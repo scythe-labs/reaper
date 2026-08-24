@@ -8,31 +8,36 @@
 
 import type { ReactNode } from "react";
 import type { OverrideFilter, RequestedFilter, SortKey, SortOrder } from "../api";
+import i18next from "../i18n";
 
-export const MEDIA_FILTERS: { value: string; label: string }[] = [
-  { value: "", label: "Everything" },
-  { value: "movie", label: "Movies" },
-  { value: "season", label: "TV shows" },
+// Each a function, not a module-level constant: the labels come from the catalog, and a
+// constant built at import time would freeze at whatever language was active on first load
+// (`applyStoredLanguage` resolves after this module's first import). Called fresh by the
+// components that already re-render on a language change.
+export const mediaFilters = (): { value: string; label: string }[] => [
+  { value: "", label: i18next.t("reviewQueue.filterOptions.media.any") },
+  { value: "movie", label: i18next.t("reviewQueue.filterOptions.media.movie") },
+  { value: "season", label: i18next.t("reviewQueue.filterOptions.media.season") },
 ];
 
-export const REQUESTED_FILTERS: { value: RequestedFilter; label: string }[] = [
-  { value: "any", label: "Anyone" },
-  { value: "yes", label: "Requested" },
-  { value: "no", label: "Not requested" },
+export const requestedFilters = (): { value: RequestedFilter; label: string }[] => [
+  { value: "any", label: i18next.t("reviewQueue.filterOptions.requested.any") },
+  { value: "yes", label: i18next.t("reviewQueue.filterOptions.requested.yes") },
+  { value: "no", label: i18next.t("reviewQueue.filterOptions.requested.no") },
 ];
 
-export const OVERRIDE_FILTERS: { value: OverrideFilter; label: string }[] = [
-  { value: "any", label: "Any override" },
-  { value: "spare", label: "Spared by hand" },
-  { value: "reap", label: "Reaped by hand" },
-  { value: "none", label: "No override" },
+export const overrideFilters = (): { value: OverrideFilter; label: string }[] => [
+  { value: "any", label: i18next.t("reviewQueue.filterOptions.override.any") },
+  { value: "spare", label: i18next.t("reviewQueue.filterOptions.override.spare") },
+  { value: "reap", label: i18next.t("reviewQueue.filterOptions.override.reap") },
+  { value: "none", label: i18next.t("reviewQueue.filterOptions.override.none") },
 ];
 
-export const SORTS: { value: SortKey; label: string }[] = [
-  { value: "score", label: "Score" },
-  { value: "size", label: "Size" },
-  { value: "year", label: "Year" },
-  { value: "title", label: "Title" },
+export const sorts = (): { value: SortKey; label: string }[] => [
+  { value: "score", label: i18next.t("reviewQueue.filterOptions.sort.score") },
+  { value: "size", label: i18next.t("reviewQueue.filterOptions.sort.size") },
+  { value: "year", label: i18next.t("reviewQueue.filterOptions.sort.year") },
+  { value: "title", label: i18next.t("reviewQueue.filterOptions.sort.title") },
 ];
 
 /** One filterable dimension of the review queue: a queue-filter field paired with a value
@@ -86,24 +91,24 @@ function sanitize(stored: Partial<Record<keyof QueueFilters, unknown>>): QueueFi
   return {
     mediaType: pick(
       stored.mediaType,
-      MEDIA_FILTERS.map((f) => f.value),
+      mediaFilters().map((f) => f.value),
       DEFAULT_FILTERS.mediaType,
     ),
     requested: pick(
       stored.requested,
-      REQUESTED_FILTERS.map((f) => f.value),
+      requestedFilters().map((f) => f.value),
       DEFAULT_FILTERS.requested,
     ),
     genre: typeof stored.genre === "string" ? stored.genre : DEFAULT_FILTERS.genre,
     library: typeof stored.library === "string" ? stored.library : DEFAULT_FILTERS.library,
     override: pick(
       stored.override,
-      OVERRIDE_FILTERS.map((f) => f.value),
+      overrideFilters().map((f) => f.value),
       DEFAULT_FILTERS.override,
     ),
     sort: pick(
       stored.sort,
-      SORTS.map((s) => s.value),
+      sorts().map((s) => s.value),
       DEFAULT_FILTERS.sort,
     ),
     order: pick(stored.order, ["asc", "desc"] as const, DEFAULT_FILTERS.order),

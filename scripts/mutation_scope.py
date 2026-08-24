@@ -1107,7 +1107,10 @@ def record(name, body, **kwargs):
     except Exception as exc:
         cases[name] = f"RAISED {type(exc).__name__}: {' '.join(str(exc).split())[:160]}"
         return
-    cases[name] = [f"{w.severity}|{w.field}|{w.message}" for w in got]
+    # The typed reason's repr, not composed English (#868): id
+    # and params are what a mutant can actually change, and a repr is deterministic where a
+    # composed sentence would need the frontend catalog this script does not load.
+    cases[name] = [f"{w.severity}|{w.field}|{w.reason!r}" for w in got]
 
 def policy(**overrides):
     base = {
@@ -1265,8 +1268,13 @@ ZONES: dict[str, Zone] = {
         module=Path("src/reaper/engine/gates.py"),
         functions=(
             "thaw_defers_to_owner",
-            "RatingRule.threshold_text",
             "RatingRule.describe_bar",
+            "_rating_value",
+            "blocked_reason",
+            "no_key_reason_id",
+            "no_key_reason",
+            "no_added_at_reason",
+            "no_size_reason",
             "RatingFloorGate.evaluate",
             "StreamingNowGate.evaluate",
             "history_shortfall",
@@ -1282,13 +1290,14 @@ ZONES: dict[str, Zone] = {
             # The eight the zone omitted while reporting a clean sweep of the gate layer
             # (#598). `_blocked` matters most in principle: it is the one fail-closed helper
             # every gate routes through, so deleting its `Unknown` guard withdraws the block
-            # from all five at once. `_miss_phrase` matters most in fact -- all three
-            # survivors a supplementary run found were in it, one live on a default policy.
+            # from all five at once. `_miss_reason` (né `_miss_phrase`) matters most in fact --
+            # all three survivors a supplementary run found were in it, one live on a default
+            # policy.
             # The four `Evaluation` properties carry no mutable token and report zero, which
             # is the honest answer `evaluate_all` already gave.
             "_blocked",
             "GateResult.fired",
-            "RatingFloorGate._miss_phrase",
+            "RatingFloorGate._miss_reason",
             "Evaluation.checked_and_did_not_fire",
             "Evaluation.protected",
             "Evaluation.blocked",

@@ -7,7 +7,8 @@
 //   - "select everything matching" that cannot reach the end of the list selects nothing
 //     and says so, rather than quietly meaning "the first page";
 //   - nothing else can be pressed while a bulk write is in flight.
-// The compact dormancy span is pinned here too: it rewrites a string the server writes.
+// The compact dormancy span is pinned here too: it rewrites the humanized string the
+// frontend composes from a fresh row's raw day count.
 import { useQuery } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -19,9 +20,11 @@ import {
   type CandidatePage,
   type GroupRollup,
   type GroupSeasonMark,
+  type ReasonKey,
   type Snapshot,
   type Verdict,
 } from "../api";
+import i18next from "../i18n";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL } from "../test/apiFixtures";
 import { renderWithProviders } from "../test/renderWithProviders";
@@ -41,7 +44,16 @@ const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
-vi.mock("../api", () => ({ api: apiMock }));
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  api: apiMock,
+}));
+
+/** A row frozen before details were typed: the stored sentence wrapped as the one legacy
+ *  reason, composed verbatim (docs/history/I18N_PLAN.md §5, #899). */
+function legacy(text: string): ReasonKey {
+  return { k: "legacy", p: { text } };
+}
 
 function movie(n: number, extra: Partial<Candidate> = {}): Candidate {
   const c: Candidate = {
@@ -62,8 +74,7 @@ function movie(n: number, extra: Partial<Candidate> = {}): Candidate {
     group_title: null,
     video_resolution: null,
     library: null,
-    dormant_for: null,
-    reason: null,
+    dormant_days: null,
     override: null,
     override_own: null,
     show_override: null,
@@ -74,6 +85,7 @@ function movie(n: number, extra: Partial<Candidate> = {}): Candidate {
     chip: null,
     show_status: null,
     season_number: null,
+    collections: null,
     ...extra,
   };
   // Default an item's own decision to its effective one unless a test sets them apart (to
@@ -288,13 +300,15 @@ describe("keeping the list in step with the latest scan", () => {
     // for it (#149). The nudge is not rendered with the list: `nudging` is set by an effect
     // that runs only once the candidates read has resolved and the snapshot mismatch has been
     // observed, so the button is two commits behind the render. A single
-    // `findByRole("button", { name })` had to cover that whole chain on one 1000ms budget,
+    // `findByRole("button", { name })` had to cover that whole chain on one budget, then 1000ms,
     // while re-computing accessible names across both cards and the open panel on every poll,
     // which is the most expensive query Testing Library has. It lost the race on a loaded CI
     // runner about one run in a few, on branches that do not touch this file at all, and the
-    // dumped DOM showed exactly this: both cards rendered, no nudge yet.
+    // dumped DOM showed exactly this: both cards rendered, no nudge yet. The budget is 5000ms
+    // now (`src/test/setup.ts`, #887), which widens the margin and does not make the one query
+    // any cheaper.
     //
-    // Two cheap text waits instead, each with its own 1000ms budget, so a genuine regression
+    // Two cheap text waits instead, each with its own budget, so a genuine regression
     // in this chain fails naming the step that broke rather than the button at the end of it.
     // Rule 137's margin sweep is how a step with no headroom is found: hold every React Query
     // notification back 200ms and re-run. That is a diagnostic to apply and revert, not
@@ -331,7 +345,7 @@ describe("a bulk override", () => {
     await waitFor(() => expect(apiMock.candidates.mock.calls.length).toBeGreaterThan(listFetches));
     // The failed one, alone, is still picked, and the notice counts it.
     expect(
-      await screen.findByText(/1 item could not be updated; it is still selected/),
+      await screen.findByText(/1 item could not be updated. It is still selected/),
     ).toBeInTheDocument();
     expect(pickedCount()).toContain("1");
     // And it is the one that failed, not just any one: a clean-up that cleared the whole
@@ -730,39 +744,38 @@ describe("a reap the engine refused", () => {
     // chip is reaped, not held, and pinning it here would pin a pairing the server can no
     // longer send (rule 119).
     //
-    // The clause comes from the chip's own `why`, which the server words (H-1). These
-    // fixtures deliberately give `text` and `why` different words, so a test that passed by
-    // re-parsing the text would fail here: this asserts the field is read, not the prose.
+    // The clause is the chip's own `chip.sentence.<id>`, a different catalog entry than
+    // `chip.text.<id>`. These fixtures pick ids whose text and sentence forms read nothing
+    // alike, so a test that passed by rendering the chip TEXT here would fail: this asserts
+    // the sentence is composed, not the text re-used.
     const streaming = movie(1, {
       override: "reap",
       override_effective: false,
-      chip: { tone: "kept", text: "Kept, playing right now", why: "playing right now" },
+      chip: { tone: "kept", reason: { k: "kept.streaming_now" } },
     });
     const unidentifiable = movie(2, {
       override: "reap",
       override_effective: false,
-      chip: {
-        tone: "quiet",
-        text: "Couldn't read its Plex match",
-        why: "Reaper couldn't read what it matched in Plex",
-      },
+      chip: { tone: "quiet", reason: { k: "match.unreadable" } },
     });
     apiMock.candidates.mockResolvedValue(page([streaming, unidentifiable]));
     renderQueue();
 
+    const streamingWhy = i18next.t("chip.sentence.kept.streaming_now");
+    const unreadableWhy = i18next.t("chip.sentence.match.unreadable");
     expect(
-      await screen.findByText("Reap requested, kept for now: playing right now"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Reap requested, kept for now: Reaper couldn't read what it matched in Plex",
+      await screen.findByText(
+        i18next.t("shell.statusChip.reapRequestedKept", { why: streamingWhy }),
       ),
     ).toBeInTheDocument();
-    // The chip's own display wording never lands mid-sentence: the clause is the server's
-    // `why`, never the chip text with its "Kept, " lead sliced off (H-1).
-    expect(screen.queryByText(/kept for now: Kept,/)).not.toBeInTheDocument();
     expect(
-      screen.queryByText(/kept for now: Couldn't read its Plex match/),
+      screen.getByText(i18next.t("shell.statusChip.reapRequestedKept", { why: unreadableWhy })),
+    ).toBeInTheDocument();
+    // The chip's own display wording never lands mid-sentence: the clause is the composed
+    // sentence, never the chip text ("Kept, ..."/"Couldn't read...") pasted in raw (H-1).
+    expect(screen.queryByText(/kept for now\. Kept,/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/kept for now\. Couldn't read its Plex match/),
     ).not.toBeInTheDocument();
   });
 });
@@ -963,7 +976,7 @@ describe("the dormancy span", () => {
   });
 
   it("renders the sub-day phrase whole on the card", async () => {
-    apiMock.candidates.mockResolvedValue(page([movie(1, { dormant_for: "less than a day" })]));
+    apiMock.candidates.mockResolvedValue(page([movie(1, { dormant_days: 0 })]));
     renderQueue();
     expect(await screen.findByText(/Not watched in less than a day/)).toBeInTheDocument();
   });
@@ -972,7 +985,7 @@ describe("the dormancy span", () => {
     // No plan will include it, which outranks every other reason the card could show:
     // an owner reading "Not watched in 5 years" would reasonably expect it to go.
     apiMock.candidates.mockResolvedValue(
-      page([movie(1, { size_bytes: null, dormant_for: "5 years" })]),
+      page([movie(1, { size_bytes: null, dormant_days: 1825 })]),
     );
     renderQueue();
 
@@ -983,7 +996,7 @@ describe("the dormancy span", () => {
   it("shows the ordinary reason when the size is known", async () => {
     // The hold-back line must not become permanent furniture: it appears only for the
     // items it is about.
-    apiMock.candidates.mockResolvedValue(page([movie(1, { dormant_for: "less than a day" })]));
+    apiMock.candidates.mockResolvedValue(page([movie(1, { dormant_days: 0 })]));
     renderQueue();
 
     await screen.findByText(/Not watched in less than a day/);
@@ -1475,8 +1488,8 @@ describe("what a screen reader hears on a queue card", () => {
           library: "Films",
           video_resolution: "1080",
           requested_by: "someone",
-          reason: "Nobody has watched it since it arrived",
-          chip: { tone: "look", text: "Nobody watched it" },
+          reason_key: legacy("Nobody has watched it since it arrived"),
+          chip: { tone: "look", reason: { k: "look.unsettled" } },
         }),
       ]),
     );
@@ -1521,7 +1534,6 @@ describe("what a screen reader hears on a queue card", () => {
       summary: null,
       size_bytes: 2 * 1024 ** 3,
       unknown_size_seasons: 0,
-      reason: null,
       library: null,
       chip: null,
       show_override: null,
@@ -1901,7 +1913,7 @@ describe("what a card says after a hand decision", () => {
   it("keeps the dormancy line when a condemned movie is spared", async () => {
     // A condemned row carries no chip by construction, so the spare flipped the card to the
     // chip branch and it lost a line and reflowed under the cursor (B-24).
-    apiMock.candidates.mockResolvedValue(page([movie(1, { dormant_for: "3 years 2 months" })]));
+    apiMock.candidates.mockResolvedValue(page([movie(1, { dormant_days: 1155 })]));
     apiMock.override.mockResolvedValue({});
     const user = userEvent.setup();
     renderQueue("condemn");
@@ -2259,7 +2271,6 @@ describe("one row's write does not disable another row's controls", () => {
       summary: null,
       size_bytes: 2 * 1024 ** 3,
       unknown_size_seasons: 0,
-      reason: null,
       library: null,
       chip: null,
       show_override: null,

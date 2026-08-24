@@ -149,7 +149,7 @@
   border-color: var(--protect);
 }
 .reap-running {
-  margin-right: auto;
+  margin-inline-end: auto;
   display: flex;
   align-items: center;
   gap: var(--space-md);
@@ -172,12 +172,7 @@
   border-radius: 50%;
   border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
   border-top-color: currentColor;
-  animation: reap-spin 0.7s linear infinite;
-}
-@keyframes reap-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  animation: spin 0.7s linear infinite;
 }
 .reap-progress {
   margin: 1rem 0 0.2rem;
@@ -255,7 +250,7 @@
   color: var(--muted);
 }
 .reap-bar-actions {
-  margin-left: auto;
+  margin-inline-start: auto;
   display: flex;
   align-items: center;
   gap: var(--space-md);
@@ -273,7 +268,7 @@
 }
 .reap-bar-fill {
   position: absolute;
-  left: 0;
+  inset-inline-start: 0;
   bottom: 0;
   height: 3px;
   background: var(--condemn);
@@ -398,7 +393,7 @@
 .changes-notes ul,
 .changes-notes ol {
   margin: var(--space-sm) 0;
-  padding-left: 1.2rem;
+  padding-inline-start: 1.2rem;
 }
 .changes-notes li {
   margin: 0.15rem 0;

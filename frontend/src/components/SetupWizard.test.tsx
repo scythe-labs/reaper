@@ -42,7 +42,10 @@ vi.mock("./SetupConnectStep", () => ({
 const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
-vi.mock("../api", () => ({ api: apiMock }));
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  api: apiMock,
+}));
 
 const { announceSpy } = vi.hoisted(() => ({ announceSpy: vi.fn() }));
 vi.mock("../announce", async (importOriginal) => ({
@@ -71,12 +74,18 @@ const IDLE = {
   done: 0,
   total: 0,
   percent: 0,
-  detail: "",
-  error: null,
+  detail_reason: null,
+  error_reason: null,
   snapshot_id: null,
   followup_queued: false,
 };
-const RUNNING = { ...IDLE, running: true, phase: "history", percent: 3, detail: "syncing" };
+const RUNNING = {
+  ...IDLE,
+  running: true,
+  phase: "history",
+  percent: 3,
+  detail_reason: { k: "history_sync", p: null },
+};
 
 function renderWizard(onSkip: () => void = () => {}) {
   return renderWithProviders(<SetupWizard onSkip={onSkip} />);
@@ -89,7 +98,6 @@ beforeEach(() => {
   apiMock.safety.mockResolvedValue({
     destructive_enabled: false,
     has_password: true,
-    note: null,
   });
 });
 
@@ -246,8 +254,10 @@ describe("the first scan finishing", () => {
   it("says so, because nothing the operator did ended it", async () => {
     // The scan status is polled every second while it runs, and the settled panel only appears
     // once that poll has answered AND the invalidation it triggers has refetched the setup
-    // read. The clock is driven rather than waited on: a bare `findByText` races its own
-    // default 1000ms window against that same 1000ms interval (rule 133).
+    // read. The clock is driven rather than waited on, because rule 133 wants the delay asked
+    // for and not a real one sampled. It also used to be a race: the wait's window was 1000ms,
+    // the same as that interval. The window is 5000ms now (`src/test/setup.ts`, #887), so the
+    // race is gone and rule 133 is the whole reason this drives the clock.
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       apiMock.scanStatus.mockResolvedValue(RUNNING);
@@ -278,7 +288,13 @@ describe("the first scan finishing", () => {
       renderWizard();
       expect(await screen.findByText(/your first scan is running/i)).toBeTruthy();
 
-      apiMock.scanStatus.mockResolvedValue({ ...IDLE, error: "Tautulli timed out" });
+      apiMock.scanStatus.mockResolvedValue({
+        ...IDLE,
+        error_reason: {
+          k: "error.scan.source_unreachable",
+          p: { error: "Tautulli timed out" },
+        },
+      });
       await act(async () => {
         await vi.advanceTimersByTimeAsync(2500);
       });
@@ -319,7 +335,6 @@ describe("what the wizard says about deletion", () => {
     apiMock.safety.mockResolvedValue({
       destructive_enabled: true,
       has_password: true,
-      note: null,
     });
     renderWizard();
 

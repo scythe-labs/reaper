@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import functools
 import hashlib
 import json
 import os
@@ -42,10 +43,12 @@ from reaper.engine.gates import (
     ServerPopularityGate,
 )
 from reaper.engine.observation import Absent, Known
+from reaper.refusal import MESSAGES
 from reaper.services import app_settings, plex_link
 from reaper.services.scheduler import SCHEDULABLE_JOB_IDS
 from reaper.services.season_scan import SeasonJudgment
 from reaper.services.snapshot import Display, RawItem
+from tests._reasons import text as reason_text
 
 REPO = Path(__file__).resolve().parents[1]
 SELF = Path(__file__).resolve()
@@ -71,7 +74,7 @@ DECISIONS_DOC = DOCS / "DECISIONS.md"
 # Rows of "Decisions locked" carrying the dagger, reconciled by hand against DECISIONS.md's
 # sections (rule 145: a set-equality assertion cannot tell a member that complies from one that
 # dropped out of the walk).
-DECISION_SECTIONS = 18
+DECISION_SECTIONS = 19
 
 
 def _live_docs() -> list[Path]:
@@ -295,6 +298,22 @@ def _code_files() -> list[Path]:
 
 def _code_and_live_docs() -> list[Path]:
     return [*_code_files(), *_live_docs()]
+
+
+#: The directories holding copy in a language other than English: a UI catalog Weblate writes
+#: under ``frontend/src/locales/<tag>/`` and a manual under ``frontend/src/docs/content/<tag>/``.
+#: The English originals sit at ``locales/en/`` and directly in ``content/``. The
+#: American-English gate reads source copy and leaves these alone (docs/history/I18N_PLAN.md
+#: §8); every other gate walking the tree is language-neutral and keeps reading them.
+_TRANSLATED_ROOTS = (FRONTEND_SRC / "locales", FRONTEND_SRC / "docs" / "content")
+
+
+def _is_translated_copy(path: Path) -> bool:
+    for root in _TRANSLATED_ROOTS:
+        if path.is_relative_to(root):
+            parts = path.relative_to(root).parts
+            return len(parts) > 1 and parts[0] != "en"
+    return False
 
 
 def _defined_rules() -> dict[int, list[Path]]:
@@ -964,15 +983,40 @@ def test_american_english_everywhere() -> None:
     ``aria-labelledby`` attribute keep their real spelling.
     """
     offenders: list[str] = []
-    for path in _code_and_live_docs():
+    # The English catalog joins the walk: since Stage 4 it holds the operator copy the walk
+    # used to read in the components. Its translator notes join it too (#868 phase 6): they
+    # are prose written for a translator, not operator copy, but the same rule binds them. A
+    # translated catalog or manual is the one thing this gate leaves alone, because a French
+    # manual is French.
+    for path in [
+        *_code_and_live_docs(),
+        FRONTEND_SRC / "locales" / "en" / "ui.json",
+        FRONTEND_SRC / "locales" / "en" / "ui.notes.json",
+    ]:
         # This file spells every banned word once, in the pattern above.
-        if path.resolve() == SELF:
+        if path.resolve() == SELF or _is_translated_copy(path):
             continue
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             stripped = _SANCTIONED.sub("", line)
             for match in _BRITISH.finditer(stripped):
                 offenders.append(f"{path.relative_to(REPO)}:{lineno} -> {match.group(0)}")
     assert not offenders, "use the American spelling:\n" + "\n".join(offenders)
+
+
+def test_the_translated_copy_exemption_reads_both_layouts() -> None:
+    """Rule 147: the exemption above is run against the paths it accepts and the ones it rejects.
+
+    A catalog is a directory per tag under ``locales/``. A manual is a directory per tag under
+    ``docs/content/``, beside the English files that sit in ``content/`` itself.
+    """
+    locales = FRONTEND_SRC / "locales"
+    content = FRONTEND_SRC / "docs" / "content"
+    assert _is_translated_copy(locales / "pt-BR" / "ui.json")
+    assert _is_translated_copy(content / "de" / "index.ts")
+    assert not _is_translated_copy(locales / "en" / "ui.json")
+    assert not _is_translated_copy(content / "en" / "index.ts")
+    assert not _is_translated_copy(content / "overview.ts")
+    assert not _is_translated_copy(FRONTEND_SRC / "components" / "de.tsx")
 
 
 def test_dynamic_favicon_link_is_declared_last() -> None:
@@ -2391,15 +2435,16 @@ def test_the_codeql_analysis_still_covers_every_tree() -> None:
 #: edit that is not even a change (rule 147).
 _NODE_MAJOR = re.compile(r"""(?:FROM\s+node:|node-version:\s*)["']?(\d+)""")
 
-#: The Dockerfile, ci.yml twice (the `frontend` and `site` jobs), docs-deploy.yml, and
-#: binaries.yml (the packaged builds bundle the SPA on the same Node the frontend job tested
-#: it on). Pinned because the agreement assertion below is vacuously true on one site, or on
-#: none (rule 145).
+#: The Dockerfile, ci.yml twice (the `frontend` and `site` jobs), and binaries.yml (the
+#: packaged builds bundle the SPA on the same Node the frontend job tested it on). Pinned
+#: because the agreement assertion below is vacuously true on one site, or on none (rule 145).
 #:
-#: The manual site's two are here for the same reason as the others rather than as bookkeeping:
-#: it builds with `npm ci` against a committed lockfile, so a Node major that drifts from the
-#: one the lockfile was resolved on is a publish that fails on a tree nothing else exercises.
-_EXPECTED_NODE_SITES = 5
+#: The manual site's `site` job is here for the same reason as the others rather than as
+#: bookkeeping: it builds with `npm ci` against a committed lockfile, so a Node major that
+#: drifts from the one the lockfile was resolved on breaks a tree nothing else exercises.
+#: Cloudflare Pages builds that same directory on its own Node and reads nothing from this
+#: repository, so its major is set in the dashboard and cannot be pinned from here.
+_EXPECTED_NODE_SITES = 4
 
 
 def test_the_node_major_is_one_supported_lts_line_in_the_image_and_in_ci() -> None:
@@ -2451,14 +2496,14 @@ _MYPY_INVOCATION = re.compile(r"uv run mypy ((?:[\w./\[\]*-]+ ?)+?)(?=\s*(?:#|`|
 #: `.github/workflows/ci.yml`, `CONTRIBUTING.md`, `.claude/skills/reaper-review/SKILL.md`, and
 #: `tests/_fakes.py`'s own docstring -- which is the copy most likely to go stale, since it is
 #: the file arguing for its place on the gate. `docs/history/**` is frozen and records what the
-#: gate was at the time, so it is skipped rather than counted, and `docs/I18N_PLAN.md` proposes
-#: a gate for a plan nothing has started.
+#: gate was at the time, so it is skipped rather than counted. The translation plan's proposed
+#: gate sits there now.
 _EXPECTED_MYPY_SITES = 4
 
 #: Files that quote the command as a record rather than as the instruction to follow. A record
 #: is pinned to its moment, so holding it to today's gate would ask a finished plan to be edited
 #: every time the gate moves.
-_MYPY_RECORDS = ("docs/history/", "docs/I18N_PLAN.md")
+_MYPY_RECORDS = ("docs/history/",)
 
 
 def test_the_typecheck_gate_names_the_same_targets_everywhere_it_is_written() -> None:
@@ -2512,22 +2557,25 @@ def test_the_typecheck_gate_names_the_same_targets_everywhere_it_is_written() ->
 
 
 #: Every `paths:` / `paths-ignore:` list under `.github/workflows/`, reconciled by hand and
-#: **named, not counted**. `codeql.yml` filters both its triggers, `docs-deploy.yml` filters its
-#: one, and `ci.yml` has none deliberately -- it runs on everything and classifies the diff
-#: inside a job, so its verdict can be read by other jobs and a skipped lane still reports.
+#: **named, not counted**. `codeql.yml` filters both its triggers, `weblate-notes.yml` filters
+#: its one (on the two files that can change what it does,
+#: `frontend/src/locales/en/ui.notes.json` and, since phase 10b,
+#: `src/reaper/locales/en/backend.notes.json`), and `ci.yml` has none deliberately -- it runs on
+#: everything and classifies the diff inside a job, so its verdict can be read by other jobs
+#: and a skipped lane still reports.
 #:
 #: This is here because two sentences describe the arrangement in prose and both were wrong:
 #: `ci.yml`'s `changes` comment and CLAUDE.md's "which jobs appear" paragraph each said nothing
 #: else in the repository restated the path list, while three lists sat in two files (rule
 #: 7/24). It is a SET rather than a number because those sentences name which file holds which,
-#: and a count cannot see a filter moving between files -- move `docs-deploy.yml`'s to
+#: and a count cannot see a filter moving between files -- move one of codeql's to
 #: `release.yml` and a pinned `3` stays green while both sentences go false (rule 145: pin the
 #: population, and a scalar is not one).
 _WORKFLOW_PATH_FILTERS = frozenset(
     {
         "codeql.yml:push:paths-ignore",
         "codeql.yml:pull_request:paths-ignore",
-        "docs-deploy.yml:push:paths",
+        "weblate-notes.yml:push:paths",
     }
 )
 
@@ -2586,7 +2634,8 @@ _CI_LANE_REF = re.compile(r"needs\.changes\.outputs\.(\w+)\s*==\s*'true'")
 
 #: `ci.yml`'s lane classification, in the order the `case` tries the arms. First match wins, so
 #: the order is load-bearing: `*.md` matches at any depth, and with prose ahead of site a
-#: `manual/guide.md` skipped the site build while docs-deploy.yml published it (#589).
+#: `manual/guide.md` skipped the site build while the publisher of the day pushed it live
+#: anyway (#589). Cloudflare Pages publishes on the same trigger now, so the order still is.
 _CI_LANE_ARMS = (
     ("manual/*|website/*", "site"),
     ("docs/*|.claude/*|*.md", "prose"),
@@ -3017,14 +3066,14 @@ def _checked_examples() -> dict[str, list[Path]]:
     dormancy = MinDormancyGate(GateConfig(threshold=1_095))
     popularity = ServerPopularityGate(GateConfig(threshold=3, window_days=365))
     examples = {
-        dormancy.evaluate(_worked_example_facts(watchers=0)).detail: [
+        reason_text(dormancy.evaluate(_worked_example_facts(watchers=0)).detail): [
             REPO / "README.md",
             DECISIONS_DOC,
             SRC / "engine" / "explanation.py",
             FRONTEND_SRC / "components" / "WhyPanel.tsx",
             TESTS / "test_api.py",
         ],
-        popularity.evaluate(_worked_example_facts(watchers=2)).detail: [
+        reason_text(popularity.evaluate(_worked_example_facts(watchers=2)).detail): [
             REPO / "manual" / "features.mdx",
         ],
     }
@@ -3103,8 +3152,10 @@ TAGLINE = "Grave decisions, clearly explained"
 #: tagline in the one place it does not belong.
 TAGLINE_SITES = (
     "README.md",
-    "frontend/src/App.tsx",
-    "frontend/src/components/Login.tsx",
+    # The masthead (App.tsx) and the sign-in card (Login.tsx) both read the catalog's one
+    # `shell.app.brandTagline` key since Stage 4, so the catalog is their site; the
+    # frontend's key gate holds each component to that key.
+    "frontend/src/locales/en/ui.json",
     "website/docusaurus.config.ts",
     "manual/index.mdx",
     "src/reaper/main.py",
@@ -3305,6 +3356,50 @@ def test_docs_referenced_from_code_exist() -> None:
 #: `reaper.api.review._chip` matches on its `api.` segment. Adding `.` to that class reads as
 #: tighter and silently drops every `:func:`reaper.…`` cross-reference in the tree, which is the
 #: spelling both pre-existing stale citations this guard first caught were written in.
+@functools.cache
+def _ui_catalog_leaves() -> tuple[tuple[str, str], ...]:
+    """Every (dotted key, message) leaf of the hand-edited en-US UI catalog."""
+    catalog = json.loads((FRONTEND_SRC / "locales" / "en" / "ui.json").read_text(encoding="utf-8"))
+    leaves: list[tuple[str, str]] = []
+
+    def walk(node: object, prefix: str) -> None:
+        if isinstance(node, str):
+            leaves.append((prefix, node))
+            return
+        assert isinstance(node, dict)
+        for name, child in node.items():
+            walk(child, f"{prefix}.{name}" if prefix else name)
+
+    walk(catalog, "")
+    return tuple(leaves)
+
+
+def _ui_catalog_keys() -> frozenset[str]:
+    """Every dotted key a citation can legitimately name: leaves, the ``t()`` shape, PLUS every
+    section path above them, the ``composeIn(namespace, reason)`` shape (#868 phase 5).
+
+    A namespace argument is a section, never a leaf -- ``composeIn("services.discord.testResult",
+    reason)`` looks up ``services.discord.testResult.<reason.k>``, so the bare section is what the
+    code and its comments cite, and ``services.discord.testResult`` on its own is a dict in
+    ``ui.json``, not a string. ``_ui_catalog_leaves()`` stays leaf-only for its other callers
+    (the word-scan tests), which read each entry as a rendered message.
+    """
+    catalog = json.loads((FRONTEND_SRC / "locales" / "en" / "ui.json").read_text(encoding="utf-8"))
+    keys: set[str] = set()
+
+    def walk(node: object, prefix: str) -> None:
+        if prefix:
+            keys.add(prefix)
+        if isinstance(node, str):
+            return
+        assert isinstance(node, dict)
+        for name, child in node.items():
+            walk(child, f"{prefix}.{name}" if prefix else name)
+
+    walk(catalog, "")
+    return frozenset(keys)
+
+
 _DOTTED_SYMBOL = re.compile(
     r"(?<![/\w])(api|services|clients|engine|db|auth)((?:\.[a-z_][\w]*)+)\.([A-Za-z_]\w{1,})\b"
 )
@@ -3381,6 +3476,12 @@ def test_a_dotted_symbol_citation_resolves_to_a_real_symbol() -> None:
                     )
             for match in _DOTTED_SYMBOL.finditer(line):
                 if match.group(0).endswith(suffixes):
+                    continue
+                # An i18n catalog key ("common.brand.discord") is shaped exactly like a
+                # dotted citation of `reaper.common`. It resolves in its own symbol
+                # table -- the en-US catalog -- and the frontend's missing-key gate
+                # (i18n-keys.test.ts) is what holds a stale one, so this guard defers.
+                if match.group(0) in _ui_catalog_keys():
                     continue
                 package, middle, symbol = match.groups()
                 # Resolve by importing the longest prefix that IS a module, then walking what is
@@ -4096,19 +4197,33 @@ def test_every_query_failure_branch_is_counted() -> None:
 # construction. Its line now points at the close the modal already has, and ``App.tsx`` is gone
 # from this dict.
 _RELOAD_ADVICE = {
-    "frontend/src/components/AboutPanel.tsx": 1,
-    "frontend/src/components/BackupPanel.tsx": 1,
-    "frontend/src/components/Fairness.tsx": 1,
-    "frontend/src/components/GeneralPanel.tsx": 1,
-    "frontend/src/components/JobsPanel.tsx": 2,
-    "frontend/src/components/NotInScanPanel.tsx": 1,
-    "frontend/src/components/PlexPanel.tsx": 1,
-    "frontend/src/components/PolicyEditor.tsx": 1,
-    "frontend/src/components/ReapBreakdown.tsx": 1,
-    "frontend/src/components/ReapConfirm.tsx": 1,
-    "frontend/src/components/ReapPlan.tsx": 1,
-    "frontend/src/components/RestoreCard.tsx": 3,
-    "frontend/src/components/SecurityPanel.tsx": 1,
+    # The word survives inside the backup.restore.reloadButton key literals; the advice
+    # itself lives in the catalog row below.
+    "frontend/src/components/RestoreCard.tsx": 2,
+    # Every converted surface's advice, one count per catalog message carrying the
+    # word, plus the catalog's own reloadButton label. Stage 4 converted every
+    # component that gave it, so this is the whole population but for RestoreCard's
+    # key literals above.
+    #
+    # Phase 8b's error.* catalog (docs/history/I18N_PLAN.md) added two more, both already the
+    # server's own English in reaper.refusal.MESSAGES and newly reachable through this walk
+    # only because they now also live in ui.json: error.lists.not_found ("That list no longer
+    # exists. Reload the page.") fires from an edit/remove on a list already gone, so there is
+    # no draft worth keeping -- the thing it was an edit OF no longer exists. error.runs.
+    # confirmation_mismatch ("... Reload, review, and confirm again.") fires when the reap
+    # plan on screen no longer matches what the server holds, so the confirmation box it is
+    # about is already stale; nothing else on that page is a draft, a staged file, a secret or
+    # a selection.
+    "frontend/src/locales/en/ui.json": 13,
+    # Not advice: `setLanguage`'s own `location.reload()`. Picking a display language reloads,
+    # because eleven module-scope tables across the tree read their labels from the catalog when
+    # their chunk is first imported, and switching in place would freeze each in whatever
+    # language its chunk loaded in (the reasoning is written out over that function). The draft
+    # this walk exists to protect is the only one that can be on screen when it fires -- the
+    # General panel's own save bar, since Settings shows one panel at a time -- and the select
+    # is `disabled` while that bar holds anything, so there is nothing to lose by the time the
+    # reload can happen.
+    "frontend/src/i18n.ts": 1,
 }
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
@@ -4145,6 +4260,14 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
         n = len(re.findall(r"(?i)\breload", _without_comments(path.read_text(encoding="utf-8"))))
         if n:
             found[str(path.relative_to(REPO))] = n
+    # Stage 4 moves a converted surface's sentences into the catalog, advice included, so the
+    # catalog is part of the population: an extraction moves a count here, and a NEW advice
+    # sentence still cannot arrive unpinned through either door.
+    in_catalog = len(
+        re.findall(r"(?i)\breload", " ".join(value for _, value in _ui_catalog_leaves()))
+    )
+    if in_catalog:
+        found["frontend/src/locales/en/ui.json"] = in_catalog
     assert found == _RELOAD_ADVICE, (
         "the reload-advice population moved.\n"
         f"expected: {_RELOAD_ADVICE}\nfound:    {found}\n"
@@ -4155,12 +4278,14 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
     )
 
 
-# Every "couldn't load" sentence the shipped tree renders, and the file rendering each one. The
+# Every "couldn't load" sentence the shipped tree renders, and the file rendering each one --
+# which, for a surface Stage 4 has converted, is the en-US catalog: the sentence moves there
+# with its surface, one entry per key that spells it. The
 # count above matches the WORD `reload` per file, so it is blind to two panels drifting apart on
 # the sentence they print when a read never landed. That is what W11-36 is about: "Couldn't load
-# these settings. Reload to try again." is written at four sites and "Couldn't load this page.
-# Reload to try again." at two. Three more keys below hold two files each, and the finding named
-# none of them.
+# these settings. Reload to try again." was written at four keys and "Couldn't load this page.
+# Reload to try again." at two, until the catalog de-dupe folded each into one `common.*` key
+# that every panel reads. One key below still holds two files, and the finding named none of them.
 #
 # `PolicyEditor`'s "Couldn't load these settings." is the deliberate fifth copy and holds a key of
 # its own. The distinction is per BRANCH rather than per panel, and that file carries both: at
@@ -4170,66 +4295,80 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
 # keys differing by exactly that clause are both correct, and a sixth site dropping the advice
 # earns its own key here with the same reasoning written down.
 _NEVER_LOADED_COPY = {
-    "Couldn't load Scales.": ["frontend/src/components/Fairness.tsx"],
-    "Couldn't load new lines, and updates are paused.": ["frontend/src/components/LogsPanel.tsx"],
-    "Couldn't load new lines. Reaper is trying again.": ["frontend/src/components/LogsPanel.tsx"],
-    "Couldn't load the Leaving Soon settings.": ["frontend/src/components/PlexPanel.tsx"],
-    "Couldn't load the library list.": [
-        "frontend/src/components/PlexPanel.tsx",
-        "frontend/src/components/SetupPlexStep.tsx",
+    "Couldn't load Scales.": [
+        "frontend/src/locales/en/ui.json",
     ],
-    "Couldn't load the library list. Try again.": ["frontend/src/components/SetupPlexStep.tsx"],
-    "Couldn't load the log.": ["frontend/src/components/LogsPanel.tsx"],
+    "Couldn't load new lines, and updates are paused.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Couldn't load new lines. Reaper is trying again.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Couldn't load the Leaving Soon settings.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Couldn't load the library list. Try again.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Couldn't load the log.": [
+        "frontend/src/locales/en/ui.json",
+    ],
     "Couldn't load the reasons for this item. Close this panel and click the item to try again.": [
-        "frontend/src/components/WhyPanelFallback.tsx"
+        "frontend/src/locales/en/ui.json",
     ],
-    "Couldn't load the rest of the list, so nothing was selected. Your picks are as they were."
-    " Try again.": ["frontend/src/components/ReviewQueue.tsx"],
+    "Couldn't load the rest of the list, so nothing was selected. Your picks are as they"
+    " were. Try again.": [
+        "frontend/src/locales/en/ui.json",
+    ],
     "Couldn't load the seasons. Collapse and expand to try again.": [
-        "frontend/src/components/ReviewQueue.tsx"
+        "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load the shelf status. Reload to try again.": [
-        "frontend/src/components/JobsPanel.tsx"
+        "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load the upkeep jobs. Reload to try again.": [
-        "frontend/src/components/JobsPanel.tsx"
+        "frontend/src/locales/en/ui.json",
     ],
-    "Couldn't load the watch history record.": ["frontend/src/components/PlexPanel.tsx"],
-    "Couldn't load these settings.": ["frontend/src/components/PolicyEditor.tsx"],
+    "Couldn't load the watch history record.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Couldn't load these settings.": [
+        "frontend/src/locales/en/ui.json",
+    ],
     "Couldn't load these settings. Reload to try again.": [
-        "frontend/src/components/GeneralPanel.tsx",
-        "frontend/src/components/PlexPanel.tsx",
-        "frontend/src/components/PolicyEditor.tsx",
-        "frontend/src/components/SecurityPanel.tsx",
+        "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load this page. Reload to try again.": [
-        "frontend/src/components/AboutPanel.tsx",
-        "frontend/src/components/BackupPanel.tsx",
+        "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load this person's requests. Close this panel and click the card to try again.": [
-        "frontend/src/components/ScalesPanel.tsx"
+        "frontend/src/locales/en/ui.json",
     ],
-    "Couldn't load what a reap would remove. Reaper just can't show it right now."
-    " Reload to try again.": ["frontend/src/components/ReapBreakdown.tsx"],
+    "Couldn't load what a reap would remove. Reload to try again.": [
+        "frontend/src/locales/en/ui.json",
+    ],
     "Couldn't load your connections.": [
-        "frontend/src/components/ServicesPanel.tsx",
-        "frontend/src/components/SetupConnectStep.tsx",
+        "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load your lists, so there is no way to tell here whether they are working.": [
-        "frontend/src/components/ListsPanel.tsx"
+        "frontend/src/locales/en/ui.json",
+        "frontend/src/locales/en/ui.json",
     ],
-    "Couldn't load your review queue.": ["frontend/src/components/ReviewQueue.tsx"],
-    "Reaper couldn't load the things a rule can look at, so there's nothing to pick from right"
-    " now. The rules you've already added are still here.": [
-        "frontend/src/components/PolicyRuleEditors.tsx",
-        "frontend/src/components/PolicyRuleEditors.tsx",
+    "Couldn't load your review queue.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Reaper couldn't load the things a rule can look at, so there's nothing to pick from. The"
+    " rules you've already added are still here.": [
+        "frontend/src/locales/en/ui.json",
     ],
     "Reaper couldn't load this plan. Reload the page to try again.": [
-        "frontend/src/components/ReapPlan.tsx"
+        "frontend/src/locales/en/ui.json",
     ],
-    "Reaper couldn't load this reap. Close this and try View again.": ["frontend/src/App.tsx"],
-    "Reaper couldn't load your lists, so there's nothing to pick from right now.": [
-        "frontend/src/components/PolicyRuleEditors.tsx"
+    "Reaper couldn't load this reap. Close this and try View again.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Reaper couldn't load your lists, so there's nothing to pick from.": [
+        "frontend/src/locales/en/ui.json",
     ],
 }
 
@@ -4272,6 +4411,12 @@ def test_the_never_loaded_sentences_are_pinned_per_sentence() -> None:
         for run in _TEXT_RUN.split(flat):
             if _NEVER_LOADED.search(run):
                 found.setdefault(run.strip(), []).append(str(path.relative_to(REPO)))
+    # The catalog carries a converted surface's sentences (Stage 4), one value per key, so a
+    # sentence two panels share appears once per key that spells it and drift stays visible.
+    for _, value in _ui_catalog_leaves():
+        for run in _TEXT_RUN.split(" ".join(value.split())):
+            if _NEVER_LOADED.search(run):
+                found.setdefault(run.strip(), []).append("frontend/src/locales/en/ui.json")
     assert {sentence: sorted(files) for sentence, files in found.items()} == _NEVER_LOADED_COPY, (
         "the never-loaded copy moved.\n"
         f"expected: {_NEVER_LOADED_COPY}\nfound:    {found}\n"
@@ -4382,8 +4527,6 @@ def test_every_field_sm_box_names_itself_and_the_population_holds_still() -> Non
 #: ``of:`` key outside a comment. Pinned by name, because the fifth surface is written by copying
 #: whichever of these four its author happened to open, and three of the four were the wrong copy.
 _VOUCHED_TEST_SURFACES = {
-    "frontend/src/components/DiscordModal.tsx",
-    "frontend/src/components/NotificationsPanel.tsx",
     "frontend/src/components/ServiceModal.tsx",
     "frontend/src/components/ServicesPanel.tsx",
 }
@@ -4447,14 +4590,15 @@ def _settle_time_fingerprints(text: str) -> list[int]:
 def test_a_held_test_result_is_stamped_when_its_request_is_issued() -> None:
     """A "Passed" badge must describe the address that was tested, not the one now on screen.
 
-    Four surfaces store ``{ result, of }`` and show the badge only while ``of`` still matches what
-    the form holds. That comparison is the honesty of the badge (rule 85), and it is satisfied by
-    computing the fingerprint at EITHER end -- which is why three of the four computed it at
-    success time, where it is no longer the address the request asked about. The boxes stay live
-    while the request is out, so pasting a second webhook while the first is being sent to left the
-    two matching by construction and "Passed" beside a channel nobody tried. ``ServiceModal``
-    captured it in ``onMutate`` and the other three did not, and nothing in the suite could see the
-    difference; #178 and #264 each fixed one site of this family by hand.
+    Two surfaces store ``{ result, of }`` and show the badge only while ``of`` still matches what
+    the form holds (four before the webhook-test copies were consolidated into ``ServiceModal``'s
+    ``useWebhookTest``). That comparison is the honesty of the badge (rule 85), and it is
+    satisfied by computing the fingerprint at EITHER end -- which is why three of the four
+    computed it at success time, where it is no longer the address the request asked about. The
+    boxes stay live while the request is out, so pasting a second webhook while the first is being
+    sent to left the two matching by construction and "Passed" beside a channel nobody tried.
+    ``ServiceModal`` captured it in ``onMutate`` and the other three did not, and nothing in the
+    suite could see the difference; #178 and #264 each fixed one site of this family by hand.
 
     **The forms this reads** (rule 147): the value an ``of:`` key is handed, on a line that does
     not also spell ``onMutate``, in a shipped ``.ts``/``.tsx`` with block comments blanked and
@@ -4551,7 +4695,9 @@ def test_the_fingerprint_matcher_reads_every_spelling_the_tree_puts_after_of() -
 # being a name Reaper guesses and becomes one the operator picks off their own server. +1 for
 # `PolicyRuleEditors`'s ListNameSelect, the picker an `on_list` keep rule names its list from --
 # a rule that matches on the name, so it is a picker rather than a box (rule 108's separator half).
-_EXPECTED_SELECTS = 23
+# -1 for `NotificationsPanel`'s language picker, gone: the language is one setting now, and
+# `GeneralPanel`'s picker (already counted) decides what a notification is written in too.
+_EXPECTED_SELECTS = 24
 
 
 #: A ``//`` that starts a comment, which is any ``//`` not preceded by a colon. Splitting on the
@@ -4731,9 +4877,13 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
     "components/TestBadgeFreshness.test.tsx": "one badge's freshness, audited in the panels",
     "components/PlexPin.test.tsx": "the poll's state machine; it mounts the announcer, no screen",
     "focus.test.tsx": "focus moves, not a screen",
+    "useSeedLanguage.test.tsx": "one hook's write, through renderHook; it renders no markup",
     "AppFocus.test.tsx": "which view holds a jump's aim; both routes it drives to are stubs",
     "AppUrl.test.tsx": (
         "which section a URL lands on; its Settings rail is audited in SettingsNav.test.tsx"
+    ),
+    "components/PolicyEditor.warnings.test.tsx": (
+        "the same policy page PolicyEditor.test.tsx mounts and audits; this file walks its warnings"
     ),
 }
 
@@ -4760,7 +4910,14 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # +1 for `JobsSweepSchedule.test.tsx`, which mounts the Jobs panel to read the history sweep's
 # every-3-days schedule back in words, and opens its editor. It audits the editor open over the
 # panel, the state no other Jobs file drives.
-_EXPECTED_RENDERING_TEST_FILES = 60
+# +1 for `docs/DocsModal.locale.test.tsx`, which mounts the docs modal over a translated manual,
+# the state `docs.test.tsx` cannot reach with the real loader. It audits that state, where the
+# pane and the index carry a `lang` the dialog around them does not.
+# +1 for `PolicyEditor.warnings.test.tsx`, the warning-anchor walk split out of
+# `PolicyEditor.test.tsx` so the two run on different workers. It mounts the same page, which the
+# file it left audits, so it is named in the map rather than audited twice.
+# +1 for `NotificationsPanel.test.tsx` (phase 10b), auditing the new language select.
+_EXPECTED_RENDERING_TEST_FILES = 63
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
@@ -5204,17 +5361,20 @@ def test_the_manual_states_the_ramp_the_shipped_policy_actually_uses() -> None:
 
 
 _JOBS_PANEL_TSX = FRONTEND_SRC / "components" / "JobsPanel.tsx"
-#: ``JOB_META`` read as the whole declaration up to the ``};`` that closes it, then picked
-#: apart inside, rather than anchored on a delimiter one spelling happens to put there
-#: (rule 147): a key may be a bare identifier or the computed ``[SCAN_ID]``, and both are
-#: ordinary here.
-_JOB_META_BLOCK = re.compile(r"const JOB_META: Record<string, JobMeta> = \{(.*?)\n\};", re.DOTALL)
-_JOB_META_KEY = re.compile(r'^  (?:\[(\w+)\]|"?(\w+)"?):\s*\{', re.MULTILINE)
-_SCAN_ID_CONST = re.compile(r'const SCAN_ID = "([\w]+)";')
-#: Every entry carries exactly one ``title:``, so counting them counts the population the key
-#: matcher is supposed to collect. A flag-shaped assertion cannot tell an entry that complies
-#: from one this parser stopped seeing -- both read green (rule 145/147).
-_JOB_META_TITLE = re.compile(r"^    title:", re.MULTILINE)
+#: ``jobMeta`` read as the whole function up to the ``}`` that closes it, then picked apart
+#: inside, rather than anchored on a delimiter one spelling happens to put there (rule 147).
+#: It was a frozen ``JOB_META`` table until Stage 4 moved the copy into the i18n catalog;
+#: now each job id is a ``case`` whose arm reads its ``jobs.meta.*`` keys, and a case may
+#: name the id as a literal or through a module constant -- both are ordinary here.
+_JOB_META_BLOCK = re.compile(r"function jobMeta\(id: string\): JobMeta \{(.*?)\n\}", re.DOTALL)
+_JOB_META_KEY = re.compile(r'^    case (?:(\w+)|"(\w+)"):', re.MULTILINE)
+_ID_CONST = re.compile(r'const (SCAN_ID|UPDATE_CHECK_ID) = "(\w+)";')
+#: Every case's arm carries exactly one multiline ``title:``, so counting them counts the
+#: population the key matcher is supposed to collect (the ``default`` arm returns inline and
+#: is rightly not counted: it is the fallback, not copy). A flag-shaped assertion cannot
+#: tell an entry that complies from one this parser stopped seeing -- both read green
+#: (rule 145/147).
+_JOB_META_TITLE = re.compile(r"^        title:", re.MULTILINE)
 
 
 def test_every_scheduled_job_has_operator_copy_on_the_jobs_page() -> None:
@@ -5233,14 +5393,11 @@ def test_every_scheduled_job_has_operator_copy_on_the_jobs_page() -> None:
     """
     source = _JOBS_PANEL_TSX.read_text(encoding="utf-8")
     block_match = _JOB_META_BLOCK.search(source)
-    assert block_match, (
-        "parsed no JOB_META declaration out of JobsPanel.tsx -- the matcher is stale"
-    )
+    assert block_match, "parsed no jobMeta function out of JobsPanel.tsx -- the matcher is stale"
     block = block_match.group(1)
 
-    scan_id = _SCAN_ID_CONST.search(source)
-    assert scan_id, "parsed no SCAN_ID constant out of JobsPanel.tsx -- the matcher is stale"
-    constants = {"SCAN_ID": scan_id.group(1)}
+    constants = dict(_ID_CONST.findall(source))
+    assert constants, "parsed no id constants out of JobsPanel.tsx -- the matcher is stale"
 
     keys = {
         constants[computed] if computed else literal
@@ -5248,18 +5405,19 @@ def test_every_scheduled_job_has_operator_copy_on_the_jobs_page() -> None:
     }
     entries = len(_JOB_META_TITLE.findall(block))
     assert len(keys) == entries, (
-        f"JOB_META holds {entries} entries but this test collected {len(keys)} keys. "
+        f"jobMeta holds {entries} arms but this test collected {len(keys)} case keys. "
         "The key matcher missed a spelling -- fix it before trusting the comparison below, "
         "which cannot tell an entry that complies from one it never saw (rule 147)."
     )
 
     assert keys == set(SCHEDULABLE_JOB_IDS), (
-        "frontend/src/components/JobsPanel.tsx's JOB_META and the jobs the server schedules "
+        "frontend/src/components/JobsPanel.tsx's jobMeta and the jobs the server schedules "
         "disagree.\n"
         f"  scheduled with no copy: {sorted(set(SCHEDULABLE_JOB_IDS) - keys) or 'none'}\n"
         f"  copy for no such job:   {sorted(keys - set(SCHEDULABLE_JOB_IDS)) or 'none'}\n"
-        "Add the title/desc/offWarning to JOB_META, or drop the stale entry. The off-warning "
-        "states what stops happening when the job is off (rule 55)."
+        "Add a case reading the job's jobs.meta.* title/desc/offWarning from the catalog, or "
+        "drop the stale one. The off-warning states what stops happening when the job is off "
+        "(rule 55)."
     )
 
 
@@ -5292,7 +5450,9 @@ _LAYERS = ("api", "services", "clients", "engine")
 #: Every `.py` file under those four, which is the population the walk parses. It moves when a
 #: module is added, split or deleted, and it is pinned because a walk that quietly stopped
 #: reading the tree would satisfy every assertion below by finding nothing at all (rule 145).
-_EXPECTED_LAYERED_MODULES = 87
+#: 89 adds `api/errors.py` (phase 8a: `refuse`/`RefusalHTTPException`/`refusal_body`, the one
+#: conversion of a coded refusal into an HTTP response every route goes through).
+_EXPECTED_LAYERED_MODULES = 89
 
 #: Every ordered pair where one of the four imports another, reconciled by hand: all six
 #: downward pairs are live, and no upward pair is. Asserted as an equality rather than a subset,
@@ -5612,8 +5772,15 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
 #: Every `.py` file under `src/reaper`, which is the population the cycle walk parses. Pinned
 #: for the reason `_EXPECTED_LAYERED_MODULES` is (rule 145): a walk that stopped reading the
 #: tree finds no cycles at all, and the assertion below cannot tell that from a clean graph.
-#: A different population from that constant, which counts the 87 under the four packages only.
-_EXPECTED_SOURCE_MODULES = 119
+#: A different population from that constant, which counts what is under the four packages
+#: only. Its value is not restated here. The two are pinned separately, so a bump to one had no
+#: reason to touch this line, and it sat naming a count the sibling had already moved past
+#: (#882, rule 144). The failure message below names the constant the same way.
+#: 122 adds `api/errors.py` and top-level `refusal.py` (phase 8a's catalog and typed refusal).
+#: 124 adds top-level `i18n.py` and the new `locales` package's `__init__.py` (phase 10a's
+#: Discord/launcher backend catalog; `locales/en/backend.json` carries no `.py` and does not
+#: join this walk).
+_EXPECTED_SOURCE_MODULES = 124
 
 #: Every import cycle under `src/reaper`, each rotated to start at its smallest member. Two,
 #: and both are one edge: `api/settings.py` imports `reaper.launcher` at module level, `launcher`
@@ -5668,7 +5835,7 @@ def _module_import_graph() -> dict[str, frozenset[str]]:
     a cycle, and the deferral is what a module graph drawn from top-level imports cannot see.
 
     A package's `__init__.py` is a module here like any other, because importing
-    `reaper.services.app_settings` executes `reaper/services/__init__.py` as well. All eight
+    `reaper.services.app_settings` executes `reaper/services/__init__.py` as well. All nine
     of them import nothing today, so they carry no outgoing edges.
     """
     names = {}
@@ -5830,7 +5997,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: Pinned for `_EXPECTED_SOURCE_MODULES`' reason (rule 145), and it carries more weight here:
 #: the expected cycle set is EMPTY, so a walk that stopped reading the tree agrees with a clean
 #: graph exactly.
-_EXPECTED_FRONTEND_MODULES = 222
+_EXPECTED_FRONTEND_MODULES = 245
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")
@@ -6083,36 +6250,40 @@ def _names_an_instance_error(node: ast.expr | None) -> bool:
     return isinstance(node, ast.Name) and node.id in _INSTANCE_ERROR_NAMES
 
 
-def _http_status_args(handler: ast.ExceptHandler) -> list[tuple[int, ast.expr]]:
-    """The status argument of every ``HTTPException(...)`` raised inside ``handler``.
+def _http_status_sites(handler: ast.ExceptHandler) -> list[tuple[int, str, ast.expr | None]]:
+    """Every call inside ``handler`` that turns the caught error into an HTTP response: its
+    line, its callee name, and the status argument it hand-writes (``None`` for
+    ``refuse_from``, which takes no status argument at all).
 
-    Collected from the whole handler body rather than from its first statement, so an arm that
-    branches before raising is read too, and returned in source order -- ``ast.walk`` is
-    breadth-first, so a raise nested inside an ``if`` comes back after one written below it.
+    ``ast.walk`` visits the ``ast.Call`` node itself whether it sits under an ``ast.Raise``
+    (``raise HTTPException(...)``) or a bare ``ast.Expr`` (``refuse(...)``, ``refuse`` being
+    typed ``NoReturn`` and raising internally), so neither wrapper needs its own branch.
 
-    **Both spellings of the status, because the tree spells it both ways**: positionally, which
-    is what every arm here uses, and as ``status_code=``, which ``api/lists.py`` uses twice. A
-    reader of the positional form alone does not report a keyword-spelled arm as a violation --
-    it drops that arm out of the population entirely, so the count below fails saying an arm
+    **Four spellings, because the tree spells it four ways**: ``raise HTTPException(status,
+    ...)`` positionally; ``status_code=``, which ``api/lists.py`` uses twice; ``refuse(status,
+    code, ...)`` (phase 8a), hand-writing a status the same way; and ``refuse_from(exc)``
+    (phase 8a's second wave) -- the one spelling that carries no status argument at all,
+    because ``api.errors.refuse_from`` always reads ``exc.status`` internally, which is what
+    makes the five instance-error arms this walk exists for structurally unable to hand-write
+    one any more. A reader missing any one spelling does not report that arm as a violation --
+    it drops the arm out of the population entirely, so the count below fails saying an arm
     stopped answering when the truth is that it answered in a spelling nobody could read
     (rule 147).
     """
-    out: list[tuple[int, ast.expr]] = []
+    out: list[tuple[int, str, ast.expr | None]] = []
     for node in ast.walk(handler):
-        if not isinstance(node, ast.Raise) or node.exc is None:
+        if not isinstance(node, ast.Call):
             continue
-        exc = node.exc
-        if not isinstance(exc, ast.Call):
-            continue
-        callee = exc.func
+        callee = node.func
         name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
-        if name != "HTTPException":
-            continue
-        keyword = next((kw.value for kw in exc.keywords if kw.arg == "status_code"), None)
-        status = exc.args[0] if exc.args else keyword
-        if status is not None:
-            out.append((node.lineno, status))
-    return sorted(out, key=lambda pair: pair[0])
+        if name == "refuse_from":
+            out.append((node.lineno, name, None))
+        elif name in ("HTTPException", "refuse"):
+            keyword = next((kw.value for kw in node.keywords if kw.arg == "status_code"), None)
+            status = node.args[0] if node.args else keyword
+            if status is not None:
+                out.append((node.lineno, name, status))
+    return sorted(out, key=lambda site: site[0])
 
 
 def _instance_error_handlers() -> list[tuple[str, int, ast.ExceptHandler]]:
@@ -6135,8 +6306,12 @@ def test_no_route_hand_writes_the_status_an_instance_error_already_declares() ->
     base class: correct only because those callees can raise nothing but ``InstanceNotFound``
     today, so a service that grew a blank-field guard the way ``create_instance`` has would
     have told the operator the instance did not exist. Reading the declaration is what makes
-    that unable to happen again, and this is what keeps a sixth arm from reintroducing it
-    (rule 144).
+    that unable to happen again.
+
+    Phase 8a's second wave moved all five to ``refuse_from(exc)``, which reads ``exc.status``
+    internally and takes no status argument to hand-write in the first place -- so what this
+    now guards is that a sixth arm (or an edit to one of the five) does not slip back to a
+    bare ``refuse``/``HTTPException`` call that types the number in again (rule 144).
     """
     handlers = _instance_error_handlers()
     assert len(handlers) == _EXPECTED_INSTANCE_ERROR_HANDLERS, (
@@ -6147,14 +6322,14 @@ def test_no_route_hand_writes_the_status_an_instance_error_already_declares() ->
 
     answered = 0
     for path, _, handler in handlers:
-        for lineno, arg in _http_status_args(handler):
+        for lineno, name, status in _http_status_sites(handler):
             answered += 1
-            assert isinstance(arg, ast.Attribute) and arg.attr == "status", (
-                f"{path}:{lineno} raises HTTPException with a hand-written status. "
-                f"Use `exc.status`, which services/instances.py declares per subclass."
+            assert name == "refuse_from" and status is None, (
+                f"{path}:{lineno} answers with `{name}`, hand-writing a status. Use "
+                "`refuse_from(exc)`, which always reads `exc.status`."
             )
     assert answered == _EXPECTED_INSTANCE_ERROR_RESPONSES, (
-        f"{answered} of those arms answer with an HTTPException, expected "
+        f"{answered} of those arms answer with an HTTP response, expected "
         f"{_EXPECTED_INSTANCE_ERROR_RESPONSES}"
     )
 
@@ -6192,13 +6367,15 @@ def test_the_instance_error_matcher_reads_every_form_the_clause_can_take() -> No
 
 
 def test_the_status_reader_finds_a_hand_written_one_wherever_it_sits() -> None:
-    """``_http_status_args`` reads the raise, not the handler's first line.
+    """``_http_status_sites`` reads the whole handler body, not its first line.
 
     An arm that logs first, or branches before raising, still raises a status -- and a reader
     that only inspected ``handler.body[0]`` would call both of those clean. Driven against a
     nested raise, since that is the shape a future arm most plausibly takes, and against
     ``status_code=``, which is a live spelling in ``api/lists.py`` and reaches the ban only
-    because the reader takes it (rule 147).
+    because the reader takes it, and against both ``refuse(...)`` (phase 8a) and
+    ``refuse_from(...)`` (phase 8a's second wave), bare calls rather than a ``raise`` at all
+    (rule 147).
     """
     nested = ast.parse(
         "try:\n"
@@ -6210,9 +6387,9 @@ def test_the_status_reader_finds_a_hand_written_one_wherever_it_sits() -> None:
         "    raise HTTPException(status_code=409, detail=str(exc)) from exc\n"
     )
     handler = next(n for n in ast.walk(nested) if isinstance(n, ast.ExceptHandler))
-    args = _http_status_args(handler)
-    assert len(args) == 2, f"both raises should be read, got {len(args)}"
-    (_, positional), (_, keyword) = args
+    sites = _http_status_sites(handler)
+    assert len(sites) == 2, f"both raises should be read, got {len(sites)}"
+    (_, _, positional), (_, _, keyword) = sites
     assert isinstance(positional, ast.Constant) and positional.value == 404
     assert isinstance(keyword, ast.Constant) and keyword.value == 409
 
@@ -6224,14 +6401,47 @@ def test_the_status_reader_finds_a_hand_written_one_wherever_it_sits() -> None:
         "    raise HTTPException(exc.status, str(exc)) from exc\n"
     )
     handler = next(n for n in ast.walk(clean) if isinstance(n, ast.ExceptHandler))
-    ((_, arg),) = _http_status_args(handler)
+    ((_, name, arg),) = _http_status_sites(handler)
+    assert name == "HTTPException"
     assert isinstance(arg, ast.Attribute) and arg.attr == "status"
+
+    # The refuse() spelling: a bare call, never a `raise`, and still readable.
+    refuses_clean = ast.parse(
+        "try:\n"
+        "    pass\n"
+        "except InstanceError as exc:\n"
+        '    refuse(exc.status, "error.instances.not_found", error=str(exc))\n'
+    )
+    handler = next(n for n in ast.walk(refuses_clean) if isinstance(n, ast.ExceptHandler))
+    ((_, name, arg),) = _http_status_sites(handler)
+    assert name == "refuse"
+    assert isinstance(arg, ast.Attribute) and arg.attr == "status"
+
+    refuses_dirty = ast.parse(
+        "try:\n"
+        "    pass\n"
+        "except InstanceError as exc:\n"
+        '    refuse(404, "error.instances.not_found", error=str(exc))\n'
+    )
+    handler = next(n for n in ast.walk(refuses_dirty) if isinstance(n, ast.ExceptHandler))
+    ((_, name, arg),) = _http_status_sites(handler)
+    assert name == "refuse"
+    assert isinstance(arg, ast.Constant) and arg.value == 404
+
+    # The refuse_from() spelling: no status argument at all, since it always reads exc.status.
+    refuse_from_clean = ast.parse(
+        "try:\n    pass\nexcept InstanceError as exc:\n    refuse_from(exc)\n"
+    )
+    handler = next(n for n in ast.walk(refuse_from_clean) if isinstance(n, ast.ExceptHandler))
+    ((_, name, arg),) = _http_status_sites(handler)
+    assert name == "refuse_from"
+    assert arg is None
 
     # A raise that is not an HTTPException contributes nothing, so a `raise` re-raising the
     # original cannot be read as an arm that stopped answering.
     bare = ast.parse("try:\n    pass\nexcept InstanceError:\n    raise\n")
     handler = next(n for n in ast.walk(bare) if isinstance(n, ast.ExceptHandler))
-    assert _http_status_args(handler) == []
+    assert _http_status_sites(handler) == []
 
 
 # --- the bold-when-active strut, and the sentence enumerating it (rule 144) -----------
@@ -7195,192 +7405,6 @@ def test_the_lane_walk_reads_every_spelling_the_tree_uses(tmp_path: Path) -> Non
     assert found["src/reaper/m.py:25:11"] == {"keeps": "tv_keeps"}
 
 
-# ---------------------------------------------------------------------------
-# The client failure sentences are worded in one place (rule 144)
-# ---------------------------------------------------------------------------
-
-#: The sentences a failed client call is reported with, as templates: literal text with `{}`
-#: standing in for each interpolation, mapped to the factory in `clients/base.py` that words
-#: each. Every one was written at two or three of the sites that raise it. Rewording one copy
-#: leaves the others describing the same failure differently, which is what rule 144 is about,
-#: and it had already happened: `public.py` spelled one of them with a hardcoded `GET` where
-#: `base.py` names the method.
-_CLIENT_FAILURE_SENTENCES = {
-    "timed out ({})": "transport_failure",
-    "unreachable ({})": "transport_failure",
-    "refused redirect (HTTP {}) for {} {}": "refused_redirect",
-    "HTTP {} for {} {}": "http_failure",
-    "expected JSON from {}, got {}": "unexpected_body",
-}
-
-#: Where all four are allowed to be spelled.
-_FAILURE_SENTENCE_HOME = "src/reaper/clients/base.py"
-
-
-def _message_template(node: ast.expr) -> str | None:
-    """An ``IntegrationError`` message argument as a template, or None if it cannot be read.
-
-    A plain string is itself; an f-string becomes its literal parts with ``{}`` for every
-    interpolation, so a copy spelling the method ``GET`` where the original interpolates it
-    reads as a DIFFERENT template rather than the same one. Anything else -- a name, a ``%``
-    format, a call -- reads as None and is counted rather than passed over, because a
-    sentence the walk cannot see is a copy it cannot fence (rule 147).
-    """
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
-    if not isinstance(node, ast.JoinedStr):
-        return None
-    parts: list[str] = []
-    for piece in node.values:
-        if isinstance(piece, ast.FormattedValue):
-            parts.append("{}")
-        elif isinstance(piece, ast.Constant) and isinstance(piece.value, str):
-            parts.append(piece.value)
-        else:  # pragma: no cover -- a JoinedStr holds only those two node kinds
-            return None
-    return "".join(parts)
-
-
-def _integration_error_messages(root: Path) -> tuple[dict[str, list[str]], list[str]]:
-    """Every ``IntegrationError`` construction under ``root``, by message template.
-
-    Returns the readable ones keyed by template, and the sites whose message the walk could
-    not read at all. Both halves are asserted on: the second is the population another copy
-    would hide in.
-
-    ``message`` is positional-or-keyword, so both spellings are collected. A call with no
-    message at all is not a construction this fence is about and is skipped; one whose message
-    is there but unreadable is counted, which is the distinction the earlier draft of this walk
-    got wrong by testing ``len(node.args) < 2`` alone and dropping every keyword call into
-    neither half (rule 147).
-    """
-    by_template: dict[str, list[str]] = {}
-    unreadable: list[str] = []
-    for path in sorted(root.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
-            if name != "IntegrationError":
-                continue
-            keyword = next((k.value for k in node.keywords if k.arg == "message"), None)
-            message = node.args[1] if len(node.args) >= 2 else keyword
-            if message is None:
-                continue
-            site = f"{path.relative_to(REPO).as_posix()}:{node.lineno}"
-            template = _message_template(message)
-            if template is None:
-                unreadable.append(site)
-            else:
-                by_template.setdefault(template, []).append(site)
-    return by_template, unreadable
-
-
-def test_every_client_failure_sentence_is_worded_in_exactly_one_place() -> None:
-    """Rule 144, for the sentences a failed integration call is reported with.
-
-    ``_send``, ``_mutate``, ``PublicClient``, ``get_json`` and ``plextv._post`` each carried
-    their own copy, thirteen in all. The factories in ``clients/base.py`` are the only place
-    these five are spelled now, and this is what stops the next client writing its own.
-
-    **It fences these and not every sentence this layer raises.** ``too many redirects`` stays
-    out: it is written once per file, and ``public.py``'s copy already spells the method
-    ``GET`` where ``base.py`` interpolates it, so adding it here fails rather than fences. The
-    comment above the factories in ``clients/base.py`` says the same. Every other
-    ``IntegrationError`` sentence under ``src/`` is written once, which the walk itself shows.
-    """
-    by_template, _ = _integration_error_messages(SRC)
-    strays = {
-        template: outside
-        for template in _CLIENT_FAILURE_SENTENCES
-        for outside in [
-            [s for s in by_template.get(template, []) if not s.startswith(_FAILURE_SENTENCE_HOME)]
-        ]
-        if outside
-    }
-    assert not strays, (
-        f"a client failure sentence is written outside {_FAILURE_SENTENCE_HOME}: {strays}. "
-        "Call the factory that already words each one -- "
-        f"{', '.join(sorted(set(_CLIENT_FAILURE_SENTENCES.values())))} -- rather than "
-        "repeating the sentence, or the copies drift the next time one is reworded (rule 144)."
-    )
-    for template, factory in _CLIENT_FAILURE_SENTENCES.items():
-        assert factory in (SRC / "clients" / "base.py").read_text(encoding="utf-8"), (
-            f"_CLIENT_FAILURE_SENTENCES maps {template!r} to {factory}, which no longer "
-            "exists in clients/base.py. Point it at whatever words the sentence now, or the "
-            "message above sends the next author to a function that is gone."
-        )
-    missing = [t for t in _CLIENT_FAILURE_SENTENCES if not by_template.get(t)]
-    assert not missing, (
-        f"these sentences are no longer written anywhere under src/reaper: {missing}. If a "
-        "factory was renamed or its wording changed, update _CLIENT_FAILURE_SENTENCES to the "
-        "new spelling; leaving it stale makes this gate pass while fencing nothing."
-    )
-
-
-def test_the_failure_sentence_walk_reads_every_message_the_tree_writes() -> None:
-    """Rule 147: the fence is only as wide as the spellings the walk can parse.
-
-    A message built anywhere but at the ``IntegrationError(...)`` call -- assembled into a
-    local, or handed in by a caller -- is invisible to the template match above, so a copy
-    hiding there would pass. The tree writes none today, and a new one has to be looked at
-    rather than silently joining the blind spot.
-    """
-    _, unreadable = _integration_error_messages(SRC)
-    assert unreadable == [], (
-        f"these IntegrationError messages are not literals the walk can read: {unreadable}. "
-        "Spell the message at the raise, or widen _message_template to the form used and "
-        "prove it against the forms it still rejects."
-    )
-
-
-def test_the_failure_sentence_matcher_reads_the_forms_it_claims_to(tmp_path: Path) -> None:
-    """The template reader, against each form separately: literal, f-string, and neither.
-
-    The keyword forms are here because they were the walk's blind spot and read as no blind
-    spot: ``message`` is positional-or-keyword, so an argument count alone dropped them out of
-    the readable half AND out of the unreadable half at once, which is a fence reporting
-    itself complete over sentences it never saw (rule 147).
-    """
-    scratch = tmp_path / "src" / "reaper"
-    scratch.mkdir(parents=True)
-    (scratch / "m.py").write_text(
-        "raise IntegrationError(svc, 'plain')\n"
-        'raise IntegrationError(svc, f"HTTP {code} for {method} {path}")\n'
-        'raise IntegrationError(svc, f"HTTP {code} for GET {path}")\n'
-        "raise base.IntegrationError(svc, f'unreachable ({exc})')\n"
-        "raise IntegrationError(svc, message)\n"
-        "raise IntegrationError(svc)\n"
-        'raise IntegrationError(svc, message=f"timed out ({kind})")\n'
-        "raise IntegrationError(service=svc, message=held)\n",
-        encoding="utf-8",
-    )
-    global REPO
-    real, REPO = REPO, tmp_path
-    try:
-        by_template, unreadable = _integration_error_messages(scratch)
-    finally:
-        REPO = real
-
-    # The two spellings of the HTTP sentence stay apart, which is the point: `GET` hardcoded
-    # and `{method}` interpolated are not the same sentence, and the fence has to see that.
-    assert sorted(by_template) == [
-        "HTTP {} for GET {}",
-        "HTTP {} for {} {}",
-        "plain",
-        "timed out ({})",
-        "unreachable ({})",
-    ]
-    # A qualified call is a call site, and a keyword message is read like a positional one.
-    assert by_template["unreachable ({})"] == ["src/reaper/m.py:4"]
-    assert by_template["timed out ({})"] == ["src/reaper/m.py:7"]
-    # A message that is there but unreadable is counted; a call carrying none is not a
-    # construction this fence is about and is skipped rather than reported as a blind spot.
-    assert unreadable == ["src/reaper/m.py:5", "src/reaper/m.py:8"]
-
-
 # --- every Display field the source record carries reaches its lane's pack ----------------
 
 #: The record each hand-written ``Display(...)`` pack unpacks, which is also its lane: the
@@ -7529,9 +7553,18 @@ def test_every_display_field_the_source_carries_reaches_its_lanes_pack() -> None
 #: already compared against the app's token by `test_the_site_palette_matches_the_app_palette`,
 #: and a second check of the same pair would fail twice for one edit.
 _ACCENT_DEFAULT_COPIES: dict[str, int] = {
-    "src/reaper/api/settings.py": 1,
+    # The Python-side refusal sentence moved into the catalog module (phase 8a):
+    # `refusal.MESSAGES["error.settings.accent_color_invalid"]`, no longer inline in the route.
+    "src/reaper/refusal.py": 1,
     "frontend/src/accent.ts": 1,
-    "frontend/src/components/GeneralPanel.tsx": 2,
+    # One client-side validation message (general.accent.error) has named the color since Stage
+    # 4; the savebar's own copy of it (general.savebar.accentBlocked) was folded into that same
+    # key in the i18n catalog consolidation, so it no longer adds a second count. Phase 8b's
+    # error.* catalog added the other: the SAME server refusal above
+    # (`error.settings.accent_color_invalid`) is now also reachable from ui.json, so a client
+    # bypassing the local check (an API client, a race) still names the color rather than
+    # reading a raw code.
+    "frontend/src/locales/en/ui.json": 2,
     "frontend/src/styles/00-tokens.css": 4,
 }
 
@@ -7810,8 +7843,8 @@ _UNRECOVERABLE_OPS = frozenset({"alter_column", "drop_column", "drop_table"})
 #: The revision files walked, pinned for rule 145's reason: a flag-shaped assertion cannot tell
 #: a revision that complies from one that dropped out of the walk. Bump the first with any new
 #: revision, the second only with one performing an operation above.
-_EXPECTED_REVISION_FILES = 28
-_EXPECTED_UNRECOVERABLE_REVISIONS = 4
+_EXPECTED_REVISION_FILES = 30
+_EXPECTED_UNRECOVERABLE_REVISIONS = 5
 
 
 def _revision_modules() -> list[tuple[str, ast.Module]]:
@@ -7898,3 +7931,393 @@ def test_the_revision_walk_still_sees_every_revision() -> None:
         "A count that FELL means the matcher stopped reading a spelling the tree uses, which "
         "is worse than a red gate: it reads as every revision complying."
     )
+
+
+# --- phase 8a: every coded refusal has a raiser, and no route composes English on the spot ---
+
+#: Every shape phase 8a's conversion left in the tree that carries an `"error.*"` code as a
+#: literal: `refuse(status, code, ...)` and `RefusalHTTPException(status, code, ...)` (the API
+#: layer's own raise), `Refusal(code, ...)` (the engine/service layer's -- `error.policy.*`'s
+#: 37 sites among them), `PydanticCustomError(code, ...)` (the three wire-schema validators),
+#: `Reason(code, ...)` (`services.leaving_soon`'s stored skip reasons, which ride the engine's
+#: typed-reason container rather than an HTTP-shaped exception), and a `super().__init__(code,
+#: ...)` inside a `Refusal` subclass's own `__init__` (the three `LeavingSoon*Error` classes,
+#: which take no constructor argument at their call site). Phase 8a's second wave turned every
+#: remaining service exception that used to compose its own English (`LoginError`,
+#: `PasswordError`, `PlexLinkError` and its retryable sibling, `RestoreError`, the `Instance*`
+#: family, `ListConfigError`, `PlanError`, `ExecutionError`, `ScanConfigError`) into a `Refusal`
+#: subclass too, each keeping `code` as its own raise-site argument exactly like `Refusal`
+#: itself -- so they read the same way and need no separate shape here. Two shapes hold no call
+#: argument at all and are read separately below: a `code=` keyword on any call
+#: (`require_admin_password(..., code=...)`), and a bare `return code` / `return code, params`
+#: (`api.middleware.api_key_refusal`, whose two codes never reach a call argument). Every site
+#: is filtered to a string constant starting with `"error."`, which is the whole catalog's
+#: namespace and nothing else in the tree spells that way.
+_CODE_CALL_INDEX: dict[str, int] = {
+    "refuse": 1,
+    "Refusal": 0,
+    "PydanticCustomError": 0,
+    "RefusalHTTPException": 1,
+    "_reject": 2,
+    "Reason": 0,
+    # Phase 8a's second wave: every service exception that used to compose its own English
+    # is now a `Refusal` subclass, and each keeps `code` as its own first positional arg
+    # (some through a thin per-subclass `__init__` that only fixes the default `status`),
+    # so every one of these reads exactly like `Refusal` itself at its raise site.
+    "LoginError": 0,
+    "PasswordError": 0,
+    "PlexLinkError": 0,
+    "PlexLinkRetryableError": 0,
+    "RestoreError": 0,
+    "InstanceError": 0,
+    "InstanceNotFoundError": 0,
+    "InstanceConflictError": 0,
+    "ListConfigError": 0,
+    "PlanError": 0,
+    "ExecutionError": 0,
+    "ScanConfigError": 0,
+    # A later wave, same shape, one layer further from the operator: the client layer's own
+    # exceptions (`clients/base.py`, `clients/plex.py`) carry a code instead of composing a
+    # sentence, so their raise sites read the same way too. `IntegrationError`'s code is its
+    # SECOND positional arg (`service` is first); `PlexError` and `SafetyViolationError` have
+    # no service (Plex is singular; the transport guard is not a remote service at all), so
+    # `code` is first, like `Refusal` itself.
+    "IntegrationError": 1,
+    "PlexError": 0,
+    "SafetyViolationError": 0,
+}
+
+
+def _refusal_code_sites() -> dict[str, list[str]]:
+    """Every `"error.*"` code raised anywhere under `src/reaper`, mapped to its sites.
+
+    See `_CODE_CALL_INDEX`'s comment for the call shapes; a `code=` keyword and a bare
+    `return` are read directly below since neither is one of those calls. Rule 145: both
+    directions are reconciled against `reaper.refusal.MESSAGES` by hand in the test below, and
+    both populations -- codes and sites -- are pinned so a walk that stopped reading part of
+    the tree cannot pass by agreeing with a catalog measured the same way.
+    """
+    sites: dict[str, list[str]] = {}
+    for path in sorted(SRC.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            code_arg: ast.expr | None = None
+            lineno = 0
+            if isinstance(node, ast.Call):
+                lineno = node.lineno
+                func = node.func
+                name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+                if name in _CODE_CALL_INDEX:
+                    idx = _CODE_CALL_INDEX[name]
+                    if len(node.args) > idx:
+                        code_arg = node.args[idx]
+                elif (
+                    isinstance(func, ast.Attribute)
+                    and func.attr == "__init__"
+                    and isinstance(func.value, ast.Call)
+                    and isinstance(func.value.func, ast.Name)
+                    and func.value.func.id == "super"
+                    and node.args
+                ):
+                    code_arg = node.args[0]
+                if code_arg is None:
+                    for kw in node.keywords:
+                        if kw.arg == "code" and isinstance(kw.value, ast.Constant):
+                            code_arg = kw.value
+                            break
+            elif isinstance(node, ast.Return) and node.value is not None:
+                lineno = node.lineno
+                value = node.value
+                if isinstance(value, ast.Constant):
+                    code_arg = value
+                elif (
+                    isinstance(value, ast.Tuple)
+                    and value.elts
+                    and isinstance(value.elts[0], ast.Constant)
+                ):
+                    code_arg = value.elts[0]
+            if (
+                isinstance(code_arg, ast.Constant)
+                and isinstance(code_arg.value, str)
+                and code_arg.value.startswith("error.")
+            ):
+                sites.setdefault(code_arg.value, []).append(f"{path.relative_to(REPO)}:{lineno}")
+    return sites
+
+
+_EXPECTED_REFUSAL_CODES = 309
+#: +2 for `config.RuntimeSafety.why_blocked`'s two `Reason(...)` returns, reusing the two
+#: `error.safety.*` codes the executor's own backstop and the execute route already raise
+#: (rule 144) -- no new code, two new sites.
+_EXPECTED_REFUSAL_SITES = 362
+
+
+def test_every_refusal_code_has_a_raiser_and_a_catalog_entry() -> None:
+    """The two-way agreement rule 145 asks for, modeled on
+    ``test_review_chips.py``'s ``TestTheMatchStatusVocabulary``: every code the engine, a
+    service or a route can raise is a key in ``reaper.refusal.MESSAGES``, and every key in
+    that catalog has somewhere in ``src/reaper`` that actually raises it. A code with no
+    template renders as itself (``Refusal.__str__``'s fallback) rather than failing loudly, so
+    an orphan on either side is silent in production until someone reads the raw response;
+    this is what catches it in review instead.
+
+    **Both populations are pinned** (rule 145): the count of codes AND the count of raising
+    sites, not just the two sets. A walk that quietly stopped reading half the tree would
+    still agree on the SET it found with a catalog built the same way, so the counts are the
+    only thing that can say the walk regressed rather than the catalog having shrunk to match.
+
+    The catalog side of this -- every code above also being a key under ``ui.json``'s
+    ``error.*`` namespace, which the browser composes -- is
+    ``test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose`` below, phase 8b's.
+    """
+    sites = _refusal_code_sites()
+    total = sum(len(v) for v in sites.values())
+    assert len(sites) == _EXPECTED_REFUSAL_CODES, (
+        f"expected {_EXPECTED_REFUSAL_CODES} distinct refusal codes raised under src/reaper, "
+        f"found {len(sites)}. If you added or removed one, bump the constant here."
+    )
+    assert total == _EXPECTED_REFUSAL_SITES, (
+        f"expected {_EXPECTED_REFUSAL_SITES} raising sites across those codes, found {total}. "
+        "A count that fell without the code count falling too means the walk stopped seeing "
+        "a spelling the tree uses (rule 147)."
+    )
+
+    catalog = set(MESSAGES)
+    walked = set(sites)
+    assert walked <= catalog, (
+        f"raised with no catalog entry: {sorted(walked - catalog)}. Add each to "
+        "reaper.refusal.MESSAGES."
+    )
+    assert catalog <= walked, (
+        f"in MESSAGES with no raising site this walk can see: {sorted(catalog - walked)}. "
+        "Either the code is dead, or it is raised through a shape _refusal_code_sites does "
+        "not recognize yet -- teach the walk the shape rather than deleting the entry."
+    )
+
+
+#: The three codes `frontend/src/api.ts` sets itself, for a body that carried no coded reason
+#: at all (no reply, a reply with no reason, a reply the browser could not parse). Nothing
+#: under `src/reaper` ever raises them -- there is no Python raise site for "the browser
+#: couldn't reach me" -- so they are the one deliberate exception to the two-way equality
+#: below, the same shape `NARROWED`/`WIDENED`/`PENDING_PHASE_8B` hold their own deliberate
+#: exceptions in `tests/test_api_type_mirror.py`.
+_TRANSPORT_ONLY_CODES = frozenset(
+    {
+        "error.transport.server_unreachable",
+        "error.transport.request_failed",
+        "error.transport.bad_reply",
+    }
+)
+
+#: `len(MESSAGES) + len(_TRANSPORT_ONLY_CODES)`, pinned so the population this test collects
+#: cannot silently shrink to match a catalog that lost entries (rule 145).
+_EXPECTED_CATALOG_ERROR_KEYS = 312
+
+
+def test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose() -> None:
+    """The browser-side twin of ``test_every_refusal_code_has_a_raiser_and_a_catalog_entry``.
+
+    That test proves every raise site names a ``reaper.refusal.MESSAGES`` code and every code
+    has a raise site. This proves the other hop: every ``MESSAGES`` code is also a leaf of
+    ``ui.json``'s ``error.*`` namespace (which the browser composes via ``why.ts``'s
+    ``composeIn("error", ...)``), and every ``error.*`` leaf is one of those codes or a
+    declared transport-only exception -- never an orphan a translator was handed for nothing,
+    and never a code the browser has no words for.
+    """
+    catalog_error_keys = {key for key, _ in _ui_catalog_leaves() if key.startswith("error.")}
+    assert len(catalog_error_keys) == _EXPECTED_CATALOG_ERROR_KEYS, (
+        f"expected {_EXPECTED_CATALOG_ERROR_KEYS} error.* leaves in ui.json, found "
+        f"{len(catalog_error_keys)}. If you added or removed one, bump the constant here."
+    )
+
+    backend = set(MESSAGES)
+    missing = backend - catalog_error_keys
+    assert missing == set(), (
+        f"in reaper.refusal.MESSAGES with no matching ui.json error.* entry: {sorted(missing)}. "
+        "Add each to the catalog's error section so the browser can compose it."
+    )
+
+    orphaned = catalog_error_keys - backend - _TRANSPORT_ONLY_CODES
+    assert orphaned == set(), (
+        f"ui.json error.* keys naming no reaper.refusal.MESSAGES code and not a declared "
+        f"transport-only code: {sorted(orphaned)}. Either the code is dead on the server "
+        "side, or _TRANSPORT_ONLY_CODES needs it named."
+    )
+
+    missing_transport = _TRANSPORT_ONLY_CODES - catalog_error_keys
+    assert missing_transport == set(), (
+        f"transport-only codes missing from ui.json: {sorted(missing_transport)}. "
+        "frontend/src/api.ts sets these itself; they still need a catalog entry to compose."
+    )
+
+
+#: The four admin-password prompts, mapped to the ``ui.json`` key that nests the refusal, or
+#: ``None`` where the browser renders it bare. Two shapes, both stating the consequence once.
+_PASSWORD_MISMATCH_WRAPPERS: dict[str, str | None] = {
+    "error.auth.restore_password_mismatch": "backup.restore.restoreFailed",
+    "error.auth.change_password_mismatch": "security.form.changeFailedError",
+    "error.auth.arm_deletion_password_mismatch": None,
+    "error.auth.forget_watch_password_mismatch": None,
+}
+
+
+def test_a_password_mismatch_states_its_consequence_exactly_once() -> None:
+    """A refused password says what did not happen once, from the wrapper or from itself.
+
+    Two of the four prompts render inside a lead-in that already carries the consequence
+    (``RestoreCard.tsx``'s "The restore didn't start: {message}",
+    ``SecurityPanel.tsx``'s "The password wasn't changed: {message}"), so their catalog
+    string is the bare sentence. The other two render alone
+    (``DeletionToggle.tsx``'s ``setError(describeError(e))``, ``PlexPanel.tsx``'s notice), so
+    they carry the tail themselves. ``reaper.refusal.MESSAGES`` carries the tail on all four:
+    its readers are API clients and log lines, which never see a wrapper.
+
+    #905 read the two bare-by-design catalog strings as a dropped tail and asked for it back,
+    which would have rendered "The restore didn't start: That password didn't match. Nothing
+    was restored." Pinning both shapes here is what stops the next reader repeating it.
+    """
+    catalog = dict(_ui_catalog_leaves())
+
+    for code, wrapper in _PASSWORD_MISMATCH_WRAPPERS.items():
+        rendered = catalog[code]
+        if wrapper is None:
+            assert rendered.count(".") == 2, (
+                f"{code} renders bare in the browser, so it states the consequence itself: "
+                f"got {rendered!r}, expected two sentences."
+            )
+        else:
+            assert "{message}" in catalog[wrapper], (
+                f"{wrapper} no longer nests a message, so {code} has nothing stating its "
+                "consequence. Give the catalog string its own tail, or restore the wrapper."
+            )
+            assert rendered.count(".") == 1, (
+                f"{code} renders inside {wrapper}, which already says what did not happen: "
+                f"got {rendered!r}, expected one sentence. See #905."
+            )
+        assert MESSAGES[code].count(".") == 2, (
+            f"reaper.refusal.MESSAGES[{code!r}] is read with no wrapper around it, so it "
+            f"states the consequence: got {MESSAGES[code]!r}, expected two sentences."
+        )
+
+
+_EXPECTED_BARE_HTTPEXCEPTION_SITES = 2
+
+
+def _http_exception_detail_sites() -> list[tuple[str, int, ast.expr]]:
+    """Every bare ``HTTPException(...)`` call under ``src/reaper/api/``, with its ``detail`` arg.
+
+    ``RefusalHTTPException`` -- a different name -- is exempt by construction: it always
+    formats its detail from ``reaper.refusal.MESSAGES``, which is the whole point of it
+    existing, so this walk is only ever pointed at bare ``HTTPException``, the one spelling a
+    route can still reach for instead of ``api.errors.refuse``.
+    """
+    found: list[tuple[str, int, ast.expr]] = []
+    for path in sorted((SRC / "api").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+            if name != "HTTPException":
+                continue
+            detail = node.args[1] if len(node.args) >= 2 else None
+            if detail is None:
+                detail = next((kw.value for kw in node.keywords if kw.arg == "detail"), None)
+            if detail is not None:
+                found.append((path.relative_to(REPO).as_posix(), node.lineno, detail))
+    return found
+
+
+def _is_composed_on_the_spot(node: ast.expr) -> bool:
+    """Whether a ``detail`` argument is prose written at the raise site rather than a coded
+    lookup: a string literal, an f-string, or a bare ``str(...)`` call.
+    ``validation_error_items(...)`` -- the one shape a ``detail`` is still allowed to come
+    from -- is none of these; driven against both directions in
+    ``test_the_bare_httpexception_matcher_reads_every_shape_it_claims`` (rule 147).
+    """
+    if isinstance(node, ast.JoinedStr):
+        return True
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return True
+    if isinstance(node, ast.Call):
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        return name == "str"
+    return False
+
+
+def test_no_route_raises_a_bare_httpexception_with_composed_english() -> None:
+    """Every operator-facing refusal is a catalog code now (phase 8a), never English composed
+    at the raise site. ``api.errors.refuse`` and ``RefusalHTTPException`` are the only doors:
+    this bans the one FastAPI itself still accepts, ``raise HTTPException(status, "some
+    sentence")``, from ever coming back under ``src/reaper/api/``.
+
+    Exempt nothing, per the plan this landed under: the two sites this walk still finds
+    (``api.policy._to_body``, ``api.runs.update_profile``) pass
+    ``detail=validation_error_items(...)`` -- a list of per-field dicts, not a sentence --
+    which is the one shape FastAPI's own ``RequestValidationError`` handler answers with too,
+    so it is read here and left alone rather than carved out by name.
+    """
+    sites = _http_exception_detail_sites()
+    assert len(sites) == _EXPECTED_BARE_HTTPEXCEPTION_SITES, (
+        f"expected {_EXPECTED_BARE_HTTPEXCEPTION_SITES} bare HTTPException(...) call(s) under "
+        f"src/reaper/api/, found {len(sites)}: {[(p, n) for p, n, _ in sites]}. If you added "
+        "one: either it belongs in reaper.refusal (raise Refusal, or call api.errors.refuse), "
+        "or it is a genuine detail=[...] list like the two already here, in which case bump "
+        "this constant."
+    )
+    composed = [(p, n) for p, n, detail in sites if _is_composed_on_the_spot(detail)]
+    assert not composed, (
+        f"HTTPException raised with English composed at the call site: {composed}. Use "
+        "api.errors.refuse(status, code, **params) instead, with the code's template declared "
+        "in reaper.refusal.MESSAGES."
+    )
+
+
+def test_the_bare_httpexception_matcher_reads_every_shape_it_claims() -> None:
+    """Rule 147: the ban's own matcher, driven against what it must catch and what it must
+    leave alone, so a future call shape cannot silently fall out of the population it counts.
+    """
+    caught = (
+        'raise HTTPException(422, "Pick one.")',
+        'raise HTTPException(422, f"{value} is bad.")',
+        "raise HTTPException(422, str(exc))",
+        'raise HTTPException(status_code=422, detail="Pick one.")',
+    )
+    for source in caught:
+        tree = ast.parse(source)
+        call = next(
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "HTTPException"
+        )
+        detail = (
+            call.args[1]
+            if len(call.args) >= 2
+            else next(kw.value for kw in call.keywords if kw.arg == "detail")
+        )
+        assert _is_composed_on_the_spot(detail), f"should be caught: {source}"
+
+    left_alone = (
+        "raise HTTPException(422, detail=validation_error_items(exc.errors()))",
+        "x = RefusalHTTPException(422, code, params)",
+    )
+    for source in left_alone:
+        tree = ast.parse(source)
+        maybe_call: ast.Call | None = next(
+            (
+                n
+                for n in ast.walk(tree)
+                if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "HTTPException"
+            ),
+            None,
+        )
+        if maybe_call is None:
+            continue  # the RefusalHTTPException case: this ban does not look at it at all
+        detail = (
+            maybe_call.args[1]
+            if len(maybe_call.args) >= 2
+            else next(kw.value for kw in maybe_call.keywords if kw.arg == "detail")
+        )
+        assert not _is_composed_on_the_spot(detail), f"should be left alone: {source}"

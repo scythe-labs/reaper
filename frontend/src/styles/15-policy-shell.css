@@ -61,8 +61,8 @@
    is decoration and the control is not. */
 @media (max-width: 400px) {
   .intent-band {
-    padding-left: var(--space-lg);
-    padding-right: var(--space-lg);
+    padding-inline-start: var(--space-lg);
+    padding-inline-end: var(--space-lg);
   }
 }
 .intent-summary {
@@ -90,7 +90,8 @@
 /* Aligned under the toggle's label (past the 40px switch + its gap), so the help reads as
    bound to the switch, not to the matrix that follows. */
 .pace-approval-help {
-  margin: 0 0 1rem 2.9rem;
+  margin-block: 0 1rem;
+  margin-inline: 2.9rem 0;
 }
 /* The bordered card grouping the TV season-protection controls is .rules-card's twin, and
    is declared with it above so the two settings-bearing cards stay one thing. */

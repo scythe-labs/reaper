@@ -2,6 +2,8 @@
 //
 // The one line a settings panel shows when its own read failed but its form is still up.
 
+import { useTranslation } from "react-i18next";
+import i18next from "../i18n";
 import { Notice } from "./Notice";
 
 /** Says the values on screen may be out of date, for a panel whose read failed after a good load.
@@ -83,16 +85,11 @@ import { Notice } from "./Notice";
  *  `inline` is spacing, not a second voice: `.notice-inline` is the margin a notice takes when it
  *  lives inside the thing it describes rather than at the top of a panel, which is where the
  *  Leaving Soon row puts it, beside that row's own `notice-inline` error (rule 18). */
-export function StaleReadNotice({
-  what = "these settings",
-  inline = false,
-}: {
-  what?: string;
-  inline?: boolean;
-}) {
+export function StaleReadNotice({ what, inline = false }: { what?: string; inline?: boolean }) {
+  const { t } = useTranslation();
   return (
     <Notice tone="warn" inline={inline}>
-      {staleReadLine(what)}
+      {staleReadLine(what ?? t("shell.staleRead.defaultWhat"))}
     </Notice>
   );
 }
@@ -167,6 +164,6 @@ export function StaleReadSlot({
  *  `.notice.notice-error` everywhere and lets bare red `.error` survive in the review surfaces,
  *  which permits `.error` there rather than banning `.notice`. Nothing forbids a notice in a
  *  review surface, and `ReviewQueue` renders one. */
-export function staleReadLine(what: string) {
-  return `Couldn't check ${what} just now, so what's below may be out of date.`;
+export function staleReadLine(what: string): string {
+  return i18next.t("shell.staleRead.line", { what });
 }

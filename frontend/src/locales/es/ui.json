@@ -1,0 +1,2764 @@
+{
+    "common": {
+        "add": "",
+        "addTag": "",
+        "adminPassword": "",
+        "adminPasswordPlaceholder": "",
+        "back": "",
+        "cancel": "",
+        "checking": "",
+        "checkingDeletion": "",
+        "checkingLastScan": "",
+        "close": "",
+        "confirmRemove": "",
+        "discard": "",
+        "edit": "",
+        "editNamed": "",
+        "failed": "",
+        "hide": "",
+        "loadError": "",
+        "loading": "",
+        "noAdminPassword": "",
+        "pageLoadError": "",
+        "planning": "",
+        "preparing": "",
+        "refresh": "",
+        "refreshing": "",
+        "remove": "",
+        "removeNamedQuestion": "",
+        "removing": "",
+        "save": "",
+        "saveChanges": "",
+        "saveError": "",
+        "saving": "",
+        "scanNow": "",
+        "scanStartFailed": "",
+        "scanning": "",
+        "starting": ""
+    },
+    "safetyBanner": {
+        "unknown": "",
+        "unknownNoLink": "",
+        "recovery": "",
+        "readOnly": "",
+        "readOnlyNoLink": "",
+        "armed": ""
+    },
+    "format": {
+        "sizeUnknown": "",
+        "totalWithUnknown": "",
+        "souls": "",
+        "spareShort": "",
+        "spareLeft": "",
+        "spareExpiredPhrase": "",
+        "spareUntil": "",
+        "spareExpiredOn": "",
+        "spareStillKept": ""
+    },
+    "jobs": {
+        "cron": {
+            "custom": "",
+            "everyNHours": "",
+            "everyHour": "",
+            "everyDayAt": "",
+            "everyNDaysAt": "",
+            "weeklyAt": "",
+            "monthlyAt": ""
+        },
+        "leavingSoon": {
+            "counts": "",
+            "countsAtLastUpdate": "",
+            "desc": "",
+            "didNotUpdate": "",
+            "loadFailed": "",
+            "manageLink": "",
+            "offNotice": "",
+            "runsAfterScan": "",
+            "shelfName": "",
+            "title": "",
+            "updateFailed": "",
+            "updateNow": "",
+            "updateNowAria": "",
+            "updating": "",
+            "updatingAria": ""
+        },
+        "maintenance": {
+            "off": "",
+            "scheduleText": ""
+        },
+        "meta": {
+            "checkForUpdates": {
+                "desc": "",
+                "offWarning": "",
+                "title": ""
+            },
+            "fullHistorySweep": {
+                "desc": "",
+                "offWarning": "",
+                "title": ""
+            },
+            "refreshCuratedLists": {
+                "desc": "",
+                "offWarning": "",
+                "title": ""
+            },
+            "refreshRatings": {
+                "desc": "",
+                "offWarning": "",
+                "title": ""
+            },
+            "scan": {
+                "desc": "",
+                "modalDesc": "",
+                "title": ""
+            }
+        },
+        "panel": {
+            "blurb": "",
+            "heading": "",
+            "loadFailed": "",
+            "loadingJobs": ""
+        },
+        "presets": {
+            "maintenanceOff": "",
+            "scanMonthly": "",
+            "scanNightly": "",
+            "scanOff": "",
+            "scanWeekly": ""
+        },
+        "row": {
+            "editAria": "",
+            "runNow": "",
+            "runNowAria": "",
+            "running": "",
+            "runningAria": "",
+            "runningLabel": "",
+            "startFailed": ""
+        },
+        "scan": {
+            "scheduleChecking": "",
+            "scheduleOff": "",
+            "scheduleText": "",
+            "scheduleUnknown": ""
+        },
+        "schedule": {
+            "customHelp": "",
+            "customLabel": "",
+            "customOption": "",
+            "defaultHelp": "",
+            "howOftenLabel": "",
+            "savedAnnounce": "",
+            "zoneHelp": "",
+            "zoneHelpUnknown": ""
+        },
+        "staleRead": {
+            "jobsNoun": "",
+            "shelfNoun": ""
+        },
+        "status": {
+            "finished": "",
+            "flashSentence": "",
+            "lastRunFailed": "",
+            "lastRunFailedReason": "",
+            "lastRunOk": "",
+            "neverRun": ""
+        },
+        "time": {
+            "am": "",
+            "pm": ""
+        },
+        "when": {
+            "anyMoment": "",
+            "inHours": "",
+            "inMinutes": "",
+            "unscheduled": ""
+        }
+    },
+    "signals": {
+        "nthNewestSeason": ""
+    },
+    "why": {
+        "blocked": "",
+        "hand_spare": "",
+        "disabled": "",
+        "misconfigured": "",
+        "does_not_apply": "",
+        "none_recorded": "",
+        "field_value": "",
+        "field_unreadable": "",
+        "below_threshold": "",
+        "season_prunable": "",
+        "custom_fired": "",
+        "custom_checked": "",
+        "rule_name": "",
+        "kept_safe": {
+            "unmatched": "",
+            "ambiguous": "",
+            "conflicted": "",
+            "match_unreadable": "",
+            "coverage": ""
+        },
+        "streaming_now": "",
+        "streaming_nobody": "",
+        "rating_none_set": "",
+        "rating_cleared": "",
+        "rating_cleared_some": "",
+        "rating_missed": "",
+        "rating_value": "",
+        "rating_value_votes": "",
+        "rating_value_pct": "",
+        "rating_bar": "",
+        "rating_bar_votes": "",
+        "rating_bar_pct": "",
+        "rating_miss_none": "",
+        "rating_miss_votes": "",
+        "rating_miss_below": "",
+        "rating_miss_below_pct": "",
+        "popularity_watched": "",
+        "popularity_nobody": "",
+        "popularity_few": "",
+        "dormancy_unestablished": "",
+        "dormancy_under_floor": "",
+        "dormancy_past_floor": "",
+        "rewatch_no_history": "",
+        "rewatch_thin": "",
+        "rewatch_watched_again": "",
+        "rewatch_under_floor": "",
+        "returned_no_record": "",
+        "returned_not_returned": "",
+        "returned_past_hold": "",
+        "returned_came_back": "",
+        "returned_came_back_ours": "",
+        "data_horizon_ok": "",
+        "signal_unwatched": "",
+        "signal_unwatched_no_history": "",
+        "signal_size": "",
+        "signal_size_none": "",
+        "signal_size_unreadable": "",
+        "signal_season_special": "",
+        "signal_season_rank": "",
+        "signal_season_unreadable": "",
+        "signal_watchers_unchecked": "",
+        "signal_watchers_no_history": "",
+        "signal_watchers_unreadable": "",
+        "signal_watchers_none": "",
+        "signal_watchers_few": "",
+        "signal_imdb": "",
+        "signal_imdb_none": "",
+        "signal_imdb_unreadable": "",
+        "keep_unchecked": "",
+        "keep_unchecked_cause": "",
+        "keep_on_list": "",
+        "keep_not_on_list": "",
+        "keep_no_lists": "",
+        "rewatch_count": "",
+        "rewatch_count_many": "",
+        "rewatch_keep_fired_recent": "",
+        "rewatch_keep_fired": "",
+        "rewatch_keep_never": "",
+        "rewatch_keep_few": "",
+        "rewatch_keep_stale": "",
+        "season_keep": {
+            "specials": "",
+            "incomplete": "",
+            "airing": "",
+            "first": "",
+            "keep_all": "",
+            "keep_last": "",
+            "midbinge": ""
+        },
+        "conflict": {
+            "shortfall": "",
+            "unread": "",
+            "counted": ""
+        },
+        "because": {
+            "incomplete": "",
+            "airing": "",
+            "first": "",
+            "keep_last": "",
+            "midbinge": "",
+            "rule": ""
+        },
+        "cond_number": "",
+        "cond_value": {
+            "days_unwatched": "",
+            "size_bytes": "",
+            "recent_watchers": "",
+            "watchers_all_time": "",
+            "imdb_rating": "",
+            "imdb_votes": "",
+            "season_rank": "",
+            "release_age": ""
+        },
+        "bar": {
+            "days": {
+                "gte_met": "",
+                "gte_missed": "",
+                "lte_met": "",
+                "lte_missed": ""
+            },
+            "bytes": {
+                "gte_met": "",
+                "gte_missed": "",
+                "lte_met": "",
+                "lte_missed": ""
+            },
+            "rating": {
+                "gte_met": "",
+                "gte_missed": "",
+                "lte_met": "",
+                "lte_missed": ""
+            },
+            "count": {
+                "gte_met": "",
+                "gte_missed": "",
+                "lte_met": "",
+                "lte_missed": ""
+            },
+            "season": {
+                "gte_met": "",
+                "gte_missed": "",
+                "lte_met": "",
+                "lte_missed": ""
+            }
+        },
+        "cond_bool": {
+            "whitelisted": {
+                "true": "",
+                "false": ""
+            },
+            "streaming_now": {
+                "true": "",
+                "false": ""
+            },
+            "requested": {
+                "true": "",
+                "false": ""
+            },
+            "show_ended": {
+                "true": "",
+                "false": ""
+            }
+        },
+        "cond_text": {
+            "contains": "",
+            "not_contains": "",
+            "includes": "",
+            "not_includes": "",
+            "is": "",
+            "is_not": "",
+            "none_of": "",
+            "is_not_one_of": ""
+        },
+        "field": {
+            "days_unwatched": "",
+            "size_bytes": "",
+            "recent_watchers": "",
+            "watchers_all_time": "",
+            "imdb_rating": "",
+            "imdb_votes": "",
+            "season_rank": "",
+            "on_list": "",
+            "whitelisted": "",
+            "streaming_now": "",
+            "requested": "",
+            "genre": "",
+            "release_age": "",
+            "quality": "",
+            "show_ended": ""
+        },
+        "check": {
+            "imdb_rating": "",
+            "imdb_votes": "",
+            "active_streams": "",
+            "watch_history": "",
+            "watch_horizon": "",
+            "last_watched": "",
+            "recent_watchers_window": "",
+            "season_progress": "",
+            "lists": "",
+            "days_unwatched": "",
+            "size_bytes": "",
+            "recent_watchers": "",
+            "watchers_all_time": "",
+            "season_rank": "",
+            "on_list": "",
+            "whitelisted": "",
+            "streaming_now": "",
+            "requested": "",
+            "genre": "",
+            "release_age": "",
+            "quality": "",
+            "show_ended": ""
+        },
+        "cause": {
+            "plex_unmatched": "",
+            "plex_ambiguous": "",
+            "radarr_plex_disagree": "",
+            "no_added_at": "",
+            "sessions_unreadable": "",
+            "requests_unreachable": "",
+            "requests_not_loaded": "",
+            "no_tmdb_request_id": "",
+            "no_tvdb_request_id": "",
+            "no_series_status": "",
+            "imdb_unreadable": "",
+            "no_imdb_id": "",
+            "no_file_size": "",
+            "plays_unreadable": "",
+            "progress_history_short": "",
+            "progress_plays_unreadable": "",
+            "progress_season_unmatched": "",
+            "progress_show_unmatched": "",
+            "reach_not_recorded": "",
+            "history_reach_short": "",
+            "history_not_that_far": "",
+            "added_at_not_recorded": "",
+            "window_not_recorded": "",
+            "error": ""
+        },
+        "source": {
+            "imdb": "",
+            "tmdb": "",
+            "rotten_tomatoes_critic": "",
+            "rotten_tomatoes_audience": "",
+            "metacritic": "",
+            "trakt": "",
+            "tvdb": "",
+            "unknown": ""
+        },
+        "panel": {
+            "backToShow": {
+                "defaultTitle": "",
+                "label": ""
+            },
+            "explanationUnreadable": "",
+            "fallback": {
+                "failure": "",
+                "loading": "",
+                "waiting": ""
+            },
+            "gates": {
+                "checkedBlurb": "",
+                "checkedTitle": "",
+                "firedBlurb": "",
+                "firedTitle": "",
+                "showCount": ""
+            },
+            "head": {
+                "openInPlex": "",
+                "seerr": "",
+                "tautulli": ""
+            },
+            "heldBackSizeUnknown": "",
+            "keeps": {
+                "blurb": "",
+                "blurbWithScores": "",
+                "heading": "",
+                "uncheckedNote": ""
+            },
+            "keptNotice": {
+                "ambiguous": "",
+                "conflicted": "",
+                "heading": "",
+                "unmatched": ""
+            },
+            "leftForYou": {
+                "blurb": "",
+                "couldntCheck": "",
+                "heading": ""
+            },
+            "matchCandidates": {
+                "lead": "",
+                "plexLabel": "",
+                "tautulliLabel": ""
+            },
+            "mediaLabel": {
+                "season": ""
+            },
+            "mergedListing": {
+                "chip": "",
+                "title": ""
+            },
+            "meta": {
+                "runtime": ""
+            },
+            "onListSince": "",
+            "ratings": {
+                "imdbLabel": "",
+                "imdbTitleNoVotes": "",
+                "imdbTitleWithVotes": "",
+                "rtAudienceLabel": "",
+                "rtAudienceTitle": "",
+                "rtCriticsLabel": "",
+                "rtCriticsTitle": "",
+                "tmdbLabel": "",
+                "tmdbTitle": "",
+                "traktLabel": "",
+                "traktTitle": ""
+            },
+            "rewatch": {
+                "heading": "",
+                "measured": "",
+                "noHistory": ""
+            },
+            "ruleTag": "",
+            "shell": {
+                "errorHeading": ""
+            },
+            "signals": {
+                "addedLegend": "",
+                "arguedTitle": "",
+                "blurb": "",
+                "coverageBlurb": "",
+                "coverageBlurbWithFloor": "",
+                "didntApply": "",
+                "heading": "",
+                "heldBackLegend": "",
+                "moreHidden": "",
+                "moreHiddenWithTotal": "",
+                "pointsAddUp": "",
+                "pointsBeforeKeep": "",
+                "pushedTitle": "",
+                "uncheckedNote": "",
+                "uncheckedTitle": ""
+            },
+            "synopsis": {
+                "less": "",
+                "more": ""
+            },
+            "verdict": {
+                "condemnedLabel": "",
+                "conflictComparable": "",
+                "conflictUnknowable": "",
+                "conflictVague": "",
+                "heldAmbiguous": "",
+                "heldConflicted": "",
+                "heldLabel": "",
+                "heldStreamingNow": "",
+                "heldUnknown": "",
+                "heldUnmanaged": "",
+                "heldUnmatched": "",
+                "limboLabel": "",
+                "limboNote": "",
+                "needsLookLabel": "",
+                "reapedByHandLabel": "",
+                "reapedByHandNote": "",
+                "sanctuaryLabel": "",
+                "sanctuaryOverridable": "",
+                "sanctuaryStructural": "",
+                "spareActive": "",
+                "spareForever": "",
+                "spareSeasonExpired": "",
+                "spareSeasonPhrase": "",
+                "spareShowForever": "",
+                "spareShowPhrase": "",
+                "sparedByHandLabel": "",
+                "thresholdClause": ""
+            },
+            "watchBlind": {
+                "done": "",
+                "notice": "",
+                "useButton": "",
+                "useHelp": "",
+                "using": ""
+            }
+        }
+    },
+    "chip": {
+        "text": {
+            "kept": {
+                "hand_spare": "",
+                "whitelisted": "",
+                "streaming_now": "",
+                "rating": "",
+                "rating_plain": "",
+                "popularity": "",
+                "popularity_plain": "",
+                "curated_list": "",
+                "no_history": "",
+                "dormancy": "",
+                "season": {
+                    "specials": "",
+                    "incomplete": "",
+                    "airing": "",
+                    "first": "",
+                    "keep_all": "",
+                    "midbinge": "",
+                    "progress_history_short": "",
+                    "keep_last": "",
+                    "rule": ""
+                },
+                "returned": "",
+                "custom": "",
+                "unknown": ""
+            },
+            "came_back": "",
+            "came_back_unknown": "",
+            "match": {
+                "unmatched": "",
+                "ambiguous": "",
+                "conflicted": "",
+                "unreadable": ""
+            },
+            "look": {
+                "comparable": "",
+                "unknowable": "",
+                "unsettled": ""
+            },
+            "unknown_checks": "",
+            "coverage": "",
+            "below_threshold": "",
+            "below": ""
+        },
+        "sentence": {
+            "kept": {
+                "hand_spare": "",
+                "whitelisted": "",
+                "streaming_now": "",
+                "rating": "",
+                "rating_plain": "",
+                "popularity": "",
+                "popularity_plain": "",
+                "curated_list": "",
+                "no_history": "",
+                "dormancy": "",
+                "season": {
+                    "specials": "",
+                    "incomplete": "",
+                    "airing": "",
+                    "first": "",
+                    "keep_all": "",
+                    "midbinge": "",
+                    "progress_history_short": "",
+                    "keep_last": "",
+                    "rule": ""
+                },
+                "returned": "",
+                "custom": "",
+                "unknown": ""
+            },
+            "came_back": "",
+            "came_back_unknown": "",
+            "match": {
+                "unmatched": "",
+                "ambiguous": "",
+                "conflicted": "",
+                "unreadable": ""
+            },
+            "look": {
+                "comparable": "",
+                "unknowable": "",
+                "unsettled": ""
+            },
+            "unknown_checks": "",
+            "coverage": "",
+            "below_threshold": "",
+            "below": ""
+        }
+    },
+    "warning": {
+        "rating_no_sources": "",
+        "rating_bar_percent": "",
+        "rating_bar_low": "",
+        "rating_bar_high": "",
+        "dormancy_beyond_history": "",
+        "popularity_beyond_history": "",
+        "popularity_rules_beyond_history": "",
+        "added_before_history": "",
+        "watcher_points_beyond_history": "",
+        "custom_rules_cannot_fire": "",
+        "graded_keeps_beyond_history": "",
+        "popularity_window_short": "",
+        "in_progress_unreadable": "",
+        "season_conflicts_before_history": "",
+        "streaming_check_off": "",
+        "horizon_off": "",
+        "threshold_low": "",
+        "unmeasured_allowance": "",
+        "custom_rule_size": "",
+        "size_points": "",
+        "field_unreadable_for_media": "",
+        "keep_last_too_many": "",
+        "keep_last_all_shows": "",
+        "graded_keeps_exceed_threshold": ""
+    },
+    "plex": {
+        "blurb": "",
+        "chooseServer": {
+            "help": "",
+            "label": ""
+        },
+        "connection": {
+            "manualAddressOption": "",
+            "manualOption": ""
+        },
+        "connectionField": {
+            "help": "",
+            "label": ""
+        },
+        "connectionGroup": {
+            "heading": ""
+        },
+        "connectionKind": {
+            "local": "",
+            "relay": "",
+            "remote": ""
+        },
+        "connectionLabel": {
+            "plain": "",
+            "secure": ""
+        },
+        "connectionSaved": "",
+        "leavingSoon": {
+            "allowUnarmedHelp": "",
+            "allowUnarmedLabel": "",
+            "enableHelp": "",
+            "enableLabel": "",
+            "loadError": "",
+            "status": {
+                "held": "",
+                "heldSkipped": "",
+                "laterScanSkipped": "",
+                "line": "",
+                "moviesCount": "",
+                "neverRan": "",
+                "neverRanSkipped": "",
+                "seasonsCount": ""
+            }
+        },
+        "leavingSoonGroup": {
+            "blurb": "",
+            "heading": ""
+        },
+        "libraries": {
+            "foundCount": "",
+            "kindMovie": "",
+            "kindTv": "",
+            "loadError": "",
+            "loading": "",
+            "refreshButton": "",
+            "toggleLabel": ""
+        },
+        "librariesGroup": {
+            "blurb": "",
+            "heading": ""
+        },
+        "linkButton": "",
+        "linkPrompt": "",
+        "linked": {
+            "defaultServerName": "",
+            "said": ""
+        },
+        "linkedAccount": {
+            "help": ""
+        },
+        "manualAddress": {
+            "help": "",
+            "hostAriaLabel": "",
+            "hostPlaceholder": "",
+            "label": "",
+            "portAriaLabel": "",
+            "sslShort": "",
+            "useSslLabel": ""
+        },
+        "noServer": {
+            "help": "",
+            "label": ""
+        },
+        "pin": {
+            "signInFailedFallback": "",
+            "chooseServerSaid": ""
+        },
+        "server": {
+            "fallbackOptionLabel": "",
+            "help": "",
+            "helpStoredNote": "",
+            "listError": "",
+            "looking": "",
+            "missingNamed": "",
+            "missingUnnamed": "",
+            "refreshTitle": "",
+            "retry": ""
+        },
+        "serverField": {
+            "label": ""
+        },
+        "serverSwitched": {
+            "generic": "",
+            "named": ""
+        },
+        "signInTimedOut": "",
+        "stale": {
+            "connection": "",
+            "leavingSoon": "",
+            "libraries": "",
+            "panel": "",
+            "watchHistory": ""
+        },
+        "trashNotice": {
+            "ackLabel": "",
+            "autoEmpties": "",
+            "knownReadable": "",
+            "knownUnreadable": "",
+            "unknown": ""
+        },
+        "unlinkButton": "",
+        "verifyCert": {
+            "help": "",
+            "warning": ""
+        },
+        "waiting": {
+            "approveNoLink": "",
+            "approveWithLink": ""
+        },
+        "waitingForPlex": "",
+        "watchEvidence": {
+            "forgetFailedFallback": "",
+            "forgotten": "",
+            "holding": "",
+            "holdingClean": "",
+            "holdingUnreadable": ""
+        },
+        "watchHistory": {
+            "confirmButton": "",
+            "forgetButton": "",
+            "forgetTitle": "",
+            "help": "",
+            "label": "",
+            "loadError": "",
+            "safetyUnknown": "",
+            "tautulliHint": "",
+            "tautulliWarning": ""
+        },
+        "watchHistoryGroup": {
+            "blurb": "",
+            "heading": ""
+        },
+        "webAddress": {
+            "help": "",
+            "label": "",
+            "placeholder": "",
+            "saved": ""
+        }
+    },
+    "general": {
+        "accent": {
+            "error": "",
+            "help": "",
+            "hexFieldAriaLabel": "",
+            "label": "",
+            "previewLabel": "",
+            "previewPolicyLink": "",
+            "previewScanButton": "",
+            "quickColorsGroup": "",
+            "resetToDefault": ""
+        },
+        "accentPresets": {
+            "amber": "",
+            "indigo": "",
+            "pink": "",
+            "reaperBlue": "",
+            "sky": "",
+            "teal": "",
+            "violet": ""
+        },
+        "apiKey": {
+            "alreadyExists": "",
+            "checkFailed": "",
+            "confirmGenerate": "",
+            "confirmReplace": "",
+            "copied": "",
+            "copy": "",
+            "copyNeedsHttps": "",
+            "fieldAriaLabel": "",
+            "generate": "",
+            "generating": "",
+            "help": "",
+            "label": "",
+            "remove": "",
+            "removeTitle": "",
+            "replace": "",
+            "replaceTitle": "",
+            "show": ""
+        },
+        "apiReference": {
+            "help": "",
+            "label": "",
+            "link": ""
+        },
+        "desktop": {
+            "blurb": "",
+            "dockIconHelp": "",
+            "dockIconLabel": "",
+            "trayHelp": "",
+            "trayLabel": ""
+        },
+        "expandSeasons": {
+            "help": "",
+            "label": "",
+            "optionBoth": "",
+            "optionDesktop": "",
+            "optionMobile": "",
+            "optionOff": ""
+        },
+        "fields": {
+            "applicationName": {
+                "help": "",
+                "label": ""
+            },
+            "applicationUrl": {
+                "help": "",
+                "label": "",
+                "placeholder": ""
+            },
+            "timezone": {
+                "help": "",
+                "label": ""
+            }
+        },
+        "heading": "",
+        "notices": {
+            "apiKeyCopied": "",
+            "apiKeyGenerated": "",
+            "apiKeyRemoved": "",
+            "apiKeyShown": "",
+            "settingsSaved": ""
+        },
+        "proxy": {
+            "addressesHelp": "",
+            "addressesLabel": "",
+            "addressesPlaceholder": "",
+            "enabledHelp": "",
+            "enabledLabel": "",
+            "hint": ""
+        },
+        "sections": {
+            "apiAccess": "",
+            "appearance": "",
+            "application": "",
+            "desktopApp": "",
+            "reverseProxy": "",
+            "reviewQueue": ""
+        },
+        "spareLength": {
+            "daysAriaLabel": "",
+            "daysSuffix": "",
+            "help": "",
+            "label": "",
+            "optionDays": "",
+            "optionForever": ""
+        },
+        "subheading": "",
+        "theme": {
+            "help": "",
+            "label": "",
+            "optionDark": "",
+            "optionLight": "",
+            "optionSystem": ""
+        }
+    },
+    "logs": {
+        "consoleLabel": "",
+        "description": "",
+        "downloadButton": "",
+        "downloadError": "",
+        "downloadHelpBase": "",
+        "downloadLabel": "",
+        "downloadRetentionKnown": "",
+        "downloadRetentionUnknown": "",
+        "emptyNoLines": "",
+        "emptyNoMatch": "",
+        "followLabel": "",
+        "levelDebug": "",
+        "levelError": "",
+        "levelFilterAll": "",
+        "levelFilterError": "",
+        "levelFilterInfo": "",
+        "levelFilterLabel": "",
+        "levelFilterWarning": "",
+        "levelHelp": "",
+        "levelInfo": "",
+        "levelLabel": "",
+        "levelWarning": "",
+        "lineCount": "",
+        "lineCountOfTotal": "",
+        "loadError": "",
+        "loading": "",
+        "loadingWait": "",
+        "pausedError": "",
+        "retryButton": "",
+        "retryFailure": "",
+        "retrySuccess": "",
+        "retryingError": "",
+        "searchLabel": "",
+        "searchPlaceholder": "",
+        "settingsHeading": "",
+        "title": "",
+        "wrapLabel": ""
+    },
+    "about": {
+        "blurb": "",
+        "changesModal": {
+            "noNotesForRelease": "",
+            "noNotesNoLink": "",
+            "noNotesWithLink": "",
+            "title": "",
+            "viewOnGithub": ""
+        },
+        "devBuildWarning": "",
+        "labels": {
+            "dataFolder": "",
+            "license": "",
+            "reaperData": "",
+            "rebuildableCache": "",
+            "update": "",
+            "version": ""
+        },
+        "reaperDataDetail": "",
+        "reaperVersion": "",
+        "rebuildableCacheDetail": "",
+        "staleReadWhat": "",
+        "title": "",
+        "update": {
+            "checking": "",
+            "devSteadier": "",
+            "disabled": "",
+            "newRelease": "",
+            "noAnswer": "",
+            "schedule": "",
+            "seeChanges": ""
+        },
+        "updatePill": {
+            "newerDevBuild": "",
+            "updateAvailable": ""
+        }
+    },
+    "lists": {
+        "addList": "",
+        "ago": {
+            "days": "",
+            "hours": "",
+            "justNow": "",
+            "minutes": ""
+        },
+        "blocked": {
+            "collection": "",
+            "imdb": "",
+            "library": "",
+            "name": "",
+            "tags": ""
+        },
+        "blurb": "",
+        "changePolicy": "",
+        "checkFailed": "",
+        "checkingItNow": "",
+        "configureInPolicy": "",
+        "describe": {
+            "cached": "",
+            "checkTheOneYouMeant": "",
+            "inUseLabel": "",
+            "notCheckedLabel": "",
+            "notInUseLabel": "",
+            "notWorkingLabel": "",
+            "nothingCached": "",
+            "nothingOnItDetail": "",
+            "nothingOnItLabel": "",
+            "onIt": "",
+            "outOfDateLabel": "",
+            "runsNextScan": ""
+        },
+        "exampleNeverReap": "",
+        "field": {
+            "collection": "",
+            "imdbIdOrUrl": "",
+            "name": "",
+            "plexLibrary": "",
+            "tags": ""
+        },
+        "heading": "",
+        "help": {
+            "cantReadLibraries": "",
+            "collectionName": "",
+            "presetDescription": "",
+            "readingLibraries": "",
+            "sourceLocked": "",
+            "tagsFormat": "",
+            "watchlistSetup": ""
+        },
+        "kindBadge": {
+            "srOnly": ""
+        },
+        "loadError": "",
+        "loadErrorRetrying": "",
+        "loading": "",
+        "matchAll": "",
+        "matchAny": "",
+        "matchLabel": "",
+        "mediaWords": "",
+        "meta": {
+            "across": "",
+            "lastChecked": ""
+        },
+        "modal": {
+            "addTypedTitle": ""
+        },
+        "orphanNote": "",
+        "partial": {
+            "detail": "",
+            "kept": ""
+        },
+        "pickLibraryOption": "",
+        "picker": {
+            "addPlexCollectionAria": "",
+            "addPlexWatchlistAria": "",
+            "addTagListAria": "",
+            "collectionBlurb": "",
+            "collectionName": "",
+            "custom": "",
+            "imdbBlurb": "",
+            "imdbListName": "",
+            "presetsLabel": "",
+            "tagsBlurb": "",
+            "tagsName": "",
+            "watchlistName": ""
+        },
+        "placeholder": {
+            "imdbId": "",
+            "movies": ""
+        },
+        "plexError": "",
+        "plexWatchlistDescription": "",
+        "presetLabel": "",
+        "protectingTitle": "",
+        "removeButton": "",
+        "removeError": "",
+        "removeListEllipsis": "",
+        "removeWarning": "",
+        "row": {
+            "checkAriaLabel": "",
+            "checkButton": "",
+            "editAriaLabel": ""
+        },
+        "saveError": "",
+        "sourceHint": {
+            "imdbList": "",
+            "plexCollectionGeneric": "",
+            "plexCollectionNamed": "",
+            "selfUpdating": "",
+            "tagsNeedAll": ""
+        },
+        "sourceName": "",
+        "submitButton": "",
+        "tagCounts": {
+            "countsByServer": "",
+            "tagColumn": "",
+            "total": ""
+        },
+        "titleCount": "",
+        "watchlistDefaultName": ""
+    },
+    "services": {
+        "common": {
+            "testing": ""
+        },
+        "discord": {
+            "badFormat": "",
+            "blurb": "",
+            "field": {
+                "help": "",
+                "placeholderAdd": "",
+                "placeholderEdit": "",
+                "webhookUrl": ""
+            },
+            "removedAnnouncement": "",
+            "saveError": "",
+            "savedAnnouncement": "",
+            "sendTestButton": "",
+            "sendTestPending": "",
+            "testResult": {
+                "failed": "",
+                "not_configured": "",
+                "posted": ""
+            },
+            "titleAdd": "",
+            "titleEdit": ""
+        },
+        "kinds": {
+            "radarr": {
+                "hint": ""
+            },
+            "seerr": {
+                "hint": ""
+            },
+            "sonarr": {
+                "hint": ""
+            },
+            "tautulli": {
+                "hint": ""
+            }
+        },
+        "modal": {
+            "addService": "",
+            "addedAnnouncement": "",
+            "adding": "",
+            "certificateWarning": "",
+            "exclusion": {
+                "offHelp": "",
+                "onHelp": "",
+                "sonarrHelp": ""
+            },
+            "externalUrlError": "",
+            "externalUrlHelp": "",
+            "field": {
+                "addExclusion": "",
+                "apiKeyAdd": "",
+                "apiKeyEdit": "",
+                "apiKeyPlaceholderAdd": "",
+                "apiKeyPlaceholderEdit": "",
+                "enabled": "",
+                "externalUrl": "",
+                "externalUrlPlaceholder": "",
+                "host": "",
+                "name": "",
+                "namePlaceholderHd": "",
+                "namePlaceholderMain": "",
+                "plexLibraries": "",
+                "port": "",
+                "requesterInstances": "",
+                "schemeHttp": "",
+                "schemeHttps": "",
+                "urlBase": "",
+                "urlBasePlaceholder": "",
+                "useSsl": "",
+                "verifyCert": ""
+            },
+            "folders": {
+                "beforeTest": "",
+                "help": "",
+                "librariesLoading": "",
+                "librariesReadFailed": "",
+                "librariesStaleWhat": "",
+                "none": "",
+                "noneToMap": "",
+                "pickerAriaLabel": "",
+                "readFailed": "",
+                "reading": "",
+                "staleWhat": ""
+            },
+            "mapError": "",
+            "mapWarning": "",
+            "missing": {
+                "host": "",
+                "key": "",
+                "keyForTest": "",
+                "map": "",
+                "name": "",
+                "test": ""
+            },
+            "notSetOption": "",
+            "requesters": {
+                "beforeTest": "",
+                "help": "",
+                "instancesReadFailed": "",
+                "instancesStaleWhat": "",
+                "noInstances": "",
+                "none": "",
+                "pickerAriaLabel": "",
+                "readFailed": "",
+                "reading": "",
+                "staleWhat": "",
+                "tag4k": ""
+            },
+            "savedAnnouncement": "",
+            "suggestedTag": "",
+            "testButton": {
+                "again": "",
+                "initial": ""
+            },
+            "titleAdd": "",
+            "willDo": {
+                "add": "",
+                "save": ""
+            }
+        },
+        "notifications": {
+            "blurb": "",
+            "checkError": "",
+            "checking": "",
+            "connected": "",
+            "field": {
+                "help": "",
+                "label": "",
+                "placeholderAdd": "",
+                "placeholderEdit": ""
+            },
+            "heading": "",
+            "notConnected": "",
+            "staleWhat": ""
+        },
+        "panel": {
+            "addKindButton": "",
+            "blurb": "",
+            "card": {
+                "cancelRemoveAria": "",
+                "certCheckOffChip": "",
+                "confirmRemoveAria": "",
+                "confirmRemoveTitle": "",
+                "disabledChip": "",
+                "notTestedYet": "",
+                "reachedDetail": "",
+                "removeAria": "",
+                "removeFailed": "",
+                "removedAnnouncement": "",
+                "testAriaIdle": "",
+                "testAriaPending": "",
+                "testButton": "",
+                "testFailed": ""
+            },
+            "heading": "",
+            "loadError": "",
+            "staleWhat": ""
+        },
+        "serviceKind": {
+            "movies": "",
+            "tv": ""
+        },
+        "test": {
+            "badgeVersion": "",
+            "passed": "",
+            "sentence": "",
+            "version": ""
+        }
+    },
+    "reapPlan": {
+        "breakdown": {
+            "allowanceUnknown": "",
+            "condemnedByPolicy": "",
+            "emptyMeasured": "",
+            "emptyNone": "",
+            "emptySpared": "",
+            "expiredSpares": "",
+            "handReaped": "",
+            "handReapedHeld": "",
+            "handSpared": "",
+            "kept": "",
+            "loadFailed": "",
+            "noScan": "",
+            "plexNotice": "",
+            "reapCountMeta": "",
+            "reasons": {
+                "fewWatchers": "",
+                "lowRating": "",
+                "seasonRank": "",
+                "size": "",
+                "unwatched": ""
+            },
+            "reasonsHeading": "",
+            "reasonsOf": "",
+            "reasonsOverlap": "",
+            "reviewQueue": "",
+            "reviewQueueLead": "",
+            "scanFailed": "",
+            "seeReview": "",
+            "split": "",
+            "sub": "",
+            "title": "",
+            "unmeasuredAllowed": "",
+            "unmeasuredHeld": "",
+            "willBeReaped": ""
+        },
+        "degraded": {
+            "notice": ""
+        },
+        "history": {
+            "heading": "",
+            "openAbove": ""
+        },
+        "page": {
+            "blurb": "",
+            "buildButton": "",
+            "title": ""
+        },
+        "plan": {
+            "loadFailed": "",
+            "loading": "",
+            "notFound": ""
+        },
+        "report": {
+            "moreOutcomes": "",
+            "outcomesLabel": "",
+            "stoppedTitle": "",
+            "walkedAll": "",
+            "walkedSkipped": ""
+        },
+        "runState": {
+            "done": "",
+            "notRun": "",
+            "running": "",
+            "stopped": ""
+        },
+        "steps": {
+            "headers": {
+                "action": "",
+                "ordinal": "",
+                "request": "",
+                "state": ""
+            },
+            "more": "",
+            "regionLabel": "",
+            "testItem": "",
+            "kind": {
+                "radarrDelete": "",
+                "sonarrUnmonitor": "",
+                "sonarrVerifyUnmonitor": "",
+                "sonarrDeleteFiles": ""
+            },
+            "state": {
+                "pending": "",
+                "sent": "",
+                "verified": "",
+                "failed": "",
+                "skipped": ""
+            }
+        },
+        "summary": {
+            "connectPlex": "",
+            "deletionOff": "",
+            "execute": "",
+            "executeDisabledTitle": "",
+            "heldBackUnknownSize": "",
+            "planLine": "",
+            "practiceRun": "",
+            "safetyUnknown": "",
+            "setupUnknown": "",
+            "staleCheckPending": "",
+            "staleRun": "",
+            "staleUnknown": "",
+            "turnOnLink": ""
+        }
+    },
+    "reapConfirm": {
+        "arm": {
+            "off": "",
+            "typePhrase": "",
+            "unknown": ""
+        },
+        "bar": {
+            "announceEnded": "",
+            "dismiss": "",
+            "endedLabel": "",
+            "errorSuffix": "",
+            "freedSuffix": "",
+            "reapingCount": "",
+            "removedFreed": "",
+            "stopError": "",
+            "view": "",
+            "viewReport": ""
+        },
+        "failed": {
+            "body": "",
+            "unknownError": ""
+        },
+        "freedAmount": "",
+        "heldBack": "",
+        "otherRunning": "",
+        "practiceRun": {
+            "announceOff": "",
+            "announcePassed": "",
+            "announceUnknownSafety": "",
+            "checking": "",
+            "failed": "",
+            "passed": "",
+            "stopped": ""
+        },
+        "progress": {
+            "announceStopping": "",
+            "announceTick": "",
+            "ariaLabel": "",
+            "count": "",
+            "valueText": ""
+        },
+        "reapCount": "",
+        "reapingLabel": "",
+        "result": {
+            "checkFailed": "",
+            "checkPassed": "",
+            "reclaimed": "",
+            "refreshedNote": "",
+            "sparedAtLastMoment": "",
+            "unmeasuredSuffix": ""
+        },
+        "sparedAmount": "",
+        "stop": "",
+        "stopping": "",
+        "stoppingLabel": "",
+        "summary": ""
+    },
+    "backup": {
+        "blurb": "",
+        "download": {
+            "button": "",
+            "errorFallback": "",
+            "failed": "",
+            "heading": "",
+            "help": "",
+            "keyEnvWarning": "",
+            "keySafetyWarning": "",
+            "lastBackupLabel": "",
+            "lastBackupNever": ""
+        },
+        "heading": "",
+        "insideLabel": "",
+        "insideValue": "",
+        "restore": {
+            "armedLead": "",
+            "armedRest": "",
+            "cancelButton": "",
+            "cancelFailed": "",
+            "cancelFailedFallback": "",
+            "checkingFile": "",
+            "chooseFailed": "",
+            "chooseFailedFallback": "",
+            "dropzoneHint": "",
+            "dropzonePrompt": "",
+            "fromLabel": "",
+            "fromSavedSuffix": "",
+            "fromVersion": "",
+            "fromVersionUnknown": "",
+            "heading": "",
+            "idleHelp": "",
+            "noKeyWarning": "",
+            "noUndoWarning": "",
+            "passwordPlaceholder": "",
+            "reloadButton": "",
+            "restartButton": "",
+            "restartFailed": "",
+            "restartFailedFallback": "",
+            "restartHelp": "",
+            "restartingButton": "",
+            "restoreButton": "",
+            "restoreFailed": "",
+            "restoreFailedFallback": "",
+            "restoringButton": "",
+            "stoppingHelp": "",
+            "stoppingLead": "",
+            "stoppingRest": "",
+            "usingHeldPassword": "",
+            "verdictCurrent": "",
+            "verdictOutdated": "",
+            "whenHelp": "",
+            "wizardHelp": ""
+        }
+    },
+    "security": {
+        "blurb": "",
+        "form": {
+            "changeFailedError": "",
+            "changeHelp": "",
+            "changeTitle": "",
+            "confirmPasswordLabel": "",
+            "currentPasswordLabel": "",
+            "currentRequiredError": "",
+            "newPasswordLabel": "",
+            "newPasswordPlaceholder": "",
+            "recoveryHelp": "",
+            "recoveryNotNeeded": "",
+            "saved": "",
+            "setFailedError": "",
+            "setHelp": "",
+            "setTitle": "",
+            "tooShortError": ""
+        },
+        "heading": ""
+    },
+    "deletion": {
+        "confirmButton": "",
+        "stateOff": "",
+        "stateOn": "",
+        "turnOff": "",
+        "turnOffHeading": "",
+        "turnOffHelp": "",
+        "turnOffHelpUnknown": "",
+        "turnOnButton": "",
+        "turnOnHeading": "",
+        "turnOnHelp": "",
+        "turningOff": "",
+        "unknownNotice": ""
+    },
+    "policyEditor": {
+        "announce": {
+            "changesDiscarded": "",
+            "moviePolicySaved": "",
+            "paceSaved": "",
+            "tvPolicySaved": ""
+        },
+        "atLeast": "",
+        "deletion": {
+            "blurb": ""
+        },
+        "flags": {
+            "blurb": "",
+            "condemnAtHelp": "",
+            "condemnAtLabel": "",
+            "coverageFloorHelp": "",
+            "coverageFloorLabel": ""
+        },
+        "gateRow": {
+            "retiredNotice": "",
+            "thresholdAriaLabel": ""
+        },
+        "hash": {
+            "line": ""
+        },
+        "header": {
+            "badge": "",
+            "blurb": "",
+            "helpLink": "",
+            "moviesOption": "",
+            "title": "",
+            "tvOption": "",
+            "whichPolicyLabel": ""
+        },
+        "intent": {
+            "alwaysKeeps": "",
+            "firstSeason": "",
+            "keepsAnything": "",
+            "midBinge": "",
+            "movieLead": "",
+            "newestSeasons": "",
+            "noLimit": "",
+            "orJoiner": "",
+            "paceTailWithClause": "",
+            "removesAtMost": "",
+            "scoresOnce": "",
+            "seasonWord": "",
+            "tvLead": "",
+            "unwatchedLessThan": "",
+            "watchedByPeople": "",
+            "withinCaps": ""
+        },
+        "learnMore": "",
+        "load": {
+            "failedNoReload": ""
+        },
+        "mediaKind": {
+            "movie": "",
+            "tv": ""
+        },
+        "pace": {
+            "blurb": "",
+            "diskFreedRowHeader": "",
+            "gracePeriodHelp": "",
+            "gracePeriodLabel": "",
+            "limitHelp": "",
+            "limitLabel": "",
+            "matrixNote": "",
+            "mostDiskPer30dAriaLabel": "",
+            "mostDiskPerRunAriaLabel": "",
+            "mostTitlesPer30dAriaLabel": "",
+            "mostTitlesPerRunAriaLabel": "",
+            "noCapNotice": "",
+            "per30DaysHeader": "",
+            "perRunHeader": "",
+            "recoveryNotice": "",
+            "titlesRowHeader": "",
+            "unmeasuredAriaLabel": "",
+            "unmeasuredHelp": "",
+            "unmeasuredLabel": ""
+        },
+        "pointsBudget": {
+            "allBuiltIn": "",
+            "leftToGiveOut": "",
+            "over": "",
+            "overNotice": "",
+            "split": "",
+            "totalUsed": "",
+            "underNotice": ""
+        },
+        "presetHelp": {
+            "custom": ""
+        },
+        "protections": {
+            "blurb": ""
+        },
+        "rampKey": {
+            "alone": "",
+            "earns": ""
+        },
+        "ratingBar": {
+            "fromVotes": "",
+            "pct": "",
+            "percentAriaLabel": "",
+            "removeAriaLabel": "",
+            "scoreAriaLabel": "",
+            "ten": "",
+            "voteFloorAriaLabel": "",
+            "votesFromLabel": ""
+        },
+        "ratingFloor": {
+            "addSourceAriaLabel": "",
+            "addSourcePlaceholder": "",
+            "cardTitle": "",
+            "clearsBars": "",
+            "emptySummary": "",
+            "joinerAnd": "",
+            "joinerOr": "",
+            "matchAll": "",
+            "matchAny": "",
+            "matchLabel": "",
+            "summary": "",
+            "tvNote": ""
+        },
+        "ratingSource": {
+            "imdb": "",
+            "metacritic": "",
+            "rottenTomatoesAudience": "",
+            "rottenTomatoesCritic": "",
+            "tmdb": ""
+        },
+        "repairs": {
+            "fellBack": "",
+            "listsMigrated": "",
+            "ratingRulesRestored": "",
+            "rescaled": "",
+            "unknown": ""
+        },
+        "rewatch": {
+            "anyAge": "",
+            "echoEmpty": "",
+            "echoNoRange": "",
+            "echoWithRange": "",
+            "error": "",
+            "notEnoughScanned": "",
+            "pending": "",
+            "rangeOver": "",
+            "rangeTo": "",
+            "rangeUnder": "",
+            "runScanFirst": "",
+            "underAbout": "",
+            "yearsPhrase": ""
+        },
+        "rewatchCard": {
+            "lowersScoreBy": "",
+            "mostRecentlyWithin": ""
+        },
+        "rewatchCopy": {
+            "bar": "",
+            "help": "",
+            "holdHelp": "",
+            "holdName": "",
+            "name": ""
+        },
+        "rewatchHold": {
+            "keptWhenAtLeast": ""
+        },
+        "savebar": {
+            "becauseInvalid": "",
+            "becausePoints": "",
+            "kindPolicy": "",
+            "paceAndLimits": "",
+            "paceAppliesImmediately": "",
+            "paceOnlyTail": "",
+            "policyBlockedNotice": "",
+            "savesOnlyKind": ""
+        },
+        "season": {
+            "aheadOfWhereTheyAre": "",
+            "alsoKeep": "",
+            "applyToLabel": "",
+            "askFirstHelp": "",
+            "askFirstLabel": "",
+            "cardTitle": "",
+            "firstSeasonHelp": "",
+            "firstSeasonLabel": "",
+            "holdAfterLabel": "",
+            "holdDaysAriaLabel": "",
+            "holdDaysHelp": "",
+            "incompleteHelp": "",
+            "incompleteLabel": "",
+            "keepNewestAriaLabel": "",
+            "keepNewestHelp": "",
+            "keepNewestLabel": "",
+            "lookaheadAriaLabel": "",
+            "lookaheadHelp": "",
+            "midBingeHelp": "",
+            "midBingeLabel": "",
+            "neverRemoveSpecialsHelp": "",
+            "neverRemoveSpecialsLabel": "",
+            "ofEveryShow": "",
+            "scopeAllOption": "",
+            "scopeHelp": "",
+            "scopeLabel": "",
+            "scopeRequestedOption": "",
+            "theNewest": "",
+            "withoutWatching": ""
+        },
+        "seasonAdvisory": {
+            "message": ""
+        },
+        "sections": {
+            "deletion": "",
+            "flags": "",
+            "kept": "",
+            "navAriaLabel": "",
+            "pace": ""
+        },
+        "signalProbe": {
+            "failed": "",
+            "historyCap": "",
+            "pending": "",
+            "said": ""
+        },
+        "signalRamp": {
+            "addsAll": "",
+            "setDefaultAriaLabel": "",
+            "setDefaultButton": "",
+            "startsAdding": "",
+            "stopsAdding": ""
+        },
+        "signalRow": {
+            "off": "",
+            "upToPoints": "",
+            "weightAriaLabel": "",
+            "zeroWeightHelp": ""
+        },
+        "sim": {
+            "blurb": "",
+            "errorBody": "",
+            "errorHeading": "",
+            "fixPolicyFirst": "",
+            "heading": "",
+            "working": ""
+        },
+        "starting": {
+            "label": "",
+            "presetHelpTail": "",
+            "stagedNotice": ""
+        },
+        "switchConfirm": {
+            "message": ""
+        },
+        "units": {
+            "days": "",
+            "outOfTen": "",
+            "perRun": "",
+            "percent": "",
+            "person": "",
+            "points": "",
+            "season": "",
+            "times": "",
+            "titles": "",
+            "votesSuffix": ""
+        },
+        "validation": {
+            "cantSaveThisPrefix": "",
+            "validatorDown": ""
+        }
+    },
+    "policyRules": {
+        "addRuleButton": "",
+        "comparisonAriaLabel": "",
+        "condemn": {
+            "graded": "",
+            "simple": ""
+        },
+        "condition": {
+            "generic": "",
+            "onList": "",
+            "onListOp": ""
+        },
+        "enterNumberHelp": "",
+        "enterValueHelp": "",
+        "fieldAriaLabel": "",
+        "fieldHelp": {
+            "days_unwatched": "",
+            "genre": "",
+            "imdb_rating": "",
+            "imdb_votes": "",
+            "on_list": "",
+            "quality": "",
+            "recent_watchers": "",
+            "release_age": "",
+            "requested": "",
+            "season_rank": "",
+            "show_ended": "",
+            "size_bytes": "",
+            "streaming_now": "",
+            "watchers_all_time": "",
+            "whitelisted": ""
+        },
+        "fieldUnit": {
+            "days_unwatched": "",
+            "imdb_rating": "",
+            "imdb_votes": "",
+            "recent_watchers": "",
+            "release_age": "",
+            "size_bytes": "",
+            "watchers_all_time": ""
+        },
+        "keepEditor": {
+            "alwaysLabel": "",
+            "blurb": "",
+            "directionLabel": "",
+            "directionLess": "",
+            "directionMore": "",
+            "fullEffectAt": "",
+            "heading": "",
+            "helpBlurb": "",
+            "hiddenUnverified": "",
+            "hiddenWrongType": "",
+            "keepWhenPlaceholder": "",
+            "keptOutright": "",
+            "leanSentence": "",
+            "leansLabel": "",
+            "lowersScore": "",
+            "noListsAllTaken": "",
+            "noListsBlanketRule": "",
+            "noListsGeneric": "",
+            "noListsLoadError": "",
+            "noListsNone": "",
+            "noListsUnsynced": "",
+            "noListsWrongType": "",
+            "onListSentence": "",
+            "pointsOffAriaLabel": "",
+            "removeConditionAriaLabel": "",
+            "removeLeanAriaLabel": "",
+            "strengthHard": "",
+            "strengthLabel": "",
+            "strengthLean": ""
+        },
+        "listNameSelect": {
+            "ariaLabel": "",
+            "placeholder": ""
+        },
+        "noValue": "",
+        "opLabel": {
+            "contains": "",
+            "eq": "",
+            "gte": "",
+            "in": "",
+            "lte": ""
+        },
+        "pickListHelp": "",
+        "rampPhrase": {
+            "daysUnwatched": "",
+            "releaseAge": "",
+            "seasonRank": "",
+            "sizeBytes": ""
+        },
+        "rampPhraseDefault": "",
+        "rampStartAriaLabel": "",
+        "rampValueGb": "",
+        "removeEditor": {
+            "blurb": "",
+            "heading": "",
+            "helpBlurb": "",
+            "pointsAriaLabel": "",
+            "rampBackwardsHelp": "",
+            "rampFrom": "",
+            "rampTo": "",
+            "removeAriaLabel": "",
+            "weightFlat": "",
+            "weightRamp": ""
+        },
+        "ruleAddedAnnounce": "",
+        "suggestInput": {
+            "valueAriaLabel": "",
+            "valuePlaceholder": ""
+        },
+        "upToLabel": "",
+        "valueLabel": "",
+        "vocabLoadError": "",
+        "whenPlaceholder": "",
+        "yesValue": "",
+        "suffixPoints": "",
+        "suffixPointsOff": ""
+    },
+    "policySim": {
+        "appliesOnNextScan": "",
+        "comparisonLine": "",
+        "deltaBlurb": "",
+        "histogram": {
+            "bucketTooltip": ""
+        },
+        "histogramHelp": "",
+        "itemsWouldBeRemoved": "",
+        "moreLeftAlone": "",
+        "newOnTheList": "",
+        "noChangeNotice": "",
+        "pace": {
+            "noCaps": "",
+            "withCaps": ""
+        },
+        "progressStatus": "",
+        "queuedRescanTail": "",
+        "reclaimed": "",
+        "rescanHeading": "",
+        "rescanQueuedLead": "",
+        "scanStartFailed": "",
+        "scoringLibrary": "",
+        "staleHeadings": {
+            "gathersDifferently": "",
+            "inProgressNotRead": "",
+            "seasonsNotRecorded": ""
+        },
+        "staleReason": {
+            "gathers_differently": "",
+            "in_progress_not_read": "",
+            "seasons_not_recorded": ""
+        },
+        "staleReasonFallback": "",
+        "summary": {
+            "newlyCondemned": "",
+            "noLongerCondemned": "",
+            "notJudged": "",
+            "sparedByAProtection": "",
+            "titlesThatChange": ""
+        },
+        "whyTitlesWereSpared": "",
+        "workingFallback": ""
+    },
+    "policyMeta": {
+        "gates": {
+            "curatedList": {
+                "help": "",
+                "label": ""
+            },
+            "custom": {
+                "help": "",
+                "label": ""
+            },
+            "dataHorizon": {
+                "help": "",
+                "label": ""
+            },
+            "handSpare": {
+                "help": "",
+                "label": ""
+            },
+            "minDormancy": {
+                "help": "",
+                "label": ""
+            },
+            "othersWatching": {
+                "help": "",
+                "label": ""
+            },
+            "ratingFloor": {
+                "help": "",
+                "label": ""
+            },
+            "returned": {
+                "help": "",
+                "label": "",
+                "lead": "",
+                "window": {
+                    "aria": "",
+                    "help": "",
+                    "label": ""
+                }
+            },
+            "rewatchOdds": {
+                "help": "",
+                "label": ""
+            },
+            "seasonProgression": {
+                "help": "",
+                "label": ""
+            },
+            "serverPopularity": {
+                "help": "",
+                "label": "",
+                "window": {
+                    "aria": "",
+                    "help": "",
+                    "label": ""
+                }
+            },
+            "streamingNow": {
+                "help": "",
+                "label": ""
+            },
+            "unmanaged": {
+                "help": "",
+                "label": ""
+            },
+            "whitelisted": {
+                "help": "",
+                "label": ""
+            }
+        },
+        "presets": {
+            "aggressive": {
+                "help": "",
+                "label": ""
+            },
+            "balanced": {
+                "help": "",
+                "label": ""
+            },
+            "cautious": {
+                "help": "",
+                "label": ""
+            }
+        },
+        "signals": {
+            "fewWatchers": {
+                "help": "",
+                "label": ""
+            },
+            "lowRating": {
+                "help": "",
+                "label": ""
+            },
+            "seasonRank": {
+                "help": "",
+                "label": ""
+            },
+            "size": {
+                "help": "",
+                "label": ""
+            },
+            "unwatched": {
+                "help": "",
+                "label": ""
+            }
+        },
+        "unnamedGateLabel": ""
+    },
+    "reviewQueue": {
+        "aboutCardAria": "",
+        "addFilterLabel": "",
+        "announce": {
+            "backInQueue": "",
+            "showingCollection": ""
+        },
+        "bulkActionsAria": "",
+        "bulkCountCardsItems": "",
+        "bulkCountSelected": "",
+        "bulkFailuresMessage": "",
+        "clearFilters": "",
+        "clearOverrideButton": "",
+        "clearOverrideTitle": "",
+        "clearWholeSelectionTitle": "",
+        "collCounts": "",
+        "collFateError": "",
+        "collFateInLane": "",
+        "collectionsNamed": "",
+        "condemnedOfTotal": "",
+        "deselectAll": "",
+        "doneSelectingTitle": "",
+        "dormantPillTitle": "",
+        "emptyCollection": "",
+        "emptyFilteredHeadline": "",
+        "filterButton": "",
+        "filterChipTitle": "",
+        "filterDim": {
+            "genre": "",
+            "library": "",
+            "requested": "",
+            "type": "",
+            "yourDecision": ""
+        },
+        "heading": "",
+        "heldBackSizeUnknown": "",
+        "hiddenLine": {
+            "abstain": "",
+            "condemn": "",
+            "protect": ""
+        },
+        "keepViewingThisScan": "",
+        "libraryChipTitle": "",
+        "loadQueueError": "",
+        "loadRestTitle": "",
+        "loadingMore": "",
+        "markLabels": {
+            "abstain": "",
+            "condemn": "",
+            "protect": ""
+        },
+        "movieChipLabel": "",
+        "nothingSelectedError": "",
+        "nudge": {
+            "newerScan": "",
+            "viewingPrevious": ""
+        },
+        "oneScanBehind": "",
+        "overrideControls": {
+            "chooseLengthAria": "",
+            "clearThisSpare": "",
+            "customDaysUnit": "",
+            "customLength": "",
+            "customLengthAria": "",
+            "dayRowLabel": "",
+            "defaultTag": "",
+            "forever": "",
+            "groupAria": "",
+            "menuAria": "",
+            "menuHeading": "",
+            "ownReapedHeld": "",
+            "ownReapedRemoved": "",
+            "ownSparedStays": "",
+            "reap": "",
+            "reapForceTitle": "",
+            "reapMarkedTitle": "",
+            "reaping": "",
+            "showAlsoReap": "",
+            "showAlsoSpared": "",
+            "showReapHeldKept": "",
+            "showReapWillRemove": "",
+            "showSparedKept": "",
+            "spare": "",
+            "spareAgain": "",
+            "spareAgainExpiredAria": "",
+            "spareAgainTitle": "",
+            "spareForDaysTitle": "",
+            "spareForeverTitle": "",
+            "spareJudgeAgainTitle": "",
+            "spared": "",
+            "sparedCount": "",
+            "sparedJudgeAgainTitle": "",
+            "sparedLeftAria": ""
+        },
+        "queueTotal": "",
+        "reapNowButton": "",
+        "reapNowTitle": "",
+        "removeFilterAria": "",
+        "requestedBy": "",
+        "requestedChipTitle": "",
+        "requestedExplainer": "",
+        "resolution": {
+            "hd": "",
+            "sd": "",
+            "uhd": ""
+        },
+        "resolutionBadgeTitle": "",
+        "scoreTitle": "",
+        "searchAria": "",
+        "searchChipLabel": "",
+        "searchPlaceholder": "",
+        "seasonCount": "",
+        "seasonDivergence": {
+            "confirmSafeUnknown": "",
+            "keptDespiteReap": "",
+            "keptDespiteReapExpired": "",
+            "keptForNowChip": "",
+            "reapedChip": "",
+            "removedDespiteSpare": "",
+            "spareExpiredChip": "",
+            "sparedChip": ""
+        },
+        "seasonExpander": {
+            "hideTitle": "",
+            "showTitle": ""
+        },
+        "seasonList": {
+            "loadFailed": "",
+            "loading": ""
+        },
+        "seasonNumber": "",
+        "select": "",
+        "selectAll": "",
+        "selectCardAria": "",
+        "selectDrawnTitle": "",
+        "selectEverythingError": "",
+        "selectEverythingMatching": "",
+        "selectEverythingMatchingCount": "",
+        "selectSeveralTitle": "",
+        "selectingEllipsis": "",
+        "showInherit": {
+            "reapAll": "",
+            "reapNone": "",
+            "reapSome": "",
+            "spareExpired": "",
+            "spared": ""
+        },
+        "showLatest": "",
+        "showPanel": {
+            "seasonsBlurb": "",
+            "seasonsHeading": "",
+            "subtitle": ""
+        },
+        "showStatus": {
+            "continuing": {
+                "about": "",
+                "label": ""
+            },
+            "ended": {
+                "about": "",
+                "label": ""
+            },
+            "unknown": {
+                "about": "",
+                "label": ""
+            }
+        },
+        "showingOfTotal": "",
+        "sortAscendingAria": "",
+        "sortByTitle": "",
+        "sortDescendingAria": "",
+        "sortHighToLow": "",
+        "sortLowToHigh": "",
+        "spareSelectedForDays": "",
+        "spareSelectedForever": "",
+        "specials": "",
+        "specialsAbbrev": "",
+        "stopSearchingClearLabel": "",
+        "stripOpenAria": "",
+        "stripOverrideNote": {
+            "reapHeld": "",
+            "reaped": "",
+            "spareExpired": "",
+            "spared": ""
+        },
+        "stripTitle": "",
+        "tabs": {
+            "abstain": {
+                "blurb": "",
+                "empty": "",
+                "label": ""
+            },
+            "condemn": {
+                "blurb": "",
+                "empty": "",
+                "label": ""
+            },
+            "protect": {
+                "blurb": "",
+                "empty": "",
+                "label": ""
+            }
+        },
+        "tabsNavAria": "",
+        "tapOrDragToPick": "",
+        "toast": {
+            "caughtUp": ""
+        },
+        "tvChipLabel": "",
+        "whyScoredAria": "",
+        "staleSeasonsWhat": "",
+        "staleQueueWhat": ""
+    },
+    "scales": {
+        "balanceBar": {
+            "ariaNoReclaim": "",
+            "ariaReclaim": ""
+        },
+        "board": {
+            "acrossPeople": "",
+            "blurb": "",
+            "card": {
+                "earningKeep": "",
+                "noAccountShort": "",
+                "noAccountTitle": "",
+                "noHistoryShort": "",
+                "noHistoryTitle": "",
+                "nothingReclaimable": "",
+                "nothingToReclaim": "",
+                "openBreakdown": "",
+                "reclaimChip": "",
+                "summary": "",
+                "theyWatched": "",
+                "toReclaim": "",
+                "unknown": ""
+            },
+            "heading": "",
+            "loadFailed": "",
+            "loadingLead": "",
+            "loadingSub": "",
+            "noRequests": "",
+            "noSnapshot": "",
+            "notInScanLabel": "",
+            "notInScanSub": "",
+            "reclaimableLabel": "",
+            "reclaimableSub": "",
+            "refreshTooltip": "",
+            "requestsLabel": "",
+            "seeWhatTheseAre": "",
+            "slowWait": "",
+            "staleWhat": ""
+        },
+        "collectionChip": {
+            "inCollection": "",
+            "pickerLabel": "",
+            "showOthers": ""
+        },
+        "mediaKind": {
+            "movie": "",
+            "series": "",
+            "tag4k": ""
+        },
+        "meta": {
+            "alsoAskedBy": "",
+            "andOthers": "",
+            "arrived": "",
+            "asked": "",
+            "askedBy": ""
+        },
+        "notInScan": {
+            "allIncluded": "",
+            "heading": "",
+            "leadSame": "",
+            "leadSplit": "",
+            "leadWithDetail": "",
+            "nothingLeftOut": "",
+            "readFailed": "",
+            "staleWhat": "",
+            "unread": ""
+        },
+        "personPanel": {
+            "allEarningKeep": "",
+            "allRequestsHeading": "",
+            "balanceHeading": "",
+            "fallback": {
+                "failure": "",
+                "loading": "",
+                "waiting": ""
+            },
+            "fate": {
+                "kept": "",
+                "leftToDecide": "",
+                "reclaimable": ""
+            },
+            "grantedLabel": "",
+            "grantedSub": "",
+            "limits": {
+                "atLimit": "",
+                "lifetimeLabel": "",
+                "lifetimeRequests": "",
+                "moviesLabel": "",
+                "seriesLabel": "",
+                "text": "",
+                "unlimited": ""
+            },
+            "limitsHeading": "",
+            "noAccountSub": "",
+            "noHistorySub": "",
+            "noTitles": "",
+            "none": "",
+            "notInScanCount": "",
+            "notInScanHeading": "",
+            "ofWhatTheyAskedFor": "",
+            "openInPortal": "",
+            "openInReview": "",
+            "reclaimableCount": "",
+            "reclaimableLabel": "",
+            "requestsLabel": "",
+            "requestsSummary": "",
+            "stillInScan": "",
+            "theyWatchedLabel": "",
+            "titlesCount": "",
+            "unknown": "",
+            "watched": {
+                "episodes": "",
+                "movieTimes": "",
+                "noHistory": "",
+                "noneSince": ""
+            }
+        },
+        "unmatchedList": {
+            "nameUnavailable": "",
+            "otherHeading": "",
+            "otherWhy": "",
+            "reasons": {
+                "afterScan": {
+                    "heading": "",
+                    "why": ""
+                },
+                "noId": {
+                    "heading": "",
+                    "why": ""
+                },
+                "setAside": {
+                    "heading": "",
+                    "why": ""
+                }
+            },
+            "titleCount": ""
+        }
+    },
+    "setup": {
+        "actions": {
+            "continue": "",
+            "goToApp": "",
+            "skipForNow": ""
+        },
+        "connect": {
+            "addAnotherButton": "",
+            "announceRemoved": "",
+            "badge": {
+                "radarr": "",
+                "seerr": "",
+                "sonarr": "",
+                "tautulli": ""
+            },
+            "connectButton": "",
+            "instanceName": {
+                "fourK": "",
+                "hd": "",
+                "main": "",
+                "second": ""
+            },
+            "notReadyWarning": "",
+            "note": "",
+            "optional": "",
+            "removeFailedError": "",
+            "removingAria": "",
+            "requiredTag": "",
+            "restoreButton": "",
+            "restoreDoorLead": "",
+            "title": ""
+        },
+        "password": {
+            "adminNote": "",
+            "blurb": "",
+            "confirmLabel": "",
+            "minHelp": "",
+            "passwordLabel": "",
+            "restoreFootNote": "",
+            "saveFailedError": "",
+            "submit": "",
+            "title": ""
+        },
+        "plex": {
+            "announceConnected": "",
+            "lookingForAddress": "",
+            "manualAddressAriaLabel": "",
+            "manualAddressPlaceholder": "",
+            "manualPortAriaLabel": "",
+            "manualUriPlaceholderHelp": "",
+            "readOnlyBlurb": "",
+            "serverAndAddressSummary": "",
+            "signInHelp": "",
+            "signInStartError": "",
+            "signInTimeoutError": "",
+            "signedIn": "",
+            "signedInTo": "",
+            "skipHelp": "",
+            "title": ""
+        },
+        "restore": {
+            "checkFailedError": ""
+        },
+        "scan": {
+            "allSetHeading": "",
+            "announceFinishedClean": "",
+            "announceFinishedWithBlocker": "",
+            "announceStarted": "",
+            "announceStoppedEarly": "",
+            "connectPlexLink": "",
+            "discordBadge": "",
+            "discordHint": "",
+            "goToQueueButton": "",
+            "introBlurb": "",
+            "laterBlurb": "",
+            "laterHeading": "",
+            "notReadyWarning": "",
+            "runFirstScanButton": "",
+            "runningBlurb": "",
+            "runningHeading": "",
+            "scanErrorNotice": "",
+            "scannedBlurb": "",
+            "scannedHeading": "",
+            "title": ""
+        },
+        "stepper": {
+            "ariaLabel": "",
+            "currentAria": "",
+            "doneAria": "",
+            "notDoneAria": "",
+            "progress": ""
+        },
+        "steps": {
+            "connect": "",
+            "password": "",
+            "scan": ""
+        },
+        "wizard": {
+            "errorHeading": "",
+            "loadingHeading": "",
+            "statusError": ""
+        }
+    },
+    "login": {
+        "authNoteSetup": "",
+        "authNoteSignIn": "",
+        "authSafety": "",
+        "localSheet": {
+            "ariaLabel": "",
+            "blurbHasLocal": "",
+            "blurbLoading": "",
+            "blurbNoLocalYet": "",
+            "heading": "",
+            "noLocalYetNotice": "",
+            "passwordLabel": "",
+            "signIn": "",
+            "signInFailedFallback": "",
+            "signingIn": "",
+            "usernameLabel": ""
+        },
+        "plexButton": {
+            "chooseServerHelp": "",
+            "signIn": "",
+            "signInSetup": "",
+            "startFailedFallback": ""
+        },
+        "recovery": {
+            "codeLabel": "",
+            "codePlaceholder": "",
+            "failedFallback": "",
+            "heading": "",
+            "note": "",
+            "redeemButton": "",
+            "redeeming": "",
+            "tagline": ""
+        },
+        "useLocalAccount": ""
+    },
+    "shell": {
+        "app": {
+            "brandTagline": "",
+            "loadingReap": "",
+            "loadingReaperEllipsis": "",
+            "reapLoadFailed": "",
+            "reapReportTitle": "",
+            "reapUnavailable": "",
+            "routeLoadingSlow": "",
+            "statusLabel": "",
+            "stillLoadingReaper": ""
+        },
+        "docBody": {
+            "flowchart": "",
+            "flowchartWithTitle": ""
+        },
+        "docsModal": {
+            "group": {
+                "gettingStarted": "",
+                "operating": "",
+                "policy": "",
+                "safety": ""
+            },
+            "indexFooter": "",
+            "indexLabel": "",
+            "showingDoc": "",
+            "title": ""
+        },
+        "notice": {
+            "problemLead": "",
+            "warningLead": ""
+        },
+        "quantityInput": {
+            "unitLabel": "",
+            "unitLabelWithName": "",
+            "units": {
+                "mb": "",
+                "gb": "",
+                "tb": "",
+                "days": "",
+                "day": "",
+                "weeks": "",
+                "week": "",
+                "months": "",
+                "month": "",
+                "years": "",
+                "year": ""
+            }
+        },
+        "scanBar": {
+            "degradedNotice": "",
+            "deltaItems": "",
+            "deltaSize": "",
+            "deltaSummary": "",
+            "deltaUnknownQualifier": "",
+            "editScheduleLabel": "",
+            "incompleteAnnounce": "",
+            "keepsRunning": "",
+            "phase": {
+                "complete": "",
+                "done": "",
+                "gathering": "",
+                "history": "",
+                "lists": "",
+                "scoring": "",
+                "shelves": "",
+                "starting": ""
+            },
+            "queueRefreshed": "",
+            "scanOnlyReads": "",
+            "scanProblem": "",
+            "snapshotSummary": ""
+        },
+        "scanFreshness": {
+            "degradedNotice": "",
+            "lastScanned": "",
+            "noScanYet": "",
+            "readFailed": ""
+        },
+        "scanSettled": {
+            "finishedAnnounce": "",
+            "stoppedAnnounce": ""
+        },
+        "sectionNav": {
+            "policy": "",
+            "reap": "",
+            "review": "",
+            "scales": "",
+            "sectionsLabel": "",
+            "settings": ""
+        },
+        "settings": {
+            "panels": {
+                "about": "",
+                "backup": "",
+                "general": "",
+                "jobs": "",
+                "lists": "",
+                "logs": "",
+                "notifications": "",
+                "security": "",
+                "services": ""
+            },
+            "sectionLabel": "",
+            "sectionsLabel": "",
+            "switchConfirmBackup": "",
+            "switchConfirmGeneric": ""
+        },
+        "staleRead": {
+            "defaultWhat": "",
+            "line": ""
+        },
+        "statusChip": {
+            "exceptSeasons": "",
+            "reapRequestedKept": "",
+            "reapRequestedKeptDefaultWhy": "",
+            "reapedByHand": "",
+            "sparedByHand": "",
+            "sparedByHandWith": "",
+            "willBeKept": "",
+            "willBeRemoved": "",
+            "wouldBeRemoved": ""
+        },
+        "switchConfirm": {
+            "discardAndSwitch": "",
+            "keepEditing": ""
+        },
+        "tagsEditor": {
+            "placeholder": "",
+            "removeTag": ""
+        },
+        "userMenu": {
+            "localAccount": "",
+            "plexAccount": "",
+            "signOut": "",
+            "signOutFailed": "",
+            "signingOut": "",
+            "updateAvailable": "",
+            "updateAvailableLabel": ""
+        },
+        "scanLine": {
+            "scanningLabel": ""
+        }
+    }
+}

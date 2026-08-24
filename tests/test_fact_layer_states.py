@@ -25,6 +25,7 @@ from reaper.engine import identity
 from reaper.engine.gates import Facts, GateConfig, ServerPopularityGate
 from reaper.engine.observation import Absent, Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
+from reaper.engine.reason import Reason
 from reaper.engine.verdict import decide_verdict
 from reaper.services import lists
 from reaper.services.imdb_dataset import ImdbRating
@@ -35,6 +36,7 @@ from reaper.services.snapshot import (
     _reported_size,
     build_facts,
 )
+from tests._reasons import text
 
 _EMPTY_INDEX = lists.MembershipIndex({}, {}, {}, {})
 
@@ -120,7 +122,8 @@ class TestNobodyIsWatchingIsNotSaidOfAnItemNobodyChecked:
 
         streaming = facts.is_streaming_now
         assert isinstance(streaming, Unknown)
-        assert "more than one Plex item" in streaming.reason
+        # Shared with the season lane now (rule 72): the same base id, media-selected.
+        assert streaming.reason == Reason("cause.plex_ambiguous", {"mediaType": "movie"})
 
     def test_a_matched_movie_nobody_is_streaming_is_still_a_definite_no(self) -> None:
         """The control. A genuine "we looked and nobody is watching" must stay ``Known``, or
@@ -349,7 +352,7 @@ class TestTheScanRecordsHowFarBackItsHistoryReaches:
         result = gate.evaluate(facts)
 
         assert result.blocked is True
-        assert result.detail.startswith("could not check")
+        assert text(result.detail).startswith("could not check")
         assert (
             decide_verdict(
                 protected=False,

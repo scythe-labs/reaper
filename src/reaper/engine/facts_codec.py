@@ -26,6 +26,7 @@ from typing import Any
 
 from reaper.engine.gates import Facts, GateId, GateResult, thaw_defers_to_owner
 from reaper.engine.observation import Absent, Known, Observation, Unknown
+from reaper.engine.reason import Reason, from_wire, to_wire
 from reaper.ratings import Rating, RatingSource
 
 #: The two ``Facts`` fields that are not observations, each serialized by hand above.
@@ -80,7 +81,12 @@ def _obs_to_dict(obs: Observation[Any]) -> dict[str, Any]:
         return {"k": "known", "v": obs.value, "s": obs.source}
     if isinstance(obs, Absent):
         return {"k": "absent", "s": obs.source}
-    return {"k": "unknown", "r": obs.reason, "s": obs.source}
+    # A bare id (``"imdb_unreadable"``) stores as itself, same as always. A producer that
+    # needed a param (the movie/season media select) hands ``Unknown`` a full ``Reason``
+    # instead (``gates.no_key_reason`` and friends), and that one is wire-encoded like any
+    # other stored ``Reason`` so its params round-trip too.
+    reason = to_wire(obs.reason) if isinstance(obs.reason, Reason) else obs.reason
+    return {"k": "unknown", "r": reason, "s": obs.source}
 
 
 def _obs_from_dict(d: dict[str, Any]) -> Observation[Any]:
@@ -89,7 +95,15 @@ def _obs_from_dict(d: dict[str, Any]) -> Observation[Any]:
         return Known(value=d["v"], source=d["s"])
     if kind == "absent":
         return Absent(source=d["s"])
-    return Unknown(reason=d["r"], source=d["s"])
+    # A reason frozen before the i18n conversion is the English sentence itself, not a
+    # catalog id. It stays that string: a re-decision wraps it as a cause via
+    # ``gates.blocked_reason``, which a consumer keyed on catalog ids simply will not
+    # match, and the frontend's missing-entry fallback (``why.ts`` composeIn) renders it
+    # raw -- the same "not translated" reading it had before the conversion. A dict is the
+    # media-typed shape ``to_wire`` produces above, and decodes back through ``from_wire``.
+    raw = d["r"]
+    reason = from_wire(raw) if isinstance(raw, dict) else raw
+    return Unknown(reason=reason, source=d["s"])
 
 
 def _rating_to_dict(r: Rating) -> dict[str, Any]:
@@ -114,7 +128,7 @@ def _result_to_dict(r: GateResult) -> dict[str, Any]:
     return {
         "gate": r.gate.value,
         "outcome": r.outcome,
-        "detail": r.detail,
+        "detail": to_wire(r.detail),
         "blocked": r.blocked,
         "defers_to_owner": r.defers_to_owner,
         "unestablishable": r.unestablishable,
@@ -125,7 +139,9 @@ def _result_from_dict(d: dict[str, Any]) -> GateResult:
     return GateResult(
         gate=GateId(d["gate"]),
         outcome=d["outcome"],
-        detail=d["detail"],
+        # A str here is a detail frozen before reasons were typed; it thaws as a legacy
+        # reason and renders raw, exactly as it did before (docs/history/I18N_PLAN.md §5).
+        detail=from_wire(d["detail"]),
         blocked=d["blocked"],
         # The thaw, stated rather than left to a ``KeyError`` (rule 104): a row frozen before
         # the flag existed carries nothing that distinguishes a comparison that was made from
@@ -173,16 +189,16 @@ def facts_to_dict(facts: Facts, *, extra_results: tuple[GateResult, ...] = ()) -
 
 #: Why a field is unreadable on a snapshot written before that field existed.
 #:
-#: One of seven reasons in ``src/`` with NO ``CAUSE_COPY`` entry, and the reasoning here is
-#: about where it can be READ: ``facts_from_dict`` has a single caller, the
-#: policy simulator (``api.simulate``), which reads a re-decided score and verdict and never
-#: builds or stores an ``Explanation``. So this string reaches a reader only through a stored
-#: explanation that does not exist, and giving it panel copy would claim a route it cannot
-#: take (rule 25). Named anyway, so the ban on hand-typed reasons has no exception and the
-#: exemption is a line in ``test_review_chips.py`` rather than a silence. If a route ever
-#: renders a thawed Facts, it wants a ``CAUSE_COPY`` entry and this comment is the wrong
-#: answer.
-NOT_RECORDED_REASON = "this scan did not record it"
+#: One of seven reasons in ``src/`` with NO ``why.cause.*`` catalog entry, and the
+#: reasoning here is about where it can be READ: ``facts_from_dict`` has a single caller,
+#: the policy simulator (``api.simulate``), which reads a re-decided score and verdict and
+#: never builds or stores an ``Explanation``. So this string reaches a reader only through
+#: a stored explanation that does not exist, and giving it panel copy would claim a route
+#: it cannot take (rule 25). Named anyway, so the ban on hand-typed reasons has no
+#: exception and the exemption is a line in ``test_review_chips.py`` rather than a
+#: silence. If a route ever renders a thawed Facts, it wants a catalog entry and this
+#: comment is the wrong answer.
+NOT_RECORDED_REASON = "not_recorded"
 
 
 def facts_from_dict(d: dict[str, Any]) -> tuple[Facts, tuple[GateResult, ...]]:

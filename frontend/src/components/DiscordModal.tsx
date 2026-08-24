@@ -16,32 +16,31 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
-import { api, type InstanceTest } from "../api";
+import { api } from "../api";
+import { describeError } from "../errors";
 import { ModalShell } from "./ModalShell";
 import { Notice } from "./Notice";
-import { TestBadge, testSentence } from "./ServiceModal";
-import { isDiscordWebhook } from "./Settings";
+import { TestBadge, useWebhookTest } from "./ServiceModal";
 
 /** The webhook box's format complaint, named once for both ends of the association
  *  (rule 67). */
 const WEBHOOK_ERROR_ID = "discord-modal-webhook-error";
 
 export function DiscordModal({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data } = useQuery({ queryKey: ["notifications"], queryFn: api.notifications });
   const connected = data?.has_webhook ?? false;
 
   const [url, setUrl] = useState("");
-  // The result and the URL it was computed for, the pairing `ServiceModal` keeps for its own
-  // badge (rule 72): without it a passed test then a pasted-over URL leaves "Passed" beside a
-  // webhook nobody has sent to (rule 85).
-  const [test, setTest] = useState<{ result: InstanceTest; of: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  /** What a test would be sent. A blank box tests the webhook already STORED, so blank is a
-   *  real value here rather than an absence. */
-  const testedWith = () => url.trim();
+  const { validNew, badFormat, canTest, test, testedWith, sendTest } = useWebhookTest(
+    url,
+    connected,
+    (e) => setError(describeError(e)),
+  );
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["notifications"] });
 
@@ -49,50 +48,30 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
     mutationFn: () => api.setWebhook(url.trim()),
     onSuccess: async () => {
       await invalidate();
-      announce("Discord webhook saved.");
+      announce(t("services.discord.savedAnnouncement"));
       onClose();
     },
-    onError: (e: Error) => setError(e.message),
-  });
-
-  const sendTest = useMutation({
-    // Test what is typed if anything is; otherwise test what is stored, so a saved channel can
-    // be verified without going back to Discord for the URL again.
-    mutationFn: () => api.testWebhook(url.trim() ? url.trim() : null),
-    // What this request is ABOUT, captured when it is issued rather than computed at success
-    // time, the same as `ServiceModal`'s own test (rule 72). The box stays live while the request
-    // is out. `testedWith()` called at success would fingerprint whatever is typed by then, so a
-    // second webhook pasted mid-send gets "Passed" for a channel nobody tried (rule 85).
-    onMutate: () => ({ of: testedWith() }),
-    onSuccess: (r, _v, issued) => {
-      setTest({ result: r, of: issued.of });
-      announce(testSentence(r));
-    },
-    onError: (e: Error) => setError(e.message),
+    onError: (e) => setError(describeError(e)),
   });
 
   const remove = useMutation({
     mutationFn: () => api.clearWebhook(),
     onSuccess: async () => {
       await invalidate();
-      announce("Discord webhook removed. Leaving-soon warnings won't be sent.");
+      announce(t("services.discord.removedAnnouncement"));
       onClose();
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e) => setError(describeError(e)),
   });
 
-  const typed = url.trim().length > 0;
-  const validNew = typed && isDiscordWebhook(url);
-  const badFormat = typed && !validNew;
-  const canTest = (validNew || (!typed && connected)) && !sendTest.isPending;
   const busy = save.isPending || remove.isPending;
 
   return (
     <ModalShell
       title={
         <>
-          <span className="kind-badge kind-discord">Discord</span>{" "}
-          {connected ? "Edit Discord" : "Add Discord"}
+          <span className="kind-badge kind-discord">{t("common.brand.discord")}</span>{" "}
+          {connected ? t("services.discord.titleEdit") : t("services.discord.titleAdd")}
         </>
       }
       onClose={onClose}
@@ -101,10 +80,7 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
       canClose={!busy}
       className="service-modal"
     >
-      <p className="blurb">
-        Reaper posts a heads-up here while a title is in its grace period, so someone can watch it
-        or spare it before it goes.
-      </p>
+      <p className="blurb">{t("services.discord.blurb")}</p>
 
       <form
         className="service-form"
@@ -115,7 +91,7 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
         }}
       >
         <label className="field-sm">
-          <span className="field-label">Webhook URL</span>
+          <span className="field-label">{t("services.discord.field.webhookUrl")}</span>
           <input
             type="password"
             autoComplete="off"
@@ -124,32 +100,33 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
               setUrl(e.target.value);
               setError(null);
             }}
-            placeholder={connected ? "leave blank to keep the current one" : "from Discord"}
+            placeholder={
+              connected
+                ? t("services.discord.field.placeholderEdit")
+                : t("services.discord.field.placeholderAdd")
+            }
             aria-invalid={badFormat ? true : undefined}
             aria-describedby={badFormat ? WEBHOOK_ERROR_ID : undefined}
           />
-          <span className="help">
-            In Discord: Server Settings, Integrations, Webhooks. Copy the webhook URL.
-          </span>
+          <span className="help">{t("services.discord.field.help")}</span>
         </label>
 
         {/* Beside the control that fixes it (rule 42), not in the shared slot at the foot
             where a failed save also lands. */}
         {badFormat && (
           <Notice tone="error" id={WEBHOOK_ERROR_ID}>
-            That doesn't look like a Discord webhook address. It should start with
-            https://discord.com/api/webhooks/
+            {t("services.discord.badFormat")}
           </Notice>
         )}
 
         {/* Only while it still describes what is in the box (rule 85). */}
         {test && test.of === testedWith() && <TestBadge result={test.result} />}
 
-        {error && <Notice tone="error">That didn't work: {error}</Notice>}
+        {error && <Notice tone="error">{t("services.discord.saveError", { error })}</Notice>}
 
         <div className="add-actions">
           <button type="button" className="ghost" onClick={onClose} disabled={busy}>
-            Cancel
+            {t("common.cancel")}
           </button>
           <span className="flex-spacer" />
           {connected && (
@@ -162,7 +139,7 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
               }}
               disabled={busy}
             >
-              {remove.isPending ? "Removing…" : "Remove"}
+              {remove.isPending ? t("common.removing") : t("common.remove")}
             </button>
           )}
           <button
@@ -174,10 +151,12 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
             }}
             disabled={!canTest || busy}
           >
-            {sendTest.isPending ? "Sending…" : "Send test"}
+            {sendTest.isPending
+              ? t("services.discord.sendTestPending")
+              : t("services.discord.sendTestButton")}
           </button>
           <button type="submit" className="primary" disabled={!validNew || busy}>
-            {save.isPending ? "Saving…" : "Save"}
+            {save.isPending ? t("common.saving") : t("common.save")}
           </button>
         </div>
       </form>

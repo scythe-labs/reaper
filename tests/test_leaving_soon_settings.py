@@ -31,6 +31,7 @@ from reaper.crypto import SecretBox
 from reaper.db.base import Base
 from reaper.db.models import PlexServer
 from reaper.db.session import create_engine, create_session_factory
+from reaper.engine.reason import Reason
 from reaper.services import app_settings, leaving_soon
 
 
@@ -113,6 +114,8 @@ class TestTheSettingsRoutes:
         assert body == {
             "enabled": False,
             "allow_unarmed": False,
+            "name": "Leaving Soon",
+            "applied_name": "Leaving Soon",
             "last": None,
             "last_skip": None,
         }
@@ -132,10 +135,12 @@ class TestTheSettingsRoutes:
                 seasons=311,
                 applied=True,
                 ok=True,
-                result="4 added, 1 cleared",
+                reason=Reason("shelf_updated", {"added": 4, "removed": 1}),
             )
             await app_settings.set_leaving_soon_last_skip(
-                session, at="2026-08-04T20:06:00+00:00", result="Reaper couldn't reach Plex"
+                session,
+                at="2026-08-04T20:06:00+00:00",
+                reason=Reason("error.leaving_soon.skip_unreachable"),
             )
             await session.commit()
 
@@ -143,11 +148,71 @@ class TestTheSettingsRoutes:
 
         assert body["last_skip"] == {
             "at": "2026-08-04T20:06:00+00:00",
-            "result": "Reaper couldn't reach Plex",
+            "result_reason": {"k": "error.leaving_soon.skip_unreachable", "p": None},
         }
         # The completed pass survives the skip. Overwriting it would take the shelf's only
         # true counts down with a pass that wrote nothing to Plex.
         assert (body["last"]["movies"], body["last"]["seasons"]) == (280, 311)
+        assert body["last"]["result_reason"] == {
+            "k": "shelf_updated",
+            "p": {"added": 4, "removed": 1},
+        }
+
+    async def test_a_last_pass_stored_before_the_typed_conversion_still_reads(
+        self, client: TestClient, factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """The same rule 96 thaw as the skip row above, for the completed-pass record: a row
+        written before phase 11a carries a bare English phrase under ``"result"`` instead of
+        a wire-encoded reason, thawed as ``Reason("legacy", {"text": ...})``. Written straight
+        into storage, since ``set_leaving_soon_last`` only ever writes the new shape now."""
+        async with factory() as session:
+            await app_settings._set(
+                session,
+                app_settings.LEAVING_SOON_LAST_KEY,
+                {
+                    "at": "2026-05-01T02:00:00+00:00",
+                    "movies": 10,
+                    "seasons": 3,
+                    "applied": True,
+                    "ok": True,
+                    "result": "6 added, 1 cleared",
+                },
+            )
+            await session.commit()
+
+        body = client.get("/api/settings/leaving-soon").json()
+
+        assert body["last"]["result_reason"] == {
+            "k": "legacy",
+            "p": {"text": "6 added, 1 cleared"},
+        }
+
+    async def test_a_skip_stored_before_the_typed_conversion_still_reads(
+        self, client: TestClient, factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A row written before phase 8a carries a bare English phrase under ``"result"``
+        instead of a wire-encoded reason. Rule 96: an old row must still read, thawed as
+        ``Reason("legacy", {"text": ...})`` exactly as ``engine.reason.from_wire`` already
+        does for a bare stored string -- it just stops composing through the catalog.
+
+        Written straight into the row rather than through ``set_leaving_soon_last_skip``,
+        which only ever writes the new shape now: the point is a value an OLDER build left
+        behind, which today's setter cannot produce any more.
+        """
+        async with factory() as session:
+            await app_settings._set(
+                session,
+                app_settings.LEAVING_SOON_LAST_SKIP_KEY,
+                {"at": "2026-07-01T00:00:00+00:00", "result": "Reaper couldn't reach Plex"},
+            )
+            await session.commit()
+
+        body = client.get("/api/settings/leaving-soon").json()
+
+        assert body["last_skip"] == {
+            "at": "2026-07-01T00:00:00+00:00",
+            "result_reason": {"k": "legacy", "p": {"text": "Reaper couldn't reach Plex"}},
+        }
 
     def test_the_switches_flip_and_stick(self, client: TestClient) -> None:
         body = client.put(
@@ -160,6 +225,52 @@ class TestTheSettingsRoutes:
         body = client.put("/api/settings/leaving-soon", json={"enabled": False}).json()
         assert body["enabled"] is False
         assert body["allow_unarmed"] is True
+
+    def test_the_name_saves_and_says_which_one_plex_still_shows(self, client: TestClient) -> None:
+        """Saving a name stores it and nothing else. Moving the shelf is a whole-library
+        reconcile per library, so the next pass does it, and until then `applied_name` is
+        what an operator will actually find in their library."""
+        body = client.put("/api/settings/leaving-soon", json={"name": "Last chance"}).json()
+        assert body["name"] == "Last chance"
+        assert body["applied_name"] == "Leaving Soon"
+
+        # It sticks, and the switches beside it are untouched by a name-only save.
+        body = client.get("/api/settings/leaving-soon").json()
+        assert body["name"] == "Last chance"
+        assert body["enabled"] is False
+
+    def test_an_empty_name_goes_back_to_the_default(self, client: TestClient) -> None:
+        """Clearing the box is how the help says to reset it, so the empty string has to
+        mean the default rather than an unnamed shelf. Whitespace is the same answer: Plex
+        would take " " as a title and nobody could find it again."""
+        client.put("/api/settings/leaving-soon", json={"name": "Last chance"})
+        assert client.put("/api/settings/leaving-soon", json={"name": ""}).json()["name"] == (
+            "Leaving Soon"
+        )
+        client.put("/api/settings/leaving-soon", json={"name": "Last chance"})
+        assert client.put("/api/settings/leaving-soon", json={"name": "   "}).json()["name"] == (
+            "Leaving Soon"
+        )
+
+    def test_a_name_past_the_bound_is_refused_rather_than_quietly_cut(
+        self, client: TestClient
+    ) -> None:
+        """A truncated name is a shelf the operator did not ask for, and they would only
+        find out by looking in Plex."""
+        over = "x" * (app_settings.LEAVING_SOON_NAME_MAX + 1)
+        assert client.put("/api/settings/leaving-soon", json={"name": over}).status_code == 422
+
+    async def test_a_clean_pass_records_the_name_it_wrote(
+        self, factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """What Plex shows is only true once every library has actually been written. Until
+        then the old name is still the one the next pass has to look under."""
+        async with factory() as session:
+            assert await app_settings.get_leaving_soon_applied_name(session) == "Leaving Soon"
+            await app_settings.set_leaving_soon_applied_name(session, "Last chance")
+            await session.commit()
+        async with factory() as session:
+            assert await app_settings.get_leaving_soon_applied_name(session) == "Last chance"
 
     async def test_library_choices_apply_to_the_stored_list(
         self, client: TestClient, tmp_path: Path
@@ -221,21 +332,25 @@ class TestTheSettingsRoutes:
 
         body = client.post("/api/leaving-soon/sync").json()
 
-        assert body["result"] == "No libraries are turned on, so no shelf was updated"
+        assert body["result_reason"] == {"k": "shelf_no_libraries", "p": None}
         assert body["ok"] is False
         stored = client.get("/api/settings/leaving-soon").json()["last"]
-        assert (stored["ok"], stored["result"]) == (body["ok"], body["result"])
+        assert (stored["ok"], stored["result_reason"]) == (body["ok"], body["result_reason"])
 
     def test_a_manual_update_while_off_is_refused_in_plain_words(self, client: TestClient) -> None:
         resp = client.post("/api/leaving-soon/sync")
         assert resp.status_code == 400
-        assert "Leaving Soon is off" in resp.json()["detail"]
+        body = resp.json()
+        assert body["code"] == "error.leaving_soon.disabled"
+        assert "Leaving Soon is off" in body["detail"]
 
     def test_a_manual_update_without_plex_names_the_missing_link(self, client: TestClient) -> None:
         client.put("/api/settings/leaving-soon", json={"enabled": True})
         resp = client.post("/api/leaving-soon/sync")
         assert resp.status_code == 400
-        assert "linked Plex server" in resp.json()["detail"]
+        body = resp.json()
+        assert body["code"] == "error.leaving_soon.unlinked"
+        assert "linked Plex server" in body["detail"]
 
     def test_a_linked_server_that_will_not_answer_is_a_502_in_reapers_words(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -257,10 +372,11 @@ class TestTheSettingsRoutes:
         behind it, rather than the diagnostic alone under a status that blamed them for it.
         """
         from reaper.clients.plex import PlexError
+        from reaper.engine.reason import to_wire
         from reaper.services import leaving_soon as service
 
         async def _stalled(*args: object, **kwargs: object) -> object:
-            raise PlexError("movie listing for section 3 stalled at 200 of 1000")
+            raise PlexError("error.plexclient.paging_failed", what="movie listing for section 3")
 
         monkeypatch.setattr(service, "_plex_client", _stalled)
         client.put("/api/settings/leaving-soon", json={"enabled": True})
@@ -268,8 +384,17 @@ class TestTheSettingsRoutes:
         resp = client.post("/api/leaving-soon/sync")
 
         assert resp.status_code == 502
-        detail = resp.json()["detail"]
-        assert detail.startswith("Reaper couldn't reach Plex")
+        body = resp.json()
+        assert body["code"] == "error.plex.unreachable"
+        # `{error}` is another composed sentence now, not a raw client string: the client's
+        # own coded failure, carried whole rather than flattened at the raise site.
+        assert body["params"]["error"] == to_wire(
+            PlexError(
+                "error.plexclient.paging_failed", what="movie listing for section 3"
+            ).as_reason()
+        )
+        assert body["detail"].startswith("Reaper couldn't reach Plex")
+        assert "movie listing for section 3" in body["detail"]
 
     def test_about_reports_the_facts(self, client: TestClient) -> None:
         body = client.get("/api/about").json()

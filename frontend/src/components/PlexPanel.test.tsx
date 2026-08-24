@@ -14,11 +14,27 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import { Announcer } from "../announce";
 import { PlexPanel } from "./PlexPanel";
 
+// jsdom has no window.open, so any test that reaches "Link with Plex" -- the linking
+// describe and the whole-panel control sweep alike -- printed "Not implemented: Window's
+// open() method" into the CI log, noise a reader has to clear every run. The stub also
+// lets the linking test pin the noopener feature string, which Login.test.tsx and
+// SetupPlexStep.test.tsx already do for their copies of this popup (rule 72): without
+// noopener, plex.tv gets a handle on the page it could navigate.
+const opened = vi.fn<typeof window.open>(() => null);
+beforeEach(() => vi.stubGlobal("open", opened));
+afterEach(() => {
+  opened.mockClear();
+  vi.unstubAllGlobals();
+});
+
 const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
-vi.mock("../api", () => ({ api: apiMock }));
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  api: apiMock,
+}));
 
 const LOCAL = "https://10-0-0-2.abcdef.plex.direct:32400";
 const TYPED = "https://plex.example.net:32400";
@@ -104,10 +120,15 @@ beforeEach(() => {
   apiMock.resetWatchEvidence.mockResolvedValue({ forgotten: 0 });
   // An install that has set an admin password and left deletion off -- the shipped state, and
   // the only one in which the reset is offered at all. The tests that vary it say so.
-  apiMock.safety.mockResolvedValue({ destructive_enabled: false, has_password: true, note: null });
+  apiMock.safety.mockResolvedValue({
+    destructive_enabled: false,
+    has_password: true,
+  });
   apiMock.leavingSoonSettings.mockResolvedValue({
     enabled: false,
     allow_unarmed: false,
+    name: "Leaving Soon",
+    applied_name: "Leaving Soon",
     last: null,
   });
   apiMock.setPlexSettings.mockResolvedValue(status());
@@ -194,6 +215,7 @@ describe("every control on this panel", () => {
       ["Check the server's certificate", "input"],
       ["Plex web address", "input"],
       ["Let Reaper touch Movies", "input"],
+      ["Shelf name", "input"],
       ['Show "Leaving Soon" in Plex', "input"],
       ["Update while read-only", "input"],
     ];
@@ -257,6 +279,8 @@ describe("linking with Plex", () => {
 
     const link = await screen.findByRole("link", { name: "Didn’t open?" });
     expect(link).toHaveAttribute("href", "https://plex.tv/link/pin");
+    expect(opened).toHaveBeenCalled();
+    expect(opened.mock.calls[0]?.[2] ?? "").toContain("noopener");
 
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(await screen.findByRole("button", { name: "Link with Plex" })).toBeInTheDocument();
@@ -754,7 +778,8 @@ describe("the groups below the form, through a failed refetch", () => {
     // row in SettingsStaleRead.test.tsx). This grid is two reads deep -- the panel returns early
     // while `plex` is pending and the grid waits on `plex-libraries` behind it -- and a
     // `findByRole` with a name matcher re-computes accessible names across the whole panel on
-    // every 50ms poll, so the pair had one 1000ms budget with the looking taken out of it.
+    // every 50ms poll, so the pair had one budget with the looking taken out of it. That budget
+    // was 1000ms then and is 5000ms now (`src/test/setup.ts`, #887); the query costs the same.
     await screen.findByText("Refresh libraries");
     const toggle = screen.getByRole("switch", { name: "Let Reaper touch Movies" });
 
@@ -1085,7 +1110,6 @@ describe("forgetting the recorded watch history", () => {
     apiMock.safety.mockResolvedValue({
       destructive_enabled: false,
       has_password: false,
-      note: null,
     });
     renderPanel();
 
@@ -1150,7 +1174,7 @@ describe("forgetting the recorded watch history", () => {
     renderPanel();
     // The honest cost of pressing it. A reset that reads as free is the one an operator presses
     // without repairing the source, and then every re-added title is condemnable on false zeros.
-    const warning = await screen.findByText(/score as never watched/);
+    const warning = await screen.findByText(/scores as never watched/);
     expect(warning).toHaveClass("notice-warn");
     expect(warning).toHaveTextContent("repair its history in Tautulli");
   });
@@ -1193,6 +1217,79 @@ describe("saving the Plex web address", () => {
   });
 });
 
+describe("naming the shelf", () => {
+  /** The saved answer, so the row re-seeds from the response rather than the effect (rule 39). */
+  function savesAs(name: string) {
+    apiMock.setLeavingSoonSettings.mockResolvedValue({
+      enabled: false,
+      allow_unarmed: false,
+      name,
+      applied_name: "Leaving Soon",
+      last: null,
+      last_skip: null,
+    });
+  }
+
+  it("sends the typed name, and reports it as a draft until it is saved", async () => {
+    const user = userEvent.setup();
+    const dirty = vi.fn();
+    savesAs("Last chance");
+    renderPanel([discovered(LOCAL)], dirty);
+
+    const box = await screen.findByLabelText("Shelf name");
+    expect(box).toHaveValue("Leaving Soon");
+    // No Save at rest: the button exists only while the row holds something to save.
+    expect(within(box.parentElement as HTMLElement).queryByRole("button")).toBeNull();
+
+    await fill(user, box, "Last chance");
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(true));
+
+    await user.click(
+      within(box.parentElement as HTMLElement).getByRole("button", { name: "Save" }),
+    );
+    expect(apiMock.setLeavingSoonSettings.mock.calls[0]?.[0]).toEqual({ name: "Last chance" });
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(false));
+  });
+
+  it("stops reporting a draft once an emptied box is saved back to the default", async () => {
+    // Clearing the box is how the help says to go back to the default, and it saves the empty
+    // string. The route stores that as unset and answers with the SAME default name it was
+    // already returning, so `savedShelfName` never changes identity and the re-seed effect
+    // never fires: the box would sit empty against a name it now matches, with a Save that
+    // never goes away and a section-switch confirm nothing on this panel can satisfy. The web
+    // address row above had exactly this (rule 39, rule 72).
+    const user = userEvent.setup();
+    const dirty = vi.fn();
+    savesAs("Leaving Soon");
+    renderPanel([discovered(LOCAL)], dirty);
+
+    const box = await screen.findByLabelText("Shelf name");
+    await user.clear(box);
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(true));
+
+    await user.click(
+      within(box.parentElement as HTMLElement).getByRole("button", { name: "Save" }),
+    );
+    expect(apiMock.setLeavingSoonSettings.mock.calls[0]?.[0]).toEqual({ name: "" });
+    await waitFor(() => expect(box).toHaveValue("Leaving Soon"));
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(false));
+    expect(within(box.parentElement as HTMLElement).queryByRole("button")).toBeNull();
+  });
+
+  it("names the shelf in the switch beside it, from the STORED name", async () => {
+    // The switch says what it does to a shelf that exists. Until Save lands, the name in the
+    // box is not what the switch would do anything to.
+    const user = userEvent.setup();
+    savesAs("Last chance");
+    renderPanel();
+
+    const box = await screen.findByLabelText("Shelf name");
+    await fill(user, box, "Last chance");
+
+    expect(screen.getByRole("switch", { name: 'Show "Leaving Soon" in Plex' })).toBeInTheDocument();
+  });
+});
+
 describe("the shelf status line", () => {
   // The one sentence on this screen that says how the Leaving Soon shelf is doing, and until
   // now the only one of the four copies of that answer with no test on it -- which is how it
@@ -1204,15 +1301,25 @@ describe("the shelf status line", () => {
     seasons: 311,
     applied: true,
     ok: true,
-    result: "4 added, 1 cleared",
+    result_reason: { k: "shelf_updated", p: { added: 4, removed: 1 } },
   };
-  /** After `PASS`, since the whole decision is which record is newer (rule 141). */
-  const SKIP = { at: "2026-08-04T20:06:00+00:00", result: "Reaper couldn't reach Plex" };
+  /** After `PASS`, since the whole decision is which record is newer (rule 141).
+   *  `result_reason` is a real catalog code (phase 8b): this panel's own status line never
+   *  reads it (it says only a generic "later scan skipped" sentence; the Jobs row names the
+   *  reason), so the exact code doesn't matter to these assertions -- it just has to be a
+   *  real one, since `shelf()`'s loose `Record<string, unknown>` typing would not catch a
+   *  stale shape. */
+  const SKIP = {
+    at: "2026-08-04T20:06:00+00:00",
+    result_reason: { k: "error.leaving_soon.skip_unreachable", p: {} },
+  };
 
   async function statusLine(over: Record<string, unknown>): Promise<string> {
     apiMock.leavingSoonSettings.mockResolvedValue({
       enabled: true,
       allow_unarmed: false,
+      name: "Leaving Soon",
+      applied_name: "Leaving Soon",
       last: PASS,
       last_skip: null,
       ...over,
@@ -1248,6 +1355,8 @@ describe("the shelf status line", () => {
     apiMock.leavingSoonSettings.mockResolvedValue({
       enabled: false,
       allow_unarmed: false,
+      name: "Leaving Soon",
+      applied_name: "Leaving Soon",
       last: PASS,
       last_skip: null,
     });
@@ -1287,10 +1396,29 @@ describe("the shelf status line", () => {
     expect(line).not.toContain("didn't update the shelves");
   });
 
+  it("opens with the shelf Plex still shows, when a rename has not been carried across", async () => {
+    // The one fact on this screen that contradicts what the operator is looking at: the box
+    // two rows up says one name and their library still shows another, and the counts after
+    // it are about the shelf under the OLD name. So it leads.
+    const line = await statusLine({ name: "Last chance", applied_name: "Leaving Soon" });
+
+    expect(line).toMatch(
+      /^Plex still shows "Leaving Soon"\. The next update renames it\. 4 added, 1 cleared\./,
+    );
+  });
+
+  it("stops saying it once a pass has carried the rename across", async () => {
+    const line = await statusLine({ name: "Last chance", applied_name: "Last chance" });
+
+    expect(line).not.toContain("Plex still shows");
+  });
+
   it("opens with the date, not a stray period, for a row stored before summaries existed", async () => {
-    // `ok` and `result` were added to the stored row after the shelf shipped, and the JSON
-    // is never migrated, so a tester's row can thaw as `result: ""`.
-    expect(await statusLine({ last: { ...PASS, result: "" } })).toMatch(LINE(""));
+    // `ok` and a result reason were added to the stored row after the shelf shipped, and the
+    // JSON is never migrated, so a tester's row can thaw as a legacy reason with empty text.
+    expect(
+      await statusLine({ last: { ...PASS, result_reason: { k: "legacy", p: { text: "" } } } }),
+    ).toMatch(LINE(""));
   });
 
   it("groups every number on the line the one way, whatever the browser's locale", async () => {
@@ -1314,7 +1442,12 @@ describe("the shelf status line", () => {
     });
     try {
       const line = await statusLine({
-        last: { ...PASS, movies: 1234, seasons: 5678, result: "1,234 added, 5,678 cleared" },
+        last: {
+          ...PASS,
+          movies: 1234,
+          seasons: 5678,
+          result_reason: { k: "shelf_updated", p: { added: 1234, removed: 5678 } },
+        },
       });
 
       expect(line).toContain("1,234 added, 5,678 cleared");

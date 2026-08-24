@@ -46,7 +46,7 @@ const SCHEDULE: Schedule = {
       running: false,
       last_run_at: null,
       last_ok: null,
-      last_result: null,
+      last_result_reason: null,
     },
     {
       id: "refresh_ratings",
@@ -56,7 +56,7 @@ const SCHEDULE: Schedule = {
       running: false,
       last_run_at: null,
       last_ok: null,
-      last_result: null,
+      last_result_reason: null,
     },
   ],
 };
@@ -242,13 +242,16 @@ describe("the Leaving Soon row through a failed refetch", () => {
     apiMock.leavingSoonSettings.mockResolvedValue({
       enabled: true,
       allow_unarmed: false,
+      name: "Leaving Soon",
+      applied_name: "Leaving Soon",
       last: null,
     });
     const queryClient = renderPanel("jobs");
     // Settle the state this button's EXISTENCE depends on before reaching for it (#228, the
     // twin of #149). `findByRole` with a name matcher re-computes accessible names across the
     // whole Settings tree on every 50ms poll -- the most expensive query Testing Library has --
-    // and here it had to cover the shelf read landing as well, on one 1000ms budget. It lost
+    // and here it had to cover the shelf read landing as well, on one budget, then 1000ms and
+    // 5000ms now (`src/test/setup.ts`, #887). It lost
     // that race on a loaded CI runner, on commits touching nothing in this tree, and the dumped
     // DOM showed the panel still on "Loading the upkeep jobs…" with this row on "Loading…".
     //
@@ -314,7 +317,7 @@ describe("NotificationsPanel through a failed refetch", () => {
     // held answer, and now the line above them agrees that it was read.
     expect(screen.getByText(/Discord connected/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Send test message" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Send test" })).toBeEnabled();
   });
 
   it("still says the check never ran when the first read is the one that fails", async () => {
@@ -326,6 +329,6 @@ describe("NotificationsPanel through a failed refetch", () => {
     // test send stay away, rather than acting on a webhook nobody confirmed exists.
     expect(screen.queryByText(STALE_ANY)).toBeNull();
     expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Send test message" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send test" })).toBeDisabled();
   });
 });

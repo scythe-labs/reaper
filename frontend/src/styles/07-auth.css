@@ -139,7 +139,7 @@
   display: flex;
   align-items: center;
   gap: 0.8rem;
-  text-align: left;
+  text-align: start;
   padding: var(--space-2xl) var(--space-3xl);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -150,7 +150,7 @@
   font-size: var(--text-sm);
 }
 .plex-waiting .link {
-  margin-left: auto;
+  margin-inline-start: auto;
   font-size: var(--text-md);
 }
 
@@ -160,7 +160,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
-  text-align: left;
+  text-align: start;
   padding: var(--space-2xl) var(--space-3xl);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -175,7 +175,7 @@
 }
 .server-pick-row {
   width: 100%;
-  text-align: left;
+  text-align: start;
   padding: var(--space-xl) var(--space-2xl);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);

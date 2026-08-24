@@ -10,38 +10,46 @@
 // of it. Deletes nothing; the plan is still built, dry-run, and executed below.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Trans, useTranslation } from "react-i18next";
 import { api, type SignalCount } from "../api";
 import { bytes, count } from "../format";
+import i18next from "../i18n";
 import { useHoldsBackUnmeasured } from "./queueSettings";
 import { Notice } from "./Notice";
 
 // Built-in signals read as a policy question in the editor ("How long it's gone
 // unwatched"); here they name the reason a title was condemned, so they get their own
-// short phrasing. A custom rule has no entry and shows under its own name.
-const REASON_LABEL: Record<string, string> = {
-  unwatched: "Gone unwatched too long",
-  few_watchers: "Few or no watchers",
-  season_rank: "An older season",
-  low_rating: "Low rating",
-  size: "Large file on disk",
-};
-
+// short phrasing. A custom rule has no entry and shows under its own name. A plain
+// function, not a frozen table, so a language change is picked up the next time this
+// renders (same shape as JobsPanel's `jobMeta`, docs/history/I18N_PLAN.md §3).
 function reasonLabel(id: string): string {
-  return REASON_LABEL[id] ?? id;
-}
-
-function plural(n: number, one: string, many: string): string {
-  return `${count(n)} ${n === 1 ? one : many}`;
+  switch (id) {
+    case "unwatched":
+      return i18next.t("reapPlan.breakdown.reasons.unwatched");
+    case "few_watchers":
+      return i18next.t("reapPlan.breakdown.reasons.fewWatchers");
+    case "season_rank":
+      return i18next.t("reapPlan.breakdown.reasons.seasonRank");
+    case "low_rating":
+      return i18next.t("reapPlan.breakdown.reasons.lowRating");
+    case "size":
+      return i18next.t("reapPlan.breakdown.reasons.size");
+    default:
+      return id;
+  }
 }
 
 function Reasons({ rows, anchor }: { rows: SignalCount[]; anchor: number }) {
+  const { t } = useTranslation();
   if (rows.length === 0) return null;
   const max = Math.max(...rows.map((r) => r.count), 1);
   return (
     <div className="rb-reasons">
       <div className="rb-reasons-head">
-        <h3>Why your policy condemned them</h3>
-        <span className="rb-of">of {plural(anchor, "title", "titles")}</span>
+        <h3>{t("reapPlan.breakdown.reasonsHeading")}</h3>
+        <span className="rb-of">
+          {t("reapPlan.breakdown.reasonsOf", { n: anchor, count: count(anchor) })}
+        </span>
       </div>
       {rows.map((r) => (
         <div className="rb-bar" key={r.id}>
@@ -52,9 +60,7 @@ function Reasons({ rows, anchor }: { rows: SignalCount[]; anchor: number }) {
           <span className="rb-rn">{count(r.count)}</span>
         </div>
       ))}
-      <p className="rb-note">
-        Titles usually trip more than one, so these overlap and add up to more than the total.
-      </p>
+      <p className="rb-note">{t("reapPlan.breakdown.reasonsOverlap")}</p>
     </div>
   );
 }
@@ -68,6 +74,7 @@ export function ReapBreakdown({
   /** Jump to the Review queue, where per-title decisions are made. */
   onGoToReview: () => void;
 }) {
+  const { t } = useTranslation();
   const { data, isPending, isError } = useQuery({
     queryKey: ["reap-breakdown"],
     queryFn: api.reapBreakdown,
@@ -99,7 +106,7 @@ export function ReapBreakdown({
     onSuccess: (started) => queryClient.setQueryData(["scanStatus"], started),
   });
 
-  if (isPending) return <p className="muted">Loading…</p>;
+  if (isPending) return <p className="muted">{t("common.loading")}</p>;
   // An unreadable breakdown must never look like "nothing to reap": say we couldn't look,
   // in the amber tone, rather than rendering an empty ledger.
   //
@@ -115,19 +122,14 @@ export function ReapBreakdown({
   // above does not catch. Only the OTHER case, a failed refetch with a ledger still in hand, is
   // dropping anything, and it is the one this note is about.
   if (isError || !data) {
-    return (
-      <Notice tone="warn">
-        Couldn't load what a reap would remove. Reaper just can't show it right now. Reload to try
-        again.
-      </Notice>
-    );
+    return <Notice tone="warn">{t("reapPlan.breakdown.loadFailed")}</Notice>;
   }
 
   if (!data.has_snapshot) {
     return (
       <div className="reap-breakdown">
-        <div className="rb-head">What this reap removes</div>
-        <p className="rb-sub">No scan yet. Run one, and this shows what a reap would remove.</p>
+        <div className="rb-head">{t("reapPlan.breakdown.title")}</div>
+        <p className="rb-sub">{t("reapPlan.breakdown.noScan")}</p>
       </div>
     );
   }
@@ -158,39 +160,41 @@ export function ReapBreakdown({
   return (
     <div className="reap-breakdown">
       <div className="rb-headline">
-        <span className="rb-head">What this reap removes</span>
+        <span className="rb-head">{t("reapPlan.breakdown.title")}</span>
         <span className="rb-meta">
           {!allowanceUnknown && (
             <>
-              <strong>{count(reapCount)}</strong> {reapCount === 1 ? "title" : "titles"},{" "}
+              <Trans
+                i18nKey="reapPlan.breakdown.reapCountMeta"
+                values={{ n: reapCount, count: count(reapCount) }}
+                components={{ strong: <strong /> }}
+              />{" "}
             </>
           )}
           <strong>{bytes(data.will_reap_bytes)}</strong>
         </span>
       </div>
-      <p className="rb-sub">
-        Your policy's verdict from the last scan, with your own changes on top.
-      </p>
+      <p className="rb-sub">{t("reapPlan.breakdown.sub")}</p>
 
       {allowanceUnknown ? (
         <>
           {/* No reload advice (#195): this renders on the Reap page, above a plan the operator
               may have spent a queue's worth of Spare and Reap decisions arriving at. */}
           <Notice tone="warn">
-            Reaper couldn't check your unknown-size allowance, so it can't say how many titles this
-            reap removes. {plural(data.will_reap_unknown, "title", "titles")} on the list can't be
-            measured.
+            {t("reapPlan.breakdown.allowanceUnknown", {
+              n: data.will_reap_unknown,
+              count: count(data.will_reap_unknown),
+            })}
           </Notice>
           <Reasons rows={data.condemned_by} anchor={data.policy_condemned} />
         </>
       ) : reapCount === 0 ? (
         <p className="rb-empty">
-          A reap would remove nothing right now.
           {data.will_reap > 0
-            ? " Reaper couldn't measure any of the titles on the list, so it won't remove them."
+            ? t("reapPlan.breakdown.emptyMeasured")
             : data.policy_condemned > 0 && data.hand_spared > 0
-              ? " You've spared everything the last scan condemned."
-              : " The last scan condemned nothing."}
+              ? t("reapPlan.breakdown.emptySpared")
+              : t("reapPlan.breakdown.emptyNone")}
         </p>
       ) : (
         <>
@@ -198,20 +202,20 @@ export function ReapBreakdown({
             {overrides && (
               <>
                 <div className="rb-row">
-                  <span className="rb-lab">Condemned by your policy</span>
+                  <span className="rb-lab">{t("reapPlan.breakdown.condemnedByPolicy")}</span>
                   <span className="rb-n">{count(data.policy_condemned)}</span>
                   <span className="rb-sz">{bytes(data.policy_condemned_bytes)}</span>
                 </div>
                 {data.hand_spared > 0 && (
                   <div className="rb-row rb-spare">
-                    <span className="rb-lab">You spared by hand</span>
+                    <span className="rb-lab">{t("reapPlan.breakdown.handSpared")}</span>
                     <span className="rb-n">− {count(data.hand_spared)}</span>
-                    <span className="rb-sz">kept</span>
+                    <span className="rb-sz">{t("reapPlan.breakdown.kept")}</span>
                   </div>
                 )}
                 {data.hand_reaped > 0 && (
                   <div className="rb-row rb-add">
-                    <span className="rb-lab">You marked to reap by hand</span>
+                    <span className="rb-lab">{t("reapPlan.breakdown.handReaped")}</span>
                     <span className="rb-n">+ {count(data.hand_reaped)}</span>
                     <span className="rb-sz">{bytes(data.hand_reaped_bytes)}</span>
                   </div>
@@ -220,14 +224,18 @@ export function ReapBreakdown({
               </>
             )}
             <div className="rb-row rb-total">
-              <span className="rb-lab">Will be reaped</span>
+              <span className="rb-lab">{t("reapPlan.breakdown.willBeReaped")}</span>
               <span className="rb-n">{count(reapCount)}</span>
               <span className="rb-sz">{bytes(data.will_reap_bytes)}</span>
             </div>
           </div>
           <div className="rb-split">
-            {plural(movies, "movie", "movies")}, {plural(seasons, "TV season", "TV seasons")},
-            smallest first, test item first.
+            {t("reapPlan.breakdown.split", {
+              movies,
+              moviesCount: count(movies),
+              seasons,
+              seasonsCount: count(seasons),
+            })}
           </div>
 
           <Reasons rows={data.condemned_by} anchor={data.policy_condemned} />
@@ -251,61 +259,75 @@ export function ReapBreakdown({
           {/* Titles, not spares: the server counts the rows a scan would hand back, and one
               whole-show spare can be holding five condemned seasons. Calling those "5 spares"
               named a thing the operator has one of (rule 21). */}
-          <strong>
-            {plural(data.spares_expired, "title is", "titles are")} kept by{" "}
-            {data.spares_expired === 1 ? "a spare that expired" : "spares that expired"}.
-          </strong>{" "}
-          This reap won't remove {data.spares_expired === 1 ? "it" : "them"}. A new scan judges{" "}
-          {data.spares_expired === 1 ? "it" : "them"} again.{" "}
+          <Trans
+            i18nKey="reapPlan.breakdown.expiredSpares"
+            values={{ n: data.spares_expired, count: count(data.spares_expired) }}
+            components={{ strong: <strong /> }}
+          />{" "}
           <button
             className="link"
             onClick={() => startScan.mutate()}
             disabled={startScan.isPending || scanning}
           >
-            {scanning ? "Scanning…" : startScan.isPending ? "Starting…" : "Scan now"}
+            {scanning
+              ? t("common.scanning")
+              : startScan.isPending
+                ? t("common.starting")
+                : t("common.scanNow")}
           </button>
         </Notice>
       )}
       {/* Its own notice in the shared error tone, not red text inside the warning above:
           every action failure in the app reads the same way (rule 42). */}
       {data.spares_expired > 0 && startScan.isError && (
-        <Notice tone="error">The scan didn't start. Try again.</Notice>
+        <Notice tone="error">{t("reapPlan.breakdown.scanFailed")}</Notice>
       )}
       {data.hand_reaped_held > 0 && (
         <div className="rb-line">
           {/* "this reap", not "a scan": a scan never removes anything, and the Jobs page
               says exactly that in the same product ("A scan only reads. It cannot
               delete."). What holds these back is the reap this page is about (U-10). */}
-          {plural(data.hand_reaped_held, "reap you marked is", "reaps you marked are")} on hold, so
-          this reap won't remove {data.hand_reaped_held === 1 ? "it" : "them"} yet.{" "}
+          {t("reapPlan.breakdown.handReapedHeld", {
+            n: data.hand_reaped_held,
+            count: count(data.hand_reaped_held),
+          })}{" "}
           <button className="link" onClick={onGoToReview}>
-            See Review <span aria-hidden="true">→</span>
+            {t("reapPlan.breakdown.seeReview")}{" "}
+            <span className="dir-glyph" aria-hidden="true">
+              →
+            </span>
           </button>
         </div>
       )}
       {showUnmeasuredLine &&
         (holdsBackUnmeasured ? (
           <div className="rb-line">
-            {plural(data.will_reap_unknown, "title", "titles")} can't be measured, so Reaper won't
-            remove {data.will_reap_unknown === 1 ? "it" : "them"}.
+            {t("reapPlan.breakdown.unmeasuredHeld", {
+              n: data.will_reap_unknown,
+              count: count(data.will_reap_unknown),
+            })}
           </div>
         ) : (
           <div className="rb-line">
-            {plural(data.will_reap_unknown, "title", "titles")} can't be measured. These are only
-            removed within your unknown-size allowance.
+            {t("reapPlan.breakdown.unmeasuredAllowed", {
+              n: data.will_reap_unknown,
+              count: count(data.will_reap_unknown),
+            })}
           </div>
         ))}
       <div className="rb-line">
-        Warning your Plex users first? “Leaving Soon” is in{" "}
-        <button className="link" onClick={onGoToPlexSettings}>
-          Settings → Plex
-        </button>
-        .
+        <Trans
+          i18nKey="reapPlan.breakdown.plexNotice"
+          components={{ btn: <button className="link" onClick={onGoToPlexSettings} /> }}
+        />
       </div>
       <div className="rb-line">
-        To spare a title or change a decision, open the{" "}
+        {t("reapPlan.breakdown.reviewQueueLead")}{" "}
         <button className="link" onClick={onGoToReview}>
-          Review queue <span aria-hidden="true">→</span>
+          {t("reapPlan.breakdown.reviewQueue")}{" "}
+          <span className="dir-glyph" aria-hidden="true">
+            →
+          </span>
         </button>
       </div>
     </div>

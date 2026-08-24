@@ -28,22 +28,23 @@ return a protect-only field, so a condemn rule referencing one is not merely rej
 from __future__ import annotations
 
 import enum
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, assert_never
 
-from reaper.clock import humanize_days
 from reaper.engine.gates import (
     ABSTAIN,
     PROTECT,
     Facts,
     GateId,
     GateResult,
+    blocked_reason,
     history_shortfall,
     lifetime_shortfall,
 )
 from reaper.engine.observation import Known, Observation, Unknown
+from reaper.engine.reason import Reason
+from reaper.refusal import Refusal
 from reaper.text import fold
 
 
@@ -106,92 +107,22 @@ class ReachSpan(enum.StrEnum):
     (``Facts.days_since_added``)."""
 
 
-@dataclass(frozen=True, slots=True)
-class BarPhrases:
-    """How a rule's own number reads beside the value it was compared against.
-
-    Four phrases, not two, because the operators bracket their number differently:
-    ``gte`` fires *at* its number and ``lte`` stops *at* its number, so in each pair
-    only one side may claim "over" or "under" outright. Getting that wrong tells an
-    owner their file was over a bar it in fact sat exactly on.
-    """
-
-    gte_met: str
-    """value >= the number. Each phrase takes the number as ``{}``."""
-    gte_missed: str
-    """value < the number, strictly."""
-    lte_met: str
-    """value <= the number."""
-    lte_missed: str
-    """value > the number, strictly."""
-
-
-_DEFAULT_BARS = BarPhrases(
-    gte_met="at or over your {}",
-    gte_missed="under your {}",
-    lte_met="at or under your {}",
-    lte_missed="over your {}",
-)
-"""Exact on both sides, which is what a count needs: watcher and vote counts land
-*on* their number often, so only the strict side may say "over" or "under" flatly."""
-
-_BARS: dict[FieldType, BarPhrases] = {
-    # A span of time is "past" or "within" a window, never over or under it.
-    FieldType.DAYS: BarPhrases(
-        gte_met="past your {}",
-        gte_missed="within your {}",
-        lte_met="within your {}",
-        lte_missed="past your {}",
-    ),
-    # A size and a rating are continuous: landing exactly on the number does not
-    # happen the way a whole count does, so the plainer word is the honest one.
-    FieldType.BYTES: BarPhrases(
-        gte_met="over your {}",
-        gte_missed="under your {}",
-        lte_met="within your {}",
-        lte_missed="over your {}",
-    ),
-    FieldType.RATING_TENTHS: BarPhrases(
-        gte_met="over your {}",
-        gte_missed="under your {}",
-        lte_met="at or under your {}",
-        lte_missed="over your {}",
-    ),
+#: Which bar-phrase family a numeric field's rule number reads in. The phrases
+#: themselves live in the catalog (``why.bar.<family>.<side>``), four per family: ``gte``
+#: fires *at* its number and ``lte`` stops *at* its number, so in each pair only one side
+#: may claim "over" or "under" outright. Families exist because a span of time is "past" or
+#: "within" a window, a size or rating takes the plain continuous word, a count lands on
+#: its number often enough that only the strict side may say "over" flatly, and a season
+#: rule phrases the number as the seasons the owner keeps.
+_TYPE_FAMILY: dict[FieldType, str] = {
+    FieldType.DAYS: "days",
+    FieldType.BYTES: "bytes",
+    FieldType.RATING_TENTHS: "rating",
+    FieldType.COUNT: "count",
 }
 
-_SEASON_BARS = BarPhrases(
-    # "keep the last N" is an lte rule, so there the number really is the count kept.
-    # A gte rule sets where removal starts instead, and saying "you keep" of it would
-    # misstate the owner's own rule by one season.
-    gte_met="at or past the {} you set",
-    gte_missed="newer than the {} you set",
-    lte_met="within the {} you keep",
-    lte_missed="past the {} you keep",
-)
-
-
-def describe_season_rank(rank: float) -> str:
-    """A season's place, counting back from the newest season that has files.
-
-    Rank 1 is the *most recent* season with files on disk (see
-    ``clients.sonarr_stats.rank_seasons``), so it is the newest season and must never
-    be described as an old one. Callers supply the article and any suffix: "The newest
-    season" in a rule explanation, "the newest season on disk" in a signal.
-    """
-    place = int(rank)
-    if place <= 1:
-        return "newest season"
-    if place == 2:
-        return "second-newest season"
-    if place == 3:
-        return "third-newest season"
-    return f"{place}{_ordinal_suffix(place)}-newest season"
-
-
-def _ordinal_suffix(number: int) -> str:
-    if 11 <= number % 100 <= 13:
-        return "th"
-    return {1: "st", 2: "nd", 3: "rd"}.get(number % 10, "th")
+#: Per-field family overrides, ahead of the type map.
+_BAR_FAMILY: dict[str, str] = {"season_rank": "season"}
 
 
 #: How a lane reads to the person who chose it. The enum's own values ("condemn",
@@ -230,11 +161,7 @@ class FieldSpec:
     """One thing a user may write a condition about."""
 
     key: str
-    label: str
-    """What the UI shows. Carries the unit, because a bare number is how a rating
-    floor of 7.5 ends up compared against a Tomatometer of 96."""
 
-    help_text: str
     type: FieldType
     lanes: tuple[Lane, ...]
     ops: tuple[Op, ...]
@@ -248,9 +175,6 @@ class FieldSpec:
     rule. A stale rule saved before this filter still reads Absent and only ever leans
     toward keeping, so scoring is unaffected."""
 
-    unit_suffix: str = ""
-    """Rendered inside the input, so the unit cannot be misread."""
-
     multi: bool = False
     """The fact is a comma-joined list ("Horror, Comedy"), not one value. ``eq`` and
     ``in`` evaluate per element -- a multi-genre title could otherwise never equal any
@@ -258,32 +182,12 @@ class FieldSpec:
 
     # ---- How this field explains itself -----------------------------------
     # A label is a form caption ("Whitelisted"), and a caption is not a sentence. The
-    # why-panel has to say what Reaper found in words the owner would use, so each
-    # field carries its own phrasing rather than having the explanation glue the label
-    # to a raw operator key.
-
-    subject: str = ""
-    """What a text explanation calls this field. Defaults to ``label``; set it where
-    the caption will not take a verb ("On a protected list includes ...")."""
-
-    true_phrase: str = ""
-    false_phrase: str = ""
-    """The two things a boolean field can report. Both are written as statements of
-    the fact, because a rule that missed and a rule that matched on the opposite value
-    describe the same world, and only one wording keeps a miss from reading as though
-    the opposite were true."""
-
-    value_phrase: str = ""
-    """A numeric field's value in a sentence, with ``{}`` where the number goes
-    ("{} on disk"). ``person|people`` picks its side from the number itself."""
-
-    value_render: Callable[[float], str] | None = None
-    """Set where the number is not the thing to show. Season rank shows a place in an
-    order ("the newest season"), and printing the rank instead is how a panel ends up
-    calling the newest season an old one."""
-
-    bars: BarPhrases | None = None
-    """Overrides the phrasing of the rule's own number. Defaults by field type."""
+    # why-panel says what Reaper found in words the owner would use, so each field's
+    # phrasing lives in the catalog rather than the explanation gluing the label to a raw
+    # operator key: ``why.field.<key>`` (the sentence subject), ``why.check.<key>`` (the
+    # "could not check ..." noun phrase), ``why.cond_value.<key>`` per numeric field and
+    # ``why.cond_bool.<key>.true`` / ``.false`` per boolean one.
+    # ``test_review_chips.py`` fails on a registry key missing its entries.
 
     reach_span: ReachSpan | None = None
     """Set where the value is drawn from the watch mirror and is only an answer while
@@ -301,114 +205,58 @@ class FieldSpec:
 REGISTRY: tuple[FieldSpec, ...] = (
     FieldSpec(
         key="days_unwatched",
-        label="Days since anyone watched it",
-        help_text=(
-            "Counted from the last play. If it has never been played, it is counted "
-            "from whichever is later: when it was added, or the start of your watch "
-            "history. Never from 1970."
-        ),
         type=FieldType.DAYS,
-        unit_suffix="days",
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=NUMERIC_OPS,
         read=lambda f: f.days_observed_unwatched,
-        value_phrase="Not watched in {}",
     ),
     FieldSpec(
         key="size_bytes",
-        label="Size on disk",
-        help_text="How much space this file occupies.",
         type=FieldType.BYTES,
-        unit_suffix="GB",
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=NUMERIC_OPS,
         read=lambda f: f.size_bytes,
-        value_phrase="{} on disk",
     ),
     FieldSpec(
         key="recent_watchers",
-        label="People who watched it recently",
-        help_text=(
-            "How many different people have watched this within your popularity "
-            "window. Windowed on purpose: on a long-lived server almost everything "
-            "has been watched by someone, eventually, so an all-time count protects "
-            "nearly the whole library and the rule stops meaning anything. Only a "
-            "fraction of those items still have watchers in the last year, and that "
-            "is the number that tells you the title is still alive."
-        ),
         type=FieldType.COUNT,
-        unit_suffix="people",
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=NUMERIC_OPS,
         read=lambda f: f.distinct_watchers,
-        value_phrase="{} person|people watched it recently",
         reach_span=ReachSpan.POPULARITY_WINDOW,
     ),
     FieldSpec(
         key="watchers_all_time",
-        label="People who have ever watched it",
-        help_text=(
-            "Everyone who has ever watched this. It can only be used to keep a title, "
-            "never to remove one. Using it to remove things would make recent viewing "
-            "count for nothing."
-        ),
         type=FieldType.COUNT,
-        unit_suffix="people",
         # Protect only. This is the registry doing its job: an all-time watcher count
         # is a fine reason to KEEP something and a terrible reason to delete it, and
         # the lane list is what makes the latter unconstructable.
         lanes=(Lane.PROTECT,),
         ops=NUMERIC_OPS,
         read=lambda f: f.distinct_watchers_all_time,
-        value_phrase="{} person|people has|have ever watched it",
         reach_span=ReachSpan.ITEM_LIFETIME,
     ),
     FieldSpec(
         key="imdb_rating",
-        label="IMDb rating",
-        help_text=(
-            "Always pair this with a vote floor. An 8.3 drawn from a few hundred votes "
-            "is noise, not quality. Every library holds a few of them, and a rating "
-            "floor on its own would keep every one of them, forever."
-        ),
         type=FieldType.RATING_TENTHS,
-        unit_suffix="/10",
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=NUMERIC_OPS,
         read=lambda f: f.imdb_rating_tenths,
-        value_phrase="IMDb {}",
     ),
     FieldSpec(
         key="imdb_votes",
-        label="IMDb vote count",
-        help_text=(
-            "How many people rated it. A useful protection in its own right: a film "
-            "with a million votes is culturally significant even if nobody here has "
-            "watched it lately."
-        ),
         type=FieldType.COUNT,
-        unit_suffix="votes",
         lanes=(Lane.PROTECT,),
         ops=NUMERIC_OPS,
         read=lambda f: f.imdb_votes,
-        value_phrase="{} vote|votes on IMDb",
     ),
     FieldSpec(
         key="season_rank",
-        label="How far back the season is",
-        help_text=(
-            "The newest season on disk is 1, the one before it 2, and so on. Keeping the "
-            "last 2 seasons means 2 or less. Counted over seasons that actually hold "
-            "files, specials excluded, never from what Sonarr planned to download."
-        ),
         type=FieldType.COUNT,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         media_types=("tv",),
         ops=NUMERIC_OPS,
         read=lambda f: f.season_rank,
-        value_phrase="The {}",
-        value_render=describe_season_rank,
-        bars=_SEASON_BARS,
     ),
     FieldSpec(
         key="on_list",
@@ -417,62 +265,35 @@ REGISTRY: tuple[FieldSpec, ...] = (
         # -- tag, collection, watchlist, IMDb -- comes to keep or lean. The stored rules
         # that used to spell this ``on_curated_list`` are re-spelled by
         # ``policy_migrations.convert_list_protections``.
-        label="On one of your lists",
-        help_text="Matches a list by the name it has on Settings → Lists.",
         type=FieldType.TEXT,
         lanes=(Lane.PROTECT,),
         ops=TEXT_OPS,
         multi=True,
         read=lambda f: f.on_lists,
-        subject="List membership",
     ),
     FieldSpec(
         key="whitelisted",
-        label="On a list you curate yourself",
-        help_text=(
-            'A tag list, a Plex collection, or your watchlist. Use "On one of your '
-            'lists" to match one list by name; this is the yes/no over all of them.'
-        ),
         type=FieldType.BOOL,
         lanes=(Lane.PROTECT,),
         ops=BOOL_OPS,
         read=lambda f: f.is_whitelisted,
-        true_phrase="On a list you curate yourself",
-        false_phrase="Not on any list you curate yourself",
     ),
     FieldSpec(
         key="streaming_now",
-        label="Being watched right now",
-        help_text="Re-checked in the seconds before any delete, never only at scan time.",
         type=FieldType.BOOL,
         lanes=(Lane.PROTECT,),
         ops=BOOL_OPS,
         read=lambda f: f.is_streaming_now,
-        true_phrase="Someone is watching it right now",
-        false_phrase="Nobody is watching it right now",
     ),
     FieldSpec(
         key="requested",
-        label="Requested by a user",
-        help_text=(
-            "Whether someone asked for this through your requests app. If Reaper cannot "
-            "tell, because the requests app is unreachable or this title could not be "
-            "matched to a request, this is left unknown and never counts toward removal."
-        ),
         type=FieldType.BOOL,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=BOOL_OPS,
         read=lambda f: f.requested,
-        true_phrase="Someone requested this",
-        false_phrase="Nobody requested this",
     ),
     FieldSpec(
         key="genre",
-        label="Genre",
-        help_text=(
-            'The genres recorded for this title. Use "contains" to match one genre '
-            "within a title that has several (for example, contains Reality)."
-        ),
         type=FieldType.TEXT,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=TEXT_OPS,
@@ -481,13 +302,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         key="release_age",
-        label="Age since release",
-        help_text=(
-            "How long ago the title was released. Pairs well with how long it has gone "
-            "unwatched: old and untouched is a stronger case than either alone."
-        ),
         type=FieldType.DAYS,
-        unit_suffix="days",
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         # Movie-only, because ``season_scan.build_season_facts`` has no clean per-season
         # release date and writes Absent for every season. Offering it on a TV policy sold
@@ -497,16 +312,9 @@ REGISTRY: tuple[FieldSpec, ...] = (
         media_types=("movie",),
         ops=NUMERIC_OPS,
         read=lambda f: f.release_age_days,
-        value_phrase="Released {} ago",
     ),
     FieldSpec(
         key="quality",
-        label="File quality",
-        help_text=(
-            "The quality of the file on disk, as your library names it (for example "
-            'Bluray-1080p, SDTV). Use "contains" to match a resolution: contains 2160p '
-            "for 4K."
-        ),
         type=FieldType.TEXT,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         # Movie-only for the same reason as ``release_age``: a season mixes episode
@@ -517,20 +325,13 @@ REGISTRY: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         key="show_ended",
-        label="The show has ended",
-        help_text=(
-            "Whether the series has finished for good. An ended show will get no new "
-            "seasons to draw viewers back; a returning one still might. TV only."
-        ),
         type=FieldType.BOOL,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         media_types=("tv",),
         ops=BOOL_OPS,
         read=lambda f: f.show_ended,
-        true_phrase="The show has ended",
         # Known-false covers a show still airing and one that has not started yet, so
         # this says the show is not finished and claims nothing more than that.
-        false_phrase="The show is still going",
     ),
 )
 
@@ -580,20 +381,25 @@ class Condition:
         try:
             return BY_KEY[self.field]
         except KeyError:
-            raise ValueError(f'Unknown field "{self.field}".') from None
+            raise Refusal("error.policy.unknown_field", field=self.field) from None
 
     def validate_for(self, lane: Lane) -> None:
         spec = self.spec()
         if lane not in spec.lanes:
             allowed = _join_or([_LANE_HOME[x] for x in spec.lanes])
-            raise ValueError(
-                f'"{spec.label}" cannot be used to {_LANE_USE[lane]}. It only works as {allowed}.'
+            raise Refusal(
+                "error.policy.field_wrong_lane",
+                field=self.field,
+                use=_LANE_USE[lane],
+                allowed=allowed,
             )
         if self.op not in spec.ops:
             allowed = _join_or([f'"{_OP_NAME[o]}"' for o in spec.ops])
-            raise ValueError(
-                f'"{spec.label}" cannot be compared with "{_OP_NAME[self.op]}". '
-                f"It works with {allowed}."
+            raise Refusal(
+                "error.policy.field_wrong_operator",
+                field=self.field,
+                op=_OP_NAME[self.op],
+                allowed=allowed,
             )
         self._validate_value_type(spec)
 
@@ -625,16 +431,16 @@ class Condition:
         value = self.value
         if spec.type is FieldType.BOOL:
             if not isinstance(value, bool):
-                raise ValueError(f'"{spec.label}" expects true or false, got {value}.')
+                raise Refusal("error.policy.field_expects_bool", field=self.field, value=value)
         elif spec.type is FieldType.TEXT:
             if not isinstance(value, str):
-                raise ValueError(f'"{spec.label}" expects text, got {value}.')
+                raise Refusal("error.policy.field_expects_text", field=self.field, value=value)
             if not value.strip():
-                raise ValueError(f'"{spec.label}" needs a value.')
+                raise Refusal("error.policy.field_needs_value", field=self.field)
             if self.op is Op.IN and not _split_csv(value):
                 # A comma-only list ("," / " , ") survives the strip above but splits to
                 # nothing, which is the same never-matches protection by another spelling.
-                raise ValueError(f'"{spec.label}" needs at least one value to match.')
+                raise Refusal("error.policy.field_needs_list_value", field=self.field)
             if self.op is Op.EQ and spec.multi and "," in value:
                 # The separator half, reached from the rule end. A multi-valued fact is one
                 # comma-joined string and ``_compare`` splits it back to test membership, so
@@ -643,14 +449,11 @@ class Condition:
                 # nothing. ``list_config._clean_name`` refuses the separator where the name
                 # is TYPED, which is where an operator can act on it; this is the boundary a
                 # hand-written body or an imported policy comes through (rule 108).
-                raise ValueError(
-                    f'"{spec.label}" can\'t match a value with a comma in it. '
-                    "Reaper separates values with one, so pick a single one."
-                )
+                raise Refusal("error.policy.field_value_has_comma", field=self.field)
         # Numeric field types (days, bytes, count, rating tenths). bool is an int
         # subclass in Python, so it must be rejected explicitly.
         elif isinstance(value, bool) or not isinstance(value, int):
-            raise ValueError(f'"{spec.label}" expects a whole number, got {value}.')
+            raise Refusal("error.policy.field_expects_number", field=self.field, value=value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -658,11 +461,13 @@ class ConditionResult:
     matched: bool
     blocked: bool
     """The field was Unknown, so the condition could not be evaluated."""
-    detail: str
+    detail: Reason
 
 
-def reach_shortfall(spec: FieldSpec | None, facts: Facts, *, window_days: int | None) -> str | None:
-    """Why the watch mirror cannot support this field's value, in the operator's words.
+def reach_shortfall(
+    spec: FieldSpec | None, facts: Facts, *, window_days: int | None
+) -> Reason | None:
+    """Why the watch mirror cannot support this field's value, as a typed reason.
 
     ``None`` when it can, and for every field the mirror does not bound. The one place
     the two watcher counts are qualified, so the protect lane, the condemn lane, the
@@ -690,7 +495,7 @@ def reach_shortfall(spec: FieldSpec | None, facts: Facts, *, window_days: int | 
     match spec.reach_span:
         case ReachSpan.POPULARITY_WINDOW:
             if window_days is None:
-                return "this scan did not record the window the count covers"
+                return Reason("cause.window_not_recorded")
             return history_shortfall(facts.history_reach_days, float(window_days))
         case ReachSpan.ITEM_LIFETIME:
             # Through the shared helper, which the season path's keep-rule conflict
@@ -766,7 +571,7 @@ def evaluate(
         return ConditionResult(
             matched=False,
             blocked=True,
-            detail=f"could not check {spec.label.lower()}: {observation.reason}",
+            detail=blocked_reason(spec.key, observation.reason),
         )
 
     if not isinstance(observation, Known):
@@ -775,7 +580,7 @@ def evaluate(
         return ConditionResult(
             matched=False,
             blocked=False,
-            detail=f"{spec.label}: none recorded",
+            detail=Reason("none_recorded", {"field": spec.key}),
         )
 
     value = observation.value
@@ -794,7 +599,7 @@ def evaluate(
         return ConditionResult(
             matched=False,
             blocked=True,
-            detail=f"could not check {spec.label.lower()}: {exc}",
+            detail=blocked_reason(spec.key, Reason("cause.error", {"text": str(exc)})),
         )
 
     # A Known value the evidence cannot actually carry. Checked AFTER the comparison
@@ -810,7 +615,7 @@ def evaluate(
         return ConditionResult(
             matched=False,
             blocked=True,
-            detail=f"could not check {spec.label.lower()}: {short}",
+            detail=blocked_reason(spec.key, short),
         )
 
     return ConditionResult(matched=matched, blocked=False, detail=detail)
@@ -868,46 +673,7 @@ def _num(value: object) -> float:
         return float(value)
     if isinstance(value, int | float):
         return float(value)
-    raise ValueError(f'"{value}" is not a number.')
-
-
-def _render(spec: FieldSpec, value: object) -> str:
-    """Human units. A bare number is how a rating floor meets a Tomatometer."""
-    match spec.type:
-        case FieldType.RATING_TENTHS:
-            return f"{_num(value) / 10:.1f}"
-        case FieldType.BYTES:
-            return f"{_num(value) / 1_000_000_000:.1f} GB"
-        case FieldType.DAYS:
-            # The same spelling the built-in signals use. One panel showing "900 days"
-            # beside "2 years, 5 months" reads as two different measurements. This is
-            # for a *measured* value only; a rule's own number goes through
-            # :func:`_render_bar`, which says why.
-            return humanize_days(_num(value))
-        case FieldType.COUNT:
-            return f"{_num(value):,.0f}"
-        case _:
-            return str(value)
-
-
-def _render_bar(spec: FieldSpec, target: object) -> str:
-    """A rule's own number, in the units the owner typed it in.
-
-    Deliberately not :func:`_render`. Humanizing a measured day count saves the reader
-    dividing 900 by 365, but humanizing the rule's number too rounds both sides into
-    the same phrase: :func:`reaper.clock.humanize_days` keeps two units and buckets
-    months in 30-day steps, so a rule at 400 days against a title at 396 would read
-    "Not watched in 1 year, 1 month, within your 1 year, 1 month" -- a line claiming
-    the value sits under a number it prints as equal to itself, on exactly the
-    marginal titles someone checks hardest before approving a deletion.
-
-    The editor already shows this field with "days" beside the box
-    (``FieldSpec.unit_suffix``), so echoing the typed number back is what they expect.
-    """
-    if spec.type is FieldType.DAYS:
-        days = _num(target)
-        return f"{days:,.0f} day" if abs(days) == 1 else f"{days:,.0f} days"
-    return _render(spec, target)
+    raise Refusal("error.policy.value_not_numeric", value=str(value))
 
 
 # ---------------------------------------------------------------------------
@@ -923,13 +689,14 @@ def _render_bar(spec: FieldSpec, target: object) -> str:
 
 def _explain(
     spec: FieldSpec, op: Op, value: object, target: int | str | bool, *, matched: bool
-) -> str:
+) -> Reason:
     match spec.type:
         case FieldType.BOOL:
             # The fact, never the comparison. "eq false" that matched and "eq true"
             # that missed describe the same world, and stating the fact is the only
-            # wording where a miss cannot be read as the opposite being true.
-            return spec.true_phrase if value else spec.false_phrase
+            # wording where a miss cannot be read as the opposite being true. One catalog
+            # entry per field and side (``why.cond_bool.<key>.true`` / ``.false``).
+            return Reason(f"cond_bool.{spec.key}.{'true' if value else 'false'}")
         case FieldType.TEXT:
             return _explain_text(spec, op, value, target, matched=matched)
         case _:
@@ -938,61 +705,79 @@ def _explain(
 
 def _explain_text(
     spec: FieldSpec, op: Op, value: object, target: int | str | bool, *, matched: bool
-) -> str:
-    subject = spec.subject or spec.label
+) -> Reason:
+    """The subject slot resolves to ``why.field.<key>`` in the catalog; the operator's own
+    values ride as verbatim params, since they are the operator's spelling, not copy."""
+    field_id = spec.key
     wanted = str(target).strip()
     match op:
         case Op.CONTAINS:
             # A substring test, over the whole value even where it is a list.
-            if matched:
-                return f"{subject} contains {wanted}"
-            return f"{subject} does not contain {wanted}"
+            kind = "contains" if matched else "not_contains"
+            return Reason(f"cond_text.{kind}", {"field": field_id, "wanted": wanted})
         case Op.EQ if spec.multi:
             # eq on a list is per element, so it is an "includes", not an "is".
-            if matched:
-                return f"{subject} includes {wanted}"
-            return f"{subject} does not include {wanted}"
+            kind = "includes" if matched else "not_includes"
+            return Reason(f"cond_text.{kind}", {"field": field_id, "wanted": wanted})
         case Op.EQ:
             if matched:
-                return f"{subject} is {value}"
-            return f"{subject} is {value}, not {wanted}"
+                return Reason("cond_text.is", {"field": field_id, "value": str(value)})
+            return Reason(
+                "cond_text.is_not", {"field": field_id, "value": str(value), "wanted": wanted}
+            )
         case Op.IN if spec.multi:
             if not matched:
-                return f"{subject} is none of {_listed(wanted)}"
+                return Reason("cond_text.none_of", {"field": field_id, "list": _listed(wanted)})
             # Name what actually matched. Printing the whole list the rule offered
             # leaves the owner to work out which part of it fired.
-            return f"{subject} includes {_shared(str(value), wanted) or _listed(wanted)}"
+            return Reason(
+                "cond_text.includes",
+                {"field": field_id, "wanted": _shared(str(value), wanted) or _listed(wanted)},
+            )
         case _:
             # Matched names what matched; missed names what the rule wanted. Repeating
             # the whole list back on a match leaves the owner to spot which part fired,
             # and the value is already the answer.
             if matched:
-                return f"{subject} is {value}"
-            return f"{subject} is {value}, not one of {_listed(wanted)}"
+                return Reason("cond_text.is", {"field": field_id, "value": str(value)})
+            return Reason(
+                "cond_text.is_not_one_of",
+                {"field": field_id, "value": str(value), "list": _listed(wanted)},
+            )
 
 
 def _explain_number(
     spec: FieldSpec, op: Op, value: object, target: int | str | bool, *, matched: bool
-) -> str:
-    number = _num(value)
-    shown = spec.value_render(number) if spec.value_render else _render(spec, value)
-    phrase = (
-        spec.value_phrase.format(shown)
-        if spec.value_phrase
-        else f"{spec.subject or spec.label}: {shown}"
-    )
-    phrase = _plural(phrase, number)
+) -> Reason:
+    """Value clause plus bar clause, each its own catalog entry.
 
-    bars = spec.bars or _BARS.get(spec.type, _DEFAULT_BARS)
+    The value clause is per field (``why.cond_value.<key>``), so each field keeps its own
+    phrasing and units. The bar clause is per family and operator side
+    (``why.bar.<family>.<gte_met|gte_missed|lte_met|lte_missed>``): four phrases, not two,
+    because the operators bracket their number differently -- ``gte`` fires *at* its number
+    and ``lte`` stops *at* its number, so in each pair only one side may claim "over" or
+    "under" outright. The catalog's day-family bar echoes the typed number back in days
+    rather than humanizing it: humanizing both sides rounds them into the same phrase, and
+    a rule at 400 days against a title at 396 would read as sitting under a number printed
+    equal to itself.
+    """
+    value_clause = Reason(f"cond_value.{spec.key}", {"value": _num(value)})
     match op:
         case Op.GTE:
-            bar = bars.gte_met if matched else bars.gte_missed
+            bar = "gte_met" if matched else "gte_missed"
         case Op.LTE:
-            bar = bars.lte_met if matched else bars.lte_missed
+            bar = "lte_met" if matched else "lte_missed"
         case _:  # pragma: no cover -- a numeric field accepts no other operator
             # Nothing to say about a bar we have no phrasing for, so claim nothing.
-            return phrase
-    return f"{phrase}, {bar.format(_render_bar(spec, target))}"
+            return value_clause
+    family = _BAR_FAMILY.get(spec.key) or _TYPE_FAMILY.get(spec.type, "count")
+    return Reason(
+        "cond_number",
+        {
+            "value": value_clause,
+            "bar": Reason(f"bar.{family}.{bar}", {"target": _num(target)}),
+        },
+    )
 
 
 def _listed(target: str) -> str:
@@ -1005,19 +790,6 @@ def _shared(value: str, target: str) -> str:
     way the library spells them."""
     wanted = set(_split_csv(target))
     return ", ".join(part for part in _split_raw(value) if part.casefold() in wanted)
-
-
-_ALTERNATIVES = re.compile(r"(\w+)\|(\w+)")
-
-
-def _plural(phrase: str, count: float) -> str:
-    """Resolve ``person|people`` alternatives in a phrase against the number in it.
-
-    Cheaper than a phrase per field, and it keeps "1 person watched it" out of the
-    "1 people" territory that makes an explanation look machine-written.
-    """
-    singular = abs(count) == 1
-    return _ALTERNATIVES.sub(lambda m: m.group(1) if singular else m.group(2), phrase)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1045,5 +817,9 @@ class CustomProtectGate:
         if result.blocked:
             return GateResult(self.id, ABSTAIN, blocked=True, detail=result.detail)
         if result.matched:
-            return GateResult(self.id, PROTECT, detail=f"your rule: {result.detail}")
-        return GateResult(self.id, ABSTAIN, detail=f"checked your rule: {result.detail}")
+            return GateResult(
+                self.id, PROTECT, detail=Reason("custom_fired", {"cond": result.detail})
+            )
+        return GateResult(
+            self.id, ABSTAIN, detail=Reason("custom_checked", {"cond": result.detail})
+        )

@@ -471,8 +471,7 @@ function showSeason(): Candidate {
     group_title: "Example Show",
     video_resolution: null,
     library: null,
-    dormant_for: null,
-    reason: null,
+    dormant_days: null,
     override: null,
     override_own: null,
     show_override: null,
@@ -483,6 +482,7 @@ function showSeason(): Candidate {
     chip: null,
     show_status: null,
     season_number: 3,
+    collections: null,
   };
 }
 
@@ -515,7 +515,6 @@ const GROUP: Group = {
   summary: null,
   size_bytes: 1024 ** 3,
   unknown_size_seasons: 0,
-  reason: null,
   library: null,
   chip: null,
   show_override: null,
@@ -622,10 +621,7 @@ const VOCAB: Vocabulary = {
   fields: [
     {
       key: "release_age",
-      label: "Age since release",
-      help_text: "How long ago the title was released.",
       type: "days",
-      unit_suffix: "days",
       ops: ["gte", "lte"],
     },
   ],

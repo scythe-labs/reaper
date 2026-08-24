@@ -19,31 +19,20 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
-import { api, type PlexResourceConnection, type SetupStatus } from "../api";
+import { api, type SetupStatus } from "../api";
+import { describeError } from "../errors";
 import { invalidateAllPlex } from "../plexServerQueries";
 import { usePlexLibraries } from "../usePlexLibraries";
 import { Notice } from "./Notice";
 import { StaleReadNotice } from "./StaleReadNotice";
-import { ServerPickList, usePlexPinPoll } from "./PlexPin";
+import { MANUAL_CONNECTION, ServerPickList, connectionLabel, usePlexPinPoll } from "./PlexPin";
 import { StepCard } from "./SetupStepper";
 import { Switch } from "./Switch";
 
-/** What a discovered address is called in the list. The same shape `PlexPanel`'s own
- *  `connectionLabel` builds, so an address reads the same in both places. */
-function connectionLabel(c: PlexResourceConnection): string {
-  const kind = c.relay ? "Relay" : c.local ? "Local" : "Remote";
-  let host = c.uri.replace(/^https?:\/\//, "");
-  const direct = /^(\d+)-(\d+)-(\d+)-(\d+)\.[0-9a-f]+\.plex\.direct(:\d+)?$/i.exec(host);
-  if (direct) host = `${direct[1]}.${direct[2]}.${direct[3]}.${direct[4]}${direct[5] ?? ""}`;
-  return `${kind}, ${host}${c.protocol === "https" ? ", secure" : ""}`;
-}
-
-/** The sentinel the connection select uses for "let me type one". Not a URI, so it can never
- *  collide with a discovered address. */
-const MANUAL = "__manual__";
-
 export function SetupPlexStep({ setup, onNext }: { setup: SetupStatus; onNext: () => void }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const linked = setup.plex_linked;
   const [error, setError] = useState<string | null>(null);
@@ -63,12 +52,12 @@ export function SetupPlexStep({ setup, onNext }: { setup: SetupStatus; onNext: (
     poll: (pinId, machineId) => api.plexLinkPoll(pinId, machineId),
     onOk: () => {
       setLinking(false);
-      announce("Plex connected.");
+      announce(t("setup.plex.announceConnected"));
       void refreshPlex();
     },
     onTimedOut: () => {
       setLinking(false);
-      setError("The sign-in wasn't approved in time. Try again.");
+      setError(t("setup.plex.signInTimeoutError"));
     },
     onFailed: (message) => {
       setLinking(false);
@@ -86,20 +75,17 @@ export function SetupPlexStep({ setup, onNext }: { setup: SetupStatus; onNext: (
       setLinking(true);
       pin.begin(start.pin_id);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't start the Plex sign-in.");
+      setError(e instanceof Error ? describeError(e) : t("setup.plex.signInStartError"));
     }
   };
 
   return (
-    <StepCard step="plex" title="Connect Plex">
+    <StepCard step="plex" title={t("setup.plex.title")}>
       {linked ? (
         <PlexLinked onError={setError} />
       ) : pin.servers ? (
         <>
-          <p className="blurb">
-            This account owns more than one Plex server. Reaper will only ever scan and prune the
-            one you pick.
-          </p>
+          <p className="blurb">{t("plex.chooseServer.help")}</p>
           <div className="server-pick">
             <ServerPickList
               servers={pin.servers}
@@ -113,16 +99,13 @@ export function SetupPlexStep({ setup, onNext }: { setup: SetupStatus; onNext: (
         </>
       ) : (
         <>
-          <p className="blurb">
-            Reaper checks nobody is watching before it removes a file, and that check runs through
-            Plex. Without it Reaper can scan, but it will not remove anything.
-          </p>
+          <p className="blurb">{t("setup.plex.readOnlyBlurb")}</p>
           {linking ? (
             <div className="plex-waiting">
               <span className="spinner" aria-hidden="true" />
               <div>
-                <strong>Waiting for Plex…</strong>
-                <p className="muted">{pin.retrying ?? "Approve the sign-in in the Plex window."}</p>
+                <strong>{t("plex.waitingForPlex")}</strong>
+                <p className="muted">{pin.retrying ?? t("plex.waiting.approveNoLink")}</p>
               </div>
               <button
                 className="link"
@@ -131,15 +114,15 @@ export function SetupPlexStep({ setup, onNext }: { setup: SetupStatus; onNext: (
                   setLinking(false);
                 }}
               >
-                Cancel
+                {t("common.cancel")}
               </button>
             </div>
           ) : (
             <>
               <button className="btn-plex" onClick={() => void startLink()}>
-                Sign in with Plex
+                {t("login.plexButton.signIn")}
               </button>
-              <p className="help">Opens plex.tv. Reaper only accepts the owner of the server.</p>
+              <p className="help">{t("setup.plex.signInHelp")}</p>
             </>
           )}
         </>
@@ -158,25 +141,21 @@ export function SetupPlexStep({ setup, onNext }: { setup: SetupStatus; onNext: (
             would offer to abandon work already done. */}
         {!linked && (
           <button className="ghost" onClick={onNext}>
-            Skip for now
+            {t("setup.actions.skipForNow")}
           </button>
         )}
         <button className="primary btn-lg" onClick={onNext}>
-          Continue
+          {t("setup.actions.continue")}
         </button>
       </div>
-      {!linked && (
-        <p className="help">
-          Skip and Reaper still scans and shows you what it would remove. It will not be able to
-          remove anything until Plex is connected.
-        </p>
-      )}
+      {!linked && <p className="help">{t("setup.plex.skipHelp")}</p>}
     </StepCard>
   );
 }
 
 /** The linked state: who is signed in, which server and address, and which libraries. */
 function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const status = useQuery({ queryKey: ["plex"], queryFn: api.plexStatus });
   const resources = useQuery({ queryKey: ["plex-resources"], queryFn: api.plexResources });
@@ -194,6 +173,7 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
   const servers = resources.data?.servers ?? [];
   const current = servers.find((s) => s.current);
   const savedUri = status.data?.connection_uri ?? "";
+  const signedInName = current?.name ?? status.data?.name ?? null;
 
   const switchServer = useMutation({
     mutationFn: (machineId: string) => api.plexSwitchServer(machineId),
@@ -203,7 +183,7 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
       onError(null);
       invalidateAllPlex(queryClient);
     },
-    onError: (e: Error) => onError(e.message),
+    onError: (e) => onError(describeError(e)),
   });
   const setConnection = useMutation({
     mutationFn: (uri: string) => api.plexSetConnection(uri),
@@ -212,12 +192,12 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
       setManualOpen(false);
       await queryClient.invalidateQueries({ queryKey: ["plex"] });
     },
-    onError: (e: Error) => onError(e.message),
+    onError: (e) => onError(describeError(e)),
   });
   const setLibraries = useMutation({
     mutationFn: (keys: number[]) => api.setPlexLibraries(keys),
     onSuccess: (libs) => queryClient.setQueryData(["plex-libraries"], libs),
-    onError: (e: Error) => onError(e.message),
+    onError: (e) => onError(describeError(e)),
   });
 
   /** The one URI the three manual boxes compose. A blank host saves nothing, and a blank port
@@ -243,24 +223,25 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
           ✓
         </span>
         <span className="who-name">
-          Signed in
-          {current ? ` to ${current.name}` : status.data?.name ? ` to ${status.data.name}` : ""}
+          {signedInName
+            ? t("setup.plex.signedInTo", { name: signedInName })
+            : t("setup.plex.signedIn")}
         </span>
-        <span className="who-sub">{savedUri || "Looking for an address…"}</span>
+        <span className="who-sub">{savedUri || t("setup.plex.lookingForAddress")}</span>
       </div>
 
       {/* Two picks, and only one of them is always worth showing. A one-server account never
           sees a select it cannot change; an account with a choice gets it opened. */}
       <details className="advanced" open={servers.length > 1}>
-        <summary>Server and address</summary>
+        <summary>{t("setup.plex.serverAndAddressSummary")}</summary>
         <div className="service-form">
           {servers.length > 1 && (
             <label className="field-sm">
-              <span className="field-label">Server</span>
+              <span className="field-label">{t("plex.serverField.label")}</span>
               <span className="pick-row">
                 <select
                   value={current?.machine_identifier ?? ""}
-                  aria-label="Server"
+                  aria-label={t("plex.serverField.label")}
                   disabled={switchServer.isPending}
                   onChange={(e) => {
                     if (e.target.value && e.target.value !== current?.machine_identifier) {
@@ -280,23 +261,21 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
                   disabled={resources.isFetching}
                   onClick={() => void resources.refetch()}
                 >
-                  {resources.isFetching ? "Refreshing…" : "Refresh"}
+                  {resources.isFetching ? t("common.refreshing") : t("common.refresh")}
                 </button>
               </span>
-              <span className="help">
-                Plex servers this account can manage. Reaper works with one at a time.
-              </span>
+              <span className="help">{t("plex.server.help")}</span>
             </label>
           )}
 
           <label className="field-sm">
-            <span className="field-label">Connection</span>
+            <span className="field-label">{t("plex.connectionField.label")}</span>
             <select
-              value={manualOpen ? MANUAL : savedUri}
-              aria-label="Connection"
+              value={manualOpen ? MANUAL_CONNECTION : savedUri}
+              aria-label={t("plex.connectionField.label")}
               disabled={setConnection.isPending}
               onChange={(e) => {
-                if (e.target.value === MANUAL) setManualOpen(true);
+                if (e.target.value === MANUAL_CONNECTION) setManualOpen(true);
                 else {
                   setManualOpen(false);
                   if (e.target.value !== savedUri) setConnection.mutate(e.target.value);
@@ -309,26 +288,25 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
                 </option>
               ))}
               {savedUri && !(current?.connections ?? []).some((c) => c.uri === savedUri) && (
-                <option value={savedUri}>Manual, {savedUri.replace(/^https?:\/\//, "")}</option>
+                <option value={savedUri}>
+                  {t("plex.connection.manualOption", { uri: savedUri.replace(/^https?:\/\//, "") })}
+                </option>
               )}
-              <option value={MANUAL}>Manual address…</option>
+              <option value={MANUAL_CONNECTION}>{t("plex.connection.manualAddressOption")}</option>
             </select>
-            <span className="help">
-              How Reaper reaches the server. A local address is usually faster, remote works from
-              anywhere. Pick "Manual address" to type your own.
-            </span>
+            <span className="help">{t("plex.connectionField.help")}</span>
           </label>
 
           {manualOpen && (
             <div className="field-sm">
-              <span className="field-label">Manual address</span>
+              <span className="field-label">{t("plex.manualAddress.label")}</span>
               <div className="manual-row">
                 <span className="m-host">
                   <input
                     type="text"
                     value={host}
-                    placeholder="192.168.1.10"
-                    aria-label="Manual address, hostname or IP"
+                    placeholder={t("setup.plex.manualAddressPlaceholder")}
+                    aria-label={t("setup.plex.manualAddressAriaLabel")}
                     onChange={(e) => setHost(e.target.value)}
                   />
                 </span>
@@ -337,13 +315,17 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
                     type="text"
                     value={port}
                     inputMode="numeric"
-                    aria-label="Manual address, port"
+                    aria-label={t("setup.plex.manualPortAriaLabel")}
                     onChange={(e) => setPort(e.target.value.replace(/[^0-9]/g, "").slice(0, 5))}
                   />
                 </span>
                 <label className="toggle">
-                  <Switch checked={ssl} onChange={setSsl} ariaLabel="Use SSL" />
-                  <span>SSL</span>
+                  <Switch
+                    checked={ssl}
+                    onChange={setSsl}
+                    ariaLabel={t("plex.manualAddress.useSslLabel")}
+                  />
+                  <span>{t("plex.manualAddress.sslShort")}</span>
                 </label>
                 <button
                   type="button"
@@ -351,42 +333,43 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
                   disabled={manualUri() === "" || setConnection.isPending}
                   onClick={() => setConnection.mutate(manualUri())}
                 >
-                  {setConnection.isPending ? "Saving…" : "Save"}
+                  {setConnection.isPending ? t("common.saving") : t("common.save")}
                 </button>
               </div>
               {/* What would actually be stored, so it is never a guess. */}
               <span className="help manual-uri">
-                {manualUri() || "Enter a hostname or IP address."}
+                {manualUri() || t("setup.plex.manualUriPlaceholderHelp")}
               </span>
             </div>
           )}
         </div>
       </details>
 
-      <h3 style={{ marginTop: "1.1rem" }}>Libraries</h3>
-      <p className="blurb">
-        The libraries Reaper may touch in Plex. Leaving Soon shelves are managed only in libraries
-        you turn on. This doesn't change what gets scanned: scanning reads from Radarr and Sonarr.
-      </p>
+      <h3 style={{ marginTop: "1.1rem" }}>{t("plex.librariesGroup.heading")}</h3>
+      <p className="blurb">{t("plex.librariesGroup.blurb")}</p>
       {libraries.isPending || syncLibraries.isPending ? (
-        <p className="muted">Loading libraries…</p>
+        <p className="muted">{t("plex.libraries.loading")}</p>
       ) : libraries.isError && !libraries.data ? (
-        <Notice tone="error">Couldn't load the library list.</Notice>
+        <Notice tone="error">{t("plex.libraries.loadError")}</Notice>
       ) : syncLibraries.isError && libs.length === 0 ? (
         /* The read landed empty and the sync that would fill it failed, which is what an
            unlinked or unreachable Plex answers. Without this the step drew an empty grid and
            said nothing at all, so "no libraries" and "we never got to look" were the same
            picture (rule 17/36, rule 93). */
-        <Notice tone="error">Couldn't load the library list. Try again.</Notice>
+        <Notice tone="error">{t("plex.libraries.loadError")}</Notice>
       ) : (
         <>
-          {libraries.isError && <StaleReadNotice what="the library list" />}
+          {libraries.isError && <StaleReadNotice what={t("plex.stale.libraries")} />}
           <div className="lib-grid">
             {libs.map((l) => (
               <div key={l.key} className={l.enabled ? "lib-card" : "lib-card off"}>
                 <span>
                   {l.title}
-                  <span className="lib-kind">{l.kind === "movie" ? "movies" : "tv"}</span>
+                  <span className="lib-kind">
+                    {l.kind === "movie"
+                      ? t("plex.libraries.kindMovie")
+                      : t("plex.libraries.kindTv")}
+                  </span>
                 </span>
                 <Switch
                   checked={l.enabled}

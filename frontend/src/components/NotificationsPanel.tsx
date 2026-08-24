@@ -8,40 +8,17 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type RefObject, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { useSuccessorFocus } from "../focus";
-import { api, type InstanceTest } from "../api";
-import { TestBadge, testSentence } from "./ServiceModal";
+import { api } from "../api";
+import { describeError } from "../errors";
+import { TestBadge, useWebhookTest } from "./ServiceModal";
 import { StaleReadNotice } from "./StaleReadNotice";
 import { Notice } from "./Notice";
 
-/** Client-side twin of the server's webhook validation (reaper/api/settings.py). The token
- *  lives in the URL path, so a typo'd host would leak it to a stranger -- we only accept an
- *  https URL whose host is Discord's webhook endpoint (subdomains like ptb./canary. count)
- *  and whose path is a real /api/webhooks/ path. The server checks the same thing; this just
- *  spares a round-trip and gives an instant hint. */
-const DISCORD_WEBHOOK_HOSTS = ["discord.com", "discordapp.com"];
-
 /** The webhook box's format complaint, named once for both ends (rule 67). */
 const WEBHOOK_ERROR_ID = "discord-webhook-error";
-
-/** Exported so `DiscordModal` checks the format the same way this panel does. A second copy
- *  of these host and path rules would be one validator written twice, and the copy that drifts
- *  is the one that starts accepting a URL the backend then refuses (rule 18, rule 144). */
-export function isDiscordWebhook(raw: string): boolean {
-  let url: URL;
-  try {
-    url = new URL(raw.trim());
-  } catch {
-    return false;
-  }
-  if (url.protocol !== "https:") return false;
-  const host = url.hostname.toLowerCase();
-  const okHost =
-    DISCORD_WEBHOOK_HOSTS.includes(host) ||
-    DISCORD_WEBHOOK_HOSTS.some((h) => host.endsWith("." + h));
-  return okHost && url.pathname.startsWith("/api/webhooks/");
-}
 
 /** The Discord webhook is the only channel that actually warns your users before a title
  *  is deleted -- the Plex "Leaving Soon" label only reaches people who pinned the library. It
@@ -56,22 +33,25 @@ export function NotificationsPanel({
 }: {
   onDirtyChange?: ((dirty: boolean) => void) | undefined;
 } = {}) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data, isPending, isError } = useQuery({
     queryKey: ["notifications"],
     queryFn: api.notifications,
   });
   const [url, setUrl] = useState("");
-  // The result and the URL it was computed for, the same pairing `ServiceModal` keeps for its own
-  // badge (rule 72). Save, Remove and the Test button each cleared this, but EDITING the box did
-  // not, so a passed test then a pasted-over URL left "Passed" beside a webhook nobody had sent
-  // to (rule 85, #178).
-  const [test, setTest] = useState<{ result: InstanceTest; of: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  /** What the test was sent. A blank box tests the webhook already STORED, so blank is a real
-   *  value here and not an absence -- which is why this is the trimmed string rather than a
-   *  truthiness check. */
-  const testedWith = () => url.trim();
+  const connected = data?.has_webhook ?? false;
+  const {
+    typed,
+    validNew,
+    badFormat,
+    canTest,
+    test,
+    testedWith,
+    clearTest,
+    sendTest: testWebhook,
+  } = useWebhookTest(url, connected, (e) => setError(describeError(e)));
 
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ["notifications"] });
 
@@ -79,29 +59,14 @@ export function NotificationsPanel({
     mutationFn: () => api.setWebhook(url.trim()),
     onSuccess: () => {
       setUrl("");
-      setTest(null);
+      clearTest();
       setError(null);
       // Success here is the box emptying and a line above it flipping, both silent. The test
       // button between these two mutations already speaks (#192); these are its siblings.
-      announce("Discord webhook saved.");
+      announce(t("services.discord.savedAnnouncement"));
       invalidate();
     },
-    onError: (e: Error) => setError(e.message),
-  });
-  const testWebhook = useMutation({
-    // Test the URL typed in the box (the one about to be saved) if there is one; otherwise
-    // test the already-stored webhook, so a saved channel can be verified without re-pasting.
-    mutationFn: () => api.testWebhook(url.trim() ? url.trim() : null),
-    // What this request is ABOUT, captured when it is issued rather than computed at success
-    // time, the same as `ServiceModal`'s own test (rule 72). The box stays live while the request
-    // is out. `testedWith()` called at success would fingerprint whatever is typed by then, so a
-    // second webhook pasted mid-send gets "Passed" for a channel nobody tried (rule 85).
-    onMutate: () => ({ of: testedWith() }),
-    onSuccess: (r, _v, issued) => {
-      setTest({ result: r, of: issued.of });
-      announce(testSentence(r));
-    },
-    onError: (e: Error) => setError(e.message),
+    onError: (e) => setError(describeError(e)),
   });
   // Remove is the rule 72 twin of the API key's, and the harder half of the pair: removing the
   // webhook disables BOTH of the pressed button's siblings in the same breath -- Save wants a
@@ -113,20 +78,13 @@ export function NotificationsPanel({
     mutationFn: () => api.clearWebhook(),
     onSuccess: () => {
       setUrl("");
-      setTest(null);
+      clearTest();
       setError(null);
-      announce("Discord webhook removed. Leaving-soon warnings won't be sent.");
+      announce(t("services.discord.removedAnnouncement"));
       invalidate();
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e) => setError(describeError(e)),
   });
-
-  const connected = data?.has_webhook ?? false;
-  const typed = url.trim().length > 0;
-  const validNew = typed && isDiscordWebhook(url);
-  const badFormat = typed && !validNew;
-  // Test either the freshly typed URL (must be valid) or, when the box is empty, the stored one.
-  const canTest = (validNew || (!typed && connected)) && !testWebhook.isPending;
 
   // What this panel would LOSE, reported up to `Settings` so leaving the section can stop and ask
   // first. A pasted webhook is the costliest draft in Settings to drop: it is a secret, it is
@@ -145,13 +103,8 @@ export function NotificationsPanel({
 
   return (
     <div className="panel">
-      <h2>Notifications</h2>
-      <p className="blurb">
-        A Discord webhook is how Reaper warns your users before anything is deleted: while a title
-        is in its grace period it posts a "leaving soon" heads-up here, so someone can watch it or
-        spare it in time. It's optional, but it's the one warning that reaches people who don't
-        watch the Plex "Leaving Soon" shelf.
-      </p>
+      <h2>{t("services.notifications.heading")}</h2>
+      <p className="blurb">{t("services.notifications.blurb")}</p>
 
       {/* Whether the warning channel exists is only worth stating once it has been read:
           an unread answer must not claim that nobody is being warned.
@@ -171,29 +124,32 @@ export function NotificationsPanel({
           back to Discord for, and nothing anywhere in `frontend/src` asks first. That is the same
           harm #153 took off the shared line; this sentence is hand-written, so it kept it. */}
       {isPending ? (
-        <p className="muted">Checking whether Discord is connected…</p>
+        <p className="muted">{t("services.notifications.checking")}</p>
       ) : isError && !data ? (
-        <Notice tone="error">Couldn't check whether Discord is connected.</Notice>
+        <Notice tone="error">{t("services.notifications.checkError")}</Notice>
       ) : (
         <>
-          {isError && <StaleReadNotice what="whether Discord is connected" />}
+          {isError && <StaleReadNotice what={t("services.notifications.staleWhat")} />}
           {connected ? (
             <p className="muted">
               {/* The sentence says the state in words either way, so the tick would only
                   interrupt it with a stray character -- the same call `:1467`'s `.dot` ✓ makes
                   a few hundred lines above, and the one #177 made for the `.gate-mark` pair. */}
-              <span aria-hidden="true">✓</span> Discord connected. Leaving-soon warnings post to
-              your channel.
+              <span aria-hidden="true">✓</span> {t("services.notifications.connected")}
             </p>
           ) : (
-            <p className="muted">No Discord webhook set, so leaving-soon warnings won't be sent.</p>
+            <p className="muted">{t("services.notifications.notConnected")}</p>
           )}
         </>
       )}
 
+      {/* No language picker here. The one in Settings -> General sets what a notification is
+          written in as well as what the app is shown in, so this panel had a second answer to
+          a question that only has one. */}
+
       <div className="add-grid">
         <label className="field-sm wide">
-          <span className="field-label">Discord webhook URL</span>
+          <span className="field-label">{t("services.notifications.field.label")}</span>
           <input
             type="password"
             ref={afterWebhookRemove.ref as RefObject<HTMLInputElement>}
@@ -204,8 +160,8 @@ export function NotificationsPanel({
             }}
             placeholder={
               connected
-                ? "leave blank to keep the current webhook"
-                : "https://discord.com/api/webhooks/…"
+                ? t("services.notifications.field.placeholderEdit")
+                : t("services.notifications.field.placeholderAdd")
             }
             autoComplete="off"
             // The complaint renders after the whole button row, so in DOM order it is three
@@ -215,10 +171,7 @@ export function NotificationsPanel({
           />
         </label>
       </div>
-      <p className="help">
-        In Discord: Channel settings → Integrations → Webhooks → New Webhook → Copy Webhook URL.
-        It's a secret. Once saved it's encrypted and never shown again.
-      </p>
+      <p className="help">{t("services.notifications.field.help")}</p>
 
       <div className="add-actions">
         <button
@@ -230,7 +183,7 @@ export function NotificationsPanel({
             save.mutate();
           }}
         >
-          {save.isPending ? "Saving…" : "Save"}
+          {save.isPending ? t("common.saving") : t("common.save")}
         </button>
         <button
           type="button"
@@ -238,11 +191,13 @@ export function NotificationsPanel({
           disabled={!canTest}
           onClick={() => {
             setError(null);
-            setTest(null);
+            clearTest();
             testWebhook.mutate();
           }}
         >
-          {testWebhook.isPending ? "Testing…" : "Send test message"}
+          {testWebhook.isPending
+            ? t("services.common.testing")
+            : t("services.discord.sendTestButton")}
         </button>
         {connected && (
           <button
@@ -255,15 +210,14 @@ export function NotificationsPanel({
               remove.mutate();
             }}
           >
-            {remove.isPending ? "Removing…" : "Remove"}
+            {remove.isPending ? t("common.removing") : t("common.remove")}
           </button>
         )}
         <TestBadge result={test && test.of === testedWith() ? test.result : null} />
       </div>
       {badFormat && (
         <Notice tone="error" id={WEBHOOK_ERROR_ID}>
-          That doesn't look like a Discord webhook URL. Paste the full
-          https://discord.com/api/webhooks/… URL from the channel's integration settings.
+          {t("services.discord.badFormat")}
         </Notice>
       )}
       {error && <Notice tone="error">{error}</Notice>}

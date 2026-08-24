@@ -14,6 +14,11 @@ export default defineConfig({
     // afterEach, so globals stay on; tests still import their vitest helpers
     // explicitly for tsc's sake.
     globals: true,
+    // Worker threads rather than forked processes. Nothing here needs process isolation (no
+    // native modules, no `process.chdir`), and a fork costs more to start than a thread, paid
+    // once per test file. Measured 71s -> 57s for the suite at full width and 96s -> 85s at
+    // CI's four workers, all 1503 passing under both (docs/LEARNINGS.md, 2026-08-20).
+    pool: "threads",
     // Vitest's default is 5000ms, which is a developer's machine talking. A loaded CI runner
     // measured 2.3-13x slower than an unloaded local run of the same files, and on one such run
     // the slowest test crossed 5000ms and failed a commit that had nothing wrong with it. The

@@ -109,7 +109,8 @@
   align-items: center;
   gap: var(--space-xl);
   margin: 0 0 var(--space-xl);
-  padding: 0.55rem 0.6rem 0.55rem 0.85rem;
+  padding-block: 0.55rem;
+  padding-inline: 0.85rem 0.6rem;
   background: var(--accent-soft);
   border: 1px solid var(--accent-ring);
   border-radius: var(--radius);
@@ -147,7 +148,7 @@
   color: var(--muted);
 }
 .nudge-actions {
-  margin-left: auto;
+  margin-inline-start: auto;
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
@@ -218,7 +219,8 @@
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
-  padding: 0.42rem 0.85rem 0.42rem 0.7rem;
+  padding-block: 0.42rem;
+  padding-inline: 0.7rem 0.85rem;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-pill);
   background: var(--surface);
@@ -287,7 +289,7 @@ table {
   font-size: var(--text-base);
 }
 th {
-  text-align: left;
+  text-align: start;
   font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -312,7 +314,7 @@ tbody tr.selected {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 .num {
-  text-align: right;
+  text-align: end;
   font-variant-numeric: tabular-nums;
 }
 

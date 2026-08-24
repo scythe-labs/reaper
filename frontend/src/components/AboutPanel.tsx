@@ -7,9 +7,12 @@
 // update check is the shared `useUpdateStatus` the masthead chip's light reads, so that light and
 // the row here answer from one read rather than two that can disagree. The *pill* is local to this
 // file, which is why the note further down names all three surfaces apart.
+//
+// The copy lives in `locales/en/ui.json` under `about.*`.
 
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { api, type ReleaseChange } from "../api";
 import Markdown from "react-markdown";
 import { useUpdateStatus } from "../updateStatus";
@@ -19,60 +22,60 @@ import { StaleReadNotice } from "./StaleReadNotice";
 import { Notice } from "./Notice";
 
 export function AboutPanel() {
+  const { t } = useTranslation();
   const { data, isPending, isError } = useQuery({ queryKey: ["about"], queryFn: api.about });
   const update = useUpdateStatus();
   const [changesOpen, setChangesOpen] = useState(false);
 
   return (
     <div className="panel">
-      <h2>About</h2>
-      <p className="blurb">What's running, and where its data lives.</p>
+      <h2>{t("about.title")}</h2>
+      <p className="blurb">{t("about.blurb")}</p>
       {/* standing: which channel this build is on is a fact about the install, true on
           first paint and unchanged for the process's whole life -- page furniture, not a
           reaction to anything pressed. */}
       {update.data?.channel === "dev" && (
         <Notice tone="warn" standing>
-          You are running a <code>dev</code> build of Reaper. It changes daily and can break; use a
-          release unless you are helping test.
+          <Trans i18nKey="about.devBuildWarning" components={{ code: <code /> }} />
         </Notice>
       )}
-      {isPending && <p className="muted">Loading…</p>}
+      {isPending && <p className="muted">{t("common.loading")}</p>}
       {/* Two cases, not one. React Query keeps the last good row through a failed refetch and
           raises isError beside it, so an undivided `isError` printed "couldn't load this page"
           directly above the fully drawn page (rule 17/36). The trigger is a remount past
           `staleTime` -- leaving About and coming back 30 seconds later while the server is
           unreachable. Not window focus, which `main.tsx` turns off app-wide and only `useSafety`
           asks back, and not an invalidation: nothing in the app invalidates `["about"]`. */}
-      {isError && !data && (
-        <Notice tone="error">Couldn't load this page. Reload to try again.</Notice>
-      )}
-      {isError && data && <StaleReadNotice what="these details" />}
+      {isError && !data && <Notice tone="error">{t("common.pageLoadError")}</Notice>}
+      {isError && data && <StaleReadNotice what={t("about.staleReadWhat")} />}
       {data && (
         <div className="set-rows">
           <dl className="about-kv">
-            <dt>Version</dt>
+            <dt>{t("about.labels.version")}</dt>
             <dd>
-              Reaper {data.version}
+              {t("about.reaperVersion", { version: data.version })}
               {update.data?.update_available && (
                 <span className="update-pill">
-                  {update.data.channel === "dev" ? "Newer dev build" : "Update available"}
+                  {update.data.channel === "dev"
+                    ? t("about.updatePill.newerDevBuild")
+                    : t("about.updatePill.updateAvailable")}
                 </span>
               )}
             </dd>
-            <dt>Update</dt>
+            <dt>{t("about.labels.update")}</dt>
             <dd>
               <UpdateCell status={update} onSeeChanges={() => setChangesOpen(true)} />
             </dd>
-            <dt>License</dt>
+            <dt>{t("about.labels.license")}</dt>
             <dd>{data.license}</dd>
-            <dt>Data folder</dt>
+            <dt>{t("about.labels.dataFolder")}</dt>
             <dd>
               <code>{data.data_dir}</code>
             </dd>
-            <dt>Reaper's own data</dt>
-            <dd>{bytes(data.reaper_db_bytes)}, decisions, audit trail, credentials</dd>
-            <dt>Rebuildable cache</dt>
-            <dd>{bytes(data.cache_db_bytes)}, watch history, ratings, lists</dd>
+            <dt>{t("about.labels.reaperData")}</dt>
+            <dd>{t("about.reaperDataDetail", { size: bytes(data.reaper_db_bytes) })}</dd>
+            <dt>{t("about.labels.rebuildableCache")}</dt>
+            <dd>{t("about.rebuildableCacheDetail", { size: bytes(data.cache_db_bytes) })}</dd>
           </dl>
         </div>
       )}
@@ -105,60 +108,50 @@ function UpdateCell({
   status: ReturnType<typeof useUpdateStatus>;
   onSeeChanges: () => void;
 }) {
+  const { t } = useTranslation();
   const { data, isPending } = status;
   // The two no-answer shapes read the same (see above), so the sentence is written once:
   // one operator claim in two places is two chances to drift (rule 144). "Later" is the
   // scheduled check (Settings, Jobs), which is what makes the promise real -- before it
   // existed nothing retried on a server nobody opened (#464).
-  const noAnswer = (
-    <span className="muted">Couldn't check for updates. Reaper will try again later.</span>
-  );
-  if (isPending) return <span className="muted">Checking for updates…</span>;
+  const noAnswer = <span className="muted">{t("about.update.noAnswer")}</span>;
+  if (isPending) return <span className="muted">{t("about.update.checking")}</span>;
   if (!data) return noAnswer;
-  if (!data.enabled)
-    return (
-      <span className="muted">
-        Update checks are off, so Reaper never asks GitHub for versions. Remove REAPER_UPDATE_CHECK
-        from launcher.conf in Reaper's data folder, or from your environment, to turn them back on.
-      </span>
-    );
+  if (!data.enabled) return <span className="muted">{t("about.update.disabled")}</span>;
   if (data.update_available === null) return noAnswer;
   if (!data.update_available)
     return (
       <span>
         {data.channel === "dev"
-          ? "This build matches the dev branch."
-          : "You are on the newest release."}
+          ? t("jobs.result.update_dev_current")
+          : t("jobs.result.update_up_to_date")}
       </span>
     );
   if (data.channel === "dev")
     return (
       <>
-        The dev branch has moved since this build.{" "}
+        {t("jobs.result.update_dev_behind")}{" "}
         {data.url && (
           <a href={data.url} target="_blank" rel="noreferrer">
-            See what changed
+            {t("about.update.seeChanges")}
           </a>
         )}
         <br />
-        <span className="muted">Dev builds change often. Releases are the steadier channel.</span>
+        <span className="muted">{t("about.update.devSteadier")}</span>
       </>
     );
   return (
     <>
-      Reaper {data.latest} is out.{" "}
+      {t("about.update.newRelease", { version: data.latest })}{" "}
       <button type="button" className="link-btn" onClick={onSeeChanges}>
-        See what changed
+        {t("about.update.seeChanges")}
       </button>
       <br />
       {/* Points at the schedule rather than naming one: the operator can change the cron
           or turn the job off, so a sentence saying "daily" is wrong the moment they do
           (rule 86). This used to say "Reaper checks a few times a day" while nothing
           checked on its own at all (#464, rule 25). */}
-      <span className="muted">
-        Reaper checks on a schedule you can change in Jobs, and never sends anything about your
-        library.
-      </span>
+      <span className="muted">{t("about.update.schedule")}</span>
     </>
   );
 }
@@ -177,25 +170,25 @@ function ChangesModal({
   url: string | null;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   return (
-    <ModalShell title="What changed" onClose={onClose} className="modal-changes">
+    <ModalShell title={t("about.changesModal.title")} onClose={onClose} className="modal-changes">
       <div className="changes-body">
         {changes.length === 0 && (
           <p className="muted">
-            No release notes to show.{" "}
             {url ? (
-              <a href={url} target="_blank" rel="noreferrer">
-                The release page on GitHub
-              </a>
+              <Trans
+                i18nKey="about.changesModal.noNotesWithLink"
+                components={{ link: <a href={url} target="_blank" rel="noreferrer" /> }}
+              />
             ) : (
-              "The releases page on GitHub"
-            )}{" "}
-            has the full story.
+              <Trans i18nKey="about.changesModal.noNotesNoLink" />
+            )}
           </p>
         )}
         {changes.map((c) => (
           <section key={c.version} className="changes-release">
-            <h3>Reaper {c.version}</h3>
+            <h3>{t("about.reaperVersion", { version: c.version })}</h3>
             {c.notes ? (
               <div className="changes-notes">
                 <Markdown
@@ -220,12 +213,12 @@ function ChangesModal({
                 </Markdown>
               </div>
             ) : (
-              <p className="muted">This release shipped without notes.</p>
+              <p className="muted">{t("about.changesModal.noNotesForRelease")}</p>
             )}
             {c.url && (
               <p className="changes-link">
                 <a href={c.url} target="_blank" rel="noreferrer">
-                  View on GitHub
+                  {t("about.changesModal.viewOnGithub")}
                 </a>
               </p>
             )}

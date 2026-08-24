@@ -11,6 +11,8 @@
 // Security panel only manages the admin password that confirms it.
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import i18next from "../i18n";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
 import { AboutPanel } from "./AboutPanel";
 import { BackupPanel } from "./BackupPanel";
@@ -24,14 +26,13 @@ import { SecurityPanel } from "./SecurityPanel";
 import { ServicesPanel } from "./ServicesPanel";
 import { SwitchConfirm, useSwitchConfirm } from "./SwitchConfirm";
 
-// Two names that moved out of this file and are still imported FROM it: `DiscordModal` reads the
-// webhook check, `SetupPasswordStep` the password floor. The name stays available at this path
-// rather than sending two callers to two new ones.
+// A name that moved out of this file and is still imported FROM it: `SetupPasswordStep` reads
+// the password floor. The name stays available at this path rather than sending that caller to
+// a new one.
 //
-// `PlexPanel` was a third until this split, re-exported for a `SetupWizard` that stopped reading
+// `PlexPanel` was a second until this split, re-exported for a `SetupWizard` that stopped reading
 // it when #384 broke first-start into four steps; the export outlived its only caller by a year
 // and the comment justifying it was still naming that caller.
-export { isDiscordWebhook } from "./NotificationsPanel";
 export { MIN_ADMIN_PASSWORD } from "./SecurityPanel";
 
 export type Panel =
@@ -49,19 +50,19 @@ export type Panel =
 /** The ten sections, in rail order. Exported for the one test that owns the hand-written label
  *  table this must agree with (SettingsNav.test.tsx), so a section added here fails there naming
  *  what to do rather than as an unexplained label mismatch (rules 103, 144). */
-export const PANELS: { id: Panel; label: string }[] = [
-  { id: "general", label: "General" },
-  { id: "services", label: "Services" },
-  { id: "plex", label: "Plex" },
-  { id: "lists", label: "Lists" },
-  { id: "jobs", label: "Jobs" },
-  { id: "notifications", label: "Notifications" },
-  { id: "security", label: "Security" },
+export const panels = (): { id: Panel; label: string }[] => [
+  { id: "general", label: i18next.t("shell.settings.panels.general") },
+  { id: "services", label: i18next.t("shell.settings.panels.services") },
+  { id: "plex", label: i18next.t("common.brand.plex") },
+  { id: "lists", label: i18next.t("shell.settings.panels.lists") },
+  { id: "jobs", label: i18next.t("shell.settings.panels.jobs") },
+  { id: "notifications", label: i18next.t("shell.settings.panels.notifications") },
+  { id: "security", label: i18next.t("shell.settings.panels.security") },
   // Named for both halves, matching the panel's own heading: restoring is the half an operator
   // comes looking for under pressure, and a tab reading "Backup" alone hides it.
-  { id: "backup", label: "Backup & Restore" },
-  { id: "logs", label: "Logs" },
-  { id: "about", label: "About" },
+  { id: "backup", label: i18next.t("shell.settings.panels.backup") },
+  { id: "logs", label: i18next.t("shell.settings.panels.logs") },
+  { id: "about", label: i18next.t("shell.settings.panels.about") },
 ];
 
 export function Settings({
@@ -84,6 +85,7 @@ export function Settings({
    *  Optional the way `SafetyBanner`'s jump is: tests mount Settings without a navigator. */
   onGoToPolicy?: (() => void) | undefined;
 }) {
+  const { t } = useTranslation();
   // General's save bar can hold six unsaved fields at once, and switching section unmounts the
   // panel holding them. So the switch waits for a yes, the same two-step confirm the policy
   // editor's Movies/TV switch uses and in the same place: directly under the control that was
@@ -101,7 +103,7 @@ export function Settings({
   // `Record<Panel, …>`: a panel missing from it does not compile, where an absent key used to read
   // as "holds nothing" and switch straight through. That is rule 103's one-declaration branch, and
   // it replaces a comment claiming these five "are the whole population" -- a claim nothing checked
-  // against the ten in `PANELS`, so the next section added would have been unguarded and silent
+  // against the ten in `panels`, so the next section added would have been unguarded and silent
   // (#156). `npm run build` runs `tsc --noEmit` and is a CI gate, so the compiler is the guard.
   //
   // The last two took a hop the first three did not: their drafts live in CHILD components
@@ -114,7 +116,7 @@ export function Settings({
   const [securityDirty, setSecurityDirty] = useState(false);
   const [backupDirty, setBackupDirty] = useState(false);
 
-  // Every panel classified, in `PANELS` order. A `false` here is a claim that the section has
+  // Every panel classified, in `panels` order. A `false` here is a claim that the section has
   // nothing to lose on the way out, so each one says why -- verified in the tree.
   const dirtyPanels: Record<Panel, boolean> = {
     general: generalDirty,
@@ -162,9 +164,10 @@ export function Settings({
     handledJump.current = jump.nonce;
     confirmSwitch.request(jump.panel);
   }, [jump, confirmSwitch]);
-  const pendingLabel = PANELS.find((p) => p.id === confirmSwitch.pending)?.label ?? "";
+  const sections = panels();
+  const pendingLabel = sections.find((p) => p.id === confirmSwitch.pending)?.label ?? "";
   // The section being LEFT, so one string serves every panel that raises the shared sentence.
-  const leavingLabel = PANELS.find((p) => p.id === panel)?.label ?? "";
+  const leavingLabel = sections.find((p) => p.id === panel)?.label ?? "";
   // Ten labels stop fitting one line well above this, but the app already has exactly one
   // definition of a narrow screen and a second would be worse than swapping a little early:
   // below this width the section rail is a bottom bar, so a compact settings header is the
@@ -174,13 +177,13 @@ export function Settings({
   return (
     <div className="settings">
       {narrow ? (
-        <nav className="settings-picker" aria-label="Settings sections">
+        <nav className="settings-picker" aria-label={t("shell.settings.sectionsLabel")}>
           <select
             value={panel}
-            aria-label="Settings section"
+            aria-label={t("shell.settings.sectionLabel")}
             onChange={(e) => confirmSwitch.request(e.target.value as Panel)}
           >
-            {PANELS.map((p) => (
+            {sections.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.label}
               </option>
@@ -188,8 +191,8 @@ export function Settings({
           </select>
         </nav>
       ) : (
-        <nav className="settings-nav" aria-label="Settings sections">
-          {PANELS.map((p) => (
+        <nav className="settings-nav" aria-label={t("shell.settings.sectionsLabel")}>
+          {sections.map((p) => (
             <button
               key={p.id}
               className={panel === p.id ? "settings-tab active" : "settings-tab"}
@@ -218,8 +221,8 @@ export function Settings({
           nonce={confirmSwitch.nonce}
           message={
             panel === "backup"
-              ? `The backup file you chose isn't restored yet. Switching to ${pendingLabel} drops it.`
-              : `You have unsaved ${leavingLabel} settings. Switching to ${pendingLabel} discards them.`
+              ? t("shell.settings.switchConfirmBackup", { pendingLabel })
+              : t("shell.settings.switchConfirmGeneric", { leavingLabel, pendingLabel })
           }
           onDiscard={confirmSwitch.discard}
           onKeep={confirmSwitch.keep}

@@ -10,8 +10,40 @@
 // in both files, and the two copies had already drifted apart.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
-import type { PlexServerChoice } from "../api";
+import type { PlexResourceConnection, PlexServerChoice, ReasonKey } from "../api";
+import { describeError } from "../errors";
+import i18next from "../i18n";
+import { composeError } from "../why";
+
+/** The sentinel the connection select uses for "let me type one". Not a URI, so it can
+ *  never collide with a discovered address. Shared by `PlexPanel` and `SetupPlexStep` so
+ *  the two can't drift onto different values for the same meaning (rule 72). */
+export const MANUAL_CONNECTION = "__manual__";
+
+/** The label a connection shows in the picker: where it goes, then how.
+ *
+ *  plex.direct hostnames embed the address as dashes ("192-168-20-73.abc….plex.direct"),
+ *  which reads as noise; show the address itself and keep the certificate goodness as
+ *  the "secure" tag. The full URI stays the option's value, so what is saved is exact.
+ *
+ *  Shared by `PlexPanel` and `SetupPlexStep` so an address reads the same in both places,
+ *  through the same `plex.connectionKind.*` / `plex.connectionLabel.*` catalog keys
+ *  (rule 72: it used to be two near-identical copies). */
+export function connectionLabel(c: PlexResourceConnection): string {
+  const kind = c.relay
+    ? i18next.t("plex.connectionKind.relay")
+    : c.local
+      ? i18next.t("plex.connectionKind.local")
+      : i18next.t("plex.connectionKind.remote");
+  let host = c.uri.replace(/^https?:\/\//, "");
+  const direct = /^(\d+)-(\d+)-(\d+)-(\d+)\.[0-9a-f]+\.plex\.direct(:\d+)?$/i.exec(host);
+  if (direct) host = `${direct[1]}.${direct[2]}.${direct[3]}.${direct[4]}${direct[5] ?? ""}`;
+  return c.protocol === "https"
+    ? i18next.t("plex.connectionLabel.secure", { kind, host })
+    : i18next.t("plex.connectionLabel.plain", { kind, host });
+}
 
 /** What the app says when a sign-in lands on the server picker.
  *
@@ -20,8 +52,11 @@ import type { PlexServerChoice } from "../api";
  *  step once: Settings announced the picker and the login screen said nothing (#177, rule 72).
  *
  *  Exported because `PlexPin.test.tsx` reads the two callers' source and fails by name in
- *  whichever one states it again. */
-export const CHOOSE_SERVER_SAID = "Signed in with Plex. Choose which server Reaper should manage.";
+ *  whichever one states it again.
+ *
+ *  A function, not a constant: this module is in the eager bundle, so a string resolved in its
+ *  body would stay English for the life of the page (`i18n-module-scope.test.ts`). */
+export const chooseServerSaid = () => i18next.t("plex.pin.chooseServerSaid");
 
 /** Poll every two seconds. The wait is a person staring at a browser tab, so the faster
  *  of the two intervals this replaced wins: two seconds still costs at most 150 requests
@@ -43,8 +78,9 @@ export interface PinPollResult {
    *  perfectly good and send the operator back through the whole approval round trip. */
   status: "pending" | "retrying" | "ok" | "choose_server";
   servers: PlexServerChoice[] | null;
-  /** Present only with status "retrying": why, in the operator's words. */
-  reason?: string | null;
+  /** Present only with status "retrying": why this poll couldn't finish yet, composed
+   *  through `why.ts`'s `composeError` (phase 8b). */
+  reason?: ReasonKey | null;
 }
 
 interface PinPollHandlers<R extends PinPollResult> {
@@ -61,7 +97,7 @@ interface PinPollHandlers<R extends PinPollResult> {
 }
 
 function failureText(e: unknown): string {
-  return e instanceof Error ? e.message : "Plex sign-in failed.";
+  return e instanceof Error ? describeError(e) : i18next.t("plex.pin.signInFailedFallback");
 }
 
 /** Drive one PIN through to a final answer.
@@ -148,13 +184,14 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
               // of forgetting it (rule 72) -- which is not hypothetical, since the login screen
               // is exactly the caller that forgot it. Told and NOT focused: the picker replaces
               // the wait on a timer, so moving focus here is a steal rather than a recovery.
-              announce(CHOOSE_SERVER_SAID);
+              announce(chooseServerSaid());
               h.onChooseServer?.(result.servers ?? []);
             } else {
               // "pending" or "retrying" -- neither is final, so keep polling. Only
               // "retrying" carries a reason; say it, so a longer-than-usual wait is
               // explained rather than looking like a hang.
-              const reason = result.status === "retrying" ? (result.reason ?? null) : null;
+              const reason =
+                result.status === "retrying" && result.reason ? composeError(result.reason) : null;
               setRetrying(reason);
               // And say it by ear as well. Every transition in this flow is driven by the
               // two-second poll rather than by the operator, so this paragraph swaps its text
@@ -207,7 +244,7 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
           setServers(result.servers ?? []);
           // The pick can land back on the picker (an account whose server list changed under
           // it), and that arrives the same way: on an answer, not on a press.
-          announce(CHOOSE_SERVER_SAID);
+          announce(chooseServerSaid());
           h.onChooseServer?.(result.servers ?? []);
         } else {
           begin(pinId, machineId);
@@ -241,6 +278,7 @@ export function ServerPickList({
   onPick: (machineId: string) => void;
   onCancel: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <>
       {servers.map((s) => (
@@ -254,7 +292,7 @@ export function ServerPickList({
         </button>
       ))}
       <button type="button" className="link" onClick={onCancel}>
-        Cancel
+        {t("common.cancel")}
       </button>
     </>
   );

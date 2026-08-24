@@ -23,7 +23,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Query, Request
 from sqlalchemy import and_, asc, case, desc, func, null, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
 from reaper.api import tags as api_tags
 from reaper.api.deps import newest_snapshot, session_factory
+from reaper.api.errors import refuse
 from reaper.api.schemas import (
     CandidateDetail,
     CandidateOut,
@@ -57,8 +58,9 @@ from reaper.db.models import (
     Snapshot,
 )
 from reaper.engine import identity
-from reaper.engine.explanation import read_explanation
+from reaper.engine.explanation import absorb_legacy_detail, read_explanation, thaw_reason_key
 from reaper.engine.gates import GateId, thaw_defers_to_owner
+from reaper.engine.reason import Reason, from_wire, to_wire
 from reaper.services import (
     app_settings,
     whitelist,
@@ -74,7 +76,6 @@ from reaper.services.condemned import (
 from reaper.services.deep_links import build_links
 from reaper.services.display_meta import parse_ratings_json
 from reaper.services.planner import MediaRef, PlanError
-from reaper.services.snapshot import HAND_SPARE_DETAIL
 
 log = structlog.get_logger(__name__)
 
@@ -155,7 +156,7 @@ async def latest_snapshot(request: Request) -> SnapshotOut:
     async with session_factory(request)() as session:
         snapshot = await newest_snapshot(session)
         if snapshot is None:
-            raise HTTPException(404, "No scan has run yet.")
+            refuse(404, "error.review.no_scan")
         return await _snapshot_out(session, snapshot)
 
 
@@ -876,7 +877,7 @@ def _decode_explanation(explanation_json: str) -> dict[str, Any] | None:
     """One guarded parse of a stored explanation, shared by every display extractor.
 
     ``_candidate_out`` decodes each row here ONCE and hands the result to
-    ``_dormant_for``, ``_primary_reason``, ``_chip`` and the reap-override read, instead
+    ``_dormant_days``, ``_primary_reason``, ``_chip`` and the reap-override read, instead
     of each running its own ``json.loads`` over the same multi-KB document (P2-2).
 
     Returns ``None`` for anything that is not a JSON object, so a corrupted or
@@ -914,10 +915,36 @@ def _match_status(exp: dict[str, Any]) -> str | None:
     return match_state(exp)
 
 
-def _detail_of(entry: dict[str, Any]) -> str | None:
-    """One entry's plain-English detail line, or ``None`` when it has none."""
-    detail = entry.get("detail")
-    return str(detail) if detail else None
+def _detail_reason(entry: dict[str, Any]) -> Reason | None:
+    """One stored row's typed detail, however old the row is.
+
+    A fresh row carries ``detail_key`` and comes back as the reason the engine wrote. A row
+    frozen before details were typed carries prose ``detail`` and no ``detail_key``;
+    ``absorb_legacy_detail`` folds it into one before this reads it, wrapped as a legacy
+    reason, so the two ages take one code path everywhere downstream -- the same fold
+    ``engine.explanation``'s models apply on their own read (rule 104), for a reader that
+    takes the stored row as a raw dict and never builds those models at all. ``None`` when
+    the row carries neither, which is the old "no detail" degrade.
+
+    Whether the resulting ``detail_key`` is legible is ``thaw_reason_key``'s call, the same
+    one the panel's models make: a malformed dict here must degrade exactly as it does
+    there, to ``None`` and never through ``from_wire``'s wrap-anything arm, which would
+    print the dict's repr at the operator (rule 21)."""
+    folded = absorb_legacy_detail(entry)
+    key = folded.get("detail_key") if isinstance(folded, dict) else None
+    if isinstance(key, dict) and thaw_reason_key(key) is not None:
+        return from_wire(key)
+    return None
+
+
+def _is_hand_spare(reason: Reason | None) -> bool:
+    """Whether this fired row is the injected hand spare.
+
+    A fresh row carries the typed id. A row frozen before reasons were typed carries the
+    sentence as a ``legacy`` reason instead, and is not matched here: it falls through to
+    the same generic ``kept.whitelisted`` chip any other whitelisted keep takes, which is
+    still true, just not as specific."""
+    return reason is not None and reason.id == "hand_spare"
 
 
 def _contribution(entry: dict[str, Any]) -> float:
@@ -933,20 +960,9 @@ def _contribution(entry: dict[str, Any]) -> float:
     return float(value) if isinstance(value, int | float) else 0.0
 
 
-def _managing_app(media_type: str) -> str:
-    """Which *arr manages this kind of item, for copy that names it.
-
-    Two stored media types, ``movie`` and ``season``, and Reaper only ever reaches a movie
-    through Radarr and a season through Sonarr, so this is total rather than a guess. Named
-    apps beat "the app that manages it" here because the operator has to go open one of
-    them to fix a disagreement, and the copy may as well say which.
-    """
-    return "Radarr" if media_type == "movie" else "Sonarr"
-
-
 def _primary_reason(
     exp: dict[str, Any] | None, verdict: str, score: int, media_type: str = "movie"
-) -> str | None:
+) -> Reason | None:
     """The single line the card shows: *why* Reaper judged this, not what it is about.
 
     A spared item leads with the protection that saved it; a reaped one with its strongest
@@ -967,37 +983,35 @@ def _primary_reason(
     if verdict == "protect":
         fired = _entries(exp, "protections_fired")
         if fired:
-            return _detail_of(fired[0])
+            return _detail_reason(fired[0])
         # A protect with nothing fired is a hand reap the engine refused to honor: the item
         # was blocked (e.g. the season keep-rule conflict), so a "reap" override resolves to
         # protect. Surface that blocked reason so the held row says WHY, not a generic line.
         unknown = _entries(exp, "protections_unknown")
-        return _detail_of(unknown[0]) if unknown else None
+        return _detail_reason(unknown[0]) if unknown else None
     if verdict == "condemn":
         signals = [s for s in _entries(exp, "signals") if s.get("evaluated")]
         signals.sort(key=_contribution, reverse=True)
-        return _detail_of(signals[0]) if signals else None
+        return _detail_reason(signals[0]) if signals else None
     # abstain: lead with the match problem when there is one -- it is the single cause
     # behind every "could not check" that follows, and the raw gate detail ("could not
     # check the watch horizon: ...") repeats it in engineer-speak. Otherwise fall back to
     # the first unchecked protection, whose detail is already a plain sentence.
     status = _match_status(exp)
     if status == "unmatched":
-        return "Kept to be safe: it couldn't be found in Plex."
+        return Reason("kept_safe.unmatched")
     if status == "ambiguous":
-        return "Kept to be safe: it looks like more than one thing in Plex."
+        return Reason("kept_safe.ambiguous")
     if status == "conflicted":
-        app = _managing_app(media_type)
-        thing = "file" if media_type == "movie" else "show"
-        return f"Kept to be safe: Plex and {app} describe this {thing} differently."
+        return Reason("kept_safe.conflicted", {"media": media_type})
     if status == MATCH_UNREADABLE:
         # The row records a match Reaper cannot read. That HOLDS a hand reap, so falling
         # through to the below-threshold line below stated the opposite of the decision in
         # force on this very row (rule 61).
-        return "Kept to be safe: Reaper couldn't read what this matched in Plex."
+        return Reason("kept_safe.match_unreadable")
     unknown = _entries(exp, "protections_unknown")
     if unknown:
-        return _detail_of(unknown[0])
+        return _detail_reason(unknown[0])
     # An abstain that got this far was stopped by the score or by the coverage floor, and
     # they are different decisions with different remedies: one says move the slider, the
     # other says fix the evidence source. ``decide_verdict``'s order settles which -- past
@@ -1008,134 +1022,161 @@ def _primary_reason(
     # once already, for the unreadable-match case; the coverage arm was left behind.
     threshold = thaw_threshold(exp.get("threshold"))
     if threshold is not None and score >= threshold:
-        return "Kept to be safe: too little of it could be checked."
-    return "Scored below your threshold."
+        return Reason("kept_safe.coverage")
+    return Reason("below_threshold")
 
 
-def _dormant_for(exp: dict[str, Any] | None) -> str | None:
-    """The humanized dormancy span ("5 years, 9 months") for the card's amber pill.
+def _dormant_days(exp: dict[str, Any] | None) -> float | None:
+    """The card's amber dormancy pill: the raw day count off a fresh row's typed detail.
 
-    Read from the stored explanation's UNWATCHED signal, whose detail has exactly one
-    producer (engine/signals.py): ``not watched in {span}``. Anything else -- the
-    signal unevaluated, an older snapshot's different phrasing, a missing block --
-    degrades to ``None`` and the pill is hidden. Same defensive posture as
-    ``_primary_reason``: display extraction must never error a row off the queue.
+    Read from the stored explanation's UNWATCHED signal. A fresh row's detail key carries
+    the day count (``signal_unwatched``) and the frontend composes the humanized span in
+    the active locale. A row frozen before details were typed carried the span baked into
+    its own prose instead; that string is no longer pulled back out of it, so a legacy
+    unwatched signal takes the same degrade the signal being unevaluated, a missing block,
+    or an unrecognized shape already take -- to neither, and the pill hides. Same
+    defensive posture as ``_primary_reason``: display extraction must never error a row
+    off the queue.
     """
-    prefix = "not watched in "
     if not isinstance(exp, dict):
         return None
     for signal in _entries(exp, "signals"):
         if signal.get("id") != "unwatched":
             continue
-        detail = signal.get("detail")
-        if signal.get("evaluated") and isinstance(detail, str) and detail.startswith(prefix):
-            return detail[len(prefix) :] or None
+        if not signal.get("evaluated"):
+            return None
+        reason = _detail_reason(signal)
+        if reason is not None and reason.id == "signal_unwatched":
+            days = reason.params.get("days")
+            return float(days) if isinstance(days, int | float) else None
         return None
     return None
 
 
-#: Parsers over our own gates' closed detail vocabularies (engine/gates.py,
-#: services/season_pruning.py) -- the WhyPanel's CHECK_COPY/CAUSE_COPY precedent.
-#: Anything unrecognized falls back to a static phrase, never an error.
-_RATED_RE = re.compile(r"^well rated: (\d+(?:\.\d+)?) on IMDb")
-_WATCHED_HERE_RE = re.compile(r"^watched here: (\d+) (?:person|people) in the last (.+)$")
-_OTHERS_RE = re.compile(r"^(\d+) other")
-_KEEP_LAST_RE = re.compile(r"^within the last (\d+) seasons")
-#: The countdown out of ``ReturnedGate``'s fired detail, whose two wordings differ only in the
-#: lead ("you removed this before and it came back, 1 year left"). Anchored on the tail rather
-#: than on either lead, so rewording a lead does not silently drop the chip's number to its
-#: static fallback.
-_CAME_BACK_RE = re.compile(r" came back, (.+) left$")
+#: The chip id per fresh season-keep reason id (``season_pruning._protection_reason``).
+#: ``cause.progress_history_short`` is NOT a keep rule and must not fall to the generic
+#: id: the lever is the depth of the watch history, and naming a season rule sends the
+#: operator to edit a control that will not move it. Its three siblings keep the generic
+#: id, as their prose forms did.
+_KEPT_SEASON_IDS: dict[str, str] = {
+    "season_keep.specials": "kept.season.specials",
+    "season_keep.incomplete": "kept.season.incomplete",
+    "season_keep.airing": "kept.season.airing",
+    "season_keep.first": "kept.season.first",
+    "season_keep.keep_all": "kept.season.keep_all",
+    "season_keep.midbinge": "kept.season.midbinge",
+    "cause.progress_history_short": "kept.season.progress_history_short",
+}
+
+#: Every id ``_chip``/``_kept_reason``/``_came_back_chip`` can emit, under the ``chip``
+#: catalog namespace (``chip.text.<id>`` / ``chip.sentence.<id>``). Hand-maintained and
+#: reconciled by hand against the catalog by the two-way walk in ``test_review_chips.py``
+#: (rule 145) -- chip ids are inline literals across many branches here, not each a named
+#: module constant, so this is scanned rather than AST-discovered the way ``*_REASON`` is.
+_CHIP_IDS: frozenset[str] = frozenset(
+    {
+        "kept.hand_spare",
+        "kept.whitelisted",
+        "kept.streaming_now",
+        "kept.rating",
+        "kept.rating_plain",
+        "kept.popularity",
+        "kept.popularity_plain",
+        "kept.curated_list",
+        "kept.no_history",
+        "kept.dormancy",
+        "kept.season.keep_last",
+        "kept.season.rule",
+        "kept.returned",
+        "kept.custom",
+        "kept.unknown",
+        "came_back",
+        "came_back_unknown",
+        "match.unmatched",
+        "match.ambiguous",
+        "match.conflicted",
+        "match.unreadable",
+        "look.comparable",
+        "look.unknowable",
+        "look.unsettled",
+        "unknown_checks",
+        "coverage",
+        "below_threshold",
+        "below",
+    }
+) | frozenset(_KEPT_SEASON_IDS.values())
 
 
-def _kept_season_phrase(detail: str) -> str:
-    """The chip phrase for a fired season keep rule (season_pruning's closed reasons).
+def _kept_season_reason(reason: Reason) -> Reason:
+    """The chip's typed reason for a fresh season row, keyed on the reason id (rule 92)."""
+    if reason.id == "season_keep.keep_last":
+        keep_last = reason.params.get("keep_last")
+        if isinstance(keep_last, int | float):
+            return Reason("kept.season.keep_last", {"keep_last": int(keep_last)})
+    chip_id = _KEPT_SEASON_IDS.get(reason.id)
+    return Reason(chip_id) if chip_id is not None else Reason("kept.season.rule")
 
-    Three of these reasons were reworded to name what Sonarr actually reported rather than
-    what it usually means (see ``_protection_reason``), so an explanation stored by an older
-    scan carries the retired spelling. Those fall through to the generic phrase below, which
-    is vague but true -- the same degrade every unrecognized detail takes, and the reason
-    this parser has a fallback at all. The next scan restores the specific phrase.
+
+def _kept_reason(gate: str, reason: Reason | None) -> Reason:
+    """The green chip's typed reason for the protection that fired.
+
+    A fresh row's numbers come off the reason's params. A legacy row's id is ``"legacy"``,
+    which matches none of the ids or gates checked below, so it falls through to whichever
+    static id its gate returns -- the same generic-but-true degrade every unrecognized shape
+    takes here. The why panel beneath the chip still shows the row's actual stored sentence,
+    verbatim, through ``detail_key`` (rule 96's direction: display extraction never invents,
+    it degrades).
     """
-    if detail.startswith("specials"):
-        return "specials are never removed"
-    if detail.startswith("episodes are missing"):
-        return "episodes are missing"
-    if detail.startswith("the newest season of a show"):
-        return "the show is still running"
-    if detail.startswith("the earliest season"):
-        return "the earliest season stays"
-    if keep_last := _KEEP_LAST_RE.match(detail):
-        return f"in the last {keep_last.group(1)} seasons you keep"
-    if detail.startswith("this show has only"):
-        return "your keep rule keeps all its seasons"
-    if detail.startswith("a viewer is part-way"):
-        return "someone is partway through"
-    if detail.startswith("your watch history is too short"):
-        # NOT a keep rule, so it must not fall to the generic phrase below: the lever is the
-        # depth of the watch history (or the hold set against it), and naming a season rule
-        # sends the operator to edit a control that will not move it.
-        return "your watch history is too short to tell"
-    return "your season rule keeps it"
-
-
-def _kept_phrase(gate: str, detail: str) -> str:
-    """The green chip's phrase for the protection that fired, worn as "Kept, {phrase}"."""
-    if detail == HAND_SPARE_DETAIL:
-        return "you spared it"
+    if _is_hand_spare(reason):
+        return Reason("kept.hand_spare")
     if gate == "whitelisted":
-        return "on your keep list"
+        return Reason("kept.whitelisted")
     if gate == "streaming_now":
-        return "playing right now"
+        return Reason("kept.streaming_now")
     if gate == "rating_floor":
-        rated = _RATED_RE.match(detail)
-        return f"well rated: {rated.group(1)} on IMDb" if rated else "well rated"
+        if reason is not None and reason.id == "rating_cleared":
+            clauses = reason.params.get("clauses")
+            if isinstance(clauses, tuple):
+                for clause in clauses:
+                    value = clause.params.get("value")
+                    if clause.params.get("source") == "imdb" and isinstance(value, int | float):
+                        return Reason("kept.rating", {"value": value, "source": "imdb"})
+        return Reason("kept.rating_plain")
     if gate == "server_popularity":
-        watched = _WATCHED_HERE_RE.match(detail)
-        if watched:
-            count, window = int(watched.group(1)), watched.group(2)
-            people = "person" if count == 1 else "people"
-            return f"{count} {people} watched it in the last {window}"
-        return "people here still watch it"
-    if gate == "others_watching":
-        others = _OTHERS_RE.match(detail)
-        if others:
-            count = int(others.group(1))
-            return (
-                "someone else is watching it" if count == 1 else f"{count} others are watching it"
-            )
-        return "others are watching it"
+        if reason is not None and reason.id == "popularity_watched":
+            count = reason.params.get("count")
+            window_days = reason.params.get("window_days")
+            if isinstance(count, int | float) and isinstance(window_days, int | float):
+                return Reason(
+                    "kept.popularity", {"count": int(count), "window_days": int(window_days)}
+                )
+        return Reason("kept.popularity_plain")
     if gate == "curated_list":
-        return "on a protected list"
+        return Reason("kept.curated_list")
     if gate == "min_dormancy":
-        if detail.startswith("no watch history"):
-            return "no watch history, kept to be safe"
+        if reason is not None and reason.id == "dormancy_unestablished":
+            return Reason("kept.no_history")
         # "Untouched", never "watched": this gate's clock runs from the last play only when
         # there IS one, and otherwise from the day the file arrived
         # (``engine.dormancy.reference_instant``). So the fired branch covers a title nobody
         # has ever played, and the chip this function used to return -- "watched too
         # recently" -- asserted a play that never happened, on a card whose own panel said
         # "nobody watched it in the last year" three lines above. ``MinDormancyGate`` words
-        # its own detail "untouched" for exactly this reason; the chip beside it now does too.
-        return "hasn't sat untouched long enough"
-    if gate == "unmanaged":
-        # Retired gate, kept for stored explanations only -- a snapshot taken before the
-        # retirement can still be read back, and this is what renders its chip. No new scan
-        # produces it (``engine.gates``, and the same reasoning as ``others_watching`` above).
-        return "not managed by Sonarr or Radarr"
+        # its own detail "untouched" for exactly this reason; the id beside it now does too.
+        return Reason("kept.dormancy")
     if gate == "season_progression":
-        return _kept_season_phrase(detail)
+        return _kept_season_reason(reason) if reason is not None else Reason("kept.season.rule")
     if gate == "returned":
         # **Not reached today, and that is stated rather than implied** (rule 7/24). The one
         # caller asks `_came_back_chip` first, and that never returns None for a `returned`
         # entry: an unparseable detail costs it the countdown and it still answers. So this
         # arm exists for the reordering, not for a case that fires -- and it exists at all
         # because the generic fallback below is what makes a missing member silent (rule 66),
-        # which is the whole reason `GATE_META`'s guard was written.
-        return "it came back after leaving your library"
+        # which is the whole reason `gateMeta`'s guard was written.
+        return Reason("kept.returned")
     if gate == "custom":
-        return "by your rule"
-    return "a protection applies"
+        return Reason("kept.custom")
+    return Reason("kept.unknown")
 
 
 def _came_back_chip(fired: list[dict[str, Any]]) -> ChipOut | None:
@@ -1158,15 +1199,19 @@ def _came_back_chip(fired: list[dict[str, Any]]) -> ChipOut | None:
     entry = next((e for e in fired if str(e.get("gate") or "") == GateId.RETURNED.value), None)
     if entry is None:
         return None
-    match = _CAME_BACK_RE.search(str(entry.get("detail") or ""))
-    # The static fallback every parser here has: an unrecognized detail costs the number, never
-    # the chip, and the next scan restores it.
-    left = f", {match.group(1)} left" if match else ""
-    return ChipOut(
-        tone="held",
-        text=f"Came back{left}",
-        why="it left your library and came back",
+    reason = _detail_reason(entry)
+    days_left = reason.params.get("days_left") if reason is not None else None
+    # A legacy row's id is "legacy", matching neither id below, so it takes the same
+    # unknown-countdown fallback any unrecognized shape does: the number is lost, never the
+    # chip, and the next scan restores it.
+    chip_reason = (
+        Reason("came_back", {"days_left": int(days_left)})
+        if reason is not None
+        and reason.id in {"returned_came_back", "returned_came_back_ours"}
+        and isinstance(days_left, int | float)
+        else Reason("came_back_unknown")
     )
+    return ChipOut(tone="held", reason=to_wire(chip_reason))
 
 
 def _chip(
@@ -1180,11 +1225,11 @@ def _chip(
     Pure display extraction from the DECODED stored explanation
     (``_decode_explanation``): never a re-decision, and never an error that drops a row
     off the queue. Condemned rows get no chip here; their card leads with the amber
-    dormancy pill (``dormant_for``).
+    dormancy pill (``dormant_days``).
 
-    Each chip carries its ``why`` clause (see ``ChipOut``) so the refused-reap chip can
-    say the same fact mid-sentence without the frontend re-parsing ``text``. Reword a
-    chip here and reword its clause in the same line.
+    Each chip carries a typed ``reason`` (id plus params, see ``ChipOut``) rather than
+    rendered English, so the frontend composes both the chip and its standalone sentence
+    from one id with nothing to keep in sync by hand (rule 92).
     """
     if not isinstance(exp, dict):
         return None
@@ -1194,48 +1239,32 @@ def _chip(
         if not fired:
             return None
         gate = str(fired[0].get("gate") or "")
-        detail = str(fired[0].get("detail") or "")
-        if detail != HAND_SPARE_DETAIL and (came_back := _came_back_chip(fired)) is not None:
+        lead_reason = _detail_reason(fired[0])
+        if not _is_hand_spare(lead_reason) and (came_back := _came_back_chip(fired)) is not None:
             return came_back
-        phrase = _kept_phrase(gate, detail)
-        # The kept phrase is already a lowercase clause, so the chip and its why say the
-        # same words with and without the "Kept, " lead.
-        return ChipOut(tone="kept", text=f"Kept, {phrase}", why=phrase)
+        return ChipOut(tone="kept", reason=to_wire(_kept_reason(gate, lead_reason)))
 
     if verdict != "abstain":
         return None
 
     status = _match_status(exp)
     if status == "unmatched":
-        return ChipOut(
-            tone="quiet",
-            text="Couldn't be found in Plex",
-            why="it couldn't be found in Plex",
-        )
+        return ChipOut(tone="quiet", reason=to_wire(Reason("match.unmatched")))
     if status == "ambiguous":
-        return ChipOut(
-            tone="quiet",
-            text="Looks like two different things in Plex",
-            why="it looks like two different things in Plex",
-        )
+        return ChipOut(tone="quiet", reason=to_wire(Reason("match.ambiguous")))
     if status == "conflicted":
-        app = _managing_app(media_type)
         return ChipOut(
             tone="quiet",
-            text=f"Plex and {app} don't agree",
-            why=f"Plex and {app} don't agree about it",
+            reason=to_wire(Reason("match.conflicted", {"media_type": media_type})),
         )
     if status == MATCH_UNREADABLE:
-        return ChipOut(
-            tone="quiet",
-            text="Couldn't read its Plex match",
-            why="Reaper couldn't read what it matched in Plex",
-        )
+        return ChipOut(tone="quiet", reason=to_wire(Reason("match.unreadable")))
 
     unknown = _entries(exp, "protections_unknown")
     for entry in unknown:
-        detail = str(entry.get("detail") or "")
-        if detail and not detail.startswith("could not check"):
+        entry_reason = _detail_reason(entry)
+        deliberate = entry_reason is not None and entry_reason.id not in ("blocked", "legacy")
+        if deliberate:
             # A deliberate "decide this yourself" flag -- today, the season keep-rule
             # conflict -- not a plumbing failure. The one blocked case that wants eyes.
             if str(entry.get("gate") or "") == "season_progression":
@@ -1288,37 +1317,24 @@ def _chip(
                 # same conflict back at the operator.
                 defers = thaw_defers_to_owner(entry.get("defers_to_owner"))
                 if defers is True:
-                    return ChipOut(
-                        tone="look",
-                        text="Needs a look, watched more than a season your rule keeps",
-                        why="watched more than a season your rule keeps",
-                    )
+                    return ChipOut(tone="look", reason=to_wire(Reason("look.comparable")))
                 if defers is False:
-                    return ChipOut(
-                        tone="look",
-                        text="Needs a look, couldn't check who watched these seasons",
-                        why="Reaper couldn't check who watched these seasons",
-                    )
-            return ChipOut(
-                tone="look",
-                text="Needs a look, left for you to decide",
-                why="a check on it couldn't be settled",
-            )
+                    return ChipOut(tone="look", reason=to_wire(Reason("look.unknowable")))
+            return ChipOut(tone="look", reason=to_wire(Reason("look.unsettled")))
     if unknown:
-        return ChipOut(
-            tone="quiet",
-            text="Some checks couldn't run",
-            why="some checks couldn't run",
-        )
+        return ChipOut(tone="quiet", reason=to_wire(Reason("unknown_checks")))
 
     threshold = thaw_threshold(exp.get("threshold"))
     if threshold is not None:
         if score >= threshold:
             # decide_verdict's order: past the blocked cases, an abstain at or above
             # the threshold can only be the coverage floor.
-            return ChipOut(tone="quiet", text="Too little of it could be checked")
-        return ChipOut(tone="quiet", text=f"Scored {score}, under your {threshold}")
-    return ChipOut(tone="quiet", text="Below your threshold")
+            return ChipOut(tone="quiet", reason=to_wire(Reason("coverage")))
+        return ChipOut(
+            tone="quiet",
+            reason=to_wire(Reason("below_threshold", {"score": score, "threshold": threshold})),
+        )
+    return ChipOut(tone="quiet", reason=to_wire(Reason("below")))
 
 
 def _season_number(media_key: str) -> int | None:
@@ -1387,6 +1403,9 @@ def _candidate_out(
     # and the reap-override read below. Each used to run its own json.loads over the same
     # multi-KB document, three or four times per row and up to 500 rows per page (P2-2).
     explanation = _decode_explanation(r.explanation_json)
+    dormant_days = _dormant_days(explanation)
+    primary_reason = _primary_reason(explanation, r.verdict, r.score, r.media_type)
+    reason_key = to_wire(primary_reason) if primary_reason is not None else None
     return CandidateOut(
         id=r.id,
         media_key=r.media_key,
@@ -1412,8 +1431,8 @@ def _candidate_out(
         group_title=r.group_title,
         video_resolution=r.video_resolution,
         library=r.library_title,
-        dormant_for=_dormant_for(explanation),
-        reason=_primary_reason(explanation, r.verdict, r.score, r.media_type),
+        dormant_days=dormant_days,
+        reason_key=reason_key,
         override=override,
         override_own=override_own,
         show_override=show_override,
@@ -1573,7 +1592,7 @@ async def candidate_detail(request: Request, candidate_id: int) -> CandidateDeta
     async with session_factory(request)() as session:
         row = await session.get(Candidate, candidate_id)
         if row is None:
-            raise HTTPException(404, "No such candidate.")
+            refuse(404, "error.review.candidate_not_found")
 
         flagged = await session.get(FirstFlagged, row.media_key)
         decisions = await whitelist.overrides(session)
@@ -1609,7 +1628,7 @@ async def group_detail(request: Request, group_key: str) -> GroupOut:
     async with session_factory(request)() as session:
         snapshot = await newest_snapshot(session)
         if snapshot is None:
-            raise HTTPException(404, "No scan has run yet.")
+            refuse(404, "error.review.no_scan")
         rows = (
             (
                 await session.execute(
@@ -1623,7 +1642,7 @@ async def group_detail(request: Request, group_key: str) -> GroupOut:
             .all()
         )
         if not rows:
-            raise HTTPException(404, "That show is not in the latest scan.")
+            refuse(404, "error.review.show_not_in_scan")
 
         flagged = {
             f.media_key: f.first_flagged_at
@@ -1672,7 +1691,7 @@ async def group_detail(request: Request, group_key: str) -> GroupOut:
             summary=next((r.summary for r in rows if r.summary), None),
             size_bytes=sum(c.size_bytes for c in seasons if c.size_bytes is not None),
             unknown_size_seasons=sum(1 for c in seasons if c.size_bytes is None),
-            reason=lead.reason,
+            reason_key=lead.reason_key,
             # A show-level fact: every season shares the show's library, so the first row
             # that carries one answers for the whole show (None if none do).
             library=next((r.library_title for r in rows if r.library_title), None),
@@ -1689,9 +1708,5 @@ async def group_detail(request: Request, group_key: str) -> GroupOut:
             # same scan. Skipping the rows that carry nothing keeps a snapshot taken
             # before this field existed from blanking a group whose other rows have it.
             show_status=next((c.show_status for c in seasons if c.show_status), None),
-            # Same pattern: a TV collection lists the SHOW, not its seasons, so every
-            # season row already carries the show's own list and the first one that has
-            # it answers for the whole group (#816).
-            collections=next((c.collections for c in seasons if c.collections), None),
             seasons=seasons,
         )

@@ -12,6 +12,18 @@ import { ApiError, api, setUnauthorizedHandler } from "./api";
 const reply = (body: string | null, init: ResponseInit = {}) =>
   vi.fn(() => Promise.resolve(new Response(body, { status: 200, ...init })));
 
+/** The rejected `ApiError` itself, so a test can inspect `.code`/`.params`/`.items` rather
+ *  than only the English `message` every other test here reads with `.rejects.toThrow`. */
+const caught = async (call: () => Promise<unknown>): Promise<ApiError> => {
+  try {
+    await call();
+  } catch (e) {
+    if (e instanceof ApiError) return e;
+    throw e;
+  }
+  throw new Error("expected the call to reject");
+};
+
 beforeEach(() => setUnauthorizedHandler(() => {}));
 afterEach(() => vi.unstubAllGlobals());
 
@@ -24,6 +36,8 @@ describe("a reply the client cannot parse", () => {
 
     await expect(api.safety()).rejects.toBeInstanceOf(ApiError);
     await expect(api.safety()).rejects.toThrow("Reaper got an unexpected reply from the server.");
+    const err = await caught(() => api.safety());
+    expect(err.code).toBe("error.transport.bad_reply");
   });
 
   it("is still fine when the body is simply empty", async () => {
@@ -86,7 +100,11 @@ describe("a failure with nothing of Reaper's in it", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.stubGlobal("fetch", reply("<html>502 Bad Gateway</html>", { status: 502 }));
 
-    await expect(api.safety()).rejects.toThrow("Reaper couldn't reach the server. Try again.");
+    const err = await caught(() => api.safety());
+    expect(err.message).toBe("Reaper couldn't reach the server. Try again.");
+    // Coded too (phase 8b), so a translated build reads this fallback like any other
+    // refusal instead of only ever seeing it in English.
+    expect(err.code).toBe("error.transport.server_unreachable");
     // The status is not lost, it just stops being the operator's problem.
     expect(String(warn.mock.calls[0]?.[0])).toContain("HTTP 502");
     warn.mockRestore();
@@ -96,13 +114,71 @@ describe("a failure with nothing of Reaper's in it", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.stubGlobal("fetch", reply("{}", { status: 409 }));
 
-    await expect(api.safety()).rejects.toThrow("Reaper couldn't do that. Try again.");
+    const err = await caught(() => api.safety());
+    expect(err.message).toBe("Reaper couldn't do that. Try again.");
+    expect(err.code).toBe("error.transport.request_failed");
     warn.mockRestore();
   });
 
   it("still prefers the server's own words whenever there are any", async () => {
     vi.stubGlobal("fetch", reply('{"detail":"Another reap is already running."}', { status: 409 }));
     await expect(api.safety()).rejects.toThrow("Another reap is already running.");
+  });
+});
+
+describe("a coded refusal (phase 8b)", () => {
+  it("carries the top-level code and params beside the English detail", async () => {
+    vi.stubGlobal(
+      "fetch",
+      reply(
+        JSON.stringify({
+          detail: "Use at least 8 characters.",
+          code: "error.password.too_short",
+          params: { min_length: 8 },
+        }),
+        { status: 422 },
+      ),
+    );
+    const err = await caught(() => api.safety());
+    expect(err.message).toBe("Use at least 8 characters.");
+    expect(err.code).toBe("error.password.too_short");
+    expect(err.params).toEqual({ min_length: 8 });
+    expect(err.items).toBeNull();
+  });
+
+  it("carries each 422 item's own code and params, and keeps an uncoded item's msg as-is", async () => {
+    vi.stubGlobal(
+      "fetch",
+      reply(
+        JSON.stringify({
+          detail: [
+            {
+              loc: ["body", "min_length"],
+              msg: "Use at least 8 characters.",
+              type: "error.password.too_short",
+              code: "error.password.too_short",
+              params: { min_length: 8 },
+            },
+            { loc: ["body", "username"], msg: "field required", type: "missing" },
+          ],
+        }),
+        { status: 422 },
+      ),
+    );
+    const err = await caught(() => api.safety());
+    // The joined English still matches what every component rendered before phase 8b.
+    expect(err.message).toBe("Use at least 8 characters. field required");
+    // No single top-level code speaks for a list of several; the per-item codes ride on
+    // `items` instead, which `describeError` composes each of and joins the same way.
+    expect(err.code).toBeNull();
+    expect(err.items).toEqual([
+      {
+        code: "error.password.too_short",
+        params: { min_length: 8 },
+        msg: "Use at least 8 characters.",
+      },
+      { code: null, params: {}, msg: "field required" },
+    ]);
   });
 });
 

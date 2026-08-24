@@ -55,11 +55,10 @@ export interface Snapshot {
  *  kept, and amber means only "left for you to decide". */
 export interface Chip {
   tone: "kept" | "quiet" | "look" | "held";
-  text: string;
-  /** The same fact as `text`, worded as a lowercase clause that can follow "Reap
-   *  requested, kept for now:" -- or null when this chip names no reason a reap would
-   *  be refused. Read it through `chipWhy`; never parse `text` to recover it. */
-  why?: string | null;
+  /** The typed id plus raw params. The browser composes the chip's own text and its
+   *  standalone sentence from this, through `why.ts`'s `composeIn` (`StatusChip.tsx`'s
+   *  `StatusChip` and `chipWhy`) -- never a re-decision, and never English off the wire. */
+  reason: ReasonKey;
 }
 
 /** One square of a show card's season strip: the lightest per-season mark, across
@@ -116,12 +115,14 @@ export interface Candidate {
    *  for a season. Drives the card/panel library chip and the library filter. Null when
    *  unknown (unmatched, or a row from before this shipped); the chip is then hidden. */
   library: string | null;
-  /** How long the item has sat unwatched ("5 years, 9 months"), for the amber pill.
-   *  Null hides the pill. */
-  dormant_for: string | null;
+  /** The raw dormancy day count of a fresh row; the frontend composes the span. Null on a
+   *  legacy row, which shows no amber pill. */
+  dormant_days: number | null;
   /** The one-line "why", drawn from the explanation: the protection keeping a spared item,
-   *  or the strongest reason a reaped one scored. What the card shows instead of a synopsis. */
-  reason: string | null;
+   *  or the strongest reason a reaped one scored. What the card shows instead of a synopsis,
+   *  composed via `why.ts`. A row frozen before typed reasons carries a `legacy` key that
+   *  composes to its stored sentence verbatim; null only where the row has no reason at all. */
+  reason_key?: ReasonKey | null;
   /** The manual decision *in effect* -- "spare", "reap", or null -- own or inherited from
    *  the show. It colors the row's chip and score (the item's real fate). Set the moment they
    *  click, so the card shows the pending intent before the next scan bakes it in. To decide
@@ -167,9 +168,8 @@ export interface Candidate {
    *  collection first -- `CollectionChip` takes element 0. Navigation only, never a verdict
    *  input. Null means "not recorded for this scan" (no Plex configured, a failed
    *  section read, a row from before this shipped), NOT "in no collection": render no
-   *  chip for null rather than an empty one. Optional: the test fixtures are not made to
-   *  carry it (#816 phase 3). */
-  collections?: string[] | null;
+   *  chip for null rather than an empty one. */
+  collections: string[] | null;
   /** Which of three search blocks this row matched: 0 exact title, 1 partial title/show,
    *  2 collection-name only. Null outside a search. Optional: no component reads it yet
    *  (#816 phase 3b; the divider that reads it is phase 5). */
@@ -200,8 +200,9 @@ export interface Group {
   size_bytes: number;
   unknown_size_seasons: number;
   /** The show-level status line and chip: those of the season that most wants the
-   *  owner's attention, else the highest-scoring one. */
-  reason: string | null;
+   *  owner's attention, else the highest-scoring one. The lead season's typed "why",
+   *  exactly as on the candidate. */
+  reason_key?: ReasonKey | null;
   /** The show's Plex library (section), shared by all its seasons. Null when unknown.
    *  Drives the show panel's library chip. */
   library: string | null;
@@ -218,12 +219,6 @@ export interface Group {
    *  reading of the series is stamped onto every season in the same scan, so they cannot
    *  disagree. Null only when no row carries it (a snapshot from before this field). */
   show_status: ShowStatus | null;
-  /** The show's Plex collection names, taken the same way as `show_status`: a TV
-   *  collection lists the show, not its seasons, so every season carries the same list.
-   *  Null means "not recorded for this scan," never "in no collection". Optional, same
-   *  reason as `Candidate.collections` -- `toGroups` (ReviewQueue.tsx) reads it off the
-   *  first season into the local `Group.collections` `CollectionChip` renders. */
-  collections?: string[] | null;
   /** Every season, sorted by season number (unnumbered rows last). */
   seasons: Candidate[];
 }
@@ -294,11 +289,23 @@ export interface CandidateQuery {
  *  only one that lowers coverage, and the only one the panel renders amber. */
 export type SignalState = "adds" | "argues_keep" | "not_applicable" | "unreadable";
 
+/** A typed detail on the wire: the catalog key under `why.*` plus its raw params.
+ *  `frontend/src/why.ts` composes it; params may nest further keys (a blocked check's
+ *  cause, the rating gate's per-bar clauses). A row frozen before the conversion carries
+ *  a `legacy` key wrapping its stored sentence, which composes to that sentence verbatim
+ *  (docs/history/I18N_PLAN.md §5, #899). */
+export interface ReasonKey {
+  k: string;
+  p?: Record<string, unknown> | null;
+}
+
 export interface SignalContribution {
   id: string;
   contribution: number;
   weight: number;
-  detail: string;
+  /** The row's detail, typed on a fresh row and a `legacy`-wrapped sentence on one frozen
+   *  before details were typed. Null only where the row has no detail to show at all. */
+  detail_key?: ReasonKey | null;
   /** False means the input was Unknown. Its weight still counts in the denominator, so
    *  an unevaluated signal drags the score DOWN, never up. */
   evaluated: boolean;
@@ -320,7 +327,9 @@ export interface SignalContribution {
 
 export interface GateOutcome {
   gate: string;
-  detail: string;
+  /** The row's detail, typed on a fresh row and a `legacy`-wrapped sentence on one frozen
+   *  before details were typed. Null only where the row has no detail to show at all. */
+  detail_key?: ReasonKey | null;
   /** Whether the comparison behind a hold is one Reaper actually made. Only the season
    *  keep-rule guard sets it, where a conflict can also mean "a count nobody could read"
    *  or "a watch history too short to stand behind the counts" -- shapes that must never
@@ -359,10 +368,9 @@ export interface Match {
   status: "matched" | "unmatched" | "ambiguous" | "conflicted" | null;
   /** Which kind of evidence bound this item, e.g. `tmdb`. Audit vocabulary, so it is declared
    *  here and deliberately not rendered: rule 21 keeps id kinds off the panel. It is typed so
-   *  the next reader of this file finds it instead of re-discovering the drift (#260).
-   *  Optional like `candidate_rating_keys` below, which the server also always sends: these
-   *  are the fields no component reads, so fixtures are not made to carry them. */
-  by?: string | null;
+   *  the next reader of this file finds it instead of re-discovering the drift (#260). Null
+   *  when nothing bound this item, and on a record stored before this shipped. */
+  by: string | null;
   /** For the audit log, not shown to the owner: "Bound by TMDB id 1001", etc. */
   detail: string | null;
   rating_key: number | null;
@@ -370,11 +378,12 @@ export interface Match {
    *  an ordinary single-listing bind, and on a record stored before this shipped. Load-bearing
    *  on the deletion path -- the executor re-reads this list, so the listings are protected
    *  together -- which is why the panel says the count out loud. */
-  merged_rating_keys?: number[] | null;
-  /** The Plex rows an abstain was choosing between, on `ambiguous` and `conflicted`. The
-   *  panel renders `links.match_candidates` rather than these numbers; they are here so a
-   *  reader can tell how many there were without following the links. */
-  candidate_rating_keys?: number[] | null;
+  merged_rating_keys: number[] | null;
+  /** The Plex rows an abstain was choosing between, on `ambiguous` and `conflicted`. Null
+   *  outside those two states, and on a record stored before this shipped. The panel renders
+   *  `links.match_candidates` rather than these numbers; they are here so a reader can tell
+   *  how many there were without following the links. */
+  candidate_rating_keys: number[] | null;
 }
 
 /** A graded keep's contribution to the score -- points subtracted, and whether it could be
@@ -383,7 +392,9 @@ export interface KeepContribution {
   name: string;
   discount: number;
   max_discount: number;
-  detail: string;
+  /** The row's detail, typed on a fresh row and a `legacy`-wrapped sentence on one frozen
+   *  before details were typed, the same shape every explanation row carries. */
+  detail_key?: ReasonKey | null;
   evaluated: boolean;
 }
 
@@ -422,7 +433,7 @@ export interface Explanation {
    *  basis points (5000 = 50%). Frozen beside `threshold` so an abstain forced by the floor can
    *  name the line coverage fell under. Null when the row could not be read or predates this
    *  field: the panel drops the floor clause rather than read the live policy (rule 113). */
-  coverage_floor_bp?: number | null;
+  coverage_floor_bp: number | null;
   /** Whether this title is held because the plays Reaper recorded earlier stopped being
    *  readable. The panel offers the per-title escape on it, and on nothing else: the reason
    *  text beside it is operator copy and will be reworded (rule 92).
@@ -431,10 +442,10 @@ export interface Explanation {
    *  claim that the scan took a reading and it was honest. **`null` is "cannot tell"** -- a
    *  row scanned before the key existed, or an item with no reading to judge -- and it is what
    *  actually arrives for such a row: `Explanation` defaults the field to `None` and nothing
-   *  sets `exclude_none`, so the server serializes it as `null`. The `?` is defense against a
-   *  shape the server does not emit. Both read as "cannot tell", never as `false`, because
-   *  offering to discard a watch record on a guess is the wrong direction. */
-  watch_blind?: boolean | null;
+   *  sets `exclude_none`, so the server serializes it as `null`. Both read as "cannot tell",
+   *  never as `false`, because offering to discard a watch record on a guess is the wrong
+   *  direction. */
+  watch_blind: boolean | null;
   signals: SignalContribution[];
   keeps?: KeepContribution[];
   /** Why it is being kept. */
@@ -444,10 +455,9 @@ export interface Explanation {
   /** Protections that could not be checked. "We could not look" is not "we looked and
    *  it was fine", and rendering them alike is the entire Deleterr failure class. */
   protections_unknown: GateOutcome[];
-  /** How it was tied to Plex. Optional so a candidate scored before this shipped still
-   *  parses (its explanation JSON has no match block), and nullable because a row that was
-   *  never matched arrives as an explicit `null`. Both consumers already guard it. */
-  match?: Match | null;
+  /** How it was tied to Plex. `null` when the row was never matched, or was scanned before
+   *  this field shipped -- both consumers already guard it, and mean nothing to show. */
+  match: Match | null;
   /** The Stage 2 rewatch-probability context (#554), movie lane only. `null` for a season
    *  row (the fit is movie-only) and for a row stored before this field existed -- both
    *  read as nothing to show. */
@@ -682,13 +692,13 @@ export interface RewatchOddsFit {
  *  lives there and not here, so the two cannot drift (rule 144). */
 export type FieldType = "days" | "bytes" | "count" | "rating_tenths" | "bool" | "text";
 
-/** One field the owner may write a protect condition about (from the vocabulary endpoint). */
+/** One field the owner may write a protect condition about (from the vocabulary endpoint).
+ *  The label, help paragraph and unit are not on the wire: the browser reads them from the
+ *  catalog by this key (`why.field.<key>`, `policyRules.fieldHelp.<key>`,
+ *  `policyRules.fieldUnit.<key>`), #868 phase 4. */
 export interface VocabField {
   key: string;
-  label: string;
-  help_text: string;
   type: FieldType;
-  unit_suffix: string;
   ops: string[];
 }
 export interface Vocabulary {
@@ -698,7 +708,7 @@ export interface Vocabulary {
 
 export interface PolicyWarning {
   field: string;
-  message: string;
+  reason: ReasonKey;
   severity: string;
 }
 
@@ -756,8 +766,8 @@ export interface GateCount {
 }
 
 /** Why the simulator would not answer. Mirrors `api.schemas.SimStale`, and the panel
- *  branches on it for the heading; an id this build does not know falls back to
- *  `stale_reason`, which is the same fact as a sentence and always populated. */
+ *  branches on it for the heading; the body paragraph is `stale_reason` beside it, composed
+ *  from the catalog. */
 export type SimStale = "gathers_differently" | "seasons_not_recorded" | "in_progress_not_read";
 
 export interface Simulation {
@@ -767,7 +777,9 @@ export interface Simulation {
   exact: boolean;
   /** Which refusal this is. Null exactly when `exact`. */
   stale_kind: SimStale | null;
-  stale_reason: string | null;
+  /** The catalog id for the refusal, composed under `policySim.staleReason.<id>` by
+   *  `PolicySimulator.tsx`'s `StaleNotice` (`composeIn`, docs/history/I18N_PLAN.md §5). */
+  stale_reason: ReasonKey | null;
   condemned: number;
   protected: number;
   abstained: number;
@@ -810,11 +822,10 @@ export interface ActionStep {
   body: Record<string, unknown> | null;
   state: string;
   is_canary: boolean;
-  /** Why this step failed or was skipped, as the executor recorded it. Null on a step that
-   *  has not run or that succeeded. Already operator copy: the executor writes one sentence
-   *  and uses it both here and in the after-action report, and the report is the half that
-   *  does not survive a restart. */
-  error: string | null;
+  /** Why this step failed or was skipped, as a typed reason: `null` on a step that has not
+   *  run or that succeeded. Compose with `composeError` (`why.ts`); a `legacy` key composes
+   *  to the sentence a row written before #899 stored verbatim (rule 96). */
+  error_reason: ReasonKey | null;
 }
 
 export interface Run {
@@ -854,11 +865,15 @@ export interface RunSummary {
   id: number;
   state: string;
   approved_at: string;
-  aborted_reason: string | null;
+  /** Why the run stopped early, as a typed reason: `null` on a run that did not abort.
+   *  Thawed the same way `ActionStep.error_reason` is. */
+  aborted_reason: ReasonKey | null;
 }
 
 export interface RunCheck {
-  label: string;
+  /** The live reason the executor recorded this checklist line with, as a typed reason.
+   *  Always present -- a check without one would have nothing to render. */
+  label_reason: ReasonKey;
   ok: boolean;
 }
 
@@ -867,15 +882,22 @@ export interface RunOutcome {
   title: string;
   kind: string;
   state: string; // verified | failed | skipped
-  detail: string;
+  /** The live reason the executor recorded for this outcome, as a typed reason. Always
+   *  present, the same way `RunCheck.label_reason` is. */
+  detail_reason: ReasonKey;
   checks: RunCheck[];
+  /** True when this item was the run's canary -- the smallest item, executed (or, in a dry
+   *  run, proven) first. The same fact `ActionStep.is_canary` carries for the step table. */
+  is_canary: boolean;
 }
 
 export interface RunReport {
   run_id: number;
   dry_run: boolean;
   state: string;
-  aborted_reason: string | null;
+  /** Why the run stopped early: the live reason the executor recorded on the run report, as
+   *  a typed reason. `null` on a run that did not abort. */
+  aborted_reason: ReasonKey | null;
   would_delete_items: number;
   deleted_bytes: number;
   /** How many deleted items had no size, so are absent from `deleted_bytes`. Above zero
@@ -902,7 +924,9 @@ export interface ReapStatus {
   skipped: number;
   /** The item last acted on, for the live line. */
   title: string;
-  error: string | null;
+  /** Why the run stopped, composed under `error.*` with `composeError` (`why.ts`). `null`
+   *  while running and on a clean finish. */
+  error_reason: ReasonKey | null;
   /** The after-action report, present once the run has ended (null while running). */
   report: RunReport | null;
 }
@@ -1052,8 +1076,10 @@ export interface ListSyncResult {
   checked: number;
   failed: number;
   /** Set when Plex could not be reached at all, so no collection row carries an error
-   *  explaining why it was not checked. Null when Plex answered or none is linked. */
-  plex_error: string | null;
+   *  explaining why it was not checked. Null when Plex answered or none is linked. The
+   *  catalog id plus Plex's own error text as a raw `error` param, composed under
+   *  `lists.plexError` by `ListsPanel.tsx` (docs/history/I18N_PLAN.md §5). */
+  plex_error_reason: ReasonKey | null;
 }
 
 export interface PlexTrash {
@@ -1107,11 +1133,13 @@ export interface LeavingSoonResult {
   /** Whether the pass did what it set out to do. Preview is not a failure; no library
    *  turned on, or one that failed, is. */
   ok: boolean;
-  /** The one plain sentence describing this pass, worded by the server and stored on the
-   *  Jobs row in the same breath. Render it; never compose one here (#555). */
-  result: string;
-  // `problems` was dropped with its server field: nothing here ever rendered it, and `result`
-  // now names the libraries that failed. See `LeavingSoonOut` for the whole reason.
+  /** The typed reason describing this pass, the same one stored on the Jobs row in the
+   *  same breath. Compose it with `jobResultText` (`JobStatus.tsx`); never word one here
+   *  (#555). */
+  result_reason: ReasonKey;
+  // `problems` was dropped with its server field: nothing here ever rendered it, and
+  // `result_reason` now names the libraries that failed. See `LeavingSoonOut` for the whole
+  // reason.
 }
 
 export interface WatchEvidence {
@@ -1132,6 +1160,11 @@ export interface WatchEvidence {
 export interface LeavingSoonSettings {
   enabled: boolean;
   allow_unarmed: boolean;
+  /** What the operator calls the shelf: one name for the Plex collection and the label. */
+  name: string;
+  /** What Plex still shows. Equal to `name` except between saving a rename and the pass that
+   *  carries it across, which is the window the Plex panel and the Jobs row report. */
+  applied_name: string;
   last: {
     at: string;
     movies: number;
@@ -1140,8 +1173,9 @@ export interface LeavingSoonSettings {
     /** Whether the last sync did what it set out to do: no library failed, and there was
      *  one turned on to update. Never false merely because it ran in preview (unarmed). */
     ok: boolean;
-    /** The pass's own one-line summary. Render it; never compose one here (#555). */
-    result: string;
+    /** The pass's own typed reason, composed under `jobs.result.*` with `jobResultText`
+     *  (`JobStatus.tsx`). Never worded here (#555). */
+    result_reason: ReasonKey;
   } | null;
   /** A scan that finished without updating the shelf, and why. Reported beside `last`
    *  rather than replacing it: a skipped pass writes nothing to Plex, so the last completed
@@ -1150,8 +1184,11 @@ export interface LeavingSoonSettings {
    *  scheduled scan that crashed. */
   last_skip: {
     at: string;
-    /** Why, in one clause: it trails the exact time on the row's last-run line. */
-    result: string;
+    /** Why, as a typed reason (phase 8b): composed through `why.ts`'s `composeIn("error",
+     *  ...)`, trailing the exact time on the row's last-run line. A row written before this
+     *  conversion carries `{k: "legacy", p: {text}}`, which composes to its stored text
+     *  the same way `why.ts` already handles a legacy `Reason`. */
+    result_reason: ReasonKey;
   } | null;
 }
 
@@ -1246,6 +1283,9 @@ export interface GeneralSettings {
   timezone: string;
   /** The UI accent as #rrggbb; the built-in sky blue until changed. */
   accent_color: string;
+  /** The BCP 47 tag the app is shown in, and that a notification is written in. Null while
+   *  nobody has chosen: this browser seeds it on first sign-in from its own languages. */
+  language: string | null;
   /** Whether a key exists at all; the value only leaves through the reveal call. */
   api_key_set: boolean;
   /** Which screens the review queue opens each show's season list expanded on. */
@@ -1394,13 +1434,6 @@ export interface FairnessReport {
   rows: RequesterRow[];
 }
 
-export interface Progress {
-  phase: string;
-  done: number;
-  total: number;
-  detail: string;
-}
-
 export interface ScanStatus {
   running: boolean;
   phase: string;
@@ -1409,8 +1442,12 @@ export interface ScanStatus {
   /** A monotonic 0-100 for the progress bar. Rises smoothly across the scan's phases,
    *  unlike done/total whose denominator changes meaning between them. */
   percent: number;
-  detail: string;
-  error: string | null;
+  /** The scan's current live step, composed under `shell.scanBar.step.*`
+   *  (`why.ts`'s `composeIn`). `null` between phases with no sub-step of their own. */
+  detail_reason: ReasonKey | null;
+  /** Why the scan stopped, composed under `error.*` (`why.ts`'s `composeError`). `null`
+   *  while running and on a clean finish. */
+  error_reason: ReasonKey | null;
   snapshot_id: number | null;
   /** A second scan starts the moment this one finishes. Set when a scan was requested
    *  mid-run (a policy save, usually): the running scan began under the old policies,
@@ -1453,9 +1490,10 @@ export interface PlexPoll {
   setup: boolean;
   /** Present only with status "choose_server". */
   servers: PlexServerChoice[] | null;
-  /** Present only with status "retrying": why this poll couldn't finish yet. The sign-in
-   *  is still good, so the browser keeps polling instead of failing. */
-  reason?: string | null;
+  /** Present only with status "retrying": why this poll couldn't finish yet, composed
+   *  through `why.ts`'s `composeIn("error", ...)` the same as any other coded refusal
+   *  (phase 8b). The sign-in is still good, so the browser keeps polling instead of failing. */
+  reason?: ReasonKey | null;
 }
 
 // --- setup + settings ------------------------------------------------------
@@ -1518,11 +1556,16 @@ export interface Instance {
   last_error: string | null;
 }
 
-/** The verdict on one connection test: what a saved-instance test and a webhook test can both
- *  answer. What a pre-save probe additionally reads is on `InstanceProbe`. */
+/** The verdict on a saved-instance connection test. `detail_reason` used to be a bare
+ *  `detail: string`, an *arr/Seerr integration's own connectivity text with no fixed
+ *  vocabulary to catalog -- it has one now, the same move that gave the Discord webhook
+ *  test its own typed `DiscordTest` below. A failure carries `explain_failure`'s own
+ *  `error.instance.*` code; a pass carries a `services.test.*` id `ServiceModal.tsx`'s own
+ *  `testDetailText` composes. What a pre-save probe additionally reads is on
+ *  `InstanceProbe`. */
 export interface InstanceTest {
   ok: boolean;
-  detail: string;
+  detail_reason: ReasonKey;
   version: string | null;
 }
 
@@ -1535,8 +1578,21 @@ export interface InstanceProbe extends InstanceTest {
   root_folders: RootFolder[];
   seerr_services: SeerrService[];
   /** Why the list above is empty, when the read FAILED rather than there being nothing to map.
-   *  `null` means the read landed, so an empty list really is nothing to map. */
-  map_error: string | null;
+   *  `null` means the read landed, so an empty list really is nothing to map. The catalog id
+   *  plus the integration's own plain-language text as a raw `error` param, composed under
+   *  `services.modal.mapError` by `ServiceModal.tsx` (docs/history/I18N_PLAN.md §5). */
+  map_error_reason: ReasonKey | null;
+}
+
+/** The verdict on a Discord webhook test: exactly three fixed outcomes, so `reason` is typed
+ *  rather than the `InstanceTest`/`InstanceProbe` shape's free-form `detail` (rule 25's
+ *  reasoning extended). `DiscordModal.tsx` and `NotificationsPanel.tsx` compose
+ *  `services.discord.testResult.<id>` into the same `{ok, detail, version}` shape `TestBadge`
+ *  and `testSentence` already render (docs/history/I18N_PLAN.md §5). */
+export interface DiscordTest {
+  ok: boolean;
+  reason: ReasonKey;
+  version: string | null;
 }
 
 /** One of an *arr instance's root folders, with a suggested Plex library to prefill the map. */
@@ -1575,9 +1631,10 @@ export interface PlexLinkPoll {
   server: PlexStatus | null;
   /** Present only with status "choose_server". */
   servers: PlexServerChoice[] | null;
-  /** Present only with status "retrying": why this poll couldn't finish yet. The sign-in
-   *  is still good, so the browser keeps polling instead of failing. */
-  reason?: string | null;
+  /** Present only with status "retrying": why this poll couldn't finish yet, composed
+   *  through `why.ts`'s `composeIn("error", ...)` the same as any other coded refusal
+   *  (phase 8b). The sign-in is still good, so the browser keeps polling instead of failing. */
+  reason?: ReasonKey | null;
 }
 
 export interface ScheduledJob {
@@ -1590,12 +1647,13 @@ export interface ScheduledJob {
   /** Whether the job is executing right this moment. */
   running: boolean;
   /** The last completion of this job: when it finished (ISO), whether it succeeded, and a
-   *  short plain-language result. All `null` for a job that has never run. For the scan, a
-   *  SUCCESSFUL run is read from the latest snapshot instead (see ScanRow); these fields are
-   *  populated for the scan only when a scheduled run crashed outright. */
+   *  typed reason. All `null` for a job that has never run. For the scan, a SUCCESSFUL run
+   *  is read from the latest snapshot instead (see ScanRow); these fields are populated for
+   *  the scan only when a scheduled run crashed outright. */
   last_run_at: string | null;
   last_ok: boolean | null;
-  last_result: string | null;
+  /** Composed under `jobs.result.*` with `jobResultText` (`JobStatus.tsx`). */
+  last_result_reason: ReasonKey | null;
 }
 
 export interface Schedule {
@@ -1610,7 +1668,6 @@ export interface Safety {
    *  this rather than plain read-only: the operator is otherwise sent to a switch that
    *  cannot help them. Only a restart with the flag off clears it. */
   recovery_mode: boolean;
-  note: string | null;
 }
 
 export interface Notifications {
@@ -1659,17 +1716,44 @@ export interface RestoreSummary {
  *  CORS preflight, which this server never grants. See reaper/api/middleware.py. */
 const CSRF_HEADER = { "X-Reaper-CSRF": "1" };
 
+/** One coded item of a 422 validation list (`api.errors.validation_error_items`'s wire
+ *  shape): a field that failed a catalog-known check carries `code`/`params` beside its
+ *  already-formatted English `msg`; one that failed a plain pydantic type check carries
+ *  `code: null` and only `msg`. `describeError` (`errors.ts`) composes the former through
+ *  the catalog and keeps the latter's `msg` as-is. */
+export interface ApiErrorItem {
+  code: string | null;
+  params: Record<string, unknown>;
+  msg: string;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** The refusal's catalog id (`error.<area>.<name>`), or one of the three
+     *  `error.transport.*` ids this client sets itself when the body carried no coded
+     *  reason at all. `null` for a body this build has no code for (an older server, or a
+     *  refusal this catalog does not carry yet) -- `message` is still the right thing to
+     *  show. Null whenever `items` is non-null: a 422 list's own codes ride there instead,
+     *  one per field, since a single top-level code cannot speak for several. */
+    readonly code: string | null = null,
+    /** The raw params `code` composes with (`why.ts`'s `composeIn` derives `field_label`
+     *  etc. from these the same way it does for a `Reason`). Empty when `code` is null. */
+    readonly params: Record<string, unknown> = {},
+    /** A 422's own per-field list, each carrying its own `code`/`params` (or neither, for
+     *  a plain pydantic type error) beside the English `msg` already folded into
+     *  `message` above. `null` outside the 422-list shape. */
+    readonly items: readonly ApiErrorItem[] | null = null,
   ) {
     super(message);
     this.name = "ApiError";
   }
 }
 
-/** Pull a human-readable reason out of a FastAPI error body.
+/** What a failed response means for the ApiError to carry: the English `message` every
+ *  caller has always read, plus the coded reason(s) behind it (phase 8b) for `describeError`
+ *  (`errors.ts`) to compose in the operator's own language.
  *
  *  `detail` is a string for HTTPException and a list of {loc, msg} for a validation
  *  failure. The domain's refusals arrive as the latter, and they are the most useful
@@ -1678,26 +1762,59 @@ export class ApiError extends Error {
  *
  *  When there is no detail at all there is nothing of Reaper's to say, and what comes back
  *  is not Reaper's: a reverse proxy during a container restart answers with its own HTML
- *  and no `detail`. Every component renders `error.message` verbatim, so the old fallback
+ *  and no `detail`. Every component renders `describeError(error)`, so the old fallback
  *  put a bare "Request failed (502)." across the review queue, the reap sheet and every
  *  settings panel (U-14, rule 21). The status still goes to the console, where whoever is
- *  debugging can read it. */
-function reason(status: number, body: unknown): string {
-  const detail = (body as { detail?: unknown } | null)?.detail;
+ *  debugging can read it. These three fallbacks are coded too (`error.transport.*`), so a
+ *  translated build reads them the same way as every other refusal. */
+function parseFailure(
+  status: number,
+  body: unknown,
+): {
+  message: string;
+  code: string | null;
+  params: Record<string, unknown>;
+  items: ApiErrorItem[] | null;
+} {
+  const b = body as { detail?: unknown; code?: unknown; params?: unknown } | null;
+  const detail = b?.detail;
 
-  if (typeof detail === "string") return detail;
+  if (typeof detail === "string") {
+    const code = typeof b?.code === "string" ? b.code : null;
+    const params = (b?.params as Record<string, unknown> | undefined) ?? {};
+    return { message: detail, code, params, items: null };
+  }
 
   if (Array.isArray(detail)) {
-    const messages = detail
-      .map((e) => (e as { msg?: string }).msg)
-      .filter((m): m is string => Boolean(m));
-    if (messages.length) return messages.join(" ");
+    const items: ApiErrorItem[] = detail
+      .map((e) => {
+        const entry = e as { msg?: unknown; code?: unknown; params?: unknown };
+        return {
+          code: typeof entry.code === "string" ? entry.code : null,
+          params: (entry.params as Record<string, unknown> | undefined) ?? {},
+          msg: typeof entry.msg === "string" ? entry.msg : "",
+        };
+      })
+      .filter((item) => item.msg.length > 0);
+    if (items.length) {
+      return { message: items.map((i) => i.msg).join(" "), code: null, params: {}, items };
+    }
   }
 
   console.warn(`Reaper: request failed with HTTP ${status} and no reason in the body.`, body);
   return status >= 500
-    ? "Reaper couldn't reach the server. Try again."
-    : "Reaper couldn't do that. Try again.";
+    ? {
+        message: "Reaper couldn't reach the server. Try again.",
+        code: "error.transport.server_unreachable",
+        params: {},
+        items: null,
+      }
+    : {
+        message: "Reaper couldn't do that. Try again.",
+        code: "error.transport.request_failed",
+        params: {},
+        items: null,
+      };
 }
 
 /** What to do when the server stops recognizing the session. Set once at startup (main.tsx).
@@ -1736,7 +1853,11 @@ async function parseBody<T>(response: Response): Promise<T> {
   try {
     return JSON.parse(text) as T;
   } catch {
-    throw new ApiError(response.status, "Reaper got an unexpected reply from the server.");
+    throw new ApiError(
+      response.status,
+      "Reaper got an unexpected reply from the server.",
+      "error.transport.bad_reply",
+    );
   }
 }
 
@@ -1745,7 +1866,8 @@ async function throwIfFailed(response: Response, path: string): Promise<void> {
   if (response.ok) return;
   const body: unknown = await response.json().catch(() => null);
   noteAuthFailure(response.status, path);
-  throw new ApiError(response.status, reason(response.status, body));
+  const failure = parseFailure(response.status, body);
+  throw new ApiError(response.status, failure.message, failure.code, failure.params, failure.items);
 }
 
 /** EVERY request the app makes goes through here: the CSRF header, the session hook, and the
@@ -1850,7 +1972,13 @@ export const api = {
     // failure on the queue's own error branch. The old hand-assembly defaulted the body to
     // `[]`, which did not crash and was worse: it drew "nothing to review" over a read that
     // never landed.
-    if (!page) throw new ApiError(502, "Reaper got an unexpected reply from the server.");
+    if (!page) {
+      throw new ApiError(
+        502,
+        "Reaper got an unexpected reply from the server.",
+        "error.transport.bad_reply",
+      );
+    }
     return page;
   },
   candidate: (id: number) => request<CandidateDetail>(`/api/candidates/${id}`),
@@ -1956,8 +2084,12 @@ export const api = {
     del<{ removed: boolean }>(`/api/settings/watch-evidence/${encodeURIComponent(media_key)}`),
 
   leavingSoonSettings: () => request<LeavingSoonSettings>("/api/settings/leaving-soon"),
-  setLeavingSoonSettings: (body: { enabled?: boolean; allow_unarmed?: boolean }) =>
-    put<LeavingSoonSettings>("/api/settings/leaving-soon", body),
+  setLeavingSoonSettings: (body: {
+    enabled?: boolean;
+    allow_unarmed?: boolean;
+    /** Empty resets to the shipped default. */
+    name?: string;
+  }) => put<LeavingSoonSettings>("/api/settings/leaving-soon", body),
 
   about: () => request<About>("/api/about"),
   update: () => request<Update>("/api/about/update"),
@@ -1968,6 +2100,7 @@ export const api = {
     application_url?: string;
     timezone?: string;
     accent_color?: string;
+    language?: string;
     expand_seasons_mode?: ExpandSeasonsMode;
     default_spare_days?: number;
     proxy_trust_enabled?: boolean;
@@ -2047,9 +2180,9 @@ export const api = {
     put<Notifications>("/api/settings/notifications", { webhook_url }),
   clearWebhook: () => del<Notifications>("/api/settings/notifications"),
   /** Post a sample embed. Pass the URL about to be saved to test it, or null to test the
-   *  already-stored webhook without re-pasting the secret. Reuses the connection-test shape. */
+   *  already-stored webhook without re-pasting the secret. */
   testWebhook: (webhook_url: string | null) =>
-    post<InstanceTest>("/api/settings/notifications/test", { webhook_url }),
+    post<DiscordTest>("/api/settings/notifications/test", { webhook_url }),
 
   policy: (mediaType: "movie" | "tv" = "movie") =>
     request<Policy>(`/api/policy?media_type=${mediaType}`),

@@ -7,13 +7,22 @@
 // comes back, so the field for it is always blank and "leave it empty to keep the current one".
 // One save bar covers the whole panel (rule 43), and it reports upward through `onDirtyChange`
 // so the section rail can hold a switch that would discard a draft (rule 146).
+//
+// The copy lives in `locales/en/ui.json` under `general.*`. Two of the tables below
+// (`accentPresets`, `textFields`) are read outside a component, so they take the catalog from
+// the plain `i18next` import rather than the `useTranslation` hook. Each is a FUNCTION for the
+// reason `i18n-module-scope.test.ts` states: a string resolved in a module body keeps whatever
+// language was serving when the module first loaded.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, type RefObject, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { accentInk, accentText, DEFAULT_ACCENT, isHexColor } from "../accent";
 import { announce } from "../announce";
 import { useSavebarFocus, useSuccessorFocus } from "../focus";
+import i18next, { LANGUAGES, languageName, preferredLanguage, setLanguage } from "../i18n";
 import { api, type ExpandSeasonsMode, type GeneralSettings } from "../api";
+import { describeError } from "../errors";
 import { useGeneralSettings } from "../useGeneralSettings";
 import { useMediaQuery } from "../useMediaQuery";
 import { FixedQuantity } from "./QuantityInput";
@@ -57,14 +66,14 @@ function applyTheme(choice: ThemeChoice) {
 // Each carries the color's name, because the swatch is a bare colored circle: its only other
 // name would be the hex, which a screen reader spells out one character at a time and which
 // rule 21 would not accept as operator copy either.
-const ACCENT_PRESETS: { value: string; name: string }[] = [
-  { value: DEFAULT_ACCENT, name: "Reaper blue" },
-  { value: "#4f46e5", name: "Indigo" },
-  { value: "#7c3aed", name: "Violet" },
-  { value: "#0ea5e9", name: "Sky" },
-  { value: "#14b8a6", name: "Teal" },
-  { value: "#f59e0b", name: "Amber" },
-  { value: "#ec4899", name: "Pink" },
+const accentPresets = (): { value: string; name: string }[] => [
+  { value: DEFAULT_ACCENT, name: i18next.t("general.accentPresets.reaperBlue") },
+  { value: "#4f46e5", name: i18next.t("general.accentPresets.indigo") },
+  { value: "#7c3aed", name: i18next.t("general.accentPresets.violet") },
+  { value: "#0ea5e9", name: i18next.t("general.accentPresets.sky") },
+  { value: "#14b8a6", name: i18next.t("general.accentPresets.teal") },
+  { value: "#f59e0b", name: i18next.t("general.accentPresets.amber") },
+  { value: "#ec4899", name: i18next.t("general.accentPresets.pink") },
 ];
 
 // The browser's full IANA zone list, fetched once and cached: it never changes within a
@@ -126,17 +135,17 @@ type TextField = {
  *
  *  #90 was this shape: one `> 0` condition shared by three of these echoes, plus a fourth that
  *  did not handle the field at all. */
-const TEXT_FIELDS: readonly TextField[] = [
+const textFields = (): readonly TextField[] => [
   {
     name: "application_name",
-    label: "Application name",
+    label: i18next.t("general.fields.applicationName.label"),
     seed: (data) => data.application_name,
     clean: (draft) => draft.trim(),
     patch: (value) => ({ application_name: value }),
   },
   {
     name: "application_url",
-    label: "Application URL",
+    label: i18next.t("general.fields.applicationUrl.label"),
     // Null on the wire means "no URL"; the box shows that as empty, and empty saves back as
     // the same nothing.
     seed: (data) => data.application_url ?? "",
@@ -145,7 +154,7 @@ const TEXT_FIELDS: readonly TextField[] = [
   },
   {
     name: "timezone",
-    label: "Time zone",
+    label: i18next.t("general.fields.timezone.label"),
     seed: (data) => data.timezone,
     // A <select> value, so there is no stray whitespace to fold away.
     clean: (draft) => draft,
@@ -161,7 +170,7 @@ const EMPTY_TEXT: Record<TextFieldName, string> = {
 
 function seededText(data: GeneralSettings): Record<TextFieldName, string> {
   const next = { ...EMPTY_TEXT };
-  for (const field of TEXT_FIELDS) next[field.name] = field.seed(data);
+  for (const field of textFields()) next[field.name] = field.seed(data);
   return next;
 }
 
@@ -172,6 +181,7 @@ export function GeneralPanel({
 }: {
   onDirtyChange?: ((dirty: boolean) => void) | undefined;
 } = {}) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const general = useGeneralSettings();
   // Save and Discard both unmount the bar holding the pressed button (#173), the twin of the
@@ -180,7 +190,7 @@ export function GeneralPanel({
   // below either is a different hook order on those renders.
   const bar = useSavebarFocus();
 
-  // One record over `TEXT_FIELDS`, not one `useState` per field: the echoes below walk the
+  // One record over `textFields`, not one `useState` per field: the echoes below walk the
   // descriptor, and a field it does not know about would still need its own state here.
   //
   // Every writer of this record uses the functional form, and that is load-bearing rather than
@@ -254,11 +264,11 @@ export function GeneralPanel({
       // Two shapes reach here and both were silent: the savebar, whose success was the bar
       // unmounting under the button that had focus, and the two controls that save on the spot,
       // whose success was nothing at all.
-      announce("Settings saved.");
+      announce(t("general.notices.settingsSaved"));
       queryClient.setQueryData(["general-settings"], data);
       setText((current) => {
         const next = { ...current };
-        for (const field of TEXT_FIELDS) {
+        for (const field of textFields()) {
           if (field.name in sent) next[field.name] = field.seed(data);
         }
         return next;
@@ -288,9 +298,9 @@ export function GeneralPanel({
     // never announced: it is in the box, and a live region is the wrong place for a secret.
     onSuccess: (r) => {
       setRevealedKey(r.key);
-      announce("API key shown.");
+      announce(t("general.notices.apiKeyShown"));
     },
-    onError: (e: Error) => setKeyError(e.message),
+    onError: (e) => setKeyError(describeError(e)),
   });
   const generate = useMutation({
     mutationFn: api.generateApiKey,
@@ -298,10 +308,10 @@ export function GeneralPanel({
     onSuccess: (r) => {
       setRevealedKey(r.key);
       setConfirmReplace(false);
-      announce("New API key generated. The old one no longer works.");
+      announce(t("general.notices.apiKeyGenerated"));
       void queryClient.invalidateQueries({ queryKey: ["general-settings"] });
     },
-    onError: (e: Error) => setKeyError(e.message),
+    onError: (e) => setKeyError(describeError(e)),
   });
 
   // Generating REPLACES whatever key the server holds, the moment it returns and with no undo,
@@ -342,11 +352,11 @@ export function GeneralPanel({
       const fresh = await general.refetch();
       if (fresh.isError) {
         setConfirmReplace(true);
-        setKeyError("Couldn't check for an existing key. Confirming replaces one if it's there.");
+        setKeyError(t("general.apiKey.checkFailed"));
         return;
       }
       if (fresh.data?.api_key_set) {
-        setKeyError("A key already exists. Use Replace to make a new one.");
+        setKeyError(t("general.apiKey.alreadyExists"));
         return;
       }
       generate.mutate();
@@ -362,26 +372,24 @@ export function GeneralPanel({
     // A self-hosted Reaper is often reached over plain http on a LAN, where the browser
     // withholds the clipboard API. Say so plainly instead of throwing a raw TypeError.
     if (!navigator.clipboard) {
-      throw new Error(
-        "Copying needs a secure (https) page. Press Show, then select the key by hand.",
-      );
+      throw new Error(t("general.apiKey.copyNeedsHttps"));
     }
     await navigator.clipboard.writeText(key);
     // The only feedback was the button's own label reading "Copied" for two seconds -- a
     // change to the name of the control the operator is standing on, which is not announced.
-    announce("API key copied.");
+    announce(t("general.notices.apiKeyCopied"));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
   const copy = useMutation({
     mutationFn: copyKey,
     onMutate: () => setKeyError(null),
-    onError: (e: Error) => setKeyError(e.message),
+    onError: (e) => setKeyError(describeError(e)),
   });
   const removeKey = useMutation({
     mutationFn: api.removeApiKey,
     onMutate: () => setKeyError(null),
-    onError: (e: Error) => setKeyError(e.message),
+    onError: (e) => setKeyError(describeError(e)),
     onSuccess: () => {
       setRevealedKey(null);
       setConfirmRemove(false);
@@ -402,9 +410,7 @@ export function GeneralPanel({
       // phrase for what the key is for, so the two read alike (rule 144), and it follows the
       // house pattern the Discord `remove` mutation sets in `NotificationsPanel`: say what the
       // operator loses, not what stops working on the wire.
-      announce(
-        "API key removed. Scripts and other apps can no longer use Reaper without signing in.",
-      );
+      announce(t("general.notices.apiKeyRemoved"));
       void queryClient.invalidateQueries({ queryKey: ["general-settings"] });
     },
   });
@@ -440,7 +446,7 @@ export function GeneralPanel({
   const ready = !!data && seeded;
 
   const dirtyText = ready
-    ? TEXT_FIELDS.filter((field) => field.clean(text[field.name]) !== field.seed(data))
+    ? textFields().filter((field) => field.clean(text[field.name]) !== field.seed(data))
     : [];
   const accentValid = isHexColor(accent);
   const accentDirty = ready && accent.trim().toLowerCase() !== data.accent_color.toLowerCase();
@@ -461,23 +467,35 @@ export function GeneralPanel({
   // inside the right-aligned control box, so the first keystroke made the button appear and
   // shoved the field being typed in 71px to the left -- then back again on undo. The bar names
   // what is unsaved and sends all of it in one request. The controls that take effect the
-  // moment they change are not drafts and do not join it: two of them call `save.mutate`
-  // themselves -- the reverse-proxy `Switch` and the expand-seasons `<select>` -- and the theme
-  // `<select>` calls `applyTheme`, which writes this browser's own localStorage and never
-  // reaches the server, so it has no draft to hold. The spare-length `Segmented` was a third
+  // moment they change are not drafts and do not join it: three of them call `save` themselves
+  // -- the reverse-proxy `Switch`, the expand-seasons `<select>` and the language `<select>` --
+  // and the theme `<select>` writes this browser's own localStorage and never reaches the
+  // server, so none has a draft to hold. The language one reloads the page once its save lands
+  // (see `setLanguage`), which would take this bar's contents with it, so it is disabled while
+  // the bar has any: that is why it reads `pending` rather than being a self-contained control
+  // like the theme beside it. The spare-length `Segmented` was a third
   // until it started staging `default_spare_days` here instead (see `spareValue` above).
   const pending: { label: string; patch: Parameters<typeof api.saveGeneral>[0] }[] = [];
   for (const field of dirtyText) {
     pending.push({ label: field.label, patch: field.patch(field.clean(text[field.name])) });
   }
   if (accentDirty)
-    pending.push({ label: "Accent color", patch: { accent_color: accent.trim().toLowerCase() } });
+    pending.push({
+      label: t("general.accent.label"),
+      patch: { accent_color: accent.trim().toLowerCase() },
+    });
   if (spareDirty)
-    pending.push({ label: "Default spare length", patch: { default_spare_days: spareValue } });
+    pending.push({
+      label: t("general.spareLength.label"),
+      patch: { default_spare_days: spareValue },
+    });
   // Only while the switch is on. Turning it off disables the box, and a bar naming a field the
   // operator cannot reach to fix is worse than one that waits for them to turn it back on.
   if (proxiesDirty && data?.proxy_trust_enabled)
-    pending.push({ label: "Trusted proxy addresses", patch: { trusted_proxies: proxyList } });
+    pending.push({
+      label: t("general.proxy.addressesLabel"),
+      patch: { trusted_proxies: proxyList },
+    });
   // A half-typed hex code would be stored as the app-wide accent, so the whole save waits on
   // it rather than silently dropping that one field from a bar that just named it.
   const accentBlocks = accentDirty && !accentValid;
@@ -502,7 +520,7 @@ export function GeneralPanel({
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   if (general.isPending) {
-    return <p className="muted">Loading…</p>;
+    return <p className="muted">{t("common.loading")}</p>;
   }
   // Only when there is nothing to render. A refetch that fails AFTER a good load leaves `data` in
   // place (React Query keeps the last good row and raises `isError` beside it), and trading the
@@ -513,7 +531,7 @@ export function GeneralPanel({
   // failed refetch keeps the form on the last good values; this is for a load that never
   // landed one.
   if (!data) {
-    return <Notice tone="error">Couldn't load these settings. Reload to try again.</Notice>;
+    return <Notice tone="error">{t("common.loadError")}</Notice>;
   }
 
   // The current zone may not be in the browser's list (an older engine, or a server-only
@@ -522,6 +540,17 @@ export function GeneralPanel({
     data.timezone && !allTimeZones().includes(data.timezone)
       ? [data.timezone, ...allTimeZones()]
       : allTimeZones();
+
+  // Computed here rather than inline in the JSX below so the Switch's `ariaLabel` and the
+  // SetRow's `label` read the same value (rule 67); guarded on `data.desktop` even though
+  // both uses are gated the same way, so the ICU `select` below is never asked to format an
+  // undefined `platform` on the far more common run where there is no desktop build at all.
+  const trayLabel = data.desktop
+    ? t("general.desktop.trayLabel", { platform: data.desktop.platform })
+    : "";
+  const trayHelp = data.desktop
+    ? t("general.desktop.trayHelp", { platform: data.desktop.platform })
+    : "";
 
   const discardDrafts = () => {
     bar.leaving();
@@ -539,9 +568,9 @@ export function GeneralPanel({
   return (
     <div className="panel">
       <h2 ref={bar.ref as RefObject<HTMLHeadingElement>} tabIndex={-1}>
-        General
+        {t("general.heading")}
       </h2>
-      <p className="muted">How this Reaper presents itself, and how other tools may talk to it.</p>
+      <p className="muted">{t("general.subheading")}</p>
 
       {/* Same obligation as the twin in `PlexPanel` (rule 72): the `!data` branch above keeps the
           form through a failed refetch so the drafts in it stay reachable, which leaves this line
@@ -549,15 +578,11 @@ export function GeneralPanel({
       {general.isError && <StaleReadNotice />}
 
       <div className="set-group">
-        <h3>Application</h3>
+        <h3>{t("general.sections.application")}</h3>
         <div className="set-rows">
           <SetRow
-            label="Application name"
-            help={
-              <>
-                Shown in Discord messages and the browser tab, so you can tell two installs apart.
-              </>
-            }
+            label={t("general.fields.applicationName.label")}
+            help={t("general.fields.applicationName.help")}
           >
             <input
               type="text"
@@ -566,32 +591,30 @@ export function GeneralPanel({
               onChange={(e) =>
                 setText((current) => ({ ...current, application_name: e.target.value }))
               }
-              aria-label="Application name"
+              aria-label={t("general.fields.applicationName.label")}
             />
           </SetRow>
           <SetRow
-            label="Application URL"
-            help={
-              <>
-                Where people reach Reaper, for example https://reaper.example.com. Notifications use
-                it to link back here. Leave empty and notifications simply skip the link.
-              </>
-            }
+            label={t("general.fields.applicationUrl.label")}
+            help={t("general.fields.applicationUrl.help")}
           >
             <input
               type="text"
               value={text.application_url}
-              placeholder="https://reaper.example.com"
+              placeholder={t("general.fields.applicationUrl.placeholder")}
               onChange={(e) =>
                 setText((current) => ({ ...current, application_url: e.target.value }))
               }
-              aria-label="Application URL"
+              aria-label={t("general.fields.applicationUrl.label")}
             />
           </SetRow>
-          <SetRow label="Time zone" help="The server's time zone.">
+          <SetRow
+            label={t("general.fields.timezone.label")}
+            help={t("general.fields.timezone.help")}
+          >
             <select
               value={text.timezone}
-              aria-label="Time zone"
+              aria-label={t("general.fields.timezone.label")}
               onChange={(e) => setText((current) => ({ ...current, timezone: e.target.value }))}
             >
               {zoneOptions.map((z) => (
@@ -605,28 +628,27 @@ export function GeneralPanel({
       </div>
 
       <div className="set-group">
-        <h3>Appearance</h3>
+        <h3>{t("general.sections.appearance")}</h3>
         <div className="set-rows">
           <SetRow
             variant="accent"
-            label="Accent color"
-            help={
-              <>
-                The color Reaper uses for buttons, links, and highlights. Everyone who opens this
-                install sees it. Pick from the wheel or type a hex code.
-              </>
-            }
+            label={t("general.accent.label")}
+            help={t("general.accent.help")}
             after={
               <>
                 {!accentValid && (
                   <p className="help field-error" id={ACCENT_ERROR_ID}>
-                    Enter a hex code like #25c3ff.
+                    {t("general.accent.error")}
                   </p>
                 )}
                 {/* role="group" is what carries the name: ARIA does not expose an aria-label on
                     a plain div, so "Quick colors" reached nobody. Same shape as `Segmented`. */}
-                <div className="presets" role="group" aria-label="Quick colors">
-                  {ACCENT_PRESETS.map((c) => (
+                <div
+                  className="presets"
+                  role="group"
+                  aria-label={t("general.accent.quickColorsGroup")}
+                >
+                  {accentPresets().map((c) => (
                     <button
                       key={c.value}
                       type="button"
@@ -663,12 +685,12 @@ export function GeneralPanel({
                       : undefined
                   }
                 >
-                  <span className="pv-label">Preview</span>
+                  <span className="pv-label">{t("general.accent.previewLabel")}</span>
                   <button className="primary" type="button" disabled>
-                    Scan library
+                    {t("general.accent.previewScanButton")}
                   </button>
                   <a href="#" tabIndex={-1} onClick={(e) => e.preventDefault()}>
-                    Policy → Deletion
+                    {t("general.accent.previewPolicyLink")}
                   </a>
                 </div>
               </>
@@ -682,7 +704,7 @@ export function GeneralPanel({
                 <input
                   type="color"
                   value={accentValid ? accent : DEFAULT_ACCENT}
-                  aria-label="Accent color"
+                  aria-label={t("general.accent.label")}
                   onChange={(e) => setAccent(e.target.value)}
                 />
               </span>
@@ -692,7 +714,7 @@ export function GeneralPanel({
                 value={accent}
                 spellCheck={false}
                 maxLength={7}
-                aria-label="Accent color hex code"
+                aria-label={t("general.accent.hexFieldAriaLabel")}
                 // The box refuses the save and the sentence saying why sits below it, out of
                 // reach of anyone who arrived at the box by keyboard (#174).
                 aria-invalid={accentValid ? undefined : true}
@@ -702,74 +724,86 @@ export function GeneralPanel({
             </span>
             {accent.toLowerCase() !== DEFAULT_ACCENT && (
               <button className="link" onClick={() => setAccent(DEFAULT_ACCENT)}>
-                Reset to default
+                {t("general.accent.resetToDefault")}
               </button>
             )}
           </SetRow>
 
-          <SetRow
-            label="Theme"
-            help={
-              <>
-                Light or dark. "Match my device" follows your system setting. Applies to this
-                browser only.
-              </>
-            }
-          >
+          <SetRow label={t("general.language.label")} help={t("general.language.help")}>
+            {/* The server holds the choice, because a notification is composed there with no
+                browser to ask. So this saves first and repaints second: `setLanguage` writes
+                this browser's copy and reloads onto it, and reaching it only from `mutateAsync`
+                means a refused save leaves both halves on the old language rather than a page
+                speaking one language while the server stores another.
+
+                No "match my browser" entry. The browser still decides on a fresh install --
+                `App` seeds the server from `preferredLanguage()` the first time it finds
+                nothing stored -- but as a seed, not a standing mode, so what the picker shows
+                is always what a notification will be written in.
+
+                Disabled while the save bar holds anything, because the reload would discard it
+                with no ask. */}
+            <select
+              value={data.language ?? preferredLanguage()}
+              aria-label={t("general.language.label")}
+              disabled={pending.length > 0 || save.isPending}
+              onChange={(e) => {
+                const tag = e.target.value;
+                void save
+                  .mutateAsync({ language: tag })
+                  .then(() => setLanguage(tag))
+                  // The refusal is already on screen through `save.error`. This only keeps the
+                  // rejection from going unhandled, which rule 135 makes a test failure.
+                  .catch(() => {});
+              }}
+            >
+              {LANGUAGES.map((tag) => (
+                <option key={tag} value={tag}>
+                  {languageName(tag)}
+                </option>
+              ))}
+            </select>
+          </SetRow>
+
+          <SetRow label={t("general.theme.label")} help={t("general.theme.help")}>
             <select
               value={theme}
-              aria-label="Theme"
+              aria-label={t("general.theme.label")}
               onChange={(e) => {
                 const next = e.target.value as ThemeChoice;
                 setTheme(next);
                 applyTheme(next);
               }}
             >
-              <option value="system">Match my device</option>
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
+              <option value="system">{t("general.theme.optionSystem")}</option>
+              <option value="light">{t("general.theme.optionLight")}</option>
+              <option value="dark">{t("general.theme.optionDark")}</option>
             </select>
           </SetRow>
         </div>
       </div>
 
       <div className="set-group">
-        <h3>Review queue</h3>
+        <h3>{t("general.sections.reviewQueue")}</h3>
         <div className="set-rows">
-          <SetRow
-            label="Expand seasons by default"
-            help={
-              <>
-                TV shows in the review queue open with every season showing. Mobile means a narrow
-                screen, like a phone.
-              </>
-            }
-          >
+          <SetRow label={t("general.expandSeasons.label")} help={t("general.expandSeasons.help")}>
             {/* Four choices, so a select rather than a Segmented (rule 41), on the same control
                 standard as the Theme picker above. */}
             <select
               value={data.expand_seasons_mode}
-              aria-label="Expand seasons by default"
+              aria-label={t("general.expandSeasons.label")}
               disabled={save.isPending}
               onChange={(e) =>
                 save.mutate({ expand_seasons_mode: e.target.value as ExpandSeasonsMode })
               }
             >
-              <option value="off">Off</option>
-              <option value="desktop">Desktop</option>
-              <option value="both">Desktop &amp; mobile</option>
-              <option value="mobile">Mobile</option>
+              <option value="off">{t("general.expandSeasons.optionOff")}</option>
+              <option value="desktop">{t("general.expandSeasons.optionDesktop")}</option>
+              <option value="both">{t("general.expandSeasons.optionBoth")}</option>
+              <option value="mobile">{t("general.expandSeasons.optionMobile")}</option>
             </select>
           </SetRow>
-          <SetRow
-            label="Default spare length"
-            help={
-              <>
-                How long a plain Spare keeps a title before Reaper judges it again. Set a different
-                length for any single title from its Spare menu.
-              </>
-            }
-          >
+          <SetRow label={t("general.spareLength.label")} help={t("general.spareLength.help")}>
             {/* Both halves read and write the DRAFT, never the stored value. A press stages
                   the mode in the save bar beside the number, so the bar names one field, one
                   Discard puts both back, and neither is written until Save.
@@ -781,10 +815,10 @@ export function GeneralPanel({
             <Segmented
               value={spareForever ? "forever" : "days"}
               options={[
-                ["days", "Days"],
-                ["forever", "Forever"],
+                ["days", t("general.spareLength.optionDays")],
+                ["forever", t("general.spareLength.optionForever")],
               ]}
-              label="Default spare length"
+              label={t("general.spareLength.label")}
               disabled={save.isPending}
               onChange={(mode) => setSpareForever(mode === "forever")}
             />
@@ -793,11 +827,11 @@ export function GeneralPanel({
             {!spareForever && (
               <FixedQuantity
                 value={spareDays}
-                suffix="days"
+                suffix={t("general.spareLength.daysSuffix")}
                 min={1}
                 max={3650}
                 width="narrow"
-                ariaLabel="Default spare length in days"
+                ariaLabel={t("general.spareLength.daysAriaLabel")}
                 disabled={save.isPending}
                 onChange={(n) => setSpareDays(Math.max(1, Math.min(3650, n)))}
               />
@@ -807,7 +841,7 @@ export function GeneralPanel({
       </div>
 
       <div className="set-group">
-        <h3>API access</h3>
+        <h3>{t("general.sections.apiAccess")}</h3>
         <div className="set-rows">
           {/* A cluster, not a box: the key field plus four buttons. It keeps a shrink-to-fit
               control column so those buttons stay on one line (see `.set-row-cluster`).
@@ -842,16 +876,8 @@ export function GeneralPanel({
                 phrase for phrase and names this file in every failure message. */}
           <SetRow
             variant="cluster"
-            label="API key"
-            help={
-              <>
-                Send it as the X-Api-Key header so scripts and other apps can use Reaper without
-                signing in. A key reads nearly everything, your settings included, and can start
-                scans, build plans, and change your policy, run limits, and grace. Nothing else: it
-                cannot turn deletion on, run a reap, read your logs, see who watched what, or change
-                any other setting.
-              </>
-            }
+            label={t("general.apiKey.label")}
+            help={t("general.apiKey.help")}
           >
             {data.api_key_set ? (
               <>
@@ -860,17 +886,17 @@ export function GeneralPanel({
                   type="text"
                   readOnly
                   value={revealedKey ?? "••••••••••••••••••••••••"}
-                  aria-label="API key"
+                  aria-label={t("general.apiKey.fieldAriaLabel")}
                 />
                 {revealedKey === null ? (
                   <button disabled={reveal.isPending} onClick={() => reveal.mutate()}>
-                    Show
+                    {t("general.apiKey.show")}
                   </button>
                 ) : (
-                  <button onClick={() => setRevealedKey(null)}>Hide</button>
+                  <button onClick={() => setRevealedKey(null)}>{t("common.hide")}</button>
                 )}
                 <button disabled={copy.isPending} onClick={() => copy.mutate()}>
-                  {copied ? "Copied" : "Copy"}
+                  {copied ? t("general.apiKey.copied") : t("general.apiKey.copy")}
                 </button>
                 {confirmReplace ? (
                   <>
@@ -879,7 +905,7 @@ export function GeneralPanel({
                       disabled={generate.isPending}
                       onClick={() => generate.mutate()}
                     >
-                      Confirm replace
+                      {t("general.apiKey.confirmReplace")}
                     </button>
                     {/* Backing out clears the notice too. It is the shared one (above), and the
                           only thing that clears it otherwise is the NEXT mutation starting -- so a
@@ -892,16 +918,16 @@ export function GeneralPanel({
                         setKeyError(null);
                       }}
                     >
-                      Cancel
+                      {t("common.cancel")}
                     </button>
                   </>
                 ) : (
                   <button
                     className="ghost"
-                    title="The old key stops working immediately"
+                    title={t("general.apiKey.replaceTitle")}
                     onClick={() => setConfirmReplace(true)}
                   >
-                    Replace…
+                    {t("general.apiKey.replace")}
                   </button>
                 )}
                 {/* Replacing swaps one working key for another, so it never closes this
@@ -917,17 +943,17 @@ export function GeneralPanel({
                         removeKey.mutate();
                       }}
                     >
-                      Confirm remove
+                      {t("common.confirmRemove")}
                     </button>
-                    <button onClick={() => setConfirmRemove(false)}>Cancel</button>
+                    <button onClick={() => setConfirmRemove(false)}>{t("common.cancel")}</button>
                   </>
                 ) : (
                   <button
                     className="ghost"
-                    title="Anything using this key stops working immediately"
+                    title={t("general.apiKey.removeTitle")}
                     onClick={() => setConfirmRemove(true)}
                   >
-                    Remove…
+                    {t("general.apiKey.remove")}
                   </button>
                 )}
               </>
@@ -946,7 +972,7 @@ export function GeneralPanel({
                   disabled={generate.isPending}
                   onClick={() => generate.mutate()}
                 >
-                  Confirm generate
+                  {t("general.apiKey.confirmGenerate")}
                 </button>
                 <button
                   onClick={() => {
@@ -954,7 +980,7 @@ export function GeneralPanel({
                     setKeyError(null);
                   }}
                 >
-                  Cancel
+                  {t("common.cancel")}
                 </button>
               </>
             ) : (
@@ -965,10 +991,10 @@ export function GeneralPanel({
                 onClick={() => requestGenerate.mutate()}
               >
                 {generate.isPending
-                  ? "Generating…"
+                  ? t("general.apiKey.generating")
                   : requestGenerate.isPending
-                    ? "Checking…"
-                    : "Generate API key"}
+                    ? t("common.checking")
+                    : t("general.apiKey.generate")}
               </button>
             )}
           </SetRow>
@@ -984,17 +1010,11 @@ export function GeneralPanel({
                 names this file. */}
           <SetRow
             variant="plain"
-            label="API reference"
-            help={
-              <>
-                Every endpoint, documented from the running app. The try-it-out button sends real
-                requests as you, so it can change settings and start work, not just read. Only
-                visible while signed in.
-              </>
-            }
+            label={t("general.apiReference.label")}
+            help={t("general.apiReference.help")}
           >
             <a className="btn-link" href="/api/docs" target="_blank" rel="noreferrer">
-              Open the API reference <span aria-hidden="true">↗</span>
+              {t("general.apiReference.link")} <span aria-hidden="true">↗</span>
             </a>
           </SetRow>
         </div>
@@ -1002,54 +1022,38 @@ export function GeneralPanel({
       </div>
 
       <div className="set-group">
-        <h3>Reverse proxy</h3>
+        <h3>{t("general.sections.reverseProxy")}</h3>
         <div className="set-rows">
           {/* A Switch, not a box, so it releases the control track (`.set-row-plain`). The row
               below it holds the addresses box and keeps the track. */}
           <SetRow
             variant="plain"
-            label="Behind a reverse proxy"
-            help={
-              <>
-                Turn this on if Nginx, Traefik, Caddy or similar sits in front of Reaper. Reaper
-                will then trust the proxy to say which address each visitor really came from, which
-                keeps sign-in rate limits accurate per visitor instead of lumping everyone together.
-                It is also how Reaper learns that visitors arrive over HTTPS, so it can mark the
-                sign-in cookie HTTPS-only.
-              </>
-            }
+            label={t("general.proxy.enabledLabel")}
+            help={t("general.proxy.enabledHelp")}
           >
             <Switch
               checked={data.proxy_trust_enabled}
               disabled={save.isPending}
-              ariaLabel="Behind a reverse proxy"
+              ariaLabel={t("general.proxy.enabledLabel")}
               onChange={(enabled) => save.mutate({ proxy_trust_enabled: enabled })}
             />
           </SetRow>
           <SetRow
             dim={!data.proxy_trust_enabled}
-            label="Trusted proxy addresses"
-            help={
-              <>
-                Only requests arriving from these addresses may claim to be forwarded. Comma
-                separated, single addresses or ranges like 172.16.0.0/12.
-              </>
-            }
+            label={t("general.proxy.addressesLabel")}
+            help={t("general.proxy.addressesHelp")}
           >
             <input
               type="text"
               value={proxies}
               disabled={!data.proxy_trust_enabled}
-              placeholder="172.16.0.1, 10.0.0.0/8"
+              placeholder={t("general.proxy.addressesPlaceholder")}
               onChange={(e) => setProxies(e.target.value)}
-              aria-label="Trusted proxy addresses"
+              aria-label={t("general.proxy.addressesLabel")}
             />
           </SetRow>
         </div>
-        <p className="group-hint muted">
-          Off by default, and forwarded headers from anywhere else are always ignored: a stranger
-          can't fake their address to dodge the login lockout.
-        </p>
+        <p className="group-hint muted">{t("general.proxy.hint")}</p>
       </div>
 
       {/* Present only when the server says it runs as the Mac or Windows app; the container,
@@ -1058,38 +1062,28 @@ export function GeneralPanel({
           data the save's response refreshed, so there is nothing here for the save bar. */}
       {data.desktop && (
         <div className="set-group">
-          <h3>Desktop app</h3>
-          <p className="group-blurb">These settings apply the next time Reaper opens.</p>
+          <h3>{t("general.sections.desktopApp")}</h3>
+          <p className="group-blurb">{t("general.desktop.blurb")}</p>
           <div className="set-rows">
             {data.desktop.platform === "macos" && (
               <SetRow
                 variant="plain"
-                label="Show the Dock icon"
-                help="Reaper lives in the menu bar. Turn this on to show a Dock icon too."
+                label={t("general.desktop.dockIconLabel")}
+                help={t("general.desktop.dockIconHelp")}
               >
                 <Switch
                   checked={data.desktop.dock_icon}
                   disabled={save.isPending}
-                  ariaLabel="Show the Dock icon"
+                  ariaLabel={t("general.desktop.dockIconLabel")}
                   onChange={(enabled) => save.mutate({ dock_icon: enabled })}
                 />
               </SetRow>
             )}
-            <SetRow
-              variant="plain"
-              label={data.desktop.platform === "macos" ? "Menu bar icon" : "Tray icon"}
-              help={
-                data.desktop.platform === "macos"
-                  ? "Open and quit Reaper from the menu bar. With this off, Reaper runs " +
-                    "with nothing on screen, and quitting takes Activity Monitor."
-                  : "Open and quit Reaper from the tray, next to the clock. With this off, " +
-                    "Reaper runs with nothing on screen, and quitting takes Task Manager."
-              }
-            >
+            <SetRow variant="plain" label={trayLabel} help={trayHelp}>
               <Switch
                 checked={data.desktop.tray}
                 disabled={save.isPending}
-                ariaLabel={data.desktop.platform === "macos" ? "Menu bar icon" : "Tray icon"}
+                ariaLabel={trayLabel}
                 onChange={(enabled) => save.mutate({ tray: enabled })}
               />
             </SetRow>
@@ -1100,7 +1094,9 @@ export function GeneralPanel({
       {/* Only when there is no bar to put it in. A control that saves on the spot fails with
           nothing unsaved, so its refusal has nowhere else to go; a refused BAR save renders
           inside the bar instead, beside the fields it just refused to write. */}
-      {save.error && pending.length === 0 && <Notice tone="error">{save.error.message}</Notice>}
+      {save.error && pending.length === 0 && (
+        <Notice tone="error">{describeError(save.error)}</Notice>
+      )}
 
       {/* The one save affordance on this panel (rule 43), the same bar the policy editor uses:
           it names what is unsaved, saves all of it in one press, and offers Discard. Rendered
@@ -1109,13 +1105,12 @@ export function GeneralPanel({
       {pending.length > 0 && (
         <div className="savebar">
           <span className="savebar-what">
-            Unsaved changes: <strong>{pending.map((p) => p.label).join(", ")}</strong>
-            {accentBlocks && (
-              <span className="savebar-blocked">Enter a hex code like #25c3ff to save.</span>
-            )}
+            {t("common.savebar.unsavedChangesPrefix")}{" "}
+            <strong>{pending.map((p) => p.label).join(", ")}</strong>
+            {accentBlocks && <span className="savebar-blocked">{t("general.accent.error")}</span>}
           </span>
           <button className="ghost" disabled={save.isPending} onClick={discardDrafts}>
-            Discard
+            {t("common.discard")}
           </button>
           <button
             className="primary"
@@ -1125,7 +1120,7 @@ export function GeneralPanel({
               save.mutate(Object.assign({}, ...pending.map((p) => p.patch)));
             }}
           >
-            {save.isPending ? "Saving…" : "Save changes"}
+            {save.isPending ? t("common.saving") : t("common.saveChanges")}
           </button>
           {/* Inside the bar, not below the panel (rule 42, and the same slot
               `PolicyEditor`'s bar uses): the route refuses the whole body before writing any
@@ -1133,7 +1128,7 @@ export function GeneralPanel({
               belief that all six fields went in. The bar is sticky, so a notice outside it
               renders at the document foot -- off screen for anyone editing the top group,
               which is where five of these six fields are. */}
-          {save.error && <Notice tone="error">{save.error.message}</Notice>}
+          {save.error && <Notice tone="error">{describeError(save.error)}</Notice>}
         </div>
       )}
     </div>

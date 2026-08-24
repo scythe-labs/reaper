@@ -85,13 +85,16 @@ API_TS = REPO / "frontend" / "src" / "api.ts"
 WIRE_PACKAGE = "reaper.api."
 INNER_MODULES = ("reaper.engine.policy", "reaper.engine.explanation")
 
-#: Reconciled by hand against the tree: 127 under ``reaper.api.*`` and 16 across the two engine
+#: Reconciled by hand against the tree: 128 under ``reaper.api.*`` and 17 across the two engine
 #: modules (+1 for ``RewatchOddsOut``, #554 stage 2, mirrored in the browser as ``RewatchOdds``;
 #: +2 more for the same stage's ``RewatchOddsFitOut``/``RewatchOddsBlockOut``, the Policy page's
-#: ladder-and-echo payload, mirrored as ``RewatchOddsFit``/``RewatchOddsBlock``). It is here
-#: because the collision assertion below is flag-shaped, and a flag cannot see a member that
-#: left the walk (rule 145).
-_EXPECTED_SERVER_MODELS = 143
+#: ladder-and-echo payload, mirrored as ``RewatchOddsFit``/``RewatchOddsBlock``; +1 more for
+#: #868 phase 5's ``DiscordTestOut``, split off ``TestOut`` for the Discord webhook test's
+#: typed reason; -1 for ``NotificationLanguageIn``, gone with the route it bodied -- the
+#: language is one setting now and rides ``GeneralSettingsIn``). It is here because the
+#: collision assertion below is flag-shaped, and a flag cannot see a member that left the walk
+#: (rule 145).
+_EXPECTED_SERVER_MODELS = 145
 
 #: Browser types whose server counterpart is spelled differently. Each is a real pair -- the
 #: field sets are compared -- and the rename is the only reason a suffix rule cannot find it.
@@ -121,9 +124,10 @@ ALIAS = {
 CLIENT_ONLY = {
     # The query the browser sends as URL parameters, not a body any model validates.
     "CandidateQuery",
-    # A UI-side subset of ScanStatus (phase/done/total/detail) that several components take
-    # as a prop; the server has no model of the subset.
-    "Progress",
+    # One item of a 422 validation list's `code`/`params`/`msg` triple (phase 8b): the
+    # browser's own name for `api.errors.validation_error_items`'s wire shape, which is a
+    # list of dicts the server builds inline rather than a model with a name to pair against.
+    "ApiErrorItem",
 }
 
 #: Reconciled by hand against the tree (rule 145). ``grep -c '^export interface'`` on api.ts is
@@ -160,8 +164,15 @@ CLIENT_ONLY = {
 # Both +3 again for #554 stage 2's frontend step: `RewatchOdds` pairs with `RewatchOddsOut`,
 # `RewatchOddsFit` with `RewatchOddsFitOut`, and `RewatchOddsBlock` with `RewatchOddsBlockOut`,
 # all three on the plain suffix rule with no ALIAS entry needed.
-EXPECTED_INTERFACES = 97
-EXPECTED_PAIRS = 95
+# Both +1 again for #868 phase 5: `DiscordTest` pairs with the new `DiscordTestOut` on the
+# suffix rule, split off `TestOut` because the Discord webhook test now sends a typed reason
+# where the *arr/Seerr connection test still sends free English (docs/history/I18N_PLAN.md §5).
+# INTERFACES alone +1 for phase 8b: `ApiErrorItem` is new and sits in CLIENT_ONLY above --
+# the 422 list it describes is a plain list of dicts server-side, not a named model to pair.
+# INTERFACES alone -1 for the i18n legacy-layer cleanup: `Progress` had no reader anywhere in
+# the tree and no server model to sit in CLIENT_ONLY for, so it was deleted rather than kept.
+EXPECTED_INTERFACES = 99
+EXPECTED_PAIRS = 97
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")
@@ -817,6 +828,15 @@ WIDENED: set[str] = {
     "Vocabulary.lane",
 }
 
+#: Phase 8a (#870-880's continuation) typed the *server* side of every refusal,
+#: `PlexPollOut.reason` and its Settings-link sibling `PlexLinkPollOut.reason` among them, ahead
+#: of the browser: composing the sentence needed `ui.json`'s `error.*` namespace, which did not
+#: exist yet. Phase 8b added that namespace, updated `api.ts` to `ReasonKey | null` for both
+#: members, and composed the retrying text from it in the same change, so this is empty now --
+#: kept declared, rather than deleted along with the loop that reads it, so a future conversion
+#: needing the same temporary two-sided-change shape has a named place to add its members.
+PENDING_PHASE_8B: set[str] = set()
+
 
 class TestTheTwoCopiesAgreeOnTypes:
     """The second half of the guard: the two copies agree about what is IN each field.
@@ -874,6 +894,8 @@ class TestTheTwoCopiesAgreeOnTypes:
         for member, (written, declared, mine, theirs) in self._diff(
             browser_member_types, server_member_types
         ).items():
+            if member in PENDING_PHASE_8B:
+                continue
             if _within(mine, theirs) or _within(theirs, mine):
                 continue
             unrelated.append(f"{member}: the browser says `{written}`, the server `{declared}`")
@@ -960,8 +982,9 @@ class TestTheTwoCopiesAgree:
             server_only = sorted(fields - browser_types[name])
             browser_only = sorted(browser_types[name] - fields)
             if server_only or browser_only:
+                pair = f"{name} <-> {counterpart}"
                 drifted.append(
-                    f"{name} <-> {counterpart}:"
+                    f"{pair}:"
                     + (
                         f" the server sends {server_only} and the browser has no field for it;"
                         if server_only
@@ -1159,7 +1182,7 @@ class TestTheRewatchKeepNameIsOneDeclaration:
 class TestEveryGateIdHasOperatorCopy:
     """A gate id the browser has no copy for is printed at the operator as a slug.
 
-    ``GATE_META`` (``frontend/src/components/policyMeta.ts``) is the browser's one
+    ``gateMeta`` (``frontend/src/components/policyMeta.ts``) is the browser's one
     declaration of what each protection is called. The policy simulator's "Why titles were
     spared" list reads it by id, and until #551 an id it lacked fell through to a
     ``titleCase`` of the slug -- so "Season Progression" and "Custom", both of which fire on
@@ -1173,10 +1196,11 @@ class TestEveryGateIdHasOperatorCopy:
     rule 118's shape: without them the guard could be deleted and its proof stay green.
 
     **The one sibling copy, named here rather than guarded** (rule 144): ``api/review.py``'s
-    ``_kept_phrase`` turns the same ids into the review queue's chip. It is deliberately not
-    covered, because its own fallback is already a sentence -- "a protection applies" -- so a
-    gate arriving without a branch there reads vaguely, never as a slug. Reword that fallback
-    into anything id-shaped and it needs a guard of its own.
+    ``_kept_reason`` turns the same ids into the review queue's chip. It is deliberately not
+    covered, because its own fallback is the id ``kept.unknown``, whose catalog entry
+    (``chip.sentence.kept.unknown``) composes "A protection applies." -- vague, but a
+    sentence, never a slug. Swap that fallback for anything id-shaped and it needs a guard
+    of its own.
 
     Bounded per rule 147: the union is read however it is spaced and wrapped, but only while
     it is spelled as quoted literals in one ``export type GateId = ...;`` statement. A
@@ -1207,7 +1231,7 @@ class TestEveryGateIdHasOperatorCopy:
             "engine.gates.GateId and policyMeta.ts's GateId union disagree. A gate the "
             "browser does not know is printed as its raw id in the policy simulator's "
             '"Why titles were spared" list (rule 21). Add it to the union, and to '
-            "GATE_META with a plain-language label (tsc requires it once the union moves)."
+            "gateMeta with a plain-language label (tsc requires it once the union moves)."
         )
 
     def test_the_map_still_has_to_cover_the_union(self) -> None:
@@ -1223,14 +1247,14 @@ class TestEveryGateIdHasOperatorCopy:
         source = self._source()
         clause = f'satisfies Record<GateId | "{HAND_SPARE_TALLY_ID}", GateMeta>'
         assert clause in source, (
-            f"policyMeta.ts no longer closes GATE_META with `{clause}`, so tsc has stopped "
+            f"policyMeta.ts no longer closes gateMeta with `{clause}`, so tsc has stopped "
             "requiring a label for every gate id and for the hand-spare tally."
         )
         for gate in self._declared():
-            assert f"\n  {gate}: {{" in source, f"{gate} has no GATE_META entry"
+            assert f"\n    {gate}: {{" in source, f"{gate} has no gateMeta entry"
 
     def _marked_retired(self) -> set[str]:
-        """Every id ``GATE_META`` marks ``retired``.
+        """Every id ``gateMeta`` marks ``retired``.
 
         Comments are stripped first, and each entry is read brace-depth aware, so
         ``server_popularity``'s nested ``window`` object is part of its entry rather than an
@@ -1238,8 +1262,8 @@ class TestEveryGateIdHasOperatorCopy:
         comparison below rather than matching nothing.
         """
         text = _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub("", self._source()))
-        start = text.find("export const GATE_META")
-        assert start != -1, "policyMeta.ts no longer declares `export const GATE_META`."
+        start = text.find("export function gateMeta")
+        assert start != -1, "policyMeta.ts no longer declares `export function gateMeta`."
         body, entry = text[text.index("{", start) + 1 :], re.compile(r"(\w+)\s*:\s*\{")
         found: set[str] = set()
         cursor = 0
@@ -1370,4 +1394,55 @@ class TestAWireModelReadsOnlyFieldsItsRecordCarries:
         assert sorted(sites) == _COLLAPSE_SITES, (
             f"the sites building a wire model off a service record are now {sorted(sites)}. "
             "Add or remove its pair in COLLAPSED_PAIRS above, then move this list."
+        )
+
+
+class TestEveryPlanStepIdHasOperatorCopy:
+    """The plan table's kind and state cells read plain words, held to the server's sets.
+
+    ``stepKind``/``stepState`` (``frontend/src/components/ReapPlan.tsx``) turn stored step
+    ids into copy, with the raw id as the unknown-id fallback (#851). Rule 66: that
+    fallback is exactly what makes a missing member silent, so both maps are pinned here,
+    both directions. The literal request the page promises lives whole in the Request
+    column, which is what freed these cells to be copy.
+
+    ``StepState`` is an enum and mirrors directly. The kinds have no enum: the planner's
+    ``kind="..."`` literals are the declaration, parsed as source the way the jobs-page
+    guard reads ``JobsPanel`` (rule 147: quoted literals only, and a spelling either
+    matcher stops finding asserts rather than matching nothing).
+    """
+
+    REAP_PLAN_TSX = REPO / "frontend" / "src" / "components" / "ReapPlan.tsx"
+    PLANNER_PY = REPO / "src" / "reaper" / "services" / "planner.py"
+
+    def _frontend_cases(self, fn: str) -> set[str]:
+        source = self.REAP_PLAN_TSX.read_text(encoding="utf-8")
+        found = re.search(
+            rf"function {fn}\((?:kind|state): string\): string \{{(.*?)\n\}}", source, re.S
+        )
+        assert found is not None, (
+            f"ReapPlan.tsx no longer declares {fn} the way this guard reads it. "
+            "Re-point the matcher at the new spelling."
+        )
+        return set(re.findall(r'=== "([^"]+)"', found.group(1)))
+
+    def test_the_browser_words_every_step_state(self) -> None:
+        from reaper.db.models import StepState
+
+        assert self._frontend_cases("stepState") == {member.value for member in StepState}, (
+            "db.models.StepState and ReapPlan.tsx's stepState disagree. A state the browser "
+            "does not know renders as its raw id in the plan table (rule 21); a state the "
+            "server no longer stores is dead copy. Move both sides together."
+        )
+
+    def test_the_browser_words_every_step_kind_the_planner_emits(self) -> None:
+        emitted = set(re.findall(r'kind="([^"]+)"', self.PLANNER_PY.read_text(encoding="utf-8")))
+        assert emitted, (
+            "services/planner.py no longer spells any kind= as a quoted literal, so this "
+            "guard is reading nothing. Re-point it at the new spelling."
+        )
+        assert self._frontend_cases("stepKind") == emitted, (
+            "the planner's step kinds and ReapPlan.tsx's stepKind disagree. A kind the "
+            "browser does not know renders as its raw id in the plan table (rule 21); a "
+            "kind the planner no longer emits is dead copy. Move both sides together."
         )

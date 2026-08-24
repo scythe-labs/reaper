@@ -51,7 +51,7 @@ const SANS = "Helvetica Neue, Helvetica, Arial, sans-serif";
  *
  *  Literals, because this module is rasterized outside the browser and has no `node:fs`.
  *  `socialCard.test.ts` reads them back out of the app and fails naming the file, the same
- *  arrangement `CLEARED_ROWS` has with `gates.py` (rule 144). */
+ *  arrangement `CLEARED_ROWS` has with the en catalog (rule 144). */
 export const WORDMARK = {
   word: "Reaper",
   size: 47,
@@ -66,21 +66,24 @@ export const WORDMARK = {
  *  that gate retired: lists protect through the operator's own keep rules now, whose copy is
  *  per-rule and not a gate sentence this card can quote.)
  *
- *  `source` is the literal each row is quoted from in engine/gates.py, and socialCard.test.ts
- *  reads that file and fails naming any row it can no longer find. Rule 144: a claim about what
- *  the app says, written this far from the code that says it, drifts silently and in the
- *  flattering direction. `lines` is where it wraps, since SVG will not wrap it. */
+ *  `source` is the literal each row is quoted from in the English catalog's `why` entries
+ *  (locales/en/ui.json, where the gates' sentences live since the typed-reason conversion),
+ *  and socialCard.test.ts reads that file and fails naming any row it can no longer find.
+ *  Rule 144: a claim about what the app says, written this far from the copy that says it,
+ *  drifts silently and in the flattering direction. `lines` is where it wraps, since SVG
+ *  will not wrap it. */
 export const CLEARED_ROWS: readonly { lines: readonly string[]; source: string }[] = [
   { lines: ["Nobody is watching it right now."], source: "Nobody is watching it right now." },
   {
-    // "year" is the shipped window, filled into the gate's f-string; the head is the literal.
+    // "year" is the shipped window, filled into the catalog message's slot; the head is
+    // the literal.
     lines: ["Nobody here watched it in the last year."],
     source: "Nobody here watched it in the last",
   },
   {
-    lines: ["Untouched for 5 years, 7 months, past the 3 years it", "has to sit unwatched first."],
-    // Built from an f-string spanning two source lines, so only this tail is a literal there.
-    source: "it has to sit unwatched first.",
+    lines: ["Unwatched for 5 years, 7 months, past the 3 years", "Reaper waits."],
+    // The catalog message opens with slots, so only this tail is a literal there.
+    source: "Reaper waits.",
   },
 ];
 

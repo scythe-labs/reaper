@@ -35,6 +35,7 @@ from reaper.clock import utcnow
 from reaper.db.models import ListConfig
 from reaper.engine.policy import DEFAULT_IMDB_LIST_NAME, DEFAULT_TAG_LIST_NAME
 from reaper.engine.policy_migrations import DEFAULT_IMDB_PRESET, DEFAULT_KEEP_TAG
+from reaper.refusal import Refusal
 from reaper.services import app_settings
 from reaper.services import lists as lists_service
 from reaper.services.lists import ListSource
@@ -43,8 +44,18 @@ from reaper.text import fold
 log = structlog.get_logger(__name__)
 
 
-class ListConfigError(ValueError):
-    """A refusal the operator should read, in their words. The API maps it to a 4xx."""
+class ListConfigError(Refusal):
+    """A refusal the operator should read. A catalog code plus raw params; the API maps it
+    to a 4xx through ``refuse_from``.
+
+    Defaults to 400 rather than ``Refusal``'s own 422: every route answering one of these
+    (``api.lists``'s add/edit/remove) has always answered 400.
+    """
+
+    def __init__(
+        self, code: str, /, *, status: int = 400, **params: str | int | float | bool
+    ) -> None:
+        super().__init__(code, status=status, **params)
 
 
 class ListRegistryUnreadableError(RuntimeError):
@@ -239,16 +250,16 @@ async def all_lists(session: AsyncSession) -> Sequence[ListConfig]:
 async def get(session: AsyncSession, list_id: int) -> ListConfig:
     row = await session.get(ListConfig, list_id)
     if row is None:
-        raise ListConfigError("That list no longer exists. Reload the page.")
+        raise ListConfigError("error.lists.not_found")
     return row
 
 
 def _clean_name(name: str) -> str:
     cleaned = name.strip()
     if not cleaned:
-        raise ListConfigError("Give the list a name, so you can pick it out on the Policy screen.")
+        raise ListConfigError("error.lists.name_required")
     if len(cleaned) > 100:
-        raise ListConfigError("That name is too long. Keep it under 100 characters.")
+        raise ListConfigError("error.lists.name_too_long")
     if "," in cleaned:
         # The ``on_list`` fact comma-joins the names holding an item (``lists.on_list_fact``)
         # and ``fields._compare`` splits it back on commas, so a name carrying one is never an
@@ -257,9 +268,7 @@ def _clean_name(name: str) -> str:
         # direction is worse -- an item on "Kids, Holiday" alone satisfies a rule naming a
         # different list called "Holiday". Refused here, where they are looking at the box
         # (rule 108 is the same check for a rule value that strips to nothing).
-        raise ListConfigError(
-            "A list name can't have a comma in it. Reaper separates names with one."
-        )
+        raise ListConfigError("error.lists.name_has_comma")
     return cleaned
 
 
@@ -285,7 +294,7 @@ async def _refuse_name_twice(session: AsyncSession, name: str, *, this_row: int 
     if this_row is not None:
         stmt = stmt.where(ListConfig.id != this_row)
     if (await session.execute(stmt)).first() is not None:
-        raise ListConfigError("You already have a list with that name. Pick another.")
+        raise ListConfigError("error.lists.name_exists")
 
 
 def _clean_config(source: ListSource, config: dict[str, Any]) -> str:
@@ -300,9 +309,9 @@ def _clean_config(source: ListSource, config: dict[str, Any]) -> str:
         library = str(config.get("library", "")).strip()
         collection = str(config.get("collection", "")).strip()
         if not library:
-            raise ListConfigError("Say which Plex library to look in.")
+            raise ListConfigError("error.lists.library_required")
         if not collection:
-            raise ListConfigError("Say which collection in that library to read.")
+            raise ListConfigError("error.lists.collection_required")
         return json.dumps({"library": library, "collection": collection})
     if source is ListSource.ARR_TAG:
         # One entry per tag, on the comparison form Sonarr and Radarr themselves use: they
@@ -322,9 +331,7 @@ def _clean_config(source: ListSource, config: dict[str, Any]) -> str:
             seen.add(key)
             tags.append(tag)
         if not tags:
-            raise ListConfigError(
-                "Add at least one tag, spelled as it appears in Sonarr or Radarr."
-            )
+            raise ListConfigError("error.lists.tags_required")
         match = "all" if config.get("match") == "all" else "any"
         return json.dumps({"tags": tags, "match": match})
     if source is ListSource.PLEX_WATCHLIST:
@@ -333,7 +340,7 @@ def _clean_config(source: ListSource, config: dict[str, Any]) -> str:
     preset = str(config.get("preset", "")).strip()
     if preset:
         if preset not in lists_service.IMDB_PRESETS:
-            raise ListConfigError("Pick one of the IMDb presets, or paste a list id instead.")
+            raise ListConfigError("error.lists.imdb_choice_required")
         return json.dumps({"preset": preset})
     # A pasted URL carries the id inside it, so the id is extracted rather than the paste
     # being bounced back for retyping.
@@ -342,7 +349,7 @@ def _clean_config(source: ListSource, config: dict[str, Any]) -> str:
         # An all-zero id of the right shape, not a real one: this is operator-facing copy, and
         # a real id is somebody's actual list. The modal's own copy of this sentence and the
         # placeholder beside it spell the same example (rule 144).
-        raise ListConfigError("Paste the list's id or URL. An IMDb list id looks like ls000000000.")
+        raise ListConfigError("error.lists.imdb_id_invalid")
     return json.dumps({"list_id": found.group(0)})
 
 
@@ -352,7 +359,7 @@ async def create(
     try:
         kind = ListSource(source)
     except ValueError:
-        raise ListConfigError("Pick where the list comes from.") from None
+        raise ListConfigError("error.lists.source_required") from None
     cleaned = _clean_name(name)
     await _refuse_name_twice(session, cleaned, this_row=None)
     row = ListConfig(
@@ -369,7 +376,7 @@ async def create(
         # The unique name. Caught rather than pre-checked, because a read-then-insert can be
         # beaten between the two and the constraint is the thing that actually holds.
         await session.rollback()
-        raise ListConfigError("You already have a list with that name. Pick another.") from None
+        raise ListConfigError("error.lists.name_exists") from None
     log.info("list_config.created", source=kind.value)
     return row
 
@@ -395,7 +402,7 @@ async def update(
         await session.commit()
     except IntegrityError:
         await session.rollback()
-        raise ListConfigError("You already have a list with that name. Pick another.") from None
+        raise ListConfigError("error.lists.name_exists") from None
     log.info("list_config.updated", list_id=list_id, enabled=row.enabled)
     return row
 

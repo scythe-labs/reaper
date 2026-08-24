@@ -29,6 +29,7 @@ from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
 from reaper.db.base import Base
 from reaper.db.session import create_engine, create_session_factory
+from reaper.engine.reason import Reason
 from reaper.services import app_settings, leaving_soon
 from reaper.services.fairness import (
     UNMATCHED_SET_ASIDE,
@@ -678,7 +679,7 @@ class TestAScanThatSkippedTheShelfSaysSo:
             )
             await session.commit()
 
-    async def _skip(self, factory: async_sessionmaker[AsyncSession]) -> dict[str, Any] | None:
+    async def _skip(self, factory: async_sessionmaker[AsyncSession]) -> tuple[str, Reason] | None:
         async with factory() as session:
             return await app_settings.get_leaving_soon_last_skip(session)
 
@@ -694,10 +695,10 @@ class TestAScanThatSkippedTheShelfSaysSo:
 
         skip = await self._skip(factory)
         assert skip is not None, "a scan skipped the shelf and left no record of it"
-        # The exact clause, because the row trails it after a timestamp and this is the whole
-        # of what the operator is told. Plain language, no internals (rule 21).
-        assert skip["result"] == "the scan didn't finish cleanly"
-        assert skip["at"]
+        # The exact code, because the row trails it after a timestamp and this is the whole
+        # of what the operator is told. Typed, not a transcribed phrase (phase 8a).
+        assert skip[1].id == "error.leaving_soon.skip_degraded"
+        assert skip[0]
 
     async def test_no_plex_link_is_written_down(
         self, factory: async_sessionmaker[AsyncSession], tmp_path: Path
@@ -718,7 +719,7 @@ class TestAScanThatSkippedTheShelfSaysSo:
 
         skip = await self._skip(factory)
         assert skip is not None
-        assert skip["result"] == "no Plex server is linked"
+        assert skip[1].id == "error.leaving_soon.skip_unlinked"
 
     async def test_a_linked_server_that_will_not_answer_is_written_down(
         self,
@@ -744,7 +745,7 @@ class TestAScanThatSkippedTheShelfSaysSo:
         assert skip is not None
         # The row clause carries no client text at all: a Jobs row is scanned, and the
         # diagnostic tail belongs on the route's response, where someone is reading it.
-        assert skip["result"] == "Reaper couldn't reach Plex"
+        assert skip[1].id == "error.leaving_soon.skip_unreachable"
 
     async def test_the_shelf_being_off_is_not_written_down(
         self, factory: async_sessionmaker[AsyncSession], tmp_path: Path
@@ -784,7 +785,7 @@ class TestAScanThatSkippedTheShelfSaysSo:
                 seasons=4,
                 applied=True,
                 ok=True,
-                result="1 added, 0 cleared",
+                reason=Reason("shelf_updated", {"added": 1, "removed": 0}),
             )
             await session.commit()
 
@@ -792,7 +793,7 @@ class TestAScanThatSkippedTheShelfSaysSo:
         async with factory() as session:
             last = await app_settings.get_leaving_soon_last(session)
         assert skip is not None and last is not None
-        assert last["at"] > skip["at"], "a completed pass could not retire the skip before it"
+        assert last["at"] > skip[0], "a completed pass could not retire the skip before it"
 
     async def test_a_specific_reason_survives_a_later_surprise(
         self,
@@ -830,7 +831,7 @@ class TestAScanThatSkippedTheShelfSaysSo:
 
         skip = await self._skip(factory)
         assert skip is not None
-        assert skip["result"] == "no Plex server is linked"
+        assert skip[1].id == "error.leaving_soon.skip_unlinked"
 
     async def test_a_surprise_with_no_name_still_says_the_shelf_did_not_move(
         self,
@@ -856,4 +857,4 @@ class TestAScanThatSkippedTheShelfSaysSo:
 
         skip = await self._skip(factory)
         assert skip is not None
-        assert skip["result"] == "the update didn't finish"
+        assert skip[1].id == "error.leaving_soon.skip_failed"

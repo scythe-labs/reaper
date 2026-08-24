@@ -27,6 +27,22 @@ If you want to know who writes this and how, the README has an honest answer und
 - **Ask a question.** [Discussions](https://github.com/scythe-labs/reaper/discussions) is the
   place for setup help, ideas that are still forming, and anything that is not yet an issue.
 - **Fix the docs.** Instructions that did not work are a bug.
+- **Translate it.** Reaper's strings live on
+  [Weblate](https://hosted.weblate.org/projects/reaper/). Translate there, and Weblate
+  opens the pull request here. Weblate holds three components: `ui` (the browser catalog,
+  `frontend/src/locales/en/ui.json`), `backend` (the Discord and desktop-launcher catalog,
+  `src/reaper/locales/en/backend.json`, which has no browser to translate in), and `glossary`
+  (the term list both draw from). Only the two English files and their notes are edited here.
+  Every other `locales/<tag>/ui.json` is written by Weblate and overwritten on its next sync, so
+  a pull request editing one is closed. The in-app manual is the exception: it is translated here
+  in the repo `frontend/src/docs/content/<tag>/index.ts`.
+  `frontend/src/locales/en/ui.notes.json` carries a translator note for every catalog string
+  that composes with a param, a tag, or otherwise needs context beyond its English text; a gate
+  (`frontend/src/i18n-notes.test.ts`) fails on one missing. `frontend/src/locales/glossary/en.tbx`
+  is Reaper's glossary, shown beside the string a translator is working on. A note is edited only
+  in `ui.notes.json`: Weblate's explanation field for each string is written from it by a workflow
+  on every push to `dev`, so editing it on Weblate directly is overwritten on the next push.
+  `src/reaper/locales/en/backend.notes.json` does the same for the `backend` component.
 - **Send a watch-history dump.** Reaper's scoring is tuned against real libraries, and it has
   been tuned against very few of them. `scripts/tautulli_anon_dump.py` reads your Tautulli and
   writes a file holding the numbers the engine reads, with no titles, usernames, email
@@ -315,7 +331,7 @@ migrations fail and the only repair is rewriting the entire migration history.
 `tests/test_migrations.py` guards both halves. It imports the real naming convention and
 proves a named constraint can be dropped under batch mode, and it runs the real
 `alembic/env.py` to capture what that file passes to `context.configure()`. There is one call
-site: the offline (`--sql`) branch had no invoker and could not have worked, since 9
+site: the offline (`--sql`) branch had no invoker and could not have worked, since 10
 revisions call `op.get_bind()`, so it was removed rather than kept as a second path nothing
 exercises. Flipping `render_as_batch` to `False` fails that test today, which is a great deal
 better than discovering it years from now in the first migration that needs it.

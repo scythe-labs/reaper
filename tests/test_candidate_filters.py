@@ -10,17 +10,15 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine as sa_create_engine
+from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from reaper.api.review import _split_search_year
 from reaper.clock import utcnow
 from reaper.config import Settings
-from reaper.db.base import Base
 from reaper.db.models import Candidate, Snapshot, WhitelistEntry
 from reaper.main import create_app
 from reaper.services.whitelist import show_key
@@ -43,13 +41,9 @@ def _candidate(**kw: object) -> Candidate:
 
 
 @pytest.fixture
-def client(tmp_path: Path) -> Iterator[TestClient]:
-    settings = Settings(data_dir=tmp_path, secret_key="k")
-    engine = sa_create_engine(settings.sync_database_url)
-    Base.metadata.create_all(engine)
-
+def client(settings: Settings, sync_db: Engine) -> Iterator[TestClient]:
     now = utcnow()
-    with Session(engine) as session:
+    with Session(sync_db) as session:
         snap = Snapshot(
             created_at=now, policy_hash="a" * 64, horizon_at=now, item_count=3, degraded=False
         )
@@ -108,8 +102,6 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
             ]
         )
         session.commit()
-    engine.dispose()
-
     with TestClient(create_app(settings)) as c:
         login(c, settings)
         yield c
@@ -211,12 +203,9 @@ class TestCollectionFilter:
     on this route (#816 phase 3)."""
 
     @pytest.fixture
-    def client(self, tmp_path: Path) -> Iterator[TestClient]:
-        settings = Settings(data_dir=tmp_path, secret_key="k")
-        engine = sa_create_engine(settings.sync_database_url)
-        Base.metadata.create_all(engine)
+    def client(self, settings: Settings, sync_db: Engine) -> Iterator[TestClient]:
         now = utcnow()
-        with Session(engine) as session:
+        with Session(sync_db) as session:
             snap = Snapshot(
                 created_at=now, policy_hash="e" * 64, horizon_at=now, item_count=2, degraded=False
             )
@@ -241,7 +230,6 @@ class TestCollectionFilter:
                 ]
             )
             session.commit()
-        engine.dispose()
         with TestClient(create_app(settings)) as c:
             login(c, settings)
             yield c
@@ -283,12 +271,9 @@ class TestCollectionSizesOnTheSnapshot:
     collection screen's header reads it for Plex's own member count (#816 phase 5)."""
 
     @pytest.fixture
-    def client(self, tmp_path: Path) -> Iterator[TestClient]:
-        settings = Settings(data_dir=tmp_path, secret_key="k")
-        engine = sa_create_engine(settings.sync_database_url)
-        Base.metadata.create_all(engine)
+    def client(self, settings: Settings, sync_db: Engine) -> Iterator[TestClient]:
         now = utcnow()
-        with Session(engine) as session:
+        with Session(sync_db) as session:
             session.add(
                 Snapshot(
                     created_at=now,
@@ -300,7 +285,6 @@ class TestCollectionSizesOnTheSnapshot:
                 )
             )
             session.commit()
-        engine.dispose()
         with TestClient(create_app(settings)) as c:
             login(c, settings)
             yield c
@@ -322,12 +306,9 @@ class TestSearchReachesCollectionNames:
     smallest-first pick."""
 
     @pytest.fixture
-    def client(self, tmp_path: Path) -> Iterator[TestClient]:
-        settings = Settings(data_dir=tmp_path, secret_key="k")
-        engine = sa_create_engine(settings.sync_database_url)
-        Base.metadata.create_all(engine)
+    def client(self, settings: Settings, sync_db: Engine) -> Iterator[TestClient]:
         now = utcnow()
-        with Session(engine) as session:
+        with Session(sync_db) as session:
             snap = Snapshot(
                 created_at=now, policy_hash="9" * 64, horizon_at=now, item_count=5, degraded=False
             )
@@ -388,7 +369,6 @@ class TestSearchReachesCollectionNames:
                 ]
             )
             session.commit()
-        engine.dispose()
         with TestClient(create_app(settings)) as c:
             login(c, settings)
             yield c
@@ -458,12 +438,9 @@ class TestSearchMatchedCollectionOnlyAppliesToBlockTwo:
     found. Only a block-2 row (search_rank == 2) carries it (#816 phase 3b)."""
 
     @pytest.fixture
-    def client(self, tmp_path: Path) -> Iterator[TestClient]:
-        settings = Settings(data_dir=tmp_path, secret_key="k")
-        engine = sa_create_engine(settings.sync_database_url)
-        Base.metadata.create_all(engine)
+    def client(self, settings: Settings, sync_db: Engine) -> Iterator[TestClient]:
         now = utcnow()
-        with Session(engine) as session:
+        with Session(sync_db) as session:
             snap = Snapshot(
                 created_at=now, policy_hash="8" * 64, horizon_at=now, item_count=1, degraded=False
             )
@@ -480,7 +457,6 @@ class TestSearchMatchedCollectionOnlyAppliesToBlockTwo:
                 )
             )
             session.commit()
-        engine.dispose()
         with TestClient(create_app(settings)) as c:
             login(c, settings)
             yield c
@@ -501,12 +477,9 @@ class TestVerdictAny:
     so there is nothing to move in or out of."""
 
     @pytest.fixture
-    def client(self, tmp_path: Path) -> Iterator[TestClient]:
-        settings = Settings(data_dir=tmp_path, secret_key="k")
-        engine = sa_create_engine(settings.sync_database_url)
-        Base.metadata.create_all(engine)
+    def client(self, settings: Settings, sync_db: Engine) -> Iterator[TestClient]:
         now = utcnow()
-        with Session(engine) as session:
+        with Session(sync_db) as session:
             snap = Snapshot(
                 created_at=now, policy_hash="f" * 64, horizon_at=now, item_count=3, degraded=False
             )
@@ -535,7 +508,6 @@ class TestVerdictAny:
                 ]
             )
             session.commit()
-        engine.dispose()
         with TestClient(create_app(settings)) as c:
             login(c, settings)
             yield c
@@ -764,12 +736,9 @@ class TestYearInSearch:
     """
 
     @pytest.fixture
-    def client(self, tmp_path: Path) -> Iterator[TestClient]:
-        settings = Settings(data_dir=tmp_path, secret_key="k")
-        engine = sa_create_engine(settings.sync_database_url)
-        Base.metadata.create_all(engine)
+    def client(self, settings: Settings, sync_db: Engine) -> Iterator[TestClient]:
         now = utcnow()
-        with Session(engine) as session:
+        with Session(sync_db) as session:
             snap = Snapshot(
                 created_at=now, policy_hash="b" * 64, horizon_at=now, item_count=2, degraded=False
             )
@@ -792,7 +761,6 @@ class TestYearInSearch:
                 ]
             )
             session.commit()
-        engine.dispose()
         with TestClient(create_app(settings)) as c:
             login(c, settings)
             yield c
@@ -844,12 +812,9 @@ class TestSearchIsLiteralText:
     """
 
     @pytest.fixture
-    def client(self, tmp_path: Path) -> Iterator[TestClient]:
-        settings = Settings(data_dir=tmp_path, secret_key="k")
-        engine = sa_create_engine(settings.sync_database_url)
-        Base.metadata.create_all(engine)
+    def client(self, settings: Settings, sync_db: Engine) -> Iterator[TestClient]:
         now = utcnow()
-        with Session(engine) as session:
+        with Session(sync_db) as session:
             snap = Snapshot(
                 created_at=now, policy_hash="c" * 64, horizon_at=now, item_count=3, degraded=False
             )
@@ -872,7 +837,6 @@ class TestSearchIsLiteralText:
                 ]
             )
             session.commit()
-        engine.dispose()
         with TestClient(create_app(settings)) as c:
             login(c, settings)
             yield c

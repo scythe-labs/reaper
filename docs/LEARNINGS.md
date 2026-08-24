@@ -4252,6 +4252,221 @@ was pinned at three.
 before writing a `CASE` over it, and where a dump is available, count the values. A prior fix
 that names the other values is not the same as one that covers them.
 
+## Where the two test suites spend their time (2026-08-20)
+
+Measured on an idle 20-core box, each full-suite comparison run twice. A first pass ran beside
+another session's `pytest -n auto` from a sibling worktree and read 2x slower across the board,
+so check for a neighbor before timing anything here.
+
+**pytest: 4720 tests, 53s wall, 562s CPU.** 231s of the CPU (41%) is fixture setup: about a
+thousand tests boot the app through `client`, and one boot is ~0.2s (`create_all` 83ms, the
+lifespan ~70ms, the login ~30ms). Each `-n auto` run also pays ~11s of wall and 90s of CPU before
+the first test: every one of 20 workers imports the app (2.0s, of which 0.35s is the two
+production-cost Argon2 hashes at import in `services/login.py` and `services/admin_password.py`)
+and collects all 4721 tests (2.8s).
+
+- `--dist worksteal`: 53.4s and 53.0s under the default `load`, 43.3s and 46.4s under
+  `worksteal`, same CPU. `load` hands out tests in chunks and never reclaims one, so the worker
+  holding the 5-7s property tests finishes alone.
+- Coverage is the CI multiplier. At CI's four workers the suite is 176s bare and 390s with
+  `--cov` (9 -> 22 CPU-minutes). The `sysmon` core cannot take it: branch coverage under sysmon
+  needs Python 3.14 where CI pins 3.13, and sysmon rejects `concurrency = greenlet`.
+- The longest single test is 10.3s: the preflight held-open test waits out two real 5s
+  `busy_timeout`s, and the hygiene suite pins that literal.
+- Hypothesis's `facts()` is draw-count-bound: 7-8ms of each 9-11ms example is generation, and
+  replacing its free-text Unknown reasons with a three-word vocabulary moved it only
+  10.0 -> 8.1 ms/example. Not worth giving up shrinking over real text.
+- Building the schema once per worker and copying it per test (#855) was estimated from the
+  83ms `create_all` above at ~20s of CI and measured at four workers as setup CPU 230s -> 207s,
+  wall 178s -> 172.5s. A 3% cut. The copy, the `Settings` construction and the per-test
+  directory are most of what the fixture still does, and the lifespan boot is untouched.
+
+**vitest: 1503 tests in 90 files, 71s wall.** A file runs serially, so one file sets the floor:
+`PolicyEditor.test.tsx` alone is 54s (137 tests, ~370ms each). Per jsdom file the fixed cost is
+~1.1s of environment, ~0.5s of setup and ~1s of imports.
+
+- `pool: "threads"`: 70.9s -> 57.4s at full width, 96.0s -> 85.5s at four workers, all 1503
+  passing under both. `isolate: false` fails 687 tests and is not an option.
+- `styles-hand-fate.test.ts` spent 20s on six tests. Its `offsetsOf` regex `([^{}]*)\{|\}`
+  retried the first alternative at every position inside a block body, backtracking across the
+  run each time: 394ms per walk over the 355KB stylesheet, about 20 walks per test.
+  `([^{}]*)([{}])` matches the same 1332 rules at the same offsets in 3.3ms.
+- Splitting the warning-anchor walk out of `PolicyEditor.test.tsx` (#854) moved the floor: the
+  walk was 35s of the file's 54s, the pair now runs in 36s, and the full suite went 71s -> 41s
+  on the default pool.
+
+⇒ The backend's wall clock is scheduling plus per-test boot, and the frontend's is one file.
+Neither is per-test work worth optimizing test by test.
+
+## The Python ICU twin substituted `#` before recursing (2026-08-21)
+
+`tests/_reasons.py` mirrors `why.ts`'s composer so a backend test can assert composed English
+through the real catalog (rule 119). Its plural handler replaced `#` with a whole-string
+`str.replace` before recursing into the picked branch, so a plural nested inside another
+plural's branch had its inner `#` overwritten by the outer count. No `why.*` entry nested a
+plural that way. `warning.graded_keeps_beyond_history` was the first to, and the bug surfaced
+as a backend assertion that disagreed with what `i18next` rendered in `PolicyEditor.test.tsx`.
+The fix substitutes at brace depth zero only. The twin earned its keep here: a test that
+transcribed the sentence would have agreed with the wrong renderer.
+
+## A row Tautulli cannot render fails every page that holds it (2026-08-21)
+
+Three full sweeps in a row failed on the last page with `HTTP 500 for GET /api/v2`, after the
+page size and the read budget had both been changed for #780. Neither could have mattered: a 500
+is not a timeout, and the walk raised on it at once. Reproduced through Reaper's own client
+against a live instance at 427,096 rows, then bisected by offset.
+
+**Two rows, both undated, and neither of them history.** Ascending by date, `start=0` answers
+500 and `start=2` answers 200. `after=1970-01-02` excludes both rows and the crash with them,
+and nothing in that history is dated before 2018. The first reading was two undated history
+rows, and raw SQL through the `sql` command refuted it: `session_history` held 427,094 rows,
+every `started` an integer, where the API reported 427,096. The two extra rows were in
+`sessions`, Tautulli's temporary table of plays in progress: no `started`, no `rating_key`, no
+`media_type`, no `user_id`, state `playing`, last touched in a window when the operator's
+Tautulli was being OOM-killed. `get_history` appends that table to its listing as activity
+unless `include_activity=0` is passed, a null date sorts last, and the formatter cannot render
+a session without a start time. The body is `{"result": "error", "message": "Check the logs for
+errors"}`, Tautulli's uncaught-exception path for an API command, and its traceback goes to
+`tautulli_api.log`, which `get_logs` does not read. The incremental sync never met them because
+its `after` filter excludes an undated row either way.
+
+**Dated to a one-day window by the sweep log, then to the hour by the rows.** The 08-19 sweep
+completed at 426,726 rows and the 08-20 sweep was the first 500, so the rows appeared between
+those two runs. Their `stopped` timestamps sit inside that window. Before that there was nothing
+to hit, which is why earlier tests of the same job passed.
+
+**The walk never wanted those rows.** It drops anything without a `row_id`, which is what a play
+in progress arrives as, so it now asks with `include_activity=0` and the probe counts the same
+rows the walk reads. The executor's per-item re-ask keeps Tautulli's default on purpose: a play
+in progress there reads as played since approval, which spares.
+
+**Measured through the step-over alone, a real `sync(full=True)` into a throwaway mirror**: 452s
+and 53 requests, against 237s and 18 for the clean sweep measured on 08-14. The halving and the
+doubling back cost 34 requests for two adjacent rows, about 6.5s each at that offset, so a bad
+row costs roughly two minutes of sweep. A true bisect that remembered the far end of the failing
+window would halve that (18 requests simulated) and was not written: the job runs every three
+days, the fix belongs at the source, and `MAX_UNSERVABLE_ROWS` bounds the worst case at 20 rows.
+**Through the final walk, with activity left out**: 194s, 427,096 rows, none skipped, 19
+requests, and `inserted` equal to `fetched` on every page where every earlier run had fetched
+and dropped the six plays in progress.
+
+⇒ A page that fails at every size is not a size problem. Ask what is IN the page before
+changing how much of it is asked for, and bisect by offset against the live source: the log says
+which page, and that is enough to find the row.
+
+## A `findBy` budget is not the test timeout, and 1000ms sat 5% from the render it waited on (2026-08-22)
+
+Two independent budgets bound an `await screen.findByText(...)`, and raising one never moved the
+other. `vite.config.ts` sets vitest's `testTimeout` to 15000ms, which bounds the whole test.
+Testing Library keeps its own `asyncUtilTimeout` for `findBy*` and `waitFor`, defaulted to
+1000ms, and that is the one the wait actually loses to. So a test with 13.7 seconds of headroom
+left failed at 1270ms.
+
+**Measured idle**, the nine-case anchor walk in `PolicyEditor.warnings.test.tsx` costs 630-948ms
+per case, 53 tests in 34.8s. Each case renders the whole policy editor and then waits on a probe
+string. The widest case, `condemn_at`, spent 948ms of a 1000ms budget on a box doing nothing
+else, and it runs first, so it also pays the file's cold transform.
+
+**Reproduced** by running the full suite under a load of 32 on a 20-core box: two runs in three
+failed, three distinct assertions, every one of them an `Unable to find` in that file. After
+raising the budget to 5000ms, five full-suite runs under the same load passed, 1582 tests each.
+
+**The negative result is the reason this looked like a mystery.** The same file run ALONE under
+the same load passed three times out of three, and again at a load of 21. A single-file run
+still gets a core. The failure needs the ~20 vitest workers of a full run contending with
+whatever else holds the box, which is exactly the condition nobody reproduces when they re-run
+the one file that failed and watch it pass.
+
+The class had already been answered three times, locally and correctly each time: #149 and #228
+replaced one expensive `findByRole` name query with a cheap text wait, and #651 warmed a
+`React.lazy` boundary in `beforeAll` so a cold transform could not land inside the budget. Every
+one of those fixes covered the site it named. None of them could cover the budget, and two of
+the files carrying them turned up in #887's failing sets anyway.
+
+⇒ When a wait fails well inside its test's timeout, read the waiting library's own timeout
+before reading the test. And reproduce a suspected load flake with the SUITE, never with the
+file: running the file alone removes the contention that is the whole cause.
+
+## Grepping for `margin-left` finds 144 of the 167 ways a stylesheet resists mirroring (2026-08-22)
+
+#861 stated the work as "rewrite the 101 left/right styles in the neutral form". A property scan
+over `styles/` found 144 direction-sensitive declarations, converted 125 and left 7 physical on
+purpose. Every gate passed and the conversion was, by every static measure, complete.
+
+**It was not.** Rendering the app at `dir="rtl"` and comparing each element's box against its
+mirror put 2047 of 2648 elements in the right place. The 601 that held still exposed two classes
+a property name cannot match:
+
+- **The four-value box shorthand.** `padding: a b c d` sets right to `b` and left to `d`, so it
+  is a `padding-left` that no search for `padding-left` reaches. 22 sites had one. `.season-list`
+  carried `padding: 0 0.7rem 0.5rem 2.4rem`, and every row of an expanded show sat 27.2px off its
+  mirror, which is exactly the 2.4rem-minus-0.7rem the shorthand asked for.
+- **The gradient angle.** `.card-scrim` faded the card opaque-to-clear at a flat `90deg`, so the
+  title crossed to the other side under RTL and landed on the see-through half. A gradient has no
+  reading-order form at all, so the angle has to ride in a custom property an `[dir="rtl"]` rule
+  flips.
+
+Two more classes were only visible the same way, and both are things a stylesheet cannot mirror
+because they are a drawing or a number rather than a style:
+
+- **Glyphs that point along the line.** A browser mirrors layout and never artwork, and only a
+  handful of characters (brackets, angle quotes) carry the Unicode mirroring property, which
+  `→`, `›`, `↗` and `▸` do not. Six of them pointed back at the margin the reader started from.
+  The two that also rotate when open compose the flip with the rotate, scale first, because
+  `transform` is one property and a second rule would replace the first rather than add to it.
+- **The two places measuring the viewport in raw pixels.** `usePopoverShift` and `fixedMenuPos`
+  pulled a menu toward the LEFT edge whichever way the page read. Rewriting both in distances
+  from the inline-start edge removed the branch instead of adding one: the arithmetic is its own
+  mirror, and the caller converts on the way in.
+
+The mirror finished at 2445/2654. What is left is two benign classes, not a tail: the paths
+inside non-directional icons (a clock is not asymmetric because it is directional), and English
+text runs reordered by bidi, which is what English in an RTL page is supposed to do.
+
+**The rewrite is free in a left-to-right page, measured rather than argued.** 56 screenshots
+across five views, a login screen and two viewports came back pixel-identical before and after,
+and a synthetic page carrying all 116 selectors compared 4176 computed values with no geometry
+change. The only 60 differences were `text-align`'s computed keyword moving `left` to `start`,
+which resolves to the same used value.
+
+**Three negative results, each of which cost time to rule out.** `linear-gradient(var(--a), ...)`
+with `--a: 90deg` rasterizes bit-identically to the literal, so the custom-property indirection
+is not a rendering risk. One capture in four differed from its neighbours by 59 pixels, each off
+by 1/255, on the anti-aliased corners of two poster thumbnails: a JPEG re-decode, not a style
+change. And a release landing mid-session put an "update available" dot on the account chip,
+which widened the chip, shifted the whole masthead, and failed **53 of 56** shots at once, on a
+change that had touched none of it.
+
+⇒ **Pin every server answer the chrome renders, not just the one the page under test is about.**
+Three runs agreeing and one disagreeing is a decode flake; 53 failing in the same rectangle is a
+feed, and the shape of the diff says which before the images are opened. The harness pins the
+scan poll, the log page and the update check for this reason. The About panel cannot be pinned
+that way at all: it prints the running build's own commit, so any two commits render it
+differently, and the mock has to carry the baseline's version string for that page to compare.
+
+⇒ A stylesheet's resistance to mirroring is not a list of property names. Convert by grep, then
+render the mirrored page and measure every box against it, because the two worst cases here were
+both invisible to the grep and both obvious in the render.
+
+## An ICU `select` with its variable entirely absent prints the template, not the `other` branch (2026-08-22)
+
+Merging the movie and season halves of five `why.cause.*` pairs behind one `{mediaType, select,
+...}` key meant an old stored reason, frozen before the merge, could reach the catalog with no
+`mediaType` param at all. The assumption was that `select` degrades the way a missing plural
+count does: read `intl-messageformat` and `i18next-icu`'s own docs, expect `other`, ship it.
+
+**Wrong.** A key present with the value `undefined` (`{mediaType: undefined}`) does fall to
+`other`. A key **absent from the params object entirely** does not: `intl-messageformat` throws
+`MissingValueError` when called directly, and `i18next.t()` swallows that and returns the raw,
+unparsed template string instead, braces and all, printed straight at the operator. Proven with
+both call shapes side by side in a throwaway test before trusting either, since the two params
+objects look interchangeable and are not: `{}` breaks, `{mediaType: undefined}` does not.
+
+⇒ Before relying on ICU's `other` branch to cover a param a legacy row might lack, prove the
+missing-KEY case specifically, not just the missing-VALUE case. `why.ts`'s resolution point now
+defaults `mediaType` onto the params object for every id that carries a select and predates it,
+so the key is always present even when no caller supplied a value.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

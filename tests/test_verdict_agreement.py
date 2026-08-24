@@ -21,6 +21,7 @@ import pytest
 
 from reaper.engine.gates import ABSTAIN, PROTECT, Evaluation, GateId, GateResult
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody
+from reaper.engine.reason import legacy
 from reaper.engine.signals import Score
 from reaper.engine.verdict import decide_verdict
 from reaper.services.condemned import reap_override_verdict_decoded
@@ -31,14 +32,16 @@ CLEAN = Evaluation(
         GateResult(
             GateId.RATING_FLOOR,
             ABSTAIN,
-            detail="5.4 on IMDb from 6,000 votes, below the 7.5 you keep.",
+            detail=legacy("5.4 on IMDb from 6,000 votes, below the 7.5 you keep."),
         )
     ]
 )
 PROTECTED = Evaluation(
     results=[
         GateResult(
-            GateId.RATING_FLOOR, PROTECT, detail="well rated: 8.2 on IMDb from 120,000 votes"
+            GateId.RATING_FLOOR,
+            PROTECT,
+            detail=legacy("well rated: 8.2 on IMDb from 120,000 votes"),
         )
     ]
 )
@@ -47,7 +50,7 @@ BLOCKED = Evaluation(
         GateResult(
             GateId.SERVER_POPULARITY,
             ABSTAIN,
-            detail="could not check watch history: Tautulli did not respond",
+            detail=legacy("could not check watch history: Tautulli did not respond"),
             blocked=True,
         )
     ]
@@ -200,7 +203,9 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         """The one line that matters: a hand reap must not beat the active-stream veto."""
         streaming = Evaluation(
             results=[
-                GateResult(GateId.STREAMING_NOW, PROTECT, detail="someone is watching it right now")
+                GateResult(
+                    GateId.STREAMING_NOW, PROTECT, detail=legacy("someone is watching it right now")
+                )
             ]
         )
         policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
@@ -217,7 +222,9 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         ``STRUCTURAL_GATES`` is kept for it, so the string stays hand-written on purpose.
         """
         unmanaged = Evaluation(
-            results=[GateResult(GateId.UNMANAGED, PROTECT, detail="no *arr manages this file")]
+            results=[
+                GateResult(GateId.UNMANAGED, PROTECT, detail=legacy("no *arr manages this file"))
+            ]
         )
         policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
 
@@ -241,7 +248,7 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
                 GateResult(
                     GateId.STREAMING_NOW,
                     ABSTAIN,
-                    detail="could not check active streams: Tautulli did not respond",
+                    detail=legacy("could not check active streams: Tautulli did not respond"),
                     blocked=True,
                 )
             ]
@@ -278,7 +285,7 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         # history"), so no single real sentence fits. Nothing here reads the wording -- what
         # is asserted is the verdict either side of the override.
         blocked = Evaluation(
-            results=[GateResult(gate, ABSTAIN, detail="could not check it", blocked=True)]
+            results=[GateResult(gate, ABSTAIN, detail=legacy("could not check it"), blocked=True)]
         )
         policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
 
@@ -296,19 +303,23 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
                 GateResult(
                     GateId.RATING_FLOOR,
                     PROTECT,
-                    detail="well rated: 8.2 on IMDb from 120,000 votes",
+                    detail=legacy("well rated: 8.2 on IMDb from 120,000 votes"),
                 )
             ],
             "condemn",
         ),
         (
             "something is playing right now",
-            [GateResult(GateId.STREAMING_NOW, PROTECT, detail="someone is watching it right now")],
+            [
+                GateResult(
+                    GateId.STREAMING_NOW, PROTECT, detail=legacy("someone is watching it right now")
+                )
+            ],
             "protect",
         ),
         (
             "no *arr manages the file",
-            [GateResult(GateId.UNMANAGED, PROTECT, detail="no *arr manages this file")],
+            [GateResult(GateId.UNMANAGED, PROTECT, detail=legacy("no *arr manages this file"))],
             "protect",
         ),
         (
@@ -317,7 +328,7 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
                 GateResult(
                     GateId.SERVER_POPULARITY,
                     ABSTAIN,
-                    detail="could not check watch history: Tautulli did not respond",
+                    detail=legacy("could not check watch history: Tautulli did not respond"),
                     blocked=True,
                 )
             ],
@@ -329,7 +340,7 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
                 GateResult(
                     GateId.STREAMING_NOW,
                     ABSTAIN,
-                    detail="could not check active streams: Tautulli did not respond",
+                    detail=legacy("could not check active streams: Tautulli did not respond"),
                     blocked=True,
                 )
             ],
@@ -341,7 +352,7 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
                 GateResult(
                     GateId.SEASON_PROGRESSION,
                     ABSTAIN,
-                    detail="watched more than a season your rule keeps",
+                    detail=legacy("watched more than a season your rule keeps"),
                     blocked=True,
                     defers_to_owner=True,
                 )
@@ -354,7 +365,7 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
                 GateResult(
                     GateId.SEASON_PROGRESSION,
                     ABSTAIN,
-                    detail="could not check who watched Season 4",
+                    detail=legacy("could not check who watched Season 4"),
                     blocked=True,
                     defers_to_owner=False,
                 )
@@ -365,12 +376,12 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
             "a structural stop beside a check that could not run",
             [
                 GateResult(
-                    GateId.STREAMING_NOW, PROTECT, detail="someone is watching it right now"
+                    GateId.STREAMING_NOW, PROTECT, detail=legacy("someone is watching it right now")
                 ),
                 GateResult(
                     GateId.SERVER_POPULARITY,
                     ABSTAIN,
-                    detail="could not check watch history: Tautulli did not respond",
+                    detail=legacy("could not check watch history: Tautulli did not respond"),
                     blocked=True,
                 ),
             ],
@@ -417,7 +428,9 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
                 GateResult(
                     GateId.SEASON_PROGRESSION,
                     ABSTAIN,
-                    detail="5 people watched it, more than a season your keep rule protects",
+                    detail=legacy(
+                        "5 people watched it, more than a season your keep rule protects"
+                    ),
                     blocked=True,
                     defers_to_owner=True,
                 )
@@ -446,15 +459,13 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
             # The settleable comparison: made, and the keep rule lost it.
             True: (
                 "40 people watched Season 1, more than watched Season 4, which Reaper is "
-                "keeping because it is one of the newest seasons your rule keeps. Left for "
-                "you to decide instead of removing it."
+                "keeping because it is one of the newest seasons your rule keeps."
             ),
             # The refused one, in the wording the guard really emits: the count comes first,
             # so a prefix test never saw the refusal.
             False: (
                 "40 people watched Season 1. Reaper could not check who watched Season 4, "
-                "which it is keeping because it is one of the newest seasons your rule "
-                "keeps. Left for you to decide instead of removing it."
+                "which it is keeping because it is one of the newest seasons your rule keeps."
             ),
         }
         policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
@@ -465,7 +476,7 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
                     GateResult(
                         GateId.SEASON_PROGRESSION,
                         ABSTAIN,
-                        detail=detail,
+                        detail=legacy(detail),
                         blocked=True,
                         defers_to_owner=defers,
                     )
@@ -482,7 +493,7 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
                 GateResult(
                     GateId.SEASON_PROGRESSION,
                     ABSTAIN,
-                    detail="could not check the sequential guard",
+                    detail=legacy("could not check the sequential guard"),
                     blocked=True,
                 )
             ]

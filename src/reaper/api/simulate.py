@@ -20,13 +20,14 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
 from reaper.api import tags as api_tags
 from reaper.api.deps import newest_snapshot, session_factory
+from reaper.api.errors import refuse
 from reaper.api.policy import _candidate_media_type, _to_body
 from reaper.api.review import (
     _decode_explanation,
@@ -52,6 +53,7 @@ from reaper.engine.policy import (
     PolicyBody,
     combine_hashes,
 )
+from reaper.engine.reason import Reason, to_wire
 from reaper.engine.signals import SignalConfig
 from reaper.engine.verdict import decide_verdict
 from reaper.services import (
@@ -67,7 +69,7 @@ from reaper.services.planner import MediaRef, PlanError
 from reaper.services.profiles import active_policy
 from reaper.services.scan_runner import build_gates
 from reaper.services.season_pruning import SeriesPrunePlan
-from reaper.services.snapshot import HAND_SPARE_DETAIL, effective_fate, judge_facts
+from reaper.services.snapshot import HAND_SPARE_REASON, effective_fate, judge_facts
 
 log = structlog.get_logger(__name__)
 
@@ -82,13 +84,13 @@ _SIM_YIELD_EVERY = 500
 
 
 def _refused(kind: SimStale, media_type: str) -> SimulationOut:
-    """No numbers, and the reason -- typed for the panel, and said once in words.
+    """No numbers, and the reason -- typed for the panel, and worded once, in the catalog.
 
-    The sentence lives here and the panel renders it, supplying only the heading beside it.
-    It used to live in both, one copy per side, "kept in step" by a comment and by nothing
-    else -- and the operator never saw this one at all, so the copy that was read and the copy
-    that was reviewed were different strings. Rule 144: the way to keep two statements of one
-    fact agreeing is to have one of them.
+    The catalog id and its raw params are built here; ``PolicySimulator.tsx``'s
+    ``StaleNotice`` composes ``policySim.staleReason.<id>`` and supplies its own heading
+    beside it (docs/history/I18N_PLAN.md §5). One id per :class:`SimStale` value -- the
+    enum's own value -- so the wording lives in exactly one place and the server never
+    renders it (rule 92).
 
     The panel keeps one sentence of its own, reached only when ``stale_reason`` is null, which
     a build older than this route can produce. It is deliberately generic for that reason: it
@@ -98,34 +100,25 @@ def _refused(kind: SimStale, media_type: str) -> SimulationOut:
     the hashed body leaves the recorded hash unmatchable until the next scan, so "you changed"
     can be false for an operator who changed nothing.
     """
-    lane = "movies" if media_type == "movie" else "TV"
-    reasons = {
-        # States the condition and stops there. Naming the cause was wrong more often than
-        # it helped: a hash mismatch cannot say WHICH field moved, and after any upgrade that
+    if kind is SimStale.GATHERS_DIFFERENTLY:
+        # States the condition and stops there. Naming the cause was wrong more often than it
+        # helped: a hash mismatch cannot say WHICH field moved, and after any upgrade that
         # re-scopes the hash it has moved for nobody -- so the old sentence told an operator
-        # who had changed nothing that their keep tags read differently.
-        SimStale.GATHERS_DIFFERENTLY: (
-            f"Your {lane} policy doesn't match the last scan, so these numbers can't be "
-            "worked out from it. Run a scan to apply it, then this becomes exact again."
-        ),
-        SimStale.SEASONS_NOT_RECORDED: (
-            "The last scan didn't record what your season rules need, so there are no numbers "
-            "to show. Run a scan, then this becomes exact again."
-        ),
-        # One scan shape produces this now: the guard was off, so the episode lists were never
-        # asked for. A scan that asked and got no answer from Sonarr replays off the empty map
-        # it planned from and reaches no refusal at all (#500, `season_evidence`). The sentence
-        # still states what the scan lacks rather than the switch, like the two above it: the
-        # remedy is a scan, and the only other way out is turning a protection off.
-        SimStale.IN_PROGRESS_NOT_READ: (
-            "The last scan didn't read where anyone had gotten to in each show, so there are "
-            "no numbers to show. Run a scan, then this becomes exact again."
-        ),
-    }
+        # who had changed nothing that their keep tags read differently. `media_type` carries
+        # the policy's own lane; the catalog's ICU `select` names it movies or TV.
+        reason = Reason(kind.value, {"media_type": media_type})
+    else:
+        # SEASONS_NOT_RECORDED needs no param: it names what the scan lacks, never a cause.
+        # IN_PROGRESS_NOT_READ is the same shape -- one scan shape produces it now, the guard
+        # was off so the episode lists were never asked for. A scan that asked and got no
+        # answer from Sonarr replays off the empty map it planned from and reaches no refusal
+        # at all (#500, `season_evidence`). Both name what the scan lacks rather than the
+        # switch: the remedy is a scan, and the only other way out is turning a protection off.
+        reason = Reason(kind.value)
     return SimulationOut(
         exact=False,
         stale_kind=kind,
-        stale_reason=reasons[kind],
+        stale_reason=to_wire(reason),
         condemned=0,
         protected=0,
         abstained=0,
@@ -381,7 +374,7 @@ async def _replay_simulation(
         merged_extra = replayed_extra
         if override == "spare":
             merged_extra.insert(
-                0, GateResult(GateId.WHITELISTED, PROTECT, detail=HAND_SPARE_DETAIL)
+                0, GateResult(GateId.WHITELISTED, PROTECT, detail=HAND_SPARE_REASON)
             )
         judged = judge_facts(
             facts,
@@ -543,7 +536,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
     async with session_factory(request)() as session:
         snapshot = await newest_snapshot(session)
         if snapshot is None:
-            raise HTTPException(404, "No scan has run yet, so there is nothing to simulate.")
+            refuse(404, "error.simulate.no_scan")
 
         other_type = "movie" if body.media_type == "tv" else "tv"
         other = (await active_policy(session, other_type)).body
@@ -791,13 +784,13 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
 #: list membership -- and on a fresh install, where ``WhitelistGate`` is retired and no gate
 #: emits that id at all, "Why titles were spared" was hand spares wearing a list's name, which
 #: invites softening a keep rule that covers none of them (rule 144). The frontend's
-#: ``GATE_META`` carries the copy for it.
+#: ``gateMeta`` carries the copy for it.
 HAND_SPARE_TALLY_ID = "hand_spare"
 
 
 def _spared_by_id(result: GateResult) -> str:
     """The tally id for one protector: its gate, unless it is the injected hand spare."""
-    return HAND_SPARE_TALLY_ID if result.detail == HAND_SPARE_DETAIL else result.gate.value
+    return HAND_SPARE_TALLY_ID if result.detail.id == "hand_spare" else result.gate.value
 
 
 def _fired_gates(explanation_json: str) -> list[str]:

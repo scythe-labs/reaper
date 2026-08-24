@@ -14,8 +14,10 @@ import { fileURLToPath } from "node:url";
 import { act, render, renderHook, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { announce, Announcer } from "../announce";
+import type { ReasonKey } from "../api";
+import { composeError } from "../why";
 import type { PinPollResult } from "./PlexPin";
-import { CHOOSE_SERVER_SAID, usePlexPinPoll } from "./PlexPin";
+import { chooseServerSaid, usePlexPinPoll } from "./PlexPin";
 
 // The real `announce` and the real `Announcer`, with a counter around the call. Counting matters
 // here and the rendered regions cannot do it: they alternate, hold one sentence at a time, and
@@ -112,7 +114,14 @@ describe("a wait that is taking longer than usual", () => {
   // the waiting paragraph swapping to "your server is restarting" is a change nobody touched
   // anything to cause: on screen it changed, by ear it did not (#177). `announce()` only speaks
   // through a mounted `Announcer`, so the region is mounted here rather than assumed.
-  const REASON = "Your Plex server is restarting. Reaper is still waiting.";
+  // A real catalog code and params (phase 8b), never a transcribed sentence: REASON is what
+  // the real composer renders for it, so these tests prove the wire-to-screen pipeline rather
+  // than a copy of it.
+  const REASON_KEY: ReasonKey = {
+    k: "error.plex.link_unreachable",
+    p: { name: "Attic", count: 2 },
+  };
+  const REASON = composeError(REASON_KEY);
 
   beforeEach(() => {
     vi.mocked(announce).mockClear();
@@ -144,7 +153,7 @@ describe("a wait that is taking longer than usual", () => {
         await vi.advanceTimersByTimeAsync(2000);
       });
       await act(async () => {
-        answer().ok({ status: "retrying", servers: null, reason: REASON });
+        answer().ok({ status: "retrying", servers: null, reason: REASON_KEY });
       });
 
       // Both halves: the paragraph has it to render, and it was spoken.
@@ -171,7 +180,7 @@ describe("a wait that is taking longer than usual", () => {
           await vi.advanceTimersByTimeAsync(2000);
         });
         await act(async () => {
-          answer().ok({ status: "retrying", servers: null, reason: REASON });
+          answer().ok({ status: "retrying", servers: null, reason: REASON_KEY });
         });
       }
 
@@ -191,9 +200,10 @@ describe("a wait that is taking longer than usual", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const { answer } = pollingHook();
-      const SECOND = "Reaper is still waiting for your Plex server to finish starting.";
+      const SECOND_KEY: ReasonKey = { k: "error.plex.link_timed_out" };
+      const SECOND = composeError(SECOND_KEY);
 
-      for (const reason of [REASON, REASON, SECOND]) {
+      for (const reason of [REASON_KEY, REASON_KEY, SECOND_KEY]) {
         await act(async () => {
           await vi.advanceTimersByTimeAsync(2000);
         });
@@ -253,7 +263,7 @@ describe("the account that owns several servers", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(200);
       });
-      expect(said()).toContain(CHOOSE_SERVER_SAID);
+      expect(said()).toContain(chooseServerSaid());
     } finally {
       vi.useRealTimers();
     }
@@ -275,11 +285,11 @@ describe("who is allowed to say the picker sentence", () => {
     readFileSync(join(dirname(fileURLToPath(import.meta.url)), name), "utf8");
 
   it("is this hook, and neither of the two screens driving it", () => {
-    expect(read("PlexPin.tsx")).toContain(`= "${CHOOSE_SERVER_SAID}"`);
+    expect(read("PlexPin.tsx")).toContain(`() => i18next.t("plex.pin.chooseServerSaid")`);
 
     for (const caller of ["Login.tsx", "PlexPanel.tsx"]) {
       expect(
-        read(caller).includes(CHOOSE_SERVER_SAID),
+        read(caller).includes(chooseServerSaid()),
         `${caller} states the picker sentence itself. The hook already announces it for every ` +
           `caller, so this one says it twice. Delete the local copy (#177, rules 72 and 144).`,
       ).toBe(false);

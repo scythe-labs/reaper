@@ -104,7 +104,6 @@ const SAFETY: Safety = {
   destructive_enabled: false,
   has_password: true,
   recovery_mode: false,
-  note: null,
 };
 
 const SNAPSHOT: Snapshot = {
@@ -142,8 +141,7 @@ const CARD: Candidate = {
   group_title: null,
   video_resolution: null,
   library: null,
-  dormant_for: null,
-  reason: null,
+  dormant_days: null,
   override: null,
   override_own: null,
   show_override: null,
@@ -154,6 +152,7 @@ const CARD: Candidate = {
   chip: null,
   show_status: null,
   season_number: null,
+  collections: null,
 };
 
 const SETUP_DONE: SetupStatus = {
@@ -173,9 +172,12 @@ const SETUP_DONE: SetupStatus = {
 
 // `App` puts Settings behind `React.lazy`, so the first render through that boundary in this
 // process pays Vite's cold transform of ten panels' worth of modules -- inside Testing Library's
-// 1000ms `asyncUtilTimeout`, which `testTimeout` does not reach. Warmed the way
+// `asyncUtilTimeout`, which `testTimeout` does not reach. Warmed the way
 // `AppStaleRead.test.tsx` warms the wizard, rather than by lengthening one assertion's timeout:
-// which test pays the cost is otherwise an accident of file order (#651).
+// which test pays the cost is otherwise an accident of file order (#651). The budget itself was
+// 1000ms then and is 5000ms now (`src/test/setup.ts`, #887), which is headroom for the whole
+// suite and not a reason to stop warming: the transform is real work, and paying it here keeps
+// it out of a wait either way.
 beforeAll(async () => {
   await import("./components/Settings");
 });

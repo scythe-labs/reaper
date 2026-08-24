@@ -73,14 +73,19 @@ describe("social preview card", () => {
   });
 
   it("every evidence row on the card is copy a gate actually produces", () => {
-    const gates = readFileSync(join(repoDir, "src", "reaper", "engine", "gates.py"), "utf8");
+    // The gates' sentences live in the catalog now (docs/history/I18N_PLAN.md §5), so the card is
+    // pinned against the English catalog rather than engine/gates.py.
+    const catalog = readFileSync(
+      join(repoDir, "frontend", "src", "locales", "en", "ui.json"),
+      "utf8",
+    );
     // Pin the population the walk covers, not just that each member it found passes: a row
     // dropped from CLEARED_ROWS leaves both the card and this check at once (rule 145).
     expect(CLEARED_ROWS.length).toBe(3);
     for (const row of CLEARED_ROWS) {
       expect(
-        gates.includes(row.source),
-        `"${row.source}" is on the social card but no longer in engine/gates.py`,
+        catalog.includes(row.source),
+        `"${row.source}" is on the social card but no longer in the en catalog's why entries`,
       ).toBe(true);
       // The wrapped lines are the same sentence the gate emits, split for the SVG. Joining them
       // has to reproduce the quoted literal, or the card is showing something else.

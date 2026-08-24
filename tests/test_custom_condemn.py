@@ -34,6 +34,7 @@ from reaper.engine.signals import (
     evaluate_keep,
     score,
 )
+from tests._reasons import text
 
 
 def _facts(**overrides: object) -> Facts:
@@ -313,7 +314,7 @@ class TestGradedKeep:
         unlisted = evaluate_keep(keep, _facts(on_lists=Absent(source="lists")))
         assert unlisted.evaluated is True
         assert unlisted.discount == 0.0
-        assert unlisted.detail == "on none of your lists"
+        assert text(unlisted.detail) == "on none of your lists"
 
         # Unknown fails closed: could not check the lists, keep fully.
         unreadable = evaluate_keep(keep, _facts(on_lists=Unknown("sync failed", "lists")))
@@ -423,7 +424,7 @@ class TestBuiltinRewatchKeep:
         assert result.evaluated is True
         assert result.discount == pytest.approx(22.0)
         assert (
-            result.detail
+            text(result.detail)
             == "Watched 8 times, most recently 1 month ago. Likely to be watched again."
         )
 
@@ -452,7 +453,7 @@ class TestBuiltinRewatchKeep:
 
         assert result.evaluated is True
         assert result.discount == 0.0
-        assert result.detail == "Watched 3 times in all."
+        assert text(result.detail) == "Watched 3 times in total."
 
     def test_a_stale_last_play_discounts_nothing(self) -> None:
         """Enough viewings, but the most recent one is outside the window: read-and-not-met,
@@ -467,7 +468,7 @@ class TestBuiltinRewatchKeep:
 
         assert result.evaluated is True
         assert result.discount == 0.0
-        assert result.detail == "Watched 8 times, but not in the last 1 year, 1 month."
+        assert text(result.detail) == "Watched 8 times, but not in the last 1 year, 1 month."
 
     def test_recency_exactly_at_the_window_fires(self) -> None:
         keep = _rewatch_keep(min_viewings=6, recent_days=400)
@@ -504,7 +505,7 @@ class TestBuiltinRewatchKeep:
 
         assert result.evaluated is False
         assert result.discount == float(keep.max_discount)
-        assert result.detail == "kept fully: could not check your watch history"
+        assert text(result.detail) == "kept fully: could not check your watch history"
 
     def test_unknown_last_play_takes_the_full_discount_and_is_not_evaluated(self) -> None:
         keep = _rewatch_keep()
@@ -517,7 +518,7 @@ class TestBuiltinRewatchKeep:
 
         assert result.evaluated is False
         assert result.discount == float(keep.max_discount)
-        assert result.detail == "kept fully: could not check your watch history"
+        assert text(result.detail) == "kept fully: could not check your watch history"
 
     def test_never_watched_here_discounts_nothing(self) -> None:
         """``Known(0)`` viewings paired with an ``Absent`` last play: the never-watched shape
@@ -533,7 +534,7 @@ class TestBuiltinRewatchKeep:
 
         assert result.evaluated is True
         assert result.discount == 0.0
-        assert result.detail == "Never watched here."
+        assert text(result.detail) == "Never watched here."
 
     def test_ungathered_facts_discount_nothing(self) -> None:
         """``rewatch_viewings`` Absent means the caller never gathered watch history
@@ -550,7 +551,7 @@ class TestBuiltinRewatchKeep:
 
         assert result.evaluated is True
         assert result.discount == 0.0
-        assert result.detail == "Does not apply here."
+        assert text(result.detail) == "Does not apply here."
 
 
 class TestBuiltinRewatchKeepTvWording:
@@ -571,7 +572,7 @@ class TestBuiltinRewatchKeepTvWording:
         assert result.evaluated is True
         assert result.discount == pytest.approx(22.0)
         assert (
-            result.detail
+            text(result.detail)
             == "Watched again 3 times, most recently 1 month ago. Likely to be watched again."
         )
 
@@ -585,7 +586,7 @@ class TestBuiltinRewatchKeepTvWording:
         result = evaluate_keep(keep, facts)
 
         assert result.discount == 0.0
-        assert result.detail == "Watched again 1 time in all."
+        assert text(result.detail) == "Watched again 1 time in total."
 
     def test_a_stale_last_play_states_the_window(self) -> None:
         keep = _rewatch_keep(media_type="tv", min_viewings=2, recent_days=500)
@@ -597,7 +598,7 @@ class TestBuiltinRewatchKeepTvWording:
         result = evaluate_keep(keep, facts)
 
         assert result.discount == 0.0
-        assert result.detail == "Watched again 3 times, but not in the last 1 year, 4 months."
+        assert text(result.detail) == "Watched again 3 times, but not in the last 1 year, 4 months."
 
     def test_zero_rewatches_says_never_again_not_never(self) -> None:
         """A show at zero was possibly watched once through -- its count is re-watches --
@@ -613,4 +614,4 @@ class TestBuiltinRewatchKeepTvWording:
 
         assert result.evaluated is True
         assert result.discount == 0.0
-        assert result.detail == "Never watched again here."
+        assert text(result.detail) == "Never watched again here."

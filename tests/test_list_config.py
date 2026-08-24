@@ -29,11 +29,14 @@ from reaper.clients.plex import PlexError
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.session import create_engine, create_session_factory
+from reaper.engine.reason import from_wire
 from reaper.main import create_app
 from reaper.services import list_config, scan_runner
 from reaper.services import snapshot as snapshot_service
 from reaper.services.lists import ListSource
 from tests._auth import login
+from tests._reasons import catalog
+from tests._reasons import text as reason_text
 
 
 @pytest.fixture
@@ -296,16 +299,20 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
             )
 
     def test_the_modal_spells_every_refusal_the_way_this_module_does(self) -> None:
-        """``ListModal.tsx`` says these same sentences before the round trip.
+        """The i18n catalog says these same sentences before the round trip.
 
         Two copies of one requirement, which is rule 144's hazard: each side was pinned by its
         own test, nothing bound the pair, and a one-sided edit left both suites green. The
         failure message names the other file, because a comment asking a future author to
         remember the second copy does nothing.
+
+        The frontend copy lives in the en-US catalog since Stage 4 (``lists.blocked.*``), so
+        this binds backend sentence to catalog message; the frontend's own gates
+        (``i18n-keys.test.ts``) bind the catalog to the keys ``ListModal.tsx`` renders.
         """
-        modal = (
-            Path(__file__).resolve().parents[1] / "frontend/src/components/ListModal.tsx"
-        ).read_text(encoding="utf-8")
+        modal = (Path(__file__).resolve().parents[1] / "frontend/src/locales/en/ui.json").read_text(
+            encoding="utf-8"
+        )
         for sentence in (
             "Give the list a name, so you can pick it out on the Policy screen.",
             "Say which Plex library to look in.",
@@ -315,7 +322,7 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
         ):
             assert sentence in modal, (
                 f"services/list_config.py refuses with {sentence!r}, and "
-                "frontend/src/components/ListModal.tsx no longer says it before the round "
+                "frontend/src/locales/en/ui.json no longer says it before the round "
                 "trip. Edit both, or drop the browser-side check."
             )
 
@@ -565,7 +572,13 @@ class TestTheRoutes:
         )
 
         assert r.status_code == 400
-        assert r.json()["detail"] == "Say which collection in that library to read."
+        body = r.json()
+        # ListConfigError is now a Refusal subclass of its own (phase 8a's second wave): the
+        # code names the condition, with no params, rather than wrapping the service's
+        # English in a generic pass-through.
+        assert body["code"] == "error.lists.collection_required"
+        assert body["params"] == {}
+        assert body["detail"] == "Say which collection in that library to read."
 
     def test_editing_the_config_leaves_the_name_alone(self, client: TestClient) -> None:
         """Rule 1: an omitted field and an explicit one are different requests. The edit
@@ -592,7 +605,9 @@ class TestTheRoutes:
         r = client.patch("/api/lists/configured/9999", json={"name": "Keep"})
 
         assert r.status_code == 400
-        assert "no longer exists" in r.json()["detail"]
+        body = r.json()
+        assert body["code"] == "error.lists.not_found"
+        assert "no longer exists" in body["detail"]
 
 
 def _definition(**overrides: object) -> list_config.ListDefinition:
@@ -756,7 +771,9 @@ class TestCheckingTheListsNow:
         response = client.post("/api/lists/sync", json={})
 
         assert response.status_code == 409, response.text
-        assert "can't read" in response.json()["detail"]
+        body = response.json()
+        assert body["code"] == "error.lists.registry_unreadable"
+        assert "can't read" in body["detail"]
         assert not seen, "checked the lists anyway, which retires what it could not read"
 
     def test_plex_not_answering_is_said_plainly_and_retires_nothing(
@@ -776,7 +793,10 @@ class TestCheckingTheListsNow:
 
         assert response.status_code == 200, response.text
         body = response.json()
-        assert body["plex_error"] and "couldn't reach Plex" in body["plex_error"]
+        reason = body["plex_error_reason"]
+        assert reason["k"] == "plexError"
+        assert reason["p"] == {"error": "unreachable (boom)"}
+        assert "couldn't reach Plex" in reason_text(from_wire(reason), namespace="lists")
         # The rest of the pass still ran, so a Plex outage does not stop the *arr tag sweeps.
         assert body["checked"] == 1
         assert body["failed"] == 0
@@ -785,7 +805,7 @@ class TestCheckingTheListsNow:
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         async def refuses(factory: object, settings: object, box: object, **kw: object) -> Any:
-            raise scan_runner.ScanConfigError("Add a Radarr before checking.")
+            raise scan_runner.ScanConfigError("error.scan.missing_sources")
 
         monkeypatch.setattr(scan_runner, "build_sources", refuses)
         seen = self._syncs(monkeypatch, {})
@@ -793,7 +813,16 @@ class TestCheckingTheListsNow:
         response = client.post("/api/lists/sync", json={})
 
         assert response.status_code == 400, response.text
-        assert response.json()["detail"] == "Add a Radarr before checking."
+        body = response.json()
+        # ScanConfigError is now a Refusal subclass of its own (phase 8a's second wave): the
+        # route answers through refuse_from(exc) rather than wrapping its English in a
+        # generic pass-through code.
+        assert body["code"] == "error.scan.missing_sources"
+        assert body["params"] == {}
+        assert body["detail"] == (
+            "A scan needs a Tautulli instance plus at least one Radarr or Sonarr. "
+            "Add them in Settings first."
+        )
         assert not seen
 
     def test_it_counts_the_checks_that_landed_apart_from_the_ones_that_failed(
@@ -811,7 +840,7 @@ class TestCheckingTheListsNow:
 
         assert body["checked"] == 2, "a list that matched nothing was still checked"
         assert body["failed"] == 1
-        assert body["plex_error"] is None
+        assert body["plex_error_reason"] is None
 
     def test_checking_one_list_passes_that_list_through(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -824,6 +853,17 @@ class TestCheckingTheListsNow:
 
         assert client.post("/api/lists/sync", json={"list_id": 1}).status_code == 200
         assert seen["only"] == 1
+
+
+class TestThePlexErrorVocabulary:
+    """The route's one Plex-unreachable reason, both directions (rule 145's shape, scaled
+    to a population of one id: ``sync_lists`` has exactly one call site for it)."""
+
+    def test_the_id_has_a_catalog_entry(self) -> None:
+        assert "plexError" in catalog("lists")
+
+    def test_the_entry_takes_the_transport_error_as_a_param(self) -> None:
+        assert "{error}" in catalog("lists")["plexError"]
 
 
 class TestTheUniqueNameConstraintIsTheThingThatHolds:
@@ -917,4 +957,6 @@ class TestARowStaysOnScreenSoTheOperatorCanFixIt:
         response = client.delete("/api/lists/configured/9999")
 
         assert response.status_code == 400, response.text
-        assert "no longer exists" in response.json()["detail"]
+        body = response.json()
+        assert body["code"] == "error.lists.not_found"
+        assert "no longer exists" in body["detail"]

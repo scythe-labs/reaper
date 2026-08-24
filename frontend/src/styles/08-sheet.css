@@ -74,7 +74,7 @@
   max-width: 34ch;
 }
 .local-form .field {
-  text-align: left;
+  text-align: start;
   margin-bottom: 0.9rem;
 }
 /* The one control chrome (see the standard at the top of the file); only the full-bleed

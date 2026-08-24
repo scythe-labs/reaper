@@ -50,6 +50,8 @@ from reaper.db.models import (
 )
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody, ProfileSettings
+from reaper.engine.reason import Reason, from_stored
+from reaper.refusal import english
 from reaper.services import list_config, whitelist
 from reaper.services import whitelist as whitelist_module
 from reaper.services.condemned import effective_condemned
@@ -79,7 +81,16 @@ from reaper.services.planner import (
 )
 from reaper.services.profiles import live_policy_hash, save_profile_settings
 
+from ._reasons import refusal_text
+
 GB = 1024**3
+
+
+def _label_text(reason: Any) -> str:
+    """A ``StepCheck.label``/``StepOutcome.detail`` reason's rendered English, from the real
+    ``reaper.refusal.MESSAGES`` catalog -- for assertions that care about the words a
+    checklist line carries, not just which code fired."""
+    return refusal_text(reason.id, **reason.params)
 
 
 @pytest.fixture
@@ -408,9 +419,13 @@ class TestDryRunProvesEverythingAndDeletesNothing:
         assert report.state is RunState.COMPLETED
         assert report.dry_run is True
         assert report.deleted_items == 0  # nothing was actually deleted
-        # every step is recorded as what it WOULD have done
+        # every step is recorded as what it WOULD have done, typed as the raw request
+        # sequence rather than an English "would" sentence (phase 11b)
         assert all(o.state is StepState.SKIPPED for o in report.outcomes)
-        assert any("would DELETE /api/v3/movie/1" in o.detail for o in report.outcomes)
+        assert all(o.detail.id == "error.reap.step.dry_run" for o in report.outcomes)
+        assert any(
+            "DELETE /api/v3/movie/1" in str(o.detail.params["plan"]) for o in report.outcomes
+        )
 
     async def test_the_first_outcome_is_flagged_as_the_canary(self, session: AsyncSession) -> None:
         snapshot_id = await _snapshot_with(
@@ -423,7 +438,7 @@ class TestDryRunProvesEverythingAndDeletesNothing:
         ).execute(run.id)
 
         # The canary is the smallest (1 GB, movie 2) and it is executed first.
-        assert "[canary]" in report.outcomes[0].detail
+        assert report.outcomes[0].is_canary
         assert report.outcomes[0].media_key == "radarr:1:2"
 
 
@@ -452,10 +467,12 @@ class TestASeasonDryRunsAsAWholeSequence:
         # listing the whole ordered sequence it would have sent.
         outcome = report.outcomes[0]
         assert outcome.kind == "sonarr_delete_files"
-        assert "would POST /api/v3/seasonpass" in outcome.detail
-        assert "would GET /api/v3/series/42" in outcome.detail
-        assert "would DELETE /api/v3/episodefile/bulk" in outcome.detail
-        assert "[canary]" in outcome.detail  # the sole item is ordinal 0
+        assert outcome.detail.id == "error.reap.step.dry_run"
+        plan = str(outcome.detail.params["plan"])
+        assert "POST /api/v3/seasonpass" in plan
+        assert "GET /api/v3/series/42" in plan
+        assert "DELETE /api/v3/episodefile/bulk" in plan
+        assert outcome.is_canary  # the sole item is ordinal 0
 
         # A dry run consumes nothing: the run stays PLANNED and every step stays PENDING, so
         # the plan can still be dry-run again and, crucially, executed for real afterwards.
@@ -529,7 +546,7 @@ class TestCapsAbortNeverTruncate:
 
         assert report.state is RunState.ABORTED
         assert report.aborted_reason is not None
-        assert "over your per-run cap" in report.aborted_reason.lower()
+        assert report.aborted_reason.id == "error.reap.items_over_run_cap"
         assert report.deleted_items == 0
         # This is a DRY run, so the abort is a *finding*, not a consumed run: the row stays
         # PLANNED and re-runnable, so raising the cap and running again just works.
@@ -622,10 +639,11 @@ class TestArmingIsRequiredForARealRun:
         snapshot_id = await _snapshot_with(session, [("radarr:1:1", 1 * GB)])
         run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
-        with pytest.raises(ExecutionError, match="Refusing to execute for real"):
+        with pytest.raises(ExecutionError, match="Deletion is turned off") as excinfo:
             await Executor(
                 session, safety=_read_only(), settings=ProfileSettings(), dry_run=False
             ).execute(run.id)
+        assert excinfo.value.code == "error.safety.deletion_off"
 
     async def test_a_real_run_without_clients_is_refused(self, session: AsyncSession) -> None:
         """Armed is not enough: a real run needs the clients to delete through AND to run
@@ -719,13 +737,18 @@ class TestTheSizeInterlocksChecklistLines:
     """
 
     def test_the_grew_line_says_what_happened_and_what_became_of_the_file(self) -> None:
-        assert _CHECK_GREW_SINCE_APPROVED == "It grew since you approved it. Kept."
+        assert refusal_text(_CHECK_GREW_SINCE_APPROVED.id) == "It grew since you approved it. Kept."
 
     def test_the_unconfirmed_line_says_what_happened_and_what_became_of_the_file(self) -> None:
-        assert _CHECK_SIZE_UNCONFIRMED == "Couldn't confirm its current size. Kept."
+        assert (
+            refusal_text(_CHECK_SIZE_UNCONFIRMED.id) == "Couldn't confirm its current size. Kept."
+        )
 
     def test_the_never_measured_line_says_what_happened_and_what_became_of_the_file(self) -> None:
-        assert _NO_APPROVED_SIZE_CHECK == "No size was recorded for it at scan time. Kept."
+        assert (
+            refusal_text(_NO_APPROVED_SIZE_CHECK.id)
+            == "No size was recorded for it at scan time. Kept."
+        )
 
 
 class TestSizeDriftReRead:
@@ -746,7 +769,7 @@ class TestSizeDriftReRead:
         assert report.deleted_items == 0
         assert report.skipped == 1
         assert report.state is RunState.COMPLETED  # a skip is a protection, not a failure
-        assert "bigger now" in report.outcomes[0].detail
+        assert report.outcomes[0].detail.id == "error.reap.step.grew_since_approved_movie"
         assert report.outcomes[0].checks[0].label == _CHECK_GREW_SINCE_APPROVED
 
     async def test_a_movie_whose_size_cannot_be_read_is_kept(self, session: AsyncSession) -> None:
@@ -811,9 +834,9 @@ class TestSizeDriftReRead:
         assert sonarr.unmonitor_calls == []
         assert sonarr.delete_calls == []
         assert report.skipped == 1
-        assert "bigger now" in report.outcomes[0].detail
-        # The same sentence the movie case above asserts, and the movie's was the only one
-        # anything read: a grep for this season's wording found it in `executor.py` alone.
+        assert report.outcomes[0].detail.id == "error.reap.step.grew_since_approved_season"
+        # The same checklist line the movie case above asserts, and the movie's was the only
+        # one anything read: a grep for this season's wording found it in `executor.py` alone.
         assert report.outcomes[0].checks[0].label == _CHECK_GREW_SINCE_APPROVED
 
     async def test_a_season_with_an_unreadable_file_size_is_kept(
@@ -837,7 +860,7 @@ class TestSizeDriftReRead:
         assert report.outcomes[0].checks[0].label == _CHECK_SIZE_UNCONFIRMED
         # Sonarr listed a file and would not size it, which IS a size problem. This is the
         # arm the empty-list skip above was folded into, so it is pinned from both sides.
-        assert "did not report a size" in report.outcomes[0].detail
+        assert report.outcomes[0].detail.id == "error.reap.step.size_unconfirmed_season"
 
     async def test_a_season_whose_files_all_report_zero_bytes_is_kept(
         self, session: AsyncSession
@@ -893,13 +916,16 @@ class TestSizeDriftReRead:
         assert report.skipped == 1
         outcome = report.outcomes[0]
         # Verbatim, and it says nothing about a size, which is the whole of the fix.
-        assert outcome.detail == (
-            "Sonarr lists no files for season 3, so there is nothing to delete. Kept."
+        assert outcome.detail.id == "error.reap.step.season_no_files"
+        assert outcome.detail.params == {"season": 3}
+        assert (
+            refusal_text(outcome.detail.id, **outcome.detail.params)
+            == "Sonarr lists no files for season 3, so there is nothing to delete. Kept."
         )
         # The post-unmonitor skip's line without its unmonitor clause, pinned verbatim
         # there too (``TestASeasonWithNothingLeftToDelete``): reword both or neither
         # (rule 144).
-        assert outcome.checks[0].label == "No files left to remove. Kept."
+        assert refusal_text(outcome.checks[0].label.id) == "No files left to remove. Kept."
 
     async def test_a_drift_skip_does_not_consume_the_canary(self, session: AsyncSession) -> None:
         """The skipped item touched no file, so the next item still gets the canary's
@@ -976,7 +1002,7 @@ class TestAnApprovedSizeThatWasNeverConfirmed:
         assert radarr.delete_calls == []  # nothing was sent
         assert report.skipped == 1
         assert report.state is RunState.COMPLETED  # a skip is a protection, not a failure
-        assert "never got a size" in report.outcomes[0].detail
+        assert report.outcomes[0].detail.id == "error.reap.step.no_approved_size"
         assert report.outcomes[0].checks[0].label == _NO_APPROVED_SIZE_CHECK
 
     async def test_a_season_with_no_approved_size_is_kept_before_the_unmonitor(
@@ -996,7 +1022,7 @@ class TestAnApprovedSizeThatWasNeverConfirmed:
         assert sonarr.unmonitor_calls == []  # not even the reversible half ran
         assert sonarr.delete_calls == []
         assert report.skipped == 1
-        assert "never got a size" in report.outcomes[0].detail
+        assert report.outcomes[0].detail.id == "error.reap.step.no_approved_size"
         assert report.outcomes[0].checks[0].label == _NO_APPROVED_SIZE_CHECK
 
     async def test_a_size_measured_against_a_different_thing_is_kept(
@@ -1277,7 +1303,9 @@ class TestTheUnmeasuredAllowance:
         ).execute(run.id)
 
         assert report.state is RunState.ABORTED
-        assert "3 titles" in (report.aborted_reason or "")
+        assert report.aborted_reason is not None
+        assert report.aborted_reason.id == "error.reap.items_over_run_cap"
+        assert report.aborted_reason.params.get("items") == 3
 
     async def test_caps_off_still_enforces_the_unknown_size_limit(
         self, session: AsyncSession
@@ -1303,7 +1331,8 @@ class TestTheUnmeasuredAllowance:
         ).execute(run.id)
 
         assert report.state is RunState.ABORTED
-        assert "couldn't measure" in (report.aborted_reason or "")
+        assert report.aborted_reason is not None
+        assert report.aborted_reason.id == "error.reap.unmeasured_over_limit"
 
     async def test_they_never_contribute_zero_to_a_byte_cap(self, session: AsyncSession) -> None:
         """The tempting shortcut once they can be planned is to let them count as 0 bytes
@@ -1455,7 +1484,8 @@ class TestUsingTheAllowanceDoesNotBrickTheNextThirtyDays:
         ).execute(second.id)
 
         assert report.state is RunState.ABORTED
-        assert "already" in (report.aborted_reason or "")
+        assert report.aborted_reason is not None
+        assert report.aborted_reason.id == "error.reap.items_over_rolling_cap"
 
 
 class TestTheAllowanceIsACountNotASwitch:
@@ -1489,7 +1519,8 @@ class TestTheAllowanceIsACountNotASwitch:
         ).execute(run.id)
 
         assert report.state is RunState.ABORTED
-        assert "over your limit" in (report.aborted_reason or "")
+        assert report.aborted_reason is not None
+        assert report.aborted_reason.id == "error.reap.unmeasured_over_limit"
 
 
 class TestTheCanaryRuleHoldsWhenNothingIsMeasured:
@@ -1649,7 +1680,8 @@ class TestDisarmMidRun:
         report = await _real(session, run, _gateway(radarr={1: radarr}), armed_recheck=flipping)
 
         assert report.state is RunState.ABORTED
-        assert "turned off" in (report.aborted_reason or "")
+        assert report.aborted_reason is not None
+        assert report.aborted_reason.id == "error.reap.deletion_disabled_mid_run"
         assert radarr.delete_calls == [1]  # the second item was never attempted
         assert report.deleted_items == 1  # the first stays deleted and recorded
 
@@ -1710,7 +1742,8 @@ class TestStopMidRun:
         report = await _real(session, run, _gateway(radarr={1: radarr}), stop_recheck=stopping)
 
         assert report.state is RunState.ABORTED
-        assert "stopped" in (report.aborted_reason or "").lower()
+        assert report.aborted_reason is not None
+        assert report.aborted_reason.id == "error.reap.stopped_by_operator"
         assert radarr.delete_calls == [1]  # the second item was never attempted
         assert report.deleted_items == 1  # the first stays deleted and recorded
 
@@ -1872,7 +1905,7 @@ class TestMovieLiveSend:
 
         outcome = report.outcomes[0]
         assert outcome.title == "Worthless 0"
-        labels = {c.label: c.ok for c in outcome.checks}
+        labels = {_label_text(c.label): c.ok for c in outcome.checks}
         assert all(labels.values())  # every check passed
         assert any("watching" in label.lower() for label in labels)
         assert any("removed the file" in label.lower() for label in labels)
@@ -1885,10 +1918,12 @@ class TestMovieLiveSend:
         report = await _real(session, run, _gateway(radarr={1: FakeRadarr(land_exclusion=False)}))
 
         outcome = report.outcomes[0]
-        failed = [c.label for c in outcome.checks if not c.ok]
+        failed = [_label_text(c.label) for c in outcome.checks if not c.ok]
         assert failed and any("exclusion" in label.lower() for label in failed)
         # ...but the "removed the file" check still passed: the file really is gone.
-        removed = next(c for c in outcome.checks if "removed the file" in c.label.lower())
+        removed = next(
+            c for c in outcome.checks if "removed the file" in _label_text(c.label).lower()
+        )
         assert removed.ok is True
 
     async def test_an_exclusion_that_lands_a_beat_late_is_still_verified(
@@ -1922,7 +1957,8 @@ class TestMovieLiveSend:
         assert report.state is RunState.ABORTED
         assert report.deleted_items == 0
         assert report.aborted_reason is not None
-        assert "test item" in report.aborted_reason.lower()
+        assert report.aborted_reason.id == "error.reap.canary_failed"
+        assert "test item" in _label_text(report.aborted_reason).lower()
 
     async def test_a_movie_without_a_tmdb_id_is_refused_before_the_delete(
         self, session: AsyncSession
@@ -1970,7 +2006,7 @@ class TestMovieLiveSend:
         assert report.deleted_items == 1
         assert radarr.delete_calls == [1]
         assert radarr.exclusion_args == [False]  # the delete was sent without the exclusion
-        labels = [c.label.lower() for c in report.outcomes[0].checks]
+        labels = [_label_text(c.label).lower() for c in report.outcomes[0].checks]
         # The file-removed check still ran; the exclusion line reads "off", never "confirmed".
         assert any("removed the file" in label for label in labels)
         assert any("off" in label for label in labels if "exclusion" in label)
@@ -2459,7 +2495,7 @@ class TestASpareIsHonoredAtExecuteTime:
 
         assert report.state is RunState.COMPLETED
         assert report.skipped == 1
-        assert "spared this by hand" in report.outcomes[0].detail
+        assert report.outcomes[0].detail.id == "error.reap.step.spared_by_hand"
 
 
 class TestPlexCleanup:
@@ -3005,6 +3041,19 @@ class FakeRadarr:
         return [{"path": "/movies", "accessible": self._root_accessible}]
 
 
+class UnreachableAfterDelete(FakeRadarr):
+    """A movie Radarr accepted the delete for, then went unreachable for the confirming
+    re-read: nobody knows whether the movie is there. Shared by three tests in
+    ``TestARemovalIsCountedEvenWhenTheStepFails`` that each drive it a different way."""
+
+    async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
+        if movie_id in self._deleted:
+            # A timeout carries no status at all, which is exactly the case that
+            # used to collapse into "the movie is still present".
+            raise IntegrationError("radarr", "timed out", status=None)
+        return await super().movie_by_id(movie_id)
+
+
 class FakeSonarr:
     """A stand-in Sonarr for the season prune path."""
 
@@ -3386,7 +3435,8 @@ class TestRollingThirtyDayCaps:
         report = await executor.execute(second.id)
 
         assert report.state is RunState.ABORTED
-        assert "30 days" in (report.aborted_reason or "")
+        assert report.aborted_reason is not None
+        assert report.aborted_reason.id == "error.reap.bytes_over_rolling_cap"
         assert radarr.delete_calls == []  # nothing was deleted: abort, never truncate
 
     async def test_a_dry_run_reports_the_same_rolling_refusal(
@@ -3407,7 +3457,8 @@ class TestRollingThirtyDayCaps:
         report = await self._execute(session, second.id, settings, dry=True)
 
         assert report.state is RunState.ABORTED
-        assert "30 days" in (report.aborted_reason or "")
+        assert report.aborted_reason is not None
+        assert report.aborted_reason.id == "error.reap.bytes_over_rolling_cap"
         # And the dry run did not consume the plan -- on disk, not in the session's copy.
         assert (await _stored_run(async_factory, second.id)).state is RunState.PLANNED
 
@@ -3429,7 +3480,9 @@ class TestRollingThirtyDayCaps:
         report = await self._execute(session, second.id, settings)
 
         assert report.state is RunState.ABORTED
-        assert "rolling cap of 3" in (report.aborted_reason or "")
+        assert report.aborted_reason is not None
+        assert report.aborted_reason.id == "error.reap.items_over_rolling_cap"
+        assert report.aborted_reason.params.get("cap") == 3
 
     async def test_deletions_older_than_thirty_days_fall_out_of_the_window(
         self, session: AsyncSession
@@ -3706,7 +3759,7 @@ class TestAnOverrideChangedMidRun:
         assert report.skipped == 1
         kept = next(o for o in report.outcomes if o.media_key == "radarr:1:2")
         assert kept.state is StepState.SKIPPED
-        assert "spared this by hand" in kept.detail
+        assert kept.detail.id == "error.reap.step.spared_by_hand"
 
     async def test_withdrawing_a_hand_reap_mid_run_keeps_the_file(
         self, session: AsyncSession
@@ -3743,12 +3796,12 @@ class TestAnOverrideChangedMidRun:
         assert radarr.delete_calls == [1]
         kept = next(o for o in report.outcomes if o.media_key == "radarr:1:2")
         assert kept.state is StepState.SKIPPED
-        # Verbatim, because the run-start-set skip below is the arm this sentence used to
-        # cover as well (issue #691). Both are kept, so only the wording tells them apart
-        # (rule 118), and rewording either without the other puts the two facts back under
-        # one sentence.
-        assert kept.detail == "the hand reap on this was removed, so it is kept"
-        assert kept.checks[0].label == "No longer marked to reap by hand. Kept."
+        # Distinct ids, because the run-start-set skip below is the arm this sentence used
+        # to cover as well (issue #691). Both are kept, so only the id tells them apart
+        # (rule 118), and merging either into the other puts the two facts back under one
+        # sentence.
+        assert kept.detail.id == "error.reap.step.hand_reap_removed"
+        assert kept.checks[0].label.id == "error.reap.check.hand_reap_removed"
 
     async def test_a_spare_withdrawn_mid_run_does_not_name_a_hand_reap(
         self, session: AsyncSession
@@ -3785,11 +3838,11 @@ class TestAnOverrideChangedMidRun:
         assert radarr.delete_calls == [1]  # still only what the operator confirmed
         kept = next(o for o in report.outcomes if o.media_key == "radarr:1:2")
         assert kept.state is StepState.SKIPPED
-        assert kept.detail == "this was not part of the run you confirmed, so it is kept"
-        assert kept.checks[0].label == "Not part of the run you confirmed. Kept."
-        # The sentence that belongs to the other half, pinned verbatim in
+        assert kept.detail.id == "error.reap.step.not_in_confirmed_run"
+        assert kept.checks[0].label.id == "error.reap.check.not_in_confirmed_run"
+        # The id that belongs to the other half, pinned in
         # ``test_withdrawing_a_hand_reap_mid_run_keeps_the_file`` (rule 144).
-        assert "hand reap" not in kept.detail
+        assert kept.detail.id != "error.reap.step.hand_reap_removed"
 
     async def test_a_reap_added_mid_run_cannot_smuggle_an_item_in(
         self, session: AsyncSession
@@ -3829,7 +3882,7 @@ class TestAnOverrideChangedMidRun:
         # And it does not tell them their reap was removed at the moment they added one
         # back, which is the other population of the run-start-set skip (issue #691).
         kept = next(o for o in report.outcomes if o.media_key == "radarr:1:2")
-        assert kept.detail == "this was not part of the run you confirmed, so it is kept"
+        assert kept.detail.id == "error.reap.step.not_in_confirmed_run"
 
     async def test_an_unreadable_override_read_stops_the_run(self, session: AsyncSession) -> None:
         """Fail-closed. If the decisions cannot be re-read we cannot prove the next file is
@@ -3856,7 +3909,8 @@ class TestAnOverrideChangedMidRun:
             report = await _real(session, run, _gateway(radarr={1: radarr}))
 
         assert report.state is RunState.ABORTED
-        assert "could not re-check your keep and remove decisions" in (report.aborted_reason or "")
+        assert report.aborted_reason is not None
+        assert report.aborted_reason.id == "error.reap.overrides_unreadable"
         assert radarr.delete_calls == [1]  # the first item went; the second was never sent
 
     async def test_the_decisions_are_re_read_before_every_item(self, session: AsyncSession) -> None:
@@ -3951,7 +4005,9 @@ class TestARemovalIsCountedEvenWhenTheStepFails:
         report = await _real(session, third, _gateway(radarr={1: radarr}), settings=settings)
 
         assert report.state is RunState.ABORTED
-        assert "rolling cap of 2" in (report.aborted_reason or "")
+        assert report.aborted_reason is not None
+        assert report.aborted_reason.id == "error.reap.items_over_rolling_cap"
+        assert report.aborted_reason.params.get("cap") == 2
         assert radarr.delete_calls == []
 
     async def test_the_run_reports_that_the_library_changed(self, session: AsyncSession) -> None:
@@ -3988,15 +4044,6 @@ class TestARemovalIsCountedEvenWhenTheStepFails:
         as the mirror above, where a clean read proved it was: the file almost certainly
         went, and leaving it uncharged lets an intermittently slow Radarr buy unlimited
         deletions past the monthly budget (rules 97 and 5/30)."""
-
-        class UnreachableAfterDelete(FakeRadarr):
-            async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
-                if movie_id in self._deleted:
-                    # A timeout carries no status at all, which is exactly the case that
-                    # used to collapse into "the movie is still present".
-                    raise IntegrationError("radarr", "timed out", status=None)
-                return await super().movie_by_id(movie_id)
-
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
         run = await _plan(session, snapshot_id)
 
@@ -4015,19 +4062,17 @@ class TestARemovalIsCountedEvenWhenTheStepFails:
         responses: a movie Radarr refused to delete is still on disk and can be retried, a
         movie it could not re-read is gone. Printing "the movie is still there" for the
         second sends the operator looking for a file nobody can find (rules 7/24 and 21)."""
-
-        class UnreachableAfterDelete(FakeRadarr):
-            async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
-                if movie_id in self._deleted:
-                    raise IntegrationError("radarr", "timed out", status=None)
-                return await super().movie_by_id(movie_id)
-
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
         run = await _plan(session, snapshot_id)
 
         await _real(session, run, _gateway(radarr={1: UnreachableAfterDelete()}))
 
-        error = ((await _steps(session, run.id))[0].error or "").lower()
+        # `error` now stores the reason's code, not its English (rule 104), so decode it
+        # through the real function before composing -- the same `from_stored` the API
+        # route reads the column with.
+        reason = from_stored((await _steps(session, run.id))[0].error)
+        assert reason is not None
+        error = refusal_text(reason.id, **reason.params).lower()
         assert "could not reach it again" in error
         assert "still there" not in error
 
@@ -4049,27 +4094,21 @@ class TestARemovalIsCountedEvenWhenTheStepFails:
         the builder; this one is what proves a REAL executor failure populates it, where
         that one writes the row itself.
         """
-
-        class UnreachableAfterDelete(FakeRadarr):
-            async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
-                if movie_id in self._deleted:
-                    raise IntegrationError("radarr", "timed out", status=None)
-                return await super().movie_by_id(movie_id)
-
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
         run = await _plan(session, snapshot_id)
 
-        # Planned and not yet sent: nothing has failed, so every step says nothing at all,
-        # rather than an empty string the browser would have to tell apart from a reason.
+        # Planned and not yet sent: nothing has failed, so every step carries no reason at
+        # all, rather than one the browser would have to tell apart from a real one.
         planned = await _run_out(session, run)
-        assert planned.steps and all(s.error is None for s in planned.steps)
+        assert planned.steps and all(s.error_reason is None for s in planned.steps)
 
         await _real(session, run, _gateway(radarr={1: UnreachableAfterDelete()}))
 
         out = await _run_out(session, run)
         failed = [s for s in out.steps if s.state == StepState.FAILED.value]
         assert failed, "the scenario stopped failing a step, so this proves nothing"
-        assert "could not reach it again" in (failed[0].error or "").lower()
+        assert failed[0].error_reason is not None
+        assert failed[0].error_reason.k == "error.reap.step.movie_removal_unconfirmed"
 
     async def test_a_season_delete_that_cannot_be_re_read_is_charged_too(
         self, session: AsyncSession
@@ -4098,7 +4137,9 @@ class TestARemovalIsCountedEvenWhenTheStepFails:
         assert delete_step.state is StepState.FAILED  # nothing confirmed it
         assert delete_step.file_removed_at is not None  # but the bytes are charged
         assert report.library_changed is True
-        assert "could not reach it again" in (delete_step.error or "").lower()
+        reason = from_stored(delete_step.error)
+        assert reason is not None
+        assert "could not reach it again" in refusal_text(reason.id, **reason.params).lower()
 
 
 # ---------------------------------------------------------------------------
@@ -4346,7 +4387,7 @@ class TestAFileThatLandsWhileTheSeasonIsBeingPruned:
         assert report.deleted_items == 0
         assert report.deleted_bytes == 0
         assert sonarr.delete_calls == []
-        assert "while Reaper was working" in report.outcomes[0].detail
+        assert report.outcomes[0].detail.id == "error.reap.step.season_files_arrived"
 
     async def test_the_operator_is_told_the_season_was_left_unmonitored(
         self, session: AsyncSession
@@ -4365,7 +4406,11 @@ class TestAFileThatLandsWhileTheSeasonIsBeingPruned:
 
         assert sonarr.unmonitor_calls == [(42, 3)]  # it really did happen
         outcome = report.outcomes[0]
-        said = (outcome.detail + " " + " ".join(c.label for c in outcome.checks)).lower()
+        said = (
+            _label_text(outcome.detail)
+            + " "
+            + " ".join(_label_text(c.label) for c in outcome.checks)
+        ).lower()
         assert "left unmonitored" in said
 
 
@@ -4404,17 +4449,20 @@ class TestASeasonWithNothingLeftToDelete:
         assert sonarr.delete_calls == []  # no empty delete was even sent
         outcome = report.outcomes[0]
         assert outcome.state is StepState.SKIPPED
-        assert "nothing was deleted" in outcome.detail
+        assert outcome.detail.id == "error.reap.step.season_files_vanished"
+        detail = _label_text(outcome.detail)
+        assert "nothing was deleted" in detail
         # ...and the copy says what DID happen to the season. The unmonitor was sent, took,
         # and is still in force (the next test), so a line reading "nothing was sent" told
         # the operator the season was untouched when it was not.
-        assert "left unmonitored" in outcome.detail
-        assert "nothing was sent" not in outcome.detail
+        assert "left unmonitored" in detail
+        assert "nothing was sent" not in detail
         # Verbatim, because the pre-unmonitor skip's line is this one without the unmonitor
         # clause. ``test_a_season_sonarr_reports_no_files_for_is_kept`` pins that one:
         # reword both or neither (rule 144).
         assert (
-            outcome.checks[0].label == "No files left to remove. The season was left unmonitored."
+            _label_text(outcome.checks[0].label)
+            == "No files left to remove. The season was left unmonitored."
         )
 
     async def test_the_verified_unmonitor_keeps_its_state(self, session: AsyncSession) -> None:
@@ -4479,12 +4527,14 @@ class TestAnUnmappedErrorStopsTheRunWithoutWedgingIt:
         # Stopped at the surprise: item three was never sent.
         assert report.state is RunState.ABORTED
         assert radarr.delete_calls == [1, 2]
-        assert "Worthless 1" in (report.aborted_reason or "")  # the item is named
+        assert report.aborted_reason is not None
+        assert report.aborted_reason.id == "error.reap.item_failed_unexplained"
+        assert report.aborted_reason.params.get("title") == "Worthless 1"  # the item is named
         # ...and the wedge stays fixed: the item is journalled, the report exists, and the
         # run is in a terminal state rather than stuck EXECUTING with nothing to reconcile.
         hurt = next(o for o in report.outcomes if o.media_key == "radarr:1:2")
         assert hurt.state is StepState.FAILED
-        assert "unexpected error" in hurt.detail
+        assert hurt.detail.id == "error.reap.step.item_unexpected"
         steps = {s.media_key: s for s in await _steps(session, run.id)}
         assert steps["radarr:1:2"].state is StepState.FAILED  # not left SENT forever
         assert steps["radarr:1:2"].file_removed_at is not None  # and the removal is charged
@@ -4513,7 +4563,12 @@ class TestAnUnmappedErrorStopsTheRunWithoutWedgingIt:
         assert radarr.delete_calls == [1, 2, 3]  # it reached the third item
         hurt = next(o for o in report.outcomes if o.media_key == "radarr:1:2")
         assert hurt.state is StepState.FAILED
-        assert "connection reset" in hurt.detail
+        assert hurt.detail.id == "error.reap.step.arr_call_failed"
+        # `{error}` is a nested reason now (the client's own coded failure via `as_reason()`),
+        # not a raw string, so read it through the real composer rather than the dataclass repr.
+        nested = hurt.detail.params.get("error")
+        assert isinstance(nested, Reason)
+        assert "connection reset" in english(nested)
 
     async def test_a_plex_surprise_during_the_refresh_is_swallowed(
         self, session: AsyncSession
@@ -4768,7 +4823,9 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
             assert report.state is RunState.ABORTED
             # It stopped rather than deleting more it also could not record.
             assert radarr.delete_calls == [1]
-            reason = report.aborted_reason or ""
+            assert report.aborted_reason is not None
+            assert report.aborted_reason.id == "error.reap.journal_halt"
+            reason = refusal_text(report.aborted_reason.id)
             assert "could not save its record" in reason
             assert "stays removed" in reason
 
@@ -4776,7 +4833,9 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
                 stored = await fresh.get(ReapRun, run_id)
                 assert stored is not None
                 assert stored.state is RunState.ABORTED, "the run was left wedged in EXECUTING"
-                assert stored.aborted_reason == reason
+                # `aborted_reason` stores the reason's code, not its English (rule 104), so
+                # decode it through the real function rather than a transcribed comparison.
+                assert from_stored(stored.aborted_reason) == report.aborted_reason
                 assert stored.finished_at is not None
         finally:
             await engine.dispose()
@@ -4883,7 +4942,8 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
             # also could not record.
             assert radarr.delete_calls == [1, 2]
             assert report.state is RunState.ABORTED
-            assert "could not save its record" in (report.aborted_reason or "")
+            assert report.aborted_reason is not None
+            assert report.aborted_reason.id == "error.reap.journal_halt"
 
             async with async_factory() as fresh:
                 stored = await fresh.get(ReapRun, run_id)
@@ -4973,7 +5033,8 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
             assert lock.fired == 2
             assert report.state is RunState.ABORTED
             assert radarr.delete_calls == []  # nothing was ever sent
-            assert "could not save its record" in (report.aborted_reason or "")
+            assert report.aborted_reason is not None
+            assert report.aborted_reason.id == "error.reap.journal_halt"
 
             async with async_factory() as fresh:
                 stored = await fresh.get(ReapRun, run_id)
@@ -5188,7 +5249,7 @@ _WRITE_ONCE_STEP_COLUMNS = frozenset(
     }
 )
 
-#: ``ReapRun``'s half of the same split: the three columns ``_Terminal`` carries and
+#: ``ReapRun``'s half of the same split: the columns ``_Terminal`` carries and
 #: ``_commit_and_finalize`` writes as plain values.
 _TERMINAL_RUN_COLUMNS = frozenset({"state", "aborted_reason", "finished_at"})
 

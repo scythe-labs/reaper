@@ -16,12 +16,14 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic_core import PydanticCustomError
 
 from reaper.engine.explanation import (
     Explanation,
     GateOutcomeOut,
     KeepContributionOut,
     MatchOut,
+    ReasonKey,
     SignalContribution,
     thaw_threshold,
 )
@@ -138,12 +140,20 @@ class RatingsOut(BaseModel):
 
 
 class ChipOut(BaseModel):
-    """The one short status chip a card wears, display-ready.
+    """The one short status chip a card wears, typed rather than pre-worded.
 
-    ``tone`` picks the color, ``text`` is the whole chip. Derived server-side from the
-    stored explanation (never a re-decision): a Sanctuary card's chip names the protection
-    that fired, a Limbo card's names what stopped Reaper short. Condemned cards carry no
-    chip here -- their amber dormancy pill is built from ``dormant_for``."""
+    ``tone`` picks the color. ``reason`` is the catalog id plus its raw params (docs/history/
+    I18N_PLAN.md §5): the frontend composes ``chip.text.<id>`` for the chip itself and
+    ``chip.sentence.<id>`` for the standalone sentence form (the season row, and the
+    override frame ``shell.statusChip.reapRequestedKept`` nests it as ``{why}``), both in
+    ``frontend/src/locales/en/ui.json`` via ``why.ts``'s ``composeIn``. Derived server-side
+    from the stored explanation (never a re-decision): a Sanctuary card's chip names the
+    protection that fired, a Limbo card's names what stopped Reaper short. Condemned cards
+    carry no chip here -- their amber dormancy pill is built from ``dormant_days``.
+
+    Every id ``api.review._chip`` can emit has a ``chip.text`` entry and a ``chip.sentence``
+    entry, checked by the two-way walk in ``tests/test_review_chips.py`` (rule 145): there is
+    no id with no sentence, so a reader may always compose one."""
 
     tone: Literal["kept", "quiet", "look", "held"]
     """``kept`` renders green (a protection fired), ``quiet`` gray (nothing to act on),
@@ -154,16 +164,12 @@ class ChipOut(BaseModel):
     outlined means Reaper did. It is green rather than amber because the file is kept, and
     amber means only "left for you to decide"."""
 
-    text: str
-
-    why: str | None = None
-    """The same fact as ``text``, worded as a lowercase clause that can follow
-    "Reap requested, kept for now:" -- or None when this chip names no reason a reap
-    would be refused (an item under the threshold is reaped on request, not held).
-
-    It ships beside ``text`` because the frontend must never parse ``text`` to recover
-    it: the clause is ours to word, and a reworded chip would silently drop every
-    held-reap explanation back to the generic fallback (H-1)."""
+    reason: ReasonKey
+    """The typed id plus raw params -- day counts as integers, ratings exactly as the
+    reason carries them, never humanized. The frontend composes both catalog forms from it
+    (``frontend/src/why.ts``'s ``composeIn("chip.text", reason)`` /
+    ``composeIn("chip.sentence", reason)``); the server never renders English here (rule 92:
+    a chip must not be pre-worded for the frontend to parse back apart)."""
 
 
 class GroupSeasonMarkOut(BaseModel):
@@ -231,14 +237,18 @@ class CandidateOut(BaseModel):
     """The Plex library (section) this item lives in, as the operator named it -- the
     show's for a season row. Powers the card/panel library chip and the library filter.
     None when unknown (unmatched, or a row from before this shipped); the chip is hidden."""
-    dormant_for: str | None = None
-    """How long the item has sat unwatched, as the humanized span from the dormancy
-    signal ("5 years, 9 months") -- the card's amber pill. None when the signal could
-    not be evaluated, and the pill is hidden."""
-    reason: str | None = None
+    dormant_days: float | None = None
+    """The raw dormancy day count on a fresh row; the frontend composes the span in the
+    active locale. ``None`` on a row frozen before typed reasons, which shows no amber
+    pill."""
+    reason_key: ReasonKey | None = None
     """The one-line "why", drawn from the explanation: the protection that keeps a spared
-    item, or the top reason a reaped one scored. It is what the card shows in place of a plot
-    synopsis -- on the review queue you want to know why Reaper judged it, not what it is."""
+    item, or the top reason a reaped one scored. It is what the card shows in place of a
+    plot synopsis -- on the review queue you want to know why Reaper judged it, not what it
+    is. Composed from the catalog by the frontend (``frontend/src/why.ts``). A row whose
+    snapshot predates typed reasons carries a ``legacy`` key wrapping its stored sentence,
+    which composes to that sentence verbatim; ``None`` only where the row has no reason to
+    show at all."""
     override: str | None = None
     """The owner's manual decision *in effect* on this item -- ``"spare"``, ``"reap"``, or
     ``None``. Set the moment they click, so the card can show the pending intent before the
@@ -408,7 +418,8 @@ class GroupOut(BaseModel):
     unknown_size_seasons: int = 0
     """How many season rows have no size, and are therefore left out of the total above.
     Hidden at zero."""
-    reason: str | None = None
+    reason_key: ReasonKey | None = None
+    """The lead season's ``reason_key``, exactly as on the candidate."""
     library: str | None = None
     """The show's Plex library (section), taken from its season rows (they all share it).
     None when no row carries one. Drives the show panel's library chip."""
@@ -430,12 +441,6 @@ class GroupOut(BaseModel):
     fact: one observation of the series is stamped onto every season of it in the same
     scan, so the rows of one group cannot disagree. None only if the group somehow holds
     no row carrying it (a pre-rescan snapshot), and the card then shows nothing."""
-    collections: list[str] | None = None
-    """The show's Plex collection names, taken from its season rows the same way
-    ``show_status`` is: a TV collection lists shows, not seasons, so every season carries
-    its show's own list and the first row that has one answers for the whole group. None
-    means "not recorded for this scan," never "in no collection" -- see
-    ``CandidateOut.collections``."""
     seasons: list[CandidateOut] = Field(default_factory=list)
     """Every season, sorted by season number (unnumbered rows last)."""
 
@@ -516,16 +521,16 @@ class ActionStepOut(BaseModel):
     state: str
     is_canary: bool
 
-    error: str | None = None
-    """Why this step failed or was skipped, as the executor recorded it. ``None`` on a step
-    that has not run or that succeeded.
+    error_reason: ReasonKey | None = None
+    """Why this step failed or was skipped, as a typed reason the browser composes.
+    ``None`` on a step that has not run or that succeeded.
 
-    Already operator copy: ``_fail`` and ``_skip`` write ONE sentence and use it for both this
-    column and ``StepOutcome.detail``, which the after-action report already shows. The
-    difference is only that this one is durable -- the report lives in memory on ``app.state``,
-    so before this a restart left the table saying a step failed with nothing saying why, while
-    the reason sat in the row the whole time (#260). Never add a message here that is not
-    already fit for the operator to read (rule 21)."""
+    Durable, not just the live report's: the report lives in memory on ``app.state``, so
+    before this a restart left the table saying a step failed with nothing saying why,
+    while the reason sat in the row the whole time (#260). Read off ``ActionStep.error``
+    through ``engine.reason.from_stored`` -- a row written before #899 holds a bare
+    English sentence and thaws as a ``legacy`` reason (rule 96) rather than come back
+    empty."""
 
 
 class RunOut(BaseModel):
@@ -598,14 +603,20 @@ class RunSummaryOut(BaseModel):
     id: int
     state: str
     approved_at: str
-    aborted_reason: str | None = None
+    aborted_reason: ReasonKey | None = None
+    """Why the run stopped early, as a typed reason the browser composes. Thawed off
+    ``ReapRun.aborted_reason`` through ``engine.reason.from_stored``: a row written before
+    #899 holds a bare English sentence and thaws as a ``legacy`` reason (rule 96)."""
 
 
 class RunCheckOut(BaseModel):
     """One line in an item's after-action checklist: a step the reap did or verified, and
     whether it passed. Rendered as a ``✓``/``✗`` tick, like the why-panel's checks."""
 
-    label: str
+    label_reason: ReasonKey
+    """The live :class:`~reaper.engine.reason.Reason` the executor recorded this checklist
+    line with, as a typed reason the browser composes. Always present -- a check without one
+    would have nothing to render."""
     ok: bool
 
 
@@ -616,8 +627,16 @@ class RunOutcomeOut(BaseModel):
     title: str
     kind: str
     state: str  # verified | failed | skipped
-    detail: str
+    detail_reason: ReasonKey
+    """The live :class:`~reaper.engine.reason.Reason` the executor recorded for this
+    outcome, as a typed reason the browser composes. Always present, the same way
+    ``RunCheckOut.label_reason`` is."""
     checks: list[RunCheckOut]
+    is_canary: bool
+    """True when this item was the run's canary -- the smallest item, executed (or, in a dry
+    run, proven) first. The same fact ``ActionStepOut.is_canary`` carries for the journal's
+    step table, carried here too so the report and result lists can mark it without a
+    server-composed English fragment in ``detail_reason`` (rule 21)."""
 
 
 class RunReportOut(BaseModel):
@@ -627,7 +646,9 @@ class RunReportOut(BaseModel):
     run_id: int
     dry_run: bool
     state: str
-    aborted_reason: str | None = None
+    aborted_reason: ReasonKey | None = None
+    """Why the run stopped early: the live :class:`~reaper.engine.reason.Reason` the
+    executor recorded on ``RunReport``, as a typed reason the browser composes."""
 
     would_delete_items: int
     """The count of items removed. In a real run this is what was actually deleted; in a
@@ -646,8 +667,8 @@ class RunReportOut(BaseModel):
 
     skipped: int
     outcomes: list[RunOutcomeOut]
-    """Per item: what happened, with a plain-English checklist of the steps performed and
-    which (if any) failed."""
+    """Per item: what happened, with a typed-reason checklist of the steps performed and
+    which (if any) failed, for the browser to compose."""
 
 
 #: A media_key's storage bound (``ActionStep.media_key`` / ``WhitelistEntry.media_key`` are
@@ -739,9 +760,10 @@ class GateSettingIn(GateSettingOut):
             # through here: the editor re-validates the loaded draft on mount, so an upgraded
             # install meets this before touching anything. The 422's ``loc`` still carries
             # ``body.gates.<i>.gate``, so an API caller can still tell which row.
-            raise ValueError(
+            raise PydanticCustomError(
+                "error.policy.retired_gate",
                 "That protection is left over from an older version and can't be saved. "
-                "Turn it off, then save."
+                "Turn it off, then save.",
             )
         return v
 
@@ -921,8 +943,16 @@ class PolicyValidateIn(PolicyIn):
 
 
 class PolicyWarningOut(BaseModel):
+    """A config that is legal but probably not what the owner meant.
+
+    ``reason`` is the catalog id plus its raw params (docs/history/I18N_PLAN.md §5): the
+    frontend composes ``warning.<id>`` (``PolicyEditor.tsx``'s ``WarnBlock``, via
+    ``why.ts``'s ``composeIn("warning", reason)``). The server never renders English here
+    (rule 92), the same posture ``ChipOut.reason`` takes.
+    """
+
     field: str
-    message: str
+    reason: ReasonKey
     severity: str
 
 
@@ -1013,10 +1043,9 @@ class SimStale(enum.StrEnum):
 
     Three refusals with three different remedies, and until this existed the panel showed
     one paragraph naming every cause at once, so nine season controls, the protection lists
-    and the popularity window shared a sentence that could only be right about one of them. The
-    operator's copy lives in ``PolicySimulator.tsx`` and branches on this; the ``stale_reason``
-    beside it is the same fact as a sentence, for a reader of the API (rule 66: the frontend
-    handles an id it does not know by falling back to that sentence, never by guessing).
+    and the popularity window shared a sentence that could only be right about one of them.
+    The operator's heading lives in ``PolicySimulator.tsx`` and branches on this; the body
+    paragraph is ``stale_reason`` beside it, composed from the catalog.
     """
 
     GATHERS_DIFFERENTLY = "gathers_differently"
@@ -1063,16 +1092,20 @@ class SimulationOut(BaseModel):
     produced by the old ones, so every count below would be confidently stale.
 
     When this is false the counts are zeroed, ``stale_kind`` says which refusal it is and
-    ``stale_reason`` says the same thing in a sentence. Reaper would rather show nothing than
-    show a number it cannot stand behind -- a plausible wrong answer is worse than a blank,
-    because the owner acts on it.
+    ``stale_reason`` carries the same fact as a typed reason. Reaper would rather show
+    nothing than show a number it cannot stand behind -- a plausible wrong answer is worse
+    than a blank, because the owner acts on it.
     """
 
     stale_kind: SimStale | None = None
     """Which refusal this is, typed, so the panel can name the control at fault. ``None``
     exactly when ``exact`` is true."""
 
-    stale_reason: str | None = None
+    stale_reason: ReasonKey | None = None
+    """The catalog id for the refusal (docs/history/I18N_PLAN.md §5): the frontend composes
+    ``policySim.staleReason.<id>`` (``PolicySimulator.tsx``'s ``StaleNotice``, via
+    ``why.ts``'s ``composeIn``). One id per :class:`SimStale` value; the server never renders
+    English here (rule 92)."""
 
     condemned: int
     protected: int
@@ -1149,11 +1182,16 @@ class FieldValuesOut(BaseModel):
 
 
 class FieldOut(BaseModel):
+    """A field's key, type and operators only. The browser says the words: the catalog's
+    ``why.field.<key>`` is the label the policy editor renders, ``policyRules.fieldHelp.<key>``
+    and ``policyRules.fieldUnit.<key>`` the help paragraph and unit where the field carries one
+    (#868 phase 4). The save-boundary refusals in ``engine/fields.py`` and ``engine/policy.py``
+    carry the raw ``field`` key as a param instead of a server-composed label (phase 8a): the
+    browser composes ``why.field.<key>`` for the sentence, and an API client reads the key it
+    sent."""
+
     key: str
-    label: str
-    help_text: str
     type: FieldType
-    unit_suffix: str
     ops: list[Op]
 
 
@@ -1175,11 +1213,11 @@ class LeavingSoonOut(BaseModel):
     ok: bool
     """Whether the pass did what it set out to do. Preview is not a failure; no library
     turned on, or one that failed, is."""
-    result: str
-    """The one plain sentence describing this pass, worded by the service
-    (``LeavingSoonResult.summary``) and stored on the Jobs row in the same breath. The
-    browser renders it and never composes its own, which is how the row and this response
-    came to say different things about one pass (#555)."""
+    result_reason: ReasonKey
+    """The typed reason describing this pass (``LeavingSoonResult.summary``), the same one
+    stored on the Jobs row in the same breath. The browser composes it under
+    ``jobs.result.*`` and never words its own, which is how the row and this response came
+    to say different things about one pass (#555)."""
     # `problems` used to ride here as a per-library list. It was only ever read as
     # `problems.length > 0`, never rendered, and the split that moved the wording into the
     # service took even that reader away -- so it shipped a field no operator could reach,
@@ -1484,9 +1522,15 @@ class PlexStartIn(BaseModel):
             return None
         parsed = urlparse(value)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            raise ValueError("expected an http or https origin")
+            raise PydanticCustomError(
+                "error.auth.forward_origin_invalid",
+                "That address must start with http:// or https://.",
+            )
         if parsed.path or parsed.params or parsed.query or parsed.fragment:
-            raise ValueError("expected an origin with no path")
+            raise PydanticCustomError(
+                "error.auth.forward_origin_has_path",
+                "That address must be just the site, with nothing after it.",
+            )
         return value
 
     def forward_url(self) -> str | None:
@@ -1634,9 +1678,11 @@ class ListSyncOut(BaseModel):
     """Lists whose check failed. Each one's own error is on its row, which the screen
     refetches; this is only what the button says when it settles."""
 
-    plex_error: str | None
+    plex_error_reason: ReasonKey | None
     """Set when Plex could not be reached, so its collections were not checked at all and no
-    row carries an error explaining why. Null when Plex answered or none is linked."""
+    row carries an error explaining why. Null when Plex answered or none is linked. The
+    catalog id plus Plex's own error text as a raw ``error`` param (docs/history/
+    I18N_PLAN.md §5): ``ListsPanel.tsx`` composes ``lists.plexError`` (rule 92)."""
 
 
 class ListPolicyUseOut(BaseModel):

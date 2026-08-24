@@ -29,10 +29,13 @@ import {
   useRef,
   useState,
 } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api, type RestoreSummary } from "../api";
+import { describeError } from "../errors";
 import { useSuccessorFocus } from "../focus";
 import { since } from "../format";
+import i18next from "../i18n";
 import { Notice } from "./Notice";
 
 /** What an armed restore says, in one place because it is said twice: the warn notice on the card
@@ -43,14 +46,14 @@ import { Notice } from "./Notice";
  *  It used to instruct -- "Restart Reaper's container to finish" -- because that was the only way
  *  to finish. `Restart now` is under it now, so the sentence says what is true and the button says
  *  what to do (#386). */
-export const RESTORE_ARMED_LEAD = "A restore is ready.";
-export const RESTORE_ARMED_REST = "Nothing has changed yet. Restart Reaper to finish.";
+export const restoreArmedLead = () => i18next.t("backup.restore.armedLead");
+export const restoreArmedRest = () => i18next.t("backup.restore.armedRest");
 
 /** The same pair for the state after `Restart now` is pressed. It claims only what the server
  *  accepted -- the stop -- and never that Reaper is back, which this page cannot see: the
  *  connection it would ask over is the one about to go (rule 85). */
-export const RESTORE_STOPPING_LEAD = "Reaper is stopping.";
-export const RESTORE_STOPPING_REST = "It finishes the restore when it starts again.";
+export const restoreStoppingLead = () => i18next.t("backup.restore.stoppingLead");
+export const restoreStoppingRest = () => i18next.t("backup.restore.stoppingRest");
 
 /** What both surfaces pass in. Split out because two components take exactly this set. */
 export interface RestoreProps {
@@ -67,9 +70,10 @@ export interface RestoreProps {
 
 /** The Settings card: the flow in the panel chrome the rest of that page uses. */
 export function RestoreCard(props: RestoreProps) {
+  const { t } = useTranslation();
   return (
     <section className="rules-card">
-      <h3>Restore from a backup</h3>
+      <h3>{t("backup.restore.heading")}</h3>
       <RestoreFlow {...props} />
     </section>
   );
@@ -91,6 +95,7 @@ export function RestoreCard(props: RestoreProps) {
 // the Settings chrome, and `SetupRestoreModal` lets `ModalShell` carry the title. Both render
 // the same three states, in the same words.
 export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps) {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const [summary, setSummary] = useState<RestoreSummary | null>(null);
@@ -171,8 +176,8 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
       // wrong for two of them (#178). Nothing was staged here: the file never got read.
       setError(
         err instanceof Error
-          ? `Reaper couldn't read that file: ${err.message}`
-          : "Reaper couldn't read that file.",
+          ? t("backup.restore.chooseFailed", { message: describeError(err) })
+          : t("backup.restore.chooseFailedFallback"),
       );
     } finally {
       setPreparing(false);
@@ -210,7 +215,7 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
       // staged the swap whether or not the read that redraws the card lands. It was the one
       // outcome in this panel with no signal at all -- the card simply became a different card,
       // which is an absence, and the operator hears nothing when a full restore is armed (#173).
-      announce(`${RESTORE_ARMED_LEAD} ${RESTORE_ARMED_REST}`);
+      announce(`${restoreArmedLead()} ${restoreArmedRest()}`);
       // The confirm armed the swap; refetch so `armed` flips on and this card shows the
       // restart prompt. Drop the staged summary from local state either way.
       reset();
@@ -225,8 +230,8 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
       // The only one of the three the old shared lead-in was right for.
       setError(
         err instanceof Error
-          ? `The restore didn't start: ${err.message}`
-          : "The restore didn't start.",
+          ? t("backup.restore.restoreFailed", { message: describeError(err) })
+          : t("backup.restore.restoreFailedFallback"),
       );
     } finally {
       setBusy(false);
@@ -245,12 +250,14 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
       // Said on the 200, which is the whole of what settled: the server took the stop. Whether it
       // comes back is not this page's to know or to claim (rule 85).
       setStopping(true);
-      announce(`${RESTORE_STOPPING_LEAD} ${RESTORE_STOPPING_REST}`);
+      announce(`${restoreStoppingLead()} ${restoreStoppingRest()}`);
     } catch (err) {
       // Its own lead, like the other three: nothing was stopped, and the staged restore is exactly
       // where it was.
       setError(
-        err instanceof Error ? `Reaper didn't restart: ${err.message}` : "Reaper didn't restart.",
+        err instanceof Error
+          ? t("backup.restore.restartFailed", { message: describeError(err) })
+          : t("backup.restore.restartFailedFallback"),
       );
     } finally {
       setBusy(false);
@@ -291,8 +298,8 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
       // need to know is that it is still there.
       setError(
         err instanceof Error
-          ? `That file is still waiting to be restored: ${err.message}`
-          : "That file is still waiting to be restored.",
+          ? t("backup.restore.cancelFailed", { message: describeError(err) })
+          : t("backup.restore.cancelFailedFallback"),
       );
     } finally {
       setBusy(false);
@@ -394,13 +401,10 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
       <>
         <Notice tone="warn" className="restore-armed" as="div">
           <span>
-            <strong>{RESTORE_STOPPING_LEAD}</strong> {RESTORE_STOPPING_REST}
+            <strong>{restoreStoppingLead()}</strong> {restoreStoppingRest()}
           </span>
         </Notice>
-        <p className="help">
-          This page stops working until then. Reload it once Reaper is back, or start the container
-          yourself if it doesn't come back on its own.
-        </p>
+        <p className="help">{t("backup.restore.stoppingHelp")}</p>
         <div className="backup-actions">
           {/* The operator decides when Reaper is back, because the page cannot: a poll would be
               asking the connection that just went. Pressing this early costs a browser error page
@@ -410,7 +414,7 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
             ref={afterStop.ref as RefObject<HTMLButtonElement>}
             onClick={() => window.location.reload()}
           >
-            Reload
+            {t("backup.restore.reloadButton")}
           </button>
         </div>
       </>
@@ -428,7 +432,7 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
             by Restart now, so it answers a press and stays an alert. */}
         <Notice tone="warn" className="restore-armed" as="div" standing>
           <span>
-            <strong>{RESTORE_ARMED_LEAD}</strong> {RESTORE_ARMED_REST}
+            <strong>{restoreArmedLead()}</strong> {restoreArmedRest()}
           </span>
           <button
             type="button"
@@ -437,7 +441,7 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
             onClick={() => void cancel()}
             disabled={busy}
           >
-            Cancel restore
+            {t("backup.restore.cancelButton")}
           </button>
         </Notice>
         <div className="backup-actions">
@@ -450,21 +454,13 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
             }}
             disabled={busy}
           >
-            {busy ? "Restarting…" : "Restart now"}
+            {busy ? t("backup.restore.restartingButton") : t("backup.restore.restartButton")}
           </button>
         </div>
-        <p className="help">
-          Reaper stops. It comes back on its own if your container is set to restart, otherwise
-          start it yourself.
-        </p>
+        <p className="help">{t("backup.restore.restartHelp")}</p>
         {/* Only the wizard needs telling what happens next, because only there is the rest of
             setup about to be overwritten by what is now staged. */}
-        {heldPassword != null && (
-          <p className="help">
-            You can close this. When Reaper comes back it will have everything from the backup, and
-            setup will be behind you.
-          </p>
-        )}
+        {heldPassword != null && <p className="help">{t("backup.restore.wizardHelp")}</p>}
         {/* The armed card had no failure surface at all, so a Cancel that failed set a sentence
             nothing rendered and the operator watched the button re-enable and nothing else. Both
             of its buttons can be refused, so the notice lives here as well as on the form below
@@ -476,10 +472,7 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
 
   return (
     <>
-      <p className="help">
-        Replace everything here with a saved backup. Deletion stays off after a restore until you
-        turn it back on.
-      </p>
+      <p className="help">{t("backup.restore.idleHelp")}</p>
 
       <input ref={inputRef} type="file" accept=".reaper" hidden onChange={onPick} />
 
@@ -494,22 +487,25 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
           onDrop={onDrop}
         >
           {busy && fileName ? (
-            <div className="muted">Checking {fileName}…</div>
+            <div className="muted">{t("backup.restore.checkingFile", { fileName })}</div>
           ) : (
             <>
               <div>
-                Drop a backup file here, or{" "}
-                <button
-                  type="button"
-                  className="link"
-                  onClick={() => inputRef.current?.click()}
-                  disabled={busy}
-                >
-                  choose one
-                </button>
-                .
+                <Trans
+                  i18nKey="backup.restore.dropzonePrompt"
+                  components={{
+                    btn: (
+                      <button
+                        type="button"
+                        className="link"
+                        onClick={() => inputRef.current?.click()}
+                        disabled={busy}
+                      />
+                    ),
+                  }}
+                />
               </div>
-              <div className="dz-hint">Reaper backup file (.reaper)</div>
+              <div className="dz-hint">{t("backup.restore.dropzoneHint")}</div>
             </>
           )}
         </div>
@@ -526,20 +522,24 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
                 onClick={() => void cancel(summary.token)}
                 disabled={busy}
               >
-                Remove
+                {t("common.remove")}
               </button>
             </div>
             <div className="chosen-body">
               <div className="kv2">
-                <span>From</span>
+                <span>{t("backup.restore.fromLabel")}</span>
                 <span>
-                  {summary.app_version ? `Reaper ${summary.app_version}` : "an earlier setup"}
-                  {summary.created_at ? `, saved ${since(summary.created_at)}` : ""}
+                  {summary.app_version
+                    ? t("backup.restore.fromVersion", { version: summary.app_version })
+                    : t("backup.restore.fromVersionUnknown")}
+                  {summary.created_at
+                    ? t("backup.restore.fromSavedSuffix", { when: since(summary.created_at) })
+                    : ""}
                 </span>
               </div>
               <div className="kv2">
-                <span>Inside</span>
-                <span>Decisions, settings, credentials</span>
+                <span>{t("backup.insideLabel")}</span>
+                <span>{t("backup.insideValue")}</span>
               </div>
               <div className="verdict-ok">
                 {/* Decorative here, unlike the test badge: both branches of the sentence below
@@ -550,30 +550,24 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
                   ✓
                 </span>
                 {summary.verdict === "current"
-                  ? "Matches this server. Safe to restore."
-                  : "Saved on an older version. Reaper will update it when it restarts."}
+                  ? t("backup.restore.verdictCurrent")
+                  : t("backup.restore.verdictOutdated")}
               </div>
             </div>
           </div>
 
           {!summary.key_in_backup && (
-            <Notice tone="warn">
-              This backup doesn't include the encryption key. Set REAPER_SECRET_KEY on this server
-              to the value it was saved with, or your saved credentials can't be read after the
-              restore.
-            </Notice>
+            <Notice tone="warn">{t("backup.restore.noKeyWarning")}</Notice>
           )}
 
           {/* Either the box, or the sentence that replaces it. Never both, and never a
               disabled box holding dots: a field the operator cannot edit invites them to try,
               and the thing it would be showing is their password. */}
           {useHeld ? (
-            <p className="help restore-with-held">
-              Reaper will confirm with the password you just set.
-            </p>
+            <p className="help restore-with-held">{t("backup.restore.usingHeldPassword")}</p>
           ) : (
             <label className="field-sm restore-pw">
-              <span className="field-label">Admin password</span>
+              <span className="field-label">{t("common.adminPassword")}</span>
               <input
                 type="password"
                 value={password}
@@ -583,7 +577,7 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
                 }}
                 autoComplete="current-password"
                 maxLength={128}
-                placeholder="Confirm to restore"
+                placeholder={t("backup.restore.passwordPlaceholder")}
               />
             </label>
           )}
@@ -598,21 +592,18 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
               }}
               disabled={busy || (!useHeld && !password)}
             >
-              {busy ? "Restoring…" : "Restore"}
+              {busy ? t("backup.restore.restoringButton") : t("backup.restore.restoreButton")}
             </button>
           </div>
           {/* Read before arming, and a sibling of the armed pair above (rule 144): it named the
               container back when a shell command was the only way to finish, so it now says the
               same thing the armed card does, in the same words, one state early. */}
-          <p className="help restore-when">
-            Restoring takes effect when Reaper restarts. Nothing changes until then.
-          </p>
+          <p className="help restore-when">{t("backup.restore.whenHelp")}</p>
 
           {/* `standing`, same as the download warning above: part of the restore card whenever
               it is on screen, not a reply to a press. */}
           <Notice tone="warn" standing>
-            Restoring replaces your current decisions and settings. There is no undo, so download a
-            backup first.
+            {t("backup.restore.noUndoWarning")}
           </Notice>
         </>
       )}

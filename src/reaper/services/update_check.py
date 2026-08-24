@@ -256,7 +256,9 @@ class UpdateChecker:
         """
         payload = await self._fetch(f"/repos/{self._repo}/releases", params={"per_page": 30})
         if not isinstance(payload, list):
-            raise IntegrationError("update-check", "expected a list of releases")
+            raise IntegrationError(
+                "update-check", "error.integration.unexpected_shape", path="/releases"
+            )
         entries: list[tuple[str, dict[str, Any]]] = []
         for row in payload:
             if not isinstance(row, dict) or row.get("prerelease") or row.get("draft"):
@@ -265,7 +267,7 @@ class UpdateChecker:
             if isinstance(tag, str) and tag.strip():
                 entries.append((tag.strip().removeprefix("v"), row))
         if not entries:
-            raise IntegrationError("update-check", "the answer carried no releases")
+            raise IntegrationError("update-check", "error.integration.update_check_incomplete")
 
         orderable = sorted(
             ((parsed, version, row) for version, row in entries if (parsed := _parse(version))),
@@ -297,10 +299,12 @@ class UpdateChecker:
     async def _check_dev(self, current: str) -> UpdateStatus:
         payload = await self._fetch(f"/repos/{self._repo}/commits/{_DEV_BRANCH}")
         if not isinstance(payload, dict):
-            raise IntegrationError("update-check", "expected an object for the branch tip")
+            raise IntegrationError(
+                "update-check", "error.integration.unexpected_shape", path="/commits"
+            )
         sha = payload.get("sha")
         if not isinstance(sha, str) or len(sha) < 7:
-            raise IntegrationError("update-check", "branch payload carried no commit sha")
+            raise IntegrationError("update-check", "error.integration.update_check_incomplete")
         mine = short_commit()
         return UpdateStatus(
             channel="dev",

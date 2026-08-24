@@ -70,16 +70,16 @@ def normalize_resolution(plex_value: str | None, quality_name: str | None) -> st
     return None
 
 
-#: What the operator is told when an IMDb figure could not be read. Each is a KEY into
-#: ``WhyPanel``'s ``CAUSE_COPY``, which turns it into the sentence the owner reads; a key
+#: What the operator is told when an IMDb figure could not be read. Each is a KEY into the
+#: catalog's ``why.cause.*`` entries, which turn it into the sentence the owner reads; a key
 #: with no entry there falls back to printing this string raw, and
 #: ``test_review_chips.py::TestTheMatchStatusVocabulary`` fails on one. Named here, and not
 #: typed at the site, because both lanes report the same two states in the same words --
 #: hand-typed on both sides of the tree, they were invisible to that test and reached the
 #: panel raw (rule 144).
-IMDB_UNREADABLE_REASON = "the IMDb ratings data could not be read"
+IMDB_UNREADABLE_REASON = "imdb_unreadable"
 """The dataset as a whole was unreadable, so its empty map is not an answer about any title."""
-NO_IMDB_ID_REASON = "no IMDb id to look up"
+NO_IMDB_ID_REASON = "no_imdb_id"
 """This title carries no id to ask by, so no lookup was possible. Not the same as unrated."""
 
 

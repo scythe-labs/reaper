@@ -85,7 +85,7 @@
 .scales-limit-v {
   color: var(--text);
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  text-align: end;
 }
 .scales-limit-sub {
   color: var(--muted);
@@ -126,7 +126,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 0.45rem 0.55rem;
-  text-align: left;
+  text-align: start;
   width: 100%;
   color: var(--text);
 }
@@ -180,7 +180,7 @@
   font-weight: var(--weight-normal);
 }
 .scales-4k {
-  margin-left: var(--space-sm);
+  margin-inline-start: var(--space-sm);
   font-size: var(--text-2xs);
   font-weight: var(--weight-bold);
   letter-spacing: 0.03em;
@@ -199,7 +199,7 @@
   color: var(--muted);
 }
 .scales-dot {
-  margin-right: 0.4rem;
+  margin-inline-end: 0.4rem;
   color: var(--border-strong);
 }
 .scales-title-side {
@@ -207,7 +207,7 @@
   flex-direction: column;
   align-items: flex-end;
   gap: 0.24rem;
-  text-align: right;
+  text-align: end;
 }
 /* The fate marker hugs the right rail with the size and watched line beneath it. .status-chip
    left-aligns itself (align-self: flex-start) for the review card and season lists; here that
@@ -250,8 +250,8 @@
    A group per reason, each with a colored left stripe that encodes the reason at a glance,
    its heading + count, and one bound help line. Rows reuse the requested-title chrome. */
 .nis-group {
-  border-left: 3px solid var(--stripe, var(--border-strong));
-  padding-left: 0.75rem;
+  border-inline-start: 3px solid var(--stripe, var(--border-strong));
+  padding-inline-start: 0.75rem;
   margin-top: 1.15rem;
 }
 .nis-group:first-child {
@@ -446,13 +446,13 @@
     /* Four digits and the stepper: the per-run title cap tops out at 1,000, and the note
        above is right that a ceiling you can reach but not read is worse than no ceiling. */
     min-width: 2.9rem;
-    padding-left: var(--space-sm);
-    padding-right: var(--space-xs);
+    padding-inline-start: var(--space-sm);
+    padding-inline-end: var(--space-xs);
   }
   .pace-matrix .qty select {
     width: 3.5rem;
-    padding-left: var(--space-sm);
-    padding-right: var(--space-sm);
+    padding-inline-start: var(--space-sm);
+    padding-inline-end: var(--space-sm);
   }
   /* A nowrap label beside its control does not fit a phone, so it steps above it. */
   .pace-extra {

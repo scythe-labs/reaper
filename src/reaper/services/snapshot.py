@@ -65,9 +65,13 @@ from reaper.engine.gates import (
     Gate,
     GateResult,
     evaluate_all,
+    no_added_at_reason,
+    no_key_reason,
+    no_size_reason,
 )
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import PolicyBody, combine_hashes
+from reaper.engine.reason import Reason, to_wire
 from reaper.engine.signals import (
     CustomSignalConfig,
     KeepConfig,
@@ -124,12 +128,17 @@ _NO_REWATCH_STATS: Mapping[int, RewatchStats] = MappingProxyType({})
 
 @dataclass(frozen=True, slots=True)
 class Progress:
-    """One step of a scan's progress, polled by the browser via ``GET /api/scan/status``."""
+    """One step of a scan's progress, polled by the browser via ``GET /api/scan/status``.
+
+    ``detail`` is a typed reason under ``shell.scanBar.step.*`` -- a bare id plus raw
+    params (``scoring``'s ``title``, ``done``'s ``count``) -- composed by the browser, never
+    English from here. ``None`` on the final "complete" emit, which the route blanks anyway.
+    """
 
     phase: str
     done: int
     total: int
-    detail: str = ""
+    detail: Reason | None = None
 
 
 ProgressFn = Callable[[Progress], None]
@@ -262,30 +271,6 @@ class RawItem:
     arr_ratings: tuple[Rating, ...] = ()
 
 
-#: Why this item has no Plex rating key, one entry per non-matched resolver outcome. Each
-#: value is a KEY into ``WhyPanel``'s ``CAUSE_COPY``, which turns it into the sentence the
-#: owner reads; a key with no entry there falls back to printing this string raw, so
-#: ``test_review_chips.py::TestTheMatchStatusVocabulary`` fails on one. ``None`` (a record
-#: from before the field shipped) takes the unmatched wording, which it has always read as.
-_NO_KEY_REASONS: dict[identity.MatchStatus | None, str] = {
-    identity.MatchStatus.UNMATCHED: "Plex has not matched this item",
-    identity.MatchStatus.AMBIGUOUS: "more than one Plex item matches this title",
-    identity.MatchStatus.CONFLICTED: "Plex and Radarr describe this file differently",
-}
-
-#: Why dormancy could not be measured: matched to Plex, but no arrival date AND no play, so
-#: there is no instant to measure from. A KEY into ``CAUSE_COPY`` exactly as the reasons
-#: above are, and named here rather than typed at each site so the same drift test covers it
-#: (rule 144) -- it was written twice by hand, on both sides of the tree, and nothing failed.
-NO_ADDED_AT_REASON = "no added-at date"
-
-#: Why a movie's size is unreadable: Radarr reported no size for the file. A KEY into
-#: ``CAUSE_COPY`` like the rest -- it reaches the panel through a keep rule on "Size on
-#: disk", the same route the request reasons take (rule 144). The season lane says this in
-#: its own words, so the two are named apart rather than shared.
-NO_SIZE_REASON = "the file's size was not reported"
-
-
 def build_facts(
     item: RawItem,
     context: ScanContext,
@@ -328,9 +313,12 @@ def build_facts(
     # found ONE row and they were different rows, which is the two apps describing one file
     # differently and is not a statement that Plex holds several copies. All three keep the
     # file; only the words shown to the owner differ, and the wrong words send them to fix
-    # the wrong thing. Each string is a key into WhyPanel's CAUSE_COPY (rule 144);
+    # the wrong thing. Each string is a key into the catalog's why.cause.* entries (rule 144);
     # test_review_chips.py::TestTheMatchStatusVocabulary fails when one has no entry there.
-    no_key_reason = _NO_KEY_REASONS.get(item.match_status, "Plex has not matched this item")
+    # Shared with the season lane through `gates.no_key_reason` (rule 72): the same
+    # MatchStatus produces the same catalog id on both, and the panel's ICU `mediaType`
+    # select ("movie" here) picks the "this title" wording.
+    no_key_cause = no_key_reason(item.match_status, "movie")
 
     # --- dormancy -----------------------------------------------------------
     # THE derived field. "Days since last play" is null for exactly the items we care
@@ -338,7 +326,7 @@ def build_facts(
     # the maximum condemnation pressure, for the item we know least about.
     dormancy: Observation[float]
     if rating_key is None:
-        dormancy = Unknown(reason=no_key_reason, source="plex")
+        dormancy = Unknown(reason=no_key_cause, source="plex")
     elif watch_blind_reason is not None:
         # Checked BEFORE the measurement below, and it has to stay there: a re-added file
         # carries a fresh added_at while its earlier plays stay filed under the key it no
@@ -366,7 +354,7 @@ def build_facts(
             # only as "kept to be safe", never on the reap list. Warn so "why isn't this
             # reapable" is answerable from the log, the same as an unmatched item. Rare: a
             # matched Plex item almost always carries an added_at. The reason is a key into
-            # WhyPanel's copy map, named in `NO_ADDED_AT_REASON` so
+            # WhyPanel's copy map, named in `gates.no_added_at_reason` so
             # `test_review_chips.py::TestTheMatchStatusVocabulary` fails if the two sides
             # drift (rule 144) -- it is also the same state the season lane's both-missing
             # arm reports, so the two lanes say one thing.
@@ -379,7 +367,7 @@ def build_facts(
                 tmdb_id=item.tmdb_id,
                 plex_rating_key=rating_key,
             )
-            dormancy = Unknown(reason=NO_ADDED_AT_REASON, source="tautulli")
+            dormancy = Unknown(reason=no_added_at_reason("movie"), source="tautulli")
         else:
             dormancy = Known(value=dormancy_days(reference, now=utcnow()), source="tautulli")
 
@@ -387,8 +375,8 @@ def build_facts(
     recent: Observation[int]
     all_time: Observation[int]
     if rating_key is None:
-        recent = Unknown(reason=no_key_reason, source="plex")
-        all_time = Unknown(reason=no_key_reason, source="plex")
+        recent = Unknown(reason=no_key_cause, source="plex")
+        all_time = Unknown(reason=no_key_cause, source="plex")
     elif watch_blind_reason is not None:
         recent = Unknown(reason=watch_blind_reason, source="tautulli")
         all_time = Unknown(reason=watch_blind_reason, source="tautulli")
@@ -404,8 +392,8 @@ def build_facts(
     viewings_obs: Observation[int]
     last_play_days_obs: Observation[float]
     if rating_key is None:
-        viewings_obs = Unknown(reason=no_key_reason, source="plex")
-        last_play_days_obs = Unknown(reason=no_key_reason, source="plex")
+        viewings_obs = Unknown(reason=no_key_cause, source="plex")
+        last_play_days_obs = Unknown(reason=no_key_cause, source="plex")
     elif watch_blind_reason is not None:
         viewings_obs = Unknown(reason=watch_blind_reason, source="tautulli")
         last_play_days_obs = Unknown(reason=watch_blind_reason, source="tautulli")
@@ -557,7 +545,7 @@ def build_facts(
             # the title, in two copies, someone can be streaming it right now, and the fact
             # asserted otherwise. Every sibling fact above takes Unknown on the same
             # condition, and the season builder's twin already does (rules 93 and 72).
-            streaming = Unknown(reason=no_key_reason, source="plex")
+            streaming = Unknown(reason=no_key_cause, source="plex")
         else:
             streaming = Known(
                 value=any(key in context.active_rating_keys for key in watch_keys),
@@ -582,12 +570,12 @@ def build_facts(
         days_since_added=(
             Known(value=dormancy_days(item.added_at, now=utcnow()), source="plex")
             if item.added_at is not None
-            else Unknown(reason=NO_ADDED_AT_REASON, source="plex")
+            else Unknown(reason=no_added_at_reason("movie"), source="plex")
         ),
         size_bytes=(
             Known(value=item.size_bytes, source="radarr")
             if item.size_bytes is not None
-            else Unknown(reason=NO_SIZE_REASON, source="radarr")
+            else Unknown(reason=no_size_reason("movie"), source="radarr")
         ),
         imdb_rating_tenths=rating,
         imdb_votes=votes,
@@ -845,7 +833,7 @@ async def scan(
     context = ScanContext(horizon=utcnow())
 
     # ---- gather ------------------------------------------------------------
-    emit(Progress("gathering", 0, 5, "watch history"))
+    emit(Progress("gathering", 0, 5, Reason("watch_history")))
 
     # One read of the mirror for both questions below: `state` returns the row count and
     # both ends of the window in a single pass, where `horizon`/`latest` are two thin
@@ -917,7 +905,7 @@ async def scan(
     for reason in extra_degrade_reasons or ():
         context.degrade(reason)
 
-    emit(Progress("gathering", 1, 5, "active streams"))
+    emit(Progress("gathering", 1, 5, Reason("active_streams")))
     try:
         activity = await tautulli.activity()
         sessions = activity.get("sessions")
@@ -964,7 +952,7 @@ async def scan(
     # slowest source instead of the sum of all of them. The freeze-then-judge contract is
     # untouched: nothing is scored until every one of these has completed (or degraded),
     # exactly as before; only the waiting overlaps.
-    emit(Progress("gathering", 2, 5, "movie and TV libraries"))
+    emit(Progress("gathering", 2, 5, Reason("libraries")))
 
     # Wall clock of the whole concurrent gather (fan-out to last await). The per-source
     # self-times above tell which source dominates this wall; this is the wall itself.
@@ -1109,7 +1097,7 @@ async def scan(
                 )
             )
 
-        emit(Progress("gathering", 4, 5, "IMDb ratings"))
+        emit(Progress("gathering", 4, 5, Reason("ratings")))
         # Look up by BOTH Radarr's imdbId and the matched Plex item's imdb id, so a film
         # whose Radarr record lacks (or has a wrong) imdbId still gets its rating when
         # Plex knows it.
@@ -1190,7 +1178,7 @@ async def scan(
         ]
         rewatch_curve = fit_blocks(rewatch_pairs)
         if season_task is not None:
-            emit(Progress("gathering", 4, 5, "TV seasons from Sonarr"))
+            emit(Progress("gathering", 4, 5, Reason("seasons")))
             season_judgments = await season_task
     except BaseException:
         # A failure on any branch aborts the scan, exactly as it did sequentially -- but
@@ -1301,7 +1289,7 @@ async def scan(
     movie_absence_days = movie_policy.returned_absence_days()
     for index, item in enumerate(items):
         if index % 100 == 0:
-            emit(Progress("scoring", index, total, item.title))
+            emit(Progress("scoring", index, total, Reason("scoring", {"title": item.title})))
             # The judge is pure computation now (no per-item queries), so without this
             # the loop would hold the event loop for the whole scoring phase -- freezing
             # the very progress endpoint the emit above feeds.
@@ -1498,7 +1486,14 @@ async def scan(
     # streamed movie is, and the why-panel renders both identically.
     for offset, judgment in enumerate(season_judgments):
         if offset % 100 == 0:
-            emit(Progress("scoring", len(items) + offset, total, judgment.title))
+            emit(
+                Progress(
+                    "scoring",
+                    len(items) + offset,
+                    total,
+                    Reason("scoring", {"title": judgment.title}),
+                )
+            )
             await asyncio.sleep(0)  # keep the event loop live; see the movie loop above
         if judgment.watch_reading is not None:
             # The TV lane already decided blindness against these same marks and put the
@@ -1696,7 +1691,7 @@ async def scan(
         )
 
     score_ms = round((time.monotonic() - score_started) * 1000)
-    emit(Progress("done", total, total, f"{len(condemned_keys)} candidates"))
+    emit(Progress("done", total, total, Reason("done", {"count": len(condemned_keys)})))
 
     log.info(
         "scan.size_source_tally",
@@ -1770,13 +1765,11 @@ class Display:
 #: The "no display fields" default, as a singleton so it is not constructed per call.
 _NO_DISPLAY = Display()
 
-#: What a hand spare reads as in the why-panel's "Protections that fired" list. A lowercase
-#: fragment with no trailing period, matching every gate protection ("someone is watching it
-#: right now", "on your keep list, never reaped"). A hand spare wears the whitelist gate id,
-#: so the review chip (``api.review._kept_phrase``) tells it apart from a real keep-list
-#: entry by this exact string. Every producer and that one reader import this constant;
-#: never re-type the literal.
-HAND_SPARE_DETAIL = "you spared this by hand"
+#: What a hand spare reads as in the why-panel's "Protections that fired" list. A hand spare
+#: wears the whitelist gate id, so the review chip (``api.review._kept_reason``) and the
+#: simulator tally tell it apart from a real keep-list entry by this reason id. Every
+#: producer and reader imports the constant; never re-type the literal.
+HAND_SPARE_REASON = Reason("hand_spare")
 
 
 @dataclass(frozen=True, slots=True)
@@ -2199,7 +2192,7 @@ def _explain(
                     "id": r.signal.value if isinstance(r.signal, SignalId) else r.signal,
                     "contribution": round(r.pressure, 1),
                     "weight": r.weight,
-                    "detail": r.detail,
+                    "detail_key": to_wire(r.detail),
                     "evaluated": r.evaluated,
                     # What the zero means. Four situations all land on a contribution of
                     # 0 and are otherwise identical on the wire; only the engine branch
@@ -2225,16 +2218,17 @@ def _explain(
                     "name": k.name,
                     "discount": round(k.discount, 1),
                     "max_discount": k.max_discount,
-                    "detail": k.detail,
+                    "detail_key": to_wire(k.detail),
                     "evaluated": k.evaluated,
                 }
                 for k in item_score.keep_results
             ],
             "protections_fired": [
-                {"gate": r.gate.value, "detail": r.detail} for r in evaluation.protectors
+                {"gate": r.gate.value, "detail_key": to_wire(r.detail)}
+                for r in evaluation.protectors
             ],
             "protections_checked": [
-                {"gate": r.gate.value, "detail": r.detail}
+                {"gate": r.gate.value, "detail_key": to_wire(r.detail)}
                 for r in evaluation.checked_and_did_not_fire
             ],
             # ``defers_to_owner`` is written on every entry, never omitted when False, so
@@ -2255,7 +2249,7 @@ def _explain(
             "protections_unknown": [
                 {
                     "gate": r.gate.value,
-                    "detail": r.detail,
+                    "detail_key": to_wire(r.detail),
                     "defers_to_owner": r.defers_to_owner,
                     "unestablishable": r.unestablishable,
                 }

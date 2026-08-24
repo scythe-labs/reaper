@@ -34,11 +34,12 @@ from reaper.engine.policy import (
     PolicyBody,
     SignalSetting,
 )
+from reaper.engine.reason import legacy
 from reaper.engine.signals import SignalConfig, SignalId
 from reaper.ratings import Rating, RatingSource
 from reaper.services.scan_runner import build_gates
 from reaper.services.snapshot import (
-    HAND_SPARE_DETAIL,
+    HAND_SPARE_REASON,
     PolicyJudgment,
     effective_fate,
     judge_facts,
@@ -250,16 +251,16 @@ def guard_result(vector: dict[str, Any]) -> GateResult | None:
     if not guard:
         return None
     if guard["state"] == "fired":
-        return GateResult(GateId.SEASON_PROGRESSION, PROTECT, detail="season guard")
+        return GateResult(GateId.SEASON_PROGRESSION, PROTECT, detail=legacy("season guard"))
     if guard["state"] == "unknown":
         return GateResult(
             GateId.SEASON_PROGRESSION,
             ABSTAIN,
             blocked=True,
-            detail="keep-rule conflict",
+            detail=legacy("keep-rule conflict"),
             defers_to_owner=True,
         )
-    return GateResult(GateId.SEASON_PROGRESSION, ABSTAIN, detail="prunable")
+    return GateResult(GateId.SEASON_PROGRESSION, ABSTAIN, detail=legacy("prunable"))
 
 
 @lru_cache(maxsize=2)
@@ -378,7 +379,7 @@ def judged_by_the_scan(
         # Facts. The fixture records the gate's states separately from the override, so the
         # PROTECT is injected here to reproduce that row -- the same shape snapshot passes
         # through ``extra_results``.
-        extra.append(GateResult(GateId.WHITELISTED, PROTECT, detail=HAND_SPARE_DETAIL))
+        extra.append(GateResult(GateId.WHITELISTED, PROTECT, detail=HAND_SPARE_REASON))
     if (g := guard_result(vector)) is not None:
         extra.append(g)
     return judge_facts(

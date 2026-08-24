@@ -852,11 +852,14 @@ The simulator's stale notice can still appear at an operator who changed nothing
 that adds a field to the hashed body leaves the recorded hash unmatchable until the next scan —
 so it goes on stating the condition rather than telling them they changed something.
 
-`GateId.UNMANAGED` and the four surfaces that decode a stored explanation stay
-(`STRUCTURAL_GATES`, the chip phrase, the why-panel line, and `WhyPanel.tsx`'s `CHECK_COPY`
-entry for the gate's blocked branch). `Facts.is_managed` stays too: it is a true observation and
-the evidence any re-wiring would need, which is a Plex-first scan path, not a change to the
-gate.
+`GateId.UNMANAGED` and the two surfaces that decode a stored explanation for a hand reap stay
+(`STRUCTURAL_GATES` and the why-panel's held-reap line). The queue chip's own phrase for it is
+gone: an old row now falls to the chip's generic kept arm, the same as any other gate id the
+chip does not recognize, rather than carrying a special-cased sentence for a gate that can no
+longer fire. A stored row naming the gate's own blocked branch renders through the panel's
+generic legacy fallback now, not through copy of its own (#899). `Facts.is_managed` stays too:
+it is a true observation and the evidence any re-wiring would need, which is a Plex-first scan
+path, not a change to the gate.
 
 ## Plex index retirement
 
@@ -899,7 +902,7 @@ VERDICT: CONDEMN   score 91/100  (threshold 70)
   +20.0/20   nobody watched it in the last year
   + 1.0/10   IMDb 5.4
 
-  ✓ Untouched for 5 years, 7 months, past the 3 years it has to sit unwatched first.
+  ✓ Unwatched for 5 years, 7 months, past the 3 years Reaper waits.
   ✓ 5.4 on IMDb from 6,000 votes, below the 7.5 you keep.
   ✓ Nobody here watched it in the last year.
 ```
@@ -1014,3 +1017,109 @@ retargeted by hand). The artifacts still build from the pushed sha. The first cu
 curated summary instead, since a generated list spanning the whole history is not release
 notes; that file retired once v2026.8.1 gave every later cut a tag to start from, and a cut
 that finds no `v*` tag now stops rather than generating notes over an unbounded range.
+
+## Server copy
+
+**Choice: The server states facts, the browser says words.**
+
+Every sentence an operator reads in the SPA is composed in the browser from
+`frontend/src/locales/en/ui.json`, so every sentence reaches Weblate. The server sends a typed
+id and raw params (`engine/reason.py`'s `Reason`, wire `{k, p}`). `why.ts`'s `composeIn` looks
+the id up under the namespace the surface owns: `why`, `chip`, `warning`, and the page sections
+phase 5 of #868 added. Gates and signals kept this contract from #862 on. Three surfaces did not,
+because #862 drew its line at the why panel. The card's status chip, the policy warnings and the
+rule vocabulary were composed server-side in English, so a translated UI still showed English on
+every card and across the policy editor. #868 moved them, one PR per surface (#870, #872, #873,
+#874, #875), and a translator note per composed string rides the PR that closes it. Phase 8
+did the same for every refusal, below.
+
+Two corollaries hold. **No string surgery on translated text.** A sentence that needs a capital
+and a period is its own catalog entry (`chip.sentence.*` beside `chip.text.*`), so
+`ReviewQueue`'s `capitalizeSentence` went. **A catalog entry is a whole thing a translator can
+read.** A fragment exists only where a frame nests it through ICU, and its note names the frame.
+A row frozen before typed reasons renders its stored sentence as it is, through the one legacy
+rule (`Reason("legacy", {"text": ...})`, composed verbatim). The parsers that used to dress that
+sentence back up, one per gate, guessing numbers and ids out of its wording, were deleted in
+#899: they were debt that never left, and every one of them either matched the exact wording a
+gate happened to freeze that day or silently fell back to the same plain line this rule always
+had. A rescan replaces the row and restores the typed id. A rule name the operator typed travels
+as a param. It is their data in their language.
+
+What stays English on purpose: log lines, the confirmation phrase, the `reaper-admin` CLI
+and the launcher's console lines, OpenAPI tag descriptions and the API-key auth box.
+
+**The two surfaces with no browser get a second catalog.** The Discord post and the desktop
+launcher's tray and dialogs are composed on the server, so they read
+`src/reaper/locales/en/backend.json` through `reaper.i18n.say`, a small ICU formatter with
+a CLDR plural table for the shipped tags. Babel is not a dependency and the catalog does not
+justify one. The tray follows the OS locale. Discord follows the `language` setting (Settings,
+General), which is the same one that decides what the app is shown in. Weblate holds the
+catalog as the `backend` component beside `ui`. `tests/_reasons.py` formats through the same
+code, so the backend and the browser agree on the ICU subset.
+
+**One language setting, and it lives on the server.** The picker used to be two: a browser-local
+one in General for the UI, and a server-stored one in Notifications for Discord, so an operator
+reading the app in Spanish got English Discord posts unless they found the second picker. There
+is one now, in General, stored server-side because a notification is composed with no browser to
+ask. The browser still decides on a fresh install, but as a *seed*: `useSeedLanguage` writes
+`navigator.languages`' best shipped match the first time it finds nothing stored, so the value a
+notification is written in is always the value the picker shows. Overseerr and Jellyseerr both
+put the display language on the server too; Jellyseerr keeps a per-agent notification locale
+besides, which is a multi-user answer (its webhook posts about someone else's request) and does
+not apply here.
+
+**The two catalogs are separate lists, and the setting is not validated against either.** A
+translation reaches `ui.json` a release before its `backend.json`, so refusing a tag with no
+backend catalog would stop an operator setting the language they are already reading the app in.
+`PUT /api/settings/general` validates the tag's *shape* only. `get_language` hands the picker
+what was stored; `get_notification_language` clamps that to `shipped_tags()`, so a notification
+reads English until the catalog lands and then switches itself with no second edit. Nothing on
+screen says so, which is deliberate: both lists hold English and Spanish today, and a permanent
+sentence about a gap that is usually closed costs every operator a line to read past.
+
+**HTTP error bodies get a code and keep their English `detail`.** `detail` stays the
+formatted English sentence, because an API-key client or a documented example reads it as
+one. `code` and a raw `params` map ride beside it at the top level
+(`reaper.refusal.MESSAGES`, `api.errors.refuse`), and a 422 carries them on each item the
+catalog knows. Services raise a `Refusal` with the code, so the English is written once.
+The browser is the first typed reader. `frontend/src/errors.ts`'s `describeError` composes
+`error.*` from `ui.json` the way `why`, `chip` and `warning` are composed, and falls back to
+the bare code when the catalog has no entry for it, the same fallback every other reason
+takes. The carried `detail` is the fallback only when the body carried no code at all.
+
+**Phase 11a types the outcome a background job reports** (#885). A job result is not a
+refusal: it is worded once, by whichever branch of `scheduler._record_run` or
+`LeavingSoonResult.summary` produced it, and read back later by a screen that never saw the
+run. So it has no English on the server at all, and the catalog under `jobs.result.*` and
+`shell.scanBar.step.*` is its only home, the same move phase 8a made for the leaving-soon
+skip reason. Every `*_result`, `detail` and `error` field this phase touches is replaced by its
+typed `*_reason` twin rather than kept alongside it. The run journal (phase 11b) does the same:
+`ReapRun.aborted_reason` and `ActionStep.error` store the reason's code, through
+`to_stored`/`from_stored` (`engine/reason.py`), in the same column that used to hold the
+sentence. A row written before #899 still holds a bare English sentence, and `from_stored`
+reads it back as a `legacy` reason (rule 96), so a past run's steps keep reading correctly.
+
+**The last two composers are coded too: a connection test's own verdict, and a client's
+transport failure.** `services.instances.explain_failure` used to return a formatted string;
+it returns a `Reason` now, under `error.instance.*`. `clients/base.py`'s `IntegrationError`
+and `clients/plex.py`'s `PlexError` used to compose their own message at the raise site; each
+now carries a catalog code (`error.integration.*`, `error.plexclient.*`) and raw params, and
+renders through the same `english()` a stored explanation uses. Where a route used to nest the
+raw `str(exc)` inside its own refusal's `{error}` param, it now nests `exc.as_reason()`
+instead, so the browser composes the client's own sentence rather than reading English handed
+to it in a param. `english()` and `why.ts`'s `composeIn` both learned to recurse into a nested
+param whose id already starts with `error.`, composing it under the error namespace rather
+than `why`, since that is the shape a nested `IntegrationError`/`PlexError` code takes. A site
+catching a bare `Exception` (never a Reaper-raised type) still passes `str(exc)` through as a
+raw, unlabeled `{error}`/`{detail}` string: that text is not Reaper's own, so there is nothing
+to give a code.
+
+**One composer was still left: `RuntimeSafety.why_blocked`.** It used to return one of two
+composed sentences, recovery mode on or deletion off, or `None`. It returns a `Reason` now,
+reusing `error.safety.recovery_mode_active` and `error.safety.deletion_off`, the same two
+codes the executor's own backstop check and the execute route already raise (rule 144: one
+code per condition). Both guarded transports nest that reason as `write_not_armed`'s `why`
+param, and `SafetyViolationError.__str__` renders through `english()` instead of a bare
+`str.format`, so the nested reason composes into its own sentence there too.
+`SafetyOut.note: str | None` becomes `note_reason: ReasonKey | None`, composed by the browser
+the same way every other reason is.

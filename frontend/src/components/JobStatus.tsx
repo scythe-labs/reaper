@@ -1,8 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 
 import { announce } from "../announce";
+import type { ReasonKey } from "../api";
 import { date, since, time } from "../format";
+import i18next from "../i18n";
+import { composeIn } from "../why";
+
+/** A background job's outcome, composed under `jobs.result.*` -- the server states the
+ *  fact (a typed reason), the browser says the words. `null` in, `null` out: a job that has
+ *  never run, or a shelf row's `last`/`last_skip` before either exists, carries no reason to
+ *  compose. */
+export function jobResultText(key: ReasonKey | null): string | null {
+  return key ? composeIn("jobs.result", key) : null;
+}
 
 /** The short-lived confirmation shown for a few seconds after a job finishes by hand. */
 export interface JobFlash {
@@ -13,14 +25,15 @@ export interface JobFlash {
 /** What a finished job's flash SAYS, written once because two surfaces state it: the chip
  *  renders it, and `useJobFlash` announces it at the transition (#192, rule 144). The chip
  *  otherwise reached only an operator who happened to navigate onto it inside its 4.2-second
- *  window, which for a job they pressed Run now on is nobody. */
+ *  window, which for a job they pressed Run now on is nobody. Plain function, not a component:
+ *  reads the catalog through the shared `i18next` instance rather than a hook (docs/history/I18N_PLAN.md §3). */
 export function flashSentence(flash: JobFlash): string {
-  return `${flashLead(flash.ok)}: ${flash.text}`;
+  return i18next.t("jobs.status.flashSentence", { lead: flashLead(flash.ok), text: flash.text });
 }
 
 /** The word in front of a flash's own text, in both surfaces' hands. */
 function flashLead(ok: boolean): string {
-  return ok ? "Finished" : "Failed";
+  return ok ? i18next.t("jobs.status.finished") : i18next.t("common.failed");
 }
 
 /** How long the manual-run confirmation lingers before the line settles back. */
@@ -100,6 +113,7 @@ export function JobStatus({
   lastResult?: string | null;
   flash: JobFlash | null;
 }) {
+  const { t } = useTranslation();
   let variant: string;
   let content: ReactNode;
 
@@ -132,16 +146,23 @@ export function JobStatus({
   } else if (lastRunAt) {
     variant = "rest";
     const failed = lastOk === false;
+    const values = { since: since(lastRunAt), date: date(lastRunAt), time: time(lastRunAt) };
+    const components = { exact: <span className="last-exact" /> };
     content = (
       <div className={`jobrow-last${failed ? " is-fail" : ""}`}>
         <span className={`last-dot ${failed ? "fail" : "ok"}`} aria-hidden="true" />
         <span>
-          Last run {failed ? "failed " : ""}
-          {since(lastRunAt)}
-          <span className="last-exact">
-            , {date(lastRunAt)}, {time(lastRunAt)}
-            {failed && lastResult ? `, ${lastResult}` : ""}
-          </span>
+          {failed && lastResult ? (
+            <Trans
+              i18nKey="jobs.status.lastRunFailedReason"
+              values={{ ...values, reason: lastResult }}
+              components={components}
+            />
+          ) : failed ? (
+            <Trans i18nKey="jobs.status.lastRunFailed" values={values} components={components} />
+          ) : (
+            <Trans i18nKey="jobs.status.lastRunOk" values={values} components={components} />
+          )}
         </span>
       </div>
     );
@@ -149,7 +170,7 @@ export function JobStatus({
     variant = "never";
     content = (
       <div className="jobrow-last is-never">
-        <span className="last-dot never" aria-hidden="true" /> Hasn't run yet
+        <span className="last-dot never" aria-hidden="true" /> {t("jobs.status.neverRun")}
       </div>
     );
   }

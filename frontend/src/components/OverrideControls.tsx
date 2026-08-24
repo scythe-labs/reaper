@@ -25,6 +25,7 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
+import { Trans, useTranslation } from "react-i18next";
 import type { Override } from "../api";
 import { useDialogFocus } from "../focus";
 import { spareRemaining } from "../format";
@@ -76,6 +77,7 @@ export function OverrideControls({
    *  51), where only the count fits and the solid green fill carries "you chose this". */
   roomy?: boolean;
 }) {
+  const { t } = useTranslation();
   const defaultDays = useDefaultSpareDays();
   const caretRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
@@ -151,16 +153,16 @@ export function OverrideControls({
   // yes: it drives the fill, `aria-pressed` and what a press does, so all three stay in step.
   const pressed = spared && !expired;
   const spareLabel = !spared
-    ? "Spare"
+    ? t("reviewQueue.overrideControls.spare")
     : expired
       ? roomy
-        ? "Spare again"
-        : "Spare"
+        ? t("reviewQueue.overrideControls.spareAgain")
+        : t("reviewQueue.overrideControls.spare")
       : counting
         ? roomy
-          ? `Spared ${remaining.short}`
+          ? t("reviewQueue.overrideControls.sparedCount", { short: remaining.short })
           : remaining.short
-        : "Spared";
+        : t("reviewQueue.overrideControls.spared");
 
   const clickSpare = (e: ReactMouseEvent) => {
     e.stopPropagation();
@@ -178,7 +180,7 @@ export function OverrideControls({
     <div
       className={`override-controls ${menuAt ? "menu-open" : ""}`}
       role="group"
-      aria-label="Spare or reap this item"
+      aria-label={t("reviewQueue.overrideControls.groupAria")}
       // No Enter/Space guard here any more. It existed because every row and card holding these
       // buttons was a `role="button"` with its own key handler calling preventDefault, which
       // canceled the button's activation and opened the panel instead (B-7). Those containers
@@ -204,10 +206,10 @@ export function OverrideControls({
           // rather than reading like a status.
           aria-label={
             expired
-              ? "Spare again, the last one expired"
+              ? t("reviewQueue.overrideControls.spareAgainExpiredAria")
               : roomy || !counting
                 ? undefined
-                : `Spared ${remaining.short} left`
+                : t("reviewQueue.overrideControls.sparedLeftAria", { short: remaining.short })
           }
           onClick={clickSpare}
           title={
@@ -216,14 +218,16 @@ export function OverrideControls({
                 // note's "still kept until the next scan judges it again" is false wherever a
                 // show-level spare outlasts it. What is still keeping the file is the covering
                 // spare's question, answered by the row's chip and by KeptByShowNote beside it.
-                `${remaining.expiredOn}. Click to spare it again`
+                t("reviewQueue.overrideControls.spareAgainTitle", {
+                  expiredOn: remaining.expiredOn,
+                })
               : counting
-                ? `${remaining.until}. Click to let Reaper judge it again`
+                ? t("reviewQueue.overrideControls.spareJudgeAgainTitle", { until: remaining.until })
                 : spared
-                  ? "Spared. Click to let Reaper judge it again"
+                  ? t("reviewQueue.overrideControls.sparedJudgeAgainTitle")
                   : defaultDays > 0
-                    ? `Spare for ${defaultDays} days. Use the arrow for another length`
-                    : "Spare forever. Use the arrow for a set time"
+                    ? t("reviewQueue.overrideControls.spareForDaysTitle", { n: defaultDays })
+                    : t("reviewQueue.overrideControls.spareForeverTitle")
           }
         >
           {/* `days` only picks the glyph's shape here: ∞ for a forever spare, the clock for a
@@ -246,7 +250,7 @@ export function OverrideControls({
           // is what ties the caret to a panel the portal puts at the far end of <body>.
           aria-expanded={menuAt !== null}
           aria-controls={menuAt !== null ? menuId : undefined}
-          aria-label="Choose how long to keep it"
+          aria-label={t("reviewQueue.overrideControls.chooseLengthAria")}
           onClick={toggleMenu}
         >
           <CaretDownGlyph />
@@ -284,11 +288,14 @@ export function OverrideControls({
           onClick={clickReap}
           title={
             override === "reap"
-              ? "Marked for reaping. Click to undo"
-              : "Force this onto the reap list"
+              ? t("reviewQueue.overrideControls.reapMarkedTitle")
+              : t("reviewQueue.overrideControls.reapForceTitle")
           }
         >
-          <ScytheIcon /> {override === "reap" ? "Reaping" : "Reap"}
+          <ScytheIcon />{" "}
+          {override === "reap"
+            ? t("reviewQueue.overrideControls.reaping")
+            : t("reviewQueue.overrideControls.reap")}
         </button>
       )}
     </div>
@@ -331,6 +338,7 @@ function SpareMenu({
    *  which is what keeps the row off an undecided item's menu. */
   onClear?: (() => void) | undefined;
 }) {
+  const { t } = useTranslation();
   // The portal is why focus-handling is not optional. Rendered at the end of <body>, the menu's
   // items sit nowhere near the caret in the Tab order, so opening it and pressing Tab used to
   // walk on to the next control INSIDE the card while the menu hung open beside it, its own rows
@@ -378,17 +386,17 @@ function SpareMenu({
       // UserMenu records the same defect being fixed the same way. The honest role is the one
       // whose keyboard contract this actually keeps -- a labeled group of buttons.
       role="group"
-      aria-label="Spare this item for"
+      aria-label={t("reviewQueue.overrideControls.menuAria")}
       tabIndex={-1}
       onKeyDown={(e) => trapTab(e, menuRef.current)}
       style={{
         position: "fixed",
-        left: at.left,
+        insetInlineStart: at.start,
         ...(at.top !== undefined ? { top: at.top } : { bottom: at.bottom }),
       }}
       onClick={(e) => e.stopPropagation()}
     >
-      <div className="dur-head">Spare for…</div>
+      <div className="dur-head">{t("reviewQueue.overrideControls.menuHeading")}</div>
       {dayRows.map((d, i) => (
         <button
           key={d}
@@ -400,8 +408,12 @@ function SpareMenu({
           <span className="mi-glyph">
             <ClockGlyph />
           </span>
-          <span className="mi-label">{d} days</span>
-          {d === defaultDays && <span className="mi-tag">Default</span>}
+          <span className="mi-label">
+            {t("reviewQueue.overrideControls.dayRowLabel", { n: d })}
+          </span>
+          {d === defaultDays && (
+            <span className="mi-tag">{t("reviewQueue.overrideControls.defaultTag")}</span>
+          )}
         </button>
       ))}
       <button type="button" className="dur-mi" onClick={() => onPick(0)}>
@@ -410,8 +422,10 @@ function SpareMenu({
             ∞
           </span>
         </span>
-        <span className="mi-label">Forever</span>
-        {defaultDays === 0 && <span className="mi-tag">Default</span>}
+        <span className="mi-label">{t("reviewQueue.overrideControls.forever")}</span>
+        {defaultDays === 0 && (
+          <span className="mi-tag">{t("reviewQueue.overrideControls.defaultTag")}</span>
+        )}
       </button>
       <div className="dur-div" />
       {custom ? (
@@ -419,7 +433,7 @@ function SpareMenu({
           <FixedQuantity
             value={customText}
             onChange={(n) => setCustomText(String(n))}
-            suffix="days"
+            suffix={t("reviewQueue.overrideControls.customDaysUnit")}
             min={1}
             max={3650}
             step={1}
@@ -429,14 +443,14 @@ function SpareMenu({
             // here too would read "custom spare length in days, 30, days" -- the stutter the
             // shared control's own comment warns about, and the reason the unit is a
             // description rather than part of the name.
-            ariaLabel="Custom spare length"
+            ariaLabel={t("reviewQueue.overrideControls.customLengthAria")}
             autoFocus
             onKeyDown={(e) => {
               if (e.key === "Enter") spareCustom();
             }}
           />
           <button type="button" className="dur-spare-go" onClick={spareCustom}>
-            Spare
+            {t("reviewQueue.overrideControls.spare")}
           </button>
         </div>
       ) : (
@@ -444,7 +458,7 @@ function SpareMenu({
           <span className="mi-glyph mi-pen">
             <PenGlyph />
           </span>
-          <span className="mi-label">Custom length…</span>
+          <span className="mi-label">{t("reviewQueue.overrideControls.customLength")}</span>
         </button>
       )}
       {/* Where clearing lives once the main button stops being the toggle. A LIVE spare still
@@ -454,7 +468,7 @@ function SpareMenu({
           (`whitelist.purge_expired_spares`), so this is that, now. */}
       {onClear && (
         <button type="button" className="dur-mi dur-clear" onClick={onClear}>
-          <span className="mi-label">Clear this spare</span>
+          <span className="mi-label">{t("reviewQueue.overrideControls.clearThisSpare")}</span>
         </button>
       )}
     </div>,
@@ -493,53 +507,39 @@ export function KeptByShowNote({
   if (!own) {
     body =
       showOverride === "spare" ? (
-        <>
-          <b>The whole show is spared</b>, so this season is kept. Undo it on the show.
-        </>
+        <Trans i18nKey="reviewQueue.overrideControls.showSparedKept" components={{ b: <b /> }} />
       ) : heldReap ? (
-        <>
-          <b>The whole show is set to reap</b>, but this season is <b>kept for now</b>. Undo it on
-          the show.
-        </>
+        <Trans i18nKey="reviewQueue.overrideControls.showReapHeldKept" components={{ b: <b /> }} />
       ) : (
-        <>
-          <b>The whole show is set to reap</b>, so this season will be removed. Undo it on the show.
-        </>
+        <Trans
+          i18nKey="reviewQueue.overrideControls.showReapWillRemove"
+          components={{ b: <b /> }}
+        />
       );
   } else if (own === showOverride) {
     body =
       showOverride === "spare" ? (
-        <>
-          The whole show is <b>also spared</b>, so clearing this one won't remove it.
-        </>
+        <Trans i18nKey="reviewQueue.overrideControls.showAlsoSpared" components={{ b: <b /> }} />
       ) : (
-        <>
-          The whole show is <b>also set to reap</b>, so clearing this one won't keep it.
-        </>
+        <Trans i18nKey="reviewQueue.overrideControls.showAlsoReap" components={{ b: <b /> }} />
       );
   } else {
     body =
       own === "reap" ? (
         heldReap ? (
-          <>
-            You reaped this season, but it is <b>kept for now</b>, even though the whole show is
-            spared.
-          </>
+          <Trans i18nKey="reviewQueue.overrideControls.ownReapedHeld" components={{ b: <b /> }} />
         ) : (
-          <>
-            You reaped this season, so it <b>will be removed</b> even though the whole show is
-            spared.
-          </>
+          <Trans
+            i18nKey="reviewQueue.overrideControls.ownReapedRemoved"
+            components={{ b: <b /> }}
+          />
         )
       ) : (
         // The one direction where clearing this control puts a file on the block, so it is the
         // one that must say so. The harmless twin above already spells its consequence out
         // ("clearing this one won't remove it"); saying nothing here left the note warning the
         // operator only when the click was safe, which runs the wrong way.
-        <>
-          You spared this season, so it <b>stays</b> even though the whole show is set to reap.
-          Clear it and it <b>goes back on the list</b>.
-        </>
+        <Trans i18nKey="reviewQueue.overrideControls.ownSparedStays" components={{ b: <b /> }} />
       );
   }
   return (

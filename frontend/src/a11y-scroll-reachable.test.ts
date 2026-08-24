@@ -189,9 +189,33 @@ function scrollers(): { selector: string; at: number }[] {
  *  one site and each has to carry the attribute. */
 function openingTagsWithClass(source: string, cls: string): string[] {
   const found: string[] = [];
-  // The class as it appears inside a className value: bounded by quote, brace, space or the
-  // string's own edge, so `doc-table` does not match `doc-table-wide`.
-  const needle = new RegExp(`className=[\\s\\S]{0,300}?(?<![\\w-])${cls}(?![\\w-])`);
+  // The class as it appears inside the className VALUE: bounded by quote, brace, space or the
+  // string's own edge, so `doc-table` does not match `doc-table-wide`. The value is carved out
+  // by `classValueSpan` below rather than searched for in the whole tag: a windowed search
+  // over the tag classified `.why-close`'s button as carrying `.why` the day an aria-label
+  // beside it started holding the catalog key `why.panel.shell.close` (Stage 4), because a
+  // dotted key spells the bare word the window was looking for.
+  const needle = new RegExp(`(?<![\\w-])${cls}(?![\\w-])`);
+  // The className value's own text: the literal's contents, or the balanced braced
+  // expression's, which covers the ternary and template spellings the tree uses.
+  const classValueSpan = (tag: string): string | null => {
+    const at = tag.indexOf("className=");
+    if (at === -1) return null;
+    const rest = tag.slice(at + "className=".length);
+    if (rest[0] === '"') {
+      const close = rest.indexOf('"', 1);
+      return close === -1 ? rest : rest.slice(1, close);
+    }
+    if (rest[0] === "{") {
+      let depth = 0;
+      for (let k = 0; k < rest.length; k++) {
+        if (rest[k] === "{") depth++;
+        else if (rest[k] === "}" && --depth === 0) return rest.slice(1, k);
+      }
+      return rest.slice(1);
+    }
+    return null;
+  };
   for (let i = 0; i < source.length; i++) {
     if (source[i] !== "<") continue;
     let depth = 0;
@@ -233,7 +257,8 @@ function openingTagsWithClass(source: string, cls: string): string[] {
     }
     if (end === -1) continue;
     const tag = source.slice(i, end + 1);
-    if (needle.test(tag)) found.push(tag);
+    const value = classValueSpan(tag);
+    if (value !== null && needle.test(value)) found.push(tag);
     i = end;
   }
   return found;

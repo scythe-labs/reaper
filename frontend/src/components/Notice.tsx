@@ -26,6 +26,7 @@
 // It is a deliberate declaration, not a default, so a new notice cannot go quiet by omission.
 
 import type { ElementType, ReactNode, Ref } from "react";
+import { useTranslation } from "react-i18next";
 
 export type NoticeTone = "error" | "warn";
 
@@ -60,6 +61,7 @@ export function Notice({
   tabIndex?: number;
   id?: string;
 }) {
+  const { t } = useTranslation();
   const classes = [
     "notice",
     tone === "error" ? "notice-error" : "notice-warn",
@@ -83,7 +85,9 @@ export function Notice({
 
           Here rather than at the call sites for the same reason the role is here: one answer to
           "can a reader tell these apart?", provable once instead of 108 times (rule 18). */}
-      <span className="sr-only">{tone === "error" ? "Problem: " : "Warning: "}</span>
+      <span className="sr-only">
+        {tone === "error" ? t("shell.notice.problemLead") : t("shell.notice.warningLead")}
+      </span>
       {children}
     </El>
   );

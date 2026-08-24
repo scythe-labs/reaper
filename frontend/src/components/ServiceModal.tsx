@@ -16,9 +16,11 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useEffect, useRef, useState, type RefObject } from "react";
+import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import {
   api,
+  type DiscordTest,
   type Instance,
   type InstanceKind,
   type InstanceProbe,
@@ -27,13 +29,20 @@ import {
   type SeerrService,
 } from "../api";
 import { useBackCloseMirror } from "../backnav";
+import { describeError } from "../errors";
+import i18next from "../i18n";
 import { usePlexLibraries } from "../usePlexLibraries";
+import { composeError, composeIn } from "../why";
 import { ModalShell } from "./ModalShell";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
 import { StaleReadNotice } from "./StaleReadNotice";
 
-export const KINDS: {
+/** The service kinds Reaper can be pointed at, in the order the setup step lists them.
+ *
+ *  A function, not a constant: a string resolved in a module body keeps whatever language was
+ *  serving when the module first loaded (`i18n-module-scope.test.ts`). */
+export const kinds = (): {
   value: InstanceKind;
   label: string;
   hint: string;
@@ -41,36 +50,36 @@ export const KINDS: {
   // Only one may be added. Tautulli mirrors a single Plex, and Reaper connects to one Plex,
   // so a second has no working setup. The backend refuses it too; this only hides the add.
   singleton?: boolean;
-}[] = [
+}[] => [
   {
     value: "radarr",
-    label: "Radarr",
-    hint: "Your movies. At least one is required.",
+    label: i18next.t("common.brand.radarr"),
+    hint: i18next.t("services.kinds.radarr.hint"),
     port: "7878",
   },
   {
     value: "sonarr",
-    label: "Sonarr",
-    hint: "Your TV shows. Needed for season pruning.",
+    label: i18next.t("common.brand.sonarr"),
+    hint: i18next.t("services.kinds.sonarr.hint"),
     port: "8989",
   },
   {
     value: "tautulli",
-    label: "Tautulli",
-    hint: "Watch history. Required. It's how Reaper knows what's watched.",
+    label: i18next.t("common.brand.tautulli"),
+    hint: i18next.t("services.kinds.tautulli.hint"),
     port: "8181",
     singleton: true,
   },
   {
     value: "seerr",
-    label: "Seerr",
-    hint: "Requests. Lets Reaper show who asked for what.",
+    label: i18next.t("common.brand.seerr"),
+    hint: i18next.t("services.kinds.seerr.hint"),
     port: "5055",
   },
 ];
 
 export function kindLabel(kind: InstanceKind): string {
-  return KINDS.find((k) => k.value === kind)?.label ?? kind;
+  return kinds().find((k) => k.value === kind)?.label ?? kind;
 }
 
 /** What media a Seerr service asks for, in a person's words rather than the stored key.
@@ -80,7 +89,32 @@ export function kindLabel(kind: InstanceKind): string {
  *  service from its Movies one when the two share a name, so a drift between them would leave
  *  one audience right and the other wrong (rule 144, and the same shape as `testSays` below). */
 export function serviceKindLabel(kind: SeerrService["kind"]): string {
-  return kind === "sonarr" ? "TV" : "Movies";
+  return kind === "sonarr"
+    ? i18next.t("services.serviceKind.tv")
+    : i18next.t("services.serviceKind.movies");
+}
+
+/** A test's own detail, composed from its typed reason. A failure's id is a full `error.*`
+ *  catalog code (`explain_failure`'s own, e.g. `error.instance.auth_refused`) and composes
+ *  through the error namespace; a pass's id is bare (`services.test.connected` and kin,
+ *  `ServiceModal.tsx`'s own namespace) and composes under `services.test`. `ServicesPanel.tsx`
+ *  synthesizes a `{k: "legacy", p: {text}}` reason for the persisted card states (the stored
+ *  `last_error` string, the fixed "Reached" detail), which `composeIn`/`composeError` both
+ *  already render verbatim (the same shape a pre-conversion stored row carries). */
+export function testDetailText(reason: InstanceTest["detail_reason"]): string {
+  return reason.k.startsWith("error.") ? composeError(reason) : composeIn("services.test", reason);
+}
+
+/** A Discord webhook test's typed reason, composed into the same `InstanceTest` shape
+ *  `TestBadge` and `testSentence` already render for a connection test. `DiscordModal.tsx`
+ *  and `NotificationsPanel.tsx` both call this rather than each composing
+ *  `services.discord.testResult` into a `legacy`-wrapped reason on its own (rule 144). */
+export function composeDiscordTestResult(r: DiscordTest): InstanceTest {
+  return {
+    ok: r.ok,
+    detail_reason: { k: "legacy", p: { text: composeIn("services.discord.testResult", r.reason) } },
+    version: r.version,
+  };
 }
 
 /** What a connection test SAYS, written once because two surfaces state it.
@@ -89,21 +123,26 @@ export function serviceKindLabel(kind: SeerrService["kind"]): string {
  *  announces it for whoever does not (#192). Deriving both from here is what rule 144 asks
  *  for: one fact, and the copy that is spoken cannot drift away from the copy that is read.
  *
- *  `detail` is already a whole sentence from the server ("Connected to Sonarr.", or an explained
- *  failure), so the lead is the only thing added -- for the reason it was added to the badge in
- *  the first place, that "Couldn't reach it" read as a result rather than as a failure.
+ *  `detail` is already a whole sentence ("Connected to Sonarr.", or an explained failure), so
+ *  the lead is the only thing added -- for the reason it was added to the badge in the first
+ *  place, that "Couldn't reach it" read as a result rather than as a failure.
  *
  *  The one deliberate difference from the badge: the version is spoken as "version 4.0.1" where
  *  the badge shows "(v4.0.1)". A reader voices a bare "v" as a letter. */
 export function testSentence(result: InstanceTest): string {
-  return `${testLead(result.ok)}: ${result.detail}${
-    result.version ? ` (version ${result.version})` : ""
-  }`;
+  const version = result.version
+    ? i18next.t("services.test.version", { version: result.version })
+    : "";
+  return i18next.t("services.test.sentence", {
+    lead: testLead(result.ok),
+    detail: testDetailText(result.detail_reason),
+    version,
+  });
 }
 
 /** The word in front of a test's own detail, in both surfaces' hands. */
 function testLead(ok: boolean): string {
-  return ok ? "Passed" : "Failed";
+  return ok ? i18next.t("services.test.passed") : i18next.t("common.failed");
 }
 
 /** A small inline pill reporting the result of a connection test. */
@@ -122,10 +161,87 @@ export function TestBadge({ result }: { result: InstanceTest | null }) {
           result the operator has already heard. */}
       <span className="sr-only">{testLead(result.ok)}: </span>
       <span aria-hidden="true">{result.ok ? "✓ " : "✗ "}</span>
-      {result.detail}
-      {result.version && ` (v${result.version})`}
+      {testDetailText(result.detail_reason)}
+      {result.version && i18next.t("services.test.badgeVersion", { version: result.version })}
     </span>
   );
+}
+
+/** Client-side twin of the server's webhook validation (reaper/api/settings.py). The token
+ *  lives in the URL path, so a typo'd host would leak it to a stranger -- we only accept an
+ *  https URL whose host is Discord's webhook endpoint (subdomains like ptb./canary. count)
+ *  and whose path is a real /api/webhooks/ path. The server checks the same thing; this just
+ *  spares a round-trip and gives an instant hint.
+ *
+ *  Lives here rather than in `DiscordModal` or `NotificationsPanel` so both webhook editors
+ *  and `useWebhookTest` below share the one rule without importing each other: a second copy
+ *  of these host and path rules would be one validator written twice, and the copy that
+ *  drifts is the one that starts accepting a URL the backend then refuses (rule 18, rule
+ *  144). */
+const DISCORD_WEBHOOK_HOSTS = ["discord.com", "discordapp.com"];
+
+export function isDiscordWebhook(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:") return false;
+  const host = url.hostname.toLowerCase();
+  const okHost =
+    DISCORD_WEBHOOK_HOSTS.includes(host) ||
+    DISCORD_WEBHOOK_HOSTS.some((h) => host.endsWith("." + h));
+  return okHost && url.pathname.startsWith("/api/webhooks/");
+}
+
+/** The shared half of testing a Discord webhook: whether the typed box is a valid new
+ *  webhook, whether Test may fire, and the test mutation itself. `DiscordModal` and
+ *  `NotificationsPanel` each point their own box and save/remove pair at this, so the
+ *  validity rule and the test request can't drift into two answers about the same webhook
+ *  (rule 72); each caller keeps its own pending-button label and error-message wording.
+ *
+ *  `onTestError` gets the raw thrown value, so the message stays the caller's to compose. */
+export function useWebhookTest(url: string, connected: boolean, onTestError: (e: unknown) => void) {
+  // The result and the URL it was computed for: without the pairing, a passed test would
+  // outlive a pasted-over box and show "Passed" for a webhook nobody has sent to (rule 85).
+  const [test, setTest] = useState<{ result: InstanceTest; of: string } | null>(null);
+
+  /** What a test would be sent. A blank box tests the webhook already STORED, so blank is a
+   *  real value here rather than an absence. */
+  const testedWith = () => url.trim();
+  const typed = url.trim().length > 0;
+  const validNew = typed && isDiscordWebhook(url);
+  const badFormat = typed && !validNew;
+
+  const sendTest = useMutation({
+    // Test what is typed if anything is; otherwise test what is stored, so a saved channel
+    // can be verified without going back to Discord for the URL again.
+    mutationFn: () => api.testWebhook(url.trim() ? url.trim() : null),
+    // What this request is ABOUT, captured when it is issued rather than computed at success
+    // time: the box stays live while the request is out, and `testedWith()` called at success
+    // would fingerprint whatever is typed by then (rule 85).
+    onMutate: () => ({ of: testedWith() }),
+    onSuccess: (r, _v, issued) => {
+      const result = composeDiscordTestResult(r);
+      setTest({ result, of: issued.of });
+      announce(testSentence(result));
+    },
+    onError: onTestError,
+  });
+
+  const canTest = (validNew || (!typed && connected)) && !sendTest.isPending;
+
+  return {
+    typed,
+    validNew,
+    badFormat,
+    canTest,
+    test,
+    testedWith,
+    sendTest,
+    clearTest: () => setTest(null),
+  };
 }
 
 /** The external-URL box's complaint, named once for both ends of the association (rule 67). */
@@ -287,9 +403,10 @@ export function ServiceModal({
    *  where the name is also the least interesting decision they could be asked to make. */
   defaultName?: string;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const editing = instance !== null;
-  const meta = KINDS.find((k) => k.value === kind);
+  const meta = kinds().find((k) => k.value === kind);
   const initial = instance ? splitBaseUrl(instance.base_url) : null;
 
   const [name, setName] = useState(instance?.name ?? defaultName ?? "");
@@ -362,12 +479,18 @@ export function ServiceModal({
    *  instance has no folders", take the grid off the screen, and then prune the stored map to
    *  nothing at save. The two shapes are told apart by the field only one of them has, so the
    *  answer comes from the payload rather than from a flag captured beside it. */
-  const probeResult = passed !== null && "map_error" in passed.result ? passed.result : null;
+  const probeResult = passed !== null && "map_error_reason" in passed.result ? passed.result : null;
 
-  /** The lists that were actually READ, or null. `map_error` is the same hazard from the other
-   *  side: the probe ran and failed, so its empty list is a read that did not land, never an
-   *  instance with nothing to map. Collapsed here once rather than at each of the five sites. */
-  const probed = probeResult && !probeResult.map_error ? probeResult : null;
+  /** The lists that were actually READ, or null. `map_error_reason` is the same hazard from
+   *  the other side: the probe ran and failed, so its empty list is a read that did not land,
+   *  never an instance with nothing to map. Collapsed here once rather than at each of the
+   *  five sites. */
+  const probed = probeResult && !probeResult.map_error_reason ? probeResult : null;
+  /** The probe's map failure, composed once rather than at each of its four render sites
+   *  (docs/history/I18N_PLAN.md §5). Null exactly when `probeResult.map_error_reason` is. */
+  const mapErrorText = probeResult?.map_error_reason
+    ? composeIn("services.modal", probeResult.map_error_reason)
+    : null;
 
   const libKind = kind === "sonarr" ? "show" : "movie";
 
@@ -496,14 +619,15 @@ export function ServiceModal({
     //
     // WHICH test answered is no longer carried alongside it. It used to be, as a boolean off
     // `testsStored`, and getting that wrong let a saved-instance verdict's absent lists pose as
-    // a folder read. The answer now comes off the payload's own shape (`"map_error" in result`,
-    // where `probeResult` is derived), so it cannot be captured wrong.
+    // a folder read. The answer now comes off the payload's own shape
+    // (`"map_error_reason" in result`, where `probeResult` is derived), so it cannot be
+    // captured wrong.
     onMutate: () => ({ of: testedWith() }),
     onSuccess: (r, _v, issued) => {
       setTest({ result: r, of: issued.of });
       announce(testSentence(r));
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e) => setError(describeError(e)),
   });
 
   const save = useMutation({
@@ -605,11 +729,15 @@ export function ServiceModal({
       // The modal closing was the entire success signal, and it takes the focused button with
       // it. Named for which of the two things just happened, because the operator gets back a
       // list they now have to find the row in.
-      announce(instance ? `${name} saved.` : `${name} added.`);
+      announce(
+        instance
+          ? t("services.modal.savedAnnouncement", { name })
+          : t("services.modal.addedAnnouncement", { name }),
+      );
       invalidate();
       onClose();
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e) => setError(describeError(e)),
   });
 
   // Either there is a whole address and key to send, or the instance is saved and untouched and
@@ -700,26 +828,26 @@ export function ServiceModal({
   // then the folders it handed back have to be mapped. Each reason names the control that
   // clears it, and `owner` is what binds the sentence to that control -- including the two new
   // owners, the Test button and the first unmapped picker, neither of which is a text box.
-  const willDo = editing ? "to save" : "to add this service";
+  const willDo = editing ? t("services.modal.willDo.save") : t("services.modal.willDo.add");
   const missing: { owner: "name" | "host" | "key" | "test" | "map"; says: string } | null =
     name.trim() === ""
-      ? { owner: "name", says: `Enter a name ${willDo}.` }
+      ? { owner: "name", says: t("services.modal.missing.name", { willDo }) }
       : host.trim() === ""
-        ? { owner: "host", says: `Enter a hostname or IP address ${willDo}.` }
+        ? { owner: "host", says: t("services.modal.missing.host", { willDo }) }
         : !editing && apiKey.trim() === ""
-          ? { owner: "key", says: `Enter an API key ${willDo}.` }
+          ? { owner: "key", says: t("services.modal.missing.key", { willDo }) }
           : needsKeyToTest
-            ? { owner: "key", says: "Enter the API key so Reaper can try this new address." }
+            ? { owner: "key", says: t("services.modal.missing.keyForTest") }
             : testRequired && passed === null
               ? {
                   // No arm for "checking…": the button beside this says "Testing…" itself, and
                   // it is DISABLED while it does, so a description hung on it is unreachable by
                   // the operator it is for -- the very trap the note above forbids.
                   owner: "test",
-                  says: "Reaper has to reach this service before you can save.",
+                  says: t("services.modal.missing.test"),
                 }
               : !mapSatisfied
-                ? { owner: "map", says: "Pick a Plex library for at least one folder to save." }
+                ? { owner: "map", says: t("services.modal.missing.map") }
                 : null;
   /** The first folder with no library, so the sentence above binds to the control that clears
    *  it rather than to a disabled button nothing can Tab to. */
@@ -731,7 +859,9 @@ export function ServiceModal({
       title={
         <>
           <span className={`kind-badge kind-${kind}`}>{kindLabel(kind)}</span>{" "}
-          {editing ? `Edit ${instance.name}` : `Add a ${kindLabel(kind)}`}
+          {editing
+            ? t("common.editNamed", { name: instance.name })
+            : t("services.modal.titleAdd", { kind: kindLabel(kind) })}
         </>
       }
       onClose={onClose}
@@ -755,17 +885,21 @@ export function ServiceModal({
         }}
       >
         <label className="field-sm">
-          <span className="field-label">Name</span>
+          <span className="field-label">{t("services.modal.field.name")}</span>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={kind === "tautulli" || kind === "seerr" ? "Main" : "HD"}
+            placeholder={
+              kind === "tautulli" || kind === "seerr"
+                ? t("services.modal.field.namePlaceholderMain")
+                : t("services.modal.field.namePlaceholderHd")
+            }
             aria-describedby={missing?.owner === "name" ? BLOCKED_ID : undefined}
           />
         </label>
         <div className="host-row">
           <label className="field-sm">
-            <span className="field-label">Hostname or IP</span>
+            <span className="field-label">{t("services.modal.field.host")}</span>
             <span className="url-join">
               {/* The scheme is a fused prefix, not part of the box's name: the label wraps it, so
                   a reader announced this field as "Hostname or IP http colon slash slash" and the
@@ -773,7 +907,7 @@ export function ServiceModal({
                   from the name only -- it is drawn as before, and the "Use SSL" switch below is
                   the control that states and changes it, in words. */}
               <span className="url-scheme" aria-hidden="true">
-                {ssl ? "https://" : "http://"}
+                {ssl ? t("services.modal.field.schemeHttps") : t("services.modal.field.schemeHttp")}
               </span>
               <input
                 value={host}
@@ -785,7 +919,7 @@ export function ServiceModal({
             </span>
           </label>
           <label className="field-sm">
-            <span className="field-label">Port</span>
+            <span className="field-label">{t("services.modal.field.port")}</span>
             <input
               value={port}
               inputMode="numeric"
@@ -796,49 +930,46 @@ export function ServiceModal({
           </label>
         </div>
         <label className="field-sm">
-          <span className="field-label">URL base</span>
+          <span className="field-label">{t("services.modal.field.urlBase")}</span>
           <input
             value={urlBase}
             onChange={(e) => setUrlBase(e.target.value)}
             onBlur={testIfUntried}
-            placeholder="only if it lives under a path, like /sonarr"
+            placeholder={t("services.modal.field.urlBasePlaceholder")}
           />
         </label>
         <label className="toggle">
           <Switch checked={ssl} onChange={setSsl} />
-          <span>Use SSL</span>
+          <span>{t("services.modal.field.useSsl")}</span>
         </label>
         {ssl && (
           <>
             <label className="toggle">
               <Switch checked={verifyCert} onChange={setVerifyCert} />
-              <span>Check the server's certificate</span>
+              <span>{t("services.modal.field.verifyCert")}</span>
             </label>
-            {!verifyCert && (
-              <Notice tone="warn">
-                Reaper will accept this server's certificate without checking who issued it. Only
-                use this for a server you run yourself, like one with a self-signed certificate.
-              </Notice>
-            )}
+            {!verifyCert && <Notice tone="warn">{t("services.modal.certificateWarning")}</Notice>}
           </>
         )}
         {isArr && (
           <>
             <label className="toggle">
               <Switch checked={addExclusion} onChange={setAddExclusion} />
-              <span>Block re-download after delete</span>
+              <span>{t("services.modal.field.addExclusion")}</span>
             </label>
             <p className="help">
               {kind === "sonarr"
-                ? "This only applies when Reaper removes a whole show. Today it removes seasons, not whole shows, so your choice is saved but not used yet."
+                ? t("services.modal.exclusion.sonarrHelp")
                 : addExclusion
-                  ? "When Reaper removes a movie, it adds a Radarr list exclusion so an import list can't add it back and re-download it."
-                  : "A deleted movie can be added back by a list and re-downloaded. Reaper won't add or check the exclusion when it removes one."}
+                  ? t("services.modal.exclusion.onHelp")
+                  : t("services.modal.exclusion.offHelp")}
             </p>
           </>
         )}
         <label className="field-sm">
-          <span className="field-label">{editing ? "New API key" : "API key"}</span>
+          <span className="field-label">
+            {editing ? t("services.modal.field.apiKeyEdit") : t("services.modal.field.apiKeyAdd")}
+          </span>
           <input
             type="password"
             value={apiKey}
@@ -847,14 +978,16 @@ export function ServiceModal({
             // goes once against a whole key rather than once per character of one.
             onBlur={testIfUntried}
             placeholder={
-              editing ? "leave blank to keep the current key" : "from the service's settings"
+              editing
+                ? t("services.modal.field.apiKeyPlaceholderEdit")
+                : t("services.modal.field.apiKeyPlaceholderAdd")
             }
             autoComplete="off"
             aria-describedby={missing?.owner === "key" ? BLOCKED_ID : undefined}
           />
         </label>
         <label className="field-sm">
-          <span className="field-label">External URL</span>
+          <span className="field-label">{t("services.modal.field.externalUrl")}</span>
           <input
             type="url"
             value={externalUrl}
@@ -864,7 +997,7 @@ export function ServiceModal({
               setExternalUrl(e.target.value);
               setExtUrlBad(false);
             }}
-            placeholder={`https://${kind}.example.com`}
+            placeholder={t("services.modal.field.externalUrlPlaceholder", { kind })}
             autoComplete="off"
             aria-invalid={extUrlBad ? true : undefined}
             aria-describedby={extUrlBad ? EXTERNAL_URL_ERROR_ID : undefined}
@@ -877,19 +1010,17 @@ export function ServiceModal({
             was the URL's fault. */}
         {extUrlBad && (
           <Notice tone="error" id={EXTERNAL_URL_ERROR_ID}>
-            The external URL must be a full web address, like https://192.0.2.10:8989.
+            {t("services.modal.externalUrlError")}
           </Notice>
         )}
-        <p className="help">
-          Where links to {kindLabel(kind)} open. Leave blank to use the address above.
-        </p>
+        <p className="help">{t("services.modal.externalUrlHelp", { kind: kindLabel(kind) })}</p>
         {isArr && (
           <div className="field-sm plex-map">
-            <span className="field-label">Plex libraries</span>
+            <span className="field-label">{t("services.modal.field.plexLibraries")}</span>
             {/* Divided on whether the folder list ever landed: any refetch while the modal is
                 open reaches this, and an undivided error traded the whole mapping grid for one
                 warning while React Query still held the folders (#190).
-                `probeResult.map_error` is the same division for the add form's source: the test
+                `mapErrorText` is the same division for the add form's source: the test
                 reached the service but could not read its folders, which is not the same as a
                 service that has none. */}
             {folders === null && (testConn.isPending || (editing && rootFolders.isPending)) ? (
@@ -898,21 +1029,18 @@ export function ServiceModal({
                  "Reading this instance's folders…" from the moment it opened -- describing a
                  read that was never started, and taking the sentence written for that exact
                  moment (below) off the screen entirely. */
-              <p className="help">Reading this instance's folders…</p>
-            ) : folders === null && probeResult?.map_error ? (
+              <p className="help">{t("services.modal.folders.reading")}</p>
+            ) : folders === null && mapErrorText ? (
               /* Only when there is nothing to show. A probe that failed while the by-id read
                  still holds folders leaves the grid up and says this over it instead, because
                  the grid is the surface the operator needs and the failure is about a refresh
                  of it. */
-              <Notice tone="warn">{probeResult.map_error}</Notice>
+              <Notice tone="warn">{mapErrorText}</Notice>
             ) : folders === null && !editing ? (
               /* The add form before a test. Says where the list comes from rather than showing
                  an empty grid, because on this form the folders are a RESULT of the connection
                  test and not something that could have been read yet. */
-              <p className="help">
-                Your folders appear here once Reaper reaches this service, each with a suggested
-                library.
-              </p>
+              <p className="help">{t("services.modal.folders.beforeTest")}</p>
             ) : rootFolders.error && !rootFolders.data && !probed ? (
               /* `!probed` or this outranks a live probe that just succeeded. Re-pointing a saved
                  *arr whose STORED address is dead is the flow this whole feature exists for: the
@@ -922,19 +1050,18 @@ export function ServiceModal({
                  modal refused to close. A guard whose signal outlives the surface that satisfies
                  it is a trap (rule 146), and the sentence was false besides: the folders had
                  just been read. */
-              <Notice tone="warn">
-                Reaper couldn't read this instance's folders. Check the address and key above, then
-                test again to map them.
-              </Notice>
+              <Notice tone="warn">{t("services.modal.folders.readFailed")}</Notice>
             ) : folders && folders.length > 0 ? (
               <>
-                {rootFolders.error && !probed && <StaleReadNotice what="this instance's folders" />}
+                {rootFolders.error && !probed && (
+                  <StaleReadNotice what={t("services.modal.folders.staleWhat")} />
+                )}
                 {/* The probe failed while the by-id read still holds the folders. The grid stays
                     up, because it is the surface the operator needs and this is a failure to
                     REFRESH it, and the sentence sits over it like every other line about
                     something below. Rendered here as well as in the no-folders arm above, which
                     is the same fact in the two states it can be in. */}
-                {probeResult?.map_error && <Notice tone="warn">{probeResult.map_error}</Notice>}
+                {mapErrorText && <Notice tone="warn">{mapErrorText}</Notice>}
                 {/* Over the grid, beside the folder line, because the shared sentence says what
                     is BELOW may be out of date and the stale library names are inside the pickers
                     under it. Emitted after the grid it pointed at the help paragraph instead,
@@ -946,7 +1073,7 @@ export function ServiceModal({
                     "couldn't read your Plex libraries" printed there sat beside a working list
                     (#190). Said as staleness instead, which is what it is. */}
                 {plexLibraries.error && libOptions.length > 0 && (
-                  <StaleReadNotice what="your Plex libraries" />
+                  <StaleReadNotice what={t("services.modal.folders.librariesStaleWhat")} />
                 )}
                 <div className="plex-map-grid">
                   {folders.map((f) => (
@@ -958,7 +1085,7 @@ export function ServiceModal({
                           // The folder name is the only thing telling these rows apart, and it
                           // lives in a sibling cell the select is not labeled by. Without this
                           // a screen reader announces every row as "combobox, Not set".
-                          aria-label={`Plex library for ${f.path}`}
+                          aria-label={t("services.modal.folders.pickerAriaLabel", { path: f.path })}
                           // The "map at least one" sentence binds to the FIRST unmapped picker,
                           // which is a control that can actually be reached and used, where the
                           // disabled Save button it describes is out of the Tab order entirely.
@@ -966,7 +1093,7 @@ export function ServiceModal({
                           value={libMap[f.path] ?? ""}
                           onChange={(e) => libraries.choose(f.path, e.target.value)}
                         >
-                          <option value="">Not set</option>
+                          <option value="">{t("services.modal.notSetOption")}</option>
                           {libOptions.map((l) => (
                             <option key={l.key} value={l.title}>
                               {l.title}
@@ -974,7 +1101,7 @@ export function ServiceModal({
                           ))}
                         </select>
                         {libraries.suggested.has(f.path) && (
-                          <span className="pl-suggested">suggested</span>
+                          <span className="pl-suggested">{t("services.modal.suggestedTag")}</span>
                         )}
                         {/* The chosen library, said again as ordinary wrapping text. A native
                             <select> clips its selected option to its own width and nothing
@@ -1011,21 +1138,13 @@ export function ServiceModal({
                      at all answers 400, Plex down answers 502 -- and with only the query
                      consulted the arm below then stated as fact that the server has no libraries
                      of this kind, about a server nobody reached (rule 93). */
-                  <Notice tone="warn">Reaper couldn't read your Plex libraries. Try again.</Notice>
+                  <Notice tone="warn">{t("services.modal.folders.librariesReadFailed")}</Notice>
                 ) : plexLibraries.isPending || syncLibraries.isPending ? (
-                  <p className="help">Looking for your Plex libraries…</p>
+                  <p className="help">{t("services.modal.folders.librariesLoading")}</p>
                 ) : libOptions.length === 0 ? (
-                  <p className="help">
-                    No {libKind === "movie" ? "movie" : "TV"} libraries in Plex yet, so there is
-                    nothing to map to. You can save this and map later.
-                  </p>
+                  <p className="help">{t("services.modal.folders.noneToMap", { libKind })}</p>
                 ) : (
-                  <p className="help">
-                    Which Plex library each folder lands in. This tells an HD copy from a 4K one
-                    when the same title is in two libraries. Matches are suggested from your
-                    folders. Map at least one. Leave the rest on "Not set" to keep both copies when
-                    they can't be told apart.
-                  </p>
+                  <p className="help">{t("services.modal.folders.help")}</p>
                 )}
               </>
             ) : (
@@ -1035,45 +1154,41 @@ export function ServiceModal({
               // line like every other held value -- without it, the one state where the read
               // failed AND the app has something to say rendered no warning at all.
               <>
-                {rootFolders.error && !probed && <StaleReadNotice what="this instance's folders" />}
-                <p className="help">This instance reports no root folders to map.</p>
+                {rootFolders.error && !probed && (
+                  <StaleReadNotice what={t("services.modal.folders.staleWhat")} />
+                )}
+                <p className="help">{t("services.modal.folders.none")}</p>
               </>
             )}
           </div>
         )}
         {isSeerr && (
           <div className="field-sm plex-map">
-            <span className="field-label">Requested-by instances</span>
+            <span className="field-label">{t("services.modal.field.requesterInstances")}</span>
             {/* Divided exactly as the folder grid above (rule 72), including the add form's
-                before-a-test arm and `map_error` for a portal that answered but would not hand
-                over its settings. */}
+                before-a-test arm and `mapErrorText` for a portal that answered but would not
+                hand over its settings. */}
             {services === null && (testConn.isPending || (editing && seerrServices.isPending)) ? (
               /* `editing &&` for the same reason as the folder slot above (rule 72). */
-              <p className="help">Reading this portal's services…</p>
-            ) : services === null && probeResult?.map_error ? (
-              <Notice tone="warn">{probeResult.map_error}</Notice>
+              <p className="help">{t("services.modal.requesters.reading")}</p>
+            ) : services === null && mapErrorText ? (
+              <Notice tone="warn">{mapErrorText}</Notice>
             ) : services === null && !editing ? (
-              <p className="help">
-                This portal's services appear here once Reaper reaches it, each with a suggested
-                connection.
-              </p>
+              <p className="help">{t("services.modal.requesters.beforeTest")}</p>
             ) : seerrServices.error && !seerrServices.data && !probed ? (
               /* `!probed` for the same reason as the folder arm above (rule 72). */
-              <Notice tone="warn">
-                Reaper couldn't read this portal's services. Check the address and key above (it
-                needs an admin key), then test again to map them.
-              </Notice>
+              <Notice tone="warn">{t("services.modal.requesters.readFailed")}</Notice>
             ) : services && services.length > 0 ? (
               <>
                 {seerrServices.error && !probed && (
-                  <StaleReadNotice what="this portal's services" />
+                  <StaleReadNotice what={t("services.modal.requesters.staleWhat")} />
                 )}
                 {/* Same as the folder grid above (rule 72). */}
-                {probeResult?.map_error && <Notice tone="warn">{probeResult.map_error}</Notice>}
+                {mapErrorText && <Notice tone="warn">{mapErrorText}</Notice>}
                 {/* Over the grid, for the same reason as the library line above (rule 72): the
                     stale connection names are inside the pickers below it. */}
                 {arrInstances.error && services.some((s) => instanceOptions(s.kind).length > 0) && (
-                  <StaleReadNotice what="your Sonarr and Radarr connections" />
+                  <StaleReadNotice what={t("services.modal.requesters.instancesStaleWhat")} />
                 )}
                 <div className="plex-map-grid">
                   {services.map((s) => (
@@ -1087,7 +1202,9 @@ export function ServiceModal({
                       <div className="pl-root">
                         {s.name}
                         <span className="pl-tag">{serviceKindLabel(s.kind)}</span>
-                        {s.is_4k && <span className="pl-tag">4K</span>}
+                        {s.is_4k && (
+                          <span className="pl-tag">{t("services.modal.requesters.tag4k")}</span>
+                        )}
                       </div>
                       <div className="pl-pick">
                         <select
@@ -1097,9 +1214,11 @@ export function ServiceModal({
                           // shared name would otherwise merge, so both belong here too. Said in
                           // words rather than as the stored kind, per rule 21, and taken from
                           // `serviceKindLabel` so the two spellings cannot drift (rule 144).
-                          aria-label={`Connection for ${s.name}${s.is_4k ? " 4K" : ""}, ${serviceKindLabel(
-                            s.kind,
-                          )}`}
+                          aria-label={t("services.modal.requesters.pickerAriaLabel", {
+                            name: s.name,
+                            is4k: s.is_4k ? "yes" : "no",
+                            serviceKind: serviceKindLabel(s.kind),
+                          })}
                           value={String(serviceMap[svcKey(s)] ?? "")}
                           onChange={(e) =>
                             requesters.choose(
@@ -1108,7 +1227,7 @@ export function ServiceModal({
                             )
                           }
                         >
-                          <option value="">Not set</option>
+                          <option value="">{t("services.modal.notSetOption")}</option>
                           {instanceOptions(s.kind).map((i) => (
                             <option key={i.id} value={String(i.id)}>
                               {i.name}
@@ -1116,7 +1235,7 @@ export function ServiceModal({
                           ))}
                         </select>
                         {requesters.suggested.has(svcKey(s)) && (
-                          <span className="pl-suggested">suggested</span>
+                          <span className="pl-suggested">{t("services.modal.suggestedTag")}</span>
                         )}
                         {/* The chosen connection, on exactly the terms as the library picker
                             above (rule 72). */}
@@ -1137,30 +1256,21 @@ export function ServiceModal({
                     pickers. */}
                 {arrInstances.error &&
                 services.every((s) => instanceOptions(s.kind).length === 0) ? (
-                  <Notice tone="warn">
-                    Reaper couldn't read your Sonarr and Radarr connections. Try again.
-                  </Notice>
+                  <Notice tone="warn">{t("services.modal.requesters.instancesReadFailed")}</Notice>
                 ) : !arrInstances.isPending &&
                   services.every((s) => instanceOptions(s.kind).length === 0) ? (
-                  <p className="help">
-                    No Sonarr or Radarr connections yet. Add them first, then map each service.
-                  </p>
+                  <p className="help">{t("services.modal.requesters.noInstances")}</p>
                 ) : (
-                  <p className="help">
-                    Which Sonarr or Radarr connection each of this portal's services adds to. This
-                    names the exact copy a person asked for when a title is in more than one
-                    library. Matches are suggested from the addresses. Leave a service on "Not set"
-                    to name everyone who asked for the title instead.
-                  </p>
+                  <p className="help">{t("services.modal.requesters.help")}</p>
                 )}
               </>
             ) : (
               // The empty-and-then-failed arm, exactly as the folder grid above (rule 72).
               <>
                 {seerrServices.error && !probed && (
-                  <StaleReadNotice what="this portal's services" />
+                  <StaleReadNotice what={t("services.modal.requesters.staleWhat")} />
                 )}
-                <p className="help">This portal reports no Sonarr or Radarr services to map.</p>
+                <p className="help">{t("services.modal.requesters.none")}</p>
               </>
             )}
           </div>
@@ -1168,7 +1278,7 @@ export function ServiceModal({
         {editing && (
           <label className="toggle">
             <Switch checked={enabled} onChange={setEnabled} />
-            <span>Enabled</span>
+            <span>{t("services.modal.field.enabled")}</span>
           </label>
         )}
         {meta && <p className="help">{meta.hint}</p>}
@@ -1184,9 +1294,7 @@ export function ServiceModal({
             sentence below already says -- one requirement, written twice, in two places, neither
             of them where it is acted on. Only ever on screen while `canClose` is false, so the
             notice and the guard cannot disagree about whether the form is holding something. */}
-        {!mapSatisfied && (
-          <Notice tone="warn">Map a folder above, or Cancel to close without saving.</Notice>
-        )}
+        {!mapSatisfied && <Notice tone="warn">{t("services.modal.mapWarning")}</Notice>}
         <div className="add-actions">
           {/* On both forms now, not just the add one. The test fires on its own when a box is
               left, so this is the way back from the states no blur will reach: a switch that was
@@ -1203,14 +1311,24 @@ export function ServiceModal({
               testConn.mutate();
             }}
           >
-            {testConn.isPending ? "Testing…" : passed ? "Test again" : "Test connection"}
+            {testConn.isPending
+              ? t("services.common.testing")
+              : passed
+                ? t("services.modal.testButton.again")
+                : t("services.modal.testButton.initial")}
           </button>
           <span className="flex-spacer" />
           <button type="button" className="ghost" onClick={onClose} disabled={save.isPending}>
-            Cancel
+            {t("common.cancel")}
           </button>
           <button type="submit" className="primary" disabled={!ready || save.isPending}>
-            {save.isPending ? (editing ? "Saving…" : "Adding…") : editing ? "Save" : "Add service"}
+            {save.isPending
+              ? editing
+                ? t("common.saving")
+                : t("services.modal.adding")
+              : editing
+                ? t("common.save")
+                : t("services.modal.addService")}
           </button>
           {missing && (
             <span className="help help-warn" id={BLOCKED_ID}>

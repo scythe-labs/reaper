@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from reaper.aio import report_background_failure
 from reaper.api import tags as api_tags
 from reaper.api.deps import newest_snapshot, session_factory, state_singleton
+from reaper.api.errors import refuse, refuse_from, validation_error_items
 from reaper.api.scan import launch_scan
 from reaper.api.schemas import (
     ActionStepOut,
@@ -46,7 +47,10 @@ from reaper.api.schemas import (
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import ActionStep, Candidate, ReapRun, RunState
+from reaper.engine.explanation import ReasonKey
 from reaper.engine.policy import ProfileSettings
+from reaper.engine.reason import Reason, from_stored, to_wire
+from reaper.refusal import english
 from reaper.services import app_settings, whitelist
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import (
@@ -81,6 +85,24 @@ profile_router = APIRouter(prefix="/api", tags=[api_tags.POLICY])
 #: route. A plan of 500 seasons is 1,500 rows, each with a path and a stringified request body,
 #: and the table draws 50 of them. The rest are a route away rather than in every response.
 STEP_PAGE = 50
+
+
+def _reason_key(reason: Reason | None) -> ReasonKey | None:
+    """A typed reason as the wire shape an optional response field carries. One conversion
+    (rule 104): used directly for a live, possibly-absent :class:`~reaper.engine.reason.Reason`
+    (``_report_out``'s ``RunReportOut.aborted_reason``), and through :func:`_thaw_reason` for
+    one recovered from a stored journal column. ``RunOutcomeOut.detail_reason`` and
+    ``RunCheckOut.label_reason`` are never absent, so ``_report_out`` wires those two
+    straight through ``ReasonKey.model_validate(to_wire(...))`` instead."""
+    return None if reason is None else ReasonKey.model_validate(to_wire(reason))
+
+
+def _thaw_reason(stored: str | None) -> ReasonKey | None:
+    """The typed key for a stored journal reason column (``ActionStep.error``,
+    ``ReapRun.aborted_reason``): ``engine.reason.from_stored`` -- a row written since #899
+    decodes its JSON, one written before it thaws as a ``legacy`` reason (rule 96) -- as the
+    wire shape :func:`_reason_key` gives a live one."""
+    return _reason_key(from_stored(stored))
 
 
 async def _run_steps(session: AsyncSession, run: ReapRun) -> list[ActionStep]:
@@ -123,11 +145,7 @@ async def _saved_limits_or_refuse(session: AsyncSession) -> ProfileSettings:
     """
     profile = await active_profile(session)
     if profile.repaired:
-        raise HTTPException(
-            409,
-            "Reaper couldn't read the limits you saved, so it won't reap. Open Policy, go "
-            "to Pace and limits, and save your limits again.",
-        )
+        refuse(409, "error.runs.limits_unreadable")
     return profile.settings
 
 
@@ -258,7 +276,7 @@ async def _run_out(
                 body=json.loads(s.body_json) if s.body_json else None,
                 state=s.state.value,
                 is_canary=s.ordinal == 0,
-                error=s.error,
+                error_reason=_thaw_reason(s.error),
             )
             for s in steps[:STEP_PAGE]
         ],
@@ -285,7 +303,7 @@ async def create_run(request: Request, payload: CreateRunIn | None = None) -> Ru
     async with session_factory(request)() as session:
         snapshot = await newest_snapshot(session)
         if snapshot is None:
-            raise HTTPException(404, "No scan has run yet, so there is nothing to plan.")
+            refuse(404, "error.runs.no_scan_to_plan")
 
         try:
             # ``approved_by`` records that the plan was built through the API rather than
@@ -299,7 +317,7 @@ async def create_run(request: Request, payload: CreateRunIn | None = None) -> Ru
                 max_unmeasured=(await _saved_limits_or_refuse(session)).max_unmeasured_per_run,
             )
         except PlanError as exc:
-            raise HTTPException(422, str(exc)) from exc
+            refuse_from(exc)
 
         out = await _run_out(session, run)
         await session.commit()
@@ -336,7 +354,7 @@ async def list_runs(
                 id=r.id,
                 state=r.state.value,
                 approved_at=r.approved_at.isoformat(),
-                aborted_reason=r.aborted_reason,
+                aborted_reason=_thaw_reason(r.aborted_reason),
             )
             for r in runs
         ]
@@ -352,7 +370,7 @@ async def get_run(request: Request, run_id: int) -> RunOut:
     async with session_factory(request)() as session:
         run = await session.get(ReapRun, run_id)
         if run is None:
-            raise HTTPException(404, "No such run.")
+            refuse(404, "error.runs.not_found")
         return await _run_out(session, run)
 
 
@@ -373,7 +391,7 @@ async def get_run_steps(
     async with session_factory(request)() as session:
         run = await session.get(ReapRun, run_id)
         if run is None:
-            raise HTTPException(404, "No such run.")
+            refuse(404, "error.runs.not_found")
         steps = await _run_steps(session, run)
         return RunStepsOut(
             steps=[
@@ -386,7 +404,7 @@ async def get_run_steps(
                     body=json.loads(s.body_json) if s.body_json else None,
                     state=s.state.value,
                     is_canary=s.ordinal == 0,
-                    error=s.error,
+                    error_reason=_thaw_reason(s.error),
                 )
                 for s in steps[offset : offset + limit]
             ],
@@ -416,7 +434,7 @@ async def dry_run(request: Request, run_id: int) -> RunReportOut:
         safety = await app_settings.runtime_safety(session, settings)
         run = await session.get(ReapRun, run_id)
         if run is None:
-            raise HTTPException(404, "No such run.")
+            refuse(404, "error.runs.not_found")
 
         # The owner's configured caps, not a hardcoded default. This is what lets a real
         # (large) condemned set be simulated: the cap is a decision the owner makes.
@@ -427,7 +445,7 @@ async def dry_run(request: Request, run_id: int) -> RunReportOut:
         except ExecutionError as exc:
             # A voided run (changed manifest, already executed) is a 409: the plan is no
             # longer valid, and the owner needs to re-plan rather than retry.
-            raise HTTPException(409, str(exc)) from exc
+            refuse_from(exc)
         await session.commit()
 
     return _report_out(report)
@@ -456,7 +474,10 @@ class ReapStatus(BaseModel):
     deleted_bytes: int = 0
     skipped: int = 0
     title: str = ""
-    error: str | None = None
+    #: Why the run stopped, as a typed reason: the executor's own catalog code
+    #: (``exc.as_reason()``) on a refused run, or ``error.reap.unexpected`` for anything
+    #: else. ``null`` while running and on a clean finish.
+    error_reason: ReasonKey | None = None
     report: RunReportOut | None = None
     """The after-action report, set once the run ends. Null while running; the browser reads
     it when ``running`` turns false to render the per-item checklist without a second call."""
@@ -485,16 +506,9 @@ def _preflight_refusal(gateway: ReapGateway) -> str | None:
     earlier, clearer refusal, the way the arm gate mirrors the transport guard -- so the two
     messages must stay in step."""
     if gateway.plex is None:
-        return (
-            "Refusing a real run without Plex: the active-stream veto (re-polled before "
-            "every delete) cannot run, and deleting blind to who is watching is exactly "
-            "what must never happen."
-        )
+        return "error.runs.preflight_no_plex"
     if gateway.tautulli is None:
-        return (
-            "Refusing a real run without Tautulli: the played-since-approval check cannot "
-            "run, and the grace period exists precisely so a late view can still spare an item."
-        )
+        return "error.runs.preflight_no_tautulli"
     return None
 
 
@@ -540,9 +554,8 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
         # releases it. Routing the loser through that path would clear the WINNING run's
         # ``running`` flag while its task keeps deleting, opening the slot for a third
         # request to start a second reap over the one shared status.
-        detail = "A reap is already running. Wait for it to finish, or stop it, first."
-        log.info("reap.refused", run_id=run_id, status=409, detail=detail)
-        raise HTTPException(409, detail)
+        log.info("reap.refused", run_id=run_id, status=409, code="error.runs.already_running")
+        refuse(409, "error.runs.already_running")
     status.running = True
     status.run_id = run_id
     status.stopping = False
@@ -553,30 +566,28 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
     status.deleted_bytes = 0
     status.skipped = 0
     status.title = ""
-    status.error = None
+    status.error_reason = None
     status.report = None
 
     try:
         async with factory() as session:
             safety = await app_settings.runtime_safety(session, settings)
             if not safety.destructive_allowed:
-                raise HTTPException(403, safety.why_blocked() or "Deletion is turned off.")
+                # Same two conditions and the same two codes as the executor's own backstop
+                # check (services.executor.Executor.execute), so the two cannot drift apart
+                # (rule 144).
+                if safety.recovery_mode:
+                    refuse(403, "error.safety.recovery_mode_active")
+                refuse(403, "error.safety.deletion_off")
 
             run = await session.get(ReapRun, run_id)
             if run is None:
-                raise HTTPException(404, "No such run.")
+                refuse(404, "error.runs.not_found")
 
             planned = await _planned_candidates(session, run)
             expected = confirmation_phrase(planned) if planned else "REAP 0 SOULS 0 GB"
             if payload.confirmation_phrase.strip() != expected:
-                raise HTTPException(
-                    409,
-                    # Plain interpolation, not repr: the operator sees the phrase exactly as
-                    # it must be typed, with no engineer-style quoting around it.
-                    f"That confirmation does not match this plan. Expected: {expected}. The "
-                    "plan may have changed since the page loaded. Reload, review, and confirm "
-                    "again.",
-                )
+                refuse(409, "error.runs.confirmation_mismatch", expected=expected)
             profile_settings = await _saved_limits_or_refuse(session)
             status.total = len(planned)
 
@@ -585,11 +596,11 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
         # closes them. On a refusal we enter-and-exit the built-but-unused clients to close
         # them cleanly rather than leak them.
         gateway, closers = await build_reap_gateway(factory, box, safety=safety)
-        if (preflight := _preflight_refusal(gateway)) is not None:
+        if (preflight_code := _preflight_refusal(gateway)) is not None:
             async with AsyncExitStack() as closing:
                 for client in closers:
                     await closing.enter_async_context(client)
-            raise HTTPException(409, preflight)
+            refuse(409, preflight_code)
     except Exception as exc:
         # ANY synchronous failure before the task is created releases the slot -- not only an
         # HTTPException refusal, but a crypto/DB error out of build_reap_gateway or a session
@@ -692,7 +703,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
                 # Why an aborted run stopped (a cap breach, a failed canary, a changed
                 # manifest) lived only in the UI report; carry it here too, or the log
                 # cannot tell one abort from another.
-                aborted_reason=report.aborted_reason,
+                aborted_reason=english(report.aborted_reason) if report.aborted_reason else None,
             )
             # Removing files leaves the last snapshot's queue and policy preview stale, so
             # kick a fresh scan -- on a completed OR a stopped run alike, as long as at least
@@ -707,7 +718,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
             # PLANNED, missing clients). The run row is untouched; surface the reason to the
             # poller so the sheet can show it.
             status.phase = "error"
-            status.error = str(exc)
+            status.error_reason = ReasonKey.model_validate(to_wire(exc.as_reason()))
             log.info("reap.execute_refused", run_id=run_id, error=str(exc))
         except Exception as exc:
             # A background task must never crash silently -- surface it as an error the UI
@@ -717,7 +728,9 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
             # CancelledError, which is not an Exception, so it does NOT reach here and does not
             # kick a scan as the app is going down.
             status.phase = "error"
-            status.error = str(exc)
+            status.error_reason = ReasonKey.model_validate(
+                to_wire(Reason("error.reap.unexpected", {"error": str(exc)}))
+            )
             log.warning("reap.background_failed", run_id=run_id, error=str(exc))
             if status.deleted_items > 0:
                 launch_scan(app)
@@ -759,9 +772,8 @@ async def stop_run(request: Request, run_id: int) -> ReapStatus:
         # logs and the refusal did not, so "I pressed Stop and it kept going" left the same
         # nothing. Usually a Stop aimed at a run that already finished, which is exactly the
         # state that has moved on by the time anyone looks.
-        detail = "That run is not currently running."
-        log.info("reap.stop_refused", run_id=run_id, status=409, detail=detail)
-        raise HTTPException(409, detail)
+        log.info("reap.stop_refused", run_id=run_id, status=409, code="error.runs.not_running")
+        refuse(409, "error.runs.not_running")
     status.stopping = True
     log.info("reap.stop_requested", run_id=run_id)
     return status
@@ -772,7 +784,7 @@ def _report_out(report: RunReport) -> RunReportOut:
         run_id=report.run_id,
         dry_run=report.dry_run,
         state=report.state.value,
-        aborted_reason=report.aborted_reason,
+        aborted_reason=_reason_key(report.aborted_reason),
         would_delete_items=report.deleted_items,
         deleted_bytes=report.deleted_bytes,
         deleted_unmeasured=report.deleted_unmeasured,
@@ -783,8 +795,16 @@ def _report_out(report: RunReport) -> RunReportOut:
                 title=o.title,
                 kind=o.kind,
                 state=o.state.value,
-                detail=o.detail,
-                checks=[RunCheckOut(label=c.label, ok=c.ok) for c in o.checks],
+                # Not `_reason_key`: `o.detail`/`c.label` are never `None` (`StepOutcome.detail`
+                # and `StepCheck.label` carry no `| None`), and the field they fill is
+                # required, so this stays the non-optional wire shape rather than widening to
+                # `_reason_key`'s `ReasonKey | None`.
+                detail_reason=ReasonKey.model_validate(to_wire(o.detail)),
+                checks=[
+                    RunCheckOut(label_reason=ReasonKey.model_validate(to_wire(c.label)), ok=c.ok)
+                    for c in o.checks
+                ],
+                is_canary=o.is_canary,
             )
             for o in report.outcomes
         ],
@@ -840,17 +860,7 @@ async def update_profile(request: Request, payload: ProfileSettingsIO) -> Profil
             max_unmeasured_per_run=payload.max_unmeasured_per_run,
         )
     except ValidationError as exc:
-        raise HTTPException(
-            422,
-            detail=[
-                {
-                    "loc": [str(p) for p in e["loc"]],
-                    "msg": e["msg"].removeprefix("Value error, "),
-                    "type": e["type"],
-                }
-                for e in exc.errors()
-            ],
-        ) from exc
+        raise HTTPException(422, detail=validation_error_items(exc.errors())) from exc
 
     async with session_factory(request)() as session:
         saved = await save_profile_settings(session, settings)

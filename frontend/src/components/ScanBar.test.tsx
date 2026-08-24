@@ -2,7 +2,7 @@
 //
 // The library scan's start, said out loud.
 //
-// Pressing "Scan library" disables its own button and swaps the schedule line for a progress
+// Pressing "Scan now" disables its own button and swaps the schedule line for a progress
 // bar. Both of those are visual, the disable drops focus to `<body>`, and a `role="progressbar"`
 // announces nothing by itself -- so for an operation that runs for minutes the next thing an
 // operator using a screen reader heard was the finish (#177).
@@ -20,7 +20,10 @@ import { ScanRow } from "./ScanBar";
 const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
-vi.mock("../api", () => ({ api: apiMock }));
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  api: apiMock,
+}));
 
 const { announceSpy } = vi.hoisted(() => ({ announceSpy: vi.fn() }));
 vi.mock("../announce", async (importOriginal) => ({
@@ -34,12 +37,12 @@ const IDLE = {
   done: 0,
   total: 0,
   percent: 0,
-  detail: "",
-  error: null,
+  detail_reason: null,
+  error_reason: null,
   snapshot_id: null,
   followup_queued: false,
 };
-const RUNNING = { ...IDLE, running: true, phase: "history", percent: 4, detail: "" };
+const RUNNING = { ...IDLE, running: true, phase: "history", percent: 4, detail_reason: null };
 
 const DEGRADED: Snapshot = {
   id: 7,
@@ -95,13 +98,13 @@ describe("starting a library scan", () => {
 
     // Wait for the control, not for the page: the button is disabled while the status read is in
     // flight, and user-event reports a click on a disabled control as success (rule 137).
-    const scan = await screen.findByRole("button", { name: /scan library/i });
+    const scan = await screen.findByRole("button", { name: /scan now/i });
     await waitFor(() => expect(scan).toBeEnabled());
     await person.click(scan);
 
     await waitFor(() =>
       expect(announceSpy.mock.calls).toEqual([
-        ["Scanning your library. You can leave this page; it keeps running."],
+        ["Scanning your library. You can leave this page. It keeps running."],
       ]),
     );
   });
@@ -115,7 +118,7 @@ describe("starting a library scan", () => {
     apiMock.startScan.mockRejectedValue(new Error("Sonarr is unreachable"));
     renderRow();
 
-    const scan = await screen.findByRole("button", { name: /scan library/i });
+    const scan = await screen.findByRole("button", { name: /scan now/i });
     await waitFor(() => expect(scan).toBeEnabled());
     await person.click(scan);
 
@@ -136,7 +139,7 @@ describe("starting a library scan", () => {
 
   it("holds the last scan's incomplete notice while the next scan runs", async () => {
     // "This scan came back incomplete" renders inside this row, under the bar of the scan in
-    // flight, so during a run it names the wrong scan -- and the operator pressing Scan library
+    // flight, so during a run it names the wrong scan -- and the operator pressing Scan now
     // has already done what it asks. Every other last-scan fact on the row already waits.
     apiMock.scanStatus.mockResolvedValue(RUNNING);
     renderRow(DEGRADED);
@@ -207,6 +210,44 @@ describe("starting a library scan", () => {
     expect(screen.getByText(/radarr didn't answer/i)).toBeInTheDocument();
   });
 
+  it("says how many sizes are unknown, not the raw template", async () => {
+    // `deltaUnknownQualifier`'s catalog string needs both `n` and the ICU plural selector
+    // `count`. The call site once passed only `n`, so i18next-icu's parseErrorHandler
+    // returned the unformatted template mid-sentence instead of "2 sizes unknown".
+    const client = testQueryClient();
+    const before: Snapshot = {
+      ...DEGRADED,
+      degraded: false,
+      degraded_reason: null,
+      condemned: 2,
+      reclaimable_bytes: 1_000_000,
+      unknown_size_items: 0,
+    };
+    client.setQueryData(["snapshot"], before);
+    apiMock.scanStatus.mockResolvedValue(RUNNING);
+    const { rerender } = renderRow(before, client);
+    await screen.findByRole("progressbar");
+
+    apiMock.scanStatus.mockResolvedValue(IDLE);
+    await act(async () => {
+      client.setQueryData(["scanStatus"], IDLE);
+    });
+    await waitFor(() => expect(screen.queryByRole("progressbar")).not.toBeInTheDocument());
+
+    const after: Snapshot = {
+      ...before,
+      id: before.id + 1,
+      reclaimable_bytes: 2_000_000,
+      unknown_size_items: 2,
+    };
+    client.setQueryData(["snapshot"], after);
+    rerender(rowTree(after));
+
+    const delta = await screen.findByText(/compared with the scan before/i);
+    expect(delta.textContent).toContain("2 sizes unknown");
+    expect(delta.textContent).not.toContain("{count");
+  });
+
   it("puts it back when the refetch that would replace the snapshot fails", async () => {
     // The window above is bounded by the READ settling, not by a new id arriving. `before` is
     // cleared only when the NEXT scan starts, so on id-equality alone a refetch that never
@@ -263,7 +304,14 @@ describe("starting a library scan", () => {
     renderRow(DEGRADED, client);
     await screen.findByRole("progressbar");
 
-    const failed = { ...IDLE, phase: "error", error: "Sonarr is unreachable" };
+    const failed = {
+      ...IDLE,
+      phase: "error",
+      error_reason: {
+        k: "error.scan.source_unreachable",
+        p: { error: "Sonarr is unreachable" },
+      },
+    };
     apiMock.scanStatus.mockResolvedValue(failed);
     await act(async () => {
       client.setQueryData(["scanStatus"], failed);

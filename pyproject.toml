@@ -11,22 +11,22 @@ license = "AGPL-3.0-or-later"
 requires-python = ">=3.13"
 authors = [{ name = "Scythe Labs" }]
 
-# Version floors are the exact releases verified on PyPI on 2026-07-23.
+# Every floor is an exact release that exists on PyPI. Dependabot raises them.
 dependencies = [
     # Web
-    "fastapi>=0.140.0",          # >=0.138 for app.frontend(), >=0.135 for fastapi.sse
-    "starlette>=1.3.1,<2.0.0",   # PIN: 1.0 removed on_startup/on_shutdown; FastAPI declares no upper bound
-    "uvicorn[standard]>=0.51.0",
+    "fastapi>=0.141.1",          # >=0.138 for app.frontend(), >=0.135 for fastapi.sse
+    "starlette>=1.6.0,<2.0.0",   # PIN: 1.0 removed on_startup/on_shutdown; FastAPI declares no upper bound
+    "uvicorn[standard]>=0.52.1",
     "pydantic>=2.13.4",
-    "pydantic-settings>=2.14.2",
+    "pydantic-settings>=2.15.0",
     "python-dotenv>=1.1.0",      # imported directly (config.load_raw_env), not only transitively
     # Persistence
     "sqlalchemy>=2.0.51",        # plain SQLAlchemy, NOT SQLModel (see docs/STATUS.md)
-    "alembic>=1.18.5",
+    "alembic>=1.19.1",
     "aiosqlite>=0.22.1",
     "greenlet>=3.5.4",
     # Integrations
-    "httpx2>=2.9.1",
+    "httpx2>=2.10.0",
     "plexapi>=4.18.2",
     "tenacity>=9.1.4",
     # Scheduling — 3.x, NOT 4.x (still alpha: 4.0.0a6, 14 months stale)
@@ -44,19 +44,19 @@ dependencies = [
 # Only the binary builds (.github/workflows/binaries.yml) install this group; it rides
 # uv.lock so the bundler is as pinned as everything it bundles (rule 15).
 package = [
-    "pyinstaller>=6.16.0",
+    "pyinstaller>=6.22.0",
     "pillow>=11.0.0",   # lets PyInstaller cut .ico/.icns from the one committed PNG
     "pystray>=0.19.5",  # the menu-bar/tray icon the desktop builds keep while serving
 ]
 dev = [
-    "ruff>=0.16.0",
+    "ruff>=0.16.2",
     "mypy>=2.3.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "httpx>=0.28.1",             # dev-only: no production import remains; respx speaks httpx only, not httpx2
     "respx>=0.23.1",             # httpx mocking (respx speaks httpx only, not httpx2)
-    "hypothesis>=6.161.5",       # property tests for the scoring invariants
+    "hypothesis>=6.165.2",       # property tests for the scoring invariants
     "pytest-xdist>=3.8.0",
     "pytest-httpx2>=1.0.0",      # httpx2 mocking; respx cannot (see docs/history/PLAN-narrative.md httpx2 scope)
     "pyyaml>=6.0.3",             # imported directly (test_repo_hygiene reads the CI config), not only via uvicorn[standard]
@@ -145,7 +145,11 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "--strict-markers --strict-config -m 'not live'"
+# `--dist worksteal` applies only under `-n`. Without `-n`, xdist forces `dist=no`, so a single
+# worker debug run is unchanged. The default `load` hands out tests in chunks and never reclaims
+# one, so the worker holding the 5-7s property tests finishes alone while the rest idle. Measured
+# 53s -> 43-46s for the same 562s of CPU (docs/LEARNINGS.md, 2026-08-20).
+addopts = "--strict-markers --strict-config -m 'not live' --dist worksteal"
 markers = [
     "live: talks to a real instance; requires .env.local. Deselected by default.",
     # pytest-httpx2 registers this in its own pytest_configure, but exposes only the

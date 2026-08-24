@@ -40,23 +40,49 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.aio import gather_reaped, per_loop_lock
-from reaper.clients.plex import PlexClient, PlexError, benign_shelf_write
+from reaper.clients.plex import PlexClient, PlexError, benign_shelf_write, normalize_label
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import PlexServer, Snapshot
+from reaper.engine.reason import Reason
 from reaper.notify.discord import DiscordNotifier, build_notifier
+from reaper.refusal import Refusal
 from reaper.services import app_settings
 from reaper.services.grace import GraceReport, grace_report
 from reaper.services.profiles import active_profile_settings
 
 log = structlog.get_logger(__name__)
 
-#: Plex title-cases this to "Leaving Soon" on the way in; every comparison in the Plex
-#: client casefolds, so the display form is what we write and search for. The collection
-#: and the label share the name deliberately -- one shelf, one vocabulary.
-LEAVING_SOON_LABEL = "Leaving Soon"
-LEAVING_SOON_COLLECTION = "Leaving Soon"
+
+@dataclass(frozen=True)
+class ShelfName:
+    """What the shelf is called, and what Plex still calls it.
+
+    The collection and the label share one name deliberately: one shelf, one vocabulary.
+    The operator chooses it (``app_settings.get_leaving_soon_name``), because every Plex
+    user on the server reads it and a household that does not speak English should not be
+    handed an English shelf. Plex title-cases what it is given and every comparison in the
+    Plex client casefolds, so the display form is what Reaper writes and searches for.
+
+    ``previous`` is what the last completed pass wrote. The two are equal on every pass
+    except the first one after a rename, which is the pass that has to carry the shelf
+    across.
+    """
+
+    current: str
+    previous: str
+
+    @property
+    def renaming(self) -> bool:
+        """Whether Plex still holds the shelf under a different name.
+
+        Casefolded through the same helper the label comparisons use: Plex title-cases what
+        you write, so "leaving soon" and "Leaving Soon" name one shelf and re-titling one to
+        the other would be a write that changes nothing an operator can see.
+        """
+        return normalize_label(self.current) != normalize_label(self.previous)
+
 
 #: How many libraries reconcile at once. Libraries are independent shelves, so they run
 #: concurrently rather than one after another -- but under a bound, for the same reason the
@@ -73,15 +99,21 @@ LEAVING_SOON_COLLECTION = "Leaving Soon"
 SHELF_CONCURRENCY = 4
 
 
-class LeavingSoonDisabledError(RuntimeError):
+class LeavingSoonDisabledError(Refusal):
     """The shelf is turned off, so there is nothing to update."""
 
+    def __init__(self) -> None:
+        super().__init__("error.leaving_soon.disabled", status=400)
 
-class LeavingSoonDegradedError(RuntimeError):
+
+class LeavingSoonDegradedError(Refusal):
     """The last scan declared itself untrustworthy, so the shelf must not act on it."""
 
+    def __init__(self) -> None:
+        super().__init__("error.leaving_soon.degraded", status=400)
 
-class LeavingSoonUnlinkedError(RuntimeError):
+
+class LeavingSoonUnlinkedError(Refusal):
     """No Plex server is linked, so there is nowhere to put a shelf.
 
     Its own class because the route answers it 400 and a client ``PlexError`` 502. This used
@@ -89,6 +121,9 @@ class LeavingSoonUnlinkedError(RuntimeError):
     problem and an upstream failure, and the route could not tell them apart: an unreachable
     server was reported as a bad request, in a sentence the client wrote for a log (#734).
     """
+
+    def __init__(self) -> None:
+        super().__init__("error.leaving_soon.unlinked", status=400)
 
 
 async def _latest_scan_degraded(session: AsyncSession) -> bool:
@@ -208,21 +243,23 @@ class LeavingSoonResult:
         return not self.problems and not self.no_libraries
 
     @property
-    def summary(self) -> str:
-        """One plain sentence saying how this pass went.
+    def summary(self) -> Reason:
+        """One typed reason saying how this pass went, under ``jobs.result.*``.
 
         Every surface reporting the pass reads this one: the stored Jobs row, the response the
         "Update now" button flashes, and the Plex panel's status line. It was written twice --
         here, and again in TypeScript over the response -- and the two disagreed, because the
         route added the no-libraries case AFTER this had been stored. A pass with nothing
         turned on was stored green while the button flashed red about the same pass (#555).
+        Composing one sentence from one reason, read by every surface, is what keeps that from
+        happening again: the server states the fact, the browser says the words.
 
         The order is the fix. Nothing turned on is reported as itself rather than as preview,
         which is what ``applied`` alone calls it (it is false whenever there are no outcomes),
         and a real per-library failure beats the benign preview caveat.
         """
         if self.no_libraries:
-            return "No libraries are turned on, so no shelf was updated"
+            return Reason("shelf_no_libraries")
         if self.problems:
             # Named, not counted. "Some shelves didn't update" was the whole answer the
             # operator got, on every surface, while the response carried the failing library
@@ -232,10 +269,10 @@ class LeavingSoonResult:
             # ``str(exc)``, which is a stack-shaped sentence rule 21 keeps off the screen; it
             # stays the log's field, where a raw cause belongs.
             failed = ", ".join(o.section_title for o in self.outcomes if o.error)
-            return f"These shelves didn't update: {failed}"
+            return Reason("shelf_failed", {"libraries": failed})
         if not self.applied:
-            return "Preview only, nothing written"
-        return f"{self.added:,} added, {self.removed:,} cleared"
+            return Reason("shelf_preview")
+        return Reason("shelf_updated", {"added": self.added, "removed": self.removed})
 
 
 def _grace_keys(report: GraceReport) -> tuple[set[int], set[int], dict[int, str]]:
@@ -274,6 +311,7 @@ async def sync_section(
     kind: str,
     in_grace: set[int],
     apply: bool,
+    shelf: ShelfName,
 ) -> ShelfOutcome:
     """Reconcile one library's shelf: the collection and the label together.
 
@@ -285,6 +323,11 @@ async def sync_section(
     Removals run before adds, so the marked set never briefly over-covers if a later
     add fails partway. A failure anywhere in this section is caught by the caller;
     one unreachable library must not block the rest.
+
+    A rename is carried across inside this same reconcile. The collection is re-titled in
+    place, so it keeps its rating key and everything the operator hung on it; the label has
+    no rename, so the old one comes off every item that carries it and the current one goes
+    on the target set. Either way nothing is left behind under the old name.
     """
 
     # The reads run one after another rather than concurrently: the whole-section key dump
@@ -296,36 +339,71 @@ async def sync_section(
     section_keys = await plex.section_rating_keys(section_key, kind=kind)
     target = in_grace & section_keys
 
-    collection_key = await plex.find_collection(section_key, LEAVING_SOON_COLLECTION)
+    collection_key = await plex.find_collection(section_key, shelf.current)
+    # Where the shelf actually lives while a rename is outstanding. Read before the
+    # membership below, so the plan is computed against the collection that is really on
+    # the server rather than against the empty set a not-yet-created name reports.
+    stale_collection = (
+        await plex.find_collection(section_key, shelf.previous) if shelf.renaming else None
+    )
+    rename_to: int | None = None
+    drop_stale: int | None = None
+    if stale_collection is not None:
+        if collection_key is None:
+            rename_to = collection_key = stale_collection
+        else:
+            # The new name is one the library ALREADY uses. Re-titling would leave two
+            # same-titled collections, which split the membership so neither ever fully
+            # clears -- the shelf would keep marking titles nothing takes back off. The
+            # existing collection wins and the old shelf is dropped into it.
+            drop_stale = stale_collection
+
     on_collection = (
         await plex.collection_children(collection_key) if collection_key is not None else set()
     )
     collection_plan = reconcile(target, on_collection)
 
-    labeled = await plex.labeled_in_section(section_key, kind=kind, label=LEAVING_SOON_LABEL)
+    labeled = await plex.labeled_in_section(section_key, kind=kind, label=shelf.current)
     label_plan = reconcile(target, labeled)
+    # A label is a tag on each item and Plex offers no rename for one, so carrying it across
+    # is a removal under the old name plus the plan's own adds under the current one. Read
+    # even when nothing is in grace: an empty shelf still has to stop marking whatever the
+    # old name marked.
+    stale_labeled = (
+        await plex.labeled_in_section(section_key, kind=kind, label=shelf.previous)
+        if shelf.renaming
+        else set()
+    )
 
-    if apply and not (collection_plan.is_noop and label_plan.is_noop):
+    # When EVERY current member is leaving (a plain clear, or a total list swap where
+    # nothing carries over), the whole collection goes in ONE request rather than one detach
+    # per member. Hoisted above the write because the rename reads it: re-titling a
+    # collection this pass is about to delete is a wasted round trip.
+    clears_collection = bool(on_collection) and set(collection_plan.to_remove) == on_collection
+    # The rename is work of its own, so a pass with nothing else to do still writes.
+    carries_a_rename = rename_to is not None or drop_stale is not None or bool(stale_labeled)
+    if apply and (carries_a_rename or not (collection_plan.is_noop and label_plan.is_noop)):
         with benign_shelf_write():
-            # Removals first: the shelf must never briefly claim more than is true. When
-            # EVERY current member is leaving (a plain clear, or a total list swap where
-            # nothing carries over), drop the whole collection in ONE request rather than
-            # detaching members one at a time; otherwise detach just the leavers by batch
-            # tag-edit.
-            clears_collection = (
-                bool(on_collection) and set(collection_plan.to_remove) == on_collection
-            )
+            # The rename first, so everything below writes under the name the shelf now
+            # carries -- `remove_collection_members` addresses the collection by name.
+            if rename_to is not None and not clears_collection:
+                await plex.rename_collection(rename_to, shelf.current)
+            if drop_stale is not None:
+                await plex.delete_collection(drop_stale)
+            if stale_labeled:
+                await plex.remove_label(section_key, sorted(stale_labeled), shelf.previous)
+            # Removals first: the shelf must never briefly claim more than is true.
             if collection_key is not None and clears_collection:
                 await plex.delete_collection(collection_key)
                 collection_key = None  # gone now; a re-add below recreates it from target
             elif collection_key is not None and collection_plan.to_remove:
                 await plex.remove_collection_members(
                     section_key,
-                    name=LEAVING_SOON_COLLECTION,
+                    name=shelf.current,
                     rating_keys=collection_plan.to_remove,
                 )
             if label_plan.to_remove:
-                await plex.remove_label(section_key, label_plan.to_remove, LEAVING_SOON_LABEL)
+                await plex.remove_label(section_key, label_plan.to_remove, shelf.current)
             if collection_plan.to_add:
                 if collection_key is None:
                     # No collection (never had one, or the clear above dropped it): Plex
@@ -334,13 +412,13 @@ async def sync_section(
                     await plex.create_collection(
                         section_key,
                         kind=kind,
-                        name=LEAVING_SOON_COLLECTION,
+                        name=shelf.current,
                         rating_keys=sorted(target),
                     )
                 else:
                     await plex.add_to_collection(collection_key, collection_plan.to_add)
             if label_plan.to_add:
-                await plex.add_label(section_key, label_plan.to_add, LEAVING_SOON_LABEL)
+                await plex.add_label(section_key, label_plan.to_add, shelf.current)
 
     # A section whose shelf already matches is APPLIED when writing was allowed: there
     # was nothing to write and nothing failed. Only a preview (apply=False) reports
@@ -364,6 +442,7 @@ async def sync_shelves(
     movie_keys: set[int],
     season_keys: set[int],
     apply: bool,
+    shelf: ShelfName,
 ) -> list[ShelfOutcome]:
     """Reconcile every enabled library, movies in movie libraries and seasons in TV
     libraries. A library that fails records its error and the pass continues; partial
@@ -389,6 +468,7 @@ async def sync_shelves(
                     kind=kind,
                     in_grace=in_grace,
                     apply=apply,
+                    shelf=shelf,
                 )
         except PlexError as exc:
             # One unreachable library records its error and the pass carries on; caught
@@ -504,21 +584,19 @@ async def _run_pass(
     """The pass itself. Split from :func:`run_sync` only so the lock wraps it whole."""
     async with session_factory() as session:
         if not await app_settings.leaving_soon_enabled(session):
-            raise LeavingSoonDisabledError(
-                "Leaving Soon is off. Turn it on in Settings, under Plex, "
-                "and Reaper will keep the shelf up to date."
-            )
+            raise LeavingSoonDisabledError()
         if await _latest_scan_degraded(session):
-            raise LeavingSoonDegradedError(
-                "The last scan couldn't be trusted, so the shelf wasn't updated. "
-                "Run a scan that finishes cleanly first."
-            )
+            raise LeavingSoonDegradedError()
         safety = await app_settings.runtime_safety(session, settings)
         libraries = await app_settings.enabled_plex_libraries(session)
         profile = await active_profile_settings(session)
         report = await grace_report(session, grace_days=profile.grace_days)
         notifier = await build_notifier(session, box, settings)
         already = await app_settings.get_leaving_soon_announced(session)
+        shelf = ShelfName(
+            current=await app_settings.get_leaving_soon_name(session),
+            previous=await app_settings.get_leaving_soon_applied_name(session),
+        )
         # build_notifier may have seeded the webhook from the environment on first read.
         await session.commit()
         # Built LAST of everything this pass gathers. This pass owns the client (rule 34),
@@ -528,9 +606,7 @@ async def _run_pass(
         plex = await _plex_client(session, box, settings)
 
     if plex is None:
-        raise LeavingSoonUnlinkedError(
-            "Leaving Soon needs a linked Plex server. Link one in Settings first."
-        )
+        raise LeavingSoonUnlinkedError()
 
     try:
         movie_keys, season_keys, _titles = _grace_keys(report)
@@ -540,6 +616,7 @@ async def _run_pass(
             movie_keys=movie_keys,
             season_keys=season_keys,
             apply=safety.leaving_soon_write_allowed,
+            shelf=shelf,
         )
         notified, announced = await announce_new(notifier, report, already_announced=already)
     finally:
@@ -557,6 +634,18 @@ async def _run_pass(
     # (``ok`` and ``summary``). Nothing downstream re-words this pass.
     async with session_factory() as session:
         await app_settings.set_leaving_soon_announced(session, set(result.announced))
+        # What Plex now shows, recorded only once EVERY library wrote cleanly. A preview, or
+        # one unreachable library, leaves the old name stored, so the next pass finds the
+        # collection and the labels still sitting under it and carries them across then. The
+        # cost of being wrong here is a shelf stranded in the library under a name nothing
+        # will ever look for again, so this resolves toward retrying.
+        #
+        # Written on every clean pass, not only a renaming one, so a change the reconcile
+        # treats as no rename at all -- a different capitalization of the same name -- still
+        # settles. Otherwise the two rows disagree forever and the panel reports a pending
+        # rename that no pass can ever clear.
+        if result.applied:
+            await app_settings.set_leaving_soon_applied_name(session, shelf.current)
         await app_settings.set_leaving_soon_last(
             session,
             at=utcnow().isoformat(),
@@ -564,7 +653,7 @@ async def _run_pass(
             seasons=result.seasons_on_shelves,
             applied=result.applied,
             ok=result.ok,
-            result=result.summary,
+            reason=result.summary,
         )
         await session.commit()
 
@@ -621,7 +710,7 @@ async def after_scan(
             # fall-through to the heads-up below: it reads the same condemned set (rule
             # 116), so "shelf off" and "scan untrustworthy" are not the same skip.
             log.info("leaving_soon.skipped_degraded")
-            await _record_skip(session_factory, "the scan didn't finish cleanly")
+            await _record_skip(session_factory, Reason("error.leaving_soon.skip_degraded"))
             return
         except LeavingSoonUnlinkedError:
             # Shelf on, no server linked at all. A separate clause from the one below, and
@@ -629,14 +718,14 @@ async def after_scan(
             # only signal for which of the two happened, and the fixes are different (rule
             # 21). One class carried both until #734.
             log.info("leaving_soon.skipped_unlinked")
-            await _record_skip(session_factory, "no Plex server is linked")
+            await _record_skip(session_factory, Reason("error.leaving_soon.skip_unlinked"))
             recorded = True
         except PlexError as exc:
             # Shelf on and a server linked, but it did not answer. Fall through to the
             # Discord heads-up below, but do not swallow it silently: an operator who
             # enabled the shelf and sees it not updating has no other trail to this cause.
             log.warning("leaving_soon.shelf_unreachable", error=str(exc))
-            await _record_skip(session_factory, "Reaper couldn't reach Plex")
+            await _record_skip(session_factory, Reason("error.leaving_soon.skip_unreachable"))
             recorded = True
 
         # Shelf off, or on with no reachable server: the Discord heads-up still runs
@@ -677,14 +766,14 @@ async def after_scan(
         # reason already written above. What is left is a surprise nobody has a name for,
         # and the row still has to say the shelf did not move.
         if shelf_on and not recorded:
-            await _record_skip(session_factory, "the update didn't finish")
+            await _record_skip(session_factory, Reason("error.leaving_soon.skip_failed"))
 
 
 async def _record_skip(
     session_factory: async_sessionmaker[AsyncSession],
-    result: str,
+    reason: Reason,
 ) -> None:
-    """Write down that a scan finished without updating the shelf, and why in one clause.
+    """Write down that a scan finished without updating the shelf, and why, as a typed reason.
 
     Read beside the last completed pass and preferred only while it is newer, so a pass that
     later completes wins on its own timestamp and this is never cleared -- the arrangement
@@ -696,7 +785,7 @@ async def _record_skip(
     try:
         async with session_factory() as session:
             await app_settings.set_leaving_soon_last_skip(
-                session, at=utcnow().isoformat(), result=result
+                session, at=utcnow().isoformat(), reason=reason
             )
             await session.commit()
     except Exception as exc:
@@ -730,6 +819,14 @@ async def cleanup_sections(
             # deletion was not armed, which is the common way this is reached.
             if not safety.leaving_soon_write_allowed:
                 return False
+            # Both names, because a cleanup that ran while a rename was still outstanding
+            # would otherwise clear the new name and leave the collection Plex actually
+            # shows sitting in the library forever -- nothing looks under the old name once
+            # the operator turns the shelf back on.
+            shelf = ShelfName(
+                current=await app_settings.get_leaving_soon_name(session),
+                previous=await app_settings.get_leaving_soon_applied_name(session),
+            )
             plex = await _plex_client(session, box, settings)
 
         if plex is None:
@@ -737,7 +834,7 @@ async def cleanup_sections(
 
         try:
             outcomes = await sync_shelves(
-                plex, sections, movie_keys=set(), season_keys=set(), apply=True
+                plex, sections, movie_keys=set(), season_keys=set(), apply=True, shelf=shelf
             )
         finally:
             await plex.aclose()

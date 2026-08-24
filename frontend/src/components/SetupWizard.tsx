@@ -22,6 +22,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, type SetupStatus } from "../api";
 import { BrandMark } from "../brand/BrandMark";
 import { Notice } from "./Notice";
@@ -55,6 +56,7 @@ function firstOpenStep(status: SetupStatus): SetupStepKey {
 }
 
 export function SetupWizard({ onSkip }: { onSkip: () => void }) {
+  const { t } = useTranslation();
   const { data: setup, isError } = useQuery({ queryKey: ["setup"], queryFn: api.setupStatus });
 
   // Null until the first status lands, then seeded from it below and never re-derived: after
@@ -98,17 +100,15 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
         <Brand />
         <section className="step-card">
           <div className="step-head">
-            <h2>{isError ? "Welcome to Reaper" : "Setting things up…"}</h2>
+            <h2>{isError ? t("setup.wizard.errorHeading") : t("setup.wizard.loadingHeading")}</h2>
           </div>
           {isError && (
             <>
-              <Notice tone="error">
-                Couldn't check what's set up yet. You can go to the app and finish from Settings.
-              </Notice>
+              <Notice tone="error">{t("setup.wizard.statusError")}</Notice>
               <div className="step-actions">
                 <span className="spacer" />
                 <button className="primary" onClick={onSkip}>
-                  Go to the app
+                  {t("setup.actions.goToApp")}
                 </button>
               </div>
             </>

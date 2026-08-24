@@ -9,7 +9,7 @@
 //      not its raw weight. The shares add up to the number beside them, so the receipt
 //      can be checked by adding it up rather than by dividing by a total never shown.
 //   2. The protections that were checked and did NOT fire -- with the real numbers.
-//      "Untouched for 5 years, 7 months, past the 3 years it has to sit unwatched first."
+//      "Unwatched for 5 years, 7 months, past the 3 years Reaper waits."
 //      Each is a whole sentence from a gate's ABSTAIN branch, rendered verbatim below; the
 //      tick is decoration and there is no label prefix. This is the block that makes a
 //      verdict auditable rather than merely asserted.
@@ -22,6 +22,8 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, type RefObject, useId, useLayoutEffect, useRef, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
+import i18next from "../i18n";
 import {
   api,
   type CandidateDetail,
@@ -35,8 +37,9 @@ import {
   type SignalState,
 } from "../api";
 import { announce } from "../announce";
+import { blockedParts, composeReason } from "../why";
 import { useSuccessorFocus } from "../focus";
-import { coverage, itemBytes, since, spareRemaining } from "../format";
+import { coverage, itemBytes, list, since, spareRemaining } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { useArtFallback } from "./artFallback";
 import { CollectionChip } from "./CollectionChip";
@@ -61,7 +64,8 @@ const BUILTIN_SIGNAL_IDS = new Set([
 
 /** The little "this one is yours" marker worn by every policy row the owner authored. */
 function RuleTag() {
-  return <span className="rule-tag">Your rule</span>;
+  const { t } = useTranslation();
+  return <span className="rule-tag">{t("why.panel.ruleTag")}</span>;
 }
 
 /** A pill that opens the item in one of the tools that manage it. Hidden without a URL --
@@ -70,7 +74,10 @@ export function JumpPill({ href, label }: { href: string | null; label: string }
   if (!href) return null;
   return (
     <a className="jump-pill" href={href} target="_blank" rel="noopener noreferrer">
-      {label} <span aria-hidden="true">↗</span>
+      {label}{" "}
+      <span className="dir-glyph" aria-hidden="true">
+        ↗
+      </span>
     </a>
   );
 }
@@ -102,6 +109,7 @@ export function PanelHead({
   /** The facts and chips this panel puts under its title, ahead of the jump pills. */
   sub: ReactNode;
 }) {
+  const { t } = useTranslation();
   const name = (
     <>
       {title}
@@ -120,7 +128,7 @@ export function PanelHead({
               href={links.plex}
               target="_blank"
               rel="noopener noreferrer"
-              title="Open in Plex"
+              title={t("why.panel.head.openInPlex")}
             >
               {name}
               <ExternalMark className="title-ext" />
@@ -134,10 +142,10 @@ export function PanelHead({
           {/* One order, read the way the panel is: what was played, who asked for it, then
               the app to go change it. At most one of radarr/sonarr is ever set (LinksOut),
               so the row always ends on the app that manages the file. */}
-          <JumpPill href={links.tautulli} label="Tautulli" />
-          <JumpPill href={links.seerr} label="Seerr" />
-          <JumpPill href={links.radarr} label="Radarr" />
-          <JumpPill href={links.sonarr} label="Sonarr" />
+          <JumpPill href={links.tautulli} label={t("why.panel.head.tautulli")} />
+          <JumpPill href={links.seerr} label={t("why.panel.head.seerr")} />
+          <JumpPill href={links.radarr} label={t("common.brand.radarr")} />
+          <JumpPill href={links.sonarr} label={t("common.brand.sonarr")} />
         </p>
       </div>
     </div>
@@ -147,8 +155,10 @@ export function PanelHead({
 /** Certification, runtime and genres, the way a library listing reads. The year stays in
  *  the title; anything unknown is simply skipped. */
 function MetaLine({ item }: { item: CandidateDetail }) {
+  const { t } = useTranslation();
   const parts: string[] = [];
-  if (item.runtime_minutes) parts.push(`${item.runtime_minutes} min`);
+  if (item.runtime_minutes)
+    parts.push(t("why.panel.meta.runtime", { minutes: item.runtime_minutes }));
   if (item.genres.length > 0) parts.push(item.genres.slice(0, 3).join(", "));
   if (!item.content_rating && parts.length === 0) return null;
   return (
@@ -188,6 +198,7 @@ function RatingChip({
  *  on hover); the rest come from Plex. Each chip opens its site when the link is known.
  *  The whole row hides when nothing is known. */
 function RatingsRow({ ratings, links }: { ratings: Ratings | null; links: Links }) {
+  const { t } = useTranslation();
   if (!ratings) return null;
   const known =
     ratings.imdb ??
@@ -204,45 +215,51 @@ function RatingsRow({ ratings, links }: { ratings: Ratings | null; links: Links 
           href={links.imdb}
           title={
             ratings.imdb_votes
-              ? `IMDb ${ratings.imdb.toFixed(1)} from ${ratings.imdb_votes.toLocaleString()} votes. The same number the score uses.`
-              : "The same number the score uses."
+              ? t("why.panel.ratings.imdbTitleWithVotes", {
+                  score: ratings.imdb.toFixed(1),
+                  votes: ratings.imdb_votes.toLocaleString(),
+                })
+              : t("why.panel.ratings.imdbTitleNoVotes")
           }
         >
-          <span className="rating-src rating-imdb">IMDb</span> {ratings.imdb.toFixed(1)}
+          <span className="rating-src rating-imdb">{t("why.panel.ratings.imdbLabel")}</span>{" "}
+          {ratings.imdb.toFixed(1)}
         </RatingChip>
       )}
       {/* The tomato and popcorn stand alone to save room; the hover text and the
           accessible label still say which score is which. */}
       {ratings.rt_critic != null && (
-        <RatingChip
-          href={links.rotten_tomatoes}
-          title="Rotten Tomatoes critics score. Opens a Rotten Tomatoes search"
-        >
-          <span className="rating-src" role="img" aria-label="Rotten Tomatoes critics">
+        <RatingChip href={links.rotten_tomatoes} title={t("why.panel.ratings.rtCriticsTitle")}>
+          <span
+            className="rating-src"
+            role="img"
+            aria-label={t("why.panel.ratings.rtCriticsLabel")}
+          >
             🍅
           </span>{" "}
           {ratings.rt_critic}%
         </RatingChip>
       )}
       {ratings.rt_audience != null && (
-        <RatingChip
-          href={links.rotten_tomatoes}
-          title="Rotten Tomatoes audience score. Opens a Rotten Tomatoes search"
-        >
-          <span className="rating-src" role="img" aria-label="Rotten Tomatoes audience">
+        <RatingChip href={links.rotten_tomatoes} title={t("why.panel.ratings.rtAudienceTitle")}>
+          <span
+            className="rating-src"
+            role="img"
+            aria-label={t("why.panel.ratings.rtAudienceLabel")}
+          >
             🍿
           </span>{" "}
           {ratings.rt_audience}%
         </RatingChip>
       )}
       {ratings.tmdb != null && (
-        <RatingChip href={links.tmdb} title="TMDb user score">
-          <span className="rating-src">TMDb</span> {ratings.tmdb}%
+        <RatingChip href={links.tmdb} title={t("why.panel.ratings.tmdbTitle")}>
+          <span className="rating-src">{t("why.panel.ratings.tmdbLabel")}</span> {ratings.tmdb}%
         </RatingChip>
       )}
       {ratings.trakt != null && (
-        <RatingChip href={links.trakt} title="Trakt rating. Opens the title on Trakt">
-          <span className="rating-src">Trakt</span> {ratings.trakt}%
+        <RatingChip href={links.trakt} title={t("why.panel.ratings.traktTitle")}>
+          <span className="rating-src">{t("why.panel.ratings.traktLabel")}</span> {ratings.trakt}%
         </RatingChip>
       )}
     </div>
@@ -254,6 +271,7 @@ function RatingsRow({ ratings, links }: { ratings: Ratings | null; links: Links 
  *  slide-out is the one place the plot lives, but it still should not push the reasoning below
  *  the fold, hence the clamp. Shared with the show panel. */
 export function Synopsis({ text }: { text: string }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [clipped, setClipped] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
@@ -307,7 +325,7 @@ export function Synopsis({ text }: { text: string }) {
           aria-expanded={expanded}
           onClick={() => setExpanded((v) => !v)}
         >
-          {expanded ? "less" : "more"}
+          {expanded ? t("why.panel.synopsis.less") : t("why.panel.synopsis.more")}
         </button>
       )}
     </p>
@@ -350,17 +368,15 @@ function KeptNotice({
   links: Links;
   mediaType: string;
 }) {
+  const { t } = useTranslation();
   if (!match || match.status === "matched" || match.status == null) return null;
 
-  const app = mediaType === "movie" ? "Radarr" : "Sonarr";
-  const thing = mediaType === "movie" ? "file" : "show";
   const reason =
     match.status === "ambiguous"
-      ? "This looks like more than one thing in your Plex, so we couldn't tell which one it is."
+      ? t("why.panel.keptNotice.ambiguous")
       : match.status === "conflicted"
-        ? `Plex and ${app} describe this ${thing} differently, so we couldn't tell which Plex ` +
-          "entry it is."
-        : "We couldn't find this in your Plex, so there's no way to tell if anyone still watches it.";
+        ? t("why.panel.keptNotice.conflicted", { mediaType })
+        : t("why.panel.keptNotice.unmatched");
 
   return (
     // `standing`: `match.status` is frozen into the scan's explanation, so it is true every time
@@ -368,7 +384,7 @@ function KeptNotice({
     // (`MatchCandidates` -> `JumpPill`), so they are reached by navigating rather than by being
     // interrupted -- and the same rows render bare at `ShowPanel.tsx`, with no notice at all.
     <Notice tone="warn" className="kept-notice" standing>
-      <strong>Kept to be safe.</strong> {reason}
+      <strong>{t("why.panel.keptNotice.heading")}</strong> {reason}
       <MatchCandidates links={links} />
     </Notice>
   );
@@ -393,14 +409,12 @@ function KeptNotice({
  *  deferred rather than half-done -- a season panel silently omitting a fact the movie panel
  *  states would be worse than both being quiet. */
 export function MergedListingChip({ match }: { match: Match | null | undefined }) {
+  const { t } = useTranslation();
   const listings = match?.merged_rating_keys?.length ?? 0;
   if (listings < 2) return null;
   return (
-    <span
-      className="chip"
-      title={`Listed ${listings} times in your Plex. A watch on any of them counts, and all ${listings} go together.`}
-    >
-      Listed {listings}&times;
+    <span className="chip" title={t("why.panel.mergedListing.title", { n: listings })}>
+      {t("why.panel.mergedListing.chip", { n: listings })}
     </span>
   );
 }
@@ -417,6 +431,7 @@ export function MergedListingChip({ match }: { match: Match | null | undefined }
  *  (rule 72): a conflicted SHOW lands there, its title link is `group.links.plex`, and that
  *  is null for exactly these rows -- the identical dead end this component exists to close. */
 export function MatchCandidates({ links }: { links: Links }) {
+  const { t } = useTranslation();
   const candidates = links.match_candidates ?? [];
   // Two ways to have nothing to offer, and only the first was checked. `JumpPill` renders
   // null for a null href, so a row whose candidates all lack BOTH a Plex and a Tautulli link
@@ -432,14 +447,26 @@ export function MatchCandidates({ links }: { links: Links }) {
         {/* The count decides the noun. The component already asserts a single-candidate case
             exists -- `numbered` drops the number for it -- while the lead said "1 possible
             matches" right beside it (#209). */}
-        Reaper saw {candidates.length} possible {numbered ? "matches" : "match"}:
+        {t("why.panel.matchCandidates.lead", { n: candidates.length })}
       </span>
       {candidates.map((candidate, i) => (
         // The rating key: unique among siblings and a stable server id (rule 19), where the
         // index would renumber every pill if the list ever reordered.
         <span className="candidate-group" key={candidate.rating_key}>
-          <JumpPill href={candidate.plex} label={numbered ? `Plex ${i + 1}` : "Plex"} />
-          <JumpPill href={candidate.tautulli} label={numbered ? `Tautulli ${i + 1}` : "Tautulli"} />
+          <JumpPill
+            href={candidate.plex}
+            label={t("why.panel.matchCandidates.plexLabel", {
+              numbered: numbered ? "yes" : "no",
+              n: i + 1,
+            })}
+          />
+          <JumpPill
+            href={candidate.tautulli}
+            label={t("why.panel.matchCandidates.tautulliLabel", {
+              numbered: numbered ? "yes" : "no",
+              n: i + 1,
+            })}
+          />
         </span>
       ))}
     </span>
@@ -504,12 +531,12 @@ function keepRuleConflict(item: CandidateDetail): GateOutcome | undefined {
  *    flip; the next scan resolves either into one of the two above. */
 function conflictNote(defersToOwner: boolean | null | undefined): string {
   if (defersToOwner === true) {
-    return "This was watched more than a season your keep rule protects, so Reaper left the call to you. Spare it to keep it, or Reap it to remove it.";
+    return i18next.t("why.panel.verdict.conflictComparable");
   }
   if (defersToOwner === false) {
-    return "Reaper couldn't check who watched these seasons, so it left the call to you. Spare it to keep it, or Reap it to remove it.";
+    return i18next.t("why.panel.verdict.conflictUnknowable");
   }
-  return "Reaper couldn't settle this one on its own, so it left the call to you. Spare it to keep it, or Reap it to remove it.";
+  return i18next.t("why.panel.verdict.conflictVague");
 }
 
 /** Why a hand reap is still held. Exactly three things refuse one: a FIRED structural stop
@@ -541,7 +568,7 @@ function structuralStop(item: CandidateDetail): "streaming_now" | "unmanaged" | 
   // Reads a STORED explanation, so it outlives the gate that wrote it. That gate is retired
   // (`engine/gates.py`) and no new scan can produce this, but a snapshot on disk is read back
   // by whatever version is running, and a wrong-but-specific sentence is worse than a right
-  // one. Kept for the same reason `api/review.py` keeps its phrase for `others_watching`.
+  // one.
   if (fired.has("unmanaged")) return "unmanaged";
   return undefined;
 }
@@ -549,24 +576,22 @@ function structuralStop(item: CandidateDetail): "streaming_now" | "unmanaged" | 
 function heldReapNote(item: CandidateDetail): string {
   const stop = structuralStop(item);
   if (stop === "streaming_now") {
-    return "You asked to remove this, but someone is watching it right now, so it's kept for now.";
+    return i18next.t("why.panel.verdict.heldStreamingNow");
   }
   if (stop === "unmanaged") {
-    return "You asked to remove this, but no app manages the file, so there's no safe way to remove it.";
+    return i18next.t("why.panel.verdict.heldUnmanaged");
   }
   const status = item.explanation.match?.status;
   if (status === "ambiguous") {
-    return "You asked to remove this, but it looks like more than one thing in your Plex, so Reaper can't tell which file to remove.";
+    return i18next.t("why.panel.verdict.heldAmbiguous");
   }
   if (status === "conflicted") {
-    const app = item.media_type === "movie" ? "Radarr" : "Sonarr";
-    const thing = item.media_type === "movie" ? "file" : "show";
-    return `You asked to remove this, but Plex and ${app} describe this ${thing} differently, so Reaper can't tell which file to remove.`;
+    return i18next.t("why.panel.verdict.heldConflicted", { mediaType: item.media_type });
   }
   if (status === "unmatched") {
-    return "You asked to remove this, but Reaper couldn't find it in your Plex, so it can't tell which file to remove.";
+    return i18next.t("why.panel.verdict.heldUnmatched");
   }
-  return "You asked to remove this, but Reaper can't confirm it's safe to remove yet, so it's kept for now.";
+  return i18next.t("why.panel.verdict.heldUnknown");
 }
 
 /** What a hand spare says: kept by the owner, forever, on a countdown, or expired.
@@ -590,18 +615,18 @@ function spareNote(item: CandidateDetail): string {
   if (item.spare_covers_until !== item.spare_expires_at) {
     const own = spareRemaining(item.spare_expires_at);
     const kept = cover.forever
-      ? "The whole show is spared, so this won't be removed."
-      : `The whole show is spared, ${cover.phrase}.`;
+      ? i18next.t("why.panel.verdict.spareShowForever")
+      : i18next.t("why.panel.verdict.spareShowPhrase", { phrase: cover.phrase });
     // Named second, so the outcome leads and the operator's own decision is still accounted
     // for rather than silently overridden.
     const mine = own.expired
-      ? "Your spare on this season has run out."
-      : `Your spare on this season has ${own.phrase}.`;
+      ? i18next.t("why.panel.verdict.spareSeasonExpired")
+      : i18next.t("why.panel.verdict.spareSeasonPhrase", { phrase: own.phrase });
     return `${kept} ${mine}`;
   }
-  if (cover.forever) return "You chose to keep this, so it won't be removed.";
+  if (cover.forever) return i18next.t("why.panel.verdict.spareForever");
   if (cover.expired) return `${cover.note}.`;
-  return `You chose to keep this. ${cover.phrase}, then Reaper judges it again.`;
+  return i18next.t("why.panel.verdict.spareActive", { phrase: cover.phrase });
 }
 
 /** The verdict headline, and the reason under it. It reads the EFFECTIVE decision, not the
@@ -618,14 +643,22 @@ function verdictLook(item: CandidateDetail): { klass: string; label: string; not
     if (override_effective) {
       return {
         klass: "verdict-condemn",
-        label: "Reaped by hand",
-        note: "You marked this for removal, so it will be removed. Nothing is holding it back.",
+        label: i18next.t("why.panel.verdict.reapedByHandLabel"),
+        note: i18next.t("why.panel.verdict.reapedByHandNote"),
       };
     }
-    return { klass: "verdict-held", label: "Kept for now", note: heldReapNote(item) };
+    return {
+      klass: "verdict-held",
+      label: i18next.t("why.panel.verdict.heldLabel"),
+      note: heldReapNote(item),
+    };
   }
   if (override === "spare") {
-    return { klass: "verdict-protect", label: "Spared by hand", note: spareNote(item) };
+    return {
+      klass: "verdict-protect",
+      label: i18next.t("why.panel.verdict.sparedByHandLabel"),
+      note: spareNote(item),
+    };
   }
 
   if (verdict === "protect" && explanation.protections_fired.length > 0) {
@@ -636,22 +669,26 @@ function verdictLook(item: CandidateDetail): { klass: string; label: string; not
     // titles on a keep list believing that list is inviolable.
     return {
       klass: "verdict-protect",
-      label: "Sanctuary",
+      label: i18next.t("why.panel.verdict.sanctuaryLabel"),
       note: structuralStop(item) ? (
-        <>
-          Something is protecting this, so <strong>the score doesn't matter</strong>: it's kept, and
-          a Reap won't remove it.
-        </>
+        <Trans
+          i18nKey="why.panel.verdict.sanctuaryStructural"
+          components={{ strong: <strong /> }}
+        />
       ) : (
-        <>
-          Something is protecting this, so <strong>the score doesn't matter</strong>: it's kept
-          unless you Reap it yourself.
-        </>
+        <Trans
+          i18nKey="why.panel.verdict.sanctuaryOverridable"
+          components={{ strong: <strong /> }}
+        />
       ),
     };
   }
   if (verdict === "condemn") {
-    return { klass: "verdict-condemn", label: "Condemned", note: null };
+    return {
+      klass: "verdict-condemn",
+      label: i18next.t("why.panel.verdict.condemnedLabel"),
+      note: null,
+    };
   }
   const conflict = keepRuleConflict(item);
   if (conflict) {
@@ -660,23 +697,19 @@ function verdictLook(item: CandidateDetail): { klass: string; label: string; not
     // conflict chip's own words, in all three shapes.
     return {
       klass: "verdict-abstain",
-      label: "Needs a look",
+      label: i18next.t("why.panel.verdict.needsLookLabel"),
       note: conflictNote(conflict.defers_to_owner),
     };
   }
   return {
     klass: "verdict-abstain",
-    label: "Limbo",
-    note: (
-      <>
-        Reaper is not confident enough to judge this one. It scored below your threshold, or too
-        little of it could be seen. Either way, Reaper leaves it alone, and the file is kept.
-      </>
-    ),
+    label: i18next.t("why.panel.verdict.limboLabel"),
+    note: i18next.t("why.panel.verdict.limboNote"),
   };
 }
 
 function Verdict({ item }: { item: CandidateDetail }) {
+  const { t } = useTranslation();
   const { score, explanation } = item;
   const look = verdictLook(item);
 
@@ -691,7 +724,7 @@ function Verdict({ item }: { item: CandidateDetail }) {
         <span className="muted">
           /100
           {typeof explanation.threshold === "number" &&
-            `, your threshold is ${explanation.threshold}`}
+            t("why.panel.verdict.thresholdClause", { threshold: explanation.threshold })}
         </span>
       </div>
       {look.note && <p className="verdict-note">{look.note}</p>}
@@ -809,6 +842,7 @@ const HOVER_QUERY = "(hover: hover) and (pointer: fine)";
  *  row against itself is what let a 55 render as three near-full bars: every row looked
  *  maxed out, and the total they were shares of was never on screen. */
 function SignalRow({ row }: { row: Row }) {
+  const { t } = useTranslation();
   const { signal, state } = row;
   // A custom condemn rule's id is its own name; built-ins use the closed id set.
   const custom = !BUILTIN_SIGNAL_IDS.has(signal.id);
@@ -849,7 +883,7 @@ function SignalRow({ row }: { row: Row }) {
           {state === "unreadable" ? (
             <>
               <span aria-hidden="true">·</span>
-              <span className="sr-only">Couldn't check</span>
+              <span className="sr-only">{t("why.panel.signals.uncheckedTitle")}</span>
             </>
           ) : row.share > 0 ? (
             `+${row.share}`
@@ -860,7 +894,7 @@ function SignalRow({ row }: { row: Row }) {
           )}
         </span>
         <span className="sig-detail">
-          {signal.detail}
+          {rowText(signal)}
           {custom && <RuleTag />}
         </span>
       </span>
@@ -920,6 +954,7 @@ function SignalGroup({
   note?: string;
   collapseAfter?: number;
 }) {
+  const { t } = useTranslation();
   if (rows.length === 0) return null;
 
   const limit = collapseAfter ?? rows.length;
@@ -930,7 +965,9 @@ function SignalGroup({
   // rounding band to pick a threshold inside. At zero the summary says only how many are
   // down there, because "adding +0" reads as a bug.
   const more =
-    hiddenTotal > 0 ? `${hidden.length} more, adding +${hiddenTotal}` : `${hidden.length} more`;
+    hiddenTotal > 0
+      ? t("why.panel.signals.moreHiddenWithTotal", { count: hidden.length, added: hiddenTotal })
+      : t("why.panel.signals.moreHidden", { count: hidden.length });
 
   return (
     <div className="sig-group">
@@ -965,6 +1002,7 @@ function SignalGroup({
  *  keeps block below owns the difference. Rows that visibly fail to add up to the number
  *  beside them are the exact bug this section exists to remove. */
 function Signals({ item }: { item: CandidateDetail }) {
+  const { t } = useTranslation();
   const { explanation } = item;
 
   // A rule carrying no weight is not part of the score and has nothing to report.
@@ -1007,14 +1045,12 @@ function Signals({ item }: { item: CandidateDetail }) {
   // omits it like a null threshold) or coverage cleared it. `coverage_bp < floor` implies
   // `< FULL_COVERAGE_BP`, so this clause only ever rides inside the sentence below.
   const floor = explanation.coverage_floor_bp ?? null;
-  const floorClause =
-    floor != null && item.coverage_bp < floor && coverage(item.coverage_bp) !== coverage(floor)
-      ? `, under the ${coverage(floor)} it needs to judge this one`
-      : "";
+  const hasFloorClause =
+    floor != null && item.coverage_bp < floor && coverage(item.coverage_bp) !== coverage(floor);
 
   return (
     <section className="block">
-      <h3>Why it scored {explanation.score}</h3>
+      <h3>{t("why.panel.signals.heading", { score: explanation.score })}</h3>
       {/* The coverage clause is silence at full coverage, and it should always have been.
           The ONLY thing that can lower this number is a reason Reaper could not read
           (`SignalState.UNREADABLE` is the one state that costs coverage), and those get
@@ -1025,34 +1061,43 @@ function Signals({ item }: { item: CandidateDetail }) {
           unread, which the group's row count does not answer: one unread reason out of five
           can be most of the score. */}
       <p className="blurb">
-        Reasons to believe nobody will watch it again.
+        {t("why.panel.signals.blurb")}
         {item.coverage_bp < FULL_COVERAGE_BP && (
           <>
             {" "}
-            Reaper could read {coverage(item.coverage_bp)} of what it scores on{floorClause}.
+            {hasFloorClause
+              ? t("why.panel.signals.coverageBlurbWithFloor", {
+                  pct: coverage(item.coverage_bp),
+                  floorPct: coverage(floor!),
+                })
+              : t("why.panel.signals.coverageBlurb", { pct: coverage(item.coverage_bp) })}
           </>
         )}
       </p>
 
       <SignalGroup
-        title="Pushed to remove"
+        title={t("why.panel.signals.pushedTitle")}
         rows={adds}
         total={addedTotal}
         collapseAfter={GROUP_ROW_LIMIT}
       />
-      <SignalGroup title="Argued to keep" rows={argued} collapseAfter={GROUP_ROW_LIMIT} />
+      <SignalGroup
+        title={t("why.panel.signals.arguedTitle")}
+        rows={argued}
+        collapseAfter={GROUP_ROW_LIMIT}
+      />
       {/* "Couldn't check" is never folded away, and never capped. A reason Reaper could not
           read is the one thing an operator has to see before approving a deletion, and more
           of them is more cause to look. One note for the group, not one per row. */}
       <SignalGroup
-        title="Couldn't check"
+        title={t("why.panel.signals.uncheckedTitle")}
         rows={unreadable}
-        note="These pull the score down, never up."
+        note={t("why.panel.signals.uncheckedNote")}
       />
 
       {inapplicable.length > 0 && (
         <details className="sig-rest">
-          <summary>{inapplicable.length} didn't apply here</summary>
+          <summary>{t("why.panel.signals.didntApply", { count: inapplicable.length })}</summary>
           <ul className="signals">
             {inapplicable.map((row) => (
               <SignalRow key={row.signal.id} row={row} />
@@ -1063,32 +1108,31 @@ function Signals({ item }: { item: CandidateDetail }) {
 
       <p className="sig-legend">
         <span className="sig-key sig-key-added" />
-        Added
+        {t("why.panel.signals.addedLegend")}
         <span className="sig-key sig-key-held" />
-        Held back
+        {t("why.panel.signals.heldBackLegend")}
         <span className="sig-key sig-key-unread" />
-        Couldn't check
+        {t("why.panel.signals.uncheckedTitle")}
         {/* The sum sentence is the legend's last item, not a stray line under it: what the
             colors mean and what the numbers add to belong on the same line. It needs its own
             element to BE an item: adjacent bare text nodes collapse into one anonymous flex
             item, and the row's gap never lands between them. */}
-        <span>{discounted ? "Points before the keep rules." : "Points add up to the score."}</span>
+        <span>
+          {discounted
+            ? t("why.panel.signals.pointsBeforeKeep")
+            : t("why.panel.signals.pointsAddUp")}
+        </span>
       </p>
     </section>
   );
 }
 
-/** The backend words a custom-rule outcome as "your rule: {condition}" (fired) or
- *  "checked your rule: {condition}" (checked, didn't fire) -- see engine/fields.py.
- *  Reworded here for the panel; the stored detail stays untouched as the audit record. */
-function customGateDetail(detail: string): string {
-  if (detail.startsWith("your rule: ")) {
-    return `Kept by your rule: ${detail.slice("your rule: ".length)}`;
-  }
-  if (detail.startsWith("checked your rule: ")) {
-    return `Your rule didn't match: ${detail.slice("checked your rule: ".length)}`;
-  }
-  return detail;
+/** One row's sentence, composed from the catalog: a typed `detail_key` on a fresh row, a
+ *  `legacy` key wrapping the stored sentence on one that predates typed details, rendered
+ *  verbatim either way (docs/history/I18N_PLAN.md §5, #899). Empty where the row carries
+ *  no detail at all. */
+function rowText(row: { detail_key?: import("../api").ReasonKey | null }): string {
+  return row.detail_key ? composeReason(row.detail_key) : "";
 }
 
 function Gates({
@@ -1104,6 +1148,7 @@ function Gates({
   tone: "fired" | "checked";
   collapsible?: boolean;
 }) {
+  const { t } = useTranslation();
   if (outcomes.length === 0) return null;
 
   const body = (
@@ -1114,8 +1159,9 @@ function Gates({
             and duplicate keys would make React drop rows. */}
         {outcomes.map((outcome) => {
           const custom = outcome.gate === "custom";
+          const text = rowText(outcome);
           return (
-            <li key={`${outcome.gate}:${outcome.detail}`} className={custom ? "gate-custom" : ""}>
+            <li key={`${outcome.gate}:${text}`} className={custom ? "gate-custom" : ""}>
               {/* Decoration: every row in this list is a pass, so the tick adds nothing a
                   reader needs and lands mid-sentence as a stray character (#177). Where a
                   list can hold BOTH outcomes -- the reap report's per-item checks -- the
@@ -1124,7 +1170,7 @@ function Gates({
                 ✓
               </span>
               <span className="gate-detail">
-                {custom ? customGateDetail(outcome.detail) : outcome.detail}
+                {text}
                 {custom && <RuleTag />}
               </span>
             </li>
@@ -1148,9 +1194,9 @@ function Gates({
               ▸
             </span>
             <span className="fold-shut-label">
-              {outcomes.length === 1 ? "Show 1" : `Show all ${outcomes.length}`}
+              {t("why.panel.gates.showCount", { count: outcomes.length })}
             </span>
-            <span className="fold-open-label">Hide</span>
+            <span className="fold-open-label">{t("common.hide")}</span>
           </summary>
           {body}
         </details>
@@ -1161,94 +1207,22 @@ function Gates({
   );
 }
 
-/** The backend words each unchecked protection as "could not check {check}: {cause}"
- *  (engine/gates.py `_blocked` and the custom-rule evaluator). Both vocabularies are
- *  closed and colon-free, so the first ": " splits them reliably; anything that doesn't
- *  parse (a season-order conflict, a named custom rule's wrapped detail) keeps its own
- *  row with the raw sentence, exactly as before.
+/** "Left for you to decide", grouped by cause. Three rows all ending in "This title
+ *  couldn't be found in Plex" told the owner the same thing three times; one box states
+ *  the cause once and lists what it blocked. Causes keep first-appearance order.
  *
- *  Only the phrases that CHANGE are listed. The lookup below falls back to the backend's own
- *  words, so an entry mapping a phrase to itself ("watch history", "when it was last watched",
- *  "who else watched it") reads as a translation and produces the fallback's string. Add an
- *  entry when the backend's phrase is not what the operator should read. */
-const CHECK_COPY: Record<string, string> = {
-  "the watch horizon": "how far back its history goes",
-  "active streams": "whether anyone is watching",
-  "the IMDb rating": "its IMDb rating",
-  "the IMDb vote count": "its IMDb vote count",
-  "the whitelist": "your keep list",
-  "curated lists": "protected lists",
-  "which *arr owns this": "which app manages it",
-  // The season guard, where it could not run at all. Its other outcomes are whole sentences
-  // that do not parse as `could not check {what}: {cause}` and keep their own row.
-  "who is part-way through it": "who's part-way through it",
-};
-
-const CAUSE_COPY: Record<string, string> = {
-  "Plex has not matched this item": "This title couldn't be found in Plex.",
-  "Plex has not matched this season": "This season couldn't be found in Plex.",
-  "more than one Plex item matches this title": "This looks like more than one thing in Plex.",
-  "more than one Plex item matches this show": "This show looks like more than one thing in Plex.",
-  // The disagreement pair. Generated nowhere: these are the exact strings snapshot.py and
-  // season_evidence.py put in `_NO_KEY_REASONS`, and
-  // tests/test_review_chips.py::TestTheMatchStatusVocabulary fails when one of those has no
-  // entry here -- without which the box prints the backend's raw phrasing (rule 144).
-  "Plex and Radarr describe this file differently":
-    "Plex and Radarr describe this file differently.",
-  "Plex and Sonarr describe this show differently":
-    "Plex and Sonarr describe this show differently.",
-  "no added-at date": "Plex didn't say when this was added.",
-  "no added-at date for this season": "Plex didn't say when this season was added.",
-  "could not read active sessions": "Reaper couldn't see what's playing right now.",
-  "could not reach the requests app": "The requests app couldn't be reached.",
-  "requests not loaded": "Requests weren't loaded for this scan.",
-  "no TMDb id to match a request": "It couldn't be matched to a request.",
-  "no TVDb id to match a request": "It couldn't be matched to a request.",
-  "Sonarr did not report series status": "Sonarr didn't say whether the show has ended.",
-  // Serves STORED rows only: nothing writes this reason any more. A season with no rank is
-  // a special, and season_scan.py now records that as Absent (it genuinely has no rank slot)
-  // rather than Unknown, so no fresh scan can compose the detail this translates. It stays
-  // because a snapshot frozen before that fix survives an upgrade -- migrations only add --
-  // and the queue renders the latest snapshot until the next scan replaces it, so an owner
-  // who upgrades before re-scanning can still open a row carrying it. Dropping the entry
-  // would print the backend's raw phrase at exactly that owner, which is what #282 closed.
-  // tests/test_review_chips.py::test_every_panel_cause_has_a_live_producer holds the pair.
-  "season has no rank": "Reaper couldn't tell which season this is.",
-  // The five that used to fall through and print the backend's own words here. Two arrive
-  // through built-in gates (an IMDb rating bar, and the dormancy and popularity gates); the
-  // size pair arrives through a keep rule on "Size on disk", the same route the request
-  // reasons above already take.
-  "the IMDb ratings data could not be read": "Reaper couldn't read the IMDb ratings data.",
-  "no IMDb id to look up": "Reaper couldn't look this title up on IMDb.",
-  "the file's size was not reported": "Radarr didn't report this file's size.",
-  "the season's size was not reported": "Sonarr didn't report this season's size.",
-  "plays recorded on an earlier scan are no longer readable":
-    "Reaper can no longer read the plays it recorded earlier.",
-};
-
-function joinChecks(checks: string[]): string {
-  if (checks.length === 1) return checks[0] ?? "";
-  if (checks.length === 2) return `${checks[0]} and ${checks[1]}`;
-  return `${checks.slice(0, -1).join(", ")}, and ${checks[checks.length - 1]}`;
-}
-
-/** "Left for you to decide", grouped by cause. Three rows all ending in "Plex has not
- *  matched this item" told the owner the same thing three times; one box states the cause
- *  once and lists what it blocked. Causes keep first-appearance order; unparseable details
- *  render verbatim as their own box. */
+ *  A fresh row carries the check/cause halves structurally (`why.blockedParts`) and its
+ *  copy lives in the catalog (`why.check.*` / `why.cause.*`). A row frozen before typed
+ *  details, or a deliberate left-for-you sentence that is not the "could not check"
+ *  shape (a season conflict, an unanswerable season hold), keeps its own row instead,
+ *  rendered verbatim (#899). */
 function LeftForYou({ outcomes }: { outcomes: GateOutcome[] }) {
+  const { t } = useTranslation();
   if (outcomes.length === 0) return null;
 
   const groups = new Map<string, { cause: string; checks: string[] }>();
   const rows: ({ kind: "group"; key: string } | { kind: "raw"; outcome: GateOutcome })[] = [];
-  for (const outcome of outcomes) {
-    const parsed = /^could not check (.+?): (.+)$/.exec(outcome.detail);
-    if (!parsed || !parsed[1] || !parsed[2]) {
-      rows.push({ kind: "raw", outcome });
-      continue;
-    }
-    const check = CHECK_COPY[parsed[1]] ?? parsed[1];
-    const cause = CAUSE_COPY[parsed[2]] ?? `${parsed[2]}.`;
+  const add = (check: string, cause: string) => {
     const group = groups.get(cause);
     if (group) {
       if (!group.checks.includes(check)) group.checks.push(check);
@@ -1256,26 +1230,30 @@ function LeftForYou({ outcomes }: { outcomes: GateOutcome[] }) {
       groups.set(cause, { cause, checks: [check] });
       rows.push({ kind: "group", key: cause });
     }
+  };
+  for (const outcome of outcomes) {
+    const parts = outcome.detail_key ? blockedParts(outcome.detail_key) : null;
+    if (parts) add(parts.check, parts.cause);
+    else rows.push({ kind: "raw", outcome });
   }
 
   return (
     <section className="block">
-      <h3>Left for you to decide</h3>
-      <p className="blurb">
-        Reaper wasn't sure enough to act on these on its own: a rule was too close to call, or
-        something couldn't be reached. Everything here is kept, never removed, until you look.
-      </p>
+      <h3>{t("why.panel.leftForYou.heading")}</h3>
+      <p className="blurb">{t("why.panel.leftForYou.blurb")}</p>
       <ul className="gates gates-unknown">
         {rows.map((row) =>
           row.kind === "raw" ? (
-            <li key={row.outcome.gate + row.outcome.detail}>
-              <span className="gate-detail">{row.outcome.detail}</span>
+            <li key={row.outcome.gate + rowText(row.outcome)}>
+              <span className="gate-detail">{rowText(row.outcome)}</span>
             </li>
           ) : (
             <li key={row.key}>
               <strong>{row.key}</strong>
               <span className="gate-detail">
-                Couldn't check: {joinChecks(groups.get(row.key)?.checks ?? [])}.
+                {t("why.panel.leftForYou.couldntCheck", {
+                  checks: list(groups.get(row.key)?.checks ?? []),
+                })}
               </span>
             </li>
           ),
@@ -1302,16 +1280,14 @@ const WATCH_RECORD_STALE = [["candidate"], ["candidates"], ["watch-evidence"]];
  *  bare percentage, so the sentence carries its own evidence; the other two say why there is
  *  no number rather than printing one. */
 function rewatchOddsSentence(odds: RewatchOdds, mediaType: string): string {
-  if (odds.state === "no_history") return "Not enough watch history yet.";
+  if (odds.state === "no_history") return i18next.t("why.panel.rewatch.noHistory");
   // Season rows read as shows, the same noun the rest of the panel uses for TV (rule 21:
-  // plain language, no internal vocabulary).
-  const noun = mediaType === "season" ? "shows" : "titles";
-  if (odds.state === "thin") return `Too few ${noun} like this to say.`;
+  // plain language, no internal vocabulary). "thin" shares its catalog entry with the gate's
+  // own `RewatchOddsGate` Reason (`why.rewatch_thin`): the two sentences were byte-identical
+  // once both carried the select, so one entry serves both surfaces (rule 144).
+  if (odds.state === "thin") return composeReason({ k: "rewatch_thin", p: { mediaType } });
   const pct = Math.round((100 * odds.k) / odds.n);
-  return (
-    `Of ${odds.n} ${noun} that had sat unwatched about this long, ${odds.k} (${pct}%) were ` +
-    "watched again within a year. Measured from your own history at the last scan."
-  );
+  return i18next.t("why.panel.rewatch.measured", { n: odds.n, k: odds.k, pct, mediaType });
 }
 
 export function WhyPanel({
@@ -1333,6 +1309,7 @@ export function WhyPanel({
    *  all of them (rule 18). A name absent from the map renders no number, never a "0". */
   collectionSizes?: Record<string, number> | null;
 }) {
+  const { t } = useTranslation();
   const { explanation } = item;
 
   // The panel is where the deciding happens, so Spare and Reap live here too, through the
@@ -1358,13 +1335,14 @@ export function WhyPanel({
       // happens inside a `standing` notice that is correctly not a live region -- so nothing was
       // said at all. The same sentence as that replacement, on purpose: one fact, one wording,
       // whichever way the operator meets it (rule 144).
-      announce("Reaper will judge this title on what it can see now.");
+      announce(t("why.panel.watchBlind.done"));
       afterForget.arriving();
       for (const queryKey of WATCH_RECORD_STALE) void queryClient.invalidateQueries({ queryKey });
     },
   });
 
-  const mediaLabel = item.media_type === "season" ? "TV season" : item.media_type;
+  const mediaLabel =
+    item.media_type === "season" ? t("why.panel.mediaLabel.season") : item.media_type;
 
   return (
     <WhyShell headingId={headingId} onClose={onClose}>
@@ -1381,7 +1359,10 @@ export function WhyPanel({
               so it is decoration sitting inside a control's accessible name. The space stays
               OUTSIDE the wrapper: inside it, the name fuses into "◂Back" with no pause (#284).
               The five directional glyphs swept in #177 missed this one (rule 72). */}
-          <span aria-hidden="true">◂</span> Back to {item.group_title ?? "the show"}
+          <span aria-hidden="true">◂</span>{" "}
+          {t("why.panel.backToShow.label", {
+            title: item.group_title ?? t("why.panel.backToShow.defaultTitle"),
+          })}
         </button>
       )}
 
@@ -1429,10 +1410,7 @@ export function WhyPanel({
           protected it, and an empty panel alone would read as the second. Same amber
           `.notice-warn` every other "we could not check" uses. */}
       {item.explanation_unreadable && (
-        <Notice tone="warn">
-          Reaper couldn't read why it judged this one, so the reasons below are missing. Run a scan
-          to rebuild them. Nothing is removed on a reason Reaper can't show.
-        </Notice>
+        <Notice tone="warn">{t("why.panel.explanationUnreadable")}</Notice>
       )}
 
       {/* The one hold the operator can lift from here, so the escape lives beside the sentence
@@ -1452,8 +1430,7 @@ export function WhyPanel({
       {explanation.watch_blind === true && (
         <>
           <Notice tone="warn" standing as="div">
-            Plays Reaper recorded earlier are no longer readable. The file may have been added to
-            your library again, and Reaper could not match it to your watch history.
+            {t("why.panel.watchBlind.notice")}
             <div className="watch-blind-act">
               {/* Rule 85: the confirmation fires on SETTLED state, never at issuance. It also
                   has to exist at all. This panel is reading the scan's frozen explanation, so
@@ -1484,7 +1461,7 @@ export function WhyPanel({
                   tabIndex={-1}
                   ref={afterForget.ref as RefObject<HTMLParagraphElement>}
                 >
-                  Reaper will judge this title on what it can see now.
+                  {t("why.panel.watchBlind.done")}
                 </p>
               ) : (
                 <>
@@ -1497,14 +1474,16 @@ export function WhyPanel({
                     {/* The label carries the pending state, so the control gates itself: a
                         press that lands while the first is in flight would forget a record
                         that is already gone and report a second, contradictory answer. */}
-                    {forgetWatchRecord.isPending ? "Using…" : "Use what Reaper sees now"}
+                    {forgetWatchRecord.isPending
+                      ? t("why.panel.watchBlind.using")
+                      : t("why.panel.watchBlind.useButton")}
                   </button>
-                  <p className="help">Use the plays visible today for this title only.</p>
+                  <p className="help">{t("why.panel.watchBlind.useHelp")}</p>
                 </>
               )}
             </div>
           </Notice>
-          {forgetWatchRecord.isError && <Notice tone="error">That didn't save. Try again.</Notice>}
+          {forgetWatchRecord.isError && <Notice tone="error">{t("common.saveError")}</Notice>}
         </>
       )}
 
@@ -1512,8 +1491,7 @@ export function WhyPanel({
 
       {item.first_flagged_at && (
         <p className="flagged">
-          On the list since {since(item.first_flagged_at)}. Watching it or sparing it keeps it, and
-          you still start every removal by hand.
+          {t("why.panel.onListSince", { when: since(item.first_flagged_at) })}
         </p>
       )}
 
@@ -1521,13 +1499,17 @@ export function WhyPanel({
 
       {explanation.keeps && explanation.keeps.length > 0 && (
         <section className="block">
-          <h3>Leaning toward keeping</h3>
+          <h3>{t("why.panel.keeps.heading")}</h3>
           <p className="blurb">
-            Soft keep rules lowered the score
-            {explanation.base_score != null
-              ? ` from ${explanation.base_score.toFixed(0)} to ${explanation.score.toFixed(0)}`
-              : ""}
-            . These can only ever lower a score, and never overrule a protection.
+            {/* A lowering that rounds away printed "from 94 to 94", which reads as nothing
+                having happened. The numbers appear only when they differ. */}
+            {explanation.base_score != null &&
+            explanation.base_score.toFixed(0) !== explanation.score.toFixed(0)
+              ? t("why.panel.keeps.blurbWithScores", {
+                  from: explanation.base_score.toFixed(0),
+                  to: explanation.score.toFixed(0),
+                })
+              : t("why.panel.keeps.blurb")}
           </p>
           <ul className="signals">
             {explanation.keeps.map((keep) => (
@@ -1538,7 +1520,7 @@ export function WhyPanel({
                     <span className="muted">/{keep.max_discount}</span>
                   </span>
                   <span className="signal-detail">
-                    {keep.detail}
+                    {rowText(keep)}
                     {/* Every graded keep except the built-in rewatch keep is operator-authored,
                         so every row but that one is yours. */}
                     {keep.name !== REWATCH_KEEP && <RuleTag />}
@@ -1546,8 +1528,7 @@ export function WhyPanel({
                 </div>
                 {!keep.evaluated && (
                   <p className="signal-note">
-                    Reaper couldn’t check this one, so it kept the file fully: missing data only
-                    ever leans toward <em>keeping</em>.
+                    <Trans i18nKey="why.panel.keeps.uncheckedNote" components={{ em: <em /> }} />
                   </p>
                 )}
               </li>
@@ -1558,21 +1539,21 @@ export function WhyPanel({
 
       {explanation.rewatch_odds && (
         <section className="block">
-          <h3>Watched again within a year</h3>
+          <h3>{t("why.panel.rewatch.heading")}</h3>
           <p className="blurb">{rewatchOddsSentence(explanation.rewatch_odds, item.media_type)}</p>
         </section>
       )}
 
       <Gates
-        title="What spared it"
-        blurb="Any one of these keeps the file, whatever it scored."
+        title={t("why.panel.gates.firedTitle")}
+        blurb={t("why.panel.gates.firedBlurb")}
         outcomes={explanation.protections_fired}
         tone="fired"
       />
 
       <Gates
-        title="Protections it cleared"
-        blurb="The numbers are the ones it actually used."
+        title={t("why.panel.gates.checkedTitle")}
+        blurb={t("why.panel.gates.checkedBlurb")}
         outcomes={explanation.protections_checked}
         tone="checked"
         collapsible
@@ -1586,10 +1567,7 @@ export function WhyPanel({
           reapable then, and promising otherwise here is worse than saying nothing. The
           plain reason only, never which source was asked or when. */}
       {item.size_bytes === null && holdsBack && (
-        <Notice tone="warn">
-          Held back: size unknown. Sonarr and Radarr had none, so Reaper can't tell what removing
-          this would free, and won't remove it.
-        </Notice>
+        <Notice tone="warn">{t("why.panel.heldBackSizeUnknown")}</Notice>
       )}
 
       {/* Decide without leaving the reasoning. Sticky, so the buttons stay in reach at
@@ -1622,7 +1600,7 @@ export function WhyPanel({
             roomy
           />
           {(setOverride.isError || clearOverride.isError) && (
-            <span className="error">Couldn't save that. Try again.</span>
+            <span className="error">{t("common.saveError")}</span>
           )}
         </div>
       </div>

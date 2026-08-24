@@ -46,8 +46,9 @@ class TestSeerrPaginationEnvelope:
 
         client.get_json = fake_get_json  # type: ignore[method-assign]
         try:
-            with pytest.raises(IntegrationError, match="pageInfo"):
+            with pytest.raises(IntegrationError) as exc:
                 await client.all_requests()
+            assert exc.value.code == "error.integration.unexpected_shape"
         finally:
             await client.aclose()
 

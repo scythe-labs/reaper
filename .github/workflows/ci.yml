@@ -66,15 +66,16 @@ jobs:
   # was written (rule 7/24). Two other workflows filter themselves and neither can read an
   # output of this one, because a `paths` filter decides whether a workflow starts at all:
   # `codeql.yml` restates the prose globs below as `paths-ignore`, twice, once per trigger;
-  # `docs-deploy.yml` carries its own, three globs against the two here.
+  # `weblate-notes.yml` filters on one unrelated file, `frontend/src/locales/en/ui.notes.json`,
+  # and restates nothing from this job.
   #
-  # **`docs-deploy.yml`'s list and the `site` lane are near neighbors, not the same set**,
-  # and one gap remains -- do not restate one as the other, which a correction here already
-  # did once. Editing `docs-deploy.yml` itself fires that workflow while landing in `code`
-  # here, so `site` skips. The second direction is closed: a `.md` under `manual/` or
-  # `website/` used to hit the `*.md` arm first and skip `site` while docs-deploy published
-  # it, which is why the site arm is ordered ahead of prose below (#589). Restoring
-  # prose-first re-opens it.
+  # The `site` lane no longer shares the question with a publisher. Cloudflare Pages builds
+  # `website/` on every push and asks GitHub nothing, so a page reaching the manual has
+  # compiled here first whatever this lane decides. It decided wrong once: a `.md` under
+  # `manual/` or `website/` used to hit the `*.md` arm first and skip `site` while the old
+  # workflow published it anyway, which is why the site arm is ordered ahead of prose below
+  # (#589). Restoring prose-first re-opens the half of that which is still live, a page
+  # publishing with nothing having built it.
   #
   # `tests/test_repo_hygiene.py` pins all three by name, so neither the count nor which
   # file holds which can move without this comment being re-read.
@@ -160,9 +161,10 @@ jobs:
               #
               # First arm, ahead of prose, because `*.md` below matches at any depth: with
               # prose first, `manual/guide.md` classified as prose and the `site` job never
-              # ran, while docs-deploy.yml (which filters on `manual/**` with no ordering)
-              # published it anyway (#589). The tree happens to be all `.mdx` today, which
-              # `*.md` does not match, so the hole was latent rather than firing.
+              # ran, while the publisher of the day pushed it live regardless (#589).
+              # Cloudflare Pages does the same thing now, so the hole is still open in that
+              # direction. The tree happens to be all `.mdx` today, which `*.md` does not
+              # match, so it stays latent rather than firing.
               manual/*|website/*)      site=true  ;;
               docs/*|.claude/*|*.md)   prose=true ;;
               *)                       code=true  ;;

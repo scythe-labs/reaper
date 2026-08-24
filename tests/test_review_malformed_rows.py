@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from reaper.api.review import (
     _chip,
     _decode_explanation,
-    _dormant_for,
+    _dormant_days,
     _explanation_out,
     _primary_reason,
 )
@@ -35,9 +35,10 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import Candidate, Snapshot, WhitelistEntry
+from reaper.engine.reason import legacy, to_wire
 from reaper.main import create_app
 from reaper.services.condemned import reap_override_verdict
-from reaper.services.snapshot import HAND_SPARE_DETAIL
+from tests._reasons import text
 
 from ._auth import login
 
@@ -101,7 +102,7 @@ HEALTHY = json.dumps(
         "threshold": 70,
         "coverage": 1.0,
         "signals": [],
-        "protections_fired": [{"gate": "whitelisted", "detail": HAND_SPARE_DETAIL}],
+        "protections_fired": [{"gate": "whitelisted", "detail": "you spared this by hand"}],
         "protections_checked": [],
         "protections_unknown": [],
     }
@@ -187,9 +188,9 @@ class TestTheQueueSurvivesABrokenRow:
         rows = client.get("/api/candidates", params={"verdict": "protect"}).json()["items"]
         by_key = {str(r["media_key"]): r for r in rows}
         # Nothing readable to lead with, so the card leads with nothing.
-        assert by_key["radarr:1:2"]["reason"] is None
-        assert by_key["radarr:1:4"]["reason"] is None
-        assert by_key["radarr:1:5"]["reason"] is None
+        assert by_key["radarr:1:2"]["reason_key"] is None
+        assert by_key["radarr:1:4"]["reason_key"] is None
+        assert by_key["radarr:1:5"]["reason_key"] is None
         assert by_key["radarr:1:2"]["chip"] is None
         assert by_key["radarr:1:4"]["chip"] is None
 
@@ -230,7 +231,9 @@ class TestTheWhyPanelSurvivesABrokenRow:
         body = client.get(f"/api/candidates/{row['id']}").json()
         assert body["explanation_unreadable"] is False
         assert body["explanation"]["threshold"] == 70
-        assert body["explanation"]["protections_fired"][0]["detail"] == HAND_SPARE_DETAIL
+        assert body["explanation"]["protections_fired"][0]["detail_key"] == to_wire(
+            legacy("you spared this by hand")
+        )
 
 
 class TestThePanelAndTheReapAgreeOnUnreadable:
@@ -274,15 +277,18 @@ class TestThePanelAndTheReapAgreeOnUnreadable:
             for k, row in rows.items()
         }
 
-        # Pin both populations by hand (rule 145): five of the seven stored rows here cannot
-        # be rendered. Two can, and they are the ones that make this test discriminate --
+        # Pin both populations by hand (rule 145): four of the seven stored rows here cannot
+        # be rendered. Three can, and they are the ones that make this test discriminate --
         # ``radarr:1:6`` carries a non-dict ``match``, which ``Explanation._thaw_match`` reads
         # as an absent block rather than failing the document, so the panel renders it and its
-        # reap is held by the bad match instead. If either set moves, the table changed and
-        # the implication below may have gone vacuous.
+        # reap is held by the bad match instead; ``radarr:1:5``'s entry has no detail at all,
+        # which the typed-reason conversion made a legal row (a fresh row writes
+        # ``detail_key``; a legacy one ``detail``; one with neither renders no sentence), and
+        # its fired protection still resolves the reap to protect. If either set moves, the
+        # table changed and the implication below may have gone vacuous.
         assert len(rows) == 7
-        assert degraded == {f"radarr:1:{n}" for n in range(1, 6)}
-        assert rows.keys() - degraded == {"radarr:1:6", "radarr:1:7"}
+        assert degraded == {f"radarr:1:{n}" for n in range(1, 5)}
+        assert rows.keys() - degraded == {"radarr:1:5", "radarr:1:6", "radarr:1:7"}
 
         condemned_but_blank = sorted(k for k in degraded if reaps[k] == "condemn")
         assert not condemned_but_blank, (
@@ -299,6 +305,19 @@ class TestThePanelAndTheReapAgreeOnUnreadable:
         assert reap_override_verdict(str(row.explanation_json), score=int(row.score)) == "condemn"
 
 
+def _shell(unknown: list[dict[str, object]]) -> dict[str, object]:
+    """A minimal stored explanation carrying only the unknown list under test."""
+    return {
+        "score": 50,
+        "threshold": 70,
+        "coverage": 1.0,
+        "signals": [],
+        "protections_fired": [],
+        "protections_checked": [],
+        "protections_unknown": unknown,
+    }
+
+
 class TestTheExtractorsThemselves:
     @pytest.mark.parametrize("verdict", ["protect", "condemn", "abstain"])
     def test_a_non_object_top_level_yields_nothing(self, verdict: str) -> None:
@@ -307,7 +326,7 @@ class TestTheExtractorsThemselves:
             assert exp is None
             assert _primary_reason(exp, verdict, 50) is None
             assert _chip(exp, verdict, 50) is None
-            assert _dormant_for(exp) is None
+            assert _dormant_days(exp) is None
 
     def test_entries_that_are_not_objects_are_dropped(self) -> None:
         exp = _decode_explanation(MALFORMED["radarr:1:4"])
@@ -318,6 +337,23 @@ class TestTheExtractorsThemselves:
         exp = _decode_explanation(MALFORMED["radarr:1:5"])
         assert exp is not None
         assert _primary_reason(exp, "protect", 50) is None
+
+    def test_a_malformed_detail_key_degrades_like_the_panel_does(self) -> None:
+        """One stored byte, one legibility rule (rule 104). A ``detail_key`` dict without a
+        legible ``k`` must degrade exactly as ``thaw_reason_key`` degrades it for the panel's
+        models: to the prose fallback, or to nothing -- never through ``from_wire``'s
+        wrap-anything arm, which printed the dict's own repr at the operator (rule 21)."""
+        junk: dict[str, object] = {"gate": "min_dormancy", "detail_key": {"no_k": True}}
+        exp = _decode_explanation(json.dumps(_shell(unknown=[junk])))
+        assert exp is not None
+        assert _primary_reason(exp, "abstain", 50) is None
+
+        with_prose: dict[str, object] = {**junk, "detail": "could not check x: y"}
+        exp = _decode_explanation(json.dumps(_shell(unknown=[with_prose])))
+        assert exp is not None
+        reason = _primary_reason(exp, "abstain", 50)
+        assert reason is not None
+        assert text(reason) == "could not check x: y"
 
     def test_a_non_dict_match_says_it_could_not_be_read(self) -> None:
         """A match block that is THERE but unreadable holds a hand reap
@@ -331,14 +367,15 @@ class TestTheExtractorsThemselves:
         exp = _decode_explanation(MALFORMED["radarr:1:6"])
         assert exp is not None
         reason = _primary_reason(exp, "abstain", 50)
-        assert reason == "Kept to be safe: Reaper couldn't read what this matched in Plex."
+        assert reason is not None
+        assert text(reason) == "Kept to be safe: Reaper couldn't read what this matched in Plex."
         # Still not an AttributeError, and still not claiming a status Plex reported.
-        assert "threshold" not in (reason or "")
+        assert "threshold" not in text(reason)
 
     def test_a_signals_block_that_is_not_a_list_hides_the_pill(self) -> None:
         exp = _decode_explanation(json.dumps({"signals": "nope"}))
         assert exp is not None
-        assert _dormant_for(exp) is None
+        assert _dormant_days(exp) is None
 
 
 class TestTheReapOverrideReadKeepsTheFile:

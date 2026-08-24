@@ -98,11 +98,13 @@ const WIZARD_WAY_OUT = /Go to the app/;
 
 // `App` puts the wizard behind `React.lazy`, so the first render through that boundary in this
 // process pays Vite's cold transform of the wizard's whole module graph -- inside Testing
-// Library's 1000ms `asyncUtilTimeout`, which `testTimeout` does not reach. Running the whole
+// Library's `asyncUtilTimeout`, which `testTimeout` does not reach. Running the whole
 // suite hid it, because another file had already transformed the wizard; this file alone failed
 // (#651). Warm it here rather than lengthening one assertion's timeout: which test pays the cost
 // is then an accident of file order, and the next wizard test written above this one inherits the
-// failure (rule 119).
+// failure (rule 119). The budget itself was 1000ms then and is 5000ms now
+// (`src/test/setup.ts`, #887). That is headroom for the whole suite, and this warm-up still
+// earns its place: the transform is real work, and it does not belong inside a wait.
 beforeAll(async () => {
   await import("./components/SetupWizard");
 });
@@ -157,6 +159,8 @@ beforeEach(() => {
   apiMock.leavingSoonSettings.mockResolvedValue({
     enabled: false,
     allow_unarmed: false,
+    name: "Leaving Soon",
+    applied_name: "Leaving Soon",
     last: null,
   });
 });

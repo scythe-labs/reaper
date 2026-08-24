@@ -63,7 +63,7 @@ READS: dict[SignalId, str] = {
 #: reach the why panel verbatim, and one written inline is invisible to every drift test.
 #: This one never should reach it -- a probe builds no candidate and writes no explanation --
 #: but "should not" is not a mechanism, and the guard is the mechanism.
-NOT_PROBED_REASON = "not part of this preview"
+NOT_PROBED_REASON = "not_probed"
 
 _NOTHING = Unknown(source="preview", reason=NOT_PROBED_REASON)
 

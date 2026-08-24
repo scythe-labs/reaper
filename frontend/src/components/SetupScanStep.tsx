@@ -22,16 +22,20 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api, type SetupStatus } from "../api";
+import { describeError } from "../errors";
+import i18next from "../i18n";
 import { reapBlockers, type ReapBlocker } from "../reapReadiness";
 import { useScanStatus } from "../useScanStatus";
+import { composeError, composeIn } from "../why";
 import { DiscordModal } from "./DiscordModal";
 import { Notice } from "./Notice";
 import { SafetyBanner } from "./SafetyBanner";
 import { ProgressBar } from "./ProgressBar";
 import { phaseLabel } from "./ScanBar";
-import { ScanLine, SCANNING_LABEL } from "./ScanLine";
+import { ScanLine, scanningLabel } from "./ScanLine";
 import { StepCard } from "./SetupStepper";
 
 export function SetupScanStep({
@@ -49,6 +53,7 @@ export function SetupScanStep({
   /** Leave the wizard for the app. */
   onDone: () => void;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [discordOpen, setDiscordOpen] = useState(false);
 
@@ -64,8 +69,8 @@ export function SetupScanStep({
   // Read at the transition rather than depended on: the message lands in the same poll that
   // turns `running` off, and a later change to it must not re-fire the effect.
   const wasRunning = useRef(false);
-  const latestError = useRef(scan?.error ?? null);
-  latestError.current = scan?.error ?? null;
+  const latestError = useRef(scan?.error_reason ?? null);
+  latestError.current = scan?.error_reason ?? null;
   // Held the same way, and additionally because `blockers` is freshly allocated every render,
   // which must never be an effect dependency (rule 19).
   const latestBlockers = useRef<ReapBlocker[]>(blockers);
@@ -81,13 +86,17 @@ export function SetupScanStep({
       // The blocker rides on this sentence rather than announcing itself, because it lands in
       // the same commit: its notice is `standing`, so it is read in document order like the
       // rest of the panel, and two alerts firing at one edge would talk over each other.
+      //
+      // `i18next.t()` here rather than the component's `t`, so this effect's dependency array
+      // stays exactly what the transition needs (rule 19) and does not grow a re-render-only
+      // dependency for a value that never changes locale mid-session.
       const blocker = latestBlockers.current[0];
       announce(
         latestError.current !== null
-          ? "Your first scan stopped before it finished. You can start it again."
+          ? i18next.t("setup.scan.announceStoppedEarly")
           : blocker
-            ? `Your first scan finished. ${blocker.sentence}`
-            : "Your first scan finished. Reaper has scanned your library.",
+            ? i18next.t("setup.scan.announceFinishedWithBlocker", { sentence: blocker.sentence })
+            : i18next.t("setup.scan.announceFinishedClean"),
       );
     }
     wasRunning.current = running;
@@ -100,7 +109,7 @@ export function SetupScanStep({
       // The press replaces this half of the card with a spinner and a bar, with nothing said,
       // for an operation the copy itself warns can take a while. The wording carries the
       // permission to walk away, because that is the useful part of a wait this long.
-      announce("Your first scan is running. You don't have to wait here.");
+      announce(t("setup.scan.announceStarted"));
     },
   });
 
@@ -108,7 +117,9 @@ export function SetupScanStep({
   // error notice leading with the outcome. The phase goes through ScanBar's shared table, so
   // this can never print a raw phase id (rule 66).
   const phase = running
-    ? `${phaseLabel(scan!.phase)}${scan!.detail ? `, ${scan!.detail}` : ""}`
+    ? `${phaseLabel(scan!.phase)}${
+        scan!.detail_reason ? `, ${composeIn("shell.scanBar.step", scan!.detail_reason)}` : ""
+      }`
     : null;
 
   return (
@@ -117,30 +128,27 @@ export function SetupScanStep({
           started does not appear to stop when they leave for the app. */}
       <ScanLine running={running} percent={percent} />
 
-      <StepCard step="scan" title="Run your first scan">
+      <StepCard step="scan" title={t("setup.scan.title")}>
         {running ? (
           <>
             <div className="setup-scanning">
               <span className="spinner" aria-hidden="true" />
-              <h3>Your first scan is running</h3>
+              <h3>{t("setup.scan.runningHeading")}</h3>
             </div>
-            <ProgressBar label={SCANNING_LABEL} percent={percent} />
-            <p className="blurb">
-              You can leave this page; it keeps running. The line at the very top of the window
-              follows it, here and in the app, and the review queue fills in the moment it finishes.
-            </p>
+            <ProgressBar label={scanningLabel()} percent={percent} />
+            <p className="blurb">{t("setup.scan.runningBlurb")}</p>
             {phase && <p className="muted setup-scanmsg">{phase}</p>}
 
             <div className="setup-later">
-              <h3>While that runs</h3>
-              <p className="blurb">Optional, and you can add it any time from Settings.</p>
+              <h3>{t("setup.scan.laterHeading")}</h3>
+              <p className="blurb">{t("setup.scan.laterBlurb")}</p>
               <DiscordRow onOpen={() => setDiscordOpen(true)} />
             </div>
 
             <div className="step-actions">
               <span className="spacer" />
               <button className="primary btn-lg" onClick={onDone}>
-                Go to the app
+                {t("setup.actions.goToApp")}
               </button>
             </div>
           </>
@@ -150,11 +158,12 @@ export function SetupScanStep({
                 real run could actually go ahead. It could not, before: an operator who
                 skipped Plex was told they were all set and had their first reap refused at
                 the button, four screens later, with nothing before that saying so (#383). */}
-            <h3>{blockers.length === 0 ? "You're all set" : "Your library is scanned"}</h3>
-            <p className="blurb">
-              Nothing has been touched: open the queue to see what Reaper would remove, and why it
-              picked each one.
-            </p>
+            <h3>
+              {blockers.length === 0
+                ? t("setup.scan.allSetHeading")
+                : t("setup.scan.scannedHeading")}
+            </h3>
+            <p className="blurb">{t("setup.scan.scannedBlurb")}</p>
             {blockers.map((b) => (
               // `standing`: this is the state of the install whenever this panel is on
               // screen, not a reply to anything the operator just pressed.
@@ -172,7 +181,7 @@ export function SetupScanStep({
                   <>
                     {" "}
                     <button className="link" onClick={onGoToPlex}>
-                      Connect Plex
+                      {t("setup.scan.connectPlexLink")}
                     </button>
                   </>
                 )}
@@ -180,20 +189,17 @@ export function SetupScanStep({
             ))}
             <div className="step-actions">
               <button className="ghost" onClick={onBack}>
-                Back
+                {t("common.back")}
               </button>
               <span className="spacer" />
               <button className="primary btn-lg" onClick={onDone}>
-                Go to the review queue
+                {t("setup.scan.goToQueueButton")}
               </button>
             </div>
           </>
         ) : (
           <>
-            <p className="blurb">
-              Reaper reads your library and shows what it would remove, and why. You approve every
-              deletion by hand.
-            </p>
+            <p className="blurb">{t("setup.scan.introBlurb")}</p>
             {/* The one thing a new operator most needs to believe on this screen, so it is
                 read rather than asserted. This was a hardcoded sentence in the green tone,
                 saying deletion was off and consulting nothing: a deploy carrying
@@ -214,42 +220,46 @@ export function SetupScanStep({
                 reached, so it is read in document order like the banner above it. */}
             {!setup.scan_ready && (
               <Notice tone="warn" standing>
-                Connect Tautulli and one of Radarr or Sonarr before your first scan.{" "}
-                <button className="link" onClick={onBack}>
-                  Connect services
-                </button>
+                <Trans
+                  i18nKey="setup.scan.notReadyWarning"
+                  components={{ btn: <button className="link" onClick={onBack} /> }}
+                />
               </Notice>
             )}
             <div className="step-actions">
               <button className="ghost" onClick={onBack}>
-                Back
+                {t("common.back")}
               </button>
               <span className="spacer" />
               {/* The wizard's standing promise: every step past the password can be left for
                   the app. Without it an install that has not scanned yet is held here, since
                   the only other button starts a scan. */}
               <button className="ghost" onClick={onDone}>
-                Go to the app
+                {t("setup.actions.goToApp")}
               </button>
               <button
                 className="primary btn-lg"
                 onClick={() => start.mutate()}
                 disabled={start.isPending || !setup.scan_ready}
               >
-                {start.isPending ? "Starting…" : "Run first scan"}
+                {start.isPending ? t("common.starting") : t("setup.scan.runFirstScanButton")}
               </button>
             </div>
           </>
         )}
 
-        {start.error && <Notice tone="error">The scan didn't start: {start.error.message}</Notice>}
+        {start.error && (
+          <Notice tone="error">
+            {t("common.scanStartFailed", { message: describeError(start.error) })}
+          </Notice>
+        )}
         {/* `standing`, unlike the Start refusal above it: a scan already running or already
             crashed server-side is on this step the moment it mounts, and once one is running the
             1s poll delivers the failure with nothing pressed. `ScanBar` says the same thing about
             the same field and moves with it (rule 72). */}
-        {scan?.error && (
+        {scan?.error_reason && (
           <Notice tone="error" standing>
-            The scan hit a problem: {scan.error}
+            {t("setup.scan.scanErrorNotice", { message: composeError(scan.error_reason) })}
           </Notice>
         )}
       </StepCard>
@@ -262,20 +272,21 @@ export function SetupScanStep({
 /** Discord in the same row grammar as the service connections one step back, so a connection
  *  looks like a connection wherever the operator meets it. */
 function DiscordRow({ onOpen }: { onOpen: () => void }) {
+  const { t } = useTranslation();
   const { data } = useQuery({ queryKey: ["notifications"], queryFn: api.notifications });
   const connected = data?.has_webhook ?? false;
   return (
     <div className="conn-list">
       <div className={connected ? "conn-row on" : "conn-row"}>
         <span className="conn-badge kind-discord" aria-hidden="true">
-          DIS
+          {t("setup.scan.discordBadge")}
         </span>
         <div>
-          <div className="conn-name">Discord</div>
-          <div className="conn-why">Tells your users what's leaving before it goes.</div>
+          <div className="conn-name">{t("common.brand.discord")}</div>
+          <div className="conn-why">{t("setup.scan.discordHint")}</div>
         </div>
         <button type="button" className="conn-add" onClick={onOpen}>
-          {connected ? "Edit" : "Add"}
+          {connected ? t("common.edit") : t("common.add")}
         </button>
       </div>
     </div>

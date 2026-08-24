@@ -23,7 +23,6 @@ import json
 import ssl
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import ClassVar
 from urllib.parse import urlsplit
 
 import httpx2
@@ -40,6 +39,8 @@ from reaper.config import RuntimeSafety
 from reaper.crypto import SecretBox
 from reaper.db.models import Instance, InstanceKind
 from reaper.engine import identity
+from reaper.engine.reason import Reason
+from reaper.refusal import Refusal, english
 
 log = structlog.get_logger(__name__)
 
@@ -64,37 +65,42 @@ _KIND_LABEL: dict[InstanceKind, str] = {
 SINGLETON_KINDS: frozenset[InstanceKind] = frozenset({InstanceKind.TAUTULLI})
 
 
-class InstanceError(RuntimeError):
-    """A configuration change could not be applied (e.g. a duplicate name).
+class InstanceError(Refusal):
+    """A configuration change could not be applied (e.g. a duplicate name). A catalog code
+    plus raw params.
 
     **The status is declared here, not at the ``except``.** Each subclass below already
-    described the status it means in prose, and ``api/settings.py`` then hand-wrote that
-    number at five sites -- so the number and the sentence explaining it lived in different
-    files and only agreed by inspection (rule 144). ``restore.RestoreError`` already carried
-    its own; this is the same shape, per subclass rather than per raise, because here the
-    class *is* the discriminator and a raise site cannot then pass the wrong one.
+    described the status it means, and ``api/settings.py`` used to hand-write that number at
+    five sites -- so the number and the raise that meant it lived in different files and only
+    agreed by inspection (rule 144). ``restore.RestoreError`` already carried its own; this is
+    the same shape, per subclass rather than per raise, because here the class *is* the
+    discriminator and a raise site cannot then pass the wrong one.
 
-    422 is the base: the request was well-formed but the service refused its content, which
-    is what a blank required field is. A subclass meaning something else says so by
-    overriding, and a subclass that says nothing inherits the answer that blames the payload
-    rather than one that invents a resource state nobody checked.
+    422 is the base (``Refusal``'s own default): the request was well-formed but the service
+    refused its content, which is what a blank required field is. A subclass meaning something
+    else overrides its own ``__init__`` to default ``status`` differently, and a subclass that
+    says nothing inherits the answer that blames the payload rather than one that invents a
+    resource state nobody checked.
     """
-
-    #: The HTTP status the API answers with. Read by every ``except InstanceError`` arm.
-    status: ClassVar[int] = 422
 
 
 class InstanceNotFoundError(InstanceError):
     """The referenced instance does not exist -- the caller should see a 404."""
 
-    status: ClassVar[int] = 404
+    def __init__(
+        self, code: str, /, *, status: int = 404, **params: str | int | float | bool
+    ) -> None:
+        super().__init__(code, status=status, **params)
 
 
 class InstanceConflictError(InstanceError):
     """The change collides with an existing instance (a duplicate name) -- a 409, not a
     404: the request was well-formed and the target exists, it just cannot be applied."""
 
-    status: ClassVar[int] = 409
+    def __init__(
+        self, code: str, /, *, status: int = 409, **params: str | int | float | bool
+    ) -> None:
+        super().__init__(code, status=status, **params)
 
 
 @dataclass(frozen=True)
@@ -120,8 +126,14 @@ class InstanceView:
 
 @dataclass(frozen=True)
 class TestResult:
+    """The verdict on a connection test. ``detail`` is a typed reason rather than a frozen
+    English sentence: :func:`explain_failure`'s own ``error.instance.*`` code on a failure,
+    or a ``services.test.*`` id (composed by ``ServiceModal.tsx``, never rendered server-side)
+    on a pass. Only the failure case is ever stored (``last_error``, via :func:`english`
+    below) or reflected in a log line; a pass's detail travels to the browser as-is."""
+
     ok: bool
-    detail: str
+    detail: Reason
     version: str | None = None
 
 
@@ -285,7 +297,7 @@ async def list_instances(session: AsyncSession) -> list[InstanceView]:
 async def _get(session: AsyncSession, instance_id: int) -> Instance:
     row = await session.get(Instance, instance_id)
     if row is None:
-        raise InstanceNotFoundError("No such instance.")
+        raise InstanceNotFoundError("error.instances.not_found")
     return row
 
 
@@ -315,15 +327,13 @@ async def create_instance(
     # base_url so the two round-trip the same way when links are built.
     external = (external_url or "").strip().rstrip("/") or None
     if not name or not base_url or not api_key:
-        raise InstanceError("A name, a URL and an API key are all required.")
+        raise InstanceError("error.instances.required_fields")
 
     if kind in SINGLETON_KINDS:
         existing = await session.scalar(select(Instance).where(Instance.kind == kind))
         if existing is not None:
             raise InstanceConflictError(
-                f"Reaper uses one {_KIND_LABEL.get(kind, 'service')}. It reads a single "
-                "Plex server's watch history, and Reaper connects to one Plex. Edit the "
-                "one you have, or remove it and add a different one."
+                "error.instances.singleton_exists", kind=_KIND_LABEL.get(kind, "service")
             )
 
     clash = await session.scalar(
@@ -331,7 +341,7 @@ async def create_instance(
     )
     if clash is not None:
         raise InstanceConflictError(
-            f'A {_KIND_LABEL.get(kind, "service")} connection named "{name}" already exists.'
+            "error.instances.name_exists", kind=_KIND_LABEL.get(kind, "service"), name=name
         )
 
     row = Instance(
@@ -402,8 +412,9 @@ async def update_instance(
             )
             if clash is not None:
                 raise InstanceConflictError(
-                    f"A {_KIND_LABEL.get(row.kind, 'service')} connection named "
-                    f'"{new_name}" already exists.'
+                    "error.instances.name_exists",
+                    kind=_KIND_LABEL.get(row.kind, "service"),
+                    name=new_name,
                 )
         row.name = new_name
     if base_url is not None and base_url.strip():
@@ -468,7 +479,7 @@ async def delete_instance(session: AsyncSession, instance_id: int) -> bool:
 #: Shown when nothing in the chain below recognizes the failure. Never a bare class name:
 #: "ConnectError: All connection attempts failed" is the first thing a new operator sees
 #: if a URL is wrong, and it teaches them nothing about what to change.
-_GENERIC_FAILURE = "Couldn't connect. The full reason is in Reaper's log."
+_GENERIC_FAILURE = Reason("error.instance.unrecognized")
 
 
 def _causes(exc: BaseException) -> list[BaseException]:
@@ -520,12 +531,19 @@ def _self_signed(chain: list[BaseException]) -> bool:
     )
 
 
-def explain_failure(kind: InstanceKind, exc: BaseException) -> str:
-    """One plain sentence an operator can act on, for the families we can recognize.
+def explain_failure(kind: InstanceKind, exc: BaseException) -> Reason:
+    """One plain sentence an operator can act on, as a typed reason, for the families we
+    can recognize.
 
     Everything else falls through to :data:`_GENERIC_FAILURE`; the raw exception is
     logged by the caller either way, so nothing is lost, it just is not put in front of
     someone who is only trying to get a URL and a key right.
+
+    Every branch adds something a raw client error does not know on its own -- which
+    status means "check your key" versus "check the URL", the certificate advice, the
+    generic-but-deliberate wording for a codeless ``IntegrationError`` -- so each keeps its
+    own ``error.instance.*`` code rather than nesting the client's. A code is reused across
+    call sites only where the English would be the same; this English never is.
 
     **Branch order is load-bearing** and is pinned by ``tests/test_instances.py``:
     certificate failures must be read before the transport families (they arrive wrapped
@@ -535,58 +553,42 @@ def explain_failure(kind: InstanceKind, exc: BaseException) -> str:
     transport failure is also wrapped in one.
     """
     chain = _causes(exc)
-    label = _KIND_LABEL.get(kind, "The server")
+    label = _KIND_LABEL[kind]
 
     # Certificate problems first: they surface as a ConnectError, so the transport
     # branch below would otherwise swallow the one detail that names the fix.
     if any(isinstance(e, ssl.SSLError) for e in chain):
         if _self_signed(chain):
-            return (
-                "The server's certificate is signed by an authority this machine doesn't "
-                "know. Only turn off the certificate check if this is your own server on "
-                "your own network: your API key travels on this connection."
-            )
-        return (
-            "The server's certificate was rejected. It may have expired, or be for a "
-            "different address, or something may be sitting between Reaper and the server."
-        )
+            return Reason("error.instance.cert_unknown_authority")
+        return Reason("error.instance.cert_rejected")
 
     status = exc.status if isinstance(exc, IntegrationError) else None
     if status is not None:
         if status in (401, 403):
-            return f"{label} refused the API key. Copy it again from its own settings."
+            return Reason("error.instance.auth_refused", {"service": label})
         if status == 404:
-            return (
-                f"{label} answered, but there is nothing at this address. Check for a "
-                "missing or extra path at the end of the URL."
-            )
+            return Reason("error.instance.address_empty", {"service": label})
         if status == 429:
-            return f"{label} asked Reaper to slow down. Wait a moment and test again."
+            return Reason("error.instance.rate_limited", {"service": label})
         if 300 <= status < 400:
-            return (
-                "The server sent Reaper somewhere else, and Reaper won't send your API "
-                "key to a different address. Check the URL and anything proxying it."
-            )
+            return Reason("error.instance.redirected")
         if status >= 500:
-            return f"{label} reported a problem of its own (HTTP {status}). Check its log."
-        return f"{label} refused the request (HTTP {status})."
+            return Reason("error.instance.server_error", {"service": label, "status": status})
+        return Reason("error.instance.request_refused", {"service": label, "status": status})
 
     if any(isinstance(e, httpx2.TimeoutException) for e in chain):
         if any(isinstance(e, httpx2.ConnectTimeout | httpx2.PoolTimeout) for e in chain):
-            return "Couldn't open a connection to the server in time."
-        return "The server didn't answer in time."
+            return Reason("error.instance.connect_timed_out")
+        return Reason("error.instance.read_timed_out")
     if any(isinstance(e, httpx2.UnsupportedProtocol | httpx2.InvalidURL) for e in chain):
-        return "That isn't an address Reaper can use. Start it with http:// or https://."
+        return Reason("error.instance.bad_address")
     if any(isinstance(e, httpx2.ConnectError | httpx2.ProxyError) for e in chain):
-        return (
-            "Couldn't reach the server at this address. Check the URL and port, and that "
-            "the service is running."
-        )
+        return Reason("error.instance.unreachable")
     if any(isinstance(e, httpx2.TransportError) for e in chain):
-        return "The connection to the server broke before it answered."
+        return Reason("error.instance.connection_broke")
     if any(isinstance(e, ValueError) for e in chain):
         # A body that would not parse: usually a login page or a proxy error page.
-        return f"The address answered, but not with data from {label}. Check the URL."
+        return Reason("error.instance.bad_body", {"service": label})
     if isinstance(exc, IntegrationError):
         # The server answered and reported a problem of its own, with no HTTP status to
         # go on. This is the commonest Tautulli misconfiguration: it answers a bad API
@@ -594,9 +596,7 @@ def explain_failure(kind: InstanceKind, exc: BaseException) -> str:
         # an answer in a shape Reaper could not use, and a URL that redirects in a loop.
         # The raw text stays in the log; the key and the URL are what an operator can act
         # on.
-        return (
-            f"{label} answered, but turned the request down. Check the API key first, then the URL."
-        )
+        return Reason("error.instance.refused", {"service": label})
     return _GENERIC_FAILURE
 
 
@@ -668,11 +668,17 @@ async def test_connection(
                 status = await client.system_status()  # type: ignore[attr-defined]
                 version = str(status.get("version") or "") or None
                 app = str(status.get("appName") or kind.value).strip()
-                return TestResult(ok=True, detail=f"Connected to {app}.", version=version)
+                return TestResult(
+                    ok=True,
+                    detail=Reason("services.test.connected", {"service": app}),
+                    version=version,
+                )
             if kind is InstanceKind.TAUTULLI:
                 info = await client.server_info()  # type: ignore[attr-defined]
                 name = str(info.get("pms_name") or "Plex").strip()
-                return TestResult(ok=True, detail=f"Connected. Watching {name}.")
+                return TestResult(
+                    ok=True, detail=Reason("services.test.connectedWatching", {"name": name})
+                )
             status = await client.status()  # type: ignore[attr-defined]
             version = str(status.get("version") or "") or None
             # /status needs no key, so it passes even with a wrong one. Probe an
@@ -680,7 +686,13 @@ async def test_connection(
             # going quiet and surfacing later as a scan warning with the requester signal
             # dark. A 401/403 lands in explain_failure's key-refused branch.
             await client.requests(take=1)  # type: ignore[attr-defined]
-            return TestResult(ok=True, detail="Connected to Seerr.", version=version)
+            return TestResult(
+                ok=True,
+                detail=Reason(
+                    "services.test.connected", {"service": _KIND_LABEL[InstanceKind.SEERR]}
+                ),
+                version=version,
+            )
     except Exception as exc:  # network/TLS/timeout/HTTP -- report, don't crash the request
         # The raw exception stays here, in the log, where a diagnosis needs it. What the
         # operator is shown is the plain-language translation.
@@ -711,7 +723,11 @@ async def test_saved_instance(
         if result.version:
             row.detected_version = result.version
     else:
-        row.last_error = result.detail
+        # `last_error` is a stored, untyped text column (unlike the live test's own
+        # `TestOut.detail_reason`), so this is still where a `Reason` becomes English --
+        # `english()` is the one place that happens (rule 104), same catalog the browser's
+        # own build was generated from.
+        row.last_error = english(result.detail)
     await session.flush()
     return result
 
@@ -747,7 +763,7 @@ async def probe_root_folders(
     wrong kind, and lets the arr client's error surface for a connection failure.
     """
     if kind not in (InstanceKind.SONARR, InstanceKind.RADARR):
-        raise InstanceError("Only Sonarr and Radarr have root folders to map to a Plex library.")
+        raise InstanceError("error.instances.wrong_kind_for_root_folders")
     client = _client(kind, base_url, api_key, verify=verify, api_path_prefix=api_path_prefix)
     async with client:
         payload = await client.root_folders()  # type: ignore[attr-defined]
@@ -879,7 +895,7 @@ async def seerr_services(
     """
     row = await _get(session, instance_id)
     if row.kind is not InstanceKind.SEERR:
-        raise InstanceError("Only Seerr portals have request services to map to an instance.")
+        raise InstanceError("error.instances.wrong_kind_for_seerr_services")
     return await probe_seerr_services(
         row.base_url,
         box.decrypt(row.api_key_enc),

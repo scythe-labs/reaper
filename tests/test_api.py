@@ -13,14 +13,14 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Iterator
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import Engine, select
 from sqlalchemy import create_engine as sa_create_engine
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from reaper import logbuffer
@@ -39,6 +39,7 @@ from reaper.db.models import (
     ListConfig,
     PlexServer,
     Profile,
+    ReapRun,
     Snapshot,
     StepState,
 )
@@ -53,6 +54,7 @@ from reaper.engine.policy import (
     SignalSetting,
     combine_hashes,
 )
+from reaper.engine.reason import Reason, from_wire, to_stored
 from reaper.main import create_app
 from reaper.secrets import resolve_kdf_salt, resolve_old_keys, resolve_secret_key
 from reaper.services import retention
@@ -60,6 +62,16 @@ from reaper.services.history_sync import SCHEMA
 
 from ._auth import login
 from ._lists import seeded_fingerprint
+from ._reasons import refusal_text
+from ._reasons import text as reason_text
+
+
+def _msg(warning: dict[str, Any]) -> str:
+    """A policy-warning dict's composed English, from the real catalog. The test-side twin
+    of ``PolicyEditor.tsx``'s ``composeIn("warning", w.reason)``, over the API's wire shape
+    (``{"field", "reason": {"k", "p"}, "severity"}``)."""
+    return reason_text(from_wire(warning["reason"]), namespace="warning")
+
 
 # No "whitelisted" row: the gate is retired (list membership protects through ``on_list``
 # keep rules), and the save boundary refuses it -- test_simulate_hardening pins that.
@@ -114,7 +126,7 @@ def _fixture_policy_hash() -> str:
 # the source text. It used to be an invented "checked: <label> -- <numbers>" shape no gate has
 # ever emitted (#419), and asserting THAT survived the wire is what made the format read as
 # load-bearing.
-CHECKED_DETAIL = "Untouched for 5 years, 7 months, past the 3 years it has to sit unwatched first."
+CHECKED_DETAIL = "Unwatched for 5 years, 7 months, past the 3 years Reaper waits."
 
 
 def _explanation(score: float) -> str:
@@ -128,7 +140,7 @@ def _explanation(score: float) -> str:
                     "id": "unwatched",
                     "contribution": score,
                     "weight": 70,
-                    "detail": "not watched in 5 years, 7 months",
+                    "detail_key": {"k": "signal_unwatched", "p": {"days": 2059}},
                     "evaluated": True,
                 }
             ],
@@ -139,16 +151,28 @@ def _explanation(score: float) -> str:
     )
 
 
-@pytest.fixture
-def client(tmp_path: Path) -> Iterator[TestClient]:
+def _boot(tmp_path: Path) -> tuple[Settings, Engine, str, datetime]:
+    """A fresh throwaway install, migrated, plus the list fingerprint a scan records --
+    without it the simulator refuses, which is right for a snapshot that cannot say and
+    useless here. The caller seeds its own rows on the returned engine and commits before
+    handing both to :func:`_client`."""
     settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
-    # What a scan records about the lists it gathered membership under: without it the
-    # simulator refuses, which is right for a snapshot that cannot say and useless here.
-    list_hash = seeded_fingerprint(settings)
+    return settings, engine, seeded_fingerprint(settings), utcnow()
 
-    now = utcnow()
+
+def _client(settings: Settings, engine: Engine) -> Iterator[TestClient]:
+    """Close the seeding engine and hand back a client logged in on the same install."""
+    engine.dispose()
+    with TestClient(create_app(settings)) as c:
+        login(c, settings)
+        yield c
+
+
+@pytest.fixture
+def client(tmp_path: Path) -> Iterator[TestClient]:
+    settings, engine, list_hash, now = _boot(tmp_path)
     with Session(engine) as session:
         snapshot = Snapshot(
             created_at=now,
@@ -350,11 +374,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
             FirstFlagged(media_key="radarr:1:10", first_flagged_at=now, last_seen_condemned_at=now)
         )
         session.commit()
-    engine.dispose()
-
-    with TestClient(create_app(settings)) as c:
-        login(c, settings)
-        yield c
+    yield from _client(settings, engine)
 
 
 class TestTheRunsApi:
@@ -400,9 +420,10 @@ class TestTheRunsApi:
         )
 
         assert refused.status_code == 404, refused.text
-        assert refused.json()["detail"] == (
-            "Reaper has no record of that item. It keeps only the last 7 scans."
-        )
+        body = refused.json()
+        assert body["code"] == "error.whitelist.unknown_item"
+        assert body["params"] == {"keep_scans": 7}
+        assert body["detail"] == refusal_text("error.whitelist.unknown_item", keep_scans=7)
 
     def test_a_plan_shows_the_literal_steps_and_the_confirmation_phrase(
         self, client: TestClient
@@ -425,42 +446,68 @@ class TestTheRunsApi:
         # No credential is ever in a journalled step.
         assert "api_key" not in json.dumps(step).lower()
 
-    def test_a_failed_step_reads_back_why_it_failed(
+    def test_a_stored_reason_thaws_as_legacy_prose_or_as_its_code(
         self, client: TestClient, tmp_path: Path
     ) -> None:
-        """The journal's reason survives the process that wrote it (#260).
-
-        `action_step.error` was durable and on no response schema, so the live reason lived
-        only in memory on `app.state`: a restart left the plan table saying a step failed and
-        nothing saying why, while the row held the sentence the whole time. This drives that
-        exact shape -- the state and the reason are written straight to the row, then read
-        back over HTTP through a response built from nothing but the database.
-
-        The reason is already operator copy; the executor writes one sentence and uses it for
-        this column and for the live report both.
+        """The journal's reason survives the process that wrote it (#260), decoded by
+        `engine.reason.from_stored`. A step's `error` and a run's `aborted_reason` are the
+        same shape: a row written before #899 holds a bare English sentence and thaws as a
+        `legacy` reason (rule 96); one written since holds `to_stored`'s JSON and thaws its
+        code and params. This drives both shapes straight to the row -- the way a snapshot
+        frozen before #899, and every write since, actually reach it -- then reads them back
+        over HTTP through a response built from nothing but the database.
         """
         run = client.post("/api/runs").json()
-        reason = "Radarr accepted the delete; not confirmed. Reaper could not reach it again."
+        legacy_text = "Radarr accepted the delete, not confirmed. Reaper could not reach it again."
 
-        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)
-        with Session(engine) as session:
+        def _write(session: Session, *, step_value: str, run_value: str) -> None:
             step = session.execute(
                 select(ActionStep).where(ActionStep.run_id == run["id"])
             ).scalar_one()
+            run_row = session.get(ReapRun, run["id"])
+            assert run_row is not None
             step.state = StepState.FAILED
-            step.error = reason
+            step.error = step_value
+            run_row.aborted_reason = run_value
             session.commit()
+
+        db_url = Settings(data_dir=tmp_path, secret_key="k").sync_database_url
+        engine = sa_create_engine(db_url)
+        with Session(engine) as session:
+            _write(session, step_value=legacy_text, run_value=legacy_text)
         engine.dispose()
 
-        read_back = client.get(f"/api/runs/{run['id']}").json()["steps"][0]
-        assert read_back["state"] == "failed"
-        assert read_back["error"] == reason
+        read_back = client.get(f"/api/runs/{run['id']}").json()
+        assert read_back["steps"][0]["state"] == "failed"
+        assert read_back["steps"][0]["error_reason"] == {
+            "k": "legacy",
+            "p": {"text": legacy_text},
+        }
+        summary = next(r for r in client.get("/api/runs").json() if r["id"] == run["id"])
+        assert summary["aborted_reason"] == {"k": "legacy", "p": {"text": legacy_text}}
+
+        engine = sa_create_engine(db_url)
+        with Session(engine) as session:
+            _write(
+                session,
+                step_value=to_stored(Reason("error.reap.step.no_plex_match")),
+                run_value=to_stored(Reason("error.reap.canceled")),
+            )
+        engine.dispose()
+
+        read_back = client.get(f"/api/runs/{run['id']}").json()
+        assert read_back["steps"][0]["error_reason"] == {
+            "k": "error.reap.step.no_plex_match",
+            "p": None,
+        }
+        summary = next(r for r in client.get("/api/runs").json() if r["id"] == run["id"])
+        assert summary["aborted_reason"] == {"k": "error.reap.canceled", "p": None}
 
     def test_a_step_that_has_not_run_carries_no_reason(self, client: TestClient) -> None:
         """The other direction, so the field above cannot pass by always being populated:
         a freshly planned step has nothing to explain and says nothing."""
         run = client.post("/api/runs").json()
-        assert run["steps"][0]["error"] is None
+        assert run["steps"][0]["error_reason"] is None
 
     def test_a_dry_run_walks_the_plan_and_deletes_nothing(self, client: TestClient) -> None:
         run = client.post("/api/runs").json()
@@ -471,7 +518,10 @@ class TestTheRunsApi:
         assert report["state"] == "completed"
         assert report["would_delete_items"] == 0  # nothing actually deleted
         assert report["outcomes"][0]["state"] == "skipped"
-        assert "would DELETE /api/v3/movie/10" in report["outcomes"][0]["detail"]
+        assert report["outcomes"][0]["is_canary"] is True  # the sole item is ordinal 0
+        detail = report["outcomes"][0]["detail_reason"]
+        assert detail["k"] == "error.reap.step.dry_run"
+        assert "DELETE /api/v3/movie/10" in detail["p"]["plan"]
 
     def test_a_plan_appears_in_the_run_list(self, client: TestClient) -> None:
         created = client.post("/api/runs").json()
@@ -522,7 +572,7 @@ class TestTheRunsApi:
             json={"confirmation_phrase": run["confirmation_phrase"]},
         )
         assert resp.status_code == 403
-        assert "deletion is turned off" in resp.json()["detail"].lower()
+        assert resp.json()["code"] == "error.safety.deletion_off"
 
 
 @pytest.fixture
@@ -533,14 +583,7 @@ def selection_client(tmp_path: Path) -> Iterator[TestClient]:
     one I asked for" and "planned the whole set" the same number -- so the selection could
     not be told from the fall-through. Three is the smallest count that distinguishes them.
     """
-    settings = Settings(data_dir=tmp_path, secret_key="k")
-    engine = sa_create_engine(settings.sync_database_url)
-    Base.metadata.create_all(engine)
-    # What a scan records about the lists it gathered membership under: without it the
-    # simulator refuses, which is right for a snapshot that cannot say and useless here.
-    list_hash = seeded_fingerprint(settings)
-
-    now = utcnow()
+    settings, engine, list_hash, now = _boot(tmp_path)
     with Session(engine) as session:
         snapshot = Snapshot(
             created_at=now,
@@ -601,11 +644,7 @@ def selection_client(tmp_path: Path) -> Iterator[TestClient]:
             for n in (10, 11, 12)
         )
         session.commit()
-    engine.dispose()
-
-    with TestClient(create_app(settings)) as c:
-        login(c, settings)
-        yield c
+    yield from _client(settings, engine)
 
 
 class TestTheRunSelectionIsExplicit:
@@ -627,7 +666,12 @@ class TestTheRunSelectionIsExplicit:
         refused = selection_client.post("/api/runs", json={"media_keys": []})
 
         assert refused.status_code == 422
-        assert "no items were selected" in refused.json()["detail"].lower()
+        body = refused.json()
+        # PlanError is now a Refusal subclass of its own (phase 8a's second wave): the code
+        # names the condition directly, with no params, rather than wrapping planner.py's
+        # English in a generic pass-through.
+        assert body["code"] == "error.plan.selection_empty"
+        assert "no items were selected" in body["detail"].lower()
         # And nothing was journalled: a refused selection leaves no plan behind at all.
         assert selection_client.get("/api/runs").json() == []
 
@@ -755,7 +799,7 @@ class TestExecuteGates:
             json={"confirmation_phrase": "REAP 999 SOULS 999 GB"},
         )
         assert resp.status_code == 409
-        assert "does not match" in resp.json()["detail"].lower()
+        assert resp.json()["code"] == "error.runs.confirmation_mismatch"
 
     def test_the_right_phrase_but_no_plex_is_refused_before_any_delete(
         self, armed_client: TestClient
@@ -769,7 +813,7 @@ class TestExecuteGates:
             json={"confirmation_phrase": run["confirmation_phrase"]},
         )
         assert resp.status_code == 409
-        assert "without plex" in resp.json()["detail"].lower()
+        assert resp.json()["code"] == "error.runs.preflight_no_plex"
 
     def test_executing_a_missing_run_is_a_404(self, armed_client: TestClient) -> None:
         resp = armed_client.post(
@@ -790,7 +834,7 @@ class TestExecuteGates:
         run = armed_client.post("/api/runs").json()
         resp = armed_client.post(f"/api/runs/{run['id']}/stop")
         assert resp.status_code == 409
-        assert "not currently running" in resp.json()["detail"].lower()
+        assert resp.json()["code"] == "error.runs.not_running"
 
     def test_a_reap_refused_because_one_is_running_says_so_in_the_log(
         self, armed_client: TestClient
@@ -1010,7 +1054,7 @@ class TestLimitsNobodySavedDoNotBoundAReap:
         )
 
         assert reaped.status_code == 409
-        assert "limits you saved" in reaped.json()["detail"]
+        assert reaped.json()["code"] == "error.runs.limits_unreadable"
 
     def test_the_refusal_says_what_to_fix(self, client: TestClient, tmp_path: Path) -> None:
         """Rule 21. The operator has to be able to act on this without reading the code, so
@@ -1019,7 +1063,10 @@ class TestLimitsNobodySavedDoNotBoundAReap:
         client.put("/api/profile", json=saved)
         self._break_the_saved_limits(tmp_path)
 
-        detail = client.post("/api/runs").json()["detail"]
+        body = client.post("/api/runs").json()
+        assert body["code"] == "error.runs.limits_unreadable"
+        detail = body["detail"]
+        assert detail == refusal_text("error.runs.limits_unreadable")
         assert "couldn't read the limits you saved" in detail
         assert "Pace and limits" in detail
 
@@ -1082,7 +1129,7 @@ class TestTheWhyPanel:
 
         checked = detail["explanation"]["protections_checked"]
         assert checked
-        assert checked[0]["detail"] == CHECKED_DETAIL
+        assert checked[0]["detail_key"] == {"k": "legacy", "p": {"text": CHECKED_DETAIL}}
 
     def test_a_protected_item_explains_the_keep(self, client: TestClient) -> None:
         """A tool that only explains its deletions cannot be trusted about its keeps.
@@ -1096,7 +1143,7 @@ class TestTheWhyPanel:
         assert detail["score"] == 90  # the score it is overriding
         fired = detail["explanation"]["protections_fired"]
         assert fired
-        assert "well rated: 8.0 on IMDb from 250,000 votes" in fired[0]["detail"]
+        assert "well rated: 8.0 on IMDb from 250,000 votes" in fired[0]["detail_key"]["p"]["text"]
 
     def test_the_grace_clock_is_exposed(self, client: TestClient) -> None:
         candidates = client.get("/api/candidates?verdict=condemn").json()["items"]
@@ -1122,7 +1169,7 @@ class TestTheWhyPanel:
         not the first gate's engineer-speak."""
         abstained = client.get("/api/candidates?verdict=abstain").json()["items"]
 
-        assert abstained[0]["reason"] == "Kept to be safe: it couldn't be found in Plex."
+        assert abstained[0]["reason_key"] == {"k": "kept_safe.unmatched", "p": None}
 
     def test_a_missing_candidate_is_a_404(self, client: TestClient) -> None:
         assert client.get("/api/candidates/9999").status_code == 404
@@ -1139,18 +1186,17 @@ class TestPanelHeadFields:
         row = client.get("/api/candidates?verdict=condemn").json()["items"][0]
 
         assert row["video_resolution"] == "1080"
-        assert row["dormant_for"] == "5 years, 7 months"
+        assert row["dormant_days"] == 2059
 
     def test_a_row_without_the_metadata_hides_both(self, client: TestClient) -> None:
-        """The abstained fixture predates the capture (no columns, and its dormancy came
-        from an unmatched item) -- both fields must be null, not an error."""
+        """The abstained fixture predates the capture (no columns), so the resolution
+        must be null, not an error."""
         row = client.get("/api/candidates?verdict=abstain").json()["items"][0]
 
         assert row["video_resolution"] is None
-        # Its explanation says "not watched in ..." but with evaluated=True from the
-        # shared helper; the unmatched item's dormancy is still the helper's phrasing, so
-        # dormant_for emits. The protect row exercises the same path.
-        assert row["dormant_for"] == "5 years, 7 months"
+        # Its explanation carries the same typed unwatched signal the condemned and
+        # protect rows share, so its dormancy still reads.
+        assert row["dormant_days"] == 2059
 
     def test_the_detail_carries_links_ratings_and_the_meta_line(self, client: TestClient) -> None:
         candidates = client.get("/api/candidates?verdict=condemn").json()["items"]
@@ -1267,7 +1313,9 @@ class TestPlexWebUrlSetting:
         # http://" while the check behind it was a `startswith` pair that let a bare scheme with
         # no host through; both moved to the shared check together (#255, rule 84). The sibling
         # cases live in test_settings_api.py's TestPlexStatus.
-        assert "full web address" in refused.json()["detail"]
+        body = refused.json()
+        assert body["code"] == "error.plex.web_url_invalid"
+        assert "full web address" in body["detail"]
 
     def test_clearing_resets_to_the_default(self, client: TestClient) -> None:
         client.put("/api/settings/plex", json={"web_url": "https://plex.example"})
@@ -1559,7 +1607,7 @@ class TestASnapshotWithNoFrozenFactsRefusesToGuess:
             ),
         )
 
-        assert "scan" in str(result["stale_reason"]).lower()
+        assert result["stale_reason"]["k"] == "gathers_differently"
 
     def test_moving_a_gate_threshold_refuses_over_this_snapshot(self, client: TestClient) -> None:
         """Not because a bar edit is unanswerable -- it is answerable, and
@@ -1755,7 +1803,9 @@ class TestPolicyPersistence:
             refused = client.post("/api/policy", json=out["body"])
 
             assert refused.status_code == 422
-            message = " ".join(d["msg"] for d in refused.json()["detail"])
+            items = refused.json()["detail"]
+            assert any(item.get("code") == "error.policy.retired_gate" for item in items)
+            message = " ".join(d["msg"] for d in items)
             assert "left over from an older version" in message
             # Not the gate id: this is the editor's "Can't save this" banner on arrival, and
             # the row it names is labeled in the operator's words on the same screen (rule 21).
@@ -1919,6 +1969,7 @@ class TestPolicyPersistence:
         assert "Value error" not in message
         assert "Turn it off, then save." in message
         assert ["body", "gates", "3", "gate"] in [d["loc"] for d in detail]
+        assert any(d.get("code") == "error.policy.retired_gate" for d in detail)
 
         # And the stored policy is untouched, so the install still scans.
         assert client.get("/api/policy").status_code == 200
@@ -2053,7 +2104,7 @@ class TestRequestedOnlyScopeNeedsSeerr:
         flagged = self._scope_warnings(client)
         assert len(flagged) == 1
         assert flagged[0]["severity"] == "warn"
-        assert "Seerr" in flagged[0]["message"]
+        assert "Seerr" in _msg(flagged[0])
 
 
 class TestAPopularityWindowLongerThanTheWatchHistory:
@@ -2108,7 +2159,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
         assert len(flagged) == 1
         assert flagged[0]["severity"] == "warn"
-        assert "Nothing will be flagged for removal" in flagged[0]["message"]
+        assert "Nothing will be flagged for removal" in _msg(flagged[0])
 
     def test_the_shipped_dormancy_floor_moves_the_warning_to_the_floor(
         self, client: TestClient, tmp_path: Path
@@ -2134,10 +2185,10 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         ] == []
         [floor] = [w for w in body["warnings"] if w["field"] == "gates.min_dormancy.threshold"]
         assert floor["severity"] == "warn"
-        assert "Nothing will be flagged for removal" in floor["message"]
+        assert "Nothing will be flagged for removal" in _msg(floor)
         # Through the route, so this pins the reach actually reaching `inspect` here too: with
         # the mirror unread the branch cannot fire at all (rule 141).
-        assert "3 years" in floor["message"]
+        assert "3 years" in _msg(floor)
 
     def test_a_mirror_that_covers_the_window_is_quiet(
         self, client: TestClient, tmp_path: Path
@@ -2176,7 +2227,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
         flagged = [w for w in warnings if w["field"] == "protect_conditions"]
         assert len(flagged) == 1
-        assert "Nothing will be flagged for removal" in flagged[0]["message"]
+        assert "Nothing will be flagged for removal" in _msg(flagged[0])
         # And nothing on the picker that is not rendered while the gate is off.
         assert [w for w in warnings if w["field"] == "gates.server_popularity.window_days"] == []
 
@@ -2461,7 +2512,7 @@ class TestPolicyValidation:
             },
         ).json()
 
-        assert any("protect almost nothing" in w["message"] for w in body["warnings"])
+        assert any("protect almost nothing" in _msg(w) for w in body["warnings"])
 
     def test_a_zero_vote_floor_is_refused_outright(self, client: TestClient) -> None:
         """Provably wrong, so it is a 422 rather than a warning: an IMDb bar with no
@@ -2498,7 +2549,7 @@ class TestUnknownSizeWarningTracksTheDraft:
                 **extra,
             },
         ).json()
-        return [w["message"] for w in body["warnings"] if w["field"] == "max_unmeasured_per_run"]
+        return [_msg(w) for w in body["warnings"] if w["field"] == "max_unmeasured_per_run"]
 
     def test_the_stored_zero_is_quiet(self, client: TestClient) -> None:
         """The shipped profile keeps every unmeasured item, so there is nothing to warn about."""
@@ -2546,11 +2597,14 @@ class TestVocabularyIsFilteredServerSide:
 
         assert condemn < protect
 
-    def test_every_field_carries_its_units(self, client: TestClient) -> None:
-        """A bare number is how a 7.5 rating floor meets a Tomatometer of 96."""
+    def test_ships_no_english(self, client: TestClient) -> None:
+        """The browser says the words now (#868 phase 4): a field's label, help paragraph and
+        unit come from the catalog by its key (`why.field.*`, `policyRules.fieldHelp.*`,
+        `policyRules.fieldUnit.*`), never off the wire."""
         for field in client.get("/api/vocabulary?lane=protect").json()["fields"]:
-            assert field["label"]
-            assert field["help_text"]
+            assert "label" not in field
+            assert "help_text" not in field
+            assert "unit_suffix" not in field
 
     def test_a_movie_policy_is_not_offered_a_tv_only_field(self, client: TestClient) -> None:
         """The editor asks with the policy's media type; a TV-only reason ("the show has

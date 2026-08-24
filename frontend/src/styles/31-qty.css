@@ -18,13 +18,14 @@
 .qty input[type="number"] {
   width: 5rem;
   min-width: 0;
-  padding: 0.42rem 0.35rem 0.42rem 0.6rem;
+  padding-block: 0.42rem;
+  padding-inline: 0.6rem 0.35rem;
   border: none;
   background: transparent;
   color: var(--text);
   font: inherit;
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  text-align: end;
 }
 .qty-narrow input[type="number"] {
   width: 3.6rem;
@@ -33,14 +34,15 @@
   flex: none;
   padding: 0.42rem 0.5rem;
   border: none;
-  border-left: 1px solid var(--border);
+  border-inline-start: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text);
   font: inherit;
 }
 .qty .qty-suffix {
   align-self: center;
-  padding: 0 0.6rem 0 0.1rem;
+  padding-block: 0;
+  padding-inline: 0.1rem 0.6rem;
   color: var(--muted);
   font-size: var(--text-md);
   white-space: nowrap;

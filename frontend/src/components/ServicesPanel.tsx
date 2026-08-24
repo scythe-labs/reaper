@@ -10,11 +10,13 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type RefObject, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { useSuccessorFocus } from "../focus";
 import { api, type InstanceKind, type Instance, type InstanceTest } from "../api";
 import { useBackGuard } from "../backnav";
-import { KINDS, kindLabel, ServiceModal, TestBadge, testSentence } from "./ServiceModal";
+import { describeError } from "../errors";
+import { kinds, kindLabel, ServiceModal, TestBadge, testSentence } from "./ServiceModal";
 import { StaleReadNotice } from "./StaleReadNotice";
 import { Notice } from "./Notice";
 
@@ -30,6 +32,7 @@ function ServiceCard({
    *  IS what unmounts (#173). */
   onRemoving?: () => void;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   // The result and the address it was computed for, the third of this badge's siblings to keep the
   // pairing (rule 72; `ServiceModal` and the Discord row are the others). Nothing cleared this, and
@@ -77,7 +80,7 @@ function ServiceCard({
     // Adding a service speaks and removing one did not, which is the asymmetry #192 was about:
     // the whole card vanishes, and an absence cannot be perceived by ear.
     onSuccess: () => {
-      announce(`${instance.name} removed.`);
+      announce(t("services.panel.card.removedAnnouncement", { name: instance.name }));
       invalidate();
     },
   });
@@ -90,8 +93,12 @@ function ServiceCard({
         <div className="instance-id">
           <span className={`kind-badge kind-${instance.kind}`}>{kindLabel(instance.kind)}</span>
           <strong>{instance.name}</strong>
-          {!instance.enabled && <span className="chip">disabled</span>}
-          {certCheckOff && <span className="chip chip-warn">certificate check off</span>}
+          {!instance.enabled && (
+            <span className="chip">{t("services.panel.card.disabledChip")}</span>
+          )}
+          {certCheckOff && (
+            <span className="chip chip-warn">{t("services.panel.card.certCheckOffChip")}</span>
+          )}
         </div>
         <div className="instance-url muted">{instance.base_url}</div>
         <div className="instance-status">
@@ -101,20 +108,32 @@ function ServiceCard({
           {test && test.of === testedWith() ? (
             <TestBadge result={test.result} />
           ) : instance.last_error ? (
-            <TestBadge result={{ ok: false, detail: instance.last_error, version: null }} />
+            <TestBadge
+              result={{
+                ok: false,
+                detail_reason: { k: "legacy", p: { text: instance.last_error } },
+                version: null,
+              }}
+            />
           ) : instance.last_ok_at ? (
             <TestBadge
-              result={{ ok: true, detail: "Reached", version: instance.detected_version }}
+              result={{
+                ok: true,
+                detail_reason: { k: "legacy", p: { text: t("services.panel.card.reachedDetail") } },
+                version: instance.detected_version,
+              }}
             />
           ) : (
-            <span className="muted">Not tested yet</span>
+            <span className="muted">{t("services.panel.card.notTestedYet")}</span>
           )}
         </div>
         {(remove.error ?? testSaved.error) && (
           <Notice tone="error" inline>
             {remove.error
-              ? `This service wasn't removed: ${remove.error.message}`
-              : `The test didn't run: ${testSaved.error?.message}`}
+              ? t("services.panel.card.removeFailed", { message: describeError(remove.error) })
+              : t("services.panel.card.testFailed", {
+                  message: testSaved.error ? describeError(testSaved.error) : "",
+                })}
           </Notice>
         )}
       </div>
@@ -129,25 +148,25 @@ function ServiceCard({
             <button
               type="button"
               className="danger"
-              title="Only forgets it in Reaper. Nothing is changed in the service itself."
-              aria-label={`Confirm remove ${instance.name}`}
+              title={t("services.panel.card.confirmRemoveTitle")}
+              aria-label={t("services.panel.card.confirmRemoveAria", { name: instance.name })}
               onClick={() => {
                 setConfirmingRemove(false);
                 onRemoving?.();
                 remove.mutate();
               }}
             >
-              Confirm remove
+              {t("common.confirmRemove")}
             </button>
             <button
               type="button"
               // The visible word first. A name that drops it entirely leaves a voice-control
               // operator saying "click Cancel" at a button that answers to "Keep", with the
               // red Confirm remove as the only other control in reach.
-              aria-label={`Cancel, keep ${instance.name}`}
+              aria-label={t("services.panel.card.cancelRemoveAria", { name: instance.name })}
               onClick={() => setConfirmingRemove(false)}
             >
-              Cancel
+              {t("common.cancel")}
             </button>
           </>
         ) : (
@@ -160,22 +179,30 @@ function ServiceCard({
               // to "Testing…", and nothing else here announces that the press did anything.
               // Visible word first, so "click Test" still reaches it by voice.
               aria-label={
-                testSaved.isPending ? `Testing…, ${instance.name}` : `Test, ${instance.name}`
+                testSaved.isPending
+                  ? t("services.panel.card.testAriaPending", { name: instance.name })
+                  : t("services.panel.card.testAriaIdle", { name: instance.name })
               }
               onClick={() => testSaved.mutate()}
             >
-              {testSaved.isPending ? "Testing…" : "Test"}
+              {testSaved.isPending
+                ? t("services.common.testing")
+                : t("services.panel.card.testButton")}
             </button>
-            <button type="button" aria-label={`Edit ${instance.name}`} onClick={onEdit}>
-              Edit
+            <button
+              type="button"
+              aria-label={t("common.editNamed", { name: instance.name })}
+              onClick={onEdit}
+            >
+              {t("common.edit")}
             </button>
             <button
               type="button"
               className="danger"
-              aria-label={`Remove ${instance.name}`}
+              aria-label={t("services.panel.card.removeAria", { name: instance.name })}
               onClick={() => setConfirmingRemove(true)}
             >
-              Remove
+              {t("common.remove")}
             </button>
           </>
         )}
@@ -187,7 +214,7 @@ function ServiceCard({
 /** One kind's cards and its Add button.
  *
  *  Its own component only so it can hold a hook per kind: a `useSuccessorFocus()` inside the
- *  `KINDS.map` below would be a hook in a loop. What it buys is where focus goes when a card
+ *  `kinds().map` below would be a hook in a loop. What it buys is where focus goes when a card
  *  removes itself -- the card IS the thing that unmounts, so the successor cannot live inside it
  *  (#173). The Add button is the target rather than a neighbouring card: the cards' own focusable
  *  content is a Test/Edit/Remove triplet, and landing on another service's Test button reads as
@@ -199,10 +226,11 @@ function ServiceSection({
   rows,
   onOpen,
 }: {
-  kind: (typeof KINDS)[number];
+  kind: ReturnType<typeof kinds>[number];
   rows: Instance[];
   onOpen: (instance: Instance | null) => void;
 }) {
+  const { t } = useTranslation();
   const afterRemove = useSuccessorFocus();
   // A singleton kind (Tautulli) shows no "Add" once one exists: it mirrors one Plex, and
   // Reaper connects to one Plex, so a second has no working setup.
@@ -227,7 +255,8 @@ function ServiceSection({
             ref={afterRemove.ref as RefObject<HTMLButtonElement>}
             onClick={() => onOpen(null)}
           >
-            <span aria-hidden="true">+</span> Add a {kind.label}
+            <span aria-hidden="true">+</span>{" "}
+            {t("services.panel.addKindButton", { label: kind.label })}
           </button>
         )}
       </div>
@@ -236,6 +265,7 @@ function ServiceSection({
 }
 
 export function ServicesPanel() {
+  const { t } = useTranslation();
   const { data, isPending, error } = useQuery({ queryKey: ["instances"], queryFn: api.instances });
   const [modal, setModal] = useState<{ kind: InstanceKind; instance: Instance | null } | null>(
     null,
@@ -255,23 +285,21 @@ export function ServicesPanel() {
 
   return (
     <div className="panel panel-wide">
-      <h2>Services</h2>
+      <h2>{t("services.panel.heading")}</h2>
       {/* "It only ever reads" was false about Radarr and Sonarr, which are how a reap removes
           anything: the executor unmonitors, deletes files and adds exclusions through them.
           Bounded to the scan, which is what the claim was reaching for. Its twin is the
           wizard's Connect step (rule 72). */}
-      <p className="blurb">
-        The apps Reaper reads from. Scanning only reads. Nothing here can delete a file.
-      </p>
+      <p className="blurb">{t("services.panel.blurb")}</p>
       {/* The one Settings panel #140 did not reach. A raw exception string over the full service
           list broke rule 21 on its own, and said the read had failed above the connections it
           had read (#190): saving or removing an instance invalidates ["instances"], so an
           ordinary edit reaches it. */}
-      {error && !data && <Notice tone="error">Couldn't load your connections.</Notice>}
-      {error && data && <StaleReadNotice what="your connections" />}
-      {isPending && <p className="muted">Loading…</p>}
+      {error && !data && <Notice tone="error">{t("services.panel.loadError")}</Notice>}
+      {error && data && <StaleReadNotice what={t("services.panel.staleWhat")} />}
+      {isPending && <p className="muted">{t("common.loading")}</p>}
       {data &&
-        KINDS.map((k) => (
+        kinds().map((k) => (
           <ServiceSection
             key={k.value}
             kind={k}

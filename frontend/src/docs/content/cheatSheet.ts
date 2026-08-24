@@ -6,7 +6,7 @@ export const cheatSheet: Doc = {
   id: "cheat-sheet",
   group: "Policy",
   title: "Tuning cheat sheet",
-  summary: "The defaults and the habits that keep you safe, at a glance.",
+  summary: "Here are the defaults and habits that keep you safe.",
   body: [
     callout(
       "tip",
@@ -24,9 +24,7 @@ export const cheatSheet: Doc = {
         ["Size on disk", "off", "off"],
       ],
     ),
-    p(
-      "Points must total **100** or Save is blocked. Never weight size: it aims at your biggest, most-loved files.",
-    ),
+    p("Your points must total **100** or the Save button is blocked."),
 
     h2("Protections", "protections"),
     table(
@@ -42,7 +40,7 @@ export const cheatSheet: Doc = {
       ],
     ),
     p(
-      'Your lists (Settings, Lists) protect through **keep rules** here: a list you add protects nothing until you give it a rule, and you pick whether it keeps every title outright or only leans that way. Shipped lists come with a keep-everything rule: "Titles you\'ve tagged" (the `reaper-keep` tag), and IMDb Top 250.',
+      'Your lists (Settings, Lists) protect through **keep rules**. A list you add protects nothing until you give it a rule, and you pick whether it keeps every title outright or only leans that way. Shipped lists come with a keep-everything rule: "Titles you\'ve tagged" (the `reaper-keep` tag) and IMDb Top 250.',
     ),
 
     h2("Pace and limits, defaults", "pace"),
@@ -52,23 +50,23 @@ export const cheatSheet: Doc = {
         ["Per run", "10 titles / 500 GB"],
         ["Per 30 days (rolling)", "100 titles / 2 TB"],
         // Named as the control is labeled in Policy, Pace and limits. What it actually does
-        // is carried by the glossary and the deletion-safety page: it shows a title as
-        // leaving, it does not hold it back.
+        // is carried by the mental model above and the deletion-safety page: it shows a title
+        // as leaving, it does not hold it back.
         ["Grace period", "14 days (min 7)"],
         ["Unknown-size items", "0 (held back)"],
       ],
     ),
-    // "stop", matching understandingPolicy's line about the same mechanism. "Abort" was the
-    // only place in the product an operator met that word (U-15).
+    // Never "abort" here: that was the only place in the product an operator met the word
+    // (U-15).
     p(
-      'Caps stop the whole run when crossed. They never remove just the part that fits. Leave "Limit how much each run removes" on: switching it off drops both rows above. Unknown-size items are still held back, and the countdown still runs.',
+      'A run over your limits stops. Reaper never removes just the part that fits. Leave "Limit how much each run removes" on so no run can take more than you expect. Unknown-size items are still held back, and the countdown still runs.',
     ),
 
     h2("Habits that keep you safe", "habits"),
     ul([
-      "To remove more, lower the line. Don't switch off a protection.",
+      "Lower the line to remove more. Don't switch off a protection.",
       "Pace, grace, and Leaving Soon first. Arm deletion last.",
-      "Keep a vote floor on ratings. A high score from few votes is noise.",
+      "Set a vote floor on ratings.",
       "Never weight size.",
     ]),
   ],

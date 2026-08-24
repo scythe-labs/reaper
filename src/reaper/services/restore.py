@@ -62,6 +62,7 @@ from reaper.clock import utcnow
 from reaper.config import LAUNCHER_CONF_NAME, Settings
 from reaper.db import schema_gate
 from reaper.db.models import AUTH_BEARING_TABLES
+from reaper.refusal import Refusal
 from reaper.secrets import KEY_FILENAME, SALT_FILENAME
 from reaper.services.app_settings import DESTRUCTIVE_KEY
 from reaper.services.backup import (
@@ -128,16 +129,12 @@ _MEMBER_CAPS = {
 }
 
 
-class RestoreError(Exception):
-    """A restore that must not proceed, carrying operator-facing copy and an HTTP status.
+class RestoreError(Refusal):
+    """A restore that must not proceed. A catalog code plus raw params, and an HTTP status.
 
     Raised toward keeping the live data: a malformed file, a newer-version backup, or a
     staged copy that cannot be verified all become one of these rather than a swap.
     """
-
-    def __init__(self, message: str, *, status: int = 422) -> None:
-        super().__init__(message)
-        self.status = status
 
 
 @dataclass(frozen=True)
@@ -191,16 +188,9 @@ def _check_schema(revision: str) -> str:
         known = known_revisions()
     except Exception as exc:  # any failure to read the migrations fails closed
         log.warning("restore.schema_unverifiable", error=str(exc))
-        raise RestoreError(
-            "Reaper couldn't check this backup against its own version. "
-            "Try again, or update Reaper."
-        ) from exc
+        raise RestoreError("error.restore.schema_unverifiable") from exc
     if revision not in known:
-        raise RestoreError(
-            "This backup was made by a newer version of Reaper than the one running. "
-            "Update Reaper to that version or later, then restore.",
-            status=409,
-        )
+        raise RestoreError("error.restore.newer_than_build", status=409)
     return "current" if revision == schema_gate.current_head() else "older"
 
 
@@ -235,7 +225,7 @@ def _copy_capped(source: Any, out_path: Path, cap: int, *, owner_only: bool = Fa
         while chunk := source.read(_COPY_CHUNK):
             written += len(chunk)
             if written > cap:
-                raise RestoreError("This backup is larger than Reaper can restore.")
+                raise RestoreError("error.restore.archive_too_large")
             out.write(chunk)
     return written
 
@@ -260,10 +250,10 @@ def _extract(archive_path: Path, dest: Path) -> dict[str, Any]:
                 if member.name not in _MEMBER_CAPS:
                     continue  # ignore anything unexpected; never trust a member's path
                 if not member.isfile():
-                    raise RestoreError("This backup file is malformed.")
+                    raise RestoreError("error.restore.malformed")
                 stream = tar.extractfile(member)
                 if stream is None:
-                    raise RestoreError("This backup file is malformed.")
+                    raise RestoreError("error.restore.malformed")
                 secret = member.name in (KEY_FILENAME, SALT_FILENAME)
                 _copy_capped(
                     stream, dest / member.name, _MEMBER_CAPS[member.name], owner_only=secret
@@ -272,21 +262,21 @@ def _extract(archive_path: Path, dest: Path) -> dict[str, Any]:
     except RestoreError:
         raise  # a validation refusal, not a read failure -- keep its message
     except (tarfile.TarError, OSError, EOFError) as exc:
-        raise RestoreError("This isn't a readable Reaper backup file.") from exc
+        raise RestoreError("error.restore.unreadable_archive") from exc
 
     if MANIFEST_NAME not in seen or DB_ARCNAME not in seen:
-        raise RestoreError("This isn't a Reaper backup: some of its contents are missing.")
+        raise RestoreError("error.restore.missing_contents")
 
     try:
         manifest = json.loads((dest / MANIFEST_NAME).read_text(encoding="utf-8"))
     except (ValueError, OSError) as exc:
-        raise RestoreError("This backup's description couldn't be read.") from exc
+        raise RestoreError("error.restore.manifest_unreadable") from exc
     if not isinstance(manifest, dict) or manifest.get("format") != BACKUP_FORMAT:
-        raise RestoreError("This isn't a Reaper backup file.")
+        raise RestoreError("error.restore.not_a_backup")
 
     with (dest / DB_ARCNAME).open("rb") as handle:
         if handle.read(len(SQLITE_MAGIC)) != SQLITE_MAGIC:
-            raise RestoreError("The database inside this backup isn't readable.")
+            raise RestoreError("error.restore.database_unreadable")
 
     return manifest
 
@@ -309,21 +299,15 @@ def _summarize(manifest: dict[str, Any], staged: Path, token: str) -> RestoreSum
     """
     db_revision = _read_revision(staged / DB_ARCNAME)
     if db_revision is None:
-        raise RestoreError(
-            "The database in this backup couldn't be verified. "
-            "It may be damaged, or not a Reaper backup."
-        )
+        raise RestoreError("error.restore.database_unverifiable")
     manifest_revision = _opt_str(manifest.get("alembic_revision"))
     if manifest_revision is not None and manifest_revision != db_revision:
-        raise RestoreError(
-            "This backup's description doesn't match the database inside it. "
-            "It may be damaged or altered."
-        )
+        raise RestoreError("error.restore.manifest_mismatch")
     verdict = _check_schema(db_revision)
 
     key_in_backup = (staged / KEY_FILENAME).is_file()
     if manifest.get("key_source") == "file" and not key_in_backup:
-        raise RestoreError("This backup is missing its encryption key and can't be restored.")
+        raise RestoreError("error.restore.missing_key")
 
     return RestoreSummary(
         app_version=_opt_str(manifest.get("app_version")),
@@ -408,16 +392,6 @@ def stage_upload(settings: Settings, archive_path: Path) -> RestoreSummary:
 # ---------------------------------------------------------------------------
 
 
-#: What every failure in the three prepare steps below answers with, declared once so the
-#: four raise sites cannot drift into four different sentences (rule 144).
-#:
-#: :func:`arm` clears :data:`READY_MARKER` before the first step and writes it after the last.
-#: A raise here therefore leaves the marker absent, and :func:`apply_pending_restore` returns
-#: on its absence having touched nothing. That order is what makes the second half of the
-#: sentence a fact about the code (rule 126).
-_PREPARE_FAILED = "Reaper couldn't prepare this backup. Nothing was restored."
-
-
 def _force_destructive_off(db_path: Path) -> None:
     """Set ``destructive_enabled = false`` in the staged database.
 
@@ -436,7 +410,7 @@ def _force_destructive_off(db_path: Path) -> None:
         )
         con.commit()
     except sqlite3.OperationalError as exc:
-        raise RestoreError(_PREPARE_FAILED) from exc
+        raise RestoreError("error.restore.prepare_failed") from exc
     finally:
         con.close()
 
@@ -482,7 +456,7 @@ def _force_recovery_off(conf_path: Path) -> None:
     except OSError as exc:
         # Refuse rather than arm the target: this is the one failure here that would leave
         # the operator with a live way in they did not ask for (the prime directive).
-        raise RestoreError(_PREPARE_FAILED) from exc
+        raise RestoreError("error.restore.prepare_failed") from exc
     log.warning("restore.recovery_disarmed")
 
 
@@ -511,7 +485,7 @@ def _purge_auth_state(db_path: Path) -> None:
     try:
         for table in AUTH_BEARING_TABLES:
             if not _TABLE_NAME.match(table):  # pragma: no cover -- guards the f-string below
-                raise RestoreError(_PREPARE_FAILED)
+                raise RestoreError("error.restore.prepare_failed")
             present = con.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
             ).fetchone()
@@ -519,7 +493,7 @@ def _purge_auth_state(db_path: Path) -> None:
                 con.execute(f"DELETE FROM {table}")  # noqa: S608 -- identifier checked above
         con.commit()
     except sqlite3.OperationalError as exc:
-        raise RestoreError(_PREPARE_FAILED) from exc
+        raise RestoreError("error.restore.prepare_failed") from exc
     finally:
         con.close()
 
@@ -550,8 +524,8 @@ def arm(settings: Settings, token: str | None) -> None:
     ``READY`` marker is written last, so a crash between preparing the database and arming
     leaves the staging inert rather than half-armed.
 
-    It is also cleared FIRST, which is what makes :data:`_PREPARE_FAILED`'s "nothing was
-    restored" true rather than nearly true. Neither check above rejects an arm over a staging
+    It is also cleared FIRST, which is what makes ``error.restore.prepare_failed``'s "nothing
+    was restored" true rather than nearly true. Neither check above rejects an arm over a staging
     that is already armed: the token file survives an arm, so a confirm retried after a
     client-side timeout runs the three steps again with ``READY`` on disk, and a raise there
     used to leave the swap armed while the operator read that nothing had happened. Clearing
@@ -560,12 +534,9 @@ def arm(settings: Settings, token: str | None) -> None:
     pending = settings.data_dir / PENDING_DIR
     staged_db = pending / DB_ARCNAME
     if not _looks_like_sqlite(staged_db):
-        raise RestoreError("There's no backup ready to restore. Choose a file first.")
+        raise RestoreError("error.restore.nothing_staged")
     if not _token_matches(pending, token):
-        raise RestoreError(
-            "The staged backup changed since you reviewed it. Check it again before restoring.",
-            status=409,
-        )
+        raise RestoreError("error.restore.staged_changed", status=409)
     (pending / READY_MARKER).unlink(missing_ok=True)
     _force_destructive_off(staged_db)
     _force_recovery_off(pending / LAUNCHER_CONF_NAME)

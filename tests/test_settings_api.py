@@ -22,12 +22,13 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 
 import reaper.api.settings
+import reaper.refusal
 from reaper.api.plex import PlexUpdateIn, update_plex_settings
-from reaper.api.settings import _BAD_CRON
 from reaper.auth.ratelimit import argon2_gate
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient, PlexError, PlexSection
@@ -35,9 +36,12 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import InstanceKind, PlexServer, Snapshot
+from reaper.engine.reason import Reason, from_wire, to_wire
 from reaper.services import instances as instances_service
 
 from ._auth import TEST_PASSWORD, clear_admin_password
+from ._reasons import catalog
+from ._reasons import text as reason_text
 
 pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
@@ -547,7 +551,9 @@ class TestTheApiPathIsStoredAndUnreachable:
             api_path_prefix: str | None = None,
         ) -> instances_service.TestResult:
             prefixes.append(api_path_prefix)
-            return instances_service.TestResult(ok=True, detail="Connected.")
+            return instances_service.TestResult(
+                ok=True, detail=Reason("legacy", {"text": "Connected."})
+            )
 
         monkeypatch.setattr(instances_service, "test_connection", fake_test)
         assert client.post(f"/api/settings/instances/{instance_id}/test").status_code == 200
@@ -572,13 +578,19 @@ class TestTheApiPathIsStoredAndUnreachable:
         instance_id = made.json()["id"]
 
         async def fake_test(*_a: object, **_k: object) -> instances_service.TestResult:
-            return instances_service.TestResult(ok=True, detail="Connected.", version="4.0.1")
+            return instances_service.TestResult(
+                ok=True, detail=Reason("legacy", {"text": "Connected."}), version="4.0.1"
+            )
 
         monkeypatch.setattr(instances_service, "test_connection", fake_test)
 
         body = client.post(f"/api/settings/instances/{instance_id}/test").json()
 
-        assert body == {"ok": True, "detail": "Connected.", "version": "4.0.1"}
+        assert body == {
+            "ok": True,
+            "detail_reason": {"k": "legacy", "p": {"text": "Connected."}},
+            "version": "4.0.1",
+        }
 
 
 class TestTheStoredTestResultDescribesWhatWasTested:
@@ -600,7 +612,9 @@ class TestTheStoredTestResultDescribesWhatWasTested:
             verify: bool = True,
             api_path_prefix: str | None = None,
         ) -> instances_service.TestResult:
-            return instances_service.TestResult(ok=True, detail="Connected.", version="4.0.1")
+            return instances_service.TestResult(
+                ok=True, detail=Reason("legacy", {"text": "Connected."}), version="4.0.1"
+            )
 
         monkeypatch.setattr(instances_service, "test_connection", fake_test)
         assert client.post(f"/api/settings/instances/{instance_id}/test").status_code == 200
@@ -691,7 +705,9 @@ class TestTheStoredTestResultDescribesWhatWasTested:
             verify: bool = True,
             api_path_prefix: str | None = None,
         ) -> instances_service.TestResult:
-            return instances_service.TestResult(ok=False, detail="Couldn't reach it.")
+            return instances_service.TestResult(
+                ok=False, detail=Reason("legacy", {"text": "Couldn't reach it."})
+            )
 
         monkeypatch.setattr(instances_service, "test_connection", failing_test)
         assert client.post(f"/api/settings/instances/{made['id']}/test").status_code == 200
@@ -769,7 +785,9 @@ class TestConnectionTestsHonorTheTlsChoice:
         ) -> instances_service.TestResult:
             seen.append(verify)
             prefixes.append(api_path_prefix)
-            return instances_service.TestResult(ok=True, detail="Connected.")
+            return instances_service.TestResult(
+                ok=True, detail=Reason("legacy", {"text": "Connected."})
+            )
 
         monkeypatch.setattr(instances_service, "test_connection", fake_test)
         resp = client.post(f"/api/settings/instances/{created['id']}/test")
@@ -788,13 +806,15 @@ class TestConnectionTestsHonorTheTlsChoice:
             kind: InstanceKind, base_url: str, api_key: str, *, verify: bool = True
         ) -> instances_service.TestResult:
             seen.append(verify)
-            return instances_service.TestResult(ok=True, detail="Connected.")
+            return instances_service.TestResult(
+                ok=True, detail=Reason("legacy", {"text": "Connected."})
+            )
 
         monkeypatch.setattr(instances_service, "test_connection", fake_test)
 
         # A passing test goes on to read the folder list, so this arm has to be stubbed too or
         # the route really dials ``a.local``. It passed anyway -- the connect failure is caught
-        # into ``map_error`` -- but on nothing better than that host not resolving here
+        # into ``map_error_reason`` -- but on nothing better than that host not resolving here
         # (rule 119). Its three siblings below already carry this.
         async def folders(
             *_a: object, **_k: object
@@ -896,7 +916,9 @@ class TestSafety:
 
         refused = client.put("/api/settings/safety", json={"enabled": True, "password": ""})
         assert refused.status_code == 400, refused.text
-        assert refused.json()["detail"] == (
+        refused_body = refused.json()
+        assert refused_body["code"] == "error.settings.no_password_set_for_arming"
+        assert refused_body["detail"] == (
             "Set an admin password first. It's what confirms turning deletion on."
         )
         assert client.get("/api/settings/safety").json()["destructive_enabled"] is False
@@ -1206,12 +1228,12 @@ class TestSetupStatus:
         assert _preflight_refusal(whole) is None
 
         no_plex = ReapGateway(plex=None, tautulli=object())  # type: ignore[arg-type]
-        assert (refusal := _preflight_refusal(no_plex)) is not None
-        assert "without Plex" in refusal
+        assert (code := _preflight_refusal(no_plex)) is not None
+        assert "without Plex" in reaper.refusal.MESSAGES[code]
 
         no_tautulli = ReapGateway(plex=object(), tautulli=None)  # type: ignore[arg-type]
-        assert (refusal := _preflight_refusal(no_tautulli)) is not None
-        assert "without Tautulli" in refusal
+        assert (code := _preflight_refusal(no_tautulli)) is not None
+        assert "without Tautulli" in reaper.refusal.MESSAGES[code]
 
         # ...and the same two absences, asked of the configuration instead of the clients.
         _make_scan_ready(client)
@@ -1255,8 +1277,9 @@ class TestSchedule:
     def test_a_recorded_last_run_surfaces_on_the_job(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Once a job has completed, its stored last run (when, ok, result) shows on the row;
+        """Once a job has completed, its stored last run (when, ok, reason) shows on the row;
         a job with no record stays null so the page can say "hasn't run yet"."""
+        from reaper.engine.reason import Reason
         from reaper.services import app_settings
 
         async def fake_last_runs(session: object) -> dict[str, dict[str, object]]:
@@ -1264,7 +1287,7 @@ class TestSchedule:
                 "refresh_ratings": {
                     "at": "2026-07-24T03:30:00+00:00",
                     "ok": True,
-                    "result": "Ratings refreshed",
+                    "result": Reason("ratings_refreshed"),
                 }
             }
 
@@ -1272,9 +1295,43 @@ class TestSchedule:
         by_id = {j["id"]: j for j in client.get("/api/settings/schedule").json()["jobs"]}
         assert by_id["refresh_ratings"]["last_run_at"] == "2026-07-24T03:30:00+00:00"
         assert by_id["refresh_ratings"]["last_ok"] is True
-        assert by_id["refresh_ratings"]["last_result"] == "Ratings refreshed"
+        assert by_id["refresh_ratings"]["last_result_reason"] == {
+            "k": "ratings_refreshed",
+            "p": None,
+        }
         assert by_id["full_history_sweep"]["last_run_at"] is None
         assert by_id["full_history_sweep"]["last_ok"] is None
+
+    async def test_a_job_row_stored_before_the_typed_conversion_still_reads(
+        self,
+        client: TestClient,
+        async_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """A row written before phase 11a carries a bare English phrase under ``"result"``
+        instead of a wire-encoded reason. Rule 96: an old row must still read, thawed as
+        ``Reason("legacy", {"text": ...})`` exactly as ``engine.reason.from_wire`` already
+        does for a bare stored string -- it just stops composing through the catalog. Written
+        straight into storage rather than through ``set_job_last_run``, which only ever
+        writes the new shape now: the point is a value an OLDER build left behind.
+
+        ``async_factory`` shares the same on-disk database as ``client`` (both are built off
+        the same ``settings`` fixture), so a commit through it is visible to the route.
+        """
+        from reaper.services import app_settings
+
+        async with async_factory() as session:
+            await app_settings._set(
+                session,
+                f"{app_settings.JOB_LAST_RUN_PREFIX}refresh_ratings",
+                {"at": "2026-06-01T03:30:00+00:00", "ok": True, "result": "Ratings refreshed"},
+            )
+            await session.commit()
+
+        by_id = {j["id"]: j for j in client.get("/api/settings/schedule").json()["jobs"]}
+        assert by_id["refresh_ratings"]["last_result_reason"] == {
+            "k": "legacy",
+            "p": {"text": "Ratings refreshed"},
+        }
 
     def test_the_scan_cron_is_stored_and_a_bad_one_refused(self, client: TestClient) -> None:
         ok = client.put("/api/settings/jobs/scheduled_scan/schedule", json={"cron": "30 4 * * *"})
@@ -1317,9 +1374,11 @@ class TestSchedule:
         self, client: TestClient
     ) -> None:
         """The scan arm and the upkeep arm answer a cron the scheduler will not take with the
-        same words, and those words are ``_BAD_CRON`` with its slot filled. The two arms each
-        spelled the sentence out, byte-identically, with nothing asserting either, so a reword
-        of one would have shipped an operator two explanations of one refusal (rule 144).
+        same words, and those words are ``MESSAGES["error.settings.bad_cron"]`` with its slot
+        filled. Both arms raise the same code (``refuse(422, "error.settings.bad_cron", ...)``)
+        rather than spelling English out, so a reword of the one catalog template moves both
+        (phase 8a; this used to guard a shared ``_BAD_CRON`` constant each arm formatted by
+        hand, the same shape one level up).
 
         **Three mutations, one assertion each, and none of the three catches another.** Do not
         collapse them:
@@ -1329,29 +1388,31 @@ class TestSchedule:
         - *An arm re-inlines the sentence verbatim.* Caught by the source count alone. Both
           copies render identically, which is what the dedup means, so no assertion over a
           response can ever see it.
-        - *An arm raises ``_BAD_CRON`` unformatted.* Caught by the ``{reason}`` assertion alone.
+        - *An arm raises the template unformatted.* Caught by the ``{reason}`` assertion alone.
           The raw template starts and ends with the very halves being compared, and its literal
           ``{reason}`` is long enough to satisfy the length bound, so every other check here
           passes while the placeholder ships to the operator (rule 21).
 
         Every expectation is derived from the declaration, so none of this restates the sentence.
         """
-        prefix, suffix = _BAD_CRON.split("{reason}")
+        prefix, suffix = reaper.refusal.MESSAGES["error.settings.bad_cron"].split("{reason}")
 
         # Rule 144, and rule 147's caution about what a text scan can see: `prefix` is the
-        # declaration's own first half, so a re-inlined f-string anywhere in the package is a
+        # declaration's own first half, so a re-inlined f-string anywhere in the tree is a
         # second hit however the rest of it was reworded.
-        package = Path(reaper.api.settings.__file__).parent
+        package = Path(reaper.refusal.__file__).parent
         copies = sum(f.read_text(encoding="utf-8").count(prefix) for f in package.rglob("*.py"))
         assert copies == 1, (
-            f"{copies} copies of the cron refusal in src/reaper, expected only _BAD_CRON's "
+            f"{copies} copies of the cron refusal in src/reaper, expected only the catalog's "
             "declaration. An arm spelling its own sentence renders identically to this one."
         )
 
         for job_id in ("scheduled_scan", "refresh_ratings"):
             resp = client.put(f"/api/settings/jobs/{job_id}/schedule", json={"cron": "nope"})
             assert resp.status_code == 422, job_id
-            detail = resp.json()["detail"]
+            body = resp.json()
+            assert body["code"] == "error.settings.bad_cron", job_id
+            detail = body["detail"]
             assert detail.startswith(prefix), (job_id, detail)
             assert detail.endswith(suffix), (job_id, detail)
             assert "{reason}" not in detail, (job_id, detail)
@@ -1434,7 +1495,9 @@ class TestPlexStatus:
     def test_the_certificate_check_cannot_be_set_before_linking(self, client: TestClient) -> None:
         response = client.put("/api/settings/plex", json={"web_url": "", "verify_tls": False})
         assert response.status_code == 422
-        assert "Link one" in response.json()["detail"]
+        body = response.json()
+        assert body["code"] == "error.plex.verify_tls_no_server"
+        assert "Link one" in body["detail"]
 
     @pytest.mark.parametrize("address", ["plex.example", "http://", "https://", "ftp://a.local"])
     def test_the_web_address_must_be_a_full_web_address(
@@ -1677,8 +1740,11 @@ class TestPlexLinkChoice:
         )
         assert blip.status_code == 200, blip.text
         assert blip.json()["status"] == "retrying"
-        # And it says why, so a longer wait reads as a wait rather than a hang.
-        assert "could not reach it" in blip.json()["reason"]
+        # And it carries why, as a typed reason (phase 8a's second wave), so a longer wait
+        # reads as a wait rather than a hang once the frontend composes it (phase 8b).
+        reason = blip.json()["reason"]
+        assert reason["k"] == "error.plex.link_unreachable"
+        assert reason["p"] == {"name": "Attic", "count": 1}
         assert client.get("/api/settings/plex").json()["linked"] is False
 
         # The SAME sign-in finishes once the server answers. Nothing was burned.
@@ -1702,7 +1768,9 @@ class TestPlexLinkChoice:
             json={"pin_id": start["pin_id"], "machine_identifier": "somebody-elses-machine"},
         )
         assert bad.status_code == 400
-        assert "No server this account owns" in bad.json()["detail"]
+        bad_body = bad.json()
+        assert bad_body["code"] == "error.plex.link_choice_not_found"
+        assert "No server this account owns" in bad_body["detail"]
 
         # The refusal consumed the PIN, so the obtained token cannot be replayed.
         retry = client.post(
@@ -1742,7 +1810,9 @@ class TestPlexLinkChoice:
             "/api/settings/plex/connection", json={"uri": "https://192.0.2.50:32400"}
         )
         assert refused.status_code == 409, refused.text
-        assert "a different Plex server" in refused.json()["detail"]
+        refused_body = refused.json()
+        assert refused_body["code"] == "error.plex.connection_wrong_server"
+        assert "a different Plex server" in refused_body["detail"]
         # Nothing was written: the stored address is still the one linking found.
         assert (
             client.get("/api/settings/plex").json()["connection_uri"]
@@ -1891,7 +1961,9 @@ class TestPlexLibrarySync:
 
         answer = client.post("/api/settings/plex/libraries/sync")
         assert answer.status_code == 502, answer.text
-        assert "Could not reach Plex" in answer.json()["detail"]
+        answer_body = answer.json()
+        assert answer_body["code"] == "error.plex.libraries_sync_failed"
+        assert "Could not reach Plex" in answer_body["detail"]
 
     def test_the_sync_route_refuses_before_a_server_is_linked(self, client: TestClient) -> None:
         assert client.post("/api/settings/plex/libraries/sync").status_code == 400
@@ -1949,7 +2021,7 @@ class TestConnectionTestCarriesTheMapping:
     def _pass(self, monkeypatch: pytest.MonkeyPatch) -> None:
         async def ok(*_a: object, **_k: object) -> instances_service.TestResult:
             return instances_service.TestResult(
-                ok=True, detail="Connected to Radarr.", version="5.4.6"
+                ok=True, detail=Reason("legacy", {"text": "Connected to Radarr."}), version="5.4.6"
             )
 
         monkeypatch.setattr(instances_service, "test_connection", ok)
@@ -1980,7 +2052,7 @@ class TestConnectionTestCarriesTheMapping:
         assert body["root_folders"][1]["suggested_library"] is None
         # Nothing was read that a Seerr would have, and the read landed, so no error is claimed.
         assert body["seerr_services"] == []
-        assert body["map_error"] is None
+        assert body["map_error_reason"] is None
 
     def test_a_failed_test_reads_nothing_to_map(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -1988,7 +2060,9 @@ class TestConnectionTestCarriesTheMapping:
         """Nothing was reached, so there is nothing to have read -- and no probe is attempted."""
 
         async def bad(*_a: object, **_k: object) -> instances_service.TestResult:
-            return instances_service.TestResult(ok=False, detail="Radarr refused that key.")
+            return instances_service.TestResult(
+                ok=False, detail=Reason("legacy", {"text": "Radarr refused that key."})
+            )
 
         monkeypatch.setattr(instances_service, "test_connection", bad)
 
@@ -2003,14 +2077,15 @@ class TestConnectionTestCarriesTheMapping:
 
         assert body["ok"] is False
         assert body["root_folders"] == []
-        assert body["map_error"] is None
+        assert body["map_error_reason"] is None
 
     def test_an_unreadable_folder_list_is_said_apart_from_an_empty_one(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The credentials really were proved, so the test still passes -- but the empty list
         must not read as "this instance has no folders", which is a claim nobody checked
-        (rule 93). The two states are told apart by ``map_error``, never by the empty list."""
+        (rule 93). The two states are told apart by ``map_error_reason``, never by the empty
+        list."""
         self._pass(monkeypatch)
 
         async def boom(*_a: object, **_k: object) -> list[instances_service.RootFolderSuggestion]:
@@ -2030,12 +2105,15 @@ class TestConnectionTestCarriesTheMapping:
         # Plain language, not the raw exception. Pasting `str(exc)` put "radarr: connection
         # reset" in front of someone trying to get a URL and a key right -- the exact string
         # shape `explain_failure` exists to prevent, on the one path that had not been given it.
-        assert "couldn't read what to map" in body["map_error"]
-        assert "connection reset" not in body["map_error"]
-        assert body["map_error"].endswith(
-            instances_service.explain_failure(
-                InstanceKind.RADARR, IntegrationError("radarr", "connection reset")
-            )
+        reason = body["map_error_reason"]
+        assert reason["k"] == "mapError"
+        explained = instances_service.explain_failure(
+            InstanceKind.RADARR, IntegrationError("radarr", "connection reset")
+        )
+        assert reason["p"] == {"error": to_wire(explained)}
+        assert "connection reset" not in reaper.refusal.english(explained)
+        assert "couldn't read what to map" in reason_text(
+            from_wire(reason), namespace="services.modal"
         )
 
     def test_a_seerr_test_returns_the_portals_services(
@@ -2143,3 +2221,72 @@ class TestCreateStoresTheMapping:
             json={"kind": "radarr", "name": "HD", "base_url": "http://r.local", "api_key": "k"},
         )
         assert created.json()["plex_library_map"] == {}
+
+
+class TestTheDiscordTestRouteSendsATypedReason:
+    """``POST /api/settings/notifications/test``'s three outcomes, docs/history/
+    I18N_PLAN.md §5: the server sends an id, never a sentence."""
+
+    WEBHOOK = "https://discord.com/api/webhooks/123/token-is-a-secret"
+
+    def test_a_successful_post_says_posted(
+        self, client: TestClient, httpx2_mock: respx.Router
+    ) -> None:
+        httpx2_mock.post(self.WEBHOOK).mock(return_value=httpx.Response(204))
+        body = client.post(
+            "/api/settings/notifications/test", json={"webhook_url": self.WEBHOOK}
+        ).json()
+        assert body["ok"] is True
+        assert body["reason"] == {"k": "posted", "p": None}
+
+    def test_a_rejected_post_says_failed(
+        self, client: TestClient, httpx2_mock: respx.Router
+    ) -> None:
+        httpx2_mock.post(self.WEBHOOK).mock(
+            return_value=httpx.Response(400, json={"message": "bad"})
+        )
+        body = client.post(
+            "/api/settings/notifications/test", json={"webhook_url": self.WEBHOOK}
+        ).json()
+        assert body["ok"] is False
+        assert body["reason"] == {"k": "failed", "p": None}
+
+    def test_no_stored_webhook_says_not_configured(self, client: TestClient) -> None:
+        body = client.post("/api/settings/notifications/test", json={}).json()
+        assert body["ok"] is False
+        assert body["reason"] == {"k": "not_configured", "p": None}
+
+
+#: The ids ``test_notifications`` can emit (``api/settings.py``). Hand-maintained, since
+#: they are inline literals across the route's three branches rather than an enum.
+_DISCORD_TEST_RESULT_IDS: frozenset[str] = frozenset({"posted", "failed", "not_configured"})
+
+
+class TestTheDiscordTestResultVocabulary:
+    """Every id ``test_notifications`` can emit, under ``services.discord.testResult.*``,
+    both directions (rule 145's shape, modeled on ``test_review_chips.TestTheChipVocabulary``).
+    """
+
+    def test_the_id_population_is_pinned(self) -> None:
+        assert len(_DISCORD_TEST_RESULT_IDS) == 3
+
+    def test_every_id_has_catalog_copy(self) -> None:
+        entries = set(catalog("services.discord.testResult"))
+        missing = _DISCORD_TEST_RESULT_IDS - entries
+        assert not missing, f"ids with no services.discord.testResult entry: {sorted(missing)}"
+
+    def test_every_catalog_entry_has_a_producer(self) -> None:
+        entries = set(catalog("services.discord.testResult"))
+        orphaned = entries - _DISCORD_TEST_RESULT_IDS
+        assert not orphaned, f"services.discord.testResult entries with no id: {sorted(orphaned)}"
+
+
+class TestTheMapErrorVocabulary:
+    """``test_new_instance``'s one Plex-couldn't-map reason, both directions (rule 145's
+    shape, scaled to a population of one id, the sibling of ``lists.py``'s ``plexError``)."""
+
+    def test_the_id_has_a_catalog_entry(self) -> None:
+        assert "mapError" in catalog("services.modal")
+
+    def test_the_entry_takes_the_integration_text_as_a_param(self) -> None:
+        assert "{error}" in catalog("services.modal")["mapError"]

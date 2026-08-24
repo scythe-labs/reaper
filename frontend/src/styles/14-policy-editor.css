@@ -34,9 +34,10 @@
   justify-content: space-between;
   gap: var(--space-3xl);
   flex-wrap: wrap;
-  padding: 0.8rem 1rem 0.85rem 1.05rem;
+  padding-block: 0.8rem 0.85rem;
+  padding-inline: 1.05rem 1rem;
   border: 1px solid var(--pc-edge);
-  border-left: 4px solid var(--pc-brand);
+  border-inline-start: 4px solid var(--pc-brand);
   border-radius: var(--radius);
   background: var(--pc-tint);
   margin-bottom: 1.1rem;
@@ -563,7 +564,7 @@
 .suggest-pop {
   position: absolute;
   top: calc(100% + 4px);
-  left: var(--pop-shift, 0px);
+  inset-inline-start: var(--pop-shift, 0px);
   z-index: var(--z-nav);
   min-width: 100%;
   max-width: min(20rem, calc(100vw - 1.5rem));

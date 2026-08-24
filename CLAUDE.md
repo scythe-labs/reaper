@@ -54,10 +54,17 @@ rule narrating the gate that enforces it pays twice for one constraint.
 
 ## Golden rules
 
-- **Nothing identifying, anywhere** — code, docs, tests, and commit messages alike. Reaper
-  ships to operators whose servers we will never see: never commit a real title, host, path,
-  username, or stat. Live-testing findings are recorded as ratios and shapes, never
-  fingerprints.
+- **Nothing identifying in the tree** — code, docs, tests, and commit messages alike. Reaper
+  ships to operators whose servers we will never see: never write a real title, host, path,
+  username, or stat into any of them. Live-testing findings are recorded as ratios and shapes,
+  never fingerprints.
+  **Screenshots are the one exception, and only of the maintainer's own instance.** The README
+  and scythelabs.dev show the running app against a real library, because a picture of invented
+  titles sells nothing and that server is theirs to publish. **Other people are never in the
+  exception**: Scales lists the names of everyone who requested something, so a shot of it is
+  cropped above that list rather than retouched, since a crop cannot miss one and painting over
+  twelve rows can. `scripts/gen_screenshot_mockup.py` still builds the invented version under
+  `docs/media/review-queue-mockup.png`, kept so reversing this call is a one-line README edit.
 - **American English everywhere**, including identifiers and commit messages
   (`normalize_label`, `SeasonJudgment`). The only exceptions are names owned by someone else
   and spelled British at the source: `asyncio.CancelledError`, `aria-labelledby`.
@@ -308,12 +315,18 @@ spanning lanes runs each lane it touched — which is not the same as everything
 `frontend`: the guards that read `manual/` and `website/` live in those last two, and for as
 long as the site lane started only its own build, a hand-edited generated page compiled and
 published with nothing having read it (#783).
+**The manual publishes from Cloudflare Pages, and no workflow here does it** — Pages watches
+`dev`, builds `website/` itself, and asks GitHub nothing, so the `site` job is the only thing
+that reads a page before an operator does and it gates nothing. Its four build settings live
+in `website/docusaurus.config.ts`'s header, beside the `baseUrl` they have to agree with.
 **Two workflows outside it carry their own path lists and have to** — a `paths` filter decides
 whether a workflow starts, so it cannot read another one's output. `codeql.yml` restates the
 prose globs as `paths-ignore` once per trigger, in `**` spelling rather than the `case` globs
-above; `docs-deploy.yml` carries a third list that is *near* the site lane and not equal to it.
-`tests/test_repo_hygiene.py` pins all three by name, so neither a fourth nor a move between
-files can arrive quietly and leave this paragraph stale again. **A workflow skipped by its own
+above. `weblate-notes.yml` filters on the two files that can change what it does,
+`frontend/src/locales/en/ui.notes.json` and `src/reaper/locales/en/backend.notes.json`,
+unrelated to any lane here. `tests/test_repo_hygiene.py`
+pins all three by name, so neither a fourth nor a move between files can arrive quietly and
+leave this paragraph stale again. **A workflow skipped by its own
 path filter publishes no check run at all** — a *job* skipped by an `if:` does publish one,
 with conclusion `skipped`, which is what the next sentence relies on. That is why the required
 check is `CI gate`: it runs on every commit, counts a skipped lane as a pass and a cancelled
@@ -401,8 +414,7 @@ streaming veto and played-since-approval check) each resolve toward keeping the 
   six places in `src/`: `engine/signals.py`, `engine/policy.py` (three times), `engine/gates.py`,
   and `api/review.py`. Read it before touching any of them: it is also the only place the rewatch
   curve is written down, now that the engines that measured it are gone.
-- The live plan: `docs/I18N_PLAN.md` (a proposal, nothing landed, no stage committed to).
-  `docs/README.md`'s map is the list to correct. `RETURN_PLAN.md` was the other one and is
-  frozen into `docs/history/`, #553 having closed with it.
+- No plan is live. `I18N_PLAN.md` and `RETURN_PLAN.md` were the last two and are frozen into
+  `docs/history/` (#862 and #553 closed them). `docs/README.md`'s map is the list to correct.
 - `docs/history/` — frozen: the retired plan narratives and the review passes, including the
   finding IDs behind the numbered rules. Never edit an archived file to bring it up to date.

@@ -20,7 +20,7 @@ has logged in. Everything here is exempt from the session requirement (see
 from __future__ import annotations
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +34,7 @@ from reaper.api.deps import (
     session_factory,
     throttled,
 )
+from reaper.api.errors import refuse, refuse_from
 from reaper.api.schemas import NO_PLEX_FORWARD, OkOut, PlexServerChoiceOut, PlexStartIn
 from reaper.auth.admins import count_local_admins
 from reaper.auth.cookie import (
@@ -59,6 +60,8 @@ from reaper.auth.sessions import (
 )
 from reaper.config import RuntimeSafety
 from reaper.db.models import AppUser, AuthProvider, PlexServer
+from reaper.engine.explanation import ReasonKey
+from reaper.engine.reason import Reason, to_wire
 from reaper.services.login import (
     LoginError,
     UserView,
@@ -144,9 +147,11 @@ class PlexPollOut(BaseModel):
     setup: bool = False
     # Present only with status "choose_server": the owned servers to pick from.
     servers: list[PlexServerChoiceOut] | None = None
-    # Present only with status "retrying": why this poll could not finish yet, in the
-    # operator's words. The sign-in is still good and the browser keeps polling.
-    reason: str | None = None
+    # Present only with status "retrying": why this poll could not finish yet -- the typed
+    # id plus raw params (docs/history/I18N_PLAN.md §5): the frontend composes it, the same
+    # posture every other reason field on the wire takes (rule 92). The sign-in is still good
+    # and the browser keeps polling.
+    reason: ReasonKey | None = None
 
 
 class LocalLoginIn(BaseModel):
@@ -199,7 +204,7 @@ async def me(request: Request) -> UserOut:
         via_recovery = await session_via_recovery(session, token)
         await session.commit()
         if user is None:
-            raise HTTPException(401, "Not authenticated.")
+            refuse(401, "error.auth.not_authenticated")
         return UserOut(
             id=user.id,
             username=user.username,
@@ -263,9 +268,12 @@ async def plex_poll(request: Request, payload: PlexPollIn, response: Response) -
         # answering with an error would strand a sign-in that is still good -- the browser
         # aborts its poll loop on any thrown status (B2-14). A non-final status instead,
         # so the loop keeps polling until the server is back or the deadline passes.
-        return PlexPollOut(status="retrying", reason=str(exc))
+        return PlexPollOut(
+            status="retrying",
+            reason=ReasonKey.model_validate(to_wire(Reason(exc.code, dict(exc.params)))),
+        )
     except LoginError as exc:
-        raise HTTPException(401, str(exc)) from exc
+        refuse_from(exc)
 
     if result is None:
         return PlexPollOut(status="pending")
@@ -294,11 +302,7 @@ async def local(request: Request, payload: LocalLoginIn, response: Response) -> 
     # capacity limit, not a credential failure, so it does not count against the
     # lockout counters.
     if not argon2_gate.acquire():
-        raise HTTPException(
-            503,
-            "The server is busy verifying sign-ins. Please try again shortly.",
-            headers={"Retry-After": "2"},
-        )
+        refuse(503, "error.auth.sign_in_busy", headers={"Retry-After": "2"})
     try:
         result = await login_local(
             session_factory(request),
@@ -318,7 +322,7 @@ async def local(request: Request, payload: LocalLoginIn, response: Response) -> 
             log.warning(
                 "auth.local_locked_out", ip=ip, username=payload.username[:64], retry_after=locked
             )
-        raise HTTPException(401, str(exc)) from exc
+        refuse_from(exc)
     finally:
         argon2_gate.release()
 
@@ -371,7 +375,7 @@ async def recover(request: Request, payload: RecoverIn, response: Response) -> U
         if not await redeem_recovery_token(session, payload.token):
             await session.commit()
             recover_throttle.record_failure(ip_key)
-            raise HTTPException(401, "That recovery link is invalid, expired, or already used.")
+            refuse(401, "error.auth.recovery_link_invalid")
 
         target = await _recovery_target(session)
         if target is None:
@@ -387,12 +391,7 @@ async def recover(request: Request, payload: RecoverIn, response: Response) -> U
             # ``packaging/pyinstaller/entry.py``, which runs the launcher and nothing else),
             # so offering it alone sent half of all operators after a command they do not
             # have (rule 25, #433). Plex sign-in claims an unclaimed server everywhere.
-            raise HTTPException(
-                409,
-                "The recovery code was valid, but this install has no admin account yet. "
-                "Sign in with Plex to claim the server, or on Docker and snap run: "
-                "reaper-admin create-admin --username admin",
-            )
+            refuse(409, "error.auth.recovery_no_admin")
 
         token_str = await open_session(
             session, target, user_agent=request.headers.get("user-agent"), via_recovery=True

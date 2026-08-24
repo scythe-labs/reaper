@@ -10,13 +10,17 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type RefObject, useEffect, useRef, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api, type Schedule, type ScheduledJob } from "../api";
 import { useBackCloseMirror, useBackGuard } from "../backnav";
-import { count } from "../format";
-import { shelfSkipIsCurrent } from "../shelfStatus";
+import { describeError } from "../errors";
+import { count, weekday } from "../format";
+import i18next from "../i18n";
+import { shelfRenamePending, shelfSkipIsCurrent } from "../shelfStatus";
 import { useGeneralSettings } from "../useGeneralSettings";
-import { JobStatus, useJobFlash } from "./JobStatus";
+import { composeError } from "../why";
+import { JobStatus, jobResultText, useJobFlash } from "./JobStatus";
 import { ModalShell } from "./ModalShell";
 import { ScanRow } from "./ScanBar";
 import { type StaleReadPlan, StaleReadSlot, collapseStaleReads } from "./StaleReadNotice";
@@ -39,53 +43,61 @@ interface JobMeta {
   offWarning?: string;
 }
 
-// The display copy for every job, in one place, so the row and its editor never drift.
-const JOB_META: Record<string, JobMeta> = {
-  [SCAN_ID]: {
-    title: "Update library and apply policy",
-    desc: "Checks what changed since the last scan and re-scores it against your policy. A quick pass, not a full re-read.",
-    modalDesc: "Reaper can scan on its own to keep the queue fresh.",
-  },
-  refresh_ratings: {
-    title: "Refresh IMDb ratings",
-    desc: "Downloads the latest IMDb ratings so scores use current numbers.",
-    offWarning:
-      "With this off, ratings won't refresh on a schedule. Reaper still refreshes them once at startup if they're over two weeks old.",
-  },
-  refresh_curated_lists: {
-    // The job id is a stored schedule key and predates the registry, so it keeps its old
-    // spelling; what it refreshes is every list on Settings -> Lists, whatever its source
-    // (scheduler.refresh_curated_lists).
-    title: "Refresh your lists",
-    desc: "Re-checks every list on Settings, Lists, so a tag or a collection you edited starts protecting without waiting for a scan.",
-    offWarning:
-      "This only affects the standalone daily refresh. Every scan already re-checks your lists, and you can check one on Settings, Lists.",
-  },
-  full_history_sweep: {
-    title: "Full watch-history update",
-    desc: "Re-reads your whole watch history, not just new plays, so imported or backdated views still count and a wiped history is caught.",
-    offWarning:
-      "With this off, Reaper stops re-reading your full history. Imported or backdated plays won't be counted, and a wiped history won't be caught.",
-  },
-  check_for_updates: {
-    title: "Check for updates",
-    desc: "Asks GitHub whether a newer Reaper is available.",
-    offWarning: "With this off, Reaper only checks when you open it.",
-  },
-};
-
-/** The copy for a job id. Every scheduled job has an entry; the fallback only exists so the
- *  lookup is total for the type checker. */
+/** The display copy for every job, read from the catalog so the row and its editor never
+ *  drift. A plain function rather than a frozen table (`jobs.meta.*` below): each id gets its
+ *  own literal `t()` calls, since a computed key is unreadable to the missing-key gate. */
 function jobMeta(id: string): JobMeta {
-  return JOB_META[id] ?? { title: id, desc: "" };
+  switch (id) {
+    case SCAN_ID:
+      return {
+        title: i18next.t("jobs.meta.scan.title"),
+        desc: i18next.t("jobs.meta.scan.desc"),
+        modalDesc: i18next.t("jobs.meta.scan.modalDesc"),
+      };
+    case "refresh_ratings":
+      return {
+        title: i18next.t("jobs.meta.refreshRatings.title"),
+        desc: i18next.t("jobs.meta.refreshRatings.desc"),
+        offWarning: i18next.t("jobs.meta.refreshRatings.offWarning"),
+      };
+    case "refresh_curated_lists":
+      // The job id is a stored schedule key and predates the registry, so it keeps its old
+      // spelling; what it refreshes is every list on Settings -> Lists, whatever its source
+      // (scheduler.refresh_curated_lists).
+      return {
+        title: i18next.t("jobs.meta.refreshCuratedLists.title"),
+        desc: i18next.t("jobs.meta.refreshCuratedLists.desc"),
+        offWarning: i18next.t("jobs.meta.refreshCuratedLists.offWarning"),
+      };
+    case "full_history_sweep":
+      return {
+        title: i18next.t("jobs.meta.fullHistorySweep.title"),
+        desc: i18next.t("jobs.meta.fullHistorySweep.desc"),
+        offWarning: i18next.t("jobs.meta.fullHistorySweep.offWarning"),
+      };
+    case UPDATE_CHECK_ID:
+      return {
+        title: i18next.t("jobs.meta.checkForUpdates.title"),
+        desc: i18next.t("jobs.meta.checkForUpdates.desc"),
+        offWarning: i18next.t("jobs.meta.checkForUpdates.offWarning"),
+      };
+    default:
+      // Every scheduled job has a case above; this only exists so the lookup is total for the
+      // type checker, for a job the frontend has not shipped copy for yet.
+      return { title: id, desc: "" };
+  }
 }
 
-const SCAN_PRESETS: { label: string; cron: string | null }[] = [
-  { label: "Off (scan by hand)", cron: null },
-  { label: "Every night at 2 AM", cron: "0 2 * * *" },
-  { label: "Every Sunday at 3 AM", cron: "0 3 * * 0" },
-  { label: "First of the month, 3 AM", cron: "0 3 1 * *" },
-];
+/** The scan's own presets, read at call time (not a frozen module constant) so a language
+ *  change is picked up the next time the editor opens. */
+function scanPresets(): { label: string; cron: string | null }[] {
+  return [
+    { label: i18next.t("jobs.presets.scanOff"), cron: null },
+    { label: i18next.t("jobs.presets.scanNightly"), cron: "0 2 * * *" },
+    { label: i18next.t("jobs.presets.scanWeekly"), cron: "0 3 * * 0" },
+    { label: i18next.t("jobs.presets.scanMonthly"), cron: "0 3 1 * *" },
+  ];
+}
 
 /** The upkeep presets. The first is the job's own default, staggered off peak, so choosing it
  *  keeps the natural setting exactly what it was.
@@ -96,16 +108,16 @@ const SCAN_PRESETS: { label: string; cron: string | null }[] = [
  *  (rule 144). Describing it means the option cannot disagree with what picking it does. */
 function maintenancePresets(defaultCron: string): { label: string; cron: string | null }[] {
   return [
-    { label: "Off (don't run)", cron: null },
+    { label: i18next.t("jobs.presets.maintenanceOff"), cron: null },
     { label: describeCron(defaultCron), cron: defaultCron },
     // Dropped when the default already IS one of these. A described label can equal a written
     // one, where the old fixed "Every day" never could, and the pair would render as two
     // identical options sharing a React key (rule 19). No shipped default collides today;
     // this is here so the next one cannot.
     ...[
-      { label: "Every 12 hours", cron: "0 */12 * * *" },
-      { label: "Every 6 hours", cron: "0 */6 * * *" },
-      { label: "Every hour", cron: "0 * * * *" },
+      { label: i18next.t("jobs.cron.everyNHours", { n: 12 }), cron: "0 */12 * * *" },
+      { label: i18next.t("jobs.cron.everyNHours", { n: 6 }), cron: "0 */6 * * *" },
+      { label: i18next.t("jobs.cron.everyHour"), cron: "0 * * * *" },
     ].filter((p) => p.cron !== defaultCron),
   ];
 }
@@ -115,56 +127,58 @@ const OFF_VALUE = "__off__";
 const CUSTOM_VALUE = "__custom__";
 
 function whenText(iso: string | null): string {
-  if (!iso) return "not scheduled";
+  if (!iso) return i18next.t("jobs.when.unscheduled");
   const ms = new Date(iso).getTime() - Date.now();
-  if (ms <= 0) return "any moment";
+  if (ms <= 0) return i18next.t("jobs.when.anyMoment");
   const mins = Math.round(ms / 60000);
-  if (mins < 60) return `in ${mins} min`;
+  if (mins < 60) return i18next.t("jobs.when.inMinutes", { mins });
   const hours = Math.round(mins / 60);
-  if (hours < 24) return `in ${hours} hr`;
+  if (hours < 24) return i18next.t("jobs.when.inHours", { hours });
   return new Date(iso).toLocaleString();
 }
 
-const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-
+/** The clock as US 12-hour text, whatever the locale; the cron messages take it as a ready
+ *  string. */
 function clockLabel(hour: number, minute: number): string {
-  const period = hour < 12 ? "AM" : "PM";
+  const period = hour < 12 ? i18next.t("jobs.time.am") : i18next.t("jobs.time.pm");
   const hour12 = hour % 12 === 0 ? 12 : hour % 12;
   return `${hour12}:${String(minute).padStart(2, "0")} ${period}`;
 }
 
-function ordinal(n: number): string {
-  const tens = n % 100;
-  if (tens >= 11 && tens <= 13) return `${n}th`;
-  const ones = n % 10;
-  return `${n}${ones === 1 ? "st" : ones === 2 ? "nd" : ones === 3 ? "rd" : "th"}`;
-}
-
 /** A cron line in plain words, for the shapes the presets and defaults produce. Anything
- *  outside those reads as its raw line rather than a confident wrong guess. */
+ *  outside those reads as its raw line rather than a confident wrong guess.
+ *
+ *  Extracted in Stage 2 (docs/history/I18N_PLAN.md): the `jobs.cron.*` keys are frozen and unchanged
+ *  by this extraction, per this surface's binding note. */
 function describeCron(cron: string): string {
   const parts = cron.trim().split(/\s+/);
-  if (parts.length !== 5) return `Custom (${cron})`;
+  if (parts.length !== 5) return i18next.t("jobs.cron.custom", { cron });
   const [m = "", h = "", dom = "", mon = "", dow = ""] = parts;
   const numeric = (x: string) => /^\d+$/.test(x);
   const everyDay = dom === "*" && mon === "*" && dow === "*";
 
   const hourStep = /^\*\/(\d+)$/.exec(h);
-  if (numeric(m) && hourStep && everyDay) return `Every ${hourStep[1]} hours`;
-  if (numeric(m) && h === "*" && everyDay) return "Every hour";
-  if (!numeric(m) || !numeric(h)) return `Custom (${cron})`;
+  if (numeric(m) && hourStep && everyDay) {
+    return i18next.t("jobs.cron.everyNHours", { n: Number(hourStep[1]) });
+  }
+  if (numeric(m) && h === "*" && everyDay) return i18next.t("jobs.cron.everyHour");
+  if (!numeric(m) || !numeric(h)) return i18next.t("jobs.cron.custom", { cron });
 
   const at = clockLabel(Number(h), Number(m));
-  if (everyDay) return `Every day at ${at}`;
+  if (everyDay) return i18next.t("jobs.cron.everyDayAt", { at });
   const dayStep = /^\*\/(\d+)$/.exec(dom);
-  if (dayStep && mon === "*" && dow === "*") return `Every ${dayStep[1]} days at ${at}`;
+  if (dayStep && mon === "*" && dow === "*") {
+    return i18next.t("jobs.cron.everyNDaysAt", { n: Number(dayStep[1]), at });
+  }
   if (dom === "*" && mon === "*" && numeric(dow)) {
-    return `Every ${WEEKDAYS[Number(dow) % 7]} at ${at}`;
+    return i18next.t("jobs.cron.weeklyAt", { day: weekday(Number(dow) % 7), at });
   }
   if (numeric(dom) && mon === "*" && dow === "*") {
-    return `Monthly on the ${ordinal(Number(dom))} at ${at}`;
+    // The ordinal suffix lives inside the message (ICU selectordinal), so a locale can
+    // decline it with the noun instead of receiving a ready-made English "21st".
+    return i18next.t("jobs.cron.monthlyAt", { n: Number(dom), at });
   }
-  return `Custom (${cron})`;
+  return i18next.t("jobs.cron.custom", { cron });
 }
 
 function scanScheduleText(job: ScheduledJob | undefined, failed: boolean): string {
@@ -175,15 +189,21 @@ function scanScheduleText(job: ScheduledJob | undefined, failed: boolean): strin
   // went on printing next-run times off that same held row, under a panel notice saying the rows
   // are kept but stale. The panel's 1.5s self-poll reaches that state with nobody touching
   // anything (rule 72: the same split `JobsPanel`'s own `StaleReadSlot` takes).
-  if (failed && !job) return "Couldn't check the schedule.";
-  if (!job) return "Automatic scan: checking…";
-  if (job.cron === null) return "Automatic scan is off. It runs when you ask.";
-  return `Automatic scan: ${describeCron(job.cron)}, next ${whenText(job.next_run_at)}`;
+  if (failed && !job) return i18next.t("jobs.scan.scheduleUnknown");
+  if (!job) return i18next.t("jobs.scan.scheduleChecking");
+  if (job.cron === null) return i18next.t("jobs.scan.scheduleOff");
+  return i18next.t("jobs.scan.scheduleText", {
+    cron: describeCron(job.cron),
+    when: whenText(job.next_run_at),
+  });
 }
 
 function maintenanceScheduleText(job: ScheduledJob): string {
-  if (job.cron === null) return "Off. Run it by hand.";
-  return `${describeCron(job.cron)}, next ${whenText(job.next_run_at)}`;
+  if (job.cron === null) return i18next.t("jobs.maintenance.off");
+  return i18next.t("jobs.maintenance.scheduleText", {
+    cron: describeCron(job.cron),
+    when: whenText(job.next_run_at),
+  });
 }
 
 /** The one schedule editor, for the scan and every upkeep job. Presets plus "off" plus a
@@ -199,13 +219,14 @@ function ScheduleModal({
    *  read (B-11, rule 80). Written by `useBackCloseMirror`, which takes the whole predicate. */
   blockCloseRef?: RefObject<boolean>;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   // The effective server time zone every timed job runs on, so the help names the real zone
   // instead of guessing "UTC in Docker" (U-1, rule 86). Shares GeneralPanel's cache.
   const zone = useGeneralSettings().data?.timezone;
   const meta = jobMeta(job.id);
   const presets =
-    job.id === SCAN_ID ? SCAN_PRESETS : maintenancePresets(job.default_cron ?? "0 4 * * *");
+    job.id === SCAN_ID ? scanPresets() : maintenancePresets(job.default_cron ?? "0 4 * * *");
   const isKnownPreset = presets.some((p) => p.cron !== null && p.cron === job.cron);
 
   const [choice, setChoice] = useState<string>(
@@ -219,11 +240,11 @@ function ScheduleModal({
     onSuccess: () => {
       // The modal closing was the entire success signal, the same shape `ServiceModal`'s save
       // was fixed for -- and it takes the focused button with it.
-      announce("Schedule saved.");
+      announce(t("jobs.schedule.savedAnnounce"));
       void queryClient.invalidateQueries({ queryKey: ["schedule"] });
       onClose();
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e) => setError(describeError(e)),
   });
 
   /** Whether a dismissal is allowed, computed once and handed to every path that can dismiss:
@@ -244,10 +265,10 @@ function ScheduleModal({
         <p className="help">{meta.modalDesc ?? meta.desc}</p>
 
         <label className="field-sm">
-          <span className="field-label">How often</span>
+          <span className="field-label">{t("jobs.schedule.howOftenLabel")}</span>
           <select
             value={choice}
-            aria-label="How often"
+            aria-label={t("jobs.schedule.howOftenLabel")}
             disabled={save.isPending}
             onChange={(e) => setChoice(e.target.value)}
           >
@@ -256,36 +277,32 @@ function ScheduleModal({
                 {p.label}
               </option>
             ))}
-            <option value={CUSTOM_VALUE}>Your own schedule…</option>
+            <option value={CUSTOM_VALUE}>{t("jobs.schedule.customOption")}</option>
           </select>
           {job.default_cron && (
             <span className="help">
-              Default: {describeCron(job.default_cron)}. You can Run now anytime.
+              {t("jobs.schedule.defaultHelp", { cron: describeCron(job.default_cron) })}
             </span>
           )}
           {/* The clock times above run on the server's configured time zone, not this browser's.
               Name the real zone so "2 AM" is not read as local time, and the operator is not left
               to guess (U-1, rule 86). Falls back to the generic phrasing only while it loads. */}
           <span className="help">
-            {zone
-              ? `Times use your server time zone: ${zone}. Change it in Settings, General.`
-              : "Times use your server time zone. Change it in Settings, General."}
+            {zone ? t("jobs.schedule.zoneHelp", { zone }) : t("jobs.schedule.zoneHelpUnknown")}
           </span>
         </label>
 
         {choice === CUSTOM_VALUE && (
           <label className="field-sm">
-            <span className="field-label">Your own schedule</span>
+            <span className="field-label">{t("jobs.schedule.customLabel")}</span>
             <input
               type="text"
               value={custom}
               placeholder="30 4 * * *"
-              aria-label="Your own schedule"
+              aria-label={t("jobs.schedule.customLabel")}
               onChange={(e) => setCustom(e.target.value)}
             />
-            <span className="help">
-              A cron line, for when none of the presets fit. 30 4 * * * runs at 4:30 AM every day.
-            </span>
+            <span className="help">{t("jobs.schedule.customHelp")}</span>
           </label>
         )}
 
@@ -295,14 +312,14 @@ function ScheduleModal({
         <div className="add-actions">
           <span className="flex-spacer" />
           <button className="ghost" onClick={onClose} disabled={save.isPending}>
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             className="primary"
             onClick={() => save.mutate(chosenCron)}
             disabled={saveDisabled}
           >
-            {save.isPending ? "Saving…" : "Save"}
+            {save.isPending ? t("common.saving") : t("common.save")}
           </button>
         </div>
       </div>
@@ -313,6 +330,7 @@ function ScheduleModal({
 /** One upkeep job: what it is, when it runs, and Edit + Run now. It shows an honest
  *  "running now" while it works; none of these can delete anything. */
 function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const meta = jobMeta(job.id);
   const run = useMutation({
@@ -336,9 +354,10 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
   // never on `run.isPending` -- that would fire a stale flash the instant the POST returns,
   // before the job has even run. Compared with `!== null`, not truthiness: an empty (but
   // present) result must still flash, unlike a job that has simply never run.
+  const lastResultText = jobResultText(job.last_result_reason);
   const flash = useJobFlash(
     job.running,
-    job.last_result !== null ? { ok: job.last_ok !== false, text: job.last_result } : null,
+    lastResultText !== null ? { ok: job.last_ok !== false, text: lastResultText } : null,
   );
 
   // A finished update check has replaced the answer `["update"]` holds, and that query is
@@ -362,16 +381,16 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
         <div className="jobrow-desc">{meta.desc}</div>
         <JobStatus
           running={running}
-          runningLabel="Running now…"
+          runningLabel={t("jobs.row.runningLabel")}
           lastRunAt={job.last_run_at}
           lastOk={job.last_ok}
-          lastResult={job.last_result}
+          lastResult={lastResultText}
           flash={flash}
         />
         <div className="jobrow-sched">{maintenanceScheduleText(job)}</div>
         {run.error && (
           <Notice tone="error" inline>
-            The job didn't start: {run.error.message}
+            {t("jobs.row.startFailed", { message: describeError(run.error) })}
           </Notice>
         )}
       </div>
@@ -380,8 +399,12 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
           sitting in `.jobrow-title` where no control referenced it. */}
       <div className="jobrow-actions">
         <span className="slot-edit">
-          <button className="ghost" aria-label={`Edit ${meta.title}`} onClick={onEdit}>
-            Edit
+          <button
+            className="ghost"
+            aria-label={t("jobs.row.editAria", { title: meta.title })}
+            onClick={onEdit}
+          >
+            {t("common.edit")}
           </button>
         </span>
         <span className="slot-act">
@@ -390,11 +413,15 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
             // Same shape as the connection test above: the state is in the name, and the
             // visible words lead so voice control still reaches it. "Run now" is not a
             // contiguous part of "Run Trash sweep now", which is what the fixed name was.
-            aria-label={running ? `Running…, ${meta.title}` : `Run now, ${meta.title}`}
+            aria-label={
+              running
+                ? t("jobs.row.runningAria", { title: meta.title })
+                : t("jobs.row.runNowAria", { title: meta.title })
+            }
             onClick={() => run.mutate()}
             disabled={running}
           >
-            {running ? "Running…" : "Run now"}
+            {running ? t("jobs.row.running") : t("jobs.row.runNow")}
           </button>
         </span>
       </div>
@@ -414,6 +441,7 @@ function LeavingSoonRow({
    *  these rows (#198). */
   plan: StaleReadPlan;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const ls = useQuery({ queryKey: ["leaving-soon-settings"], queryFn: api.leavingSoonSettings });
   const runSync = useMutation({
@@ -429,19 +457,18 @@ function LeavingSoonRow({
   // counts, and the flash then contradicted the row it sat on: with no libraries turned on it
   // said the shelves had failed while the row rested green (#555).
   const syncResult = runSync.data
-    ? { ok: runSync.data.ok, text: runSync.data.result }
+    ? { ok: runSync.data.ok, text: jobResultText(runSync.data.result_reason) ?? "" }
     : runSync.error
-      ? { ok: false, text: "It didn't update" }
+      ? { ok: false, text: t("jobs.leavingSoon.didNotUpdate") }
       : null;
   const flash = useJobFlash(runSync.isPending, syncResult);
 
   // One declaration behind both the row heading and the button's spoken name, so they cannot
   // drift apart (rule 144). The name has to carry the visible words "Update now" first, and
   // `title` already opens with the verb, so pasting the two together says "Update" twice.
-  const shelf = "Leaving Soon shelf";
-  const title = `Update ${shelf}`;
-  const desc =
-    'Pushes the current countdown set to the Plex "Leaving Soon" shelf, so people get a heads-up before anything goes.';
+  const shelf = t("jobs.leavingSoon.shelfName");
+  const title = t("jobs.leavingSoon.title", { shelf });
+  const desc = t("jobs.leavingSoon.desc");
 
   if (ls.isPending) {
     return (
@@ -449,7 +476,7 @@ function LeavingSoonRow({
         <div className="jobrow-main">
           <div className="jobrow-title">{title}</div>
           <div className="jobrow-desc">{desc}</div>
-          <div className="jobrow-sched">Loading…</div>
+          <div className="jobrow-sched">{t("common.loading")}</div>
         </div>
       </div>
     );
@@ -468,7 +495,7 @@ function LeavingSoonRow({
           <div className="jobrow-title">{title}</div>
           <div className="jobrow-desc">{desc}</div>
           <Notice tone="error" inline>
-            Couldn't load the shelf status. Reload to try again.
+            {t("jobs.leavingSoon.loadFailed")}
           </Notice>
         </div>
       </div>
@@ -478,7 +505,7 @@ function LeavingSoonRow({
   const { enabled, last, last_skip: skip } = ls.data;
   // The row is still the best answer there is, so it renders -- and says it could not be
   // confirmed, above everything in the row the failed read could have changed.
-  const stale = <StaleReadSlot plan={plan} slot="the shelf status" inline />;
+  const stale = <StaleReadSlot plan={plan} slot={t("jobs.staleRead.shelfNoun")} inline />;
   // A scan that skipped the shelf writes no pass, so this row re-read the last COMPLETED
   // pass and answered for the scan with its green dot, its timestamp and its counts -- under
   // a line reading "Runs after every scan". `after_scan` records the skip separately; prefer
@@ -497,17 +524,17 @@ function LeavingSoonRow({
           <div className="jobrow-desc">{desc}</div>
           {stale}
           <div className="jobrow-sched">
-            Off.{" "}
-            <button className="link" onClick={onGoToPlex}>
-              Turn it on in Plex → Leaving Soon
-            </button>
+            <Trans
+              i18nKey="jobs.leavingSoon.offNotice"
+              components={{ btn: <button className="link" onClick={onGoToPlex} /> }}
+            />
           </div>
         </div>
         <div className="jobrow-actions">
           <span className="slot-edit" />
           <span className="slot-act">
             <button className="primary" disabled>
-              Update now
+              {t("jobs.leavingSoon.updateNow")}
             </button>
           </span>
         </div>
@@ -524,10 +551,14 @@ function LeavingSoonRow({
         {stale}
         <JobStatus
           running={running}
-          runningLabel="Updating…"
+          runningLabel={t("jobs.leavingSoon.updating")}
           lastRunAt={currentSkip ? currentSkip.at : (last?.at ?? null)}
           lastOk={currentSkip ? false : last ? last.ok : null}
-          lastResult={currentSkip ? currentSkip.result : (last?.result ?? null)}
+          lastResult={
+            currentSkip
+              ? composeError(currentSkip.result_reason)
+              : jobResultText(last?.result_reason ?? null)
+          }
           flash={flash}
         />
         {last && (
@@ -536,20 +567,48 @@ function LeavingSoonRow({
           // anyone has. Past tense is the whole correction -- they stop reading as the outcome
           // of the most recent scan, which is the one thing about them that stopped being true.
           <div className="jobrow-meta">
-            <strong>{count(last.movies)}</strong> movie{last.movies === 1 ? "" : "s"} and{" "}
-            <strong>{count(last.seasons)}</strong> season{last.seasons === 1 ? "" : "s"}{" "}
-            {currentSkip ? "were on the shelves at the last update" : "on the shelves"}
+            {currentSkip ? (
+              <Trans
+                i18nKey="jobs.leavingSoon.countsAtLastUpdate"
+                values={{
+                  movies: last.movies,
+                  movieCount: count(last.movies),
+                  seasons: last.seasons,
+                  seasonCount: count(last.seasons),
+                }}
+                components={{ movieNum: <strong />, seasonNum: <strong /> }}
+              />
+            ) : (
+              <Trans
+                i18nKey="jobs.leavingSoon.counts"
+                values={{
+                  movies: last.movies,
+                  movieCount: count(last.movies),
+                  seasons: last.seasons,
+                  seasonCount: count(last.seasons),
+                }}
+                components={{ movieNum: <strong />, seasonNum: <strong /> }}
+              />
+            )}
           </div>
         )}
-        <div className="jobrow-sched">Runs after every scan</div>
+        {/* A rename the operator saved that no pass has carried across yet. Here, beside the
+            button that would carry it, because this row is where they can do something about
+            it -- the Plex panel says the same thing where they typed it (rule 104). */}
+        {shelfRenamePending(ls.data) && (
+          <div className="jobrow-sched">
+            {t("jobs.leavingSoon.renaming", { was: ls.data.applied_name })}
+          </div>
+        )}
+        <div className="jobrow-sched">{t("jobs.leavingSoon.runsAfterScan")}</div>
         <div className="jobrow-link">
           <button className="link" onClick={onGoToPlex}>
-            Manage in Plex → Leaving Soon
+            {t("jobs.leavingSoon.manageLink")}
           </button>
         </div>
         {runSync.error && (
           <Notice tone="error" inline>
-            The shelves didn't update: {runSync.error.message}
+            {t("jobs.leavingSoon.updateFailed", { message: describeError(runSync.error) })}
           </Notice>
         )}
       </div>
@@ -558,11 +617,15 @@ function LeavingSoonRow({
         <span className="slot-act">
           <button
             className="primary"
-            aria-label={running ? `Updating…, ${shelf}` : `Update now, ${shelf}`}
+            aria-label={
+              running
+                ? t("jobs.leavingSoon.updatingAria", { shelf })
+                : t("jobs.leavingSoon.updateNowAria", { shelf })
+            }
             onClick={() => runSync.mutate()}
             disabled={running}
           >
-            {running ? "Updating…" : "Update now"}
+            {running ? t("jobs.leavingSoon.updating") : t("jobs.leavingSoon.updateNow")}
           </button>
         </span>
       </div>
@@ -571,6 +634,7 @@ function LeavingSoonRow({
 }
 
 export function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
+  const { t } = useTranslation();
   const { data: snapshot } = useQuery({
     queryKey: ["snapshot"],
     queryFn: api.latestSnapshot,
@@ -605,9 +669,10 @@ export function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
     queryKey: ["leaving-soon-settings"],
     queryFn: api.leavingSoonSettings,
   });
-  const stale = collapseStaleReads("these jobs", [
-    { what: "these jobs", stale: schedule.isError && !!schedule.data },
-    { what: "the shelf status", stale: shelf.isError && !!shelf.data },
+  const jobsNoun = t("jobs.staleRead.jobsNoun");
+  const stale = collapseStaleReads(jobsNoun, [
+    { what: jobsNoun, stale: schedule.isError && !!schedule.data },
+    { what: t("jobs.staleRead.shelfNoun"), stale: shelf.isError && !!shelf.data },
   ]);
 
   const jobsById = new Map<string, ScheduledJob>((schedule.data?.jobs ?? []).map((j) => [j.id, j]));
@@ -615,14 +680,10 @@ export function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
 
   return (
     <div className="panel">
-      <h2>Jobs</h2>
-      <p className="blurb">
-        Everything Reaper runs on a timer lives here, and you can run any of it now without waiting.
-        None of these can delete a thing. A scan just refreshes the review queue; the rest is
-        upkeep.
-      </p>
+      <h2>{t("jobs.panel.heading")}</h2>
+      <p className="blurb">{t("jobs.panel.blurb")}</p>
 
-      {schedule.isPending && <p className="muted">Loading the upkeep jobs…</p>}
+      {schedule.isPending && <p className="muted">{t("jobs.panel.loadingJobs")}</p>}
       {/* The rows below render from the last good row either way (`schedule.data?.jobs ?? []`),
           so a failed refetch already keeps them on screen -- only the sentence about them was
           wrong, and it read worst here: every row carries a next-run time and a running flag,
@@ -634,13 +695,13 @@ export function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
           plain block flow, so DOM order is reading order: sat after `.set-rows` it pointed at the
           schedule editor and nothing else. Every other call site puts it over its content. */}
       {schedule.isError && !schedule.data && (
-        <Notice tone="error">Couldn't load the upkeep jobs. Reload to try again.</Notice>
+        <Notice tone="error">{t("jobs.panel.loadFailed")}</Notice>
       )}
       {/* Both reads on this panel say the same thing when they fail together, so they say it
           once, here, above the rows (#198). Unlike Plex's four these are independent polls
           that can fail apart, which is why the rule counts the lines that would draw rather
           than grouping by invalidation: either one alone still speaks in its own words. */}
-      <StaleReadSlot plan={stale} slot="these jobs" />
+      <StaleReadSlot plan={stale} slot={jobsNoun} />
 
       <div className="set-rows">
         <ScanRow

@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""Create Reaper's Weblate component for the backend catalog (`src/reaper/locales/*/backend.json`,
+docs/history/I18N_PLAN.md's phase 10b), and install its git-squash add-on.
+
+Standalone by design (stdlib only, rule 15), and run by hand rather than by CI: creating a
+component is a one-time, human-approved step. Modeled on `scripts/weblate_glossary.py`'s own
+`_ensure_component`, which is `ui`'s component copied field for field -- ``COPIED_FIELDS`` plus
+``ui``'s own ``language_regex`` here, since this component is a monolingual JSON catalog with a
+template (like ``ui``), not a bilingual TBX one (like ``glossary``).
+
+    python3 scripts/weblate_component.py            # creates the component if missing
+    python3 scripts/weblate_component.py --dry-run   # prints what it would do, changes nothing
+
+Idempotent either way: a component that already exists, or an add-on already installed, is left
+alone. The API key is read from `WEBLATE_API_KEY`, or from the file `--key-file` names (default
+`/opt/reaper_1/.weblate_api`). Never printed, never logged.
+
+Do not run this for real before this change has merged to `dev`: the filemask
+(`src/reaper/locales/*/backend.json`) names a path Weblate cannot yet find on the branch it
+reads.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+from _weblate_http import DEFAULT_KEY_FILE, api_key, request
+from weblate_glossary import COPIED_FIELDS
+
+API_ROOT = "https://hosted.weblate.org/api"
+PROJECT = "reaper"
+UI_COMPONENT_URL = f"{API_ROOT}/components/{PROJECT}/ui/"
+BACKEND_COMPONENT_URL = f"{API_ROOT}/components/{PROJECT}/backend/"
+#: A component's own `addons/` URL accepts POST only (the first real run read it and got a
+#: 405). Listing is the instance-wide `/api/addons/`, filtered by the `component` each row
+#: points at.
+ADDONS_LIST_URL = f"{API_ROOT}/addons/?page_size=100"
+CREATE_COMPONENT_URL = f"{API_ROOT}/projects/{PROJECT}/components/"
+
+BACKEND_DIR = "src/reaper/locales"
+BACKEND_FILEMASK = f"{BACKEND_DIR}/*/backend.json"
+#: The English file is both the template Weblate diffs translations against and the seed a new
+#: language starts from -- the same file serving both roles, as `ui`'s own component does.
+BACKEND_TEMPLATE = f"{BACKEND_DIR}/en/backend.json"
+
+#: `icu-message-format` enforces the exact subset `reaper.i18n.format_icu` implements (rule 21's
+#: "explain a technical term once": see that module's docstring); `icu-flags:xml` matches `ui`'s
+#: own check flags rather than inventing a second spelling for the same ICU dialect.
+CHECK_FLAGS = "icu-message-format, icu-flags:xml"
+ENFORCED_CHECKS = ["icu_message_format"]
+
+#: Installed on `ui` and `glossary` alike (CONTRIBUTING's "Translate it"): one commit per sync
+#: instead of one per string, so a translator's session lands as a single, reviewable commit.
+GIT_SQUASH_ADDON: dict[str, Any] = {
+    "name": "weblate.git.squash",
+    "configuration": {"squash": "all", "append_trailers": True, "commit_message": ""},
+}
+
+
+def _ensure_component(key: str, *, dry_run: bool) -> bool:
+    """True once the backend component exists. Creates it only when absent."""
+    existing = request(BACKEND_COMPONENT_URL, key=key, allow_404=True)
+    if existing is not None:
+        print("backend component already exists, nothing to create")
+        return True
+
+    ui = request(UI_COMPONENT_URL, key=key)
+    payload = {field: ui[field] for field in COPIED_FIELDS}
+    # Not the glossary's bilingual exclusion filter (there is no English translation unit to
+    # skip here, since `en` is the template): `ui`'s own filter is the one to copy.
+    payload["language_regex"] = ui["language_regex"]
+    payload.update(
+        {
+            "name": "Backend",
+            "slug": "backend",
+            "file_format": "json-nested",
+            "filemask": BACKEND_FILEMASK,
+            "template": BACKEND_TEMPLATE,
+            "new_base": BACKEND_TEMPLATE,
+            "check_flags": CHECK_FLAGS,
+            "enforced_checks": ENFORCED_CHECKS,
+        }
+    )
+    if dry_run:
+        print("would POST to", CREATE_COMPONENT_URL)
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return False
+
+    request(CREATE_COMPONENT_URL, method="POST", key=key, body=json.dumps(payload).encode())
+    print("created the backend component")
+    return True
+
+
+def _repository_root(key: str) -> str:
+    """The component whose repository the backend component shares.
+
+    Weblate links a component to an existing one in the project when both name the same
+    repository, so `backend` (and `glossary`) carry `linked_component` pointing at `ui`. A
+    repository-scoped add-on such as git squash lives on that root and applies to every
+    linked component, which is why the first run installed a second copy on `ui` instead
+    of one on `backend`.
+    """
+    component = request(BACKEND_COMPONENT_URL, key=key)
+    return str(component.get("linked_component") or BACKEND_COMPONENT_URL).rstrip("/") + "/"
+
+
+def _addon_names(root: str, *, key: str) -> set[str]:
+    """The add-ons installed on `root`, read from the instance-wide list."""
+    names: set[str] = set()
+    url: str | None = ADDONS_LIST_URL
+    while url is not None:
+        page = request(url, key=key)
+        for addon in page.get("results", []):
+            if str(addon.get("component", "")).rstrip("/") + "/" == root:
+                names.add(str(addon.get("name", "")))
+        url = page.get("next")
+    return names
+
+
+def _ensure_git_squash_addon(key: str, *, dry_run: bool) -> None:
+    root = _repository_root(key)
+    if GIT_SQUASH_ADDON["name"] in _addon_names(root, key=key):
+        print(f"git.squash add-on already installed on {root}")
+        return
+    if dry_run:
+        print(f"would POST the git.squash add-on to {root}addons/")
+        print(json.dumps(GIT_SQUASH_ADDON, indent=2, sort_keys=True))
+        return
+    request(f"{root}addons/", method="POST", key=key, body=json.dumps(GIT_SQUASH_ADDON).encode())
+    print(f"installed the git.squash add-on on {root}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dry-run", action="store_true", help="print the plan, change nothing")
+    parser.add_argument("--key-file", type=Path, default=DEFAULT_KEY_FILE)
+    args = parser.parse_args(argv)
+
+    key = api_key(args.key_file)
+    component_exists = _ensure_component(key, dry_run=args.dry_run)
+    if not component_exists:
+        print("component not created yet (dry run), skipping the add-on check")
+        return 0
+    _ensure_git_squash_addon(key, dry_run=args.dry_run)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

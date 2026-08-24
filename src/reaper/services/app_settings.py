@@ -32,6 +32,8 @@ from reaper.clock import utcnow
 from reaper.config import RuntimeSafety, Settings, parse_trusted_proxies
 from reaper.crypto import SecretBox
 from reaper.db.models import AppSetting
+from reaper.engine.reason import Reason, from_wire, to_wire
+from reaper.i18n import DEFAULT_TAG, shipped_tags
 
 DESTRUCTIVE_KEY = "destructive_enabled"
 SCAN_SCHEDULE_KEY = "scan_schedule"
@@ -65,6 +67,18 @@ LEAVING_SOON_ENABLED_KEY = "leaving_soon_enabled"
 #: environment variable (REAPER_ALLOW_UNARMED_LEAVING_SOON) is only the first-run default,
 #: exactly like the deletion switch. Edited in Settings -> Plex.
 LEAVING_SOON_UNARMED_KEY = "leaving_soon_unarmed"
+#: What the shelf is called in Plex: the collection title AND the label, one name for one
+#: shelf. Every Plex user on the server reads it, so it is the operator's word for their own
+#: library rather than a translated string (#869). Not a credential, so rule 16 does not bind
+#: it and `.env.example` carries no matching variable. Edited in Settings -> Plex.
+LEAVING_SOON_NAME_KEY = "leaving_soon_name"
+#: The name Reaper last WROTE to Plex, which is what the server still shows until the next
+#: pass. A rename cannot take effect on its own, so the reconcile needs the old name to find
+#: the collection and the labels it has to carry across. Advanced only after a pass that
+#: wrote every library cleanly, so a rename that half-landed is retried rather than stranded
+#: under a name nothing remembers. An install that predates this row has been writing the
+#: default all along, which is exactly what the default here says.
+LEAVING_SOON_APPLIED_NAME_KEY = "leaving_soon_applied_name"
 #: What the last shelf update did and when -- the status line under the Leaving Soon
 #: settings. ``{"at": iso, "movies": n, "seasons": n, "applied": bool, "ok": bool,
 #: "result": str}``. ``applied`` is false in preview (unarmed) as well as on a genuine
@@ -142,9 +156,31 @@ TIMEZONE_KEY = "timezone"
 #: When a backup was last downloaded (ISO 8601, UTC). Only ever surfaced as "last backup"
 #: on the Backup panel, so a losable copy on someone else's schedule is not a source of truth.
 BACKUP_LAST_AT_KEY = "backup_last_at"
+#: The one language setting: what the app is shown in AND what a notification is written in,
+#: as a BCP 47 tag. Not a credential (rule 16 does not bind it) and not env-seeded like the
+#: timezone: there is no first-boot deployment concern a language choice answers, so
+#: `.env.example` carries no matching variable. Edited in Settings -> General.
+#:
+#: It holds a tag from the BROWSER's catalog list, which is not the same list as
+#: `reaper.i18n.shipped_tags()` -- a translation reaches the UI a release before its
+#: `backend.json` ships. So there are two readers: `get_language` hands back what is stored,
+#: and `get_notification_language` clamps it to a tag `say` can actually serve.
+#:
+#: An empty row means nobody has chosen yet. The browser seeds it on first sign-in from its
+#: own preferred languages, so the row is empty only until then.
+LANGUAGE_KEY = "language"
 
 DEFAULT_PLEX_WEB_URL = "https://app.plex.tv"
 DEFAULT_APPLICATION_NAME = "Reaper"
+#: What the Plex shelf is called until the operator says otherwise. Plex title-cases this on
+#: the way in, and every comparison in the Plex client casefolds, so the display form is what
+#: Reaper writes and searches for.
+DEFAULT_LEAVING_SOON_NAME = "Leaving Soon"
+#: How long a shelf name may be. A Plex collection title and a label are both free text, so
+#: this is Reaper's own bound: long enough for a phrase in any language, short enough that the
+#: name still reads on a shelf row. Enforced once, at the route (rule 131), which refuses a
+#: longer name rather than storing a truncated one the operator never typed.
+LEAVING_SOON_NAME_MAX = 60
 #: The last-resort time zone: what APScheduler would fall back to if the host's own zone
 #: cannot be read either. UTC is the safe, universal choice.
 DEFAULT_TIMEZONE = "UTC"
@@ -345,6 +381,39 @@ async def set_accent_color(session: AsyncSession, color: str | None) -> None:
     await _set(session, ACCENT_COLOR_KEY, cleaned or None)
 
 
+async def get_language(session: AsyncSession) -> str | None:
+    """The stored BCP 47 tag, or ``None`` while nobody has chosen one.
+
+    Raw on purpose. This is what the Settings picker shows, and it holds a tag from the
+    BROWSER's catalog list, which the backend's own ``shipped_tags()`` need not contain.
+    ``get_notification_language`` is the reader that clamps.
+    """
+    stored = await _get(session, LANGUAGE_KEY, default=None)
+    return str(stored) if stored else None
+
+
+async def set_language(session: AsyncSession, tag: str) -> None:
+    """Store the language. Validated to a BCP 47 tag SHAPE at the API edge, never against a
+    list: the browser offers tags this process has no ``backend.json`` for, and storing one
+    is how Discord starts speaking it the release that catalog ships."""
+    await _set(session, LANGUAGE_KEY, tag)
+
+
+async def get_notification_language(session: AsyncSession) -> str:
+    """The BCP 47 tag ``notify.discord``'s Leaving Soon embed is written in.
+
+    Falls back to English both when nothing is stored and when the stored tag names no
+    shipped BACKEND catalog -- the UI carries a translation a release before its
+    ``backend.json`` ships, and ``reaper.i18n.catalog`` would silently merge an unknown
+    tag's absent file onto English anyway, so this is the one place that tells the
+    operator's *choice* apart from a tag ``say`` cannot serve.
+    """
+    stored = await get_language(session)
+    if stored and stored in shipped_tags():
+        return stored
+    return DEFAULT_TAG
+
+
 async def get_expand_seasons_mode(session: AsyncSession) -> ExpandSeasonsMode:
     """Which screens the review queue starts each show's season list expanded on -- one of
     ``EXPAND_SEASONS_MODES``. Off until the operator picks a screen, so an existing install
@@ -530,11 +599,27 @@ async def set_maintenance_schedule(session: AsyncSession, job_id: str, cron: str
 # --- upkeep job last-run ---------------------------------------------------
 
 
+def thaw_stored_reason(value: dict[str, Any]) -> Reason:
+    """Read one stored job-outcome reason: ``{"k", "p"}`` on a fresh row.
+
+    A row written before this conversion (phase 11a) carries a bare English phrase under
+    ``"result"`` instead, thawed as ``Reason("legacy", {"text": ...})`` exactly as
+    ``engine.reason.from_wire`` already does for a bare stored string (rule 96): an old row
+    still reads, it just stops being translated. One derivation shared by every job-outcome
+    reader -- ``get_job_last_runs``, ``get_leaving_soon_last``, ``get_leaving_soon_last_skip``
+    -- so a record lacking a fresh key thaws the same way everywhere (rule 104).
+    """
+    return from_wire(
+        {"k": value["k"], "p": value.get("p")} if "k" in value else str(value.get("result", ""))
+    )
+
+
 async def get_job_last_runs(session: AsyncSession) -> dict[str, dict[str, Any]]:
     """The last completion of each upkeep job, keyed by job id.
 
-    Each value is ``{"at": iso, "ok": bool, "result": str}`` -- when it last finished, whether
-    it succeeded, and a short plain-language summary. A job that has never completed is simply
+    Each value is ``{"at": iso, "ok": bool, "result": Reason}`` -- when it last finished,
+    whether it succeeded, and a typed reason the browser composes under ``jobs.result.*``
+    (``JobStatus.tsx``'s ``jobResultText``). A job that has never completed is simply
     absent, which the Jobs page reads as "hasn't run yet". Read from the per-job rows so one
     job's write never touches another's.
     """
@@ -551,16 +636,22 @@ async def get_job_last_runs(session: AsyncSession) -> dict[str, dict[str, Any]]:
     for row in rows:
         value = json.loads(row.value_json)
         if isinstance(value, dict):
-            out[row.key[len(JOB_LAST_RUN_PREFIX) :]] = value
+            out[row.key[len(JOB_LAST_RUN_PREFIX) :]] = {
+                "at": value.get("at"),
+                "ok": value.get("ok"),
+                "result": thaw_stored_reason(value),
+            }
     return out
 
 
 async def set_job_last_run(
-    session: AsyncSession, job_id: str, *, at: str, ok: bool, result: str
+    session: AsyncSession, job_id: str, *, at: str, ok: bool, result: Reason
 ) -> None:
     """Record one upkeep job's last completion. Writes only this job's own row (rule 59)."""
     await _set(
-        session, f"{JOB_LAST_RUN_PREFIX}{job_id}", {"at": at, "ok": bool(ok), "result": result}
+        session,
+        f"{JOB_LAST_RUN_PREFIX}{job_id}",
+        {"at": at, "ok": bool(ok), **to_wire(result)},
     )
 
 
@@ -667,6 +758,45 @@ async def set_leaving_soon_enabled(session: AsyncSession, *, enabled: bool) -> N
     await _set(session, LEAVING_SOON_ENABLED_KEY, bool(enabled))
 
 
+async def _shelf_name(session: AsyncSession, key: str) -> str:
+    """One of the two shelf-name rows, or the shipped default when it is unset or blank."""
+    value = await _get(session, key, default=None)
+    name = str(value).strip() if value else ""
+    return name or DEFAULT_LEAVING_SOON_NAME
+
+
+async def get_leaving_soon_name(session: AsyncSession) -> str:
+    """What the shelf is called in Plex."""
+    return await _shelf_name(session, LEAVING_SOON_NAME_KEY)
+
+
+async def set_leaving_soon_name(session: AsyncSession, name: str | None) -> None:
+    """Store the shelf name. Empty resets to the default.
+
+    Stores the name alone. What Plex currently shows is a different fact and a different row
+    (:func:`set_leaving_soon_applied_name`), written only once a pass has actually moved the
+    shelf, so a rename saved here is a rename PENDING until then. The length bound belongs to
+    the route, which refuses a long name rather than storing a shorter one nobody typed.
+    """
+    await _set(session, LEAVING_SOON_NAME_KEY, (name or "").strip() or None)
+
+
+async def get_leaving_soon_applied_name(session: AsyncSession) -> str:
+    """The name Plex still shows: what the last completed pass wrote.
+
+    Unset means every pass so far wrote the default, which is what an install predating the
+    setting has been doing. Never falls back to the CURRENT name: that would tell the
+    reconcile a rename had already landed and strand the old collection and its labels in
+    the library under a name nothing would look for again.
+    """
+    return await _shelf_name(session, LEAVING_SOON_APPLIED_NAME_KEY)
+
+
+async def set_leaving_soon_applied_name(session: AsyncSession, name: str) -> None:
+    """Record the name a pass just wrote to Plex."""
+    await _set(session, LEAVING_SOON_APPLIED_NAME_KEY, name)
+
+
 async def leaving_soon_unarmed(session: AsyncSession, settings: Settings) -> bool:
     """Whether the shelf may be written while deletion is off.
 
@@ -684,7 +814,13 @@ async def set_leaving_soon_unarmed(session: AsyncSession, *, allowed: bool) -> N
 
 async def get_leaving_soon_last(session: AsyncSession) -> dict[str, Any] | None:
     """What the last shelf update did: when it ran, how many movies and seasons are on
-    the shelves, and whether the writes actually landed in Plex."""
+    the shelves, and whether the writes actually landed in Plex.
+
+    The raw stored dict, wire-encoded reason and all -- ``api.settings`` reads its ``at``/
+    ``movies``/``seasons``/``applied``/``ok`` fields directly and thaws the reason itself
+    with ``thaw_stored_reason`` (rule 104), the same helper ``get_job_last_runs`` and
+    ``get_leaving_soon_last_skip`` use.
+    """
     value = await _get(session, LEAVING_SOON_LAST_KEY, default=None)
     return dict(value) if isinstance(value, dict) else None
 
@@ -697,7 +833,7 @@ async def set_leaving_soon_last(
     seasons: int,
     applied: bool,
     ok: bool,
-    result: str,
+    reason: Reason,
 ) -> None:
     await _set(
         session,
@@ -708,19 +844,27 @@ async def set_leaving_soon_last(
             "seasons": seasons,
             "applied": applied,
             "ok": ok,
-            "result": result,
+            **to_wire(reason),
         },
     )
 
 
-async def get_leaving_soon_last_skip(session: AsyncSession) -> dict[str, Any] | None:
-    """The last scan that finished without updating the shelf, and why in one clause."""
+async def get_leaving_soon_last_skip(session: AsyncSession) -> tuple[str, Reason] | None:
+    """When the last skip happened, and why, as a typed reason.
+
+    A row written before this conversion (phase 8a) carries a bare English phrase under
+    ``"result"`` instead of a wire-encoded reason; thawed by the same shared helper every
+    job-outcome reader uses (``thaw_stored_reason``, rule 104: an old row still reads, it
+    just stops being typed)."""
     value = await _get(session, LEAVING_SOON_LAST_SKIP_KEY, default=None)
-    return dict(value) if isinstance(value, dict) else None
+    if not isinstance(value, dict):
+        return None
+    at = str(value.get("at", ""))
+    return at, thaw_stored_reason(value)
 
 
-async def set_leaving_soon_last_skip(session: AsyncSession, *, at: str, result: str) -> None:
-    await _set(session, LEAVING_SOON_LAST_SKIP_KEY, {"at": at, "result": result})
+async def set_leaving_soon_last_skip(session: AsyncSession, *, at: str, reason: Reason) -> None:
+    await _set(session, LEAVING_SOON_LAST_SKIP_KEY, {"at": at, **to_wire(reason)})
 
 
 # --- Plex libraries ----------------------------------------------------------

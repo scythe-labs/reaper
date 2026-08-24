@@ -3,37 +3,37 @@
 // The full policy guide. Every number here is a shipped default from engine/policy.py and
 // the frontend presets (PolicyEditor.tsx). When a default changes, change it here too.
 
-import { callout, defs, type Doc, h2, h3, p, steps, table, ul } from "../blocks";
+import { callout, type Doc, h2, h3, p, steps, table, ul } from "../blocks";
 
 export const understandingPolicy: Doc = {
   id: "understanding-policy",
   group: "Policy",
   title: "Understanding policy",
-  summary: "Your policy is the rulebook Reaper follows when it decides what to remove.",
+  summary: "Your policy is the rulebook Reaper follows to decide what to remove.",
   body: [
     p(
-      'A policy is how you tell Reaper what "nobody watches this" means for your server. It gathers reasons a title looks expendable, adds them into a single score, and flags anything that crosses your line. A whole separate set of protections can keep a title no matter how it scored.',
+      'A policy tells Reaper what "nobody watches this" means for your server. It gathers reasons a title looks expendable, adds them into a single score, and flags anything that crosses your line. A separate set of protections can keep a title no matter how it scored.',
     ),
     callout(
       "tip",
-      "**Start cautious, then tighten one nudge at a time.** You can always remove more later, and it is reversible up to the moment of deletion.",
+      "**Start cautious, then tighten one nudge at a time.** You can always remove more later. You can never un-delete.",
     ),
 
     h2("The mental model", "mental-model"),
     p(
-      "**The flag threshold is your line.** Every title gets a score from 0 to 100. At or above your line, it becomes a candidate for removal. Below it, Reaper leaves it alone. A higher line means Reaper has to be more sure.",
+      "**The flag threshold is your line.** Reaper gives every title a score from 0 to 100. Titles at or above your line become candidates for removal, while Reaper leaves anything below it alone. If you set a higher line, Reaper has to be more sure.",
     ),
     p(
-      "**Signals are soft pressure that adds up.** How long it has gone unwatched, how few people watch it, how low it is rated. Each pushes the score up by its weight. In practice, how long it has gone unwatched does almost all the work.",
+      "**Signals are soft pressure that adds up.** How long it has gone unwatched, how few people watch it, and how low it is rated each push the score up by its weight. In practice, how long it has gone unwatched does almost all the work.",
     ),
     p(
-      "**Protections are hard lines that always win.** They sit in their own lane and can only ever keep a file, never remove one. If any single protection fires, the title stays, whatever it scored.",
+      "**Protections are hard lines that always win.** They only ever keep a file and can never remove one. If any single protection fires, the title stays regardless of its score.",
     ),
     p(
-      "**Caps stop a run; grace is the heads-up.** Caps limit how much any one run, and any rolling 30 days, can remove, and a cap stops the whole run when it is crossed. Grace shows every flagged title as leaving for a set number of days. Watching a title or sparing it keeps it, and nothing goes until you run a reap yourself.",
+      "**Caps stop a run; grace is the heads-up.** [Pace and limits](understanding-policy#pace) sets both. Grace shows every flagged title as leaving for a set number of days. You keep a title by watching it or sparing it. Nothing goes until you run a reap yourself.",
     ),
     p(
-      "**Missing information can only protect, never delete.** The score is pressure that adds up from zero. Anything Reaper cannot read, an outage, a stale ratings file, a title it cannot match, adds no pressure.",
+      "**Missing information can only protect, never delete.** The score is pressure that adds up from zero. If Reaper can't read something, like an outage, a stale ratings file, or a title it cannot match, it adds no pressure.",
     ),
 
     h2("The recommended workflow", "workflow"),
@@ -45,44 +45,44 @@ export const understandingPolicy: Doc = {
         // the history source supplies the last play when there is one, and it also sets
         // how far back Reaper is willing to count. Neither is the whole answer for a title
         // nobody has ever played. See `engine/dormancy.py`.
-        text: "Every score starts from how long a title has sat untouched, and your history source is what tells Reaper when it was last played and how far back it can look. Connect it and let one scan finish against real data before you tune anything.",
+        text: "Scores are based on how long a title has sat unwatched. Your history source tells Reaper when a title was last played and how far back it can look. Connect it and let one scan finish against real data before you tune anything.",
       },
       {
         title: "Start on the Cautious footing.",
-        text: "Pick Cautious as your starting point. It sets a high line (82), small runs (5 titles or 250 GB), and a long grace window (30 days). Do not hand-edit the points yet.",
+        text: "Start with Cautious. It sets a high line (82), small runs (5 titles or 250 GB), and a long grace window (30 days). Don't hand-edit the points yet.",
       },
       {
         title: "Leave every protection on.",
-        text: "Above all, leave the time-to-be-rewatched line at its 3-year default. It is a hard line, so nothing can outvote it.",
+        text: "Leave the time-to-be-rewatched line at its 3-year default. It's a hard line that nothing can outvote.",
       },
       {
         title: "Run a scan and let it finish.",
         // "incomplete" is the word the app itself shows (ScanBar, ScanFreshness). "degraded" is
         // the internal field name, which rules 21 and 25 both bar from operator copy (U-12).
-        text: 'A scan freezes all the evidence, then scores, so a brief timeout can never flip a title’s fate mid-run. If it comes back "incomplete," a source failed, so Reaper marked the run unusable. Fix the source and scan again.',
+        text: "A scan freezes all the evidence and then scores it so a brief timeout can't flip a title's fate mid-run. If a scan comes back \"incomplete,\" a source failed and Reaper marked the run unusable. Fix the source and scan again.",
       },
       {
         title: 'Read a few "why" panels before touching anything.',
-        text: "Open several flagged titles and read why each was flagged, and which protections were checked and did not fire. Notice how much of the pressure is just time unwatched.",
+        text: "Open several flagged titles to see why they were flagged and which protections were checked and did not fire. You'll notice how much of the pressure is just time unwatched.",
       },
       {
         title: "Tune with the simulator, one nudge at a time.",
-        text: "Move the line down a step and watch the count, the space reclaimed, and the named titles change live. Tighten gradually over several scans.",
+        text: "Move the line down a step. Watch the count, the space reclaimed, and the named titles change live. Tighten gradually over several scans.",
       },
       {
         title: "Set pace and grace, then arm deletion last.",
-        text: 'Confirm your caps and grace, and turn on the Leaving Soon shelf so your users can rescue anything about to go. To see the shelf before you arm anything, also turn on "Update while read-only" in Settings, Plex. Only then arm deletion, which is password-gated and separate from all tuning.',
+        text: 'Confirm your caps and grace, then turn on the Leaving Soon shelf so your users can rescue anything about to go. To see the shelf before you arm anything, turn on "Update while read-only" in Settings, Plex. Arm deletion only after that. It\'s password-gated and separate from all tuning.',
       },
     ]),
 
     h2("What's in a policy", "in-a-policy"),
-    // "which starts by itself" is the same fact as `APPLIES_ON_NEXT_SCAN`
+    // "which starts by itself" is the same fact as `appliesOnNextScan`
     // (components/PolicySimulator.tsx), the sentence the savebar and the simulator both show.
     // Kept as its own wording because this paragraph names which controls sit in that half,
     // and left saying only "take effect on the next scan" it read as a chore the operator has
     // to remember to start (rule 144).
     p(
-      "A policy has two halves. The rules that change what Reaper decides (the line, signals, protections) take effect on the next scan, which starts by itself when you save. The limits on how much one run may remove, and how long a title shows as leaving (caps and grace), take effect immediately. Movies and TV are two separate policies, tuned on their own.",
+      "A policy has two parts. The rules that change what Reaper decides (the line, signals, protections) take effect on the next scan, which starts by itself when you save. The limits on how much one run may remove, and how long a title shows as leaving (caps and grace), take effect immediately. Movies and TV are two separate policies, tuned on their own.",
     ),
 
     h3("Your starting point", "starting-point"),
@@ -108,7 +108,7 @@ export const understandingPolicy: Doc = {
 
     h3("The flag threshold", "threshold"),
     p(
-      "The threshold is a confidence line. A title is flagged only when its score reaches it, so a higher line means Reaper flags fewer titles and has to be more sure. Move it down one step at a time in the simulator and watch what appears.",
+      "The threshold is a confidence line. Reaper only flags a title when its score reaches it, so a higher line means Reaper flags fewer titles and has to be more sure. Move it down one step at a time in the simulator and watch what appears.",
     ),
 
     h3("Signals: soft pressure", "signals"),
@@ -131,7 +131,7 @@ export const understandingPolicy: Doc = {
         // page sends operators here for never-played requests, which is the second of those.
         [
           "How long it's gone unwatched",
-          "How long it has sat untouched, counted from the last play or from the day it arrived",
+          "The time since the last play or the day it arrived",
           "Nothing until 1 year, all of it at 5 years",
           "70",
           "60",
@@ -167,16 +167,16 @@ export const understandingPolicy: Doc = {
       ],
     ),
     p(
-      "**The points share one fixed budget.** Every signal's points, plus any of your own removal rules, must total exactly 100 before you can save. A point is literally how much that signal can add to the score. So lowering one signal frees points you must hand to another signal or removal rule first. Setting a signal to 0 turns it off and returns its points to the pot.",
+      "**The points share one fixed budget.** Every signal's points and your removal rules must total exactly 100 before you can save. A point is how much a signal can add to the score. Lowering one signal frees points you must hand to another signal or removal rule first. Setting a signal to 0 turns it off and returns its points to the pot.",
     ),
     callout(
       "note",
-      "**Size is off on purpose.** Weighting size aims Reaper at your biggest files, which are usually the 4K titles people chose to keep. Size measures how much space you would reclaim, not whether anyone still wants it. Leave it off, and instead sort the flagged list by size at review time and approve the big ones first.",
+      "**Size is off on purpose.** Weighting size targets your biggest files, which are usually the 4K titles you chose to keep. Size measures how much space you'll reclaim, not whether anyone still wants the file. Leave it off and sort the flagged list by size at review time to approve the big ones first.",
     ),
 
     h3("Protections: what's always kept", "protections"),
     p(
-      "Any one that fires keeps the title, no matter its score. A protection Reaper cannot check keeps the file. All of these are on by default, in both the movie and TV policies, except the last two, which are off until you turn them on.",
+      "If a rule fires, Reaper keeps the title regardless of its score. A protection Reaper cannot check also keeps the file. These are on by default in both the movie and TV policies, but the last two stay off until you turn them on.",
     ),
     table(
       ["Protection", "What it keeps", "Default"],
@@ -208,7 +208,7 @@ export const understandingPolicy: Doc = {
         ["Stop if the unwatched time can't be read", "Anything Reaper couldn't measure", "On"],
         [
           "Keep titles most likely to be rewatched above a percentage",
-          "Anything whose kind gets watched again above your percentage",
+          "Titles like it watched again above your percentage",
           "Off by default",
         ],
         [
@@ -219,60 +219,58 @@ export const understandingPolicy: Doc = {
       ],
     ),
     p(
-      "Your lists protect through **keep rules**, below: each list on Settings, Lists acts through a rule here naming it. A list you add starts with no rule, so it protects nothing until you give it one here, and you choose whether it keeps every title outright or only leans that way. The lists Reaper ships come with a keep-everything rule already. Removing the list removes its rules with it.",
+      "Your **keep rules** protect your files through your lists. Each list on Settings, Lists acts through a rule here naming it. A list you add starts with no rule, so it protects nothing until you give it one here. You choose whether it keeps every title outright or only leans that way. The lists Reaper ships come with a keep-everything rule already. Removing the list removes its rules with it.",
     ),
 
     h3("Titles most likely to be rewatched", "rewatch-keep"),
     p(
-      "Some titles just get watched over and over. The comfort movie, the show someone binges every winter. This rule picks up on that and lowers the score by up to 20 points, making it harder for a genuine favorite to get flagged.",
+      "Some titles get watched over and over, like a comfort movie or a show you binge every winter. This rule lowers the score by up to 20 points so a genuine favorite is harder to flag.",
     ),
     p(
-      "For a movie, that means at least 10 plays by anyone on the server, with at least one in the last 2 years. Getting halfway through counts as a play, and plays within a week of each other collapse into one, so watching something three times over a weekend only registers once.",
+      "A movie needs at least 10 plays by anyone on the server, including at least one in the last 2 years. Getting halfway through counts as a play. Plays within a week of each other collapse into one, so watching something three times over a weekend only registers once.",
     ),
     p(
-      "For a show, it means going back to episodes already seen, at least twice. Watching a new season as it airs is a first watch, so it does not count toward a rewatch.",
+      "For a show, this means someone on the server has gone back to episodes already seen at least twice. Watching a new season as it airs is a first watch, so it doesn't count toward a rewatch.",
     ),
     p(
-      "Turn the second switch on and Reaper will protect anything that still has a real shot at being watched again, even if the score is high. It figures out that shot by looking at how long a title has gone unwatched, then checking what happened to other titles in your library that sat idle for about the same amount of time. The percentage of those that got watched again within a year is the likelihood. If it meets or beats your threshold, the title stays.",
+      "Turn the second switch on to protect anything that still has a real shot at being watched again, even if the score is high. Reaper figures out that shot by looking at how long a title has gone unwatched and checking what happened to other titles in your library that sat idle for about the same amount of time. It calculates the likelihood based on the percentage of those titles that got watched again within a year. If it meets or beats your threshold, the title stays.",
     ),
     p(
-      "Example: a movie hasn't been watched in 2 years. Reaper finds 100 other titles that also sat for 2 years, and 30 of them got watched again within a year. That's a 30% chance. If your threshold is set to 25, the movie is kept. At 40, the score decides.",
+      "Imagine a movie hasn't been watched in 2 years. Reaper finds 100 other titles that also sat for 2 years, and 30 of them were watched again within a year. That's a 30% chance. If your threshold is set to 25, Reaper keeps the movie. At 40, the score decides.",
     ),
     p(
-      "Shows are measured as a whole, so any episode counts as activity, and keeping a show means keeping all its seasons. Say nobody has touched a show for a year. Out of 60 other shows that sat for a year, 20 came back. That's 33%, so at a threshold of 25, it's kept.",
+      "Shows are measured as a whole. Any episode counts as activity, so keeping a show means keeping all its seasons. Imagine a show hasn't been touched for a year. Out of 60 other shows that sat for a year, 20 came back. That's 33%. At a threshold of 25, the show is kept.",
     ),
     p(
-      "Where do those numbers come from? Every scan, Reaper pretends today is a year ago and sorts every title by how long it had been sitting at that point: under a year, one to two years, and so on. Because it rewound the clock, the following year is already in your history, so it can just count how many in each group got played again. Those counts fill the table on the card, one row per group. A group needs at least 30 titles before its number is used.",
+      "Every scan, Reaper pretends today was a year ago and sorts every title by how long it sat there: under a year, one to two years, and so on. Since it rewound the clock, the following year is already in your history so it can count how many in each group got played again. Those counts fill the table on the card, one row per group. A group needs at least 30 titles before its number is used.",
     ),
     p(
-      "Think of it like guessing whether a kid is going to ride the old bike in the garage. You don't study the bike. You think about what happened to every other bike that sat in the garage that long.",
+      "It's like guessing if a kid will ride that old bike in the garage. You don't study the bike itself. You just think about what happened to every other bike that sat in the garage that long.",
     ),
 
     h3("A title that came back", "came-back"),
     p(
-      "Turn this on and Reaper will hold onto a title that was removed and added back for as long as you set, so the same title doesn't get flagged again until that time is up. The default is 1.5 years.",
+      "Turn this on so Reaper holds onto a title that was removed and added back for as long as you set. This prevents the same title from getting flagged again until that time is up. The default is 1.5 years.",
     ),
     // The absence is an operator setting (`RETURN_ABSENCE_DAYS`, the "counts as gone after"
     // control in `policyMeta.ts`), so name the control and give its default rather than
     // stating a bare number this page would then have to chase.
     p(
-      'Reaper picks up on this through Plex. A file that leaves and comes back shows up as a new entry in Plex even though it\'s the same film. It only counts when the title was actually gone for longer than your "counts as gone after" setting, which starts at 7 days. A file swapped out for a better copy comes back within hours, and that is ignored.',
+      'Reaper picks this up through Plex. A file that leaves and comes back shows up as a new entry in Plex even though it\'s the same film. It only counts as gone if the title was missing for longer than your "counts as gone after" setting, which starts at 7 days. A file swapped out for a better copy comes back within hours and is ignored.',
     ),
     // Two, not one: `library_seen._SCANS_INSIDE_THE_ABSENCE`.
     p(
-      "Reaper also needs at least two scans that ran while the title was missing to account for its absence, so a long gap between scans will not mark titles as coming back.",
+      "Reaper needs at least two scans to run while a title is missing to account for its absence. A long gap between scans won't mark titles as coming back.",
     ),
     p(
-      "The card tells you which titles it saw come back, with a countdown protecting each one based on your configured policy. Reaper does not have to be the one that removed the title. It tracks them through Plex either way.",
+      "The card shows you which titles came back, and a countdown protects each one based on your configured policy. Reaper tracks them through Plex even if it wasn't the one that removed the title.",
     ),
     p(
-      "Reaper can only spot a returning title if it saw it before it left, so a fresh install has nothing to compare against yet. It builds the picture up over time as it watches your library.",
+      "Reaper needs to see a title before it can spot it returning, so a fresh install won't have anything to compare against yet. It builds that picture over time as it watches your library.",
     ),
 
     h3("Pace and limits", "pace"),
-    p(
-      "These limit how much can happen, and are shared by movies and TV. They take effect the moment you save.",
-    ),
+    p("These limits apply to both movies and TV. They take effect as soon as you save."),
     table(
       ["Limit", "What it bounds", "Default", "Floor"],
       [
@@ -290,108 +288,74 @@ export const understandingPolicy: Doc = {
       ],
     ),
     p(
-      'Caps stop the whole run when crossed, and the rolling 30-day limits count every run in the window. Turning off "Limit how much each run removes" drops the first four rows above. The unknown-size allowance and the countdown are unaffected, so items Reaper cannot measure are still held back.',
+      'Caps stop the whole run when crossed, and Reaper never removes just the part that fits. The rolling 30-day limits count every run in the window. If you turn off "Limit how much each run removes", the first four rows above no longer apply. The unknown-size allowance and the countdown are unaffected, so items Reaper cannot measure are still held back.',
     ),
 
     h3("Movies and TV are tuned separately", "movies-tv"),
     p(
-      'They are two policies behind one toggle, each with its own line, signals, and rating bars, plus TV’s season rules: keep the 2 newest seasons and the first season, hold an in-progress viewer’s place for 180 days (and optionally some seasons ahead of it, which starts at none), keep specials, and flag an unusual removal as "Needs a look." Switching the toggle with unsaved edits warns before it discards them.',
+      "One toggle controls two policies. Each has its own line, signals, and rating bars. TV's season rules keep the 2 newest seasons and the first season, hold an in-progress viewer's place for 180 days (and optionally some seasons ahead of it, which starts at none), keep specials, and flag an unusual removal as \"Needs a look.\" Switching the toggle with unsaved edits warns you before it discards them.",
     ),
 
     h2("Using the simulator", "simulator"),
     p(
-      'The right-hand "What this would do" panel re-decides your last scan under your draft, with zero calls to Sonarr, Radarr, or your history source. For your draft it shows:',
+      'The "What this would do" panel on the right re-decides your last scan under your draft without making any calls to Sonarr, Radarr, or your history source. For your draft it shows:',
     ),
     ul([
-      "how many titles would be removed, and how much space that frees",
+      "number of titles that would be removed and how much space that would free",
       "how many titles your edit moves at all",
       "every title’s score against your line",
       "example titles newly flagged",
       "how this draft differs from the policy you already saved",
     ]),
     p(
-      "Nudge one control, watch the number, repeat. If the count jumps more than you expected, put the control back and move it half as far.",
+      "Nudge one control, watch the number, and repeat. If the count jumps more than you expected, put the control back and move it half as far.",
     ),
     p(
-      'An edit can be real and still move nothing. "Titles that change" is the row that tells you which one you are looking at: the two removal counts only move when a title crosses your line, so a protection can shuffle titles between spared and not judged while every other number holds still. When nothing moves at all, the panel says "Your changes leave every title as it is." That is an answer, not a failure: a protection can carry no weight on your library, worth knowing before you keep it on.',
+      'An edit can be real and still move nothing. "Titles that change" is the row that tells you which of the two cases you\'re in. The two removal counts only move when a title crosses your line, so a protection can shuffle titles between spared and not judged while every other number holds still. When nothing moves at all, the panel says "Your changes leave every title as it is." That\'s an answer, not a failure. A protection can carry no weight on your library, which is worth knowing before you keep it on.',
     ),
     p(
       "**The panel is live for the numbers.** Moving the flag threshold, how much is enough to go on, a signal’s points, a rating bar, one of your own rules, a protection's switch and its own numbers, or any TV season rule updates the panel instantly.",
     ),
     p(
-      "Some edits still need a fresh scan first. The panel names which one and offers a Scan now button:",
+      "Some edits need a fresh scan first. The panel names which one and offers a Scan now button:",
     ),
     ul([
-      "a list, or how far back watching counts, changes what a scan reads",
-      "a season rule needs one scan on this version before it can preview, because the panel needs something the older scan never recorded",
-      "keeping seasons someone is partway through needs one whenever the last scan didn't read where anyone had gotten to",
-      "an upgrade can ask for a scan on its own, without you having touched anything",
+      "Changing your list or how far back watching counts changes what a scan reads.",
+      "You need to run one scan on this version before you can preview a season rule because the panel needs data that the older scan didn't record.",
+      "The setting to keep seasons someone is partway through needs a fresh scan whenever the last scan didn't read where anyone had gotten to.",
+      "An upgrade might trigger a scan on its own without you doing anything.",
     ]),
     callout(
       "caution",
-      'You have gone too far when the examples include titles you would keep, or you want to switch off a protection to "find more." Turning off a protection is the most effective way to remove more, and it looks like simplification. If a one-step drop nearly doubles the count, stop there.',
+      "You've gone too far if the examples include titles you'd keep. If a one-step drop nearly doubles the count, stop there.",
     ),
 
     h2("Recipes", "recipes"),
     p("Starting points for common goals."),
     h3("Reclaim space without risk"),
     p(
-      "Use the Balanced defaults: line 70, the 3-year age line, keep well-rated (IMDb 7.5 with 1,000 votes), keep anything 3 or more people watched in the last year, caps on, 14-day grace. Turn on Leaving Soon. Do not add size to the score. At review time, sort by size and approve the big ones first.",
+      "Use the Balanced defaults: line 70, the 3-year age line, keep well-rated (IMDb 7.5 with 1,000 votes), keep anything 3 or more people watched in the last year, caps on, and 14-day grace. Turn on Leaving Soon.",
     ),
     h3("Very cautious setup"),
     p(
-      "Use Cautious: line 82, 5 titles or 250 GB per run, 50 or 1 TB per 30 days, 30-day grace. Leave every protection on and the unknown-size allowance at 0. Consider raising the age line above 3 years, and live through a couple of grace cycles before loosening anything.",
+      "Use Cautious: line 82, 5 titles or 250 GB per run, 50 or 1 TB per 30 days, 30-day grace. Leave every protection on and set the unknown-size allowance to 0. You can raise the age line above 3 years, but live through a couple of grace cycles before you loosen anything.",
     ),
     h3("Big backlog of never-played requests"),
     p(
-      "Keep the defaults, especially the 3-year age line and keep well-rated. Old, never-watched, mediocre requests are exactly what Balanced already flags. For one supervised first cleanup you can raise the per-run cap for that run only, leave the 30-day cap in place, then turn it back down.",
+      "Stick with the defaults, especially the 3-year age line and keep well-rated. Balanced already flags old, never-watched, mediocre requests. If you're doing a supervised first cleanup, you can raise the per-run cap for that run only, leave the 30-day cap in place, and then turn it back down.",
     ),
     h3("Movies only, or TV only"),
     p(
-      "The two are separate policies. Tune and scan the one you care about, leave the other on its defaults, and do not approve its items. TV’s season rules already keep the 2 newest seasons and the first, hold an in-progress viewer’s place for 180 days, and keep specials.",
+      "These are two separate policies. Tune and scan the one you care about, leave the other on its defaults, and do not approve its items. TV's season rules keep the 2 newest seasons and the first, hold an in-progress viewer's place for 180 days, and keep specials.",
     ),
 
     h2("Common mistakes", "mistakes"),
     ul([
-      "**The points don't total 100, so the policy won't save.** Lowering one signal strands its points and holds the policy half back. Pace and grace still save. Safe habit: give the freed points to another signal or removal rule before saving.",
+      "**The points don't total 100, so the policy won't save.** If you lower a signal, its points get stranded and the policy stays half finished. Pace and grace still save. To keep a safe habit, give those freed points to another signal or removal rule before you save.",
       "**Forgetting that saving starts a fresh scan.** A policy change only takes effect after a scan, which begins by itself when you save. Safe habit: expect the rescan. Pace and grace apply immediately while policy changes wait for it.",
       "**Treating arming like tuning.** Editing a policy changes nothing about whether Reaper can delete. Safe habit: set caps, grace, and Leaving Soon first, then arm, then keep the first run supervised.",
-      "**Going aggressive on the first pass.** Removing more is one nudge away and reversible until deletion. Safe habit: start on Cautious and loosen only as far as each supervised cycle proves safe.",
-      "**Switching off a protection to find more to delete.** This exposes titles the protection was keeping, whatever their score. Safe habit: to remove more, lower the line in the simulator and watch the number.",
-      "**Setting a rating bar with no vote floor.** A high rating from a few hundred votes is unreliable and would protect titles forever. Safe habit: keep a vote floor on any source that counts votes (the default is 1,000).",
+      "**Switching off a protection to find more to delete.** It is the most effective way to remove more, and it looks like simplification, but it exposes titles the protection was keeping regardless of their score. To remove more, lower the line in the simulator and watch the number.",
+      "**Setting a rating bar with no vote floor.** A high rating from only a few hundred votes isn't reliable and could protect titles forever. It's a safe habit to keep a vote floor on any source that counts votes. The default is 1,000.",
     ]),
-
-    h2("Glossary", "glossary"),
-    defs([
-      {
-        term: "Policy",
-        text: "Your rulebook for one media type: the line, the signals, the protections.",
-      },
-      {
-        term: "Flag threshold",
-        text: "The score, out of 100, at or above which a title becomes a candidate for removal.",
-      },
-      {
-        term: "Signal",
-        text: "One reason to remove, adding up to its number of points to the score.",
-      },
-      {
-        term: "Protection",
-        text: "A hard line that keeps a title no matter its score, and can never remove one.",
-      },
-      {
-        term: "Grace",
-        text: "The days a flagged title shows as leaving, so someone can watch it or you can spare it. You still start every removal by hand.",
-      },
-      {
-        term: "Cap",
-        text: 'A limit on how much one run, or a rolling 30 days, may remove, while "Limit how much each run removes" is on. Crossing it stops the run.',
-      },
-    ]),
-
-    callout(
-      "tip",
-      "**Start cautious, watch a few real runs, and tighten one nudge at a time.** You can always remove more later. You can never un-delete.",
-    ),
   ],
 };

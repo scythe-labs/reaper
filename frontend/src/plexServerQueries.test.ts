@@ -8,33 +8,13 @@
 // of them. This pins the shape that stops it recurring: the keys are declared once, and no
 // component may invalidate two or more of them by hand.
 
-import { readFileSync, readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
 import { OF_THE_LINKED_SERVER, invalidateAllPlex } from "./plexServerQueries";
-
-const SRC = dirname(fileURLToPath(import.meta.url));
-
-/** Every `.ts`/`.tsx` the SPA ships, tests excluded. */
-function shippedSource(): string[] {
-  const out: string[] = [];
-  const walk = (dir: string) => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        if (entry.name !== "test") walk(full);
-      } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
-        out.push(full);
-      }
-    }
-  };
-  walk(SRC);
-  return out.sort();
-}
+import { shippedSource, sourceText, srcRelative } from "./test/sources";
 
 describe("invalidateAllPlex", () => {
   it("drops every key that means 'of the linked server', and only those", () => {
@@ -108,7 +88,7 @@ describe("no component open-codes a subset of it", () => {
     for (const path of shippedSource()) {
       if (path.endsWith("plexServerQueries.ts")) continue; // the declaration itself
       for (const run of subsetRuns(readFileSync(path, "utf8"), owned)) {
-        offenders.push(`${path.slice(SRC.length + 1)}: ${run.join(", ")}`);
+        offenders.push(`${srcRelative(path)}: ${run.join(", ")}`);
       }
     }
 
@@ -161,7 +141,7 @@ describe("no component open-codes a subset of it", () => {
 
   it("both components that change which server is linked call the helper", () => {
     for (const file of ["components/PlexPanel.tsx", "components/SetupPlexStep.tsx"]) {
-      const source = readFileSync(join(SRC, file), "utf8");
+      const source = sourceText(file);
       expect(source, `${file} should import the shared helper`).toContain(
         'from "../plexServerQueries"',
       );

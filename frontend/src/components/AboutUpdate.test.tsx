@@ -7,6 +7,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { About, Update } from "../api";
+import en from "../locales/en/ui.json";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_UPDATE } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
@@ -173,5 +174,23 @@ describe("the About update row", () => {
     renderAbout();
     expect(await screen.findByText("You are on the newest release.")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText("Update available")).not.toBeInTheDocument());
+  });
+});
+
+describe("jobs.result.update_available says the same thing as this row's about.update.newRelease (rule 144)", () => {
+  // Three of the four states this row used to word on its own (devMoved, devCurrent,
+  // releaseCurrent) now read `jobs.result.update_dev_behind` / `update_dev_current` /
+  // `update_up_to_date` directly, so those three cannot drift: there is only one catalog
+  // entry left to read. `update_available` stays a separate sibling on purpose: the
+  // backend fixes its param name to `{latest}` (`Reason("update_available", {"latest": ...})`
+  // in `services/scheduler.py`), while this row's own update query supplies `{version}` from
+  // its own endpoint, so this pins the two by name rather than trusting the wording agrees.
+  // Compared with the trailing period and the param name stripped, since `about.update.*` is
+  // a standalone sentence and `jobs.result.update_*` is a resting-line fragment
+  // (`jobs.status.lastRunOk`/`lastRunFailedReason` supply their own punctuation).
+  const strip = (s: string) => s.replace(/\.$/, "").replace(/\{[^}]+\}/g, "{}");
+
+  it("matches the one state that's still a separate sibling", () => {
+    expect(strip(en.jobs.result.update_available)).toBe(strip(en.about.update.newRelease));
   });
 });

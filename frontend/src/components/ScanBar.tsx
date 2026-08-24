@@ -12,38 +12,39 @@
 
 import { useIsFetching, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api, type ScheduledJob, type Snapshot } from "../api";
 import { DegradedDocLink } from "../docs/DocLink";
+import { describeError } from "../errors";
 import { bytes, count, totalBytes } from "../format";
+import i18next from "../i18n";
 import { useScanStatus } from "../useScanStatus";
-import { JobStatus, useJobFlash } from "./JobStatus";
+import { composeError, composeIn } from "../why";
+import { JobStatus, jobResultText, useJobFlash } from "./JobStatus";
 import { Notice } from "./Notice";
 import { ProgressBar } from "./ProgressBar";
-import { SCANNING_LABEL } from "./ScanLine";
+import { scanningLabel } from "./ScanLine";
 
-//: Friendly names for the scan's internal phases, so the status line reads in English.
-//  Exported because the first-run wizard shows the same progress line; one table keeps
-//  the two surfaces from drifting into raw phase ids.
-export const PHASE_LABELS: Record<string, string> = {
-  starting: "Starting",
-  history: "Reading watch history",
-  lists: "Refreshing protection lists",
-  gathering: "Gathering your library",
-  scoring: "Scoring",
-  done: "Finishing up",
-  shelves: "Updating shelves",
-  complete: "Done",
-};
-
+/** Friendly names for the scan's internal phases, so the status line reads in English. A
+ *  plain function rather than a frozen table, read from the catalog on every call (each id
+ *  gets its own literal `t()` call, since a computed key is unreadable to the missing-key
+ *  gate) -- the same shape `JobsPanel`'s own `jobMeta` takes. Exported because the first-run
+ *  wizard shows the same progress line; one function keeps the two surfaces from drifting
+ *  into raw phase ids. */
 export function phaseLabel(phase: string): string {
-  return PHASE_LABELS[phase] ?? phase;
+  const labels: Record<string, string> = {
+    starting: i18next.t("shell.scanBar.phase.starting"),
+    history: i18next.t("shell.scanBar.phase.history"),
+    lists: i18next.t("shell.scanBar.phase.lists"),
+    gathering: i18next.t("shell.scanBar.phase.gathering"),
+    scoring: i18next.t("shell.scanBar.phase.scoring"),
+    done: i18next.t("shell.scanBar.phase.done"),
+    shelves: i18next.t("shell.scanBar.phase.shelves"),
+    complete: i18next.t("shell.scanBar.phase.complete"),
+  };
+  return labels[phase] ?? phase;
 }
-
-/** The line under the bar, shown and said. For an operation that can run for many minutes, the
- *  fact that walking away does not cancel it is the most useful thing an operator can be told,
- *  and it was on screen only. */
-const KEEPS_RUNNING = "You can leave this page; it keeps running.";
 
 /** What the totals did between the scan that just finished and the one before it.
  *
@@ -66,14 +67,27 @@ function scanDelta(
 
   const parts: string[] = [];
   if (items !== 0) {
-    parts.push(`${count(Math.abs(items))} ${items > 0 ? "more" : "fewer"} to remove`);
+    parts.push(
+      i18next.t("shell.scanBar.deltaItems", {
+        n: count(Math.abs(items)),
+        dir: items > 0 ? "up" : "down",
+      }),
+    );
   }
   if (size !== 0) {
     const qualifier =
-      unknowns > 0 ? `, ${count(unknowns)} ${unknowns === 1 ? "size" : "sizes"} unknown` : "";
-    parts.push(`${bytes(Math.abs(size))} ${size > 0 ? "more" : "less"} to free${qualifier}`);
+      unknowns > 0
+        ? i18next.t("shell.scanBar.deltaUnknownQualifier", { n: unknowns, count: unknowns })
+        : "";
+    parts.push(
+      i18next.t("shell.scanBar.deltaSize", {
+        n: bytes(Math.abs(size)),
+        dir: size > 0 ? "up" : "down",
+        qualifier,
+      }),
+    );
   }
-  return `Compared with the scan before: ${parts.join(", ")}.`;
+  return i18next.t("shell.scanBar.deltaSummary", { parts: parts.join(", ") });
 }
 
 /** The library-scan row on the Jobs page: the marquee run action, its last-scan stats and
@@ -90,9 +104,9 @@ export function ScanRow({
   canEdit,
 }: {
   snapshot: Snapshot | undefined;
-  /** The scan's own schedule entry. Carries `last_run_at`/`last_ok`/`last_result` only for
-   *  a SCHEDULED scan that crashed outright and wrote no snapshot (see `get_schedule`); a
-   *  successful run is read from `snapshot` below instead. */
+  /** The scan's own schedule entry. Carries `last_run_at`/`last_ok`/`last_result_reason`
+   *  only for a SCHEDULED scan that crashed outright and wrote no snapshot (see
+   *  `get_schedule`); a successful run is read from `snapshot` below instead. */
   scanJob: ScheduledJob | undefined;
   title: string;
   desc: string;
@@ -100,6 +114,7 @@ export function ScanRow({
   onEdit: () => void;
   canEdit: boolean;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   const status = useScanStatus();
@@ -159,7 +174,7 @@ export function ScanRow({
       // own, and the next thing said is the finish -- which for a library scan is minutes away
       // (#177). Said at `onSuccess`, so it reports a scan that actually started rather than one
       // still being asked for (rule 85); a start that fails speaks through the `Notice` below.
-      announce(`${SCANNING_LABEL}. ${KEEPS_RUNNING}`);
+      announce(`${scanningLabel()}. ${t("shell.scanBar.keepsRunning")}`);
     },
   });
 
@@ -200,20 +215,26 @@ export function ScanRow({
 
   const supersededSnapshot =
     scanning ||
-    (before !== null && !status?.error && snapshot?.id === before.id && !snapshotReadSettled);
+    (before !== null &&
+      !status?.error_reason &&
+      snapshot?.id === before.id &&
+      !snapshotReadSettled);
 
   // The scan's live phase, shown in the shared status slot while it runs.
+  const stepText = status?.detail_reason
+    ? composeIn("shell.scanBar.step", status.detail_reason)
+    : "";
   const runLabel = status
-    ? `${phaseLabel(status.phase)}${status.detail ? `, ${status.detail}` : ""}${
+    ? `${phaseLabel(status.phase)}${stepText ? `, ${stepText}` : ""}${
         pct !== null ? `, ${pct}%` : ""
       }`
-    : "Scanning…";
+    : t("common.scanning");
   // A finished scan confirms itself in the same slot, then settles to the last-run line. A
   // scan that reported a problem gets no flash: the error notice below carries the detail,
   // and a green "done" chip beside it would contradict.
   const scanFlash = useJobFlash(
     scanning,
-    status?.error ? null : { ok: true, text: "Queue refreshed" },
+    status?.error_reason ? null : { ok: true, text: t("shell.scanBar.queueRefreshed") },
   );
 
   // A degraded scan is not an error, so it takes the success flash above -- and that flash
@@ -231,8 +252,8 @@ export function ScanRow({
     if (supersededSnapshot || before === null || !snapshot?.degraded) return;
     if (announcedIncompleteFor.current === snapshot.id) return;
     announcedIncompleteFor.current = snapshot.id;
-    announce("That scan came back incomplete. Reaper won't act on it.");
-  }, [supersededSnapshot, before, snapshot?.degraded, snapshot?.id]);
+    announce(t("shell.scanBar.incompleteAnnounce"));
+  }, [supersededSnapshot, before, snapshot?.degraded, snapshot?.id, t]);
 
   // A scheduled scan that crashed outright writes no snapshot, so it is recorded separately
   // (job id "scheduled_scan", see get_schedule) instead of being silently invisible here.
@@ -260,26 +281,34 @@ export function ScanRow({
           runningLabel={runLabel}
           lastRunAt={lastRunAt}
           lastOk={lastOk}
-          lastResult={failureIsCurrent ? (scanJob?.last_result ?? null) : null}
+          lastResult={jobResultText(
+            failureIsCurrent ? (scanJob?.last_result_reason ?? null) : null,
+          )}
           flash={scanFlash}
         />
 
         {snapshot && !scanning && (
           <div className="jobrow-meta">
-            {count(snapshot.item_count)} items, <strong>{count(snapshot.condemned)}</strong> would
-            be removed, freeing{" "}
-            <strong>{totalBytes(snapshot.reclaimable_bytes, snapshot.unknown_size_items)}</strong>
+            <Trans
+              i18nKey="shell.scanBar.snapshotSummary"
+              values={{
+                itemCount: count(snapshot.item_count),
+                condemnedCount: count(snapshot.condemned),
+                freedAmount: totalBytes(snapshot.reclaimable_bytes, snapshot.unknown_size_items),
+              }}
+              components={{ condemned: <strong />, freed: <strong /> }}
+            />
           </div>
         )}
         {delta && !scanning && <div className="jobrow-meta">{delta}</div>}
         {!snapshot && !scanning && (
-          <div className="jobrow-meta">A scan only reads. It cannot delete.</div>
+          <div className="jobrow-meta">{t("shell.scanBar.scanOnlyReads")}</div>
         )}
 
         {scanning ? (
           <>
-            <ProgressBar label={SCANNING_LABEL} percent={pct ?? 0} />
-            <div className="jobrow-sched">{KEEPS_RUNNING}</div>
+            <ProgressBar label={scanningLabel()} percent={pct ?? 0} />
+            <div className="jobrow-sched">{t("shell.scanBar.keepsRunning")}</div>
           </>
         ) : (
           <div className="jobrow-sched">{scheduleText}</div>
@@ -287,7 +316,7 @@ export function ScanRow({
 
         {start.error && (
           <Notice tone="error" inline>
-            The scan didn't start: {start.error.message}
+            {t("common.scanStartFailed", { message: describeError(start.error) })}
           </Notice>
         )}
         {/* `standing`, unlike `start.error` directly above it, which answers this bar's own
@@ -295,9 +324,9 @@ export function ScanRow({
             devices, and the shell holds a second observer on `["scanStatus"]` that polls every
             15s while this row is idle (`App.tsx`), so a scheduled scan crashing writes this into
             the shared cache and paints it under a page nobody touched. */}
-        {status?.error && (
+        {status?.error_reason && (
           <Notice tone="error" inline standing>
-            The scan hit a problem: {status.error}
+            {t("shell.scanBar.scanProblem", { error: composeError(status.error_reason) })}
           </Notice>
         )}
 
@@ -320,8 +349,11 @@ export function ScanRow({
                 which source had failed: only `library_index`'s reasons carry "Nothing may be
                 deleted from this scan" in their own text (rules 21, 72, 144). */}
             <span>
-              <strong>This scan came back incomplete.</strong> Reaper won&apos;t act on it.{" "}
-              {snapshot.degraded_reason}
+              <Trans
+                i18nKey="shell.scanBar.degradedNotice"
+                values={{ reason: snapshot.degraded_reason }}
+                components={{ strong: <strong /> }}
+              />
             </span>
             {/* Nothing renders for a degradation with no page, which is most of them, so this
                 notice looks exactly as it did unless the scan named one. `ReapPlan` carries the
@@ -337,11 +369,11 @@ export function ScanRow({
               upkeep job, and by its own text they are indistinguishable (rule 72). */}
           <button
             className="ghost"
-            aria-label="Edit the library scan schedule"
+            aria-label={t("shell.scanBar.editScheduleLabel")}
             onClick={onEdit}
             disabled={!canEdit}
           >
-            Edit
+            {t("common.edit")}
           </button>
         </span>
         <span className="slot-act">
@@ -350,7 +382,11 @@ export function ScanRow({
             onClick={() => start.mutate()}
             disabled={scanning || start.isPending}
           >
-            {scanning ? "Scanning…" : start.isPending ? "Starting…" : "Scan library"}
+            {scanning
+              ? t("common.scanning")
+              : start.isPending
+                ? t("common.starting")
+                : t("common.scanNow")}
           </button>
         </span>
       </div>

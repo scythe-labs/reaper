@@ -75,7 +75,7 @@ class TestRedirectsNeverCarryCredentialsAway:
             return_value=httpx.Response(301, headers={"location": "https://elsewhere.test/x"})
         )
         async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
-            with pytest.raises(IntegrationError, match="cross-origin"):
+            with pytest.raises(IntegrationError, match="tried to redirect somewhere else"):
                 await client.system_status()
 
     async def test_a_redirect_loop_gives_up(self, httpx2_mock: respx.Router) -> None:
@@ -85,7 +85,7 @@ class TestRedirectsNeverCarryCredentialsAway:
             )
         )
         async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
-            with pytest.raises(IntegrationError, match="too many redirects"):
+            with pytest.raises(IntegrationError, match="kept redirecting"):
                 await client.system_status()
 
     async def test_a_redirected_mutation_is_refused_not_replayed(
@@ -98,7 +98,7 @@ class TestRedirectsNeverCarryCredentialsAway:
             return_value=httpx.Response(307, headers={"location": "https://elsewhere.test/movie/5"})
         )
         async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
-            with pytest.raises(IntegrationError, match="refused redirect"):
+            with pytest.raises(IntegrationError, match="redirected instead of answering"):
                 await client.delete_movie(5, delete_files=True, add_exclusion=True)
 
 
@@ -113,7 +113,7 @@ class TestTagsBodyMustBeAList:
             return_value=httpx.Response(200, json={"error": "bad gateway"})
         )
         async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
-            with pytest.raises(IntegrationError, match="did not return a list"):
+            with pytest.raises(IntegrationError, match="sent back something Reaper couldn't read"):
                 await client.tags()
 
 
@@ -155,7 +155,7 @@ class TestEveryListReadRefusesANonListBody:
             return_value=httpx.Response(200, json={"error": "bad gateway"})
         )
         async with client_cls(f"https://{host}", "k", safety=READ_ONLY) as client:
-            with pytest.raises(IntegrationError, match="did not return a list"):
+            with pytest.raises(IntegrationError, match="sent back something Reaper couldn't read"):
                 await call(client)
 
     async def test_a_genuinely_empty_list_is_still_empty(self, httpx2_mock: respx.Router) -> None:
@@ -208,7 +208,7 @@ class TestEveryObjectReadRefusesANonObjectBody:
             return_value=httpx.Response(200, json=["bad gateway"])
         )
         async with client_cls(f"https://{host}", "k", safety=READ_ONLY) as client:
-            with pytest.raises(IntegrationError, match="did not return an object"):
+            with pytest.raises(IntegrationError, match="sent back something Reaper couldn't read"):
                 await call(client)
 
     async def test_the_message_names_the_path_that_was_asked(
@@ -216,17 +216,15 @@ class TestEveryObjectReadRefusesANonObjectBody:
     ) -> None:
         """The three arr messages used to be hand-written and dropped the API prefix, so
         an operator on a v5 Sonarr read "series/7 did not return an object" and could not
-        tell which API path had answered. Generating the message from the path fixes that,
-        and this is the assertion that would notice it going back."""
+        tell which API path had answered. Carrying the path as the code's own param fixes
+        that, and this is the assertion that would notice it going back."""
         httpx2_mock.get(host="sonarr.test", path="/api/v5/series/7").mock(
             return_value=httpx.Response(200, json=["bad gateway"])
         )
         async with SonarrClient(
             "https://sonarr.test", "k", safety=READ_ONLY, api_path_prefix="/api/v5"
         ) as client:
-            with pytest.raises(
-                IntegrationError, match=r"/api/v5/series/7 did not return an object"
-            ):
+            with pytest.raises(IntegrationError, match=r"/api/v5/series/7 sent back"):
                 await client.series_by_id(7)
 
     async def test_a_helper_cannot_be_asked_not_to_raise(self) -> None:
@@ -272,7 +270,7 @@ class TestAShortSeerrWalkRefusesRatherThanUndercounting:
             httpx.Response(200, json={"pageInfo": {"results": 500}, "results": None}),
         )
         async with self._client() as client:
-            with pytest.raises(IntegrationError, match="did not return a list of results"):
+            with pytest.raises(IntegrationError, match="sent back something Reaper couldn't read"):
                 await client.all_requests()
 
     async def test_an_empty_page_before_the_total_is_reached_refuses(
@@ -288,8 +286,10 @@ class TestAShortSeerrWalkRefusesRatherThanUndercounting:
             httpx.Response(200, json={"pageInfo": {"results": 500}, "results": []}),
         )
         async with self._client() as client:
-            with pytest.raises(IntegrationError, match="stopped at 100 of 500"):
+            with pytest.raises(IntegrationError) as exc:
                 await client.all_requests()
+        assert exc.value.code == "error.integration.seerr_list_incomplete"
+        assert exc.value.params == {"seen": 100, "total": 500}
 
     async def test_a_portal_with_no_requests_at_all_is_still_fine(
         self, httpx2_mock: respx.Router
@@ -312,7 +312,7 @@ class TestAShortSeerrWalkRefusesRatherThanUndercounting:
             httpx.Response(200, json={"pageInfo": {"results": 500}, "results": None}),
         )
         async with self._client() as client:
-            with pytest.raises(IntegrationError, match="did not return a list of results"):
+            with pytest.raises(IntegrationError, match="sent back something Reaper couldn't read"):
                 await client.users()
 
     @staticmethod
@@ -348,8 +348,10 @@ class TestAShortSeerrWalkRefusesRatherThanUndercounting:
             )
         )
         async with self._client() as client:
-            with pytest.raises(IntegrationError, match="never finished, after 6 requests"):
+            with pytest.raises(IntegrationError) as exc:
                 await client.all_requests()
+        assert exc.value.code == "error.integration.seerr_list_unbounded"
+        assert exc.value.params == {"count": 6}
         assert asked == ["0", "100", "200"]
 
     async def test_the_user_walk_is_bounded_too(
@@ -369,8 +371,10 @@ class TestAShortSeerrWalkRefusesRatherThanUndercounting:
             )
         )
         async with self._client() as client:
-            with pytest.raises(IntegrationError, match="never finished, after 4 accounts"):
+            with pytest.raises(IntegrationError) as exc:
                 await client.users()
+        assert exc.value.code == "error.integration.seerr_list_unbounded"
+        assert exc.value.params == {"count": 4}
         assert asked == ["0", "100"]
 
 
@@ -408,7 +412,7 @@ class TestSendRetriesTransientTransportErrors:
             side_effect=httpx2.ConnectError("down")
         )
         async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
-            with pytest.raises(IntegrationError, match="unreachable"):
+            with pytest.raises(IntegrationError, match="Couldn't reach it"):
                 await client.system_status()
 
         # Exhausted the retry budget (stop_after_attempt(3)) before giving up.
@@ -428,24 +432,14 @@ class TestSendRetriesTransientTransportErrors:
 
 
 class TestTimeoutMessageNamesTheKind:
-    """A ConnectTimeout must not be reported as the 30s read timeout.
+    """A ConnectTimeout must not be treated as the 30s read timeout.
 
-    The message hardcoded ``DEFAULT_TIMEOUT.read`` (30s), so a 5s ConnectTimeout (host up
-    but refusing connections) read as 'slow to respond' instead of 'unreachable'."""
-
-    async def test_connect_timeout_is_named_not_reported_as_read_timeout(
-        self, httpx2_mock: respx.Router
-    ) -> None:
-        httpx2_mock.get("https://radarr.test/api/v3/system/status").mock(
-            side_effect=httpx2.ConnectTimeout("no route")
-        )
-        async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
-            with pytest.raises(IntegrationError) as exc:
-                await client.system_status()
-
-        message = str(exc.value)
-        assert "ConnectTimeout" in message
-        assert "30" not in message  # never the misleading fixed read-timeout figure
+    The operator sentence is one generic "timed out" now (rule 21: an exception class name
+    and a raw second count are jargon, not something a person reads), so what used to be
+    guarded at the rendered text is guarded on the typed flag instead --
+    ``test_only_a_read_timeout_is_marked_as_one`` below, whose ``(ConnectTimeout, False)``
+    case is this same regression: a 5s ConnectTimeout (host up but refusing connections)
+    must never be marked ``read_timed_out`` and shrunk like a slow body would be."""
 
     @pytest.mark.parametrize(
         ("kind", "shrinkable"),
@@ -763,7 +757,7 @@ class TestEveryOutboundCallIsTraced:
             side_effect=httpx2.ConnectTimeout("nope")
         )
         async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
-            with pytest.raises(IntegrationError, match=r"timed out \(ConnectTimeout\)"):
+            with pytest.raises(IntegrationError, match="Timed out"):
                 await client.delete_movie(5, delete_files=True, add_exclusion=True)
 
         call = call_lines()[-1]
@@ -779,7 +773,7 @@ class TestEveryOutboundCallIsTraced:
             side_effect=httpx2.ConnectError("no route")
         )
         async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
-            with pytest.raises(IntegrationError, match="unreachable"):
+            with pytest.raises(IntegrationError, match="Couldn't reach it"):
                 await client.delete_movie(5, delete_files=True, add_exclusion=True)
 
     async def test_an_error_status_on_a_mutation_carries_the_status(
@@ -806,7 +800,7 @@ class TestEveryOutboundCallIsTraced:
             return_value=httpx.Response(302)  # a redirect carrying no Location
         )
         async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
-            with pytest.raises(IntegrationError, match="refused redirect"):
+            with pytest.raises(IntegrationError, match="redirected instead of answering"):
                 await client.system_status()
 
     async def test_the_trace_never_carries_a_query_string_or_a_header(

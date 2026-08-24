@@ -17,6 +17,7 @@
 // Curated: a phrase exists only where more-of-the-number honestly means more reason to
 import { type CSSProperties, type RefObject, useEffect, useId, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { REMOVES_ITS_ROW, useRemovalFocus } from "../focus";
 import {
@@ -27,13 +28,14 @@ import {
   type ListConfig,
   type VocabField,
 } from "../api";
-import { humanDays } from "../format";
+import { count, humanDays } from "../format";
+import i18next from "../i18n";
 import { usePopoverShift } from "./popoverFit";
 import {
   FixedQuantity,
   QuantityInput,
-  SIZE_UNITS,
-  TIME_UNITS,
+  sizeUnits,
+  timeUnits,
   decimalsOfStep,
   useTypedNumber,
 } from "./QuantityInput";
@@ -42,24 +44,75 @@ import { Notice } from "./Notice";
 
 // remove. (Most of these fields are filtered out of the remove vocabulary today because a
 // built-in signal covers them; the map stays complete so a future field just works.)
-const RAMP_PHRASES: Record<string, string> = {
-  days_unwatched: "the longer it sits unwatched",
-  size_bytes: "the bigger it is",
-  season_rank: "the older the season",
-  release_age: "the older it is",
-};
+//
+// A switch, not a Record<string,string>: `t()` needs a literal key (docs/history/I18N_PLAN.md §4),
+// and `field.key` is server data, so each field gets its own literal `t()` call rather than
+// one computed from the key (same shape as `ReapBreakdown.tsx`'s `reasonLabel`).
+function rampPhrase(fieldKey: string): string | undefined {
+  switch (fieldKey) {
+    case "days_unwatched":
+      return i18next.t("policyRules.rampPhrase.daysUnwatched");
+    case "size_bytes":
+      return i18next.t("policyRules.rampPhrase.sizeBytes");
+    case "season_rank":
+      return i18next.t("policyRules.rampPhrase.seasonRank");
+    case "release_age":
+      return i18next.t("policyRules.rampPhrase.releaseAge");
+    default:
+      return undefined;
+  }
+}
+
+/** A field's label, read from the catalog by its server key (`why.field.<key>`, the same
+ *  subject the why-panel's condition sentences compose), never from the wire: the vocabulary
+ *  endpoint stopped shipping one (#868 phase 4). Falls back to the raw key for a stored rule
+ *  naming a field this build's catalog has no entry for.
+ *
+ *  Three call sites below bake this into a generated rule NAME, which is then stored: a rule
+ *  name is operator data, not UI chrome, so it is written once, in the UI language active at
+ *  that moment, and never re-translated when the operator's language changes later -- the same
+ *  way a list name or a policy name is never retranslated. */
+function fieldLabel(key: string): string {
+  const catalogKey = `why.field.${key}`;
+  return i18next.exists(catalogKey) ? i18next.t(catalogKey) : key;
+}
+
+/** A field's help paragraph, from the catalog (`policyRules.fieldHelp.<key>`). Most fields
+ *  carry one; `undefined` where this build's catalog has none, so the caller renders nothing
+ *  rather than an empty paragraph. */
+function fieldHelp(key: string): string | undefined {
+  const catalogKey = `policyRules.fieldHelp.${key}`;
+  return i18next.exists(catalogKey) ? i18next.t(catalogKey) : undefined;
+}
+
+/** A field's unit suffix, from the catalog (`policyRules.fieldUnit.<key>`). Most fields have
+ *  none (a rank, a count, a yes/no) -- those read as `""`, same as the wire's old default. */
+function fieldUnit(key: string): string {
+  const catalogKey = `policyRules.fieldUnit.${key}`;
+  return i18next.exists(catalogKey) ? i18next.t(catalogKey) : "";
+}
 
 /** The sentinel option value for a ramp phrase in the condition dropdown. */
 const RAMP_OP = "__ramp__";
 
-/** How each comparison reads in a rule sentence. */
-const OP_LABELS: Record<string, string> = {
-  gte: "is at least",
-  lte: "is at most",
-  eq: "is",
-  in: "is one of",
-  contains: "contains",
-};
+/** How each comparison reads in a rule sentence. A switch for the same reason as
+ *  `rampPhrase` above: `op` is server data, so each op gets its own literal `t()` call. */
+function opLabel(op: string): string | undefined {
+  switch (op) {
+    case "gte":
+      return i18next.t("policyRules.opLabel.gte");
+    case "lte":
+      return i18next.t("policyRules.opLabel.lte");
+    case "eq":
+      return i18next.t("policyRules.opLabel.eq");
+    case "in":
+      return i18next.t("policyRules.opLabel.in");
+    case "contains":
+      return i18next.t("policyRules.opLabel.contains");
+    default:
+      return undefined;
+  }
+}
 
 // A vocabulary field already handled by a built-in protection -> not offered as a custom rule,
 // so the two never say the same thing twice. Only fields with no built-in gate (size, all-time
@@ -109,10 +162,11 @@ function rampDefaults(field: VocabField): [number, number] {
 
 /** A ramp bound, said in the field's own units. */
 function rampValue(field: VocabField | undefined, value: number): string {
-  if (field?.type === "bytes") return `${Math.round(value / 1e9)} GB`;
+  if (field?.type === "bytes")
+    return i18next.t("policyRules.rampValueGb", { gb: Math.round(value / 1e9) });
   if (field?.type === "days") return humanDays(value);
   if (field?.type === "rating_tenths") return (value / 10).toFixed(1);
-  return withUnit(value.toLocaleString(), field?.unit_suffix);
+  return withUnit(value.toLocaleString(), field ? fieldUnit(field.key) : undefined);
 }
 
 /**
@@ -149,6 +203,12 @@ function uniqueName(existing: { name: string }[], base: string): string {
   for (let i = 2; ; i++) if (!taken.has(`${base} ${i}`)) return `${base} ${i}`;
 }
 
+/** "yes" / "no", shared by every bool value in this file: the two Segmented toggles and the
+ *  sentence composers below, so the word is written once (rule 144). */
+function boolWord(value: boolean): string {
+  return value ? i18next.t("policyRules.yesValue") : i18next.t("policyRules.noValue");
+}
+
 /** Turn a stored condition back into a sentence, in the units a person reads. */
 function describeCondition(c: Condition, fields: VocabField[]): string {
   // The membership field reads as a sentence about the LIST, not as "field op value": the
@@ -164,37 +224,45 @@ function describeCondition(c: Condition, fields: VocabField[]): string {
   if (c.field === "on_list") {
     const listValue = String(c.value);
     return c.op === "eq"
-      ? `Keep it when on your list ${listValue}`
-      : `Keep it when on a list whose name ${OP_LABELS[c.op] ?? c.op} ${listValue}`;
+      ? i18next.t("policyRules.condition.onList", { list: listValue })
+      : i18next.t("policyRules.condition.onListOp", {
+          op: opLabel(c.op) ?? c.op,
+          list: listValue,
+        });
   }
   const f = fields.find((x) => x.key === c.field);
-  const label = f?.label ?? c.field;
-  const op = OP_LABELS[c.op] ?? c.op;
+  const label = fieldLabel(c.field);
+  const op = opLabel(c.op) ?? c.op;
   let value: string;
   // Cleared by the branches that have already said their unit inside `value`.
-  let unit = f?.unit_suffix;
+  let unit = f ? fieldUnit(f.key) : undefined;
   if (f?.type === "rating_tenths" && typeof c.value === "number") value = (c.value / 10).toFixed(1);
   else if (f?.type === "bytes" && typeof c.value === "number") {
-    value = `${Math.round(c.value / 1e9)} GB`;
+    value = i18next.t("policyRules.rampValueGb", { gb: Math.round(c.value / 1e9) });
     unit = "";
   } else if (f?.type === "bool") {
-    value = c.value ? "yes" : "no";
+    value = boolWord(Boolean(c.value));
     unit = "";
   } else if (typeof c.value === "number") value = c.value.toLocaleString();
   else value = String(c.value);
-  return `Keep it when ${label} ${op} ${withUnit(value, unit)}`;
+  return i18next.t("policyRules.condition.generic", { label, op, value: withUnit(value, unit) });
 }
 
 function describeCondemn(rule: CustomCondemn, fields: VocabField[]): string {
   const f = fields.find((x) => x.key === rule.field);
-  const label = f?.label ?? rule.field;
+  const label = fieldLabel(rule.field);
   if (rule.kind === "graded") {
-    const phrase = RAMP_PHRASES[rule.field] ?? "the higher it is";
-    return `${label}: ${phrase} (from ${rampValue(f, rule.floor)} to ${rampValue(f, rule.saturate_at)})`;
+    const phrase = rampPhrase(rule.field) ?? i18next.t("policyRules.rampPhraseDefault");
+    return i18next.t("policyRules.condemn.graded", {
+      label,
+      phrase,
+      from: rampValue(f, rule.floor),
+      to: rampValue(f, rule.saturate_at),
+    });
   }
-  const op = OP_LABELS[rule.op] ?? rule.op;
-  const value = f?.type === "bool" ? (rule.value ? "yes" : "no") : String(rule.value);
-  return `${label} ${op} ${value}`;
+  const op = opLabel(rule.op) ?? rule.op;
+  const value = f?.type === "bool" ? boolWord(Boolean(rule.value)) : String(rule.value);
+  return i18next.t("policyRules.condemn.simple", { label, op, value });
 }
 
 /** A value input that suggests what the library already contains -- and still takes
@@ -216,6 +284,7 @@ function SuggestInput({
    *  message that vanishes on the other two (rule 72). */
   describedBy?: string | undefined;
 }) {
+  const { t } = useTranslation();
   const isText = field.type === "text";
   const { data } = useQuery({
     // The spelling the review queue's filters use for the same resource; two spellings meant
@@ -253,15 +322,22 @@ function SuggestInput({
     popRef.current?.querySelector(".suggest-opt.active")?.scrollIntoView({ block: "nearest" });
   }, [highlight]);
 
+  // The one composed sentence in this component: a catalog field label plus a static
+  // suffix (rule 144), shared by all three branches below rather than composed three times.
+  const valueAriaLabel = t("policyRules.suggestInput.valueAriaLabel", {
+    field: fieldLabel(field.key),
+  });
+  const unit = fieldUnit(field.key);
+
   if (!isText) {
     // A number that has a unit wears it in the box, not in a placeholder that vanishes the
     // moment you type. Fields with no unit (a rank, a count) stay a plain box.
-    return field.unit_suffix ? (
+    return unit ? (
       <FixedQuantity
         value={value}
-        suffix={field.unit_suffix}
+        suffix={unit}
         step={field.type === "rating_tenths" ? 0.1 : 1}
-        ariaLabel={`${field.label} value`}
+        ariaLabel={valueAriaLabel}
         describedBy={describedBy}
         onChange={(v) => onChange(String(v))}
       />
@@ -269,7 +345,7 @@ function SuggestInput({
       <input
         type="number"
         value={value}
-        aria-label={`${field.label} value`}
+        aria-label={valueAriaLabel}
         aria-describedby={describedBy}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -296,10 +372,10 @@ function SuggestInput({
         aria-autocomplete="list"
         aria-controls={show ? listboxId : undefined}
         aria-activedescendant={show && highlight >= 0 ? optionId(highlight) : undefined}
-        aria-label={`${field.label} value`}
+        aria-label={valueAriaLabel}
         aria-describedby={describedBy}
         value={value}
-        placeholder={field.unit_suffix || "value"}
+        placeholder={unit || t("policyRules.suggestInput.valuePlaceholder")}
         onChange={(e) => {
           onChange(e.target.value);
           setOpen(true);
@@ -377,6 +453,7 @@ export function RemoveRulesEditor({
   onCondemn: (r: CustomCondemn[]) => void;
   mediaType: "movie" | "tv";
 }) {
+  const { t } = useTranslation();
   // Narrowed to the policy's media type, so a TV-only reason ("the show has ended")
   // is never offered while tuning movies.
   const { data: condemnVocab, error: condemnVocabError } = useQuery({
@@ -408,7 +485,7 @@ export function RemoveRulesEditor({
   const rampFrom = useTypedNumber(String(rFrom), setRFrom, rampBounds);
   const rampTo = useTypedNumber(String(rTo), setRTo, rampBounds);
   const rampable = Boolean(
-    field && RAMP_PHRASES[field.key] && field.type !== "bool" && field.type !== "text",
+    field && rampPhrase(field.key) && field.type !== "bool" && field.type !== "text",
   );
   const isRamp = rOp === RAMP_OP;
   // A ramp builds pressure from its low bound UP to its high one, so the high one has to be
@@ -423,6 +500,7 @@ export function RemoveRulesEditor({
   // respond, on a form whose next step is invisible (#188).
   const condemnEmpty =
     !isRamp && field !== undefined && field.type !== "bool" && rValue.trim() === "";
+  const helpText = field ? fieldHelp(field.key) : undefined;
 
   // Re-seed the half-built rule when the operator picks a DIFFERENT field: its comparison,
   // its value and its ramp bounds all belong to the old field and would otherwise be carried
@@ -443,12 +521,12 @@ export function RemoveRulesEditor({
   const add = () => {
     if (!field || !rOp || rampBackwards) return;
     if (isRamp) {
-      const phrase = RAMP_PHRASES[field.key];
+      const phrase = rampPhrase(field.key);
       onCondemn([
         ...condemn,
         {
           kind: "graded",
-          name: uniqueName(condemn, `${field.label}: ${phrase}`),
+          name: uniqueName(condemn, `${fieldLabel(field.key)}: ${phrase}`),
           field: field.key,
           weight: rWeight,
           floor: rFrom,
@@ -460,7 +538,7 @@ export function RemoveRulesEditor({
         ...condemn,
         {
           kind: "boolean",
-          name: uniqueName(condemn, field.label),
+          name: uniqueName(condemn, fieldLabel(field.key)),
           field: field.key,
           op: rOp,
           value: coerceValue(field, rValue),
@@ -472,7 +550,7 @@ export function RemoveRulesEditor({
     // disables itself -- three ways of saying nothing. Announced only on the branch that
     // actually added one: the guard above returns silently, so a no-op press and a successful
     // one were the same event to a reader.
-    announce("Rule added.");
+    announce(t("policyRules.ruleAddedAnnounce"));
     // Picking the field again is where the operator continues, and clearing it below is what
     // unmounts the Add button they just pressed -- so without this the press that ADDS a rule
     // also drops focus to `<body>` (#173).
@@ -487,11 +565,8 @@ export function RemoveRulesEditor({
 
   return (
     <div className="rules-card">
-      <h3>Your own reasons to remove</h3>
-      <p className="blurb">
-        Add pressure to the score with a rule of your own. These can flag a title, but a protection
-        still wins, and missing data only ever leans toward keeping.
-      </p>
+      <h3>{t("policyRules.removeEditor.heading")}</h3>
+      <p className="blurb">{t("policyRules.removeEditor.blurb")}</p>
 
       {condemn.length > 0 && (
         <div className="rules-table" ref={rules.ref as RefObject<HTMLDivElement>}>
@@ -502,7 +577,9 @@ export function RemoveRulesEditor({
                   number flat. A sliding rule ramps between its floor and its top, so it
                   says "up to". Removal weights total 100, so both are literal points. */}
               <span className="rules-weight-remove">
-                {r.kind === "graded" ? `up to +${r.weight} points` : `+${r.weight} points`}
+                {r.kind === "graded"
+                  ? t("policyRules.removeEditor.weightRamp", { n: r.weight })
+                  : t("policyRules.removeEditor.weightFlat", { n: r.weight })}
               </span>
               {/* Named for the rule it deletes. These lists stack one "Remove" per authored
                   rule across three tables on one page, and the sentence saying which rule is
@@ -511,13 +588,15 @@ export function RemoveRulesEditor({
               <button
                 {...REMOVES_ITS_ROW}
                 className="ghost sm"
-                aria-label={`Remove rule: ${describeCondemn(r, condemnAll)}`}
+                aria-label={t("policyRules.removeEditor.removeAriaLabel", {
+                  rule: describeCondemn(r, condemnAll),
+                })}
                 onClick={() => {
                   rules.removing(i);
                   onCondemn(condemn.filter((_, j) => j !== i));
                 }}
               >
-                Remove
+                {t("common.remove")}
               </button>
             </div>
           ))}
@@ -540,23 +619,20 @@ export function RemoveRulesEditor({
           (`PolicyEditor` binds `onCondemn` to its own `update`), so the advice destroyed exactly
           what the next clause called safe. "Still here" is the honest half. */}
       {condemnVocabError && !condemnVocab ? (
-        <Notice tone="error">
-          Reaper couldn't load the things a rule can look at, so there's nothing to pick from right
-          now. The rules you've already added are still here.
-        </Notice>
+        <Notice tone="error">{t("policyRules.vocabLoadError")}</Notice>
       ) : (
         <>
           <div className="condition-add">
             <select
               ref={fieldRef}
               value={rField}
-              aria-label="Field"
+              aria-label={t("policyRules.fieldAriaLabel")}
               onChange={(e) => setRField(e.target.value)}
             >
-              <option value="">when…</option>
+              <option value="">{t("policyRules.whenPlaceholder")}</option>
               {condemnFields.map((f) => (
                 <option key={f.key} value={f.key}>
-                  {f.label}
+                  {fieldLabel(f.key)}
                 </option>
               ))}
             </select>
@@ -564,19 +640,19 @@ export function RemoveRulesEditor({
               <>
                 <select
                   value={rOp}
-                  aria-label="Comparison"
+                  aria-label={t("policyRules.comparisonAriaLabel")}
                   onChange={(e) => setROp(e.target.value)}
                 >
                   {field.ops.map((o) => (
                     <option key={o} value={o}>
-                      {OP_LABELS[o] ?? o}
+                      {opLabel(o) ?? o}
                     </option>
                   ))}
-                  {rampable && <option value={RAMP_OP}>{RAMP_PHRASES[field.key]}</option>}
+                  {rampable && <option value={RAMP_OP}>{rampPhrase(field.key)}</option>}
                 </select>
                 {isRamp ? (
                   <span className="ramp-bounds">
-                    <span className="muted">from</span>
+                    <span className="muted">{t("policyRules.removeEditor.rampFrom")}</span>
                     {/* All six boxes below carry the same pair, because the complaint is about
                         the PAIR: either number can be the one that is wrong, and the operator
                         may be standing on whichever they typed second (rule 72 -- three
@@ -585,8 +661,8 @@ export function RemoveRulesEditor({
                     {field.type === "days" ? (
                       <QuantityInput
                         value={rFrom}
-                        units={TIME_UNITS}
-                        ariaLabel="Starts counting at"
+                        units={timeUnits()}
+                        ariaLabel={t("policyRules.rampStartAriaLabel")}
                         describedBy={rampBackwards ? RAMP_ERROR_ID : undefined}
                         invalid={rampBackwards}
                         onChange={setRFrom}
@@ -594,8 +670,8 @@ export function RemoveRulesEditor({
                     ) : field.type === "bytes" ? (
                       <QuantityInput
                         value={rFrom}
-                        units={SIZE_UNITS}
-                        ariaLabel="Starts counting at"
+                        units={sizeUnits()}
+                        ariaLabel={t("policyRules.rampStartAriaLabel")}
                         describedBy={rampBackwards ? RAMP_ERROR_ID : undefined}
                         invalid={rampBackwards}
                         onChange={setRFrom}
@@ -604,18 +680,18 @@ export function RemoveRulesEditor({
                       <input
                         type="number"
                         step={rampStep}
-                        aria-label="Starts counting at"
+                        aria-label={t("policyRules.rampStartAriaLabel")}
                         aria-describedby={rampBackwards ? RAMP_ERROR_ID : undefined}
                         aria-invalid={rampBackwards ? true : undefined}
                         {...rampFrom}
                       />
                     )}
-                    <span className="muted">to</span>
+                    <span className="muted">{t("policyRules.removeEditor.rampTo")}</span>
                     {field.type === "days" ? (
                       <QuantityInput
                         value={rTo}
-                        units={TIME_UNITS}
-                        ariaLabel="Full effect at"
+                        units={timeUnits()}
+                        ariaLabel={t("policyRules.keepEditor.fullEffectAt")}
                         describedBy={rampBackwards ? RAMP_ERROR_ID : undefined}
                         invalid={rampBackwards}
                         onChange={setRTo}
@@ -623,8 +699,8 @@ export function RemoveRulesEditor({
                     ) : field.type === "bytes" ? (
                       <QuantityInput
                         value={rTo}
-                        units={SIZE_UNITS}
-                        ariaLabel="Full effect at"
+                        units={sizeUnits()}
+                        ariaLabel={t("policyRules.keepEditor.fullEffectAt")}
                         describedBy={rampBackwards ? RAMP_ERROR_ID : undefined}
                         invalid={rampBackwards}
                         onChange={setRTo}
@@ -633,7 +709,7 @@ export function RemoveRulesEditor({
                       <input
                         type="number"
                         step={rampStep}
-                        aria-label="Full effect at"
+                        aria-label={t("policyRules.keepEditor.fullEffectAt")}
                         aria-describedby={rampBackwards ? RAMP_ERROR_ID : undefined}
                         aria-invalid={rampBackwards ? true : undefined}
                         {...rampTo}
@@ -645,10 +721,10 @@ export function RemoveRulesEditor({
                   <Segmented
                     value={rValue === "false" ? "false" : "true"}
                     onChange={setRValue}
-                    label="Value"
+                    label={t("policyRules.valueLabel")}
                     options={[
-                      ["true", "yes"],
-                      ["false", "no"],
+                      ["true", t("policyRules.yesValue")],
+                      ["false", t("policyRules.noValue")],
                     ]}
                   />
                 ) : (
@@ -663,19 +739,19 @@ export function RemoveRulesEditor({
                     a bare number box beside loose text. "up to" for a ramp, flat for a yes/no,
                     matching how each rule actually pays out. */}
                 <label className="inline-weight">
-                  {isRamp ? "up to" : ""}
+                  {isRamp ? t("policyRules.upToLabel") : ""}
                   <FixedQuantity
                     value={rWeight}
                     onChange={setRWeight}
-                    suffix="points"
+                    suffix={t("policyRules.suffixPoints")}
                     min={0}
                     max={100}
                     width="narrow"
-                    ariaLabel="Points this rule adds"
+                    ariaLabel={t("policyRules.removeEditor.pointsAriaLabel")}
                   />
                 </label>
                 <button className="ghost sm" onClick={add} disabled={rampBackwards || condemnEmpty}>
-                  Add rule
+                  {t("policyRules.addRuleButton")}
                 </button>
               </>
             )}
@@ -683,22 +759,16 @@ export function RemoveRulesEditor({
           {/* Beside the boxes that fix it (rule 42), and only while it is true. */}
           {rampBackwards && (
             <p className="help help-warn" id={RAMP_ERROR_ID}>
-              The second number has to be higher than the first: a rule like this builds up between
-              them.
+              {t("policyRules.removeEditor.rampBackwardsHelp")}
             </p>
           )}
           {condemnEmpty && (
             <p className="help help-warn" id={CONDEMN_EMPTY_ID}>
-              Enter a value to add this rule.
+              {t("policyRules.enterValueHelp")}
             </p>
           )}
-          {field?.help_text && <p className="help">{field.help_text}</p>}
-          <p className="help">
-            The choices match the field: numbers get at least / at most, words get is / is one of /
-            contains. A phrase like “the older it is” builds pressure gradually between two numbers,
-            like the built-in signals above, and its weight is a ceiling. There is no “is not”, on
-            purpose.
-          </p>
+          {helpText && <p className="help">{helpText}</p>}
+          <p className="help">{t("policyRules.removeEditor.helpBlurb")}</p>
         </>
       )}
     </div>
@@ -719,14 +789,15 @@ function ListNameSelect({
   onChange: (v: string) => void;
   describedBy?: string | undefined;
 }) {
+  const { t } = useTranslation();
   return (
     <select
       value={value}
-      aria-label="Which list"
+      aria-label={t("policyRules.listNameSelect.ariaLabel")}
       aria-describedby={describedBy}
       onChange={(e) => onChange(e.target.value)}
     >
-      <option value="">Pick a list…</option>
+      <option value="">{t("policyRules.listNameSelect.placeholder")}</option>
       {names.map((n) => (
         <option key={n} value={n}>
           {n}
@@ -754,6 +825,7 @@ export function KeepRulesEditor({
   onConditions: (c: Condition[]) => void;
   onKeeps: (k: GradedKeep[]) => void;
 }) {
+  const { t } = useTranslation();
   // Same media-type narrowing as the remove editor, so a movie policy is never offered
   // a keep rule on a field a movie does not have.
   const { data: vocab, error: vocabError } = useQuery({
@@ -825,9 +897,6 @@ export function KeepRulesEditor({
   const hiddenUnverified = keptByBlanketRule
     ? 0
     : configured.filter((l) => notNamed(l) && l.authorable_media.length === 0).length;
-  const thisMedia = mediaType === "movie" ? "movies" : "shows";
-  const otherMedia = mediaType === "movie" ? "shows" : "movies";
-  const thisSingular = mediaType === "movie" ? "movie" : "show";
   // Why the list select is empty, said once for both composers (rule 72). A failed read is named
   // as one, never shown as "you have no lists" (rules 17/36); a set that all already have a rule
   // is a third thing; and a set none of which this policy can keep is a fourth, which is either
@@ -836,21 +905,20 @@ export function KeepRulesEditor({
   const noListsMessage =
     !lists.isPending && listNames.length === 0
       ? lists.isError
-        ? "Reaper couldn't load your lists, so there's nothing to pick from right now."
+        ? t("policyRules.keepEditor.noListsLoadError")
         : keptByBlanketRule
-          ? 'Your "On a list you curate yourself" rule already keeps every one of your lists. ' +
-            "Remove it above to set a strength per list."
+          ? t("policyRules.keepEditor.noListsBlanketRule")
           : configured.length === 0
-            ? "You have no lists yet. Add one on Settings → Lists first."
+            ? t("policyRules.keepEditor.noListsNone")
             : eligible.length > 0
               ? // "this policy can keep" so it stays true when an unnamed wrong-type or unsynced
                 // list is also hidden: those are not lists this policy can keep (#549).
-                "Every list this policy can keep already has a rule. Remove one above to give it a different strength."
+                t("policyRules.keepEditor.noListsAllTaken")
               : hiddenUnverified > 0 && hiddenWrongType === 0
-                ? "Your lists haven't synced yet. Check them on Settings → Lists so Reaper knows what's on them."
+                ? t("policyRules.keepEditor.noListsUnsynced")
                 : hiddenWrongType > 0 && hiddenUnverified === 0
-                  ? `None of your lists holds ${thisMedia}. Add a ${thisSingular} list on Settings → Lists.`
-                  : "None of your lists can be kept here yet. Check them on Settings → Lists."
+                  ? t("policyRules.keepEditor.noListsWrongType", { mediaType })
+                  : t("policyRules.keepEditor.noListsGeneric")
       : null;
 
   const [strength, setStrength] = useState<"hard" | "lean">("hard");
@@ -864,6 +932,7 @@ export function KeepRulesEditor({
   // Why Add is off here, the condemn composer's twin (rule 72). A yes/no always has an answer,
   // so only a typed value -- or an unpicked list -- can be missing.
   const hardEmpty = hardField !== undefined && hardField.type !== "bool" && hValue.trim() === "";
+  const hardHelpText = hardField ? fieldHelp(hardField.key) : undefined;
   // The keep-rule twin of the re-seed above, and suppressed for the same reason: a new field
   // needs its own comparison and value, and `hardFields` is reallocated every render (H-3).
   useEffect(() => {
@@ -883,7 +952,7 @@ export function KeepRulesEditor({
         : { field: hardField.key, op: hOp, value: coerceValue(hardField, hValue) },
     ]);
     // Same silence as the condemn composer's Add, on the same guard (rule 72).
-    announce("Rule added.");
+    announce(t("policyRules.ruleAddedAnnounce"));
     // And the same focus drop: clearing the field below unmounts the Add button.
     hardFieldRef.current?.focus();
     setHField("");
@@ -902,6 +971,7 @@ export function KeepRulesEditor({
   const leanIsList = leanField?.key === "on_list";
   // And the third (rule 72). A numeric lean waits on its number; a membership lean on its list.
   const leanEmpty = leanField !== undefined && (leanIsList ? lList === "" : lAt === "");
+  const leanHelpText = leanField ? fieldHelp(leanField.key) : undefined;
   const addLean = () => {
     if (!leanField || leanEmpty) return;
     if (leanIsList) {
@@ -926,7 +996,7 @@ export function KeepRulesEditor({
       onKeeps([
         ...keeps,
         {
-          name: uniqueName(keeps, leanField.label),
+          name: uniqueName(keeps, fieldLabel(leanField.key)),
           field: leanField.key,
           max_discount: lPoints,
           floor: 0,
@@ -936,7 +1006,7 @@ export function KeepRulesEditor({
       ]);
     }
     // And the third (rule 72).
-    announce("Rule added.");
+    announce(t("policyRules.ruleAddedAnnounce"));
     leanFieldRef.current?.focus();
     setLField("");
     setLAt("");
@@ -952,11 +1022,12 @@ export function KeepRulesEditor({
 
   return (
     <div className="rules-card">
-      <h3>Your own keep rules</h3>
+      <h3>{t("policyRules.keepEditor.heading")}</h3>
       <p className="blurb">
-        Two strengths: a rule can keep a title <strong>outright</strong>, or just{" "}
-        <strong>lean toward keeping</strong> by lowering its score. Neither can ever flag anything,
-        and missing data takes the full lean, to be safe.
+        <Trans
+          i18nKey="policyRules.keepEditor.blurb"
+          components={{ outright: <strong />, lean: <strong /> }}
+        />
       </p>
 
       {(conditions.length > 0 || keeps.length > 0) && (
@@ -965,21 +1036,24 @@ export function KeepRulesEditor({
             <div className="rules-row rules-row-simple" key={`h-${c.field}-${c.op}-${i}`}>
               <span className="rules-rule">
                 <span className="rule-kind">
-                  Keeps it, always<span aria-hidden="true"> · </span>
+                  {t("policyRules.keepEditor.alwaysLabel")}
+                  <span aria-hidden="true"> · </span>
                 </span>
                 {describeCondition(c, allFields)}
               </span>
-              <span className="rules-weight-keep">kept outright</span>
+              <span className="rules-weight-keep">{t("policyRules.keepEditor.keptOutright")}</span>
               <button
                 {...REMOVES_ITS_ROW}
                 className="ghost sm"
-                aria-label={`Remove rule: keeps it, always, ${describeCondition(c, allFields)}`}
+                aria-label={t("policyRules.keepEditor.removeConditionAriaLabel", {
+                  rule: describeCondition(c, allFields),
+                })}
                 onClick={() => {
                   rows.removing(i);
                   onConditions(conditions.filter((_, j) => j !== i));
                 }}
               >
-                Remove
+                {t("common.remove")}
               </button>
             </div>
           ))}
@@ -990,10 +1064,12 @@ export function KeepRulesEditor({
             // removed rather than orphaned invisibly.
             const sentence =
               k.value != null
-                ? `On your list ${k.value}`
-                : `${f?.label ?? k.field}: the ${
-                    k.direction === "low_keeps" ? "less" : "more"
-                  }, the safer (full effect at ${rampValue(f, k.saturate_at)})`;
+                ? t("policyRules.keepEditor.onListSentence", { list: k.value })
+                : t("policyRules.keepEditor.leanSentence", {
+                    field: fieldLabel(k.field),
+                    direction: k.direction,
+                    value: rampValue(f, k.saturate_at),
+                  });
             // Membership is not a number, so this rule pays its whole discount or none of it.
             // "up to" is this file's own word for a RAMP -- `describeCondemn`'s row says the
             // number flat for a yes/no rule for exactly this reason -- and it was printed here
@@ -1003,12 +1079,16 @@ export function KeepRulesEditor({
               <div className="rules-row rules-row-simple" key={`k-${k.name}-${i}`}>
                 <span className="rules-rule">
                   <span className="rule-kind">
-                    Leans<span aria-hidden="true"> · </span>
+                    {t("policyRules.keepEditor.leansLabel")}
+                    <span aria-hidden="true"> · </span>
                   </span>
                   {sentence}
                 </span>
                 <span className="rules-weight-keep">
-                  lowers the score{isRampLean ? ", up to" : " by"} −{k.max_discount} points
+                  {t("policyRules.keepEditor.lowersScore", {
+                    isRamp: isRampLean ? "true" : "false",
+                    n: k.max_discount,
+                  })}
                 </span>
                 <button
                   {...REMOVES_ITS_ROW}
@@ -1018,15 +1098,17 @@ export function KeepRulesEditor({
                   // `uniqueName` precisely because they collide -- and the field alone gives
                   // both Remove buttons the same name. What gets removed by mistake is a keep
                   // rule, so the next scan condemns titles the operator believed were held.
-                  aria-label={`Remove rule: leans, ${sentence}, ${
-                    isRampLean ? "up to " : ""
-                  }${k.max_discount} points off`}
+                  aria-label={t("policyRules.keepEditor.removeLeanAriaLabel", {
+                    sentence,
+                    isRamp: isRampLean ? "true" : "false",
+                    n: k.max_discount,
+                  })}
                   onClick={() => {
                     rows.removing(conditions.length + i);
                     onKeeps(keeps.filter((_, j) => j !== i));
                   }}
                 >
-                  Remove
+                  {t("common.remove")}
                 </button>
               </div>
             );
@@ -1038,20 +1120,17 @@ export function KeepRulesEditor({
           dropdown looks like a feature with nothing behind it, so name the failure and drop the
           form -- but only when the dropdown really would be empty. */}
       {vocabError && !vocab ? (
-        <Notice tone="error">
-          Reaper couldn't load the things a rule can look at, so there's nothing to pick from right
-          now. The rules you've already added are still here.
-        </Notice>
+        <Notice tone="error">{t("policyRules.vocabLoadError")}</Notice>
       ) : (
         <>
           <div className="rules-add">
             <Segmented
               value={strength}
               onChange={setStrength}
-              label="Rule strength"
+              label={t("policyRules.keepEditor.strengthLabel")}
               options={[
-                ["hard", "Keeps it outright"],
-                ["lean", "Leans toward keeping"],
+                ["hard", t("policyRules.keepEditor.strengthHard")],
+                ["lean", t("policyRules.keepEditor.strengthLean")],
               ]}
             />
 
@@ -1060,13 +1139,13 @@ export function KeepRulesEditor({
                 <select
                   ref={hardFieldRef}
                   value={hField}
-                  aria-label="Field"
+                  aria-label={t("policyRules.fieldAriaLabel")}
                   onChange={(e) => setHField(e.target.value)}
                 >
-                  <option value="">Keep it when…</option>
+                  <option value="">{t("policyRules.keepEditor.keepWhenPlaceholder")}</option>
                   {hardFields.map((f) => (
                     <option key={f.key} value={f.key}>
-                      {f.label}
+                      {fieldLabel(f.key)}
                     </option>
                   ))}
                 </select>
@@ -1077,12 +1156,12 @@ export function KeepRulesEditor({
                     {!hardIsList && (
                       <select
                         value={hOp}
-                        aria-label="Comparison"
+                        aria-label={t("policyRules.comparisonAriaLabel")}
                         onChange={(e) => setHOp(e.target.value)}
                       >
                         {hardField.ops.map((o) => (
                           <option key={o} value={o}>
-                            {OP_LABELS[o] ?? o}
+                            {opLabel(o) ?? o}
                           </option>
                         ))}
                       </select>
@@ -1099,10 +1178,10 @@ export function KeepRulesEditor({
                       <Segmented
                         value={hValue === "false" ? "false" : "true"}
                         onChange={setHValue}
-                        label="Value"
+                        label={t("policyRules.valueLabel")}
                         options={[
-                          ["true", "yes"],
-                          ["false", "no"],
+                          ["true", t("policyRules.yesValue")],
+                          ["false", t("policyRules.noValue")],
                         ]}
                       />
                     ) : (
@@ -1114,7 +1193,7 @@ export function KeepRulesEditor({
                       />
                     )}
                     <button className="ghost sm" onClick={addHard} disabled={hardEmpty}>
-                      Add rule
+                      {t("policyRules.addRuleButton")}
                     </button>
                   </>
                 )}
@@ -1134,25 +1213,23 @@ export function KeepRulesEditor({
                     </p>
                   ) : (
                     <p className="help help-warn" id={HARD_EMPTY_ID}>
-                      {hardIsList
-                        ? "Pick a list to add this rule."
-                        : "Enter a value to add this rule."}
+                      {hardIsList ? t("policyRules.pickListHelp") : t("policyRules.enterValueHelp")}
                     </p>
                   ))}
-                {hardField?.help_text && <p className="help">{hardField.help_text}</p>}
+                {hardHelpText && <p className="help">{hardHelpText}</p>}
               </div>
             ) : (
               <div className="condition-add">
                 <select
                   ref={leanFieldRef}
                   value={lField}
-                  aria-label="Field"
+                  aria-label={t("policyRules.fieldAriaLabel")}
                   onChange={(e) => setLField(e.target.value)}
                 >
-                  <option value="">when…</option>
+                  <option value="">{t("policyRules.whenPlaceholder")}</option>
                   {leanFields.map((f) => (
                     <option key={f.key} value={f.key}>
-                      {f.label}
+                      {fieldLabel(f.key)}
                     </option>
                   ))}
                 </select>
@@ -1174,19 +1251,19 @@ export function KeepRulesEditor({
                         <Segmented
                           value={lDir}
                           onChange={setLDir}
-                          label="Which way it leans"
+                          label={t("policyRules.keepEditor.directionLabel")}
                           options={[
-                            ["high_keeps", "the more, the safer"],
-                            ["low_keeps", "the less, the safer"],
+                            ["high_keeps", t("policyRules.keepEditor.directionMore")],
+                            ["low_keeps", t("policyRules.keepEditor.directionLess")],
                           ]}
                         />
-                        <span className="muted">full effect at</span>
-                        {leanField.unit_suffix ? (
+                        <span className="muted">{t("policyRules.keepEditor.fullEffectAt")}</span>
+                        {fieldUnit(leanField.key) ? (
                           <FixedQuantity
                             value={lAt}
-                            suffix={leanField.unit_suffix}
+                            suffix={fieldUnit(leanField.key)}
                             step={leanField.type === "rating_tenths" ? 0.1 : 1}
-                            ariaLabel="Full effect at"
+                            ariaLabel={t("policyRules.keepEditor.fullEffectAt")}
                             describedBy={leanEmpty ? LEAN_EMPTY_ID : undefined}
                             onChange={(v) => setLAt(String(v))}
                           />
@@ -1194,7 +1271,7 @@ export function KeepRulesEditor({
                           <input
                             type="number"
                             value={lAt}
-                            aria-label="Full effect at"
+                            aria-label={t("policyRules.keepEditor.fullEffectAt")}
                             aria-describedby={leanEmpty ? LEAN_EMPTY_ID : undefined}
                             onChange={(e) => setLAt(e.target.value)}
                           />
@@ -1206,19 +1283,19 @@ export function KeepRulesEditor({
                         membership is not a number, so a list lean pays its whole discount or
                         none of it, matching `RemoveRulesEditor`'s own split (rule 72). */}
                     <label className="inline-weight">
-                      {leanIsList ? "" : "up to"}
+                      {leanIsList ? "" : t("policyRules.upToLabel")}
                       <FixedQuantity
                         value={lPoints}
                         onChange={setLPoints}
-                        suffix="points off"
+                        suffix={t("policyRules.suffixPointsOff")}
                         min={1}
                         max={100}
                         width="narrow"
-                        ariaLabel="Points this rule takes off"
+                        ariaLabel={t("policyRules.keepEditor.pointsOffAriaLabel")}
                       />
                     </label>
                     <button className="ghost sm" onClick={addLean} disabled={leanEmpty}>
-                      Add rule
+                      {t("policyRules.addRuleButton")}
                     </button>
                   </>
                 )}
@@ -1232,11 +1309,11 @@ export function KeepRulesEditor({
                   ) : (
                     <p className="help help-warn" id={LEAN_EMPTY_ID}>
                       {leanIsList
-                        ? "Pick a list to add this rule."
-                        : "Enter a number to add this rule."}
+                        ? t("policyRules.pickListHelp")
+                        : t("policyRules.enterNumberHelp")}
                     </p>
                   ))}
-                {leanField?.help_text && <p className="help">{leanField.help_text}</p>}
+                {leanHelpText && <p className="help">{leanHelpText}</p>}
               </div>
             )}
           </div>
@@ -1245,24 +1322,22 @@ export function KeepRulesEditor({
               are always in force and stated here. Two more, media type and not-yet-synced, hide a
               list only in some states, so their copy is the conditional notes below and the
               empty-state message above, said only when they actually bite (#549). */}
-          <p className="help">
-            Suggestions are values from your own library. Pick one, or type anything else. Fields
-            already covered by a protection you've turned on aren't offered for outright keeps, so a
-            rule never repeats a built-in. A list that already has a keep rule isn't offered either:
-            one list takes one rule, at one strength.
-          </p>
+          <p className="help">{t("policyRules.keepEditor.helpBlurb")}</p>
           {!keptByBlanketRule && listNames.length > 0 && hiddenWrongType > 0 && (
             <p className="help">
-              {hiddenWrongType === 1
-                ? `One list isn't shown here: it holds only ${otherMedia}, which this policy can't keep.`
-                : `${hiddenWrongType} lists aren't shown here: they hold only ${otherMedia}, which this policy can't keep.`}
+              {t("policyRules.keepEditor.hiddenWrongType", {
+                n: hiddenWrongType,
+                count: count(hiddenWrongType),
+                mediaType,
+              })}
             </p>
           )}
           {!keptByBlanketRule && listNames.length > 0 && hiddenUnverified > 0 && (
             <p className="help">
-              {hiddenUnverified === 1
-                ? "One list isn't shown here yet: it hasn't synced. Check it on Settings → Lists."
-                : `${hiddenUnverified} lists aren't shown here yet: they haven't synced. Check them on Settings → Lists.`}
+              {t("policyRules.keepEditor.hiddenUnverified", {
+                n: hiddenUnverified,
+                count: count(hiddenUnverified),
+              })}
             </p>
           )}
         </>

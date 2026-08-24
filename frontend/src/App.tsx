@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { applyAccent } from "./accent";
 import { Announcer, useSlowWait } from "./announce";
 import { api, ApiError, type AuthUser, type Verdict } from "./api";
@@ -26,7 +27,7 @@ import { DocsProvider } from "./docs/DocsContext";
 import type { Focus, NavIntent, Selection, View } from "./navIntent";
 import { readLanding, sectionUrl, writeUrl } from "./navUrl";
 import { usePageScrollLock } from "./pageScrollLock";
-import { useGeneralSettings } from "./useGeneralSettings";
+import { useGeneralSettings, useSeedLanguage } from "./useGeneralSettings";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "./useMediaQuery";
 import { useScanSettled } from "./useScanSettled";
 import { Notice } from "./components/Notice";
@@ -57,11 +58,12 @@ const SetupWizard = lazy(async () => ({
  *  has actually been one. This component mounts only while the chunk is in flight, so its unmount
  *  is what cancels a fast load's announcement. */
 function RouteLoading() {
-  useSlowWait("Still loading. Reaper is fetching this page.");
+  const { t } = useTranslation();
+  useSlowWait(t("shell.app.routeLoadingSlow"));
   return (
     <div className="fair-loading">
       <span className="spinner spinner-xl" aria-hidden="true" />
-      <p className="fair-loading-lead">Loading…</p>
+      <p className="fair-loading-lead">{t("common.loading")}</p>
     </div>
   );
 }
@@ -70,6 +72,7 @@ function RouteLoading() {
  *  then hands it to the same ReapConfirm the review queue uses, which re-attaches to the live
  *  status and shows progress or the finished report. */
 function ReapSheetLoader({ runId, onClose }: { runId: number; onClose: () => void }) {
+  const { t } = useTranslation();
   const {
     data: run,
     isPending,
@@ -90,15 +93,15 @@ function ReapSheetLoader({ runId, onClose }: { runId: number; onClose: () => voi
   // selection that may have cost thousands of rows, with nothing asking first (`frontend/src`
   // has no `beforeunload`). The close this modal already has keeps it, so the line points there.
   return (
-    <ModalShell title="Reap report" onClose={onClose}>
+    <ModalShell title={t("shell.app.reapReportTitle")} onClose={onClose}>
       <div className="service-form">
         {isPending ? (
-          <p className="help">Loading the reap…</p>
+          <p className="help">{t("shell.app.loadingReap")}</p>
         ) : (
           <Notice tone="error">
             {error instanceof ApiError && error.status === 404
-              ? "That reap is no longer available."
-              : "Reaper couldn't load this reap. Close this and try View again."}
+              ? t("shell.app.reapUnavailable")
+              : t("shell.app.reapLoadFailed")}
           </Notice>
         )}
       </div>
@@ -107,6 +110,7 @@ function ReapSheetLoader({ runId, onClose }: { runId: number; onClose: () => voi
 }
 
 function Dashboard({ user }: { user: AuthUser }) {
+  const { t } = useTranslation();
   // Where the URL says to land, read once at mount and nowhere else (navUrl.ts). The URL is the
   // authority for a cold load and for nothing after it: `backnav` owns Back, and its undo
   // restores these two setters directly, so re-deriving either from the URL would fight it.
@@ -409,7 +413,7 @@ function Dashboard({ user }: { user: AuthUser }) {
   // poll, for the same reason the finished-reap refresh above is here: a scan started from
   // the Reap page, the scheduler or another device must refresh the screen the operator is
   // on, not only the one screen that happens to mount the scan bar.
-  useScanSettled(scanStatus?.running ?? false, scanStatus?.error ?? null);
+  useScanSettled(scanStatus?.running ?? false, scanStatus?.error_reason ?? null);
 
   const { data: detail, isError: detailError } = useQuery({
     queryKey: ["candidate", selectedId],
@@ -502,7 +506,7 @@ function Dashboard({ user }: { user: AuthUser }) {
                 checked, not assumed). `SetupWizard` and `Login` keep their own `h1` because
                 each REPLACES this shell rather than rendering inside it. */}
             <h1 className="brand-word">Reaper</h1>
-            <span className="muted brand-sub">Grave decisions, clearly explained</span>
+            <span className="muted brand-sub">{t("shell.app.brandTagline")}</span>
           </div>
         </div>
 
@@ -537,7 +541,7 @@ function Dashboard({ user }: { user: AuthUser }) {
           section is what makes it a landmark; `.app` is plain block flow with no child or
           sibling selectors, so the wrapper moves nothing on screen. Caught by the page-level
           axe audit in `AppStaleRead.test.tsx`, which is the only test that mounts the shell. */}
-      <section className="app-status" aria-label="Status">
+      <section className="app-status" aria-label={t("shell.app.statusLabel")}>
         <SafetyBanner onGoToDeletion={() => goToPolicySection("deletion")} />
         <ReapBar onView={(runId) => setReapSheetRun(runId)} />
         {view === "review" && (
@@ -675,6 +679,7 @@ function Dashboard({ user }: { user: AuthUser }) {
 /** Once signed in, a fresh install goes to the setup wizard until it is configured and has
  *  scanned once; after that (or if the owner skips) it is the dashboard. */
 function Authed({ user }: { user: AuthUser }) {
+  const { t } = useTranslation();
   const [skipped, setSkipped] = useState(false);
   // Latched, because the wizard's own last step is what makes `complete` true: finishing the
   // first scan flips `has_scanned`, and deriving this gate live then unmounted the wizard in
@@ -694,7 +699,11 @@ function Authed({ user }: { user: AuthUser }) {
   });
 
   // Above the early return, so the hook order holds whichever branch renders (rule 146).
-  useSlowWait(isLoading ? "Still loading Reaper." : null);
+  useSlowWait(isLoading ? t("shell.app.stillLoadingReaper") : null);
+  // The first signed-in moment is the earliest one where a browser that knows its own preferred
+  // languages is talking to a server that cannot detect them. Here rather than in the wizard,
+  // because an install past setup never runs the wizard again.
+  useSeedLanguage();
 
   if (isLoading) {
     return (
@@ -707,7 +716,7 @@ function Authed({ user }: { user: AuthUser }) {
             the aria-label this used to carry reached nobody: Reaper's first screen announced as
             an empty page. The word goes in the tree instead of on the element. */}
         <span className="spinner spinner-lg" aria-hidden="true" />
-        <span className="sr-only">Loading Reaper…</span>
+        <span className="sr-only">{t("shell.app.loadingReaperEllipsis")}</span>
       </div>
     );
   }
@@ -755,6 +764,7 @@ function Authed({ user }: { user: AuthUser }) {
 
 /** The gate. Nothing renders until we know who (if anyone) is signed in. */
 export function App() {
+  const { t } = useTranslation();
   const { data: user, isLoading } = useQuery({
     queryKey: ["me"],
     queryFn: api.me,
@@ -763,7 +773,7 @@ export function App() {
     staleTime: 0,
   });
 
-  useSlowWait(isLoading ? "Still loading Reaper." : null);
+  useSlowWait(isLoading ? t("shell.app.stillLoadingReaper") : null);
 
   // One expression rather than the three early returns this used to be, so `Announcer` is a
   // sibling of every branch instead of three copies of itself (rule 72). It has to sit above
@@ -800,7 +810,7 @@ export function App() {
               Pre-existing the message is the property that matters, not pre-existing the
               spinner. */}
           <span className="spinner spinner-lg" aria-hidden="true" />
-          <span className="sr-only">Loading Reaper…</span>
+          <span className="sr-only">{t("shell.app.loadingReaperEllipsis")}</span>
         </div>
       ) : !user ? (
         <Login />

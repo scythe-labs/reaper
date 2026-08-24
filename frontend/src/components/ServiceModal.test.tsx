@@ -19,7 +19,10 @@ const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
-vi.mock("../api", () => ({ api: apiMock }));
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  api: apiMock,
+}));
 
 // The mocks are shared across tests, so clear call history between them: otherwise a later
 // test that reads `updateInstance.mock.calls[0]` sees an earlier test's save, not its own.
@@ -634,7 +637,7 @@ describe("what a screen reader hears when a connection is tested", () => {
   it("says a connection was reached, and which version", async () => {
     apiMock.testInstance.mockResolvedValue({
       ok: true,
-      detail: "Connected to Sonarr.",
+      detail_reason: { k: "legacy", p: { text: "Connected to Sonarr." } },
       version: "4.0.1",
     });
     const user = await renderWithAnnouncer();
@@ -649,7 +652,7 @@ describe("what a screen reader hears when a connection is tested", () => {
   it("says a connection FAILED, which arrives as an ordinary 200", async () => {
     apiMock.testInstance.mockResolvedValue({
       ok: false,
-      detail: "Couldn't reach it. Check the address.",
+      detail_reason: { k: "legacy", p: { text: "Couldn't reach it. Check the address." } },
       version: null,
     });
     const user = await renderWithAnnouncer();
@@ -679,7 +682,7 @@ describe("what the connection badge vouches for", () => {
   async function passATest() {
     apiMock.testInstance.mockResolvedValue({
       ok: true,
-      detail: "Connected to Sonarr.",
+      detail_reason: { k: "legacy", p: { text: "Connected to Sonarr." } },
       version: "4.0.1",
     });
     apiMock.instanceRootFolders.mockResolvedValue([]);
@@ -771,7 +774,11 @@ describe("what the connection badge vouches for", () => {
     // the point here rather than the value it leaves behind.
     await user.type(hostBox(), "1");
     await act(async () => {
-      land({ ok: true, detail: "Connected to Sonarr.", version: "4.0.1" });
+      land({
+        ok: true,
+        detail_reason: { k: "legacy", p: { text: "Connected to Sonarr." } },
+        version: "4.0.1",
+      });
     });
 
     expect(badge()).toBeNull();
@@ -833,11 +840,11 @@ describe("why 'Add service' will not act", () => {
     // Leaving the key box fires the test, which passes and hands back one unmapped folder.
     apiMock.testInstance.mockResolvedValue({
       ok: true,
-      detail: "Connected to Sonarr.",
+      detail_reason: { k: "legacy", p: { text: "Connected to Sonarr." } },
       version: "4.0.1",
       root_folders: [{ path: "/tv", suggested_library: null }],
       seerr_services: [],
-      map_error: null,
+      map_error_reason: null,
     });
     await user.tab();
     await waitFor(() =>
@@ -918,11 +925,11 @@ describe("what a failed folder read must not do", () => {
 
     apiMock.testInstance.mockResolvedValue({
       ok: true,
-      detail: "Connected to Sonarr.",
+      detail_reason: { k: "legacy", p: { text: "Connected to Sonarr." } },
       version: "4.0.1",
       root_folders: [{ path: "/tv", suggested_library: null }],
       seerr_services: [],
-      map_error: null,
+      map_error_reason: null,
     });
     await fill(user, screen.getByLabelText(/Hostname or IP/), "10.0.0.9");
     await user.type(screen.getByLabelText(/New API key/), "k");
@@ -936,7 +943,7 @@ describe("what a failed folder read must not do", () => {
   });
 
   it("keeps the stored map when the test passes but the folder read fails", async () => {
-    // The silent-loss case. `map_error` means the probe RAN and failed, so its empty list is a
+    // The silent-loss case. `map_error_reason` means the probe RAN and failed, so its empty list is a
     // read that never landed -- and `[]` is truthy, so the save's prune walked it and sent `{}`,
     // which the server stores as NULL. The map that tells an HD copy from a 4K one was gone with
     // no confirmation, off a screen that had replaced the grid with a notice.
@@ -956,11 +963,11 @@ describe("what a failed folder read must not do", () => {
 
     apiMock.testInstance.mockResolvedValue({
       ok: true,
-      detail: "Connected to Sonarr.",
+      detail_reason: { k: "legacy", p: { text: "Connected to Sonarr." } },
       version: "4.0.1",
       root_folders: [],
       seerr_services: [],
-      map_error: "Reaper reached this service but couldn't read what to map. It timed out.",
+      map_error_reason: { k: "mapError", p: { error: "It timed out." } },
     });
     await user.type(screen.getByLabelText(/New API key/), "fresh-key");
     await user.tab();

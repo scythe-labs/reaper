@@ -91,7 +91,7 @@
   background: var(--sonarr);
 }
 .list-head .kind-arr > span[aria-hidden] + span[aria-hidden] {
-  border-left: 1px solid rgba(0, 0, 0, 0.55);
+  border-inline-start: 1px solid rgba(0, 0, 0, 0.55);
   background: var(--radarr);
 }
 /* The exposed half: a media type on this list that no keep rule covers, so its titles are
@@ -132,7 +132,7 @@
 }
 /* The gap the flex `gap` used to supply, on top of the space in the text. */
 .tag-pill b {
-  margin-left: var(--space-xs);
+  margin-inline-start: var(--space-xs);
   color: var(--accent-text);
   font-weight: var(--weight-bold);
   font-variant-numeric: tabular-nums;
@@ -181,7 +181,7 @@ details.per-server summary:hover {
 .tag-matrix th,
 .tag-matrix td {
   padding: var(--space-sm) var(--space-2xl);
-  text-align: right;
+  text-align: end;
   white-space: nowrap;
 }
 .tag-matrix thead th {
@@ -194,12 +194,12 @@ details.per-server summary:hover {
 .tag-matrix th[scope="row"],
 .tag-matrix thead th.corner {
   position: sticky;
-  left: 0;
-  text-align: left;
+  inset-inline-start: 0;
+  text-align: start;
   background: var(--surface-2);
   color: var(--text);
   font-weight: var(--weight-medium);
-  border-right: 1px solid var(--border-strong);
+  border-inline-end: 1px solid var(--border-strong);
 }
 .tag-matrix thead th.corner {
   color: var(--muted);
@@ -220,7 +220,7 @@ details.per-server summary:hover {
 .tag-matrix .tot {
   color: var(--muted);
   font-weight: var(--weight-semi);
-  border-left: 1px solid var(--border-strong);
+  border-inline-start: 1px solid var(--border-strong);
 }
 .tag-matrix tfoot th[scope="row"],
 .tag-matrix tfoot td {
@@ -352,7 +352,8 @@ button.link.policy-configure::after {
   background: var(--protect-soft);
   color: var(--protect);
   border-radius: var(--radius-pill);
-  padding: 0.12rem 0.2rem 0.12rem 0.6rem;
+  padding-block: 0.12rem;
+  padding-inline: 0.6rem 0.2rem;
   font-size: var(--text-sm);
   font-weight: var(--weight-semi);
   /* A tag is spelled on somebody else's keyboard in Sonarr or Radarr. As a flex item this

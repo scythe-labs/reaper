@@ -42,8 +42,8 @@
    (see the note beside `.policy-section`). */
 @media (max-width: 400px) {
   .settings-tab {
-    padding-left: 0.45rem;
-    padding-right: 0.45rem;
+    padding-inline-start: 0.45rem;
+    padding-inline-end: 0.45rem;
   }
 }
 
@@ -157,14 +157,14 @@
   flex: 1;
   background: none;
   border: none;
-  border-left: 1px solid var(--border);
+  border-inline-start: 1px solid var(--border);
   border-radius: 0;
   padding: 0.5rem 0.2rem;
   font-size: var(--text-sm);
   color: var(--muted);
 }
 .service-card-foot button:first-child {
-  border-left: none;
+  border-inline-start: none;
 }
 .service-card-foot button:hover:not(:disabled) {
   background: var(--hover);
@@ -270,7 +270,7 @@ button.danger:hover:not(:disabled) {
   padding: 0 0.55rem;
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
-  border-right: none;
+  border-inline-end: none;
   border-radius: var(--radius-sm) 0 0 var(--radius-sm);
   font-family: var(--mono);
   font-size: var(--text-sm);
@@ -406,7 +406,7 @@ button.danger:hover:not(:disabled) {
    portal draws one, "4K" -- so two services sharing a name read apart. Both wear this one pill;
    a row can show either, or both. */
 .pl-tag {
-  margin-left: 0.4rem;
+  margin-inline-start: 0.4rem;
   font-size: var(--text-2xs);
   font-weight: var(--weight-bold);
   color: var(--muted);
@@ -670,12 +670,7 @@ button.danger:hover:not(:disabled) {
   border-radius: 50%;
   border: 2px solid var(--accent-ring);
   border-top-color: var(--accent);
-  animation: job-spin 0.7s linear infinite;
-}
-@keyframes job-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  animation: spin 0.7s linear infinite;
 }
 @media (prefers-reduced-motion: reduce) {
   .spin {

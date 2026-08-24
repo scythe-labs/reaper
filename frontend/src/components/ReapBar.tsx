@@ -1,9 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { announce } from "../announce";
 import { api } from "../api";
+import { describeError } from "../errors";
 import { bytes, count, souls } from "../format";
+import { composeError } from "../why";
 import { Notice } from "./Notice";
 
 /** The app-wide reap bar: shown on every screen of the app while a reap runs, so its count and
@@ -33,6 +36,7 @@ import { Notice } from "./Notice";
  *  its tests" note; the export means nothing here, where every file exports its component. */
 export function ReapBar({ onView }: { onView: (runId: number) => void }) {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
   const [dismissed, setDismissed] = useState<number | null>(null);
   // Idle still polls, slowly. A reap can be started from a phone or a second tab, and this
   // bar carries the only Stop on most screens: going silent when nothing is running here
@@ -71,9 +75,11 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
     // sheet is meant to be closed mid-run, and an operator who closed it would otherwise hear
     // nothing at all about a deletion finishing.
     announce(
-      status.phase === "error"
-        ? `Reap failed. ${souls(status.deleted_items)} removed before it stopped.`
-        : `${status.phase === "aborted" ? "Reap stopped." : "Reap finished."} ${souls(status.deleted_items)} removed, ${bytes(status.deleted_bytes)} freed.`,
+      t("reapConfirm.bar.announceEnded", {
+        phase: status.phase,
+        souls: souls(status.deleted_items),
+        bytes: bytes(status.deleted_bytes),
+      }),
     );
     // ["run"] as well as ["runs"]: the plan surface reads one run by id, and that key does
     // not match the list's.
@@ -87,7 +93,7 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
     ]) {
       void queryClient.invalidateQueries({ queryKey: key });
     }
-  }, [status, queryClient]);
+  }, [status, queryClient, t]);
 
   if (!status || status.run_id == null) return null;
   const runId = status.run_id;
@@ -105,18 +111,23 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
       <div className={errored ? "reap-bar errored" : "reap-bar done"}>
         <span className="banner-dot" aria-hidden="true" />
         <span className="reap-bar-text">
-          <b>{errored ? "Reap failed." : status.phase === "aborted" ? "Stopped." : "Reaped."}</b>{" "}
+          <b>{t("reapConfirm.bar.endedLabel", { phase: status.phase })}</b>{" "}
           <span className="reap-bar-sub">
-            {souls(status.deleted_items)} removed, {bytes(status.deleted_bytes)} freed
-            {errored && status.error ? `. ${status.error}` : ""}
+            {t("reapConfirm.bar.removedFreed", {
+              souls: souls(status.deleted_items),
+              bytes: bytes(status.deleted_bytes),
+            })}
+            {errored &&
+              status.error_reason &&
+              t("reapConfirm.bar.errorSuffix", { error: composeError(status.error_reason) })}
           </span>
         </span>
         <span className="reap-bar-actions">
           <button className="link" onClick={() => onView(runId)}>
-            View report
+            {t("reapConfirm.bar.viewReport")}
           </button>
           <button className="sm" onClick={() => setDismissed(runId)}>
-            Dismiss
+            {t("reapConfirm.bar.dismiss")}
           </button>
         </span>
       </div>
@@ -140,40 +151,49 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
       <span
         className="reap-bar-text"
         role="progressbar"
-        aria-label="Reaping"
+        aria-label={t("reapConfirm.progress.ariaLabel")}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={pct}
-        aria-valuetext={`${pct}%, ${count(status.done)} of ${count(status.total)} removed`}
+        aria-valuetext={t("reapConfirm.progress.valueText", {
+          pct,
+          done: count(status.done),
+          total: count(status.total),
+        })}
       >
         {status.stopping ? (
-          <b>Stopping after the current one…</b>
+          <b>{t("reapConfirm.stoppingLabel")}</b>
         ) : (
           <>
             <b>
-              Reaping, {count(status.done)} of {count(status.total)}
+              {t("reapConfirm.bar.reapingCount", {
+                done: count(status.done),
+                total: count(status.total),
+              })}
             </b>
-            <span className="reap-bar-sub">, {bytes(status.deleted_bytes)} freed</span>
+            <span className="reap-bar-sub">
+              {t("reapConfirm.bar.freedSuffix", { bytes: bytes(status.deleted_bytes) })}
+            </span>
           </>
         )}
       </span>
       <span className="reap-bar-actions">
         <button className="link" onClick={() => onView(runId)}>
-          View
+          {t("reapConfirm.bar.view")}
         </button>
         <button
           className="stop-btn"
           disabled={status.stopping || stop.isPending}
           onClick={() => stop.mutate(runId)}
         >
-          {status.stopping ? "Stopping…" : "Stop"}
+          {status.stopping ? t("reapConfirm.stopping") : t("reapConfirm.stop")}
         </button>
       </span>
       {/* A Stop that failed must say so. Swallowed, it reads as a run that is halting while
           it keeps deleting -- and this is the only Stop on every screen but the sheet. */}
       {stop.error && (
         <Notice tone="error" className="reap-bar-error">
-          Reaper couldn't stop the reap: {stop.error.message}
+          {t("reapConfirm.bar.stopError", { error: describeError(stop.error) })}
         </Notice>
       )}
       <span className="reap-bar-fill" style={{ width: `${pct}%` }} />

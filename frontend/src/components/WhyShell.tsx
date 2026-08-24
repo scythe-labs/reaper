@@ -29,6 +29,7 @@
 // at all. Owning it here is what makes that unfixable-again (rule 72).
 
 import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { useModalOpen } from "../backnav";
 import { useSlowWait } from "../announce";
 import { useDialogFocus } from "../focus";
@@ -42,8 +43,9 @@ import { Notice } from "./Notice";
  *  title with no art it rests on the surface top-right the same way. Rendered FIRST by the shell
  *  so it is the panel's first tab stop; z-index clears the hero art and fade. */
 function WhyClose({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation();
   return (
-    <button type="button" className="why-close" onClick={onClose} aria-label="Close">
+    <button type="button" className="why-close" onClick={onClose} aria-label={t("common.close")}>
       <svg viewBox="0 0 16 16" width="15" height="15" fill="none" aria-hidden="true">
         <path
           d="M4 4l8 8M12 4l-8 8"
@@ -167,6 +169,7 @@ export function PanelFallback({
   loading: string;
   failure: string;
 }) {
+  const { t } = useTranslation();
   const headingId = useId();
   // Above the branch, and null on the failure arm: that arm reaches `Notice`'s `role="alert"`,
   // which speaks on its own, so a wait sentence arriving beside it would say two things about
@@ -177,7 +180,7 @@ export function PanelFallback({
       {error ? (
         <>
           <div className="why-head">
-            <h2 id={headingId}>Something went wrong</h2>
+            <h2 id={headingId}>{t("why.panel.shell.errorHeading")}</h2>
           </div>
           <Notice tone="error">{failure}</Notice>
         </>

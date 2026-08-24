@@ -76,13 +76,13 @@ backend id list (jobs, phases, states) is a blocker when the server already retu
 fallback copy handles unknown ids only. **A map from those ids to operator copy is the same
 mirror, and rule 103's drift guard binds it here** — that rule sits in `.claude/rules/backend.md`
 and never loads for the file carrying the copy, so the obligation is restated where the mirror
-lives: derive the keys from one declaration, or a test fails when the set changes. `GATE_META`
+lives: derive the keys from one declaration, or a test fails when the set changes. `gateMeta`
 is the worked case (`policyMeta.ts` types itself off a `GateId` union that
 `test_api_type_mirror.py` pins against the enum), and it is what four missing labels cost
 before it existed: two ids that fire on ordinary scans reached the fallback, so the simulator
 answered "why was this kept" with `season_progression` and `custom`, title-cased (#551, rule
 21). The fallback is not the safety net here — it is what makes a missing member silent.
-`SIGNAL_META`, `RAMPS` and `BUILTIN_SIGNAL_IDS` are the same shape and still unguarded.
+`signalMeta`, `RAMPS` and `BUILTIN_SIGNAL_IDS` are the same shape and still unguarded.
 
 **85. Success copy fires on settled state.** A toast, timestamp, or "done" indicator is set only
 after the operation it describes has actually completed (refetch settled, final chunk streamed),
@@ -126,11 +126,11 @@ inside a conditional subtree takes its warning off the page altogether on the br
 does not mount, rather than down to the bottom, and its anchor names that condition as its
 `guard` so it claims only while the condition holds. The warning lost that way was the one about
 a setting that lets deletions past the size caps (#145). Both directions are proven in
-`PolicyEditor.test.tsx`, never argued here: every anchor is driven through the state its guard
-requires, and through every branch it does not name, so a guard that is missing fails as loudly
-as one that is wrong (#167). Action failures everywhere are `.notice.notice-error` with a
-plain-language lead ("The scan didn't start: …"); bare red `.error` text survives only in the
-review surfaces and the simulator's dedicated failure panel.
+`PolicyEditor.warnings.test.tsx`, never argued here: every anchor is driven through the state
+its guard requires, and through every branch it does not name, so a guard that is missing fails
+as loudly as one that is wrong (#167). Action failures everywhere are `.notice.notice-error`
+with a plain-language lead ("The scan didn't start: …"); bare red `.error` text survives only in
+the review surfaces and the simulator's dedicated failure panel.
 
 **43. One save affordance per page.** The policy editor's sticky `.savebar` is the only save UI
 on that page: it names what is dirty, states when each part takes effect, saves everything with

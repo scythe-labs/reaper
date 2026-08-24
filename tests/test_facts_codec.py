@@ -23,7 +23,21 @@ from reaper.engine.facts_codec import (
 )
 from reaper.engine.gates import ABSTAIN, PROTECT, Facts, GateId, GateResult
 from reaper.engine.observation import Absent, Known, Observation, Unknown
+from reaper.engine.reason import Reason, from_wire, legacy, to_wire
 from reaper.ratings import Rating, RatingSource
+
+#: An ``Unknown.reason`` that carries params (the movie/season media select on the
+#: match-status and no-added-at/no-size causes, ``gates.no_key_reason`` and friends) --
+#: the other arm of ``Unknown.reason: str | Reason``, alongside the bare id below.
+_UNKNOWN_REASON = st.builds(
+    Reason,
+    id=st.text(min_size=1, max_size=15),
+    params=st.dictionaries(
+        st.text(min_size=1, max_size=10),
+        st.one_of(st.text(max_size=10), st.integers(-100, 100), st.booleans()),
+        max_size=3,
+    ),
+)
 
 
 def _obs[T](value_strategy: st.SearchStrategy[T]) -> st.SearchStrategy[Observation[T]]:
@@ -31,6 +45,7 @@ def _obs[T](value_strategy: st.SearchStrategy[T]) -> st.SearchStrategy[Observati
         value_strategy.map(lambda v: Known(value=v, source="s")),
         st.just(Absent(source="s")),
         st.text(min_size=1, max_size=10).map(lambda r: Unknown(reason=r, source="s")),
+        _UNKNOWN_REASON.map(lambda r: Unknown(reason=r, source="s")),
     )
 
 
@@ -95,12 +110,12 @@ class TestFactsRoundTrip:
         # once left it at ``False``, so the codec dropping the field compared equal on both
         # sides of the round trip and this test could not see the loss.
         results = (
-            GateResult(GateId.SEASON_PROGRESSION, PROTECT, detail="kept newest"),
+            GateResult(GateId.SEASON_PROGRESSION, PROTECT, detail=legacy("kept newest")),
             GateResult(
                 GateId.SEASON_PROGRESSION,
                 ABSTAIN,
                 blocked=True,
-                detail="conflict",
+                detail=legacy("conflict"),
                 defers_to_owner=True,
             ),
         )
@@ -118,7 +133,7 @@ class TestFactsRoundTrip:
             GateResult(
                 GateId.SEASON_PROGRESSION,
                 ABSTAIN,
-                detail="d",
+                detail=legacy("d"),
                 blocked=True,
                 defers_to_owner=True,
             )
@@ -143,3 +158,32 @@ def _bare_facts() -> Facts:
         in_curated_list=absent,
         is_whitelisted=Known(value=False, source="t"),
     )
+
+
+class TestTheWireDecoderNeverRaises:
+    def test_a_blob_nested_past_any_real_reason_degrades_instead_of_recursing(self) -> None:
+        """Rule 96 for the reason decoder. The engine writes at most three levels of
+        nesting, so a deeply nested stored blob is corruption -- and an unbounded recursion
+        raises ``RecursionError``, which no reader's except tuple names -- the season
+        bundle reader above ``api.simulate._season_guard_replay`` chose its exceptions by
+        hand -- so it would raise a row off the queue instead of degrading."""
+        blob: dict[str, object] = {"k": "x"}
+        for _ in range(2000):
+            blob = {"k": "x", "p": {"inner": blob}}
+
+        decoded = from_wire(blob)
+
+        assert isinstance(decoded, Reason)
+
+    def test_a_reason_at_the_engines_real_depth_still_round_trips(self) -> None:
+        """The cap must sit far above anything the engine writes, or it would be the
+        corruption. Three levels is the deepest live shape (a conflict's cause in its
+        because-slot in the row)."""
+        deep = Reason(
+            "conflict.shortfall",
+            {
+                "because": Reason("because.keep_last"),
+                "cause": Reason("cause.history_reach_short", {"reach_days": 90.0}),
+            },
+        )
+        assert from_wire(to_wire(deep)) == deep

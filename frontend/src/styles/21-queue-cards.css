@@ -37,7 +37,7 @@
      which in the fold IS the buttons' corner (card-side is now a row at the card's bottom) -- that
      was the "60" landing on the Reap button. In flow it can't overlap them. */
   .card-side .score {
-    margin-right: auto;
+    margin-inline-end: auto;
   }
   /* The fold turns card-side into a full-width row, so the absolutely-positioned resting mark
      (bottom-right) lands on top of the now-inline Reap button. This is the fold's geometry, not
@@ -60,7 +60,7 @@
      declared later in the file and would win a specificity tie. */
   .card .season-list,
   .card .season-list-note {
-    padding-left: 1.2rem;
+    padding-inline-start: 1.2rem;
   }
   .card .season-row {
     grid-template-columns: 2.6rem minmax(0, 1fr) auto;
@@ -240,11 +240,19 @@
   inset: 0;
   z-index: 1;
   pointer-events: none;
+  /* Which way the card fades: opaque under the title, clear over the artwork. A gradient
+     angle has no reading-order form, so the direction rides in a variable the rule below
+     flips. Left alone it is the half-mirrored case #861 describes, and the worst one to
+     have: the title crosses to the other side and lands on the see-through half. */
+  --scrim-angle: 90deg;
   background: linear-gradient(
-    90deg,
+    var(--scrim-angle),
     var(--surface) 22%,
     color-mix(in srgb, var(--surface) 45%, transparent) 100%
   );
+}
+[dir="rtl"] .card-scrim {
+  --scrim-angle: 270deg;
 }
 .card > *:not(.card-bg):not(.card-scrim),
 .card-head > *:not(.card-bg):not(.card-scrim) {

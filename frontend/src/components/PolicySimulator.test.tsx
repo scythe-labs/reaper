@@ -15,10 +15,10 @@ import { describe, expect, it } from "vitest";
 import type { Simulation } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import {
-  APPLIES_ON_NEXT_SCAN,
+  appliesOnNextScan,
   Outcome,
-  RESCAN_HEADING,
-  RESCAN_QUEUED_LEAD,
+  rescanHeading,
+  rescanQueuedLead,
   StaleNotice,
 } from "./PolicySimulator";
 
@@ -33,7 +33,7 @@ function renderNotice(props: Partial<Parameters<typeof StaleNotice>[0]> = {}) {
       percent={40}
       detail="Scoring"
       staleKind="gathers_differently"
-      staleReason="This policy doesn't match the last scan. Scan to apply it."
+      staleReason={{ k: "gathers_differently", p: { media_type: "movie" } }}
       {...props}
     />,
   );
@@ -46,8 +46,8 @@ describe("the wait the simulator shows while a rescan runs", () => {
     // 144).
     renderNotice();
 
-    expect(screen.getByRole("heading", { name: RESCAN_HEADING })).toBeInTheDocument();
-    expect(screen.getByRole("progressbar", { name: RESCAN_HEADING })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: rescanHeading() })).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: rescanHeading() })).toBeInTheDocument();
   });
 
   it("has no accessibility violations in either of its two states", async () => {
@@ -68,7 +68,7 @@ describe("the wait the simulator shows while a rescan runs", () => {
     // from the bar itself.
     renderNotice({ followupQueued: true });
 
-    expect(screen.getByText(new RegExp(RESCAN_QUEUED_LEAD.slice(0, 40)))).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(rescanQueuedLead().slice(0, 40)))).toBeInTheDocument();
   });
 
   it("does not claim a second scan when this one carries the changes", () => {
@@ -76,7 +76,7 @@ describe("the wait the simulator shows while a rescan runs", () => {
     // (rule 118): a test that passes for both states pins neither.
     renderNotice({ followupQueued: false });
 
-    expect(screen.queryByText(new RegExp(RESCAN_QUEUED_LEAD.slice(0, 40)))).toBeNull();
+    expect(screen.queryByText(new RegExp(rescanQueuedLead().slice(0, 40)))).toBeNull();
     expect(screen.getByText(/scoring your library under the new policy/i)).toBeInTheDocument();
   });
 });
@@ -110,32 +110,36 @@ describe("what the panel says when it will not answer", () => {
     expect(seen.size).toBe(cases.length);
   });
 
-  it("renders the server's sentence rather than a copy of its own", () => {
-    // The reason lives in api/simulate.py alone. It used to live in both, and the copy the
-    // operator actually read was the one in this file -- so the sentence that was reviewed
-    // and the sentence that shipped were different strings (rule 144).
+  it("renders the composed reason rather than a copy of its own", () => {
+    // The reason id lives in api/simulate.py's `_refused` alone, and is composed here from
+    // the catalog (`policySim.staleReason.<id>`) rather than restated -- so the sentence a
+    // reviewer reads and the sentence that ships are one catalog entry (rule 144).
     renderNotice({
       scanning: false,
       staleKind: "seasons_not_recorded",
-      staleReason: "A sentence only the server could have written.",
+      staleReason: { k: "seasons_not_recorded" },
     });
 
-    expect(screen.getByText("A sentence only the server could have written.")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "The last scan didn't record what your season rules need, so there are no numbers " +
+          "to show. Run a scan, then this becomes exact again.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("still says something when the server sends a kind this build does not know", () => {
-    // Rule 66: an unknown id falls back, it never guesses. An older browser against a newer
-    // server gets the general heading and the server's own sentence, which is always sent.
+    // Rule 66: an unknown id falls back, it never guesses. composeIn's own fallback
+    // (why.test.ts) fires here, the same as any other reason id this build has no catalog
+    // entry for yet: the raw id, never a blank paragraph.
     renderNotice({
       scanning: false,
       staleKind: "a_refusal_from_the_future" as never,
-      staleReason: "Something changed that this scan cannot answer for.",
+      staleReason: { k: "a_refusal_from_the_future" },
     });
 
     expect(screen.getByRole("heading", { name: "Needs a fresh scan" })).toBeInTheDocument();
-    expect(
-      screen.getByText("Something changed that this scan cannot answer for."),
-    ).toBeInTheDocument();
+    expect(screen.getByText("a_refusal_from_the_future")).toBeInTheDocument();
   });
 });
 
@@ -152,20 +156,26 @@ describe("who is allowed to write the rescan sentences", () => {
     readFileSync(join(dirname(fileURLToPath(import.meta.url)), name), "utf8");
 
   it("is this panel, and not the editor that announces them", () => {
+    // The declarations resolve from the catalog since Stage 4, so the anchor pins the
+    // key each constant reads: the sentence itself lives in locales/en/ui.json, and the
+    // imported constant values checked below are what the catalog served.
     const panel = read("PolicySimulator.tsx");
-    expect(panel).toContain(`export const RESCAN_HEADING = "${RESCAN_HEADING}"`);
-    expect(panel).toContain(`"${RESCAN_QUEUED_LEAD}"`);
+    expect(panel).toContain(
+      `export const rescanHeading = () => i18next.t("policySim.rescanHeading")`,
+    );
+    expect(panel).toContain(`i18next.t("policySim.rescanQueuedLead")`);
     // The savebar's sentence, now that this panel shows it too. The savebar is at the foot of
     // the left column and this panel is the right one, so a reword reaching only one of them
     // leaves two answers to "when does this take effect" on one screen.
-    expect(panel).toContain("export const APPLIES_ON_NEXT_SCAN");
-    expect(panel).toContain(`"${APPLIES_ON_NEXT_SCAN}"`);
+    expect(panel).toContain(
+      `export const appliesOnNextScan = () => i18next.t("policySim.appliesOnNextScan")`,
+    );
 
     const editor = read("PolicyEditor.tsx");
     for (const [name, sentence] of [
-      ["RESCAN_HEADING", RESCAN_HEADING],
-      ["RESCAN_QUEUED_LEAD", RESCAN_QUEUED_LEAD],
-      ["APPLIES_ON_NEXT_SCAN", APPLIES_ON_NEXT_SCAN],
+      ["rescanHeading", rescanHeading()],
+      ["rescanQueuedLead", rescanQueuedLead()],
+      ["appliesOnNextScan", appliesOnNextScan()],
     ] as const) {
       expect(
         editor.includes(sentence),
@@ -174,8 +184,8 @@ describe("who is allowed to write the rescan sentences", () => {
           `the old thing (#177, rules 72 and 144).`,
       ).toBe(false);
     }
-    expect(editor).toContain("RESCAN_QUEUED_LEAD");
-    expect(editor).toContain("APPLIES_ON_NEXT_SCAN");
+    expect(editor).toContain("rescanQueuedLead");
+    expect(editor).toContain("appliesOnNextScan");
   });
 });
 
@@ -210,7 +220,13 @@ describe("the outcome panel on an edit that changes no title", () => {
 
   function renderOutcome(sim: Partial<Simulation>, edited: boolean) {
     return render(
-      <Outcome simulation={{ ...BASE, ...sim }} threshold={62} pace={null} edited={edited} />,
+      <Outcome
+        simulation={{ ...BASE, ...sim }}
+        threshold={62}
+        pace={null}
+        edited={edited}
+        mediaType="movie"
+      />,
     );
   }
 
@@ -242,7 +258,7 @@ describe("the outcome panel on an edit that changes no title", () => {
     expect(screen.queryByText(/Your last scan flags/)).not.toBeInTheDocument();
     // And says nothing about a scan either, for the same reason: there is no save pending
     // for one to follow, and these numbers already describe the scan that has run.
-    expect(screen.queryByText(APPLIES_ON_NEXT_SCAN)).not.toBeInTheDocument();
+    expect(screen.queryByText(appliesOnNextScan())).not.toBeInTheDocument();
   });
 
   it.each([
@@ -255,7 +271,7 @@ describe("the outcome panel on an edit that changes no title", () => {
     // Both branches, because an inert edit still saves and still starts a scan (rule 118).
     renderOutcome({ changed_titles }, true);
 
-    expect(screen.getByText(APPLIES_ON_NEXT_SCAN)).toBeInTheDocument();
+    expect(screen.getByText(appliesOnNextScan())).toBeInTheDocument();
   });
 
   it("reads the last scan's count off the server rather than off the two deltas", () => {
@@ -313,9 +329,18 @@ describe("the outcome panel on an edit that changes no title", () => {
 // the operator wrote -- read as "Season Progression" and "Custom" beside their counts, in the
 // panel someone reads while deciding what to delete (rule 21).
 describe("what the spared-by list calls each protection", () => {
-  function renderSpared(protected_by: { gate: string; count: number }[]) {
+  function renderSpared(
+    protected_by: { gate: string; count: number }[],
+    mediaType: "movie" | "tv" = "movie",
+  ) {
     return render(
-      <Outcome simulation={{ ...BASE, protected_by }} threshold={62} pace={null} edited={false} />,
+      <Outcome
+        simulation={{ ...BASE, protected_by }}
+        threshold={62}
+        pace={null}
+        edited={false}
+        mediaType={mediaType}
+      />,
     );
   }
 
@@ -327,7 +352,7 @@ describe("what the spared-by list calls each protection", () => {
     return row?.querySelector("dd")?.textContent ?? "";
   }
 
-  // The engine's id, then the words. Written from `GATE_META`'s intent rather than from its
+  // The engine's id, then the words. Written from `gateMeta`'s intent rather than from its
   // source, so a label edited into engine vocabulary fails here (rule 119).
   //
   // `season_progression` is deliberately vague and pinned that way: the same id tallies a
@@ -349,6 +374,18 @@ describe("what the spared-by list calls each protection", () => {
     expect(screen.queryByText(slug)).not.toBeInTheDocument();
     expect(screen.queryByText(gate)).not.toBeInTheDocument();
     expect(tally(label)).toBe("40");
+  });
+
+  it("picks the rewatch-odds label's movie or TV wording off the simulator's own policy", () => {
+    renderSpared([{ gate: "rewatch_odds", count: 12 }], "movie");
+    expect(
+      screen.getByText("Keep titles most likely to be rewatched above a percentage"),
+    ).toBeInTheDocument();
+
+    renderSpared([{ gate: "rewatch_odds", count: 12 }], "tv");
+    expect(
+      screen.getByText("Keep shows most likely to be rewatched above a percentage"),
+    ).toBeInTheDocument();
   });
 
   it("still says something true about an id it has no copy for", () => {

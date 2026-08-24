@@ -7,8 +7,15 @@
 // Pulled out of PolicyEditor.tsx, which was a single 2,700-line module holding these, five
 // rule editors and a 1,000-line component (R-2). None of it renders; all of it is pure, which
 // is why the tests can call it directly.
+//
+// The preset labels and help sentences live in `locales/en/ui.json` under `policyMeta.*`.
+// This is a data module, not a component, so it reads the catalog through the plain
+// `i18next` import rather than the `useTranslation` hook. `presets` is a FUNCTION, never a
+// constant: a string resolved in a module body keeps whatever language was serving when the
+// module first loaded (`i18n-module-scope.test.ts`).
 
 import type { PolicyBody, ProfileSettings } from "../api";
+import i18next from "../i18n";
 
 // ---------------------------------------------------------------------------
 // Presets: three starting points that stage (never save) the threshold and the
@@ -47,17 +54,17 @@ export type PresetCaps = Pick<
   | "max_unmeasured_per_run"
 >;
 
-export const PRESETS: {
+export const presets = (): {
   id: PresetId;
   label: string;
   help: string;
   condemn_at: number;
   caps: PresetCaps;
-}[] = [
+}[] => [
   {
     id: "cautious",
-    label: "Cautious",
-    help: "Cautious: only flags a title it is very sure about, removes less per run, and shows a title as leaving for a month.",
+    label: i18next.t("policyMeta.presets.cautious.label"),
+    help: i18next.t("policyMeta.presets.cautious.help"),
     condemn_at: 82,
     caps: {
       max_items_per_run: 5,
@@ -75,8 +82,8 @@ export const PRESETS: {
   },
   {
     id: "balanced",
-    label: "Balanced",
-    help: "Balanced: the defaults Reaper ships with.",
+    label: i18next.t("policyMeta.presets.balanced.label"),
+    help: i18next.t("policyMeta.presets.balanced.help"),
     condemn_at: 70,
     caps: {
       max_items_per_run: 10,
@@ -90,8 +97,8 @@ export const PRESETS: {
   },
   {
     id: "aggressive",
-    label: "Aggressive",
-    help: "Aggressive: flags sooner, allows bigger runs, and keeps the one-week minimum grace.",
+    label: i18next.t("policyMeta.presets.aggressive.label"),
+    help: i18next.t("policyMeta.presets.aggressive.help"),
     condemn_at: 58,
     caps: {
       max_items_per_run: 25,
@@ -178,14 +185,5 @@ export function weightsMatchMix(draft: PolicyBody, mix: Record<string, number>):
 export function activePreset(draft: PolicyBody): PresetId | null {
   const mix = DEFAULT_WEIGHTS[draft.media_type === "tv" ? "tv" : "movie"];
   if (!weightsMatchMix(draft, mix)) return null;
-  return PRESETS.find((p) => p.condemn_at === draft.condemn_at)?.id ?? null;
-}
-
-/** A list said the way a person would: "A", "A and B", "A, B, and C". Used by the intent
- *  summary, whose clauses are pushed one at a time as their switches turn on, so the
- *  number of them is never known ahead of time. */
-export function andList(parts: string[]): string {
-  if (parts.length <= 1) return parts[0] ?? "";
-  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
-  return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
+  return presets().find((p) => p.condemn_at === draft.condemn_at)?.id ?? null;
 }

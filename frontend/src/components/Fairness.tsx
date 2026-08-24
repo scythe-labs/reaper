@@ -15,8 +15,10 @@
 // It deletes nothing. It reads the last scan, so it can never disagree with Review.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Trans, useTranslation } from "react-i18next";
 import { useSlowWait } from "../announce";
 import { ApiError, api, type RequesterRow } from "../api";
+import { describeError } from "../errors";
 import { bytes, count } from "../format";
 import { BalanceBar } from "./BalanceBar";
 import { CardOpen } from "./CardOpen";
@@ -85,6 +87,7 @@ export function PersonCard({
    *  confident zero this exists to stop. */
   horizonAt: string | null;
 }) {
+  const { t } = useTranslation();
   const reach = watchReach(row.plex_id, horizonAt);
   const watched = watchedPct(row, reach);
   const granted = row.gb_granted_bytes;
@@ -106,27 +109,40 @@ export function PersonCard({
 
       <div className="fair-body">
         <div className="fair-row1">
-          <CardOpen name={`Open ${row.name}'s request breakdown`} onActivate={open}>
+          <CardOpen
+            name={t("scales.board.card.openBreakdown", { name: row.name })}
+            onActivate={open}
+          >
             <span className="fair-name">{row.name}</span>
           </CardOpen>
           <span className="fair-sub">
-            <strong>{count(row.requests_made)}</strong> requests, <strong>{bytes(granted)}</strong>{" "}
-            granted
+            <Trans
+              i18nKey="scales.board.card.summary"
+              values={{ requests: count(row.requests_made), granted: bytes(granted) }}
+              components={{ reqCount: <strong />, grantedSize: <strong /> }}
+            />
           </span>
         </div>
 
         <BalanceBar granted={granted} reclaim={reclaim} hasReclaim={hasReclaim} />
         <div className="fair-legend">
           <span>
-            <strong>{bytes(used)}</strong> earning its keep
+            <Trans
+              i18nKey="scales.board.card.earningKeep"
+              values={{ used: bytes(used) }}
+              components={{ usedSize: <strong /> }}
+            />
           </span>
           {hasReclaim ? (
             <span className="bad">
-              <strong>{bytes(reclaim)}</strong> to reclaim, {count(row.reclaimable_items)}{" "}
-              {row.reclaimable_items === 1 ? "title" : "titles"}
+              <Trans
+                i18nKey="scales.board.card.toReclaim"
+                values={{ reclaim: bytes(reclaim), n: row.reclaimable_items }}
+                components={{ reclaimSize: <strong /> }}
+              />
             </span>
           ) : (
-            <span className="muted">nothing reclaimable</span>
+            <span className="muted">{t("scales.board.card.nothingReclaimable")}</span>
           )}
         </div>
       </div>
@@ -137,25 +153,29 @@ export function PersonCard({
             className="fair-watched"
             title={
               reach.kind === "no_account"
-                ? "Their request account isn't linked to a Plex account, so Reaper can't see what they watched."
-                : "Reaper hasn't read any watch history yet, so it can't see what anyone watched."
+                ? t("scales.board.card.noAccountTitle")
+                : t("scales.board.card.noHistoryTitle")
             }
           >
-            <span className="fair-pct muted">Unknown</span>
+            <span className="fair-pct muted">{t("scales.board.card.unknown")}</span>
             <span className="fair-pct-lbl">
-              {reach.kind === "no_account" ? "no Plex account" : "no watch history"}
+              {reach.kind === "no_account"
+                ? t("scales.board.card.noAccountShort")
+                : t("scales.board.card.noHistoryShort")}
             </span>
           </span>
         ) : (
           <span className="fair-watched">
             <span className={`fair-pct ${watched >= 50 ? "good" : "bad"}`}>{watched}%</span>
-            <span className="fair-pct-lbl">they watched</span>
+            <span className="fair-pct-lbl">{t("scales.board.card.theyWatched")}</span>
           </span>
         )}
         {hasReclaim ? (
-          <span className="status-chip status-pressure">{bytes(reclaim)} to reclaim</span>
+          <span className="status-chip status-pressure">
+            {t("scales.board.card.reclaimChip", { amount: bytes(reclaim) })}
+          </span>
         ) : (
-          <span className="status-chip status-kept">Nothing to reclaim</span>
+          <span className="status-chip status-kept">{t("scales.board.card.nothingToReclaim")}</span>
         )}
       </div>
     </div>
@@ -177,6 +197,7 @@ export function Fairness({
   /** Whether that panel is the one open, so the tile wears the selection bar. */
   unmatchedSelected?: boolean;
 }) {
+  const { t } = useTranslation();
   const { data, isPending, isFetching, error } = useQuery({
     queryKey: ["fairness"],
     queryFn: api.fairness,
@@ -187,7 +208,7 @@ export function Fairness({
   // The board's own copy already warns this can take a moment, so a wait that runs long is the
   // expected case here rather than a fault. It is still said, because the operator who cannot
   // see the spinner is the one that copy does not reach (#332).
-  useSlowWait(isPending ? "Still gathering requests. This can take a moment." : null);
+  useSlowWait(isPending ? t("scales.board.slowWait") : null);
 
   // Scales reads live requests and watch history, so a refresh pulls the latest without a full
   // scan. Invalidating the "fairness" prefix refetches the board and any open person panel.
@@ -215,10 +236,13 @@ export function Fairness({
           asked to act on was not heard as a number at all (#284). A whitespace-only anonymous
           flex item is not rendered (CSS Flexbox 4.1), so the tile draws exactly as before. */}
       <span className="fair-stat-num amber">{count(data.not_in_scan)}</span>{" "}
-      <span className="fair-stat-lbl">Not in the last scan</span>{" "}
-      <span className="fair-stat-sub">requested since, or filtered out</span>{" "}
+      <span className="fair-stat-lbl">{t("scales.board.notInScanLabel")}</span>{" "}
+      <span className="fair-stat-sub">{t("scales.board.notInScanSub")}</span>{" "}
       <span className="fair-stat-more">
-        See what these are <span aria-hidden="true">›</span>
+        {t("scales.board.seeWhatTheseAre")}{" "}
+        <span className="dir-glyph" aria-hidden="true">
+          ›
+        </span>
       </span>
     </button>
   );
@@ -227,21 +251,19 @@ export function Fairness({
     <section className="fair">
       <div className="fair-head">
         <div className="fair-head-top">
-          <h2>Scales</h2>
+          <h2>{t("scales.board.heading")}</h2>
           <button
             type="button"
             className={`ghost sm fair-refresh${isFetching ? " busy" : ""}`}
             onClick={refresh}
             disabled={isFetching}
-            title="Reload requests and watch history"
+            title={t("scales.board.refreshTooltip")}
           >
             <RefreshIcon />
-            {isFetching ? "Refreshing…" : "Refresh"}
+            {isFetching ? t("common.refreshing") : t("common.refresh")}
           </button>
         </div>
-        <p className="blurb">
-          Who asked for what, and who actually watched it. Read only: nothing here removes anything.
-        </p>
+        <p className="blurb">{t("scales.board.blurb")}</p>
       </div>
 
       {/* Divided, and without the exception string rule 21 forbids. The board is refetched by
@@ -256,29 +278,25 @@ export function Fairness({
           wrote; a fetch failure's own message is not operator copy (rule 21). */}
       {error && !data && (
         <Notice tone="error">
-          {error instanceof ApiError ? error.message : "Couldn't load Scales."}
+          {error instanceof ApiError ? describeError(error) : t("scales.board.loadFailed")}
         </Notice>
       )}
-      {error && data && <StaleReadNotice what="Scales" />}
+      {error && data && <StaleReadNotice what={t("scales.board.staleWhat")} />}
       {isPending && (
         // Live region dropped: it was mounted in the same commit as its text, which several
         // readers never announce (#332). `useSlowWait` above speaks it instead.
         <div className="fair-loading">
           <span className="spinner spinner-xl" aria-hidden="true" />
-          <p className="fair-loading-lead">Gathering requests…</p>
-          <p className="fair-loading-sub muted">
-            Reading every request and matching it to your last scan. This can take a moment.
-          </p>
+          <p className="fair-loading-lead">{t("scales.board.loadingLead")}</p>
+          <p className="fair-loading-sub muted">{t("scales.board.loadingSub")}</p>
         </div>
       )}
 
-      {data?.no_snapshot && (
-        <p className="empty">Run a scan first. Scales reads your last library scan.</p>
-      )}
+      {data?.no_snapshot && <p className="empty">{t("scales.board.noSnapshot")}</p>}
 
       {data && !data.no_snapshot && data.rows.length === 0 && (
         <>
-          <p className="empty">No available requests are in the last scan yet.</p>
+          <p className="empty">{t("scales.board.noRequests")}</p>
           {notInScanTile && <div className="fair-stats fair-stats-lone">{notInScanTile}</div>}
         </>
       )}
@@ -288,17 +306,16 @@ export function Fairness({
           <div className="fair-stats">
             <div className="fair-stat">
               <span className="fair-stat-num">{count(data.total_requests)}</span>
-              <span className="fair-stat-lbl">Requests</span>
+              <span className="fair-stat-lbl">{t("scales.board.requestsLabel")}</span>
               <span className="fair-stat-sub">
-                across {count(data.rows.length)} {data.rows.length === 1 ? "person" : "people"}
+                {t("scales.board.acrossPeople", { n: data.rows.length })}
               </span>
             </div>
             <div className="fair-stat">
               <span className="fair-stat-num red">{bytes(data.total_reclaimable_bytes)}</span>
-              <span className="fair-stat-lbl">Reclaimable</span>
+              <span className="fair-stat-lbl">{t("scales.board.reclaimableLabel")}</span>
               <span className="fair-stat-sub red">
-                {count(data.total_reclaimable_items)}{" "}
-                {data.total_reclaimable_items === 1 ? "title" : "titles"} the scan would remove
+                {t("scales.board.reclaimableSub", { n: data.total_reclaimable_items })}
               </span>
             </div>
             {notInScanTile}

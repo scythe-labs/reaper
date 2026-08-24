@@ -216,6 +216,18 @@ cython_debug/
 .env.*
 !.env.example
 
+# The same class one step down: a credential for a service this repository talks to,
+# dropped in the root by hand rather than into .env. The Cloudflare token that deploys
+# the two sites and the Weblate key that opens the translation pull requests both landed
+# here untracked and unmatched, one `git add -A` from being published. They share no
+# extension to match on, so each spelling is named and the patterns beside them are wide
+# enough to catch the next one. No tracked file matches any of these.
+.weblate_api
+.clouldf*
+.cloudflare*
+*_api
+*.token
+
 # Runtime data (SQLite DB, IMDb dataset cache, logs)
 /data/
 
@@ -260,7 +272,7 @@ frontend/coverage/
 mutation-report-*.json
 
 # The screenshot page is a build product; the PNG beside it is what ships.
-docs/media/review-queue.html
+docs/media/review-queue-mockup.html
 
 # Docusaurus's build cache. `website/build` and `website/node_modules` are already covered by
 # the `build/` and `node_modules/` rules above.
@@ -268,3 +280,6 @@ docs/media/review-queue.html
 
 # Generated per build by scripts/write_buildinfo.py; never committed.
 packaging/pyinstaller/buildinfo.json
+
+# The Hosted Weblate API key, read by the session that configures the project. Never in a commit.
+.weblate_api

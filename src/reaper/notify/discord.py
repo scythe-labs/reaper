@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.config import Settings
 from reaper.crypto import SecretBox
+from reaper.i18n import DEFAULT_TAG, say
 from reaper.services import app_settings
 
 log = structlog.get_logger(__name__)
@@ -66,7 +67,10 @@ class DiscordNotifier:
 
     ``app_name`` is the sender name the message wears (Settings -> General), so two
     installs posting into one channel stay tellable-apart. ``app_url`` adds an "open"
-    link at the end of list messages; empty means no link, never a broken one.
+    link at the end of list messages; empty means no link, never a broken one. ``language``
+    is the BCP 47 tag every ``say(...)`` call in this class reads its catalog through
+    (Settings -> Notifications); English until the operator picks one of
+    ``reaper.i18n.shipped_tags()``.
     """
 
     def __init__(
@@ -75,10 +79,12 @@ class DiscordNotifier:
         *,
         app_name: str = "Reaper",
         app_url: str | None = None,
+        language: str = DEFAULT_TAG,
     ) -> None:
         self._url = webhook_url
         self._app_name = app_name
         self._app_url = app_url
+        self._language = language
 
     async def post(self, embed: Embed) -> bool:
         """Send one embed. Returns whether it landed; never raises.
@@ -153,26 +159,27 @@ class DiscordNotifier:
         "Unwatched" this used to open with then told every user that a film one of
         them watched last night had gone unplayed. The dormancy that would let it branch per
         title is not on this call, so the claim is dropped rather than guessed.
+
+        Written in ``self._language`` (Settings -> Notifications), English until changed.
         """
         if not titles:
             return False
+        tag = self._language
         shown = titles[:_MAX_TITLES]
         lines = "\n".join(f"• {t}" for t in shown)
-        if len(titles) > _MAX_TITLES:
-            lines += f"\n…and {len(titles) - _MAX_TITLES} more."
-        count = len(titles)
-        noun = "title is" if count == 1 else "titles are"
+        remaining = len(titles) - _MAX_TITLES
+        if remaining > 0:
+            lines += "\n" + say("discord.leaving_soon.more", tag, remaining=remaining)
         # The way back in: the Application URL from Settings -> General, when set.
-        link = f"\n\n[Open {self._app_name}]({self._app_url})" if self._app_url else ""
+        link = ""
+        if self._app_url:
+            link_text = say("discord.leaving_soon.open_link", tag, app_name=self._app_name)
+            link = f"\n\n[{link_text}]({self._app_url})"
+        body = say("discord.leaving_soon.body", tag, grace_days=grace_days)
         return await self.post(
             Embed(
-                title=f"{count} {noun} leaving soon",
-                description=(
-                    f"Watch one and it stays. Nothing "
-                    f"is removed automatically: they show as leaving for the next "
-                    f"{grace_days} days, and every removal is started by hand.\n\n"
-                    f"{lines}{link}"
-                ),
+                title=say("discord.leaving_soon.title", tag, count=len(titles)),
+                description=f"{body}\n\n{lines}{link}",
             )
         )
 
@@ -205,4 +212,5 @@ async def build_notifier(
         webhook,
         app_name=await app_settings.get_application_name(session),
         app_url=await app_settings.get_application_url(session),
+        language=await app_settings.get_notification_language(session),
     )

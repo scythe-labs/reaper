@@ -41,6 +41,8 @@ export const DEFAULT_GENERAL: GeneralSettings = {
   application_url: null,
   timezone: "UTC",
   accent_color: "#38bdf8",
+  // A tag already stored, so no fixture-backed render trips `useSeedLanguage` into a save.
+  language: "en",
   api_key_set: false,
   expand_seasons_mode: "off",
   default_spare_days: 0,
@@ -134,8 +136,8 @@ export const IDLE_SCAN: ScanStatus = {
   done: 0,
   total: 0,
   percent: 0,
-  detail: "",
-  error: null,
+  detail_reason: null,
+  error_reason: null,
   snapshot_id: 1,
   followup_queued: false,
 };

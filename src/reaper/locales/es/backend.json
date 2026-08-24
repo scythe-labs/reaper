@@ -1,0 +1,30 @@
+{
+    "discord": {
+        "leaving_soon": {
+            "title": "",
+            "body": "",
+            "more": "",
+            "open_link": ""
+        },
+        "test": {
+            "title": "",
+            "body": ""
+        }
+    },
+    "launcher": {
+        "tray": {
+            "open": "",
+            "quit": "",
+            "tooltip": ""
+        },
+        "dialog": {
+            "crashed": "",
+            "port_in_use": "",
+            "no_migrations": ""
+        },
+        "move": {
+            "conf": "",
+            "env": ""
+        }
+    }
+}

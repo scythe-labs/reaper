@@ -12,7 +12,8 @@
   display: flex;
   align-items: center;
   gap: var(--space-md);
-  padding: 0.28rem 0.5rem 0.28rem 0.32rem;
+  padding-block: 0.28rem;
+  padding-inline: 0.32rem 0.5rem;
   border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   background: var(--surface);
@@ -45,7 +46,7 @@
 }
 .user-dropdown {
   position: absolute;
-  right: 0;
+  inset-inline-end: 0;
   top: calc(100% + 0.4rem);
   min-width: 200px;
   background: var(--surface);
@@ -65,7 +66,7 @@
 }
 .user-dropdown-item {
   width: 100%;
-  text-align: left;
+  text-align: start;
   background: none;
   border: none;
   border-radius: var(--radius-sm);

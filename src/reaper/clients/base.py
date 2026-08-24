@@ -38,6 +38,8 @@ from tenacity import (
 )
 
 from reaper.config import RuntimeSafety
+from reaper.engine.reason import Reason
+from reaper.refusal import MESSAGES, english
 
 log = structlog.get_logger(__name__)
 
@@ -180,11 +182,38 @@ class SafetyViolationError(RuntimeError):
     """A mutating request was attempted while destructive actions are disabled.
 
     This is a bug, not a condition to handle: something tried to write when the
-    application is in read-only mode.
+    application is in read-only mode. Carries a catalog code and raw params the same way
+    :class:`IntegrationError` does, in the same ``error.integration.*`` namespace: the
+    transport guard's own refusal is this layer's failure exactly as a client's is, just
+    for a write rather than a read. A param may itself be a :class:`Reason` (``why``, the
+    nested ``error.safety.*`` cause from ``RuntimeSafety.why_blocked``), the same shape a
+    stored explanation's own params can carry.
     """
 
+    def __init__(self, code: str, /, **params: str | int | float | bool | Reason) -> None:
+        self.code = code
+        self.params: dict[str, str | int | float | bool | Reason] = params
+        super().__init__(str(self))
 
-def refuse_mutation(event: str, method: str, path: str, *, reason: str, message: str) -> NoReturn:
+    def __str__(self) -> str:
+        # Through `english()`, not a bare `str.format`, so a nested `Reason` param (`why`)
+        # composes into its own sentence instead of printing the dataclass (rule 104: one
+        # renderer -- the same move `refusal.Refusal.__str__` makes).
+        return english(self.as_reason())
+
+    def as_reason(self) -> Reason:
+        return Reason(self.code, dict(self.params))
+
+
+def refuse_mutation(
+    event: str,
+    method: str,
+    path: str,
+    *,
+    reason: str,
+    code: str,
+    **params: str | int | float | bool | Reason,
+) -> NoReturn:
     """Record a blocked write, then raise it. Both guards refuse through here.
 
     A refusal is the loudest thing either guard does and it was the quietest thing in the
@@ -202,26 +231,42 @@ def refuse_mutation(event: str, method: str, path: str, *, reason: str, message:
     Raising from here rather than at each site is what makes that structural. A refusal
     added later cannot arrive without its log line, and the ``reason`` is the discriminator
     rules 92/93 ask for: something a reader matches on, never a sentence that will be
-    reworded. ``path`` is already token-free at both call sites (rule 13).
+    reworded. ``path`` is already token-free at both call sites (rule 13). ``code`` is the
+    catalog id the caller's params render through (an ``error.integration.write_*`` entry);
+    the guard's message is composed the same way every other refusal is now, not written by
+    hand at each call site.
     """
     log.warning(event, method=method.upper(), path=path, reason=reason)
-    raise SafetyViolationError(message)
+    raise SafetyViolationError(code, method=method.upper(), path=path, **params)
 
 
 class IntegrationError(RuntimeError):
-    """An integration could not be reached, or returned an error."""
+    """An integration could not be reached, or returned an error.
+
+    ``code`` is a catalog id (an ``error.integration.*`` entry in ``reaper.refusal.MESSAGES``,
+    or ``error.instance.*``/``error.plexclient.*`` for a sibling raiser in this layer), and
+    ``params`` are the raw values its template fills in -- ``service`` as the product name
+    where a template wants one, ``status``, ``path``, ``method``, ``detail`` for a library's
+    own message text carried verbatim rather than re-worded. ``__str__`` renders through the
+    same catalog :class:`~reaper.refusal.Refusal` does, so every existing ``except`` that
+    reads ``str(exc)`` for a log line keeps reading a sentence; :meth:`as_reason` is what a
+    caller nests inside its own refusal instead, so the code (not a frozen sentence) survives
+    to the browser.
+    """
 
     def __init__(
         self,
         service: str,
-        message: str,
+        code: str,
         *,
         status: int | None = None,
         retry_after: float | None = None,
         read_timed_out: bool = False,
+        **params: str | int | float | bool,
     ) -> None:
-        super().__init__(f"{service}: {message}")
         self.service = service
+        self.code = code
+        self.params: dict[str, str | int | float | bool] = params
         self.status = status
         self.retry_after = retry_after
         """Seconds the server asked us to wait (a numeric Retry-After), or None."""
@@ -242,6 +287,35 @@ class IntegrationError(RuntimeError):
         write may already have applied. Only the executor's verification step settles that,
         never the response (see ``_mutate``). This is a fact about a READ that can be asked
         again smaller."""
+        super().__init__(str(self))
+
+    def _render_params(self) -> dict[str, str | int | float | bool]:
+        """``self.params`` plus ``status`` when it is set.
+
+        ``status`` is its own constructor argument (every caller needs it typed, for
+        :attr:`is_auth_failure` and a route's own status-mapping logic), not a ``**params``
+        entry -- so a template naming ``{status}`` (``error.integration.http_failure`` and
+        kin) would otherwise never see it. This is the one place that gap is closed, for
+        both renderers below.
+        """
+        if self.status is None:
+            return self.params
+        return {**self.params, "status": self.status}
+
+    def __str__(self) -> str:
+        template = MESSAGES.get(self.code, self.code)
+        try:
+            return f"{self.service}: {template.format(**self._render_params())}"
+        except (KeyError, IndexError):
+            return f"{self.service}: {template}"
+
+    def as_reason(self) -> Reason:
+        """This error's code and params, as the typed container a nested ``{error}`` param
+        carries -- the same move :meth:`reaper.refusal.Refusal.as_reason` makes, one layer
+        further from the operator. ``service`` rides along as a param so a template that
+        wants the product name (none do today; a caller wanting one can add ``{service}``)
+        has it without a second lookup."""
+        return Reason(self.code, {"service": self.service, **self._render_params()})
 
     @property
     def is_auth_failure(self) -> bool:
@@ -254,45 +328,24 @@ class IntegrationError(RuntimeError):
         return self.status in (401, 403)
 
 
-# Three transport and status failures, each worded once.
-#
-# Each sentence used to be written at the site that raised it: four in ``_send``, the same four
-# in ``_mutate``, and three of them again in ``PublicClient``, so four sentences stood as eleven
-# copies. Rule 144 is what that costs. The wording is what an operator reads when a service
-# stops answering, and rewording one copy leaves the others saying something else about the
-# same failure -- which is how ``public.py`` came to spell one of them with a hardcoded ``GET``
-# where ``base.py`` names the method.
-#
-# ``too many redirects`` is one more failure this layer raises and is NOT fenced here. It is
-# written once per file rather than twice, and the two spellings differ the same way: ``GET``
-# hardcoded in ``public.py``, which only ever issues one, against ``{method}`` here.
-# ``test_every_client_failure_sentence_is_worded_in_exactly_one_place`` fences the four below
-# and names this one as out.
-#
-# ``refuse_mutation`` above is the same move for the guard's refusal, for the same reason.
-
-
 def transport_failure(service: str, exc: httpx2.TransportError) -> IntegrationError:
     """The request never got an answer: it timed out, or the host was not reachable.
-
-    Name the actual timeout kind. A ConnectTimeout (5s), WriteTimeout (10s) or PoolTimeout
-    (5s) is not the read timeout, so a fixed "30s" sends an operator to the wrong place. For a
-    mutation, "could not connect" and "the server was slow to answer" call for different next
-    steps (rule 10).
 
     ``TimeoutException`` is itself a ``TransportError``, so callers catch the one type and the
     split happens here, in the order the two ``except`` arms used to sit in.
 
     A ``ReadTimeout`` also carries ``read_timed_out``, so a caller can tell the one timeout
-    kind that a smaller request would fix from the ones it would not.
+    kind that a smaller request would fix from the ones it would not, even though the two now
+    share one operator-facing code: which kind it was stays a fact on the exception (rule 10),
+    it just stops being two different sentences.
     """
     if isinstance(exc, httpx2.TimeoutException):
         return IntegrationError(
             service,
-            f"timed out ({type(exc).__name__})",
+            "error.integration.timed_out",
             read_timed_out=isinstance(exc, httpx2.ReadTimeout),
         )
-    return IntegrationError(service, f"unreachable ({exc})")
+    return IntegrationError(service, "error.integration.unreachable", detail=str(exc))
 
 
 def refused_redirect(
@@ -301,8 +354,10 @@ def refused_redirect(
     """A redirect Reaper will not follow. The caller decides which ones qualify."""
     return IntegrationError(
         service,
-        f"refused redirect (HTTP {response.status_code}) for {method} {path}",
+        "error.integration.refused_redirect",
         status=response.status_code,
+        method=method,
+        path=path,
     )
 
 
@@ -317,25 +372,24 @@ def http_failure(
     """
     return IntegrationError(
         service,
-        f"HTTP {response.status_code} for {method} {path}",
+        "error.integration.http_failure",
         status=response.status_code,
         retry_after=_retry_after_seconds(response),
+        method=method,
+        path=path,
     )
 
 
 def unexpected_body(service: str, response: httpx2.Response, path: str) -> IntegrationError:
-    """A 200 whose body would not parse as JSON, named by the content type that came back.
-
-    Naming the type is what makes it diagnosable: an auth proxy's HTML login page and a
-    gateway's text error read the same as "it did not work" without it.
+    """A 200 whose body would not parse as JSON.
 
     Raised by ``get_json`` and by ``plextv._post``, which normalizes its own POST for the
-    reason its docstring gives (rule 72).
+    reason its docstring gives (rule 72). Shares its code with ``get_list``/``get_dict``'s
+    "parsed, but the wrong shape" refusal (``error.integration.unexpected_shape``): both mean
+    the same thing to the operator, and the content-type this used to name is kept in the log
+    line the caller already writes, not in operator copy (rule 21).
     """
-    return IntegrationError(
-        service,
-        f"expected JSON from {path}, got {response.headers.get('content-type')}",
-    )
+    return IntegrationError(service, "error.integration.unexpected_shape", path=path)
 
 
 class GuardedTransport(httpx2.AsyncBaseTransport):
@@ -390,7 +444,8 @@ class GuardedTransport(httpx2.AsyncBaseTransport):
                         request.method,
                         path,
                         reason="not_armed",
-                        message=f"Blocked {request.method} {path}. {self._safety.why_blocked()}",
+                        code="error.integration.write_not_armed",
+                        why=self._safety.why_blocked() or "",
                     )
                 if not intended:
                     refuse_mutation(
@@ -398,11 +453,7 @@ class GuardedTransport(httpx2.AsyncBaseTransport):
                         request.method,
                         path,
                         reason="not_declared",
-                        message=(
-                            f"Blocked {request.method} {path}: this mutation was not declared "
-                            "to the action journal. Destructive calls must go through the "
-                            "action executor so that they are recorded before they are sent."
-                        ),
+                        code="error.integration.write_not_declared",
                     )
 
         return await self._inner.handle_async_request(request)
@@ -553,14 +604,17 @@ class BaseClient:
                 ):
                     raise IntegrationError(
                         self.service,
-                        f"refused cross-origin redirect for {method} {path}: the credential "
-                        f"headers must never leave {httpx2.URL(self.base_url).host!r}",
+                        "error.integration.cross_origin_redirect_refused",
                         status=response.status_code,
+                        method=method,
+                        path=path,
                     )
                 target = str(next_url)
                 send_params = None  # the Location URL already carries its query string
             else:
-                raise IntegrationError(self.service, f"too many redirects for {method} {path}")
+                raise IntegrationError(
+                    self.service, "error.integration.too_many_redirects", method=method, path=path
+                )
 
             if response.status_code >= 400:
                 raise http_failure(self.service, response, method, path)
@@ -606,7 +660,7 @@ class BaseClient:
         """
         data = await self.get_json(path, params=params, headers=headers)
         if not isinstance(data, list):
-            raise IntegrationError(self.service, f"{path} did not return a list")
+            raise IntegrationError(self.service, "error.integration.unexpected_shape", path=path)
         return list(data)
 
     async def get_dict(
@@ -619,7 +673,7 @@ class BaseClient:
         """A GET whose body must be a JSON object. See :meth:`get_list` for why."""
         data = await self.get_json(path, params=params, headers=headers)
         if not isinstance(data, dict):
-            raise IntegrationError(self.service, f"{path} did not return an object")
+            raise IntegrationError(self.service, "error.integration.unexpected_shape", path=path)
         return data
 
     async def _mutate(

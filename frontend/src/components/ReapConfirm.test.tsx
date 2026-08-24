@@ -66,7 +66,7 @@ function status(overrides: Partial<ReapStatus> = {}): ReapStatus {
     deleted_bytes: 0,
     skipped: 0,
     title: "",
-    error: null,
+    error_reason: null,
     report: null,
     ...overrides,
   };
@@ -192,7 +192,7 @@ describe("the execute gate", () => {
 
     await screen.findByText(/Practice run passed/);
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    expect(screen.queryByText(/empties its own trash/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/empty its trash/i)).not.toBeInTheDocument();
   });
 
   it("says who does the emptying when the trash already holds records", async () => {
@@ -206,7 +206,7 @@ describe("the execute gate", () => {
 
     await screen.findByText(/Practice run passed/);
     expect(await screen.findByText(/already holds 40 items/i)).toBeInTheDocument();
-    expect(screen.getByText(/empties its own trash after every scan/i)).toBeInTheDocument();
+    expect(screen.getByText(/empty its trash after every scan/i)).toBeInTheDocument();
   });
 
   it("says nothing about auto-emptying when the preference could not be read", async () => {
@@ -222,7 +222,7 @@ describe("the execute gate", () => {
 
     await screen.findByText(/Practice run passed/);
     expect(await screen.findByText(/already holds 40 items/i)).toBeInTheDocument();
-    expect(screen.queryByText(/empties its own trash/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/empty its trash/i)).not.toBeInTheDocument();
   });
 
   it("offers no phrase input at all while deletion is off", async () => {
@@ -257,7 +257,9 @@ describe("the execute gate", () => {
   });
 
   it("a practice run that stopped never unlocks execution", async () => {
-    apiMock.dryRun.mockResolvedValue(report({ state: "aborted", aborted_reason: "over the cap" }));
+    apiMock.dryRun.mockResolvedValue(
+      report({ state: "aborted", aborted_reason: { k: "legacy", p: { text: "over the cap" } } }),
+    );
     renderSheet();
 
     await screen.findByText(/The plan stopped/);
@@ -377,7 +379,10 @@ describe("the execute gate", () => {
     const failed = status({
       run_id: run.id,
       phase: "error",
-      error: "Deletion was switched off mid-run.",
+      error_reason: {
+        k: "error.reap.unexpected",
+        p: { error: "Deletion was switched off mid-run." },
+      },
     });
     apiMock.reapStatus.mockResolvedValue(failed);
     apiMock.dryRun.mockClear();
@@ -422,8 +427,17 @@ describe("the execute gate", () => {
                 title: "A Film",
                 kind: "radarr_delete",
                 state: "verified",
-                detail: "deleted",
-                checks: [{ label: "Nobody was watching it right now", ok: true }],
+                detail_reason: { k: "legacy", p: { text: "deleted" } },
+                checks: [
+                  {
+                    label_reason: {
+                      k: "legacy",
+                      p: { text: "Nobody was watching it right now" },
+                    },
+                    ok: true,
+                  },
+                ],
+                is_canary: false,
               },
             ],
           }),
@@ -608,7 +622,10 @@ describe("what a screen reader hears while a reap runs", () => {
           status({
             run_id: run.id,
             phase: "error",
-            error: "Deletion was switched off mid-run.",
+            error_reason: {
+              k: "error.reap.unexpected",
+              p: { error: "Deletion was switched off mid-run." },
+            },
           }),
         ),
     );
@@ -632,11 +649,21 @@ describe("what a screen reader hears while a reap runs", () => {
             title: "A Film",
             kind: "radarr_delete",
             state: "verified",
-            detail: "deleted",
+            detail_reason: { k: "legacy", p: { text: "deleted" } },
             checks: [
-              { label: "Nobody was watching it right now", ok: true },
-              { label: "It was played since you approved it", ok: false },
+              {
+                label_reason: { k: "legacy", p: { text: "Nobody was watching it right now" } },
+                ok: true,
+              },
+              {
+                label_reason: {
+                  k: "legacy",
+                  p: { text: "It was played since you approved it" },
+                },
+                ok: false,
+              },
             ],
+            is_canary: false,
           },
         ],
       }),

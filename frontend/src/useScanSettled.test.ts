@@ -10,6 +10,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { createElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { Announcer } from "./announce";
+import type { ReasonKey } from "./api";
 import { testQueryClient } from "./test/queryClient";
 import { SCAN_SETTLED_KEYS, useScanSettled } from "./useScanSettled";
 
@@ -28,10 +29,10 @@ function harness() {
   const wrapper = ({ children }: { children: ReactNode }) =>
     createElement(QueryClientProvider, { client }, createElement(Announcer), children);
   const view = renderHook(
-    ({ scanning, error }: { scanning: boolean; error?: string | null }) =>
+    ({ scanning, error }: { scanning: boolean; error?: ReasonKey | null }) =>
       useScanSettled(scanning, error),
     {
-      initialProps: { scanning: false } as { scanning: boolean; error?: string | null },
+      initialProps: { scanning: false } as { scanning: boolean; error?: ReasonKey | null },
       wrapper,
     },
   );
@@ -124,7 +125,10 @@ describe("what a background scan tells an operator using a screen reader", () =>
     const { view } = harness();
 
     view.rerender({ scanning: true });
-    view.rerender({ scanning: false, error: "Sonarr timed out" });
+    view.rerender({
+      scanning: false,
+      error: { k: "error.scan.source_unreachable", p: { error: "Sonarr timed out" } },
+    });
 
     expect(spoken()).toContain("stopped before it finished");
     // Named outright rather than left to the sentence above: the two branches must not be able
@@ -140,7 +144,10 @@ describe("what a background scan tells an operator using a screen reader", () =>
     const { view, invalidated } = harness();
 
     view.rerender({ scanning: true });
-    view.rerender({ scanning: false, error: "Sonarr timed out" });
+    view.rerender({
+      scanning: false,
+      error: { k: "error.scan.source_unreachable", p: { error: "Sonarr timed out" } },
+    });
 
     expect(invalidated).toEqual(SCAN_SETTLED_KEYS.map((k) => JSON.stringify(k)));
   });

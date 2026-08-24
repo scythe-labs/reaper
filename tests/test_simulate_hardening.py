@@ -30,12 +30,13 @@ from __future__ import annotations
 import json
 from collections import Counter
 from collections.abc import Iterator
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, NamedTuple
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import Engine
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
@@ -48,6 +49,7 @@ from reaper.api.schemas import (
     PolicyBodyOut,
     PolicyIn,
     SignalSettingIn,
+    SimStale,
 )
 from reaper.api.simulate import _fired_gates, _has_blocked_protections
 from reaper.clock import utcnow
@@ -71,6 +73,7 @@ from reaper.main import create_app
 
 from ._auth import login
 from ._lists import seeded_fingerprint
+from ._reasons import catalog
 
 #: The draft policy every simulation below is run under. Its scoring hash has to be the one
 #: the fixture snapshot was "scored" with, or the route refuses to re-decide at all -- so
@@ -251,17 +254,33 @@ ROWS: tuple[Row, ...] = (
 EXPECTED = dict(Counter(r.bucket for r in ROWS))
 
 
-@pytest.fixture
-def client(tmp_path: Path) -> Iterator[TestClient]:
-    """A snapshot carrying every explanation shape in ``ROWS``."""
+def _boot(tmp_path: Path) -> tuple[Settings, Engine, str, datetime]:
+    """A fresh throwaway install, migrated, plus the list fingerprint every simulation
+    needs recorded.
+
+    ``list_hash`` is what a scan records about the lists it gathered membership under:
+    without it the simulator refuses, which is right for a snapshot that cannot say and
+    useless here. The caller seeds its own rows on the returned engine and commits before
+    handing both to :func:`_client`.
+    """
     settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
-    # What a scan records about the lists it gathered membership under: without it the
-    # simulator refuses, which is right for a snapshot that cannot say and useless here.
-    list_hash = seeded_fingerprint(settings)
+    return settings, engine, seeded_fingerprint(settings), utcnow()
 
-    now = utcnow()
+
+def _client(settings: Settings, engine: Engine) -> Iterator[TestClient]:
+    """Close the seeding engine and hand back a client logged in on the same install."""
+    engine.dispose()
+    with TestClient(create_app(settings)) as c:
+        login(c, settings)
+        yield c
+
+
+@pytest.fixture
+def client(tmp_path: Path) -> Iterator[TestClient]:
+    """A snapshot carrying every explanation shape in ``ROWS``."""
+    settings, engine, list_hash, now = _boot(tmp_path)
     with Session(engine) as session:
         snapshot = Snapshot(
             created_at=now,
@@ -292,11 +311,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                 )
             )
         session.commit()
-    engine.dispose()
-
-    with TestClient(create_app(settings)) as c:
-        login(c, settings)
-        yield c
+    yield from _client(settings, engine)
 
 
 def _simulate(client: TestClient, condemn_at: int = 70) -> dict[str, Any]:
@@ -407,7 +422,10 @@ class TestTheQueueSurvivesAMixedSignalBlock:
         response = client.get("/api/candidates", params={"verdict": "condemn"})
         assert response.status_code == 200
         rows = {str(r["media_key"]): r for r in response.json()["items"]}
-        assert rows["radarr:1:9"]["reason"] == "poorly rated where it is rated"
+        assert rows["radarr:1:9"]["reason_key"] == {
+            "k": "legacy",
+            "p": {"text": "poorly rated where it is rated"},
+        }
 
 
 class TestTheHelpersThemselves:
@@ -577,14 +595,7 @@ def replay_client(tmp_path: Path) -> Iterator[TestClient]:
     stored scores; the stored evidence hash is exactly the draft's, so the frozen Facts are
     still what a scan would gather and the replay is allowed.
     """
-    settings = Settings(data_dir=tmp_path, secret_key="k")
-    engine = sa_create_engine(settings.sync_database_url)
-    Base.metadata.create_all(engine)
-    # What a scan records about the lists it gathered membership under: without it the
-    # simulator refuses, which is right for a snapshot that cannot say and useless here.
-    list_hash = seeded_fingerprint(settings)
-
-    now = utcnow()
+    settings, engine, list_hash, now = _boot(tmp_path)
     rows = {
         # Dormant, unprotected, fully observed: the draft condemns it.
         "radarr:1:1": _facts(),
@@ -679,11 +690,7 @@ def replay_client(tmp_path: Path) -> Iterator[TestClient]:
                 )
             )
         session.commit()
-    engine.dispose()
-
-    with TestClient(create_app(settings)) as c:
-        login(c, settings)
-        yield c
+    yield from _client(settings, engine)
 
 
 class TestTheFrozenFactsReplay:
@@ -771,14 +778,7 @@ def keep_rule_client(tmp_path: Path) -> Iterator[TestClient]:
     override, so ``was`` is condemn for all three and the only thing that moves them is the
     draft's own protections firing on the frozen facts.
     """
-    settings = Settings(data_dir=tmp_path, secret_key="k")
-    engine = sa_create_engine(settings.sync_database_url)
-    Base.metadata.create_all(engine)
-    # What a scan records about the lists it gathered membership under: without it the
-    # simulator refuses, which is right for a snapshot that cannot say and useless here.
-    list_hash = seeded_fingerprint(settings)
-
-    now = utcnow()
+    settings, engine, list_hash, now = _boot(tmp_path)
     # Two ways out of the removal list and one row that stays on it, so the count cannot come
     # out right by counting a single protection, or by counting every row.
     rows = {
@@ -820,11 +820,7 @@ def keep_rule_client(tmp_path: Path) -> Iterator[TestClient]:
                 )
             )
         session.commit()
-    engine.dispose()
-
-    with TestClient(create_app(settings)) as c:
-        login(c, settings)
-        yield c
+    yield from _client(settings, engine)
 
 
 class TestATitleAProtectionRescuesLeavesTheRemovalList:
@@ -933,7 +929,7 @@ class TestSwitchingAProtectionIsPreviewedRatherThanRefused:
         body = response.json()
         assert body["exact"] is False
         assert body["condemned"] == 0
-        assert "scan" in body["stale_reason"].lower()
+        assert body["stale_reason"]["k"] == "gathers_differently"
 
 
 class TestTheWireRoundTripPreservesBothHashes:
@@ -983,14 +979,7 @@ def upgraded_install_client(tmp_path: Path) -> Iterator[TestClient]:
     the request will carry that same policy back through the wire schema. Nothing here is
     contrived except the version number: this is what every upgraded install looks like.
     """
-    settings = Settings(data_dir=tmp_path, secret_key="k")
-    engine = sa_create_engine(settings.sync_database_url)
-    Base.metadata.create_all(engine)
-    # What a scan records about the lists it gathered membership under: without it the
-    # simulator refuses, which is right for a snapshot that cannot say and useless here.
-    list_hash = seeded_fingerprint(settings)
-
-    now = utcnow()
+    settings, engine, list_hash, now = _boot(tmp_path)
     with Session(engine) as session:
         snapshot = Snapshot(
             created_at=now,
@@ -1026,11 +1015,7 @@ def upgraded_install_client(tmp_path: Path) -> Iterator[TestClient]:
             )
         )
         session.commit()
-    engine.dispose()
-
-    with TestClient(create_app(settings)) as c:
-        login(c, settings)
-        yield c
+    yield from _client(settings, engine)
 
 
 class TestAnUpgradedInstallStillGetsNumbers:
@@ -1121,14 +1106,7 @@ def _reach_client(
     which is exactly what a row frozen before ``Facts.history_reach_days`` existed looks
     like on disk.
     """
-    settings = Settings(data_dir=tmp_path, secret_key="k")
-    engine = sa_create_engine(settings.sync_database_url)
-    Base.metadata.create_all(engine)
-    # What a scan records about the lists it gathered membership under: without it the
-    # simulator refuses, which is right for a snapshot that cannot say and useless here.
-    list_hash = seeded_fingerprint(settings)
-
-    now = utcnow()
+    settings, engine, list_hash, now = _boot(tmp_path)
     # Encoded by production's own codec rather than transcribed (rule 119); only the
     # deletion is done by hand, because no Facts can express "this key was never written".
     frozen = facts_codec.facts_to_dict(
@@ -1171,11 +1149,7 @@ def _reach_client(
             )
         )
         session.commit()
-    engine.dispose()
-
-    with TestClient(create_app(settings)) as c:
-        login(c, settings)
-        yield c
+    yield from _client(settings, engine)
 
 
 class TestTheReplayKnowsHowFarTheStoredHistoryReached:
@@ -1247,14 +1221,7 @@ SPARED_ROWS: tuple[tuple[str, str, str], ...] = (
 @pytest.fixture
 def spared_client(tmp_path: Path) -> Iterator[TestClient]:
     """A snapshot whose every row carries a hand spare, on the stored-score tier."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")
-    engine = sa_create_engine(settings.sync_database_url)
-    Base.metadata.create_all(engine)
-    # What a scan records about the lists it gathered membership under: without it the
-    # simulator refuses, which is right for a snapshot that cannot say and useless here.
-    list_hash = seeded_fingerprint(settings)
-
-    now = utcnow()
+    settings, engine, list_hash, now = _boot(tmp_path)
     with Session(engine) as session:
         snapshot = Snapshot(
             created_at=now,
@@ -1293,11 +1260,7 @@ def spared_client(tmp_path: Path) -> Iterator[TestClient]:
                 )
             )
         session.commit()
-    engine.dispose()
-
-    with TestClient(create_app(settings)) as c:
-        login(c, settings)
-        yield c
+    yield from _client(settings, engine)
 
 
 class TestAHandSpareIsOneProtectionAmongTheRest:
@@ -1413,7 +1376,7 @@ class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:
         after = _simulate(client, 40)
         assert after["exact"] is False, "previewed a threshold against pre-edit list membership"
         assert after["condemned"] == 0
-        assert "scan" in after["stale_reason"].lower()
+        assert after["stale_reason"]["k"] == "gathers_differently"
 
     def test_the_replay_refuses_once_the_lists_move(self, replay_client: TestClient) -> None:
         draft = REPLAY_PAYLOAD.model_dump()
@@ -1425,7 +1388,7 @@ class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:
         after = replay_client.post("/api/policy/simulate", json=draft).json()
         assert after["exact"] is False, "replayed a scoring edit against pre-edit list membership"
         assert after["condemned"] == 0
-        assert "scan" in after["stale_reason"].lower()
+        assert after["stale_reason"]["k"] == "gathers_differently"
 
     def test_a_snapshot_that_never_recorded_its_lists_refuses(
         self, client: TestClient, tmp_path: Path
@@ -1448,7 +1411,7 @@ class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:
 
         after = _simulate(client, 40)
         assert after["exact"] is False, "answered off a snapshot that cannot say its lists"
-        assert "scan" in after["stale_reason"].lower()
+        assert after["stale_reason"]["k"] == "gathers_differently"
 
     def test_two_unknowns_are_not_a_match(self, client: TestClient, tmp_path: Path) -> None:
         """Both sides ``None`` is the pairing an equality test reads as agreement.
@@ -1481,4 +1444,25 @@ class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:
 
         after = _simulate(client, 40)
         assert after["exact"] is False, "previewed as exact with neither side able to say"
-        assert "scan" in after["stale_reason"].lower()
+        assert after["stale_reason"]["k"] == "gathers_differently"
+
+
+class TestTheSimStaleReasonVocabulary:
+    """Every ``SimStale`` member composes under ``policySim.staleReason.*``, both directions
+    (rule 145's shape, modeled on ``test_review_chips.TestTheChipVocabulary``). The
+    population is the enum itself rather than a hand-maintained id set, since ``_refused``
+    (``api/simulate.py``) emits exactly ``kind.value`` for every kind."""
+
+    def test_every_sim_stale_value_has_catalog_copy(self) -> None:
+        entries = set(catalog("policySim.staleReason"))
+        missing = {member.value for member in SimStale} - entries
+        assert not missing, (
+            f"SimStale values with no policySim.staleReason entry: {sorted(missing)}"
+        )
+
+    def test_every_catalog_entry_has_a_producer(self) -> None:
+        entries = set(catalog("policySim.staleReason"))
+        orphaned = entries - {member.value for member in SimStale}
+        assert not orphaned, (
+            f"policySim.staleReason entries with no SimStale member: {sorted(orphaned)}"
+        )

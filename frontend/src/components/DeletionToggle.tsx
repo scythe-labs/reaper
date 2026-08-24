@@ -18,12 +18,15 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api } from "../api";
+import { describeError } from "../errors";
 import { useSafety } from "../useSafety";
 import { Notice } from "./Notice";
 
 export function DeletionToggle() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data, isLoading, isError } = useSafety();
   const [confirming, setConfirming] = useState(false);
@@ -70,18 +73,18 @@ export function DeletionToggle() {
       // settled mutation, never at issuance (rule 85) -- this is the switch that decides whether
       // Reaper may delete, so a premature "on" would be the worst possible thing to be wrong
       // about.
-      announce(vars.enabled ? "Deletion is on." : "Deletion is off. Reaper is read-only.");
+      announce(vars.enabled ? t("deletion.stateOn") : t("deletion.stateOff"));
       // Arming happens from the password form, which unmounts on success and takes the focused
       // Confirm button with it. Without this, focus lands on `<body>` and the next Tab restarts
       // at the top of the page.
       if (vars.enabled) returnToRow.current = true;
       refresh();
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e) => setError(describeError(e)),
   });
 
   if (isLoading) {
-    return <p className="muted">Checking whether deletion is on…</p>;
+    return <p className="muted">{t("common.checkingDeletion")}</p>;
   }
   // Unknown must never read as safe: say it plainly, in amber, and still offer OFF -- no
   // password, no prior state, the one direction that can only make Reaper safer -- so the
@@ -100,28 +103,23 @@ export function DeletionToggle() {
           <div className="safety-state safe">
             <span className="banner-dot" aria-hidden="true" />
             <div>
-              <strong>Deletion is off. Reaper is read-only.</strong>
+              <strong>{t("deletion.stateOff")}</strong>
             </div>
           </div>
         ) : (
-          <Notice tone="warn">
-            Reaper couldn't confirm whether deletion is on. Until it can, treat it as on.
-          </Notice>
+          <Notice tone="warn">{t("deletion.unknownNotice")}</Notice>
         )}
         <div className="safety-row">
           <div>
-            <strong>Turn deletion off</strong>
-            <p className="help">
-              Puts Reaper back to read-only right away. Safe to press either way: if it was already
-              off, nothing changes.
-            </p>
+            <strong>{t("deletion.turnOffHeading")}</strong>
+            <p className="help">{t("deletion.turnOffHelpUnknown")}</p>
           </div>
           <button
             className="ghost danger"
             disabled={toggle.isPending}
             onClick={() => toggle.mutate({ enabled: false })}
           >
-            {toggle.isPending ? "Turning off…" : "Turn off"}
+            {toggle.isPending ? t("deletion.turningOff") : t("deletion.turnOff")}
           </button>
         </div>
         {error && <Notice tone="error">{error}</Notice>}
@@ -133,22 +131,17 @@ export function DeletionToggle() {
 
   return (
     <>
-      {/* No `data.note` here: it says where to turn deletion on, and this IS that place. */}
       <div className={`safety-state ${on ? "armed" : "safe"}`}>
         <span className="banner-dot" aria-hidden="true" />
         <div>
-          <strong>{on ? "Deletion is on." : "Deletion is off. Reaper is read-only."}</strong>
+          <strong>{on ? t("deletion.stateOn") : t("deletion.stateOff")}</strong>
         </div>
       </div>
 
       <div className="safety-row">
         <div>
-          <strong>{on ? "Turn deletion off" : "Turn deletion on"}</strong>
-          <p className="help">
-            {on
-              ? "Puts Reaper back to read-only right away."
-              : "Reaper will be allowed to delete media you approve. You'll still review and approve every run."}
-          </p>
+          <strong>{on ? t("deletion.turnOffHeading") : t("deletion.turnOnHeading")}</strong>
+          <p className="help">{on ? t("deletion.turnOffHelp") : t("deletion.turnOnHelp")}</p>
         </div>
         {on ? (
           <button
@@ -156,10 +149,10 @@ export function DeletionToggle() {
             className="ghost danger"
             onClick={() => toggle.mutate({ enabled: false })}
           >
-            Turn off
+            {t("deletion.turnOff")}
           </button>
         ) : !data.has_password ? (
-          <span className="muted">Set an admin password first, in Settings → Security.</span>
+          <span className="muted">{t("common.noAdminPassword")}</span>
         ) : confirming ? (
           <form
             className="pw-form"
@@ -176,24 +169,24 @@ export function DeletionToggle() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               maxLength={128}
-              placeholder="admin password"
-              aria-label="Admin password"
+              placeholder={t("common.adminPasswordPlaceholder")}
+              aria-label={t("common.adminPassword")}
               autoComplete="current-password"
               autoFocus
             />
             <button type="submit" className="primary sm" disabled={!password || toggle.isPending}>
-              Confirm
+              {t("deletion.confirmButton")}
             </button>
             {/* Cancel drops the typed password with the form. Closing the form alone left the
                 admin password sitting in component state for as long as this panel stayed
                 mounted, and refilled the field the next time it was opened (S-5). */}
             <button type="button" className="ghost sm" onClick={closeForm}>
-              Cancel
+              {t("common.cancel")}
             </button>
           </form>
         ) : (
           <button ref={rowButtonRef} className="primary" onClick={() => setConfirming(true)}>
-            Turn on…
+            {t("deletion.turnOnButton")}
           </button>
         )}
       </div>

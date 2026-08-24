@@ -15,6 +15,7 @@ import {
   type CandidateDetail,
   type GateOutcome,
   type Match,
+  type ReasonKey,
   REWATCH_KEEP,
   type SignalContribution,
 } from "../api";
@@ -53,8 +54,14 @@ beforeEach(() => {
   vi.mocked(api.forgetWatchEvidenceFor).mockResolvedValue({ removed: true });
 });
 
+/** A row frozen before details were typed: the stored sentence wrapped as the one legacy
+ *  reason, composed verbatim (docs/history/I18N_PLAN.md §5, #899). */
+function legacy(text: string): ReasonKey {
+  return { k: "legacy", p: { text } };
+}
+
 function signal(over: Partial<SignalContribution> & { id: string }): SignalContribution {
-  return { contribution: 0, weight: 10, detail: "a reason", evaluated: true, ...over };
+  return { contribution: 0, weight: 10, detail_key: legacy("a reason"), evaluated: true, ...over };
 }
 
 /** The six rows the operator was looking at: 75/75, 30/80, 20/20, 20/20, 10/60, 0/25.
@@ -64,26 +71,43 @@ const WORKED_ROWS: SignalContribution[] = [
     id: "unwatched",
     contribution: 75,
     weight: 75,
-    detail: "not watched in 5 years",
+    detail_key: legacy("not watched in 5 years"),
     state: "adds",
   }),
   signal({
     id: "season_rank",
     contribution: 30,
     weight: 80,
-    detail: "a later season",
+    detail_key: legacy("a later season"),
     state: "adds",
   }),
   signal({
     id: "few_watchers",
     contribution: 20,
     weight: 20,
-    detail: "1 person watched it",
+    detail_key: legacy("1 person watched it"),
     state: "adds",
   }),
-  signal({ id: "size", contribution: 20, weight: 20, detail: "takes 40 GiB", state: "adds" }),
-  signal({ id: "low_rating", contribution: 10, weight: 60, detail: "rated 6.4", state: "adds" }),
-  signal({ id: "my rule", weight: 25, detail: "not on the shelf", state: "not_applicable" }),
+  signal({
+    id: "size",
+    contribution: 20,
+    weight: 20,
+    detail_key: legacy("takes 40 GiB"),
+    state: "adds",
+  }),
+  signal({
+    id: "low_rating",
+    contribution: 10,
+    weight: 60,
+    detail_key: legacy("rated 6.4"),
+    state: "adds",
+  }),
+  signal({
+    id: "my rule",
+    weight: 25,
+    detail_key: legacy("not on the shelf"),
+    state: "not_applicable",
+  }),
 ];
 
 function detail(
@@ -108,8 +132,7 @@ function detail(
     group_title: null,
     video_resolution: null,
     library: null,
-    dormant_for: null,
-    reason: null,
+    dormant_days: null,
     override: null,
     override_own: null,
     show_override: null,
@@ -120,6 +143,7 @@ function detail(
     chip: null,
     season_number: 3,
     show_status: null,
+    collections: null,
     content_rating: null,
     runtime_minutes: null,
     genres: [],
@@ -142,10 +166,13 @@ function detail(
       keep_discount: 0,
       threshold: 70,
       coverage: 10_000,
+      coverage_floor_bp: null,
+      watch_blind: null,
       signals,
       protections_fired: [],
       protections_checked: [],
       protections_unknown: [],
+      match: null,
     },
     ...over,
   };
@@ -189,7 +216,7 @@ function pushRows(n: number, weight = 10): SignalContribution[] {
       id: `rule ${String(i).padStart(2, "0")}`,
       contribution: weight,
       weight,
-      detail: `reason ${i}`,
+      detail_key: legacy(`reason ${i}`),
       state: "adds",
     }),
   );
@@ -260,23 +287,28 @@ describe("the scoring receipt", () => {
           id: "unwatched",
           contribution: 40,
           weight: 40,
-          detail: "not watched in 5 years",
+          detail_key: legacy("not watched in 5 years"),
           state: "adds",
         }),
         signal({
           id: "few_watchers",
           weight: 30,
-          detail: "4 people watched it",
+          detail_key: legacy("4 people watched it"),
           state: "argues_keep",
         }),
         signal({
           id: "low_rating",
           weight: 20,
-          detail: "could not read its rating",
+          detail_key: legacy("could not read its rating"),
           evaluated: false,
           state: "unreadable",
         }),
-        signal({ id: "my rule", weight: 10, detail: "not on the shelf", state: "not_applicable" }),
+        signal({
+          id: "my rule",
+          weight: 10,
+          detail_key: legacy("not on the shelf"),
+          state: "not_applicable",
+        }),
       ]),
     );
 
@@ -297,12 +329,17 @@ describe("the scoring receipt", () => {
     // keeping would overstate the case for keeping the file.
     show(
       detail([
-        signal({ id: "unwatched", contribution: 40, weight: 40, detail: "not watched in 5 years" }),
-        signal({ id: "few_watchers", weight: 30, detail: "5 people watched it" }),
+        signal({
+          id: "unwatched",
+          contribution: 40,
+          weight: 40,
+          detail_key: legacy("not watched in 5 years"),
+        }),
+        signal({ id: "few_watchers", weight: 30, detail_key: legacy("5 people watched it") }),
         signal({
           id: "low_rating",
           weight: 20,
-          detail: "could not read its rating",
+          detail_key: legacy("could not read its rating"),
           evaluated: false,
         }),
       ]),
@@ -329,7 +366,7 @@ describe("the scoring receipt", () => {
               name: "asked for lately",
               discount: 15,
               max_discount: 20,
-              detail: "requested 30 days ago",
+              detail_key: legacy("requested 30 days ago"),
               evaluated: true,
             },
           ],
@@ -386,7 +423,7 @@ describe("the scoring receipt", () => {
       signal({
         id: `unread ${i}`,
         weight: 20,
-        detail: `could not read reason ${i}`,
+        detail_key: legacy(`could not read reason ${i}`),
         evaluated: false,
         state: "unreadable" as const,
       }),
@@ -434,7 +471,7 @@ describe("the scoring receipt", () => {
         id: "unwatched",
         contribution: 1000,
         weight: 1000,
-        detail: "the reason",
+        detail_key: legacy("the reason"),
         state: "adds",
       }),
       ...pushRows(11, 1),
@@ -451,7 +488,7 @@ describe("the scoring receipt", () => {
       signal({
         id: `unread ${String(i).padStart(2, "0")}`,
         weight: 20,
-        detail: `could not read reason ${i}`,
+        detail_key: legacy(`could not read reason ${i}`),
         evaluated: false,
         state: "unreadable" as const,
       }),
@@ -490,14 +527,16 @@ describe("the built-in rewatch keep", () => {
             name: REWATCH_KEEP,
             discount: 15,
             max_discount: 20,
-            detail: "Watched 14 times, most recently 3 weeks ago. Likely to be watched again.",
+            detail_key: legacy(
+              "Watched 14 times, most recently 3 weeks ago. Likely to be watched again.",
+            ),
             evaluated: true,
           },
           {
             name: "asked for lately",
             discount: 8,
             max_discount: 15,
-            detail: "requested 30 days ago",
+            detail_key: legacy("requested 30 days ago"),
             evaluated: true,
           },
         ],
@@ -520,8 +559,21 @@ describe("the built-in rewatch keep", () => {
   it('drops "Your" from the keeps blurb', () => {
     show(withKeeps());
 
-    expect(screen.getByText(/^Soft keep rules lowered the score/)).toBeTruthy();
+    expect(screen.getByText(/^Keep rules lowered the score/)).toBeTruthy();
     expect(screen.queryByText(/Your soft/)).toBeNull();
+  });
+
+  it("names no numbers when the lowering rounds away", () => {
+    // A base of 94.4 and a score of 93.6 both print as 94, and "from 94 to 94" reads as
+    // nothing having happened. The plain sentence says the rules acted, without the numbers.
+    const base = withKeeps();
+    show({
+      ...base,
+      score: 94,
+      explanation: { ...base.explanation, score: 93.6, base_score: 94.4 },
+    });
+    expect(screen.getByText("Keep rules lowered the score.")).toBeTruthy();
+    expect(screen.queryByText(/from 94 to 94/)).toBeNull();
   });
 });
 
@@ -541,8 +593,8 @@ describe("the rewatch-probability block (#554 stage 2)", () => {
 
     expect(
       screen.getByText(
-        "Of 599 shows that had sat unwatched about this long, 207 (35%) were watched again " +
-          "within a year. Measured from your own history at the last scan.",
+        "Of 599 shows in your history that had sat unwatched about this long, 207 (35%) were " +
+          "watched again within a year.",
       ),
     ).toBeInTheDocument();
   });
@@ -567,9 +619,7 @@ describe("the rewatch-probability block (#554 stage 2)", () => {
     // `None`) -- this is the shape the browser actually reads over the wire.
     show(withOdds(null));
 
-    expect(
-      screen.queryByRole("heading", { name: "Watched again within a year" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Rewatch probability" })).not.toBeInTheDocument();
   });
 
   it("sits after Leaning toward keeping and before What spared it", () => {
@@ -584,19 +634,21 @@ describe("the rewatch-probability block (#554 stage 2)", () => {
               name: "asked for lately",
               discount: 15,
               max_discount: 20,
-              detail: "requested 30 days ago",
+              detail_key: legacy("requested 30 days ago"),
               evaluated: true,
             },
           ],
           rewatch_odds: { n: 10, k: 3, lo_days: 0, hi_days: 365, state: "measured" },
-          protections_fired: [{ gate: "whitelisted", detail: "on your keep list, never reaped" }],
+          protections_fired: [
+            { gate: "whitelisted", detail_key: legacy("on your keep list, never reaped") },
+          ],
         },
       }),
     );
 
     const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
     const leaning = headings.indexOf("Leaning toward keeping");
-    const odds = headings.indexOf("Watched again within a year");
+    const odds = headings.indexOf("Rewatch probability");
     const spared = headings.indexOf("What spared it");
     expect(leaning).toBeGreaterThanOrEqual(0);
     expect(odds).toBeGreaterThan(leaning);
@@ -612,9 +664,9 @@ describe("the protection blocks", () => {
   // branches (src/reaper/engine/gates.py). The third row used to be a "Managed by Sonarr
   // or Radarr." line on a gate id ("arr") that has never existed.
   const CHECKED = [
-    { gate: "whitelisted", detail: "Not on your keep list." },
-    { gate: "streaming_now", detail: "Nobody is watching it right now." },
-    { gate: "curated_list", detail: "Not on any protected list." },
+    { gate: "whitelisted", detail_key: legacy("Not on your keep list.") },
+    { gate: "streaming_now", detail_key: legacy("Nobody is watching it right now.") },
+    { gate: "curated_list", detail_key: legacy("Not on any protected list.") },
   ];
 
   it("rests the cleared list folded, and opens it on click", async () => {
@@ -642,7 +694,9 @@ describe("the protection blocks", () => {
       detail(WORKED_ROWS, {
         explanation: {
           ...base.explanation,
-          protections_fired: [{ gate: "whitelisted", detail: "on your keep list, never reaped" }],
+          protections_fired: [
+            { gate: "whitelisted", detail_key: legacy("on your keep list, never reaped") },
+          ],
         },
       }),
     );
@@ -664,14 +718,12 @@ describe("the protection blocks", () => {
 // protection actually fired. This is the exact confusion the change fixes: a reaped item that
 // the old panel labeled a protected Sanctuary.
 describe("the verdict headline", () => {
-  const fired = (gate: string, d = "a reason") => ({ gate, detail: d });
+  const fired = (gate: string, d = "a reason") => ({ gate, detail_key: legacy(d) });
 
   it("labels an honored hand reap a removal, never a Sanctuary", () => {
     show(detail(WORKED_ROWS, { verdict: "protect", override: "reap", override_effective: true }));
     expect(screen.getByText("Reaped by hand")).toBeInTheDocument();
-    expect(
-      screen.getByText(/it will be removed\. Nothing is holding it back/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Nothing is holding it back/i)).toBeInTheDocument();
     expect(screen.queryByText("Sanctuary")).not.toBeInTheDocument();
     expect(screen.queryByText(/the score doesn't matter/i)).not.toBeInTheDocument();
   });
@@ -725,7 +777,14 @@ describe("the verdict headline", () => {
         override_effective: false,
         explanation: {
           ...detail(WORKED_ROWS).explanation,
-          match: { status: "unmatched", detail: null, rating_key: null },
+          match: {
+            status: "unmatched",
+            detail: null,
+            rating_key: null,
+            by: null,
+            merged_rating_keys: null,
+            candidate_rating_keys: null,
+          },
         },
       }),
     );
@@ -745,7 +804,14 @@ describe("the verdict headline", () => {
         override_effective: false,
         explanation: {
           ...detail(WORKED_ROWS).explanation,
-          match: { status: "unmatched", detail: null, rating_key: null },
+          match: {
+            status: "unmatched",
+            detail: null,
+            rating_key: null,
+            by: null,
+            merged_rating_keys: null,
+            candidate_rating_keys: null,
+          },
           protections_unknown: [
             fired(
               "server_popularity",
@@ -767,7 +833,14 @@ describe("the verdict headline", () => {
         override_effective: false,
         explanation: {
           ...detail(WORKED_ROWS).explanation,
-          match: { status: "ambiguous", detail: null, rating_key: null },
+          match: {
+            status: "ambiguous",
+            detail: null,
+            rating_key: null,
+            by: null,
+            merged_rating_keys: null,
+            candidate_rating_keys: null,
+          },
           protections_unknown: [
             fired(
               "server_popularity",
@@ -794,7 +867,14 @@ describe("the verdict headline", () => {
         override_effective: false,
         explanation: {
           ...detail(WORKED_ROWS).explanation,
-          match: { status: "conflicted", detail: null, rating_key: null },
+          match: {
+            status: "conflicted",
+            detail: null,
+            rating_key: null,
+            by: null,
+            merged_rating_keys: null,
+            candidate_rating_keys: null,
+          },
           protections_unknown: [
             fired(
               "server_popularity",
@@ -806,7 +886,7 @@ describe("the verdict headline", () => {
     );
     // Both surfaces say it, so each is asserted by its own distinguishing tail rather than
     // the shared clause -- the ambiguous test above has the same shape.
-    expect(screen.getByText(/so we couldn't tell which Plex entry it is/i)).toBeInTheDocument();
+    expect(screen.getByText(/so Reaper can't tell which one it is/i)).toBeInTheDocument();
     expect(
       screen.getByText(/You asked to remove this, but Plex and Sonarr describe this show/i),
     ).toBeInTheDocument();
@@ -822,12 +902,19 @@ describe("the verdict headline", () => {
         media_type: "movie",
         explanation: {
           ...detail(WORKED_ROWS).explanation,
-          match: { status: "conflicted", detail: null, rating_key: null },
+          match: {
+            status: "conflicted",
+            detail: null,
+            rating_key: null,
+            by: null,
+            merged_rating_keys: null,
+            candidate_rating_keys: null,
+          },
         },
       }),
     );
     expect(
-      screen.getByText(/Plex and Radarr describe this file differently, so we couldn't/i),
+      screen.getByText(/Plex and Radarr describe this file differently, so Reaper can't/i),
     ).toBeInTheDocument();
   });
 
@@ -847,7 +934,14 @@ describe("the verdict headline", () => {
         },
         explanation: {
           ...detail(WORKED_ROWS).explanation,
-          match: { status: "ambiguous", detail: null, rating_key: null },
+          match: {
+            status: "ambiguous",
+            detail: null,
+            rating_key: null,
+            by: null,
+            merged_rating_keys: null,
+            candidate_rating_keys: null,
+          },
         },
       }),
     );
@@ -876,7 +970,14 @@ describe("the verdict headline", () => {
         },
         explanation: {
           ...detail(WORKED_ROWS).explanation,
-          match: { status: "ambiguous", detail: null, rating_key: null },
+          match: {
+            status: "ambiguous",
+            detail: null,
+            rating_key: null,
+            by: null,
+            merged_rating_keys: null,
+            candidate_rating_keys: null,
+          },
         },
       }),
     );
@@ -905,7 +1006,14 @@ describe("the verdict headline", () => {
         },
         explanation: {
           ...detail(WORKED_ROWS).explanation,
-          match: { status: "ambiguous", detail: null, rating_key: null },
+          match: {
+            status: "ambiguous",
+            detail: null,
+            rating_key: null,
+            by: null,
+            merged_rating_keys: null,
+            candidate_rating_keys: null,
+          },
         },
       }),
     );
@@ -1029,12 +1137,11 @@ describe("the verdict headline", () => {
   // (rule 119).
   const SETTLEABLE_CONFLICT =
     "9 people watched Season 1, more than watched Season 3, which Reaper is keeping " +
-    "because it is one of the newest seasons your rule keeps. Left for you to decide " +
-    "instead of removing it.";
+    "because it is one of the newest seasons your rule keeps.";
   const REFUSED_CONFLICT =
     "Reaper cannot tell whether Season 1 is watched more than Season 3, since your watch " +
     "history only goes back 12 months. Season 3 is kept because it is one of the newest " +
-    "seasons your rule keeps. Left for you to decide instead of removing it.";
+    "seasons your rule keeps.";
 
   // The message and the flag come from the same conflict, exactly as the producer emits them
   // (`season_evidence.guard_result`): a settleable conflict carries `defers_to_owner: true`, a
@@ -1064,7 +1171,11 @@ describe("the verdict headline", () => {
         ...detail(WORKED_ROWS).explanation,
         protections_unknown: [
           ...others,
-          { gate: "season_progression", detail: message, defers_to_owner: defersToOwner },
+          {
+            gate: "season_progression",
+            detail_key: legacy(message),
+            defers_to_owner: defersToOwner,
+          },
         ],
       },
     });
@@ -1073,7 +1184,7 @@ describe("the verdict headline", () => {
     show(conflictDetail(SETTLEABLE_CONFLICT, true));
     expect(screen.getByText("Needs a look")).toBeInTheDocument();
     expect(screen.getByText(/This was watched more than a season your keep rule/i)).toBeVisible();
-    expect(screen.getByText(/Spare it to keep it, or Reap it to remove it/i)).toBeInTheDocument();
+    expect(screen.getByText(/left the call to you/i)).toBeInTheDocument();
   });
 
   it("offers a reap on a conflict Reaper could not settle, and the engine now honors it", () => {
@@ -1082,7 +1193,7 @@ describe("the verdict headline", () => {
     // it is the half that used to be a safety divergence, and a future change that makes a
     // block hold the reap again must fail a test rather than quietly re-break the panel.
     show(conflictDetail(REFUSED_CONFLICT, false));
-    expect(screen.getByText(/Spare it to keep it, or Reap it to remove it/i)).toBeInTheDocument();
+    expect(screen.getByText(/left the call to you/i)).toBeInTheDocument();
   });
 
   it("never asserts a comparison its own reason block denies (#86)", () => {
@@ -1110,7 +1221,7 @@ describe("the verdict headline", () => {
     // while telling every one of them "Reaper couldn't check who watched these seasons".
     show(conflictDetail(SETTLEABLE_CONFLICT, null));
     expect(screen.getByText("Needs a look")).toBeInTheDocument();
-    expect(screen.getByText(/Reaper couldn't settle this one on its own/i)).toBeVisible();
+    expect(screen.getByText(/Reaper couldn't settle this one/i)).toBeVisible();
     expect(screen.queryByText(/This was watched more than/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/couldn't check who watched these seasons/i)).not.toBeInTheDocument();
   });
@@ -1138,20 +1249,27 @@ describe("the verdict headline", () => {
   it("keeps the plain 'Limbo' note for an ordinary abstain", () => {
     show(detail(WORKED_ROWS, { verdict: "abstain" }));
     expect(screen.getByText("Limbo")).toBeInTheDocument();
-    expect(screen.getByText(/not confident enough to judge/i)).toBeInTheDocument();
+    expect(screen.getByText(/not sure enough to judge/i)).toBeInTheDocument();
   });
 
   it("does not read a mid-binge check that never ran as a conflict (#486)", () => {
     // A show Plex never resolved: no season carries a rating key, so the guard answered
-    // "is anyone part-way through this" having asked nobody. Both details are verbatim
+    // "is anyone part-way through this" having asked nobody. Both rows carry the SAME
+    // composed cause on purpose, which is what makes them one box (rule 119): verbatim
     // producer output -- `season_evidence.guard_result`'s unestablishable arm and
-    // `engine.gates._blocked` -- and they carry the SAME cause on purpose, which is what
-    // makes them one box (rule 119).
+    // `engine.gates._blocked` -- each wrapped as the typed `blocked` shape a fresh scan
+    // writes today.
     //
     // Without the typed flag this row satisfied `keepRuleConflict`, and the headline offered
     // to settle a comparison nobody attempted: "Reaper couldn't check who watched these
     // seasons, so it left the call to you."
-    const cause = "Plex has not matched this season";
+    const blocked = (check: string) => ({
+      k: "blocked",
+      p: {
+        check: { k: `check.${check}` },
+        cause: { k: "cause.plex_unmatched", p: { mediaType: "season" } },
+      },
+    });
     show(
       detail(WORKED_ROWS, {
         verdict: "abstain",
@@ -1160,13 +1278,13 @@ describe("the verdict headline", () => {
           protections_unknown: [
             {
               gate: "season_progression",
-              detail: `could not check who is part-way through it: ${cause}`,
+              detail_key: blocked("season_progress"),
               defers_to_owner: false,
               unestablishable: true,
             },
             {
               gate: "min_dormancy",
-              detail: `could not check when it was last watched: ${cause}`,
+              detail_key: blocked("last_watched"),
               defers_to_owner: false,
               unestablishable: false,
             },
@@ -1227,7 +1345,15 @@ describe("the merged-listing count", () => {
     detail(WORKED_ROWS, {
       explanation: {
         ...detail(WORKED_ROWS).explanation,
-        match: { status: "matched", detail: null, rating_key: 900, ...match },
+        match: {
+          status: "matched",
+          detail: null,
+          rating_key: 900,
+          by: null,
+          merged_rating_keys: null,
+          candidate_rating_keys: null,
+          ...match,
+        },
       },
     });
 
@@ -1467,7 +1593,7 @@ describe("the watch-record escape", () => {
     await waitFor(() => expect(press).toBeEnabled());
     await user.click(press);
 
-    expect(await screen.findByText("That didn't save. Try again.")).toBeVisible();
+    expect(await screen.findByText("Couldn't save that. Try again.")).toBeVisible();
     // The warning and its control stay put: the record is still there to discard.
     expect(screen.getByRole("button", { name: PRESS })).toBeEnabled();
   });
@@ -1563,7 +1689,7 @@ describe("what a signal row was measured against", () => {
     id: "low_rating",
     contribution: 0,
     weight: 10,
-    detail: "IMDb 6.4",
+    detail_key: legacy("IMDb 6.4"),
     state: "argues_keep",
     floor: 0,
     saturate_at: 60,
@@ -1598,7 +1724,9 @@ describe("what a signal row was measured against", () => {
     // A row frozen before the ramp shipped, and a yes/no rule of your own, both arrive as
     // null and both mean the same thing: there is no line to state. Inventing one would put
     // a ramp on a rule that provably has none.
-    show(detail([signal({ id: "low_rating", detail: "IMDb 6.4", state: "argues_keep" })]));
+    show(
+      detail([signal({ id: "low_rating", detail_key: legacy("IMDb 6.4"), state: "argues_keep" })]),
+    );
 
     expect(screen.queryByRole("button", { name: /IMDb 6.4/ })).toBeNull();
     expect(screen.queryByText(/Nothing at IMDb/)).toBeNull();
@@ -1611,7 +1739,7 @@ describe("what a signal row was measured against", () => {
       detail([
         signal({
           id: "low_rating",
-          detail: "could not read the IMDb rating",
+          detail_key: legacy("could not read the IMDb rating"),
           evaluated: false,
           state: "unreadable",
           floor: 0,
@@ -1720,5 +1848,118 @@ describe("the synopsis disclosure", () => {
     // what the operator sees: without it the open state is an inline span and the control
     // lands after the last word, hundreds of pixels from where it had just been.
     expect(CSS).toMatch(/\.why-synopsis:not\(\.clamp-2\)\s*\{[^}]*display:\s*block/);
+  });
+});
+
+describe("a fresh explanation composes from the catalog", () => {
+  // Rows written since the typed-reason conversion (docs/history/I18N_PLAN.md §5) carry
+  // `detail_key` and no prose; the panel composes each sentence via `why.ts`. The legacy
+  // fixtures across the rest of this file are the other half of the contract: a stored
+  // pre-conversion snapshot still renders its prose verbatim.
+  it("composes gate, custom-rule and signal rows from their keys", () => {
+    show(
+      detail([], {
+        explanation: {
+          score: 55,
+          base_score: 55,
+          keep_discount: 0,
+          threshold: 70,
+          coverage: 10_000,
+          coverage_floor_bp: null,
+          watch_blind: null,
+          signals: [
+            signal({
+              id: "unwatched",
+              contribution: 55,
+              weight: 60,
+              detail_key: { k: "signal_unwatched", p: { days: 830 } },
+              state: "adds",
+            }),
+          ],
+          protections_fired: [{ gate: "streaming_now", detail_key: { k: "streaming_now" } }],
+          protections_checked: [
+            {
+              gate: "custom",
+              detail_key: {
+                k: "custom_checked",
+                p: {
+                  cond: {
+                    k: "cond_text.not_includes",
+                    p: { field: "genre", wanted: "Documentary" },
+                  },
+                },
+              },
+            },
+          ],
+          protections_unknown: [],
+          match: null,
+        },
+      }),
+    );
+
+    expect(screen.getByText("someone is watching it right now")).toBeInTheDocument();
+    expect(screen.getByText("not watched in 2 years, 3 months")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Your rule didn't match: Genre does not include Documentary/),
+    ).toBeInTheDocument();
+  });
+
+  it("groups fresh blocked rows by their composed cause, once", () => {
+    const blocked = (check: string) => ({
+      gate: "min_dormancy",
+      detail_key: {
+        k: "blocked",
+        p: {
+          check: { k: `check.${check}` },
+          cause: { k: "cause.plex_unmatched", p: { mediaType: "movie" } },
+        },
+      },
+    });
+    show(
+      detail([], {
+        explanation: {
+          score: 55,
+          base_score: 55,
+          keep_discount: 0,
+          threshold: 70,
+          coverage: 10_000,
+          coverage_floor_bp: null,
+          watch_blind: null,
+          signals: [],
+          protections_fired: [],
+          protections_checked: [],
+          protections_unknown: [
+            blocked("last_watched"),
+            blocked("watch_horizon"),
+            {
+              gate: "season_progression",
+              detail_key: {
+                k: "conflict.counted",
+                p: {
+                  pruned_season: 3,
+                  kept_season: 4,
+                  pruned_watchers: 2,
+                  because: { k: "because.airing" },
+                },
+              },
+              defers_to_owner: true,
+            },
+          ],
+          match: null,
+        },
+      }),
+    );
+
+    // One cause heading for the two blocked checks, both checks listed under it.
+    expect(screen.getAllByText("This title couldn't be found in Plex.")).toHaveLength(1);
+    expect(
+      screen.getByText(
+        /Couldn't check: when it was last watched and how far back its history goes\./,
+      ),
+    ).toBeInTheDocument();
+    // The deliberate conflict keeps its own composed row.
+    expect(
+      screen.getByText(/2 people watched Season 3, more than watched Season 4/),
+    ).toBeInTheDocument();
   });
 });

@@ -33,13 +33,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
-from reaper.clock import humanize_days, humanize_window
+from reaper.engine import identity
 from reaper.engine.observation import Absent, Known, Observation, Unknown
+from reaper.engine.reason import Reason
 from reaper.ratings import (
     Rating,
     RatingSource,
     is_percentage_source,
-    source_label,
 )
 
 GateOutcome = Literal["PROTECT", "ABSTAIN"]
@@ -95,9 +95,10 @@ class GateId(enum.StrEnum):
     all, whatever else it scores. See MinDormancyGate."""
 
     REWATCH_ODDS = "rewatch_odds"
-    """Opt-in, movies only: keep anything whose dormancy cohort gets watched again at or
-    above the operator's percentage. See RewatchOddsGate; a TV body never carries the row
-    (``PolicyBody._rewatch_odds_row``)."""
+    """Opt-in, both lanes: keep anything whose dormancy cohort gets watched again at or above
+    the operator's percentage. See RewatchOddsGate; every body carries the row, movie and TV
+    alike (``PolicyBody._rewatch_odds_row``), off each policy's own frozen cohort -- a movie's
+    own, a season's the show's."""
 
     RETURNED = "returned"
     """Opt-in, both lanes: hold a title that left the library and came back, because a return
@@ -144,15 +145,16 @@ POLICY_AUTHORABLE_GATES: frozenset[GateId] = frozenset(
 class GateResult:
     """One gate's verdict, and the numbers behind it.
 
-    ``detail`` is not a log line -- it is what the user reads. Every gate that was
-    checked and did *not* fire still reports its actual figures, because
-    "protections checked that did not fire, with the numbers" is the block that
-    makes a deletion trustworthy.
+    ``detail`` is not a log line -- it is what the user reads, as a typed
+    :class:`~reaper.engine.reason.Reason` the frontend composes from the catalog
+    (docs/history/I18N_PLAN.md §5). Every gate that was checked and did *not* fire still
+    reports its actual figures, because "protections checked that did not fire,
+    with the numbers" is the block that makes a deletion trustworthy.
     """
 
     gate: GateId
     outcome: GateOutcome
-    detail: str
+    detail: Reason
 
     blocked: bool = False
     """True when the gate could not be evaluated at all (an ``Unknown`` input).
@@ -527,16 +529,126 @@ class GateConfig:
 # ---------------------------------------------------------------------------
 
 
-def _blocked(gate: GateId, observation: Observation[object], what: str) -> GateResult | None:
+def blocked_reason(check: Reason | str, cause: Reason | str) -> Reason:
+    """The one "could not check {check}: {cause}" shape, as a typed reason.
+
+    Both slots take a bare id where there are no params to carry -- a check with a window
+    takes a full ``Reason``. A bare check id resolves under the catalog's ``why.check.*``
+    namespace and a bare cause id under ``why.cause.*``; the cause is usually an
+    ``Unknown.reason`` id, and a legacy sentence thawed off an old snapshot rides through
+    the same slot and renders raw.
+    """
+    return Reason(
+        "blocked",
+        {
+            "check": Reason(f"check.{check}") if isinstance(check, str) else check,
+            "cause": Reason(f"cause.{cause}") if isinstance(cause, str) else cause,
+        },
+    )
+
+
+def _blocked(
+    gate: GateId, observation: Observation[object], what: Reason | str
+) -> GateResult | None:
     """Fail closed on an Unknown input."""
     if isinstance(observation, Unknown):
         return GateResult(
             gate=gate,
             outcome=ABSTAIN,
             blocked=True,
-            detail=f"could not check {what}: {observation.reason}",
+            detail=blocked_reason(what, observation.reason),
         )
     return None
+
+
+#: A movie or a season/show -- the same two-way split ``why.panel.rewatch.thin`` and
+#: ``why.panel.keptNotice.conflicted`` already carry as an ICU ``mediaType`` select in the
+#: catalog. Named here because the reasons below are the shared producer for both lanes.
+MediaKind = Literal["movie", "season"]
+
+#: Why an item/season/show carries no Plex rating key, one entry per non-matched resolver
+#: outcome -- shared by the movie and season lanes (rule 72: this used to be two near-copies,
+#: ``snapshot._NO_KEY_REASONS`` and ``season_evidence._NO_KEY_REASONS``, that differed only in
+#: which literal each ``MatchStatus`` mapped to). A KEY into the catalog's ``why.cause.*``
+#: entries, which the ICU ``mediaType`` select turns into "this title"/"this season" wording;
+#: ``test_review_chips.py::TestTheMatchStatusVocabulary`` fails on one with no entry there.
+NO_KEY_REASON_IDS: dict[identity.MatchStatus | None, str] = {
+    identity.MatchStatus.UNMATCHED: "plex_unmatched",
+    identity.MatchStatus.AMBIGUOUS: "plex_ambiguous",
+    identity.MatchStatus.CONFLICTED: "radarr_plex_disagree",
+}
+
+
+def no_key_reason_id(match_status: identity.MatchStatus | None) -> str:
+    """The bare catalog id for why an item has no Plex rating key, with no media wording
+    attached. ``None`` (a record from before the field shipped) takes the unmatched wording,
+    which it has always read as.
+
+    This is the shape ``season_evidence``'s ``SeasonPruneInput.progress_unknown_reason`` field
+    stores: a plain id, because that field's own codec (``season_evidence._KEYS``) freezes it
+    as a bare string, and the mid-binge guard (``season_evidence.guard_result``) is the one
+    place season context attaches the ``mediaType`` param, since every caller of *this*
+    function is season-only anyway.
+    """
+    return NO_KEY_REASON_IDS.get(match_status, "plex_unmatched")
+
+
+def no_key_reason(match_status: identity.MatchStatus | None, media_type: MediaKind) -> Reason:
+    """The typed cause for a missing Plex rating key: the shared id above, plus which wording
+    the panel's ``mediaType`` select should pick. What ``Unknown(reason=...)`` carries directly
+    on the movie and season fact builders (rule 72)."""
+    return Reason(f"cause.{no_key_reason_id(match_status)}", {"mediaType": media_type})
+
+
+#: Why dormancy (or an all-time span) could not be measured: matched to Plex, but no arrival
+#: date and no play, so there is no instant to measure from. Shared by the movie and season
+#: lanes (rule 72: this used to be ``snapshot.NO_ADDED_AT_REASON``/``season_scan.NO_ADDED_AT_
+#: REASON``, two constants naming the same concept two different ways). A KEY into the
+#: catalog's ``why.cause.*`` entries, named here so the drift test covers it (rule 144).
+NO_ADDED_AT_REASON = "no_added_at"
+
+#: Why a file/season's size is unreadable: the *arr reported no size on disk. Shared the same
+#: way as the reason above (rule 72: was ``snapshot.NO_SIZE_REASON``/``season_scan.NO_SIZE_
+#: REASON``). Reaches the panel through a keep rule on "Size on disk".
+NO_SIZE_REASON = "no_file_size"
+
+
+def no_added_at_reason(media_type: MediaKind) -> Reason:
+    """The typed cause for a missing arrival date, media-selected the same way as
+    :func:`no_key_reason`."""
+    return Reason(f"cause.{NO_ADDED_AT_REASON}", {"mediaType": media_type})
+
+
+def no_size_reason(media_type: MediaKind) -> Reason:
+    """The typed cause for a missing on-disk size, media-selected the same way as
+    :func:`no_key_reason`."""
+    return Reason(f"cause.{NO_SIZE_REASON}", {"mediaType": media_type})
+
+
+def _rating_value(rating: Rating) -> Reason:
+    """A rating the item really has, as the value clause the panel prints.
+
+    The structured twin of ``ratings.Rating.describe_for_user`` -- percentage sources read
+    as a percentage, the 0-10 sources on their own scale with the vote count that makes the
+    number mean something -- and the catalog holds the words.
+    """
+    if is_percentage_source(rating.source):
+        return Reason(
+            "rating_value_pct",
+            {"source": rating.source.value, "pct": round(rating.value * 10)},
+        )
+    if rating.votes is None:
+        return Reason(
+            "rating_value", {"source": rating.source.value, "value": round(rating.value, 1)}
+        )
+    return Reason(
+        "rating_value_votes",
+        {
+            "source": rating.source.value,
+            "value": round(rating.value, 1),
+            "votes": rating.votes,
+        },
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -554,27 +666,25 @@ class RatingRule:
     floor: int
     min_votes: int = 0
 
-    def threshold_text(self) -> str:
-        """Just the number, in the source's own units: ``7.5`` or ``75%``."""
-        return f"{self.floor}%" if is_percentage_source(self.source) else f"{self.floor / 10:.1f}"
-
-    def describe_bar(self) -> str:
+    def describe_bar(self) -> Reason:
         """The full bar, for the why-panel and the checked line: the number, the source, and
-        the vote floor where the source has one (``7.5 on IMDb from 1,000+ votes``)."""
+        the vote floor where the source has one (``7.5 on IMDb from 1,000+ votes``).
+
+        The floor's catalog entries (``why.rating_bar*``) keep their own vote clause rather
+        than sharing the value clause's: the why-panel prints a bar and a real count one
+        line apart, and sharing the wording made "from 1,000 votes" a floor in one sentence
+        and a measurement in the next (#623). The "+" is the whole difference.
+        `PolicyEditor.tsx`'s `describeBar` renders this same clause for the same rule; the
+        two are pinned together in `test_the_bar_names_its_vote_floor_as_a_floor`.
+        """
         if is_percentage_source(self.source):
-            return f"{source_label(self.source)} {self.floor}%"
-        # The floor gets its own clause rather than `ratings.describe_votes`, which renders
-        # a count a title really has. The why-panel prints both one line apart -- the bar
-        # under "you keep", the item's own count under "too few to trust" -- so sharing the
-        # wording made "from 1,000 votes" a floor in one sentence and a measurement in the
-        # next (#623). The "+" is the whole difference, and it is why this cannot call the
-        # helper and append one: at a floor of 1 the clause reads "from 1+ votes", where a
-        # real count of 1 correctly reads "from 1 vote".
-        # `PolicyEditor.tsx`'s `describeBar` renders this same clause for the same rule and
-        # already spells it with the "+"; the two are pinned together in
-        # `test_the_bar_names_its_vote_floor_as_a_floor`.
-        floor = f" from {self.min_votes:,}+ votes" if self.min_votes > 0 else ""
-        return f"{self.threshold_text()} on {source_label(self.source)}{floor}"
+            return Reason("rating_bar_pct", {"source": self.source.value, "pct": self.floor})
+        if self.min_votes > 0:
+            return Reason(
+                "rating_bar_votes",
+                {"source": self.source.value, "floor": self.floor / 10, "votes": self.min_votes},
+            )
+        return Reason("rating_bar", {"source": self.source.value, "floor": self.floor / 10})
 
 
 @dataclass(frozen=True, slots=True)
@@ -600,20 +710,33 @@ class RatingFloorGate:
     match: Literal["any", "all"] = "any"
     id: GateId = GateId.RATING_FLOOR
 
-    def _miss_phrase(self, rule: RatingRule, rating: Rating | None) -> str:
+    def _miss_reason(self, rule: RatingRule, rating: Rating | None) -> Reason:
         """Why one bar was not cleared, with the item's own numbers where we have them --
         the "checked and did not fire, with the numbers" explainability the panel needs."""
         if rating is None:
-            return f"no rating on {source_label(rule.source)} (you keep {rule.describe_bar()})"
+            return Reason(
+                "rating_miss_none", {"source": rule.source.value, "bar": rule.describe_bar()}
+            )
         # The same predicate `evaluate` decides the bar on, so the sentence cannot claim a
         # vote floor was missed on a count `Rating.meets` counted as enough (rule 104).
         if rating.short_of_vote_floor(rule.min_votes):
-            return f"{rating.describe_for_user()}, too few to trust (you need {rule.min_votes:,})"
-        return f"{rating.describe_for_user()}, below the {rule.threshold_text()} you keep"
+            return Reason(
+                "rating_miss_votes",
+                {"value": _rating_value(rating), "need": rule.min_votes},
+            )
+        if is_percentage_source(rule.source):
+            return Reason(
+                "rating_miss_below_pct",
+                {"value": _rating_value(rating), "floor_pct": rule.floor},
+            )
+        return Reason(
+            "rating_miss_below",
+            {"value": _rating_value(rating), "floor": rule.floor / 10},
+        )
 
     def evaluate(self, facts: Facts) -> GateResult:
         if not self.rules:
-            return GateResult(self.id, ABSTAIN, detail="No rating is set that would keep a title.")
+            return GateResult(self.id, ABSTAIN, detail=Reason("rating_none_set"))
 
         # Fail closed if a source we keep on could not be read. IMDb is the one source that
         # carries a three-state observation in Facts (imdb_rating_tenths / imdb_votes); the
@@ -622,44 +745,41 @@ class RatingFloorGate:
         # be read, blocking keeps the file rather than silently dropping the protection it
         # was carrying -- the same fail-closed the single-source gate had.
         if any(r.source is RatingSource.IMDB for r in self.rules):
-            if blocked := _blocked(self.id, facts.imdb_rating_tenths, "the IMDb rating"):
+            if blocked := _blocked(self.id, facts.imdb_rating_tenths, "imdb_rating"):
                 return blocked
-            if blocked := _blocked(self.id, facts.imdb_votes, "the IMDb vote count"):
+            if blocked := _blocked(self.id, facts.imdb_votes, "imdb_votes"):
                 return blocked
 
         by_source = {r.source: r for r in facts.ratings}
-        cleared: list[str] = []
-        missed: list[str] = []
+        cleared: list[Reason] = []
+        missed: list[Reason] = []
         for rule in self.rules:
             rating = by_source.get(rule.source)
             if rating is not None and rating.meets(rule.floor / 10, min_votes=rule.min_votes):
-                cleared.append(rating.describe_for_user())
+                cleared.append(_rating_value(rating))
             else:
-                missed.append(self._miss_phrase(rule, rating))
+                missed.append(self._miss_reason(rule, rating))
 
         # ANY: one cleared bar keeps it. ALL: every bar must clear, and a source we could
         # not read counts as a miss (there is nothing to clear), so ALL fails closed toward
         # NOT protecting -- the safe direction for a keep, which can only ever spare a file.
         protects = bool(cleared) if self.match == "any" else (not missed and bool(self.rules))
         if protects:
-            # No trailing period: a fired protection reads as a lowercase fragment in the
-            # "Protections that fired" list, alongside "someone is watching it right now"
-            # and "on your keep list, never reaped". The ABSTAIN details below are full
-            # sentences by the same convention, so they keep theirs.
-            return GateResult(self.id, PROTECT, detail="well rated: " + "; ".join(cleared))
+            return GateResult(
+                self.id, PROTECT, detail=Reason("rating_cleared", {"clauses": tuple(cleared)})
+            )
         if cleared:
             return GateResult(
                 self.id,
                 ABSTAIN,
-                detail=(
-                    "cleared "
-                    + "; ".join(cleared)
-                    + ", but not every bar you asked for: "
-                    + "; ".join(missed)
-                    + "."
+                detail=Reason(
+                    "rating_cleared_some",
+                    {"cleared": tuple(cleared), "missed": tuple(missed)},
                 ),
             )
-        return GateResult(self.id, ABSTAIN, detail="; ".join(missed) + ".")
+        return GateResult(
+            self.id, ABSTAIN, detail=Reason("rating_missed", {"clauses": tuple(missed)})
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -674,12 +794,12 @@ class StreamingNowGate:
     id: GateId = GateId.STREAMING_NOW
 
     def evaluate(self, facts: Facts) -> GateResult:
-        if blocked := _blocked(self.id, facts.is_streaming_now, "active streams"):
+        if blocked := _blocked(self.id, facts.is_streaming_now, "active_streams"):
             return blocked
         streaming = facts.is_streaming_now
         if isinstance(streaming, Known) and streaming.value:
-            return GateResult(self.id, PROTECT, detail="someone is watching it right now")
-        return GateResult(self.id, ABSTAIN, detail="Nobody is watching it right now.")
+            return GateResult(self.id, PROTECT, detail=Reason("streaming_now"))
+        return GateResult(self.id, ABSTAIN, detail=Reason("streaming_nobody"))
 
 
 #: How much shorter than the span it must cover a reach must be before the copy names it
@@ -693,8 +813,8 @@ class StreamingNowGate:
 _REACH_NAMEABLE_MARGIN_DAYS = 30
 
 
-def history_shortfall(reach: Observation[float], needed: float) -> str | None:
-    """Why the watch mirror cannot cover ``needed`` days, in the operator's words.
+def history_shortfall(reach: Observation[float], needed: float) -> Reason | None:
+    """Why the watch mirror cannot cover ``needed`` days, as a typed reason.
 
     ``None`` when it does cover them -- the only case in which a count drawn from the
     mirror may be read as the answer rather than as a lower bound, because the plays a
@@ -707,16 +827,16 @@ def history_shortfall(reach: Observation[float], needed: float) -> str | None:
     in one lane and not the next is the bug it exists to prevent.
     """
     if not isinstance(reach, Known):
-        return "this scan did not record how far back your watch history goes"
+        return Reason("cause.reach_not_recorded")
     if reach.value >= needed:
         return None
     if reach.value <= needed - _REACH_NAMEABLE_MARGIN_DAYS:
-        return f"your watch history only goes back {humanize_days(reach.value)}"
-    return "your watch history does not go back that far"
+        return Reason("cause.history_reach_short", {"reach_days": reach.value})
+    return Reason("cause.history_not_that_far")
 
 
-def lifetime_shortfall(reach: Observation[float], age: Observation[float]) -> str | None:
-    """Why the mirror cannot support an ALL-TIME watcher count, in the operator's words.
+def lifetime_shortfall(reach: Observation[float], age: Observation[float]) -> Reason | None:
+    """Why the mirror cannot support an ALL-TIME watcher count, as a typed reason.
 
     ``None`` when it can. An all-time count is only an answer where the mirror reaches back
     to the day the item arrived, because every play it could ever have had happened after
@@ -736,7 +856,7 @@ def lifetime_shortfall(reach: Observation[float], age: Observation[float]) -> st
     how the first sweep of these readers missed it.
     """
     if not isinstance(age, Known):
-        return "this scan did not record when it was added"
+        return Reason("cause.added_at_not_recorded")
     return history_shortfall(reach, float(age.value))
 
 
@@ -790,7 +910,7 @@ class ServerPopularityGate:
     id: GateId = GateId.SERVER_POPULARITY
 
     def evaluate(self, facts: Facts) -> GateResult:
-        if blocked := _blocked(self.id, facts.distinct_watchers, "watch history"):
+        if blocked := _blocked(self.id, facts.distinct_watchers, "watch_history"):
             return blocked
         watchers = facts.distinct_watchers
         count = watchers.value if isinstance(watchers, Known) else 0
@@ -798,13 +918,11 @@ class ServerPopularityGate:
 
         window = self.config.window_days
 
-        window_text = humanize_window(window)
         if count >= floor:
-            people = "person" if count == 1 else "people"
             return GateResult(
                 self.id,
                 PROTECT,
-                detail=f"watched here: {count} {people} in the last {window_text}",
+                detail=Reason("popularity_watched", {"count": count, "window_days": window}),
             )
         # Everything below here says the protection did NOT fire, and that is only an
         # answer if the mirror actually saw the whole window. A history reaching back
@@ -828,26 +946,26 @@ class ServerPopularityGate:
                 # keeping it un-overrulable was what made a shallow Tautulli refuse
                 # reaps library-wide. It still forces ABSTAIN, which is its real job.
                 #
-                # The "could not check ..." prefix IS still load-bearing, for the two
-                # surfaces that read it: ``api.review._chip`` sends a detail starting
-                # with it to "Some checks couldn't run" instead of "left for you to
-                # decide", and ``WhyPanel`` splits it into check and cause. Reword it and a
-                # plumbing failure starts reading to the operator as their own decision.
-                detail=f"could not check who watched it in the last {window_text}: {short}",
+                # The ``blocked`` reason id IS still load-bearing, for the two surfaces
+                # that read it: ``api.review._chip`` sends it to "Some checks couldn't
+                # run" instead of "left for you to decide", and ``WhyPanel`` reads its
+                # check and cause slots. Re-id it and a plumbing failure starts reading
+                # to the operator as their own decision.
+                detail=blocked_reason(
+                    Reason("check.recent_watchers_window", {"window_days": window}), short
+                ),
             )
         if count == 0:
             return GateResult(
                 self.id,
                 ABSTAIN,
-                detail=f"Nobody here watched it in the last {window_text}.",
+                detail=Reason("popularity_nobody", {"window_days": window}),
             )
-        people = "person" if count == 1 else "people"
         return GateResult(
             self.id,
             ABSTAIN,
-            detail=(
-                f"Only {count} {people} watched it here in the last {window_text} "
-                f"(it takes {floor} to keep on that alone)."
+            detail=Reason(
+                "popularity_few", {"count": count, "window_days": window, "floor": floor}
             ),
         )
 
@@ -863,7 +981,7 @@ class ServerPopularityGate:
 
 @dataclass(frozen=True, slots=True)
 class MinDormancyGate:
-    """Nothing may be deleted until it has sat untouched for long enough.
+    """Nothing may be deleted until it has sat unwatched for long enough.
 
     A hard gate, not a weight, because a weight can be outvoted by other signals --
     and that is exactly how an early version of this engine ended up condemning films
@@ -892,7 +1010,7 @@ class MinDormancyGate:
     id: GateId = GateId.MIN_DORMANCY
 
     def evaluate(self, facts: Facts) -> GateResult:
-        blocked = _blocked(self.id, facts.days_observed_unwatched, "when it was last watched")
+        blocked = _blocked(self.id, facts.days_observed_unwatched, "last_watched")
         if blocked:
             return blocked
 
@@ -908,9 +1026,7 @@ class MinDormancyGate:
             # fire; it stays because ``Absent`` arriving later must keep the file, and the
             # ``isinstance`` is load-bearing regardless -- ``_blocked`` returns a result, not a
             # narrowed type, so ``.value`` below needs it.
-            return GateResult(
-                self.id, PROTECT, detail="no watch history, so its dormancy cannot be established"
-            )
+            return GateResult(self.id, PROTECT, detail=Reason("dormancy_unestablished"))
 
         if dormant.value < floor:
             # "Untouched", not "last watched": for a never-played item the clock runs from
@@ -919,18 +1035,12 @@ class MinDormancyGate:
             return GateResult(
                 self.id,
                 PROTECT,
-                detail=(
-                    f"untouched for just {humanize_days(dormant.value)}, "
-                    f"less than the {humanize_window(floor)} Reaper waits"
-                ),
+                detail=Reason("dormancy_under_floor", {"days": dormant.value, "floor_days": floor}),
             )
         return GateResult(
             self.id,
             ABSTAIN,
-            detail=(
-                f"Untouched for {humanize_days(dormant.value)}, past the "
-                f"{humanize_window(floor)} it has to sit unwatched first."
-            ),
+            detail=Reason("dormancy_past_floor", {"days": dormant.value, "floor_days": floor}),
         )
 
 
@@ -979,6 +1089,15 @@ class RewatchOddsGate:
 
     config: GateConfig
     id: GateId = GateId.REWATCH_ODDS
+    media_type: MediaKind = "movie"
+    """Which wording the panel's ICU ``mediaType`` select should pick for this gate's four
+    cohort Reasons -- "movie" or "season". ``Facts`` carries no media discriminator of its own
+    (unlike ``KeepConfig.media_type`` in ``engine/signals.py``, the rewatch keep's own twin), so
+    this is set once at construction (``scan_runner.build_gates``, off the policy's own
+    ``media_type``) rather than read per item. Defaulted to "movie" so a hand-built gate in a
+    test needs no opinion about it; rule 141 is answered by
+    ``test_signal_quality.py::TestTheRewatchOddsGate``, which sweeps both values across all four
+    Reasons."""
 
     def evaluate(self, facts: Facts) -> GateResult:
         n_obs = facts.rewatch_cohort_n
@@ -987,31 +1106,37 @@ class RewatchOddsGate:
             return GateResult(
                 self.id,
                 ABSTAIN,
-                detail="Not enough watch history to say how often titles like this get watched.",
+                detail=Reason("rewatch_no_history", {"mediaType": self.media_type}),
             )
         if not (isinstance(n_obs, Known) and isinstance(k_obs, Known)):
             # Hand-built Facts that never gathered a curve: both live lanes freeze a
             # cohort now, so a genuine Absent means nothing to compare (rule 93's Absent,
             # not a failed read).
-            return GateResult(self.id, ABSTAIN, detail="Does not apply here.")
+            return GateResult(self.id, ABSTAIN, detail=Reason("does_not_apply"))
         n = int(n_obs.value)
         k = int(k_obs.value)
         if n < REWATCH_BLOCK_FLOOR_N:
-            return GateResult(self.id, ABSTAIN, detail="Too few titles like this to say.")
+            return GateResult(
+                self.id,
+                ABSTAIN,
+                detail=Reason("rewatch_thin", {"mediaType": self.media_type}),
+            )
         floor = self.config.threshold
         if wilson_upper(k, n) * 100 >= floor:
             # Lowercase fragment: it renders in the "Protections that fired" list.
             return GateResult(
                 self.id,
                 PROTECT,
-                detail=f"titles like this keep getting watched: {k} of {n} within a year",
+                detail=Reason(
+                    "rewatch_watched_again", {"k": k, "n": n, "mediaType": self.media_type}
+                ),
             )
         return GateResult(
             self.id,
             ABSTAIN,
-            detail=(
-                f"Of {n} titles like this, {k} were watched again within a year, "
-                f"under the {floor}% you keep."
+            detail=Reason(
+                "rewatch_under_floor",
+                {"k": k, "n": n, "floor_pct": floor, "mediaType": self.media_type},
             ),
         )
 
@@ -1049,12 +1174,10 @@ class ReturnedGate:
             return GateResult(
                 self.id,
                 ABSTAIN,
-                detail="Reaper has nothing on record about this title leaving and coming back.",
+                detail=Reason("returned_no_record"),
             )
         if not isinstance(returned, Known):
-            return GateResult(
-                self.id, ABSTAIN, detail="It has not left your library and come back."
-            )
+            return GateResult(self.id, ABSTAIN, detail=Reason("returned_not_returned"))
 
         hold = self.config.threshold
         # Rounded UP, so a hold with any of itself left never reads as spent. Rule 31: the
@@ -1064,22 +1187,21 @@ class ReturnedGate:
             return GateResult(
                 self.id,
                 ABSTAIN,
-                detail=(
-                    f"It came back {humanize_days(returned.value)} ago, past the "
-                    f"{humanize_window(hold)} you keep a title that came back."
-                ),
+                detail=Reason("returned_past_hold", {"days": returned.value, "hold_days": hold}),
             )
         by_reaper = facts.returned_by_reaper
         removed_by_us = isinstance(by_reaper, Known) and by_reaper.value
         # The journal's one job. Same hold either way: splitting the length would mean a
-        # second knob for a difference nobody has measured. A lowercase fragment, because it
-        # renders in the "What spared it" list beside "someone is watching it right now".
-        lead = (
-            "you removed this before and it came back"
-            if removed_by_us
-            else "this left your library and came back"
+        # second knob for a difference nobody has measured. Two ids so the lead can say
+        # whether Reaper itself removed it; both carry the countdown the chip reads.
+        return GateResult(
+            self.id,
+            PROTECT,
+            detail=Reason(
+                "returned_came_back_ours" if removed_by_us else "returned_came_back",
+                {"days_left": left},
+            ),
         )
-        return GateResult(self.id, PROTECT, detail=f"{lead}, {humanize_days(left)} left")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1108,13 +1230,9 @@ class DataHorizonGate:
     id: GateId = GateId.DATA_HORIZON
 
     def evaluate(self, facts: Facts) -> GateResult:
-        if blocked := _blocked(self.id, facts.days_observed_unwatched, "the watch horizon"):
+        if blocked := _blocked(self.id, facts.days_observed_unwatched, "watch_horizon"):
             return blocked
-        return GateResult(
-            self.id,
-            ABSTAIN,
-            detail="Unwatched time is known, never counted further back than its history goes.",
-        )
+        return GateResult(self.id, ABSTAIN, detail=Reason("data_horizon_ok"))
 
 
 # An `UnmanagedGate` ("if no *arr owns it, Reaper cannot delete it") lived here, enabled by
@@ -1139,11 +1257,12 @@ class DataHorizonGate:
 # it is exactly what a re-wiring would need. Bringing the gate back means giving Reaper a scan
 # path that can find media NO *arr manages -- reading Plex directly rather than the *arrs --
 # so that the fact can be something other than True. Gate, builders and tests return together.
-# ``GateId.UNMANAGED`` survives so a stored explanation still decodes. Four surfaces read one
-# back, and all four stay for that reason: ``verdict.STRUCTURAL_GATES``, `api.review`' chip
-# phrasing, `WhyPanel.tsx`'s held-reap line, and `WhyPanel.tsx`'s ``CHECK_COPY`` entry for
-# "which *arr owns this", which was this gate's blocked branch and whose only producer was the
-# code deleted here.
+# ``GateId.UNMANAGED`` survives so a stored explanation still decodes. Three surfaces read one
+# back, and all three stay for that reason: ``verdict.STRUCTURAL_GATES``, `api.review`'s chip
+# phrasing, and `WhyPanel.tsx`'s held-reap line. A stored blocked detail naming "which *arr owns
+# this" (this gate's own blocked branch, whose only producer was the code deleted here) is a
+# legacy sentence now: no typed check id ever backed it, so it renders through the panel's
+# generic legacy fallback rather than through copy of its own (#899).
 
 
 # An `OthersWatchingGate` ("the requester ignored it, but other people did not") lived here.

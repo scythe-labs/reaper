@@ -47,6 +47,8 @@ from reaper.engine.gates import (
 )
 from reaper.engine.policy import PolicyBody, join_and
 from reaper.engine.policy_migrations import LIST_GATES_NOW_KEEP_RULES, PolicyRepair
+from reaper.engine.reason import Reason
+from reaper.refusal import Refusal
 from reaper.services import (
     app_settings,
     history_sync,
@@ -64,12 +66,32 @@ from reaper.text import fold
 log = structlog.get_logger(__name__)
 
 
-class ScanConfigError(RuntimeError):
-    """A scan cannot run because the required instances are not configured."""
+class ScanConfigError(Refusal):
+    """A scan cannot run because the required instances are not configured. A catalog code
+    plus raw params.
+
+    Defaults to 400 rather than ``Refusal``'s own 422: the one route that turns this into an
+    HTTP response (``api.lists``'s check-now) has always answered 400. The two background
+    catchers (``api.scan``, ``services.scheduler``) read ``str(exc)`` for a log line and
+    ``exc.as_reason()`` for the typed reason a poller reads.
+    """
+
+    def __init__(
+        self, code: str, /, *, status: int = 400, **params: str | int | float | bool
+    ) -> None:
+        super().__init__(code, status=status, **params)
 
 
-class ScanInProgressError(RuntimeError):
-    """A scan is already running, so this one was refused rather than run on top of it."""
+class ScanInProgressError(Refusal):
+    """A scan is already running, so this one was refused rather than run on top of it.
+
+    A ``Refusal`` subclass (phase 11a) rather than a bare ``RuntimeError``, so ``api.scan``
+    can turn it into a typed ``error_reason`` the same way it does ``ScanConfigError`` and
+    ``IntegrationError`` -- every catcher still matches it by class exactly as it did before.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("error.scan.already_running", status=409)
 
 
 # One scan at a time, enforced HERE so every caller shares it: the browser's scan button
@@ -167,6 +189,18 @@ def build_gates(policy: PolicyBody) -> list[Gate]:
                 RatingFloorGate(rules=policy.rating_rules(), match=policy.keep_rating_match)
             )
             continue
+        if setting.gate is GateId.REWATCH_ODDS:
+            # The one gate whose Reason needs to say "shows" on a TV policy. `Facts` carries
+            # no media discriminator of its own (`gates.no_key_reason`'s movie/season merge is
+            # attached per item, off the fact builder; this gate is built once per POLICY), so
+            # the wording is set here, off the same ``media_type`` the policy body carries.
+            gates.append(
+                RewatchOddsGate(
+                    GateConfig(threshold=setting.threshold, window_days=setting.window_days),
+                    media_type="season" if policy.media_type == "tv" else "movie",
+                )
+            )
+            continue
         gate_type = GATE_TYPES.get(setting.gate)
         if gate_type is None:
             # The two list gates reach this by a different route and need their own sentence.
@@ -189,17 +223,8 @@ def build_gates(policy: PolicyBody) -> list[Gate]:
                 # gate into an `on_list` rule naming it, which is the outcome this whole path
                 # exists to reach (rules 25, 144;
                 # `tests/test_api.py` drives both orders).
-                raise ScanConfigError(
-                    "A protection you set up is pointing at a list that is no longer there, so "
-                    "the scan stopped instead of leaving titles unprotected. Add the list back "
-                    "on Settings, Lists, then open Policy and save. Turning that protection off "
-                    "instead drops it for good."
-                )
-            raise ScanConfigError(
-                f'Policy enables the "{setting.gate.value}" protection, but Reaper has no '
-                "implementation for it. Refusing to scan rather than silently skipping a "
-                "protection you asked for."
-            )
+                raise ScanConfigError("error.scan.list_gate_missing_list")
+            raise ScanConfigError("error.scan.gate_unimplemented", gate=setting.gate.value)
         gates.append(
             gate_type(GateConfig(threshold=setting.threshold, window_days=setting.window_days))
         )
@@ -312,10 +337,7 @@ async def build_sources(
     tautulli_row = next((r for r in rows if r.kind is InstanceKind.TAUTULLI), None)
 
     if require_scan_sources and ((not radarr_rows and not sonarr_rows) or tautulli_row is None):
-        raise ScanConfigError(
-            "A scan needs a Tautulli instance plus at least one Radarr or Sonarr. "
-            "Add them in Settings first."
-        )
+        raise ScanConfigError("error.scan.missing_sources")
 
     # Each client carries its instance's own TLS setting (``verify_tls``, on by default):
     # the decrypted API key travels on these connections, so certificate verification is
@@ -614,9 +636,7 @@ async def run_scan(
     rather than aborting -- partial evidence must never look complete.
     """
     if not _claim_scan():
-        raise ScanInProgressError(
-            "A scan is already running. Wait for it to finish, then start another."
-        )
+        raise ScanInProgressError()
     try:
         return await _run_scan_locked(
             settings=settings,
@@ -662,10 +682,7 @@ async def _run_scan_locked(
         # Asserted rather than assumed: a scan without watch history judges dormancy against
         # nothing, and every score leans on dormancy.
         if tautulli is None:  # pragma: no cover - the guard in build_sources precedes it
-            raise ScanConfigError(
-                "A scan needs a Tautulli instance plus at least one Radarr or Sonarr. "
-                "Add them in Settings first."
-            )
+            raise ScanConfigError("error.scan.missing_sources")
 
         async with session_factory() as policy_session:
             active_movie, active_tv = await profiles.active_policies(policy_session)
@@ -771,12 +788,21 @@ async def _run_scan_locked(
         # Pull watch history into the local mirror BEFORE scoring reads it. Incremental
         # after the first time, but on a fresh install it is what populates the table at
         # all -- without it every item's dormancy is Unknown and the scan judges nothing.
-        emit(Progress("history", 0, 0, "syncing watch history"))
+        emit(Progress("history", 0, 0, Reason("history_sync")))
         history_started = time.monotonic()
         try:
             hist = await history_sync.sync(cache_engine, tautulli)
             history_ms = round((time.monotonic() - history_started) * 1000)
             log.info("scan.history_synced", rows=hist.rows, duration_ms=history_ms)
+            if hist.unservable:
+                # A play the source refused to return is missing evidence, in the condemn
+                # direction, so it degrades exactly as a sync that raised does (rule 28).
+                # The walk stepped over the row rather than raising so the rows after it
+                # still landed (`history_sync.MAX_UNSERVABLE_ROWS`).
+                pre_scan_degradations.append(
+                    f"Tautulli couldn't return {hist.unservable} of your plays, so they "
+                    "don't count and nothing may be deleted from this scan."
+                )
         except IntegrationError as exc:
             history_ms = round((time.monotonic() - history_started) * 1000)
             # The mirror is the primary condemning evidence: dormancy and watcher counts
@@ -801,7 +827,7 @@ async def _run_scan_locked(
 
         # Refresh the protection lists BEFORE scoring reads them, or every list the
         # operator defined is silently empty and protects nothing.
-        emit(Progress("lists", 0, 0, "refreshing protection lists"))
+        emit(Progress("lists", 0, 0, Reason("lists")))
 
         # Plex is optional (a movie-only deployment runs without it), but a *configured*
         # Plex that is briefly unreachable must degrade, not crash the whole scan the way an
@@ -924,14 +950,14 @@ async def _run_scan_locked(
         if snapshot.degraded:
             log.info("scan.shelves_skipped", snapshot=snapshot.id, reason="degraded")
         else:
-            emit(Progress("shelves", 0, 0, "updating shelves"))
+            emit(Progress("shelves", 0, 0, Reason("shelves")))
             after_scan_started = time.monotonic()
             await leaving_soon.after_scan(session_factory, settings, box)
             after_scan_ms = round((time.monotonic() - after_scan_started) * 1000)
 
         # Only now is the run truly done: bar to 100%, and the browser's next poll sees
         # `running` flip false right behind it.
-        emit(Progress("complete", snapshot.item_count, snapshot.item_count, str(snapshot.id)))
+        emit(Progress("complete", snapshot.item_count, snapshot.item_count, None))
 
         # The one line an operator reads to answer "how long did that take, and where did
         # the time go?" -- the TRUE end-to-end wall clock (including the shelf reconcile,

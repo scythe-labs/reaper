@@ -23,9 +23,12 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { useTranslation } from "react-i18next";
 
 import { api, type ListConfig, type ListConfigBody } from "../api";
 import { useBackCloseMirror, useBackGuard } from "../backnav";
+import { describeError } from "../errors";
+import i18next from "../i18n";
 import { usePlexLibraries } from "../usePlexLibraries";
 import { FilterMenu } from "./FilterMenu";
 import { ModalShell } from "./ModalShell";
@@ -47,32 +50,19 @@ const BLOCKED_ID = "list-modal-blocked";
 export const LIST_NAME_MAX = 100;
 
 /** What the operator is told each source is, in their words. */
-const SOURCE_NAMES: Record<Source, string> = {
-  plex_collection: "Plex collection",
-  plex_watchlist: "Plex watchlist",
-  arr_tag: "Sonarr and Radarr tags",
-  imdb: "IMDb list",
-};
-
-/** The shipped IMDb charts. The keys are the server's (`services.lists.IMDB_PRESETS`); no
- *  route serves them, so this is the one browser copy and it is checked by the tests that
- *  post each key. A stored preset this table does not know still renders, by its raw key. */
-const IMDB_PRESETS: readonly { key: string; label: string }[] = [
-  { key: "top250", label: "IMDb Top 250" },
-  { key: "popular", label: "IMDb Popular Movies" },
-];
-
-function presetLabel(key: string): string {
-  return IMDB_PRESETS.find((p) => p.key === key)?.label ?? key;
+function sourceName(source: Source): string {
+  return i18next.t("lists.sourceName", { source });
 }
 
-/** The any/all pair, there from the start so the form never has a blank where a control
- *  belongs. The shared `Segmented` in its flat variant: the mockup's chrome, one either-or
- *  control (rules 18, 41). */
-const MATCH_OPTIONS = [
-  ["any", "Any of these"],
-  ["all", "All of these"],
-] as const satisfies readonly (readonly ["any" | "all", string])[];
+/** The shipped IMDb charts' keys, the server's own spelling (`services.lists.IMDB_PRESETS`).
+ *  No route serves them, so this is the one browser copy and it is checked by the tests that
+ *  post each key. A stored preset this table does not know still renders, by its raw key
+ *  (`presetLabel`'s fallback). */
+const IMDB_PRESETS: readonly string[] = ["top250", "popular"];
+
+function presetLabel(key: string): string {
+  return i18next.t("lists.presetLabel", { key });
+}
 
 /** One card in the type picker. */
 function PickCard({
@@ -130,7 +120,16 @@ export function ListModal({
    *  Written by `useBackCloseMirror`, which is the only writer of any of these. */
   blockCloseRef?: RefObject<boolean> | undefined;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
+
+  // The any/all pair, there from the start so the form never has a blank where a control
+  // belongs. The shared `Segmented` in its flat variant: the mockup's chrome, one either-or
+  // control (rules 18, 41).
+  const MATCH_OPTIONS = [
+    ["any", t("lists.matchAny")],
+    ["all", t("lists.matchAll")],
+  ] as const satisfies readonly (readonly ["any" | "all", string])[];
 
   // Adding opens on the type picker; editing goes straight to the form, and the remove
   // confirmation is the form's own third view rather than a second modal.
@@ -180,7 +179,7 @@ export function ListModal({
     setPreset(null);
     // The watchlist form has nothing to set up, so the name is the one box -- give it a
     // starting value the operator can keep.
-    setName(next === "plex_watchlist" ? "My watchlist" : "");
+    setName(next === "plex_watchlist" ? t("lists.watchlistDefaultName") : "");
     setView("form");
   };
   const openPreset = (key: string) => {
@@ -297,28 +296,20 @@ export function ListModal({
   // is standing in or it is announced nowhere at all.
   const blocked = ((): { on: BlockedField; why: string } | null => {
     if (!name.trim()) {
-      return {
-        on: "name",
-        why: "Give the list a name, so you can pick it out on the Policy screen.",
-      };
+      return { on: "name", why: t("lists.blocked.name") };
     }
     if (source === "plex_collection") {
-      if (!library.trim()) return { on: "library", why: "Say which Plex library to look in." };
+      if (!library.trim()) return { on: "library", why: t("lists.blocked.library") };
       if (!collection.trim()) {
-        return { on: "collection", why: "Say which collection in that library to read." };
+        return { on: "collection", why: t("lists.blocked.collection") };
       }
       return null;
     }
     if (source === "arr_tag") {
-      return tags.length === 0
-        ? { on: "tags", why: "Add at least one tag, spelled as it appears in Sonarr or Radarr." }
-        : null;
+      return tags.length === 0 ? { on: "tags", why: t("lists.blocked.tags") } : null;
     }
     if (source === "imdb" && !preset && !imdbId.trim()) {
-      return {
-        on: "imdb",
-        why: "Paste the list's id or URL. An IMDb list id looks like ls000000000.",
-      };
+      return { on: "imdb", why: t("lists.blocked.imdb") };
     }
     return null;
   })();
@@ -345,23 +336,23 @@ export function ListModal({
 
   const title =
     view === "picker"
-      ? "Add a list"
+      ? t("lists.addList")
       : view === "confirm"
-        ? `Remove ${editing?.name}?`
+        ? t("common.removeNamedQuestion", { name: editing?.name })
         : editing
-          ? `Edit ${editing.name}`
-          : `Add a list: ${SOURCE_NAMES[source]}`;
+          ? t("common.editNamed", { name: editing.name })
+          : t("lists.modal.addTypedTitle", { sourceName: sourceName(source) });
 
   return (
     <ModalShell title={title} onClose={onClose} canClose={canClose} className="service-modal">
       {view === "picker" && (
         <div className="service-form">
           <div className="pick-group">
-            <h3>Plex</h3>
+            <h3>{t("common.brand.plex")}</h3>
             <div className="pick-grid">
               <PickCard
-                name="Collection"
-                blurb="A collection you curate in the Plex app. Add a title from your phone and it's covered."
+                name={t("lists.picker.collectionName")}
+                blurb={t("lists.picker.collectionBlurb")}
               >
                 <div className="acts">
                   {/* Each card's Add is named for its card: three buttons reading "Add" are
@@ -369,64 +360,61 @@ export function ListModal({
                   <button
                     type="button"
                     className="ghost sm"
-                    aria-label="Add a Plex collection"
+                    aria-label={t("lists.picker.addPlexCollectionAria")}
                     onClick={() => openForm("plex_collection")}
                   >
-                    Add
+                    {t("common.add")}
                   </button>
                 </div>
               </PickCard>
               <PickCard
-                name="Watchlist"
+                name={t("lists.picker.watchlistName")}
                 // No second sentence about another user's watchlist: there is no way to sign
                 // Reaper into a second Plex account, so naming one advertised a route that
                 // does not exist (rule 25).
-                blurb="The watchlist of the Plex account Reaper is signed in with."
+                blurb={t("lists.plexWatchlistDescription")}
               >
                 <div className="acts">
                   <button
                     type="button"
                     className="ghost sm"
-                    aria-label="Add a Plex watchlist"
+                    aria-label={t("lists.picker.addPlexWatchlistAria")}
                     onClick={() => openForm("plex_watchlist")}
                   >
-                    Add
+                    {t("common.add")}
                   </button>
                 </div>
               </PickCard>
             </div>
           </div>
           <div className="pick-group">
-            <h3>Sonarr and Radarr</h3>
+            <h3>{t("common.brand.sonarrAndRadarr")}</h3>
             <div className="pick-grid">
-              <PickCard
-                name="Tags"
-                blurb="Titles carrying tags you pick, read from every connected server."
-              >
+              <PickCard name={t("lists.picker.tagsName")} blurb={t("lists.picker.tagsBlurb")}>
                 <div className="acts">
                   <button
                     type="button"
                     className="ghost sm"
-                    aria-label="Add a tag list"
+                    aria-label={t("lists.picker.addTagListAria")}
                     onClick={() => openForm("arr_tag")}
                   >
-                    Add
+                    {t("common.add")}
                   </button>
                 </div>
               </PickCard>
             </div>
           </div>
           <div className="pick-group">
-            <h3>IMDb</h3>
+            <h3>{t("common.brand.imdb")}</h3>
             <div className="pick-grid">
               <PickCard
-                name="IMDb list"
-                blurb="A public IMDb list or chart, refreshed on its own."
+                name={t("lists.picker.imdbListName")}
+                blurb={t("lists.picker.imdbBlurb")}
                 cardRef={presetsRef}
               >
                 <div className="acts">
                   <button type="button" className="ghost sm" onClick={() => openForm("imdb")}>
-                    Custom
+                    {t("lists.picker.custom")}
                   </button>
                   {/* The menu is anchored on this wrapper, so it aligns to the button that
                       opens it rather than to the whole row (rule 138). */}
@@ -436,23 +424,27 @@ export function ListModal({
                     <button
                       type="button"
                       className="ghost sm"
-                      aria-label="Presets"
+                      aria-label={t("lists.picker.presetsLabel")}
                       aria-expanded={presetsOpen}
                       aria-controls={presetsOpen ? "imdb-preset-menu" : undefined}
                       onClick={() => setPresetsOpen((v) => !v)}
                     >
-                      Presets <span aria-hidden="true">▾</span>
+                      {t("lists.picker.presetsLabel")} <span aria-hidden="true">▾</span>
                     </button>
                     {presetsOpen && (
-                      <FilterMenu id="imdb-preset-menu" label="Presets" anchorClass="preset-anchor">
-                        {IMDB_PRESETS.map((p) => (
-                          <li key={p.key}>
+                      <FilterMenu
+                        id="imdb-preset-menu"
+                        label={t("lists.picker.presetsLabel")}
+                        anchorClass="preset-anchor"
+                      >
+                        {IMDB_PRESETS.map((key) => (
+                          <li key={key}>
                             <button
                               type="button"
                               className="filter-mi"
-                              onClick={() => openPreset(p.key)}
+                              onClick={() => openPreset(key)}
                             >
-                              {p.label}
+                              {presetLabel(key)}
                             </button>
                           </li>
                         ))}
@@ -466,7 +458,7 @@ export function ListModal({
           <div className="add-actions">
             <span className="flex-spacer" />
             <button type="button" className="ghost" onClick={onClose}>
-              Cancel
+              {t("common.cancel")}
             </button>
           </div>
         </div>
@@ -482,11 +474,11 @@ export function ListModal({
           }}
         >
           <label className="field-sm">
-            <span className="field-label">Name</span>
+            <span className="field-label">{t("lists.field.name")}</span>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Never Reap"
+              placeholder={t("lists.exampleNeverReap")}
               autoFocus={!editing}
               // The same 100 the schema and `_clean_name` bound, so the operator meets the
               // limit as a box that stops taking characters rather than as Pydantic's
@@ -505,23 +497,22 @@ export function ListModal({
             // membership is keyed on a slug carrying the source, so changing it here would
             // leave the old list enabled and still protecting.
             <p className="help">
-              Where it comes from: {SOURCE_NAMES[editing.source]}. To point a list somewhere else,
-              remove it and add the one you want.
+              {t("lists.help.sourceLocked", { sourceName: sourceName(editing.source) })}
             </p>
           )}
 
           {source === "plex_collection" && (
             <>
               <label className="field-sm">
-                <span className="field-label">Plex library</span>
+                <span className="field-label">{t("lists.field.plexLibrary")}</span>
                 {canPickLibrary ? (
                   <select
-                    aria-label="Plex library"
+                    aria-label={t("lists.field.plexLibrary")}
                     value={library}
                     onChange={(e) => setLibrary(e.target.value)}
                     aria-describedby={describedBy("library")}
                   >
-                    <option value="">Pick a library…</option>
+                    <option value="">{t("lists.pickLibraryOption")}</option>
                     {libraryOptions.map((libraryTitle) => (
                       <option key={libraryTitle} value={libraryTitle}>
                         {libraryTitle}
@@ -532,7 +523,7 @@ export function ListModal({
                   <input
                     value={library}
                     onChange={(e) => setLibrary(e.target.value)}
-                    placeholder="Movies"
+                    placeholder={t("lists.placeholder.movies")}
                     aria-describedby={describedBy("library")}
                   />
                 )}
@@ -540,56 +531,44 @@ export function ListModal({
               {!canPickLibrary && (
                 <p className="help">
                   {libraries.isPending
-                    ? "Reading your Plex libraries…"
-                    : "Reaper couldn't read your Plex libraries, so type the name exactly as it " +
-                      "appears in Plex. A name that doesn't match means this list protects nothing."}
+                    ? t("lists.help.readingLibraries")
+                    : t("lists.help.cantReadLibraries")}
                 </p>
               )}
               <label className="field-sm">
-                <span className="field-label">Collection</span>
+                <span className="field-label">{t("lists.field.collection")}</span>
                 <input
                   value={collection}
                   onChange={(e) => setCollection(e.target.value)}
-                  placeholder="Never Reap"
+                  placeholder={t("lists.exampleNeverReap")}
                   aria-describedby={describedBy("collection")}
                 />
               </label>
-              <p className="help">
-                The collection's name in Plex. Add a title to it from the Plex app and it is kept
-                from the next scan on.
-              </p>
+              <p className="help">{t("lists.help.collectionName")}</p>
             </>
           )}
 
-          {source === "plex_watchlist" && (
-            <p className="help">
-              Reaper reads the watchlist of the Plex account it is signed in with. Nothing else to
-              set up.
-            </p>
-          )}
+          {source === "plex_watchlist" && <p className="help">{t("lists.help.watchlistSetup")}</p>}
 
           {source === "arr_tag" && (
             <div className="field-sm">
-              <span className="field-label">Tags</span>
+              <span className="field-label">{t("lists.field.tags")}</span>
               <TagsEditor
                 tags={tags}
                 onTags={setTags}
-                addLabel="Add a tag"
+                addLabel={t("common.addTag")}
                 describedBy={describedBy("tags")}
               />
               {/* Directly beneath the box it is about, and above the any/all pair, which is a
                   separate question. It sat under the pair, so it read as covering both and the
                   pair got none of its own (rule 45). */}
-              <p className="help">
-                Type each tag exactly as it appears in Sonarr or Radarr. Every connected server is
-                read.
-              </p>
+              <p className="help">{t("lists.help.tagsFormat")}</p>
               <Segmented
                 value={match}
                 options={MATCH_OPTIONS}
                 onChange={setMatch}
                 variant="flat"
-                label="How many of these tags a title needs"
+                label={t("lists.matchLabel")}
               />
             </div>
           )}
@@ -597,36 +576,42 @@ export function ListModal({
           {source === "imdb" &&
             (preset ? (
               <p className="help">
-                The {presetLabel(preset)} preset. Refreshed on its own, no sign-in needed.
+                {t("lists.help.presetDescription", { label: presetLabel(preset) })}
               </p>
             ) : (
               <label className="field-sm">
-                <span className="field-label">List id or URL</span>
+                <span className="field-label">{t("lists.field.imdbIdOrUrl")}</span>
                 <input
                   value={imdbId}
                   onChange={(e) => setImdbId(e.target.value)}
-                  placeholder="ls000000000, or paste the list's URL"
+                  placeholder={t("lists.placeholder.imdbId")}
                   aria-describedby={describedBy("imdb")}
                 />
               </label>
             ))}
 
-          {save.error && <Notice tone="error">The list wasn't saved: {save.error.message}</Notice>}
+          {save.error && (
+            <Notice tone="error">
+              {t("lists.saveError", { error: describeError(save.error) })}
+            </Notice>
+          )}
 
           <div className="add-actions">
             {editing && (
               <button type="button" className="ghost danger" onClick={() => setView("confirm")}>
-                Remove list…
+                {t("lists.removeListEllipsis")}
               </button>
             )}
             <span className="flex-spacer" />
             {/* Live through the save: it is the deliberate way out, and it is what keeps
                 `canClose` a guard rather than a trap (see `canClose` above, rule 146). */}
             <button type="button" className="ghost" onClick={onClose}>
-              Cancel
+              {t("common.cancel")}
             </button>
             <button type="submit" className="primary" disabled={!!missing || save.isPending}>
-              {save.isPending ? "Saving…" : editing ? "Save" : "Add list"}
+              {t("lists.submitButton", {
+                state: save.isPending ? "saving" : editing ? "save" : "add",
+              })}
             </button>
             {missing && (
               <span className="help help-warn" id={BLOCKED_ID}>
@@ -639,20 +624,18 @@ export function ListModal({
 
       {view === "confirm" && editing && (
         <div className="service-form">
-          <p>
-            Anything this list was keeping can be deleted by the next scan. Its keep rules on Policy
-            go with it. Reaper does not delete the collection or the tags themselves, only its own
-            record of them.
-          </p>
+          <p>{t("lists.removeWarning")}</p>
           {remove.error && (
-            <Notice tone="error">The list wasn't removed: {remove.error.message}</Notice>
+            <Notice tone="error">
+              {t("lists.removeError", { error: describeError(remove.error) })}
+            </Notice>
           )}
           <div className="add-actions">
             <span className="flex-spacer" />
             {/* Live through the remove, same reason as the form's Cancel: with it disabled,
                 the one control still pressable on this view was Remove itself. */}
             <button type="button" className="ghost" onClick={() => setView("form")}>
-              Cancel
+              {t("common.cancel")}
             </button>
             {/* `danger` alone is the app's destructive button, the one the reap confirmation
                 and the restore card use (rule 18). */}
@@ -662,7 +645,7 @@ export function ListModal({
               onClick={() => remove.mutate()}
               disabled={remove.isPending}
             >
-              {remove.isPending ? "Removing…" : "Remove list"}
+              {t("lists.removeButton", { removing: remove.isPending ? "true" : "false" })}
             </button>
           </div>
         </div>

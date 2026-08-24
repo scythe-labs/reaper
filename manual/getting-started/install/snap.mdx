@@ -10,18 +10,16 @@ sidebar_position: 6
 sudo snap install scythe-labs-reaper
 ```
 
-Reaper then serves on `http://localhost:8420` and runs as a service: snapd starts it at boot
-and keeps it updated. Both amd64 and arm64 are published.
+You can find Reaper at `http://localhost:8420`. It runs as a service, so snapd starts it at boot and keeps it updated. Both amd64 and arm64 versions are available.
 
 ## Which channel
 
-| Channel | Follows |
-| --- | --- |
-| `stable` | releases. **Use this.** |
-| `edge` | the `dev` branch, refreshed nightly, for testing what is coming. |
+| Channel  | Follows                                                          |
+| -------- | ---------------------------------------------------------------- |
+| `stable` | releases. **Use this.**                                          |
+| `edge`   | the `dev` branch, refreshed nightly, for testing what is coming. |
 
-To run the dev channel, switch to edge: `sudo snap refresh --edge scythe-labs-reaper`. Dev
-builds change often. Releases are the steadier channel.
+Switch to edge to run the dev channel: `sudo snap refresh --edge scythe-labs-reaper`. Dev builds change often. Releases are the steadier channel.
 
 ## Controlling the service
 
@@ -32,24 +30,16 @@ snap logs scythe-labs-reaper
 
 ## Where the data lives
 
-`/var/snap/scythe-labs-reaper/common` holds the database, the encryption keys, and
-`launcher.conf`. Back up `reaper.db`, `secret.key`, and `secret.salt`, covered in
-[Back this up](/operating/backups). Refreshes leave the folder alone.
+Your database, encryption keys, and `launcher.conf` are kept in `/var/snap/scythe-labs-reaper/common`. Back up `reaper.db`, `secret.key`, and `secret.salt` as described in [Back this up](/operating/backups). Refreshes won't touch this folder.
 
 ## Settings
 
-Reaper reads `launcher.conf` from the data folder. The first run writes it as a commented
-template: the port, the listening address, the browser launch, the update check, and recovery
-mode each have a line. Edit it with `sudo`, then `sudo snap restart scythe-labs-reaper`.
-Recovery mode is how you get back in if you cannot sign in, covered in
-[Not getting locked out](/operating/locked-out).
+Reaper reads `launcher.conf` from your data folder. On the first run, it writes a commented template with lines for the port, the listening address, the browser launch, the update check, and recovery mode. Edit the file with `sudo`, then run `sudo snap restart scythe-labs-reaper`. If you can't sign in, use recovery mode as explained in [Not getting locked out](/operating/locked-out).
 
 ## Reaching it from other machines
 
-Reaper listens on every interface, the same as the container. Open `http://<host-ip>:8420`
-from the other machine.
+Reaper listens on every interface, just like the container. Open `http://<host-ip>:8420` from your other machine.
 
 ## Next
 
-[First run](/getting-started/first-run), in order. The first account to sign in claims the
-install, so it matters who does it.
+Follow the [First run](/getting-started/first-run) steps in order. The first account that signs in claims the install, so make sure you know who's doing it.

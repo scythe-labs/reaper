@@ -42,6 +42,7 @@ from reaper.engine.explanation import Explanation, read_explanation
 from reaper.engine.gates import ABSTAIN, PROTECT, Evaluation, Facts, GateId, GateResult
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
+from reaper.engine.reason import legacy
 from reaper.engine.signals import KeepResult, Score, SignalId, SignalResult, SignalState
 from reaper.services.fairness import WatchEvidence
 from reaper.services.snapshot import _explain
@@ -245,7 +246,7 @@ class TestTheStreamedDownloadIsRetried:
             side_effect=httpx2.ConnectError("down")
         )
         async with PublicClient("https://mirror.test") as client:
-            with pytest.raises(IntegrationError, match="unreachable"):
+            with pytest.raises(IntegrationError, match="Couldn't reach it"):
                 await client.stream_to("/data.tsv.gz", tmp_path / "data.tsv.gz")
 
         assert route.call_count == 3
@@ -346,17 +347,19 @@ def _written_explanation() -> dict[str, Any]:
             GateResult(
                 gate=GateId.STREAMING_NOW,
                 outcome=PROTECT,
-                detail="someone is watching it right now",
+                detail=legacy("someone is watching it right now"),
             ),
             GateResult(
                 gate=GateId.MIN_DORMANCY,
                 outcome=ABSTAIN,
-                detail="untouched for 5 years, past the 3 years it has to sit unwatched first",
+                detail=legacy(
+                    "untouched for 5 years, past the 3 years it has to sit unwatched first"
+                ),
             ),
             GateResult(
                 gate=GateId.SEASON_PROGRESSION,
                 outcome=ABSTAIN,
-                detail="watched more than a season your rule keeps",
+                detail=legacy("watched more than a season your rule keeps"),
                 blocked=True,
                 defers_to_owner=True,
                 unestablishable=False,
@@ -371,7 +374,7 @@ def _written_explanation() -> dict[str, Any]:
                 signal=SignalId.UNWATCHED,
                 pressure=31.4,
                 weight=40,
-                detail="untouched for 5 years",
+                detail=legacy("untouched for 5 years"),
                 evaluated=True,
                 state=SignalState.ADDS,
                 floor=90,
@@ -385,7 +388,7 @@ def _written_explanation() -> dict[str, Any]:
                 name="Rated well",
                 discount=15.0,
                 max_discount=20,
-                detail="rated 8.1 by 40,000 people",
+                detail=legacy("rated 8.1 by 40,000 people"),
                 evaluated=True,
             )
         ],
@@ -438,9 +441,23 @@ _LISTS_WITHOUT_THE_GATE_FLAGS = frozenset({"protections_fired", "protections_che
 
 
 def _declared(label: str, model: type[BaseModel]) -> set[str]:
-    """The keys the writer owes this block: its model's fields, less the stated exception."""
+    """The keys the writer owes this block: its model's fields, less the stated exceptions.
+
+    On the signal, keep and protection rows, ``detail`` is declared and deliberately never
+    written: it is the prose of a row frozen before details were typed (docs/history/I18N_PLAN.md
+    §5), so only stored legacy rows carry it and every fresh row writes ``detail_key``
+    instead. The ``match`` block's own ``detail`` is untouched audit prose and stays owed."""
     fields = set(model.model_fields)
-    if label.split("[")[0] in _LISTS_WITHOUT_THE_GATE_FLAGS:
+    root = label.split("[")[0]
+    if root in {
+        "signals",
+        "keeps",
+        "protections_fired",
+        "protections_checked",
+        "protections_unknown",
+    }:
+        fields -= {"detail"}
+    if root in _LISTS_WITHOUT_THE_GATE_FLAGS:
         return fields - _UNKNOWN_ONLY_GATE_FLAGS
     return fields
 

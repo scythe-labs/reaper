@@ -28,9 +28,9 @@ from reaper.clients.base import IntegrationError
 from reaper.clients.seerr import SeerrClient, SeerrService
 from reaper.config import RuntimeSafety
 from reaper.db.models import Instance, InstanceKind
+from reaper.refusal import english
 from reaper.services import instances as instances_service
 from reaper.services.instances import (
-    _GENERIC_FAILURE,
     _causes,
     _encode_service_instance_map,
     _host_port,
@@ -236,7 +236,7 @@ CASES: list[tuple[str, InstanceKind, BaseException, str]] = [
         "nothing we recognize",
         InstanceKind.SONARR,
         RuntimeError("something else entirely"),
-        _GENERIC_FAILURE,
+        "Couldn't connect. The full reason is in Reaper's log.",
     ),
 ]
 
@@ -247,13 +247,15 @@ CASES: list[tuple[str, InstanceKind, BaseException, str]] = [
     ids=[name for name, _kind, _exc, _expected in CASES],
 )
 def testexplain_failure_sentence(kind: InstanceKind, exc: BaseException, expected: str) -> None:
-    assert explain_failure(kind, exc) == expected
+    # Through english(), the real catalog renderer (rule 119): explain_failure returns a
+    # typed Reason now, and the English it composes into is what an operator actually reads.
+    assert english(explain_failure(kind, exc)) == expected
 
 
 def test_no_failure_message_recommends_skipping_verification_except_the_safe_one() -> None:
     """Only the unknown-authority case may offer the "turn off the check" remedy."""
     for name, kind, exc, _expected in CASES:
-        sentence = explain_failure(kind, exc)
+        sentence = english(explain_failure(kind, exc))
         if sentence == SELF_SIGNED:
             continue
         assert "certificate check" not in sentence, name
@@ -261,7 +263,7 @@ def test_no_failure_message_recommends_skipping_verification_except_the_safe_one
 
 def test_failure_copy_has_no_em_dashes() -> None:
     for name, kind, exc, _expected in CASES:
-        assert "—" not in explain_failure(kind, exc), name
+        assert "—" not in english(explain_failure(kind, exc)), name
 
 
 def test_causes_follows_implicit_context() -> None:
@@ -302,7 +304,7 @@ class TestSeerrConnectionExercisesTheKey:
         )
         result = await instances_service.test_connection(InstanceKind.SEERR, SEERR, "wrong-key")
         assert result.ok is False
-        assert result.detail == KEY_REFUSED
+        assert english(result.detail) == KEY_REFUSED
         assert authed.called  # the public status probe alone must not decide the outcome
 
     async def test_a_good_key_connects_and_reports_the_version(

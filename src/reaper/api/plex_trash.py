@@ -16,10 +16,11 @@ is a GET.
 from __future__ import annotations
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from sqlalchemy import select
 
 from reaper.api import tags as api_tags
+from reaper.api.errors import refuse
 from reaper.api.schemas import PlexTrashOut
 from reaper.clients.plex import PlexClient, PlexError
 from reaper.db.models import PlexServer
@@ -92,7 +93,7 @@ async def get_plex_trash(request: Request) -> PlexTrashOut:
             trashed += count
     except Exception as exc:
         log.warning("plex.trash_probe_failed", error=str(exc))
-        raise HTTPException(502, f"Could not read Plex's trash: {exc}") from exc
+        refuse(502, "error.plex_trash.unreadable", error=str(exc))
     finally:
         await plex.aclose()
 
