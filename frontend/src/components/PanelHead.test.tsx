@@ -122,7 +122,6 @@ function show(links: Links): Group {
     show_spare_expires_at: null,
     links,
     show_status: null,
-    collections: null,
     seasons: [],
   };
 }

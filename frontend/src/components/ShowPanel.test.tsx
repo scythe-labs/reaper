@@ -94,7 +94,6 @@ function group(seasons: Candidate[]): Group {
     show_spare_expires_at: null,
     links: NO_LINKS,
     show_status: "ended",
-    collections: null,
     seasons,
   };
 }

@@ -441,12 +441,6 @@ class GroupOut(BaseModel):
     fact: one observation of the series is stamped onto every season of it in the same
     scan, so the rows of one group cannot disagree. None only if the group somehow holds
     no row carrying it (a pre-rescan snapshot), and the card then shows nothing."""
-    collections: list[str] | None = None
-    """The show's Plex collection names, taken from its season rows the same way
-    ``show_status`` is: a TV collection lists shows, not seasons, so every season carries
-    its show's own list and the first row that has one answers for the whole group. None
-    means "not recorded for this scan," never "in no collection" -- see
-    ``CandidateOut.collections``."""
     seasons: list[CandidateOut] = Field(default_factory=list)
     """Every season, sorted by season number (unnumbered rows last)."""
 
