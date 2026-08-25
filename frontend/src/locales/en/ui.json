@@ -2202,7 +2202,7 @@
     "ratioCard": {
       "applyButton": "Use this score",
       "driftApply": "Apply the new score",
-      "driftNoLongerResolves": "One mistake per {ratio} cleared no longer resolves to a score. Set the score directly until it does.",
+      "driftNoLongerResolves": "One mistake per {ratio} cleared no longer works out to a score. Set the score directly until it does.",
       "driftNotice": "One mistake per {ratio} cleared now works out to a score of {score}%.",
       "echoBody": "That is a score of {score}%. Reaper would put {flagged, plural, one {one title} other {# titles}} in front of you. Based on your history, about {mistakes, plural, one {one of them} other {# of them}} would come back.",
       "echoFloored": "Your library cannot go that low. Even at the loosest setting it only gets one mistake per {bestRatio}.",

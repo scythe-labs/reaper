@@ -976,7 +976,7 @@ describe("the controls a screen reader has to tell apart", () => {
   // caught the arrival, and the reason they left is the same thing it is watching for -- a
   // second range control under a weight reads as another setting, and the operator cannot
   // tell which track changes their policy. It went to 6 when the ratio card's own slider
-  // joined the other two thresholds (#932-step-5).
+  // joined the other two thresholds.
   it("names both thresholds for their label, never for the help text under it", async () => {
     renderEditor({ body: body() });
 
@@ -1780,6 +1780,59 @@ describe("the ratio card", () => {
           condemn_at: 55,
           applied_ratio: { ratio: 20, resolved_score: 55 },
         }),
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("stays locked on a resolution state this build does not recognize", async () => {
+    // Allowlist, never denylist: a future backend's fourth state must land on locked,
+    // not on an unlocked card printing fields it does not have.
+    renderEditor(
+      { body: body() },
+      pace,
+      null,
+      [],
+      "flags",
+      "movie",
+      { blocks: [], total_items: 0 },
+      { state: "confidence_interval_wide" } as never,
+    );
+    await screen.findByRole("heading", { name: "Movies policy" });
+    expect(await screen.findByText(LOCKED_TEXT)).toBeInTheDocument();
+    expect(screen.getByLabelText(SLIDER_NAME)).toBeDisabled();
+  });
+
+  it("clears applied_ratio when a policy preset is applied afterwards", async () => {
+    // Rule 72's sibling of the hand-edit case below: a preset writes condemn_at the same
+    // way the hand slider does, so the same clearing applies.
+    const person = userEvent.setup();
+    apiMock.validatePolicy.mockClear();
+    renderEditor(
+      { body: body() },
+      pace,
+      null,
+      [],
+      "flags",
+      "movie",
+      { blocks: [], total_items: 0 },
+      { state: "resolved", score: 55, flagged_items: 20, expected_mistakes: 2 },
+    );
+    await screen.findByRole("heading", { name: "Movies policy" });
+    await screen.findByText(/That is a score of 55%/);
+    await person.click(screen.getByRole("button", { name: "Use this score" }));
+    await waitFor(() =>
+      expect(apiMock.validatePolicy).toHaveBeenCalledWith(
+        expect.objectContaining({ applied_ratio: { ratio: 20, resolved_score: 55 } }),
+        expect.anything(),
+      ),
+    );
+
+    await person.click(screen.getByRole("button", { name: "Cautious" }));
+
+    await waitFor(() =>
+      expect(apiMock.validatePolicy).toHaveBeenCalledWith(
+        expect.objectContaining({ applied_ratio: null }),
         expect.anything(),
       ),
     );

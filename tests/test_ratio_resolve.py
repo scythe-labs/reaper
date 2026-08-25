@@ -84,8 +84,17 @@ class TestCohortReading:
     """``_cohort`` / ``_measured_or_thin_rate``: what one candidate's stored rewatch-odds
     block contributes, before any fallback is applied."""
 
-    def test_measured_reads_the_plain_rate(self) -> None:
-        assert _measured_or_thin_rate(_measured(40, 8)) == 8 / 40
+    def test_measured_reads_the_wilson_upper_bound_like_the_gate_does(self) -> None:
+        # Never the plain rate: a measured cohort with k=0 read as a bare 0.0 would zero
+        # the scan's expected mistakes and let any ratio "resolve" at the bottom of the
+        # score range (the review's demonstration; same bound RewatchOddsGate compares).
+        bound = _measured_or_thin_rate(_measured(40, 8))
+        assert bound == wilson_upper(8, 40)
+        assert bound is not None and bound > 8 / 40
+
+    def test_a_zero_comeback_measured_cohort_reads_above_zero(self) -> None:
+        bound = _measured_or_thin_rate(_measured(200, 0))
+        assert bound is not None and bound > 0
 
     def test_thin_reads_the_wilson_upper_bound_not_the_point_rate(self) -> None:
         # A thin cohort's own rate (1/5 = 0.2) is NOT what gets used -- the conservative
@@ -112,38 +121,36 @@ class TestCohortReading:
         assert _mistake_probability(None, fallback=0.42) == 0.42
 
     def test_mistake_probability_uses_its_own_rate_when_usable(self) -> None:
-        assert _mistake_probability(_measured(40, 8), fallback=0.99) == 8 / 40
+        assert _mistake_probability(_measured(40, 8), fallback=0.99) == wilson_upper(8, 40)
 
 
 class TestResolveRatioCurve:
-    """The resolver's contract, over hand-built rows so the arithmetic is checkable by
-    hand. Ten "cheap" titles score 60 with a 0.1 measured mistake rate; ten "expensive"
-    (safer) titles score 90, also 0.1. Below score 61 all twenty are flagged (ratio
-    20/(10*0.1+10*0.1) = 10.0); at or above 61 only the ten scored-90 titles are (ratio
-    10/(10*0.1) = 10.0 too) -- except the cheap lane is deliberately worse in the tests
-    below, so the two zones actually differ.
+    """The resolver's contract, over hand-built rows with cohorts large enough that the
+    Wilson bound sits near the plain rate. Ten "cheap" titles score 60 with a 60-of-300
+    cohort (bound ~0.249); ten "expensive" (safer) titles score 90 with 3-of-300 (bound
+    ~0.029). Below score 61 all twenty are flagged, ratio 20/(10*0.249+10*0.029) ~ 7.2;
+    at or above 61 only the ten scored-90 titles are, ratio 10/(10*0.029) ~ 34.5.
     """
 
     @staticmethod
     def _library() -> list[RatioCandidate]:
-        cheap = [_row(score=60, rewatch_odds=_measured(30, 6)) for _ in range(10)]  # rate 0.2
-        expensive = [_row(score=90, rewatch_odds=_measured(30, 3)) for _ in range(10)]  # rate 0.1
+        cheap = [_row(score=60, rewatch_odds=_measured(300, 60)) for _ in range(10)]
+        expensive = [_row(score=90, rewatch_odds=_measured(300, 3)) for _ in range(10)]
         return cheap + expensive
 
     def test_ratio_8_resolves_above_the_cheap_lane(self) -> None:
-        # Below score 61: flagged=20, mistakes=10*0.2+10*0.1=3.0, ratio=20/3=6.67 -- short of
-        # 8. At or above 61 (through 90): flagged=10, mistakes=10*0.1=1.0, ratio=10.0 -- clears
-        # it. The resolver must therefore land inside that second zone, not at score 1.
+        # Below score 61 the achieved ratio (~7.2) is short of 8; at or above 61 (through
+        # 90) it is ~34.5. The resolver must land inside that second zone, not at score 1.
         result = resolve_ratio_curve(self._library(), ratio=8, coverage_floor_bp=0)
 
         assert result.state == "resolved"
         assert result.score == 61
         assert result.flagged_items == 10
-        assert result.expected_mistakes == 1  # ceil(1.0)
+        assert result.expected_mistakes == math.ceil(10 * wilson_upper(3, 300))
 
     def test_lowest_score_at_least_the_ratio_is_returned_not_any_satisfying_one(self) -> None:
-        # Every threshold from 61 through 90 achieves the identical 10.0 ratio (the flagged
-        # set does not change across that span), so this is the case that actually
+        # Every threshold from 61 through 90 achieves the identical ~34.5 ratio (the
+        # flagged set does not change across that span), so this is the case that actually
         # distinguishes "lowest" from "some" -- a resolver that scanned differently could
         # legally return anything in [61, 90] and still pass a looser assertion.
         result = resolve_ratio_curve(self._library(), ratio=10, coverage_floor_bp=0)
@@ -151,16 +158,29 @@ class TestResolveRatioCurve:
         assert result.state == "resolved"
         assert result.score == 61
 
-    def test_ratio_20_is_unreachable_and_floors_at_the_best_available(self) -> None:
-        # No threshold in the whole domain reaches 20 (the best is 10.0, in the score
+    def test_ratio_50_is_unreachable_and_floors_at_the_best_available(self) -> None:
+        # No threshold in the whole domain reaches 50 (the best is ~34.5, in the score
         # 61-90 zone), so this must FLOOR rather than silently resolve to something worse.
-        result = resolve_ratio_curve(self._library(), ratio=20, coverage_floor_bp=0)
+        result = resolve_ratio_curve(self._library(), ratio=50, coverage_floor_bp=0)
 
         assert result.state == "floored"
         assert result.score == 90  # the highest threshold that still flags anything
         assert result.flagged_items == 10
-        assert result.expected_mistakes == 1
-        assert result.best_ratio == 10
+        assert result.expected_mistakes == math.ceil(10 * wilson_upper(3, 300))
+        assert result.best_ratio == math.floor(1 / wilson_upper(3, 300))
+
+    def test_a_zero_comeback_cohort_floors_an_extreme_ratio_instead_of_resolving_it(self) -> None:
+        # The review's demonstration on the unfixed code: one measured cohort with zero
+        # comebacks read as a plain 0.0, zeroed the scan's expected mistakes, and any
+        # requested ratio "resolved" at the bottom of the score range with 0 expected
+        # mistakes. The Wilson bound keeps every cohort's contribution above zero, so an
+        # unreachable ratio floors honestly instead.
+        rows = [_row(score=80, rewatch_odds=_measured(200, 0)) for _ in range(5)]
+        result = resolve_ratio_curve(rows, ratio=99, coverage_floor_bp=0)
+
+        assert result.state == "floored"
+        assert result.score == 80
+        assert result.expected_mistakes >= 1
 
     def test_no_candidates_is_not_enough_history(self) -> None:
         result = resolve_ratio_curve([], ratio=8, coverage_floor_bp=0)
@@ -178,30 +198,31 @@ class TestResolveRatioCurve:
 
     def test_a_missing_cohort_falls_back_to_the_worst_measured_rate_in_the_scan(self) -> None:
         # One row this server could never measure (no_history) sits beside two it could
-        # (rates 0.5 and 0.1). Its contribution must be the WORST of those two (0.5), never
-        # a bare zero -- the prime directive: missing data must not look safer than the
-        # worst thing this scan actually measured.
+        # (bounds ~0.249 and ~0.029). Its contribution must be the WORST of those two
+        # (~0.249), never a bare zero -- the prime directive: missing data must not look
+        # safer than the worst thing this scan actually measured.
         rows = [
-            _row(score=80, rewatch_odds=_measured(30, 15)),  # rate 0.5
-            _row(score=80, rewatch_odds=_measured(30, 3)),  # rate 0.1
+            _row(score=80, rewatch_odds=_measured(300, 60)),
+            _row(score=80, rewatch_odds=_measured(300, 3)),
             _row(score=80, rewatch_odds=_NO_HISTORY),
         ]
         result = resolve_ratio_curve(rows, ratio=2, coverage_floor_bp=0)
         assert result.state == "resolved"
         assert result.flagged_items == 3
-        # mistakes = 0.5 + 0.1 + 0.5 (fallback) = 1.1 -> ceil = 2
-        assert result.expected_mistakes == 2
+        # mistakes = 2 * wilson(60,300) + wilson(3,300), the no-history row at the worst
+        expected = 2 * wilson_upper(60, 300) + wilson_upper(3, 300)
+        assert result.expected_mistakes == math.ceil(expected)
 
     def test_a_thin_cohort_contributes_its_wilson_upper_bound(self) -> None:
         bound = wilson_upper(1, 5)
         rows = [
-            _row(score=80, rewatch_odds=_measured(30, 3)),  # rate 0.1, anchors the fallback
+            _row(score=80, rewatch_odds=_measured(300, 3)),  # anchors the fallback
             _row(score=80, rewatch_odds=_thin(5, 1)),
         ]
         result = resolve_ratio_curve(rows, ratio=2, coverage_floor_bp=0)
         assert result.state == "resolved"
         assert result.flagged_items == 2
-        assert result.expected_mistakes == math.ceil(0.1 + bound)
+        assert result.expected_mistakes == math.ceil(wilson_upper(3, 300) + bound)
 
     def test_a_protected_row_is_never_flagged_at_any_threshold(self) -> None:
         rows = [
@@ -263,7 +284,7 @@ def _fixture_hash() -> str:
 @pytest.fixture
 def resolve_client(tmp_path: Path) -> Iterator[TestClient]:
     """A snapshot whose 40 movie candidates give the resolver something real to chew on:
-    20 scored 60 with a measured 0.2 mistake rate, 20 scored 90 with a measured 0.1 rate --
+    20 scored 60 with a 60-of-300 cohort (bound ~0.249), 20 scored 90 with 3-of-300 (~0.029) --
     the same shape ``TestResolveRatioCurve._library`` proves by hand, but written through
     ``Candidate.verdict``/``explanation_json`` the way a real scan would freeze them, so this
     exercises ``_ratio_candidates``' decode path too."""
@@ -297,7 +318,7 @@ def resolve_client(tmp_path: Path) -> Iterator[TestClient]:
                     verdict="abstain",
                     score=60,
                     coverage_bp=10_000,
-                    explanation_json=_explanation(60, _measured(30, 6)),
+                    explanation_json=_explanation(60, _measured(300, 60)),
                     created_at=now,
                 )
             )
@@ -311,7 +332,7 @@ def resolve_client(tmp_path: Path) -> Iterator[TestClient]:
                     verdict="abstain",
                     score=90,
                     coverage_bp=10_000,
-                    explanation_json=_explanation(90, _measured(30, 3)),
+                    explanation_json=_explanation(90, _measured(300, 3)),
                     created_at=now,
                 )
             )

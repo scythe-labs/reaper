@@ -399,21 +399,22 @@ def _cohort(rewatch_odds: object) -> tuple[int, int, str] | None:
 
 
 def _measured_or_thin_rate(rewatch_odds: object) -> float | None:
-    """This candidate's own comeback rate, read straight from its cohort: the plain rate at
-    or above the fit's trust floor (``gates.REWATCH_BLOCK_FLOOR_N``, state ``"measured"``),
-    the conservative Wilson 95% upper bound below it (``"thin"``, ``gates.wilson_upper`` --
-    the same bound the hold gate compares and the Policy page displays, never the point
-    rate). ``None`` for anything else, including ``"no_history"``: :func:`resolve_ratio_curve`
-    falls back to the worst rate this scan measured anywhere else rather than read that as a
-    bare zero (missing data must not make deletion look safer, the prime directive).
+    """This candidate's own comeback rate, read straight from its cohort: the Wilson 95%
+    upper bound of ``k``/``n`` (``gates.wilson_upper``) for both ``"measured"`` and
+    ``"thin"`` states -- the same bound the hold gate compares and the Policy page
+    displays, never the point rate. The bound is strictly positive for any finite cohort,
+    which is load-bearing: a measured cohort with zero comebacks read as a plain ``0.0``
+    would poison :func:`resolve_ratio_curve`'s ``max()`` fallback, zero the expected
+    mistakes, and let any requested ratio "resolve" at the bottom of the score range.
+    ``None`` for anything else, including ``"no_history"``: :func:`resolve_ratio_curve`
+    falls back to the worst rate this scan measured anywhere else rather than read that as
+    a bare zero (missing data must not make deletion look safer, the prime directive).
     """
     cohort = _cohort(rewatch_odds)
     if cohort is None:
         return None
     n, k, state = cohort
-    if state == "measured":
-        return k / n
-    if state == "thin":
+    if state in ("measured", "thin"):
         return wilson_upper(k, n)
     return None
 

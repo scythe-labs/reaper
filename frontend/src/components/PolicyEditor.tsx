@@ -1392,7 +1392,7 @@ function rewatchEchoSentence(
       });
 }
 
-/** The three starting points under the ratio slider (#932-step-5, design-approved): not a
+/** The three starting points under the ratio slider (design-approved): not a
  *  stored mode, each just sets the slider to its own ratio. Loosest first, matching the
  *  mockup's order. A function returning already-translated strings, the same shape
  *  `policyPresets.ts`'s own `presets()` uses, and for the same reason: every `t()` call here
@@ -1539,8 +1539,14 @@ export function PolicyEditor({
   // than a separate `locked` boolean beside it, is what lets the JSX below narrow: TypeScript
   // cannot connect a boolean to the value it was computed from, only to a check on the value
   // itself, so `ratioAnswer === null` has to be the thing the render branches on.
+  // Allowlist the two states this build can render, never denylist the one it cannot: a
+  // state a future backend adds must land on locked, not on an unlocked card printing
+  // fields it does not have.
   const ratioAnswer: RatioResolved | RatioFloored | null =
-    ratioPending || ratioError || !ratioResolution || ratioResolution.state === "not_enough_history"
+    ratioPending ||
+    ratioError ||
+    !ratioResolution ||
+    (ratioResolution.state !== "resolved" && ratioResolution.state !== "floored")
       ? null
       : ratioResolution;
   const ratioLocked = ratioAnswer === null;
@@ -1556,13 +1562,16 @@ export function PolicyEditor({
     queryFn: () => api.resolveRatio(mediaType, savedRatio!.ratio),
     enabled: savedRatio !== null,
   });
+  // Same allowlist as ratioAnswer: an unrecognized state reads as "cannot confirm the
+  // ratio still holds", which the drift notice's no-longer-works-out arm already says.
   const driftAnswer: RatioResolved | RatioFloored | null =
-    driftResolution && driftResolution.state !== "not_enough_history" ? driftResolution : null;
+    driftResolution && (driftResolution.state === "resolved" || driftResolution.state === "floored")
+      ? driftResolution
+      : null;
   const ratioDrifted =
     savedRatio !== null &&
     driftResolution !== undefined &&
-    (driftResolution.state === "not_enough_history" ||
-      driftAnswer!.score !== savedRatio.resolved_score);
+    (driftAnswer === null || driftAnswer.score !== savedRatio.resolved_score);
 
   // Pace and limits: a SEPARATE draft with a separate save. Un-hashed on the server, so
   // changing a cap never voids a pending approval -- and deliberately media-type
@@ -1765,6 +1774,10 @@ export function PolicyEditor({
       // without this the operator edits a rule here, walks back, and reads "Keeps every title
       // on it" for a list nothing now protects with (rule 79).
       void queryClient.invalidateQueries({ queryKey: ["lists-configured"] });
+      // The ratio card's resolver reads the saved coverage floor server-side, so a save
+      // moves its answer at save time, before the rescan below lands. `useScanSettled`
+      // covers the scan half; this covers the save half (rule 79).
+      void queryClient.invalidateQueries({ queryKey: ["resolve-ratio"] });
       // Apply the saved policy to the review queue by re-scanning in the background. The
       // queue and the simulator read the last snapshot's stored verdicts, which were
       // produced by the OLD policy; a rescan re-scores the library under the new one, and the
@@ -2042,6 +2055,9 @@ export function PolicyEditor({
     ]);
     update({
       condemn_at: p.condemn_at,
+      // A preset sets the score the same way the hand slider does, so the same rule
+      // applies: whatever ratio last wrote condemn_at no longer describes it.
+      applied_ratio: null,
       signals: draft.signals.map((s, i) => ({ ...s, weight: scaled[i] ?? 0 })),
       custom_condemn: draft.custom_condemn.map((c, i) => ({
         ...c,
