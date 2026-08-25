@@ -42,6 +42,35 @@ from sqlalchemy import Integer
 from sqlalchemy.engine.interfaces import Dialect
 from sqlalchemy.types import TypeDecorator
 
+from reaper.clock import from_iso
+
+
+def _from_text(value: str) -> datetime:
+    """Read an instant out of a TEXT value sitting in an epoch column.
+
+    Nothing in Reaper writes one, and a hand ``sqlite3`` edit does. One such row took
+    ``GET /api/settings/general`` down, because ``session.get`` decodes every column of the
+    row it fetches, so every reader of that row hit it and not just the one that wanted the
+    bad column (#937).
+
+    An ISO-8601 string carrying an offset names one exact instant, so it decodes. Anything
+    else raises. Reading it as ``None`` would be worse than the crash: ``NULL`` carries a
+    meaning on these columns, and on ``WatchHighWater.last_played_at`` that meaning is
+    "never played", which is the condemn direction.
+
+    ISO is the only spelling to decode because the column is INTEGER, and SQLite's affinity
+    converts a well-formed numeric literal on the way in. A hand-typed ``'1756046256'`` is an
+    integer by the time it lands, so it never reaches here.
+    """
+    parsed = from_iso(value)
+    if parsed is None:
+        raise ValueError(
+            f"Unreadable timestamp {value!r} in an epoch column. Reaper stores an instant as "
+            "integer unix seconds, and reads an ISO-8601 string back only when it carries a "
+            "UTC offset."
+        )
+    return parsed
+
 
 class EpochDateTime(TypeDecorator[datetime]):
     """A UTC instant, stored as an integer unix timestamp."""
@@ -62,9 +91,13 @@ class EpochDateTime(TypeDecorator[datetime]):
             )
         return int(value.timestamp())
 
-    def process_result_value(self, value: int | None, dialect: Dialect) -> datetime | None:
+    def process_result_value(
+        self, value: int | float | str | None, dialect: Dialect
+    ) -> datetime | None:
         if value is None:
             return None
+        if isinstance(value, str):
+            return _from_text(value)
         return datetime.fromtimestamp(value, tz=UTC)
 
     def process_literal_param(self, value: datetime | None, dialect: Dialect) -> str:
