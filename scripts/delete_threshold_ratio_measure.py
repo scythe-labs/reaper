@@ -291,15 +291,23 @@ def title_pair(
     *,
     cutoff_epoch: int,
     window_end_epoch: int,
+    earliest_epoch: int | None = None,
 ) -> tuple[tuple[float, bool] | None, bool]:
     """One title's ``(dormancy_days_at_cutoff, watched_again)`` training pair via the
     real ``rewatch.training_pair``, plus whether it landed in lane A (played before the
     cutoff). ``pair is None`` means withheld: not present at the cutoff, or no honest
     anchor either side (``training_pair``'s own contract).
 
+    ``earliest_epoch`` is the start of the watch history held. A never-played title's
+    anchor clamps to it, exactly as the live engine's ``dormancy.reference_instant``
+    clamps to the mirror's horizon: an arrival date the history cannot see past would
+    otherwise read as dormancy nobody measured.
+
     Hoisted out of :func:`load_dump` so the cutoff/leak logic is testable without a real
     dump file (``tests/test_delete_threshold_ratio_measure.py``).
     """
+    if added_at_epoch is not None and earliest_epoch is not None:
+        added_at_epoch = max(added_at_epoch, earliest_epoch)
     times = plays_by_token.get(token, [])
     before = [t for t in times if t <= cutoff_epoch]
     after = [t for t in times if cutoff_epoch < t <= window_end_epoch]
@@ -445,6 +453,7 @@ def load_dump(path: Path, cutoff_days: int) -> Replay:
             added_at_epoch,
             cutoff_epoch=cutoff_epoch,
             window_end_epoch=window_end_epoch,
+            earliest_epoch=earliest_epoch,
         )
         if pair is None:
             withheld += 1
@@ -548,12 +557,17 @@ def print_lane(
         print(f"  {threshold:>9}  {flagged:>9,}  {mistakes:>9,}  {ratio_text(flagged, mistakes)}")
 
 
-def run(replay: Replay, *, kind: str, source: str, cutoff_days: int) -> None:
+def run(replay: Replay, *, kind: str, cutoff_days: int) -> None:
     print("Reaper delete-threshold ratio measurement")
-    print(f"input: {kind} at {source}")
-    print(
-        f"now: {_fmt(replay.now_epoch)} (from the newest event in the data, never the wall clock)"
+    # The kind only: the path the operator typed stays off shareable output, per the
+    # module docstring's privacy stance.
+    print(f"input: {kind}")
+    now_note = (
+        "the dump's own reference clock, shifted for anonymity, never this machine's"
+        if kind == "Tautulli dump"
+        else "from the newest event in the data, never the wall clock"
     )
+    print(f"now: {_fmt(replay.now_epoch)} ({now_note})")
     print(f"cutoff: {_fmt(replay.cutoff_epoch)} (now minus {cutoff_days} days)")
     print(
         "approximation: score = the shipped UNWATCHED signal alone (0-100, floor"
@@ -614,7 +628,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         replay = load_datadir(path, args.cutoff_days)
-        run(replay, kind="Reaper data directory", source=str(path), cutoff_days=args.cutoff_days)
+        run(replay, kind="Reaper data directory", cutoff_days=args.cutoff_days)
         return 0
 
     if not path.is_file():
@@ -622,7 +636,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     replay = load_dump(path, args.cutoff_days)
-    run(replay, kind="Tautulli dump", source=str(path), cutoff_days=args.cutoff_days)
+    run(replay, kind="Tautulli dump", cutoff_days=args.cutoff_days)
     return 0
 
 

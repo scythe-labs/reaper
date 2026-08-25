@@ -118,6 +118,26 @@ def test_title_pair_splits_lanes_on_a_play_before_the_cutoff() -> None:
     assert pair[0] == 500.0
 
 
+def test_title_pair_clamps_a_never_played_anchor_to_the_history_horizon() -> None:
+    # The live engine clamps a never-played anchor to the mirror's earliest event
+    # (dormancy.reference_instant): an arrival date the history cannot see past would
+    # otherwise read as dormancy nobody measured. 3,000 days since arrival with only 400
+    # days of history reads as 400, which the MIN_DORMANCY gate (1,095) then protects.
+    cutoff = int(datetime(2025, 1, 1, tzinfo=UTC).timestamp())
+    window_end = cutoff + 365 * DAY
+    pair, in_lane_a = measure.title_pair(
+        "old",
+        {},
+        added_at_epoch=cutoff - 3000 * DAY,
+        cutoff_epoch=cutoff,
+        window_end_epoch=window_end,
+        earliest_epoch=cutoff - 400 * DAY,
+    )
+    assert in_lane_a is False
+    assert pair is not None
+    assert pair[0] == 400.0
+
+
 def test_title_pair_withholds_a_title_added_inside_the_lookback_year() -> None:
     # No play either side, and it arrived after the cutoff: it was not in the library
     # yet, so it must not be scored as if it had sat dormant since the cutoff.
