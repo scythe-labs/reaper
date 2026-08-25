@@ -4467,6 +4467,34 @@ missing-KEY case specifically, not just the missing-VALUE case. `why.ts`'s resol
 defaults `mediaType` onto the params object for every id that carries a select and predates it,
 so the key is always present even when no caller supplied a value.
 
+## The delete threshold buys volume, not precision (2026-08-25)
+
+`scripts/delete_threshold_ratio_measure.py` replays a library at a one-year cutoff, scores
+every title with the shipped `UNWATCHED` signal through the real engine, and counts who came
+back in the following year. Two libraries measured: the live data dir (7.6 years of history
+before the cutoff) and the anonymized second library from `docs/SIGNALS.md`'s backtest (9.5
+years). Both qualify on the criteria the script checks: a year of history before the cutoff
+and cohorts of 30 or more.
+
+- **The score-to-mistake curve is nearly flat.** On the live library, flagged titles fall
+  from 774 at threshold 60 to 374 at 95, but the mistake rate holds at 1 comeback per 8 to
+  10 cleared across the whole range. On the second library, the played-before lane moves
+  from 1-per-11 to 1-per-12 and the never-played lane sits at 1-per-17 everywhere. Raising
+  the threshold shrinks how much is flagged. It barely changes how often a flagged title
+  comes back.
+- **Ratios past the curve's ceiling resolve to no score.** 1 mistake per 20 cleared is
+  reachable at no threshold on either library, in either lane. A control that resolves a
+  ratio into a score needs an explicit "no score delivers this" state on the wire, beside
+  "not enough history". Presets at 1-per-20 and 1-per-50 would sit in that state on both
+  measured libraries.
+- **Never-played titles cannot be back-scored from a data dir.** `reaper.db` keeps no
+  arrival date (`engine/dormancy.py` derives it at scan time and discards it), so that lane
+  is counted but not scored there. The anonymized dump keeps an arrival date, so both lanes
+  measure. Recorded so nobody re-derives it.
+- **Never-played titles come back less, not more.** On the second library the never-played
+  lane's comeback rate is about 6% against the played lane's 9 to 10%. At every threshold
+  measured, a title nobody started is a safer delete than a title somebody once watched.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have
