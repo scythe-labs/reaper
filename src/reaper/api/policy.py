@@ -448,9 +448,11 @@ def resolve_ratio_curve(
     mistake per ``ratio``", so it is skipped rather than treated as a vacuous pass (an empty
     flagged set trivially has zero mistakes, which would otherwise satisfy any ratio at
     all). When no threshold in the domain reaches the requested ratio, the answer is FLOORED
-    at the highest score that still flags anything -- the best ratio the library's curve
-    reaches, which docs/LEARNINGS.md ("The delete threshold buys volume, not precision")
-    found is common on real libraries, not an error. A domain with no flaggable threshold at
+    at the point where the best ratio the curve reaches actually lives (lowest such score on
+    a tie, matching the resolved arm), so the echo's score, counts and best_ratio all
+    describe one point. docs/LEARNINGS.md ("The delete threshold buys volume, not
+    precision") found this state is common on real libraries, not an error.
+    A domain with no flaggable threshold at
     all -- every row protected, blocked, or under the coverage floor -- has no population to
     resolve a ratio against, and resolves to NOT_ENOUGH_HISTORY for the same reason a scan
     with no measurable cohort does: there is nothing here to resolve. Same stored scan, same
@@ -482,6 +484,7 @@ def resolve_ratio_curve(
 
     resolved: tuple[int, int, float] | None = None
     best: tuple[int, int, float] | None = None
+    best_achieved = 0.0
     for threshold in _CONDEMN_AT_DOMAIN:
         flagged = 0
         mistakes = 0.0
@@ -502,7 +505,12 @@ def resolve_ratio_curve(
         achieved = math.inf if mistakes <= 0 else flagged / mistakes
         if resolved is None and achieved >= ratio:
             resolved = (threshold, flagged, mistakes)
-        best = (threshold, flagged, mistakes)  # ends on the HIGHEST threshold that flagged anything
+        # Strictly greater, so a tie keeps the LOWEST threshold achieving it -- the same
+        # convention the resolved arm uses, and every number in the floored echo then
+        # describes one point on the curve.
+        if achieved > best_achieved:
+            best_achieved = achieved
+            best = (threshold, flagged, mistakes)
 
     if resolved is not None:
         threshold, flagged, mistakes = resolved

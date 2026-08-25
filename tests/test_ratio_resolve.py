@@ -159,12 +159,14 @@ class TestResolveRatioCurve:
         assert result.score == 61
 
     def test_ratio_50_is_unreachable_and_floors_at_the_best_available(self) -> None:
-        # No threshold in the whole domain reaches 50 (the best is ~34.5, in the score
+        # No threshold in the whole domain reaches 50 (the best is ~34.5, held across the
         # 61-90 zone), so this must FLOOR rather than silently resolve to something worse.
+        # The pin is where the best ratio LIVES, at the lowest such score: every number in
+        # the operator's floored echo then describes the same point on the curve.
         result = resolve_ratio_curve(self._library(), ratio=50, coverage_floor_bp=0)
 
         assert result.state == "floored"
-        assert result.score == 90  # the highest threshold that still flags anything
+        assert result.score == 61
         assert result.flagged_items == 10
         assert result.expected_mistakes == math.ceil(10 * wilson_upper(3, 300))
         assert result.best_ratio == math.floor(1 / wilson_upper(3, 300))
@@ -179,7 +181,9 @@ class TestResolveRatioCurve:
         result = resolve_ratio_curve(rows, ratio=99, coverage_floor_bp=0)
 
         assert result.state == "floored"
-        assert result.score == 80
+        # One flat curve: every threshold up to 80 flags the same five rows, so the tie
+        # keeps the lowest score, the same convention the resolved arm uses.
+        assert result.score == 1
         assert result.expected_mistakes >= 1
 
     def test_no_candidates_is_not_enough_history(self) -> None:
@@ -369,7 +373,9 @@ class TestResolveRatioRoute:
         body = resolve_client.get("/api/policy/resolve-ratio?ratio=99").json()
 
         assert body["state"] == "floored"
-        assert body["score"] == 90
+        # Pinned where the best ratio lives (the 61-90 zone's lowest score), so the echo's
+        # score and its "best it can get" describe one point.
+        assert body["score"] == 61
 
     def test_media_type_tv_reads_no_rows_here(self, resolve_client: TestClient) -> None:
         # This fixture wrote only movie rows; a TV policy scores seasons, so the same scan

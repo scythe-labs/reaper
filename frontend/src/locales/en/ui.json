@@ -2205,7 +2205,7 @@
       "driftNoLongerResolves": "One mistake per {ratio} cleared no longer works out to a score. Set the score directly until it does.",
       "driftNotice": "One mistake per {ratio} cleared now works out to a score of {score}%.",
       "echoBody": "That is a score of {score}%. Reaper would put {flagged, plural, one {one title} other {# titles}} in front of you. Based on your history, about {mistakes, plural, one {one of them} other {# of them}} would come back.",
-      "echoFloored": "Your library cannot go that low. Even at the loosest setting it only gets one mistake per {bestRatio}.",
+      "echoFloored": "Your library cannot go that low. The best it can get is one mistake per {bestRatio}.",
       "heading": "How careful should Reaper be?",
       "locked": "Not enough history yet. Reaper needs about a year of watch history to judge from, and another year after it to see who came back. Until then it keeps working the way it does now, and you set the score directly.",
       "presetAnnoyingName": "It would be annoying",

@@ -1744,7 +1744,7 @@ describe("the ratio card", () => {
     await screen.findByRole("heading", { name: "Movies policy" });
     expect(
       await screen.findByText(
-        "Your library cannot go that low. Even at the loosest setting it only gets one mistake per 3. That is a score of 42%. Reaper would put 9 titles in front of you. Based on your history, about 3 of them would come back.",
+        "Your library cannot go that low. The best it can get is one mistake per 3. That is a score of 42%. Reaper would put 9 titles in front of you. Based on your history, about 3 of them would come back.",
       ),
     ).toBeInTheDocument();
   });
