@@ -106,7 +106,7 @@ const HOW_TO_UPDATE =
 //: humanWindow no longer hardcode "year"/"month"/"day"), so all three are required;
 //: format.span.lessThanADay/yearWord/monthWord/dayWord carry no argument or tag and stay
 //: unrequired, the same as any other plain literal.
-const EXPECTED_REQUIRED_COUNT = 1180;
+const EXPECTED_REQUIRED_COUNT = 1185;
 
 describe("translator notes (locales/en/ui.notes.json)", () => {
   it("classifies a plain literal as not required, and an ICU or tagged one as required (rule 145)", () => {

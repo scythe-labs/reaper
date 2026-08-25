@@ -15,6 +15,7 @@ import type {
   PolicyBody,
   PolicyWarning,
   ProfileSettings,
+  RatioResolution,
   RewatchOddsFit,
 } from "../api";
 import type { PolicySectionId } from "../components/PolicyEditor";
@@ -137,6 +138,14 @@ export function policyEditorKit(apiMock: ApiMock) {
      *  the hold still gets a quiet card; the rewatch-odds hold's own describe block passes a
      *  seeded fit. */
     rewatchFit: RewatchOddsFit | Error = { blocks: [], total_items: 0 },
+    /** What GET /api/policy/resolve-ratio answers, or an Error for a failed read. Defaults
+     *  to the locked default (rule 17/36: not-enough-history is the safe answer for a test
+     *  that does not care about the ratio card), one answer for every ratio it is asked
+     *  about -- a test driving the drift notice passes a function instead, since that reads
+     *  the endpoint twice, once for the slider and once for the saved ratio. */
+    ratioResolution: RatioResolution | Error | ((ratio: number) => RatioResolution | Error) = {
+      state: "not_enough_history",
+    },
   ) {
     apiMock.policy.mockResolvedValue({
       policy_hash: "hash",
@@ -165,6 +174,11 @@ export function policyEditorKit(apiMock: ApiMock) {
     apiMock.seasonShape.mockResolvedValue({ total_shows: 0, season_counts: {} });
     if (rewatchFit instanceof Error) apiMock.rewatchOddsFit.mockRejectedValue(rewatchFit);
     else apiMock.rewatchOddsFit.mockResolvedValue(rewatchFit);
+    apiMock.resolveRatio.mockImplementation((_mediaType: "movie" | "tv", ratio: number) => {
+      const answer =
+        typeof ratioResolution === "function" ? ratioResolution(ratio) : ratioResolution;
+      return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
+    });
     if (vocabulary) apiMock.vocabulary.mockImplementation(() => Promise.reject(vocabulary));
     else apiMock.vocabulary.mockResolvedValue({ lane: "condemn", fields: [] });
     apiMock.vocabularyValues.mockResolvedValue({ field: "", values: [] });

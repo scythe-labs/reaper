@@ -2274,6 +2274,11 @@ export const api = {
    *  TV seasons carry their own fit, so the ladder never mixes the two lanes. */
   rewatchOddsFit: (mediaType: "movie" | "tv") =>
     request<RewatchOddsFit>(`/api/policy/rewatch-odds?media_type=${mediaType}`),
+  /** Resolve "one mistake per `ratio` cleared" into a delete-threshold score, from the
+   *  latest scan and this server's own fitted rewatch curve. Read-only: applying the
+   *  answer is a local draft edit through the ordinary policy save, never a call here. */
+  resolveRatio: (mediaType: "movie" | "tv", ratio: number) =>
+    request<RatioResolution>(`/api/policy/resolve-ratio?ratio=${ratio}&media_type=${mediaType}`),
 
   startScan: () => post<ScanStatus>("/api/scan/start", {}),
   scanStatus: () => request<ScanStatus>("/api/scan/status"),

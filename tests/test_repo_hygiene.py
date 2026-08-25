@@ -3651,8 +3651,12 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # Then 143 -> 142: the why panel's and the Scales panel's loading/error fallbacks became one
 # `PanelFallback` the two hand three strings (W11-24). One fewer call site, the same two notices
 # on screen.
+# Then 142 -> 143: the ratio card's drift notice (#932-step-5), telling the operator their
+# applied "one mistake per N cleared" ratio now resolves to a different score.
+# Then 143 -> 144: the ratio card's floored echo (#932-step-5), an error-toned notice in place
+# of its ordinary help paragraph when the requested ratio is looser than the library reaches.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_NOTICES = 142
+_EXPECTED_NOTICES = 144
 
 
 def _shipped_tsx() -> list[Path]:
@@ -3766,8 +3770,12 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
 # Then 37: the policy editor's `savebar` half of `REPAIR_NOTICES`, the twin of the `top` half two
 # entries up. Same repair, carried by the same fetch, and it interrupted when the save bar
 # appeared while `top` stayed silent (#718, rule 72).
+# Then 38: the ratio card's drift notice (#932-step-5) -- a fact about the loaded policy's
+# stored applied_ratio, true from first paint and never a reply to a press.
+# Then 39: the ratio card's floored echo (#932-step-5), which refires on every debounced drag
+# of the ratio slider the same way the validator's own WarnBlock notices already do.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_STANDING = 37
+_EXPECTED_STANDING = 39
 
 # ``standing`` as a JSX attribute, never as a substring of a class name or a word in prose.
 _STANDING_ATTR = re.compile(r"(?<![\w-])standing(?![\w-])")
@@ -3952,7 +3960,10 @@ _QUERY_FAILURE_HANDLES = {
     "frontend/src/components/PlexPanel.tsx": 6,
     # 4 -> 5 for #554 stage 2's rewatch-odds fit (`RewatchLadder`'s `isError`): undivided, see
     # the docstring above.
-    "frontend/src/components/PolicyEditor.tsx": 5,
+    # 5 -> 6 for the ratio card's own resolve-ratio read (`ratioError`, #932-step-5): the same
+    # shape as the rewatch-odds fit above, locked by default on any failure (rule 17/36) rather
+    # than holding a stale score on screen.
+    "frontend/src/components/PolicyEditor.tsx": 6,
     "frontend/src/components/PolicyRuleEditors.tsx": 3,
     "frontend/src/components/ReapBreakdown.tsx": 2,
     "frontend/src/components/ReapConfirm.tsx": 2,
