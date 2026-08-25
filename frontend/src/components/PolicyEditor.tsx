@@ -2241,7 +2241,7 @@ export function PolicyEditor({
           {/* What the current position means, off this server's own history -- a readout, not
               a setting, so it renders nothing while the curve has nothing to say (no scan yet,
               still loading, or a failed read) rather than a locked or error state. */}
-          {condemnConsequence && <p className="help">{condemnConsequence}</p>}
+          {condemnConsequence && <p className="condemn-consequence">{condemnConsequence}</p>}
         </label>
         <WarnBlock anchor="condemn_at" warnings={warningsAt("condemn_at")} />
 
