@@ -39,13 +39,15 @@ from reaper.api.schemas import (
     PolicyProbeOut,
     PolicyValidateIn,
     PolicyWarningOut,
-    RatioFlooredOut,
-    RatioNotEnoughHistoryOut,
-    RatioResolutionOut,
-    RatioResolvedOut,
     RewatchOddsBlockOut,
     RewatchOddsFitOut,
     SignalSettingIn,
+    ThresholdCurveCountsOnlyOut,
+    ThresholdCurveCountsOnlyRowOut,
+    ThresholdCurveMeasuredOut,
+    ThresholdCurveMeasuredRowOut,
+    ThresholdCurveNoScanOut,
+    ThresholdCurveOut,
 )
 from reaper.clock import utcnow
 from reaper.db.models import (
@@ -137,9 +139,6 @@ def _to_body(payload: PolicyIn) -> PolicyBody:
             # Already engine specs (RatingRuleSpec) -- passed through, validated on the wire.
             keep_rating_rules=tuple(payload.keep_rating_rules),
             keep_rating_match=payload.keep_rating_match,
-            # Already an engine spec (AppliedRatio), like the two rows above -- display-only
-            # bookkeeping (PolicyBody.applied_ratio), never read on the scan or deletion path.
-            applied_ratio=payload.applied_ratio,
         )
     except ValidationError as exc:
         raise HTTPException(422, detail=validation_error_items(exc.errors())) from exc
@@ -256,7 +255,6 @@ def _policy_out(
             rewatch_recent_days=body.rewatch_recent_days,
             keep_rating_rules=list(body.keep_rating_rules),
             keep_rating_match=body.keep_rating_match,
-            applied_ratio=body.applied_ratio,
         ),
         warnings=[
             # Only draft warnings here. The LOAD-time repairs are their own field, not
@@ -348,9 +346,9 @@ async def rewatch_odds_fit(
 
 @dataclass(frozen=True, slots=True)
 class RatioCandidate:
-    """One stored candidate's inputs to the ratio resolver, decoded once from its frozen
-    verdict, score, coverage and explanation -- everything :func:`resolve_ratio_curve` needs,
-    with no JSON or session left in it.
+    """One stored candidate's inputs to the threshold curve, decoded once from its frozen
+    verdict, score, coverage and explanation -- everything :func:`threshold_curve_rows`
+    needs, with no JSON or session left in it.
     """
 
     protected: bool
@@ -375,9 +373,9 @@ class RatioCandidate:
 
 
 #: The legal ``condemn_at`` domain (``engine.policy.PolicyBody.condemn_at``, ``ge=1, le=100``
-#: -- never 0, which would condemn everything the gates do not save). The resolver scans
-#: every score in it rather than a narrower band, so "the lowest score delivering at least
-#: the requested ratio" is never missed because it sat outside a shortcut range.
+#: -- never 0, which would condemn everything the gates do not save). The curve is built over
+#: every score in it rather than a narrower band, so a title scoring high enough to flag only
+#: at the very top of the range is never missed because it sat outside a shortcut range.
 _CONDEMN_AT_DOMAIN: range = range(1, MAX_SCORE + 1)
 
 
@@ -404,9 +402,9 @@ def _measured_or_thin_rate(rewatch_odds: object) -> float | None:
     ``"thin"`` states -- the same bound the hold gate compares and the Policy page
     displays, never the point rate. The bound is strictly positive for any finite cohort,
     which is load-bearing: a measured cohort with zero comebacks read as a plain ``0.0``
-    would poison :func:`resolve_ratio_curve`'s ``max()`` fallback, zero the expected
-    mistakes, and let any requested ratio "resolve" at the bottom of the score range.
-    ``None`` for anything else, including ``"no_history"``: :func:`resolve_ratio_curve`
+    would poison :func:`threshold_curve_rows`'s ``max()`` fallback, zero the expected
+    mistakes, and let every row on the curve understate its risk.
+    ``None`` for anything else, including ``"no_history"``: :func:`threshold_curve_rows`
     falls back to the worst rate this scan measured anywhere else rather than read that as
     a bare zero (missing data must not make deletion look safer, the prime directive).
     """
@@ -427,39 +425,38 @@ def _mistake_probability(rewatch_odds: object, *, fallback: float) -> float:
     return fallback if rate is None else rate
 
 
-def resolve_ratio_curve(
-    candidates: Sequence[RatioCandidate], *, ratio: int, coverage_floor_bp: int
-) -> RatioResolutionOut:
-    """Resolve "one mistake per ``ratio`` cleared" into a delete-threshold score, over
-    already-decoded rows from the newest scan.
+def threshold_curve_rows(
+    candidates: Sequence[RatioCandidate], *, coverage_floor_bp: int
+) -> ThresholdCurveMeasuredOut | ThresholdCurveCountsOnlyOut:
+    """The whole score-to-consequence curve behind the delete-threshold slider, over
+    already-decoded rows from the newest scan: for every legal ``condemn_at``
+    (:data:`_CONDEMN_AT_DOMAIN`), how many titles the scan would flag and, where this scan
+    measured a trusted rewatch cohort anywhere, about how many of them its own history says
+    come back. Computed once for every score so the editor answers any slider position
+    locally with zero requests while dragging, rather than the one-ratio-at-a-time question
+    the old resolver answered.
 
-    For every legal ``condemn_at`` (:data:`_CONDEMN_AT_DOMAIN`), re-decide each candidate
-    through the one decision function (``engine.verdict.decide_verdict``, rule 3/22 -- never
-    a hand-rolled ``score >= threshold``) and sum the flagged titles' own dormancy cohorts'
-    comeback probability into an expected-mistakes figure (:func:`_mistake_probability`).
+    Re-decides each candidate through the one decision function
+    (``engine.verdict.decide_verdict``, rule 3/22 -- never a hand-rolled ``score >=
+    threshold``) and sums the flagged titles' own dormancy cohorts' comeback probability
+    (:func:`_mistake_probability`), exactly as the retired resolver did for one ratio.
 
-    Returns the LOWEST score whose achieved ratio (flagged / expected mistakes) is at least
-    the requested one, so integer rounding of the response can never overstate what was
-    delivered: the comparison runs on the raw, unrounded figures, and only the response
-    itself is rounded -- ``expected_mistakes`` up, ``best_ratio`` down -- always toward
-    showing more risk, never less.
+    A row is included only where ``flagged > 0``: a threshold flagging nothing has no
+    consequence to state, and the frontend already renders the "nothing scores this high"
+    sentence for any score above the last included row. Since ``decide_verdict`` is monotone
+    in score, flagged is non-increasing across the domain, so the rows form one leading run
+    and the highest-scoring row is the curve's peak.
 
-    A threshold that flags nothing is not a resolution: it says "delete nothing", not "one
-    mistake per ``ratio``", so it is skipped rather than treated as a vacuous pass (an empty
-    flagged set trivially has zero mistakes, which would otherwise satisfy any ratio at
-    all). When no threshold in the domain reaches the requested ratio, the answer is FLOORED
-    at the point where the best ratio the curve reaches actually lives (lowest such score on
-    a tie, matching the resolved arm), so the echo's score, counts and best_ratio all
-    describe one point. docs/LEARNINGS.md ("The delete threshold buys volume, not
-    precision") found this state is common on real libraries, not an error.
-    A domain with no flaggable threshold at
-    all -- every row protected, blocked, or under the coverage floor -- has no population to
-    resolve a ratio against, and resolves to NOT_ENOUGH_HISTORY for the same reason a scan
-    with no measurable cohort does: there is nothing here to resolve. Same stored scan, same
-    history, same answer every time (no clock, no randomness).
+    ``counts_only`` when no candidate anywhere in this scan has a cohort this server trusts
+    (mirrors the retired resolver's NOT_ENOUGH_HISTORY guard): the count is real, but making
+    up a comeback estimate with nothing to base it on would be worse than not showing one.
+    An empty candidate set (no scan, or nothing on this media type's lane) has no population
+    to ever flag anything, so it reads the same way, with an empty row list -- every score
+    then falls through to "nothing on the last scan scores this high", which is true of it.
+    Same stored scan, same history, same answer every time (no clock, no randomness).
     """
     if not candidates:
-        return RatioNotEnoughHistoryOut()
+        return ThresholdCurveCountsOnlyOut(rows=[])
 
     fallback_pool = [
         rate for c in candidates if (rate := _measured_or_thin_rate(c.rewatch_odds)) is not None
@@ -467,8 +464,27 @@ def resolve_ratio_curve(
     if not fallback_pool:
         # No candidate anywhere in this scan has a cohort this server trusts -- the fit
         # never found a band with REWATCH_BLOCK_FLOOR_N (30) or more titles. Nothing below
-        # would have a real number to compare against, so the locked default applies.
-        return RatioNotEnoughHistoryOut()
+        # would have a real number to compare against, so the count stands alone.
+        counted_rows: list[ThresholdCurveCountsOnlyRowOut] = []
+        for threshold in _CONDEMN_AT_DOMAIN:
+            flagged = sum(
+                1
+                for c in candidates
+                if decide_verdict(
+                    protected=c.protected,
+                    blocked=c.blocked,
+                    score=c.score,
+                    coverage_bp=c.coverage_bp,
+                    condemn_at=threshold,
+                    coverage_floor_bp=coverage_floor_bp,
+                )
+                == "condemn"
+            )
+            if flagged:
+                counted_rows.append(
+                    ThresholdCurveCountsOnlyRowOut(score=threshold, flagged=flagged)
+                )
+        return ThresholdCurveCountsOnlyOut(rows=counted_rows)
     fallback_probability = max(fallback_pool)
 
     weighted = [
@@ -482,9 +498,7 @@ def resolve_ratio_curve(
         for c in candidates
     ]
 
-    resolved: tuple[int, int, float] | None = None
-    best: tuple[int, int, float] | None = None
-    best_achieved = 0.0
+    measured_rows: list[ThresholdCurveMeasuredRowOut] = []
     for threshold in _CONDEMN_AT_DOMAIN:
         flagged = 0
         mistakes = 0.0
@@ -502,32 +516,16 @@ def resolve_ratio_curve(
                 mistakes += probability
         if flagged == 0:
             continue
-        achieved = math.inf if mistakes <= 0 else flagged / mistakes
-        if resolved is None and achieved >= ratio:
-            resolved = (threshold, flagged, mistakes)
-        # Strictly greater, so a tie keeps the LOWEST threshold achieving it -- the same
-        # convention the resolved arm uses, and every number in the floored echo then
-        # describes one point on the curve.
-        if achieved > best_achieved:
-            best_achieved = achieved
-            best = (threshold, flagged, mistakes)
-
-    if resolved is not None:
-        threshold, flagged, mistakes = resolved
-        return RatioResolvedOut(
-            score=threshold, flagged_items=flagged, expected_mistakes=math.ceil(mistakes)
+        # mistakes > 0 is guaranteed here: every contributing probability is strictly
+        # positive (`_measured_or_thin_rate`'s own guarantee), and at least one flagged
+        # title contributes one, so `math.ceil` is always >= 1 -- pinned in the tests as
+        # the review's zero-cohort hole staying closed.
+        measured_rows.append(
+            ThresholdCurveMeasuredRowOut(
+                score=threshold, flagged=flagged, expected_mistakes=math.ceil(mistakes)
+            )
         )
-    if best is None:
-        return RatioNotEnoughHistoryOut()
-    threshold, flagged, mistakes = best
-    # mistakes > 0 is guaranteed here: mistakes == 0 gives achieved == math.inf, which
-    # clears any finite requested ratio and would have set `resolved` above instead.
-    return RatioFlooredOut(
-        score=threshold,
-        flagged_items=flagged,
-        expected_mistakes=math.ceil(mistakes),
-        best_ratio=math.floor(flagged / mistakes),
-    )
+    return ThresholdCurveMeasuredOut(rows=measured_rows)
 
 
 async def _ratio_candidates(
@@ -564,41 +562,38 @@ async def _ratio_candidates(
     return out
 
 
-@router.get("/policy/resolve-ratio", tags=[api_tags.POLICY])
-async def resolve_ratio(
+@router.get("/policy/threshold-curve", tags=[api_tags.POLICY])
+async def threshold_curve(
     request: Request,
-    ratio: int = Query(..., ge=2, le=99),
     media_type: str = Query("movie", pattern="^(movie|tv)$"),
-) -> RatioResolutionOut:
-    """Resolve "one mistake per ``ratio`` cleared" into a delete-threshold score, from the
-    newest scan and this server's own fitted rewatch curve.
+) -> ThresholdCurveOut:
+    """The whole per-score curve behind the delete-threshold slider's consequence sentence,
+    from the newest scan and this server's own fitted rewatch curve.
 
-    Read-only: nothing here saves anything. The frontend applies the resolved score through
-    the ordinary ``POST /api/policy`` save, exactly as if the operator had typed it, and the
-    ratio itself is never the live setting -- see ``PolicyBody.applied_ratio`` for where a
-    later drift check reads what was applied. Covers both lanes: a movie policy scores
-    movies, a TV policy scores seasons (``_candidate_media_type``), the same split
-    ``rewatch_odds_fit`` reads.
+    Read-only: nothing here saves anything, and nothing here is a setting -- the operator
+    still sets ``condemn_at`` on the slider exactly as before, and this route only states
+    what that position means. Covers both lanes: a movie policy scores movies, a TV policy
+    scores seasons (``_candidate_media_type``), the same split ``rewatch_odds_fit`` reads.
 
-    Every failure -- no scan yet, or a scan whose fitted curve has no cohort large enough to
-    trust -- resolves to NOT_ENOUGH_HISTORY, the locked default: an operator is never shown a
-    confident score this server cannot back.
+    One request per media type, not one per slider position: the frontend re-decides every
+    row locally as the operator drags, since :func:`threshold_curve_rows` already computed
+    the whole domain. ``no_scan`` when there is nothing to read yet; the frontend renders
+    nothing in that state, and in a failed or still-loading read, rather than a locked or
+    error notice -- a plain score control needs no scan to work.
     """
     async with session_factory(request)() as session:
         newest = (
             await session.execute(select(Snapshot).order_by(Snapshot.id.desc()).limit(1))
         ).scalar_one_or_none()
         if newest is None:
-            return RatioNotEnoughHistoryOut()
+            return ThresholdCurveNoScanOut()
         candidates = await _ratio_candidates(
             session,
             snapshot_id=newest.id,
             candidate_media_type=_candidate_media_type(media_type),
         )
         active = await active_policy(session, media_type)
-    return resolve_ratio_curve(
-        candidates, ratio=ratio, coverage_floor_bp=active.body.coverage_floor_bp
-    )
+    return threshold_curve_rows(candidates, coverage_floor_bp=active.body.coverage_floor_bp)
 
 
 @router.get("/policy", tags=[api_tags.POLICY])

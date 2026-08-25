@@ -2083,6 +2083,9 @@
       "blurb": "The reasons to believe nobody will watch it again. The protections below can always overrule the score.",
       "condemnAtHelp": "The higher you set this, the more sure Reaper has to be before it flags a title. Protections below still win.",
       "condemnAtLabel": "Put a title on the list once it scores",
+      "condemnConsequence": "{flagged, plural, one {# title} other {# titles}} would be Condemned. About {mistakes} of them may get watched again within a year if you kept them.",
+      "condemnConsequenceCountOnly": "{flagged, plural, one {# title} other {# titles}} would be Condemned.",
+      "condemnConsequenceZero": "0 titles would be Condemned. Nothing on the last scan scores this high.",
       "coverageFloorHelp": "Reaper judges a title on the reasons below. If it can't check enough of them, it holds the title in Limbo for you to decide.",
       "coverageFloorLabel": "Judge a title only when there's enough to go on"
     },
@@ -2198,26 +2201,6 @@
       "rottenTomatoesAudience": "Rotten Tomatoes audience",
       "rottenTomatoesCritic": "Rotten Tomatoes critics",
       "tmdb": "TMDb"
-    },
-    "ratioCard": {
-      "applyButton": "Use this score",
-      "driftApply": "Apply the new score",
-      "driftNoLongerResolves": "One mistake per {ratio} cleared no longer works out to a score. Set the score directly until it does.",
-      "driftNotice": "One mistake per {ratio} cleared now works out to a score of {score}%.",
-      "echoBody": "That is a score of {score}%. Reaper would put {flagged, plural, one {one title} other {# titles}} in front of you. Based on your history, about {mistakes, plural, one {one of them} other {# of them}} would come back.",
-      "echoFloored": "Your library cannot go that low. The best it can get is one mistake per {bestRatio}.",
-      "heading": "How careful should Reaper be?",
-      "locked": "Not enough history yet. Reaper needs about a year of watch history to judge from, and another year after it to see who came back. Until then it keeps working the way it does now, and you set the score directly.",
-      "presetAnnoyingName": "It would be annoying",
-      "presetAnnoyingSub": "I would rather not, but I would live",
-      "presetEasyName": "I can get it back easily",
-      "presetEasySub": "Most of my library is a re-request away",
-      "presetUpsetName": "I would be upset",
-      "presetUpsetSub": "Some of this I could not replace",
-      "sliderAriaLabel": "One mistake per how many titles cleared",
-      "sliderLabel": "One mistake per",
-      "sliderValue": "{n} cleared",
-      "sub": "Set how many good deletions are worth one mistake. Reaper works out the rest."
     },
     "repairs": {
       "fellBack": "Your saved policy couldn't be read, so this shows the starting one instead. Nothing has changed on your server. Check the values below, then save to replace it.",

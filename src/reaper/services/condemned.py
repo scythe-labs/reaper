@@ -174,7 +174,7 @@ def has_blocked_protections_decoded(explanation: object) -> bool:
     a hand reap. Anything that is not a dict at the top level, including a decode failure the
     caller already turned into ``None``, holds too: evidence this code cannot read must never
     be read as "nothing was blocking" (rule 96). ``api.simulate``'s threshold-only replay and
-    ``api.policy``'s ratio resolver both read this -- the one derivation of "is this row
+    ``api.policy``'s threshold curve both read this -- the one derivation of "is this row
     unchecked, whatever the threshold" -- rather than each parsing the block itself.
     """
     if not isinstance(explanation, dict):

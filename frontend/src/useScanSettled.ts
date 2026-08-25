@@ -59,11 +59,11 @@ export const SCAN_SETTLED_KEYS: string[][] = [
   // plays for N items"), so a stale read here attributes an older count to a scan that has just
   // finished with a different one.
   ["watch-evidence"], // Plex's recorded-watch-history line
-  // The ratio card resolves against the newest snapshot's candidates, so a finished scan
-  // moves its echo and its drift notice. The save-time half of its staleness (a changed
-  // coverage floor takes effect at save, before any scan) is invalidated by the policy
-  // save itself in `PolicyEditor`.
-  ["resolve-ratio"], // the policy editor's mistakes-per-cleared readout
+  // The threshold curve is built off the newest snapshot's candidates, so a finished scan
+  // moves the delete-threshold slider's consequence sentence. The save-time half of its
+  // staleness (a changed coverage floor takes effect at save, before any scan) is
+  // invalidated by the policy save itself in `PolicyEditor`.
+  ["threshold-curve"], // the policy editor's "N titles would be Condemned" readout
 ];
 
 /** Refresh everything that hangs off the snapshot when a scan finishes.

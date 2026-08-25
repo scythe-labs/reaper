@@ -29,7 +29,7 @@ from reaper.engine.explanation import (
 )
 from reaper.engine.fields import FieldType, Lane, Op
 from reaper.engine.gates import POLICY_AUTHORABLE_GATES, GateId
-from reaper.engine.policy import AppliedRatio, CustomCondemnSpec, GradedKeepSpec, RatingRuleSpec
+from reaper.engine.policy import CustomCondemnSpec, GradedKeepSpec, RatingRuleSpec
 from reaper.engine.policy_migrations import PolicyRepair
 from reaper.engine.signals import SignalId
 from reaper.engine.verdict import Override
@@ -858,54 +858,63 @@ class RewatchOddsFitOut(BaseModel):
     consequence echo states its protected count out of."""
 
 
-class RatioResolvedOut(BaseModel):
-    """A "one mistake per N cleared" ratio resolved to a score, from the current scan and
-    this server's own fitted rewatch curve.
-
-    ``flagged_items`` and ``expected_mistakes`` are the echo sentence's two numbers,
-    re-derived here rather than composed on the wire, so a rounding difference in the
-    browser can never disagree with what the score control itself will show once applied.
+class ThresholdCurveMeasuredRowOut(BaseModel):
+    """One legal delete-threshold score, from a scan with a trusted rewatch cohort
+    somewhere in it: what the Policy page's consequence sentence reads off, for whichever
+    score the slider currently sits on.
     """
 
-    state: Literal["resolved"] = "resolved"
     score: int = Field(ge=1, le=100)
-    """The lowest score that still delivers at least the requested ratio."""
-    flagged_items: int = Field(ge=0)
-    """How many titles the current scan would put in front of the operator at ``score``."""
-    expected_mistakes: int = Field(ge=0)
-    """About how many of ``flagged_items`` the operator's own history says come back,
-    rounded up (never down) so the echo never understates the risk."""
+    flagged: int = Field(gt=0)
+    """How many titles the newest scan would put in front of the operator at ``score``."""
+    expected_mistakes: int = Field(ge=1)
+    """About how many of ``flagged`` the operator's own history says come back, rounded up
+    (never down) so the sentence never understates the risk. Never zero: every candidate's
+    contribution is strictly positive (``_measured_or_thin_rate``'s own Wilson-bound
+    guarantee), so at least one flagged title always adds something above zero."""
 
 
-class RatioNotEnoughHistoryOut(BaseModel):
-    """Locked: no scan, or too little watch history, to resolve a ratio into a score at
-    all. The operator keeps setting the score directly; the frontend catalog supplies the
-    sentence (rule 92)."""
+class ThresholdCurveMeasuredOut(BaseModel):
+    """The whole score-to-consequence curve, from a scan with a trusted rewatch cohort
+    somewhere in it. One row per legal score that flags anything at all, in ascending score
+    order; a score between two rows, above the highest one, or below 1 flags nothing this
+    scan measured, and the frontend reads that as the zero-flagged sentence.
+    """
 
-    state: Literal["not_enough_history"] = "not_enough_history"
+    state: Literal["measured"] = "measured"
+    rows: list[ThresholdCurveMeasuredRowOut]
 
 
-class RatioFlooredOut(BaseModel):
-    """The requested ratio is past what this library's curve can deliver at any score
-    (docs/LEARNINGS.md, "The delete threshold buys volume, not precision"). Pinned at the
-    highest score the current scan still flags anything at, which is the best ratio this
-    library's curve reaches."""
+class ThresholdCurveCountsOnlyRowOut(BaseModel):
+    """One legal delete-threshold score's flagged count, from a scan with no rewatch cohort
+    this server trusts anywhere. The count is real; a comeback estimate would not be."""
 
-    state: Literal["floored"] = "floored"
     score: int = Field(ge=1, le=100)
-    flagged_items: int = Field(ge=0)
-    expected_mistakes: int = Field(ge=0)
-    best_ratio: int = Field(ge=0)
-    """The best "1 mistake per N cleared" the library reaches, at ``score`` -- the N the
-    copy names. Rounded DOWN from the raw figure (never up), so the echo never overstates
-    how good the library's ceiling really is (rule 31's spirit)."""
+    flagged: int = Field(gt=0)
 
 
-#: What ``GET /api/policy/resolve-ratio`` answers: exactly one of the three states above,
+class ThresholdCurveCountsOnlyOut(BaseModel):
+    """No candidate anywhere in this scan has a cohort large enough to trust (mirrors the
+    resolver's own NOT_ENOUGH_HISTORY guard), so the sentence renders its count clause
+    alone -- never a made-up comeback estimate with nothing behind it."""
+
+    state: Literal["counts_only"] = "counts_only"
+    rows: list[ThresholdCurveCountsOnlyRowOut]
+
+
+class ThresholdCurveNoScanOut(BaseModel):
+    """No scan has run on this build yet, so there is nothing to read a curve from. The
+    frontend renders nothing rather than a locked or error state: this is a readout, not a
+    setting, and the slider keeps working exactly as it does today."""
+
+    state: Literal["no_scan"] = "no_scan"
+
+
+#: What ``GET /api/policy/threshold-curve`` answers: exactly one of the three states above,
 #: never inferred from which optional fields happen to be present (rule 142) -- the same
 #: discriminated-union shape ``PolicyProbeIn`` documents above as the pattern to copy.
-RatioResolutionOut = Annotated[
-    RatioResolvedOut | RatioNotEnoughHistoryOut | RatioFlooredOut,
+ThresholdCurveOut = Annotated[
+    ThresholdCurveMeasuredOut | ThresholdCurveCountsOnlyOut | ThresholdCurveNoScanOut,
     Field(discriminator="state"),
 ]
 
@@ -963,9 +972,6 @@ class PolicyBodyOut(BaseModel):
     # per-source vote-floor validation runs on the wire.
     keep_rating_rules: list[RatingRuleSpec] = Field(default_factory=list)
     keep_rating_match: Literal["any", "all"] = "any"
-    # Reused directly, like the three specs above, so its own bounds run on the wire and
-    # cannot drift from the engine's (rule 131). See ``PolicyBody.applied_ratio``.
-    applied_ratio: AppliedRatio | None = None
 
 
 class PolicyIn(PolicyBodyOut):

@@ -627,15 +627,6 @@ export interface RatingRule {
  *  Declared beside `PolicyBody` because that is where the keep's own four fields live. */
 export const REWATCH_KEEP = "rewatch_habit";
 
-/** A resolved "one mistake per N cleared" ratio, frozen at the moment it was applied: what
- *  the operator asked for, and the delete-threshold score `GET /api/policy/resolve-ratio`
- *  resolved it to then. Display-only; see `PolicyBody.applied_ratio`. Mirrors
- *  `engine.policy.AppliedRatio`. */
-export interface AppliedRatio {
-  ratio: number;
-  resolved_score: number;
-}
-
 export interface PolicyBody {
   name: string;
   media_type: string;
@@ -663,7 +654,6 @@ export interface PolicyBody {
   rewatch_recent_days: number;
   keep_rating_rules: RatingRule[];
   keep_rating_match: "any" | "all";
-  applied_ratio: AppliedRatio | null;
 }
 
 /** The distribution of content-season counts across shows in the latest snapshot, so the
@@ -697,42 +687,53 @@ export interface RewatchOddsFit {
   total_items: number;
 }
 
-/** A "one mistake per N cleared" ratio resolved to a score, from the current scan and this
- *  server's own fitted rewatch curve. */
-export interface RatioResolved {
-  state: "resolved";
-  /** The lowest score that still delivers at least the requested ratio. */
+/** One legal delete-threshold score, from a scan with a trusted rewatch cohort somewhere in
+ *  it: what the Policy page's consequence sentence reads off, for whichever score the
+ *  slider currently sits on. */
+export interface ThresholdCurveMeasuredRow {
   score: number;
-  /** How many titles the current scan would put in front of the operator at `score`. */
-  flagged_items: number;
-  /** About how many of `flagged_items` the operator's own history says come back, rounded
-   *  up so the echo never understates the risk. */
+  /** How many titles the newest scan would put in front of the operator at `score`. */
+  flagged: number;
+  /** About how many of `flagged` the operator's own history says come back, rounded up so
+   *  the sentence never understates the risk. */
   expected_mistakes: number;
 }
 
-/** Locked: no scan, or too little watch history, to resolve a ratio into a score at all.
- *  The operator keeps setting the score directly. */
-export interface RatioNotEnoughHistory {
-  state: "not_enough_history";
+/** The whole score-to-consequence curve, from a scan with a trusted rewatch cohort
+ *  somewhere in it. One row per legal score that flags anything at all, in ascending score
+ *  order; a score between two rows, above the highest one, or below 1 flags nothing this
+ *  scan measured. */
+export interface ThresholdCurveMeasured {
+  state: "measured";
+  rows: ThresholdCurveMeasuredRow[];
 }
 
-/** The requested ratio is past what this library's curve can deliver at any score. Pinned
- *  at the highest score the current scan still flags anything at, which is the best ratio
- *  the library's curve reaches. */
-export interface RatioFloored {
-  state: "floored";
+/** One legal delete-threshold score's flagged count, from a scan with no rewatch cohort
+ *  this server trusts anywhere. The count is real; a comeback estimate would not be. */
+export interface ThresholdCurveCountsOnlyRow {
   score: number;
-  flagged_items: number;
-  expected_mistakes: number;
-  /** The best "1 mistake per N cleared" the library reaches, at `score` -- rounded DOWN, so
-   *  it never overstates how good the library's ceiling really is. */
-  best_ratio: number;
+  flagged: number;
 }
 
-/** What `GET /api/policy/resolve-ratio` answers: exactly one of the three states above,
+/** No candidate anywhere in this scan has a cohort large enough to trust, so the sentence
+ *  renders its count clause alone, never a made-up comeback estimate. */
+export interface ThresholdCurveCountsOnly {
+  state: "counts_only";
+  rows: ThresholdCurveCountsOnlyRow[];
+}
+
+/** No scan has run on this build yet. The editor renders nothing rather than a locked or
+ *  error state: this is a readout, not a setting, and the slider keeps working exactly as
+ *  it does today. */
+export interface ThresholdCurveNoScan {
+  state: "no_scan";
+}
+
+/** What `GET /api/policy/threshold-curve` answers: exactly one of the three states above,
  *  never inferred from which fields happen to be present. Mirrors
- *  `api.schemas.RatioResolutionOut`. */
-export type RatioResolution = RatioResolved | RatioNotEnoughHistory | RatioFloored;
+ *  `api.schemas.ThresholdCurveOut`. */
+export type ThresholdCurve =
+  ThresholdCurveMeasured | ThresholdCurveCountsOnly | ThresholdCurveNoScan;
 
 /** What a vocabulary field's value IS, which decides how it is typed, stored and read back
  *  (`engine/fields.py`'s `FieldType`). Two of the six convert. A size is typed in GB and stored
@@ -2274,11 +2275,11 @@ export const api = {
    *  TV seasons carry their own fit, so the ladder never mixes the two lanes. */
   rewatchOddsFit: (mediaType: "movie" | "tv") =>
     request<RewatchOddsFit>(`/api/policy/rewatch-odds?media_type=${mediaType}`),
-  /** Resolve "one mistake per `ratio` cleared" into a delete-threshold score, from the
-   *  latest scan and this server's own fitted rewatch curve. Read-only: applying the
-   *  answer is a local draft edit through the ordinary policy save, never a call here. */
-  resolveRatio: (mediaType: "movie" | "tv", ratio: number) =>
-    request<RatioResolution>(`/api/policy/resolve-ratio?ratio=${ratio}&media_type=${mediaType}`),
+  /** The whole score-to-consequence curve behind the delete-threshold slider, from the
+   *  latest scan and this server's own fitted rewatch curve. One request per media type:
+   *  the editor re-decides every row locally as the slider moves, never a call per drag. */
+  thresholdCurve: (mediaType: "movie" | "tv") =>
+    request<ThresholdCurve>(`/api/policy/threshold-curve?media_type=${mediaType}`),
 
   startScan: () => post<ScanStatus>("/api/scan/start", {}),
   scanStatus: () => request<ScanStatus>("/api/scan/status"),

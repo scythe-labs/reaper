@@ -106,7 +106,12 @@ const HOW_TO_UPDATE =
 //: humanWindow no longer hardcode "year"/"month"/"day"), so all three are required;
 //: format.span.lessThanADay/yearWord/monthWord/dayWord carry no argument or tag and stay
 //: unrequired, the same as any other plain literal.
-const EXPECTED_REQUIRED_COUNT = 1185;
+//: 1182: the retired ratio card's five required keys (echoBody, echoFloored, sliderValue,
+//: driftNotice, driftNoLongerResolves) left with it; the delete-threshold slider's
+//: consequence sentence added two back (policyEditor.flags.condemnConsequence and
+//: .condemnConsequenceCountOnly, both carrying an ICU plural). Its third key,
+//: .condemnConsequenceZero, is a plain literal with no argument or tag and stays unrequired.
+const EXPECTED_REQUIRED_COUNT = 1182;
 
 describe("translator notes (locales/en/ui.notes.json)", () => {
   it("classifies a plain literal as not required, and an ICU or tagged one as required (rule 145)", () => {

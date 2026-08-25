@@ -967,16 +967,17 @@ describe("the controls a screen reader has to tell apart", () => {
   //
   // Rule 145: this walks a population, so it counts. Asserting "every slider I collected has a
   // name" reads green when the walk collects nothing. The count below is every `range` this
-  // fixture renders -- the two thresholds, the ratio card's own slider, plus one weight per
-  // built-in signal in `body()` (3) -- reconciled by hand against the source. Its honest limit:
-  // a slider added to a section this fixture does not mount is missing from both the table and
-  // the count, and the two absences hide each other.
+  // fixture renders -- the two thresholds, plus one weight per built-in signal in `body()` (3)
+  // -- reconciled by hand against the source. Its honest limit: a slider added to a section
+  // this fixture does not mount is missing from both the table and the count, and the two
+  // absences hide each other.
   //
   // It went 5 -> 8 -> 5 across this branch: a probe slider per signal, then none. The guard
   // caught the arrival, and the reason they left is the same thing it is watching for -- a
   // second range control under a weight reads as another setting, and the operator cannot
-  // tell which track changes their policy. It went to 6 when the ratio card's own slider
-  // joined the other two thresholds.
+  // tell which track changes their policy. It went to 6 when the retired ratio card's own
+  // slider joined the other two thresholds, and back to 5 when that card was replaced by a
+  // plain sentence under the existing score slider, with no control of its own.
   it("names both thresholds for their label, never for the help text under it", async () => {
     renderEditor({ body: body() });
 
@@ -986,7 +987,7 @@ describe("the controls a screen reader has to tell apart", () => {
     expect(floor).toHaveAttribute("type", "range");
 
     const sliders = document.querySelectorAll<HTMLInputElement>('input[type="range"]');
-    expect(sliders).toHaveLength(6);
+    expect(sliders).toHaveLength(5);
     for (const s of sliders) expect(s.getAttribute("aria-label")).toBeTruthy();
     // The two per signal must not answer to the same name, which is the failure this whole
     // test is about and the one a truthiness check on each cannot see.
@@ -1696,62 +1697,29 @@ describe("the policy the URL names", () => {
   });
 });
 
-describe("the ratio card", () => {
-  const SLIDER_NAME = "One mistake per how many titles cleared";
+describe("the delete threshold's consequence sentence", () => {
   const SCORE_NAME = "Put a title on the list once it scores";
-  const LOCKED_TEXT = /Not enough history yet\. Reaper needs about a year/;
 
-  // The default `policyEditorKit` answer for GET /policy/resolve-ratio is "not_enough_history"
-  // -- the safe default most servers actually see (no year of watch history yet) -- so a test
-  // that does not pass its own answer already covers this state, driven explicitly rather than
-  // relied on implicitly.
-  it("stays locked with no watch history to resolve a ratio against", async () => {
-    renderEditor({ body: body() });
-    await screen.findByRole("heading", { name: "Movies policy" });
-    expect(await screen.findByText(LOCKED_TEXT)).toBeInTheDocument();
-    expect(screen.getByLabelText(SLIDER_NAME)).toBeDisabled();
-  });
-
-  // Rule 17/36: isPending and error both land on the same safe default. A control the
-  // endpoint cannot back is never shown enabled.
-  it("stays locked when the endpoint fails", async () => {
+  it("pins the sentence at a measured position", async () => {
     renderEditor(
-      { body: body() },
+      { body: body() }, // condemn_at 70
       pace,
       null,
       [],
       "flags",
       "movie",
       { blocks: [], total_items: 0 },
-      new Error("resolve-ratio unreachable"),
-    );
-    await screen.findByRole("heading", { name: "Movies policy" });
-    expect(await screen.findByText(LOCKED_TEXT)).toBeInTheDocument();
-    expect(screen.getByLabelText(SLIDER_NAME)).toBeDisabled();
-  });
-
-  it("warns when the requested ratio is looser than the library can deliver", async () => {
-    renderEditor(
-      { body: body() },
-      pace,
-      null,
-      [],
-      "flags",
-      "movie",
-      { blocks: [], total_items: 0 },
-      { state: "floored", score: 42, flagged_items: 9, expected_mistakes: 3, best_ratio: 3 },
+      { state: "measured", rows: [{ score: 70, flagged: 20, expected_mistakes: 2 }] },
     );
     await screen.findByRole("heading", { name: "Movies policy" });
     expect(
       await screen.findByText(
-        "Your library cannot go that low. The best it can get is one mistake per 3. That is a score of 42%. Reaper would put 9 titles in front of you. Based on your history, about 3 of them would come back.",
+        "20 titles would be Condemned. About 2 of them may get watched again within a year if you kept them.",
       ),
     ).toBeInTheDocument();
   });
 
-  it("applies the resolved score and its ratio into the draft", async () => {
-    const person = userEvent.setup();
-    apiMock.validatePolicy.mockClear();
+  it("uses the singular at exactly one flagged title", async () => {
     renderEditor(
       { body: body() },
       pace,
@@ -1760,34 +1728,20 @@ describe("the ratio card", () => {
       "flags",
       "movie",
       { blocks: [], total_items: 0 },
-      { state: "resolved", score: 55, flagged_items: 20, expected_mistakes: 2 },
+      { state: "measured", rows: [{ score: 70, flagged: 1, expected_mistakes: 1 }] },
     );
     await screen.findByRole("heading", { name: "Movies policy" });
-    // The slider opens on 20 (the shipped default) with nothing applied yet, so applying it
-    // now is the operator's own act, not something the load did for them.
-    await screen.findByText(/That is a score of 55%/);
-
-    await person.click(screen.getByRole("button", { name: "Use this score" }));
-
-    // condemn_at moved: observable on the existing direct score control, which the ratio
-    // card writes through rather than duplicating.
-    expect(screen.getByLabelText(SCORE_NAME)).toHaveValue("55");
-    // applied_ratio moved too: it has no surface of its own, so it is read off the drafted
-    // body the debounced validator was actually handed (rule 119: assert what was sent).
-    await waitFor(() =>
-      expect(apiMock.validatePolicy).toHaveBeenCalledWith(
-        expect.objectContaining({
-          condemn_at: 55,
-          applied_ratio: { ratio: 20, resolved_score: 55 },
-        }),
-        expect.anything(),
+    expect(
+      await screen.findByText(
+        "1 title would be Condemned. About 1 of them may get watched again within a year if you kept them.",
       ),
-    );
+    ).toBeInTheDocument();
   });
 
-  it("stays locked on a resolution state this build does not recognize", async () => {
-    // Allowlist, never denylist: a future backend's fourth state must land on locked,
-    // not on an unlocked card printing fields it does not have.
+  it("shows the zero-flagged sentence when nothing on the last scan scores this high", async () => {
+    // The curve's only row sits at 40, well under the draft's 70: dense-domain rows never
+    // reach a score this high, so nothing here would ever put a title in front of the
+    // operator at 70.
     renderEditor(
       { body: body() },
       pace,
@@ -1796,18 +1750,17 @@ describe("the ratio card", () => {
       "flags",
       "movie",
       { blocks: [], total_items: 0 },
-      { state: "confidence_interval_wide" } as never,
+      { state: "measured", rows: [{ score: 40, flagged: 5, expected_mistakes: 1 }] },
     );
     await screen.findByRole("heading", { name: "Movies policy" });
-    expect(await screen.findByText(LOCKED_TEXT)).toBeInTheDocument();
-    expect(screen.getByLabelText(SLIDER_NAME)).toBeDisabled();
+    expect(
+      await screen.findByText(
+        "0 titles would be Condemned. Nothing on the last scan scores this high.",
+      ),
+    ).toBeInTheDocument();
   });
 
-  it("clears applied_ratio when a policy preset is applied afterwards", async () => {
-    // Rule 72's sibling of the hand-edit case below: a preset writes condemn_at the same
-    // way the hand slider does, so the same clearing applies.
-    const person = userEvent.setup();
-    apiMock.validatePolicy.mockClear();
+  it("renders only the count when the scan has no trusted rewatch cohort anywhere", async () => {
     renderEditor(
       { body: body() },
       pace,
@@ -1816,60 +1769,38 @@ describe("the ratio card", () => {
       "flags",
       "movie",
       { blocks: [], total_items: 0 },
-      { state: "resolved", score: 55, flagged_items: 20, expected_mistakes: 2 },
+      { state: "counts_only", rows: [{ score: 70, flagged: 12 }] },
     );
     await screen.findByRole("heading", { name: "Movies policy" });
-    await screen.findByText(/That is a score of 55%/);
-    await person.click(screen.getByRole("button", { name: "Use this score" }));
-    await waitFor(() =>
-      expect(apiMock.validatePolicy).toHaveBeenCalledWith(
-        expect.objectContaining({ applied_ratio: { ratio: 20, resolved_score: 55 } }),
-        expect.anything(),
-      ),
-    );
-
-    await person.click(screen.getByRole("button", { name: "Cautious" }));
-
-    await waitFor(() =>
-      expect(apiMock.validatePolicy).toHaveBeenCalledWith(
-        expect.objectContaining({ applied_ratio: null }),
-        expect.anything(),
-      ),
-    );
+    expect(await screen.findByText("12 titles would be Condemned.")).toBeInTheDocument();
+    // Never a made-up comeback estimate with no cohort behind it.
+    expect(screen.queryByText(/may get watched again/)).not.toBeInTheDocument();
   });
 
-  it("clears applied_ratio when the score is hand-edited afterwards", async () => {
-    const person = userEvent.setup();
-    apiMock.validatePolicy.mockClear();
-    renderEditor(
-      { body: body() },
-      pace,
-      null,
-      [],
-      "flags",
-      "movie",
-      { blocks: [], total_items: 0 },
-      { state: "resolved", score: 55, flagged_items: 20, expected_mistakes: 2 },
-    );
-    await screen.findByRole("heading", { name: "Movies policy" });
-    await screen.findByText(/That is a score of 55%/);
-    await person.click(screen.getByRole("button", { name: "Use this score" }));
-    await waitFor(() =>
-      expect(apiMock.validatePolicy).toHaveBeenCalledWith(
-        expect.objectContaining({ applied_ratio: { ratio: 20, resolved_score: 55 } }),
-        expect.anything(),
-      ),
-    );
-
-    // A hand-set score is no longer "from" a ratio (a preset or an old applied ratio must
-    // not go on describing a score the operator just picked themselves).
-    fireEvent.change(screen.getByLabelText(SCORE_NAME), { target: { value: "60" } });
-
-    await waitFor(() =>
-      expect(apiMock.validatePolicy).toHaveBeenCalledWith(
-        expect.objectContaining({ condemn_at: 60, applied_ratio: null }),
-        expect.anything(),
-      ),
-    );
-  });
+  // This is a readout, not a setting (unlike the retired ratio card, whose slider disabled
+  // itself on the same three states): the score slider works exactly as it does without
+  // this sentence, whatever the curve read answers.
+  const NOTHING_STATES: ReadonlyArray<[string, { state: "no_scan" } | Error | "pending"]> = [
+    ["no scan yet", { state: "no_scan" }],
+    ["a failed read", new Error("threshold-curve unreachable")],
+    ["a still-loading read", "pending"],
+  ];
+  it.each(NOTHING_STATES)(
+    "renders nothing for %s, and the score slider stays enabled",
+    async (_label, curve) => {
+      renderEditor(
+        { body: body() },
+        pace,
+        null,
+        [],
+        "flags",
+        "movie",
+        { blocks: [], total_items: 0 },
+        curve,
+      );
+      await screen.findByRole("heading", { name: "Movies policy" });
+      expect(screen.getByLabelText(SCORE_NAME)).toBeEnabled();
+      expect(screen.queryByText(/would be Condemned/)).not.toBeInTheDocument();
+    },
+  );
 });

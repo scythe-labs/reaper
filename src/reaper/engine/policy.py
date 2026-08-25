@@ -385,15 +385,6 @@ class RatingRuleSpec(Frozen):
         return self
 
 
-class AppliedRatio(Frozen):
-    """A resolved "one mistake per N cleared" ratio, frozen at the moment the operator
-    applied it: what they asked for, and the delete-threshold score
-    ``api.policy.resolve_ratio`` resolved it to then. See ``PolicyBody.applied_ratio``."""
-
-    ratio: int = Field(ge=2, le=99)
-    resolved_score: int = Field(ge=1, le=100)
-
-
 class PolicyBody(Frozen):
     """The hashed, immutable part of a policy.
 
@@ -698,23 +689,6 @@ class PolicyBody(Frozen):
     keep_rating_match: Literal["any", "all"] = "any"
     """Whether a title needs to clear ANY rating bar (the usual case) or ALL of them."""
 
-    applied_ratio: AppliedRatio | None = None
-    """The ratio the operator last resolved into ``condemn_at``, and the score it resolved
-    to at that moment -- so a LATER load can re-resolve the same ratio and tell the operator
-    when the library has shifted enough that it now means a different score, never moving it
-    for them. ``None`` means the operator has never applied a ratio, or set ``condemn_at`` by
-    hand since.
-
-    Display-only, and that is enforced by absence rather than by convention: nothing in
-    ``engine.verdict``, ``engine.signals`` or the scan pipeline reads this field, and it
-    cannot reach them by accident because none of them import ``PolicyBody.applied_ratio`` --
-    they read ``condemn_at`` directly, exactly as before this field existed. Listed in
-    ``_NON_BEHAVIORAL_FIELDS`` for the same reason ``schema_version`` is: it cannot move a
-    score, a verdict, or what a scan gathers, so the simulator's scoring-behavior tier must
-    not treat re-applying a ratio as a reason to distrust stored scores. It still moves
-    ``policy_hash`` (nothing is excluded from that one, rule 113), so re-applying a ratio is
-    a policy edit like any other and asks for a re-scan the same way one always has."""
-
     @model_validator(mode="after")
     def _weights_total_one_hundred(self) -> Self:
         """Every removal weight, built-in and operator-authored, sums to exactly 100.
@@ -927,11 +901,7 @@ class PolicyBody(Frozen):
     #: and **scanning could not clear it**. Any install whose policy predated a version bump
     #: had a permanently dead simulator. A hash that decides whether a feature answers at all
     #: must cover only fields that change the answer.
-    #: ``applied_ratio`` joined ``schema_version`` here for the same reason (see its own
-    #: docstring): it records what the operator asked for, not anything the scorer reads.
-    _NON_BEHAVIORAL_FIELDS: ClassVar[frozenset[str]] = frozenset(
-        {"schema_version", "applied_ratio"}
-    )
+    _NON_BEHAVIORAL_FIELDS: ClassVar[frozenset[str]] = frozenset({"schema_version"})
 
     def scoring_hash(self) -> str:
         """Identifies the policy's *scoring behavior*, ignoring the thresholds.

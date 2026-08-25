@@ -602,38 +602,3 @@
   align-items: center;
   gap: 0.4rem;
 }
-
-/* The ratio card's three starting points: pressable, not the shared `Segmented` (rule 41 --
-   they are only starting values for the slider, never a state of their own). Layout and
-   colors match the approved mockup; the base `button` rule in 04-buttons.css already
-   supplies the border, radius, hover and `:disabled` treatment. */
-.ratio-presets {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
-  margin-top: var(--space-3xl);
-}
-.ratio-preset {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3xl);
-  width: 100%;
-  text-align: start;
-  padding: var(--space-2xl) var(--space-3xl);
-  background: var(--bg);
-}
-.ratio-preset[aria-pressed="true"] {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  box-shadow: 0 0 0 3px var(--accent-ring);
-}
-.ratio-preset-name {
-  display: block;
-  font-weight: var(--weight-semi);
-  font-size: var(--text-base);
-}
-.ratio-preset-sub {
-  display: block;
-  font-size: var(--text-sm);
-  color: var(--muted);
-}

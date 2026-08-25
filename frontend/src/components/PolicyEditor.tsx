@@ -38,7 +38,6 @@ import { Trans, useTranslation } from "react-i18next";
 import {
   api,
   ApiError,
-  type AppliedRatio,
   type GateSetting,
   type Policy,
   type PolicyBody,
@@ -46,10 +45,9 @@ import {
   type ProfileSettings,
   type RatingRule,
   type RatingSource,
-  type RatioFloored,
-  type RatioResolved,
   type RewatchOddsFit,
   type SignalSetting,
+  type ThresholdCurve,
 } from "../api";
 import { announce } from "../announce";
 import { describeError } from "../errors";
@@ -1392,46 +1390,38 @@ function rewatchEchoSentence(
       });
 }
 
-/** The three starting points under the ratio slider (design-approved): not a
- *  stored mode, each just sets the slider to its own ratio. Loosest first, matching the
- *  mockup's order. A function returning already-translated strings, the same shape
- *  `policyPresets.ts`'s own `presets()` uses, and for the same reason: every `t()` call here
- *  takes a literal key, so the i18n key gate can resolve it statically -- a key built from a
- *  variable at the call site is what that gate's own DYNAMIC allowlist exists for, and a
- *  fixed 3-item list is not that. */
-function ratioPresets(): ReadonlyArray<{ ratio: number; name: string; sub: string }> {
-  return [
-    {
-      ratio: 8,
-      name: i18next.t("policyEditor.ratioCard.presetEasyName"),
-      sub: i18next.t("policyEditor.ratioCard.presetEasySub"),
-    },
-    {
-      ratio: 20,
-      name: i18next.t("policyEditor.ratioCard.presetAnnoyingName"),
-      sub: i18next.t("policyEditor.ratioCard.presetAnnoyingSub"),
-    },
-    {
-      ratio: 50,
-      name: i18next.t("policyEditor.ratioCard.presetUpsetName"),
-      sub: i18next.t("policyEditor.ratioCard.presetUpsetSub"),
-    },
-  ];
-}
-
-/** The ratio card's echo, straight off the endpoint's own answer -- never recomputed here,
- *  so the sentence can never disagree with what Apply is about to write into the draft.
- *  Floored prepends the warning clause. Never called with `not_enough_history`: that state
- *  renders the locked copy instead of this echo. */
-function ratioEchoSentence(resolution: RatioResolved | RatioFloored): string {
-  const body = i18next.t("policyEditor.ratioCard.echoBody", {
-    score: resolution.score,
-    flagged: resolution.flagged_items,
-    mistakes: resolution.expected_mistakes,
-  });
-  return resolution.state === "floored"
-    ? `${i18next.t("policyEditor.ratioCard.echoFloored", { bestRatio: resolution.best_ratio })} ${body}`
-    : body;
+/** The delete-threshold slider's consequence sentence: what the current score would flag on
+ *  the last scan, and about how many of those the operator's own history says come back.
+ *  Reads the curve fetched once per media type (`["threshold-curve", mediaType]`) and
+ *  re-decides locally for `condemnAt`, so dragging the slider costs nothing.
+ *
+ *  `null` covers every state with nothing to say: no curve yet, still loading, or a failed
+ *  read (`curve` undefined), and no scan at all (`"no_scan"`) -- this is a readout, not a
+ *  setting, so those states render nothing rather than a locked or error notice, and the
+ *  slider keeps working exactly as it does without this sentence.
+ *
+ *  A row exists only where it flags something
+ *  (`api.policy.threshold_curve_rows`), and every legal score from 1 up to the curve's peak
+ *  has one (`decide_verdict` is monotone in score), so a missing row at `condemnAt` means
+ *  nothing on the last scan scores that high. */
+function condemnConsequenceSentence(
+  curve: ThresholdCurve | undefined,
+  condemnAt: number,
+): string | null {
+  if (!curve || curve.state === "no_scan") return null;
+  if (curve.state === "counts_only") {
+    const row = curve.rows.find((r) => r.score === condemnAt);
+    return row
+      ? i18next.t("policyEditor.flags.condemnConsequenceCountOnly", { flagged: row.flagged })
+      : i18next.t("policyEditor.flags.condemnConsequenceZero");
+  }
+  const row = curve.rows.find((r) => r.score === condemnAt);
+  return row
+    ? i18next.t("policyEditor.flags.condemnConsequence", {
+        flagged: row.flagged,
+        mistakes: row.expected_mistakes,
+      })
+    : i18next.t("policyEditor.flags.condemnConsequenceZero");
 }
 
 export function PolicyEditor({
@@ -1499,79 +1489,25 @@ export function PolicyEditor({
   });
 
   const [draft, setDraft] = useState<PolicyBody | null>(null);
-  // The ratio card's own slider position. Not part of the policy at all until Apply writes
-  // it into the draft (`applied_ratio`), so it re-seeds alongside the draft rather than
-  // living inside it -- 20 unless the loaded policy already carries an applied ratio.
-  const [ratioTarget, setRatioTarget] = useState(20);
 
   // Seed the draft once the saved policy arrives, and re-seed when it is for a different media
   // type (the toggle changed). The editor must open on what is actually in force.
   useEffect(() => {
     if (saved && (draft === null || draft.media_type !== saved.body.media_type)) {
       setDraft(saved.body);
-      setRatioTarget(saved.body.applied_ratio?.ratio ?? 20);
     }
   }, [saved, draft]);
 
-  // Debounced on its own timer (SETTLE_MS, the same idiom `debounced` below uses off
-  // `draft`), so dragging the slider fires one request when the drag stops rather than one
-  // per pixel. Its own state, not folded into that debounce: this control never writes the
-  // draft on its own, only Apply does, so an edit elsewhere on the page must not restart
-  // this timer and dragging this slider must not restart that one.
-  const [debouncedRatio, setDebouncedRatio] = useState(ratioTarget);
-  useEffect(() => {
-    const id = setTimeout(() => setDebouncedRatio(ratioTarget), SETTLE_MS);
-    return () => clearTimeout(id);
-  }, [ratioTarget]);
-
-  const {
-    data: ratioResolution,
-    isPending: ratioPending,
-    isError: ratioError,
-  } = useQuery({
-    queryKey: ["resolve-ratio", mediaType, debouncedRatio],
-    queryFn: () => api.resolveRatio(mediaType, debouncedRatio),
-    placeholderData: keepPreviousData,
+  // The delete-threshold slider's consequence sentence, read once per media type and
+  // re-decided locally for every position the operator drags to -- no debounce, since
+  // `condemnConsequenceSentence` below just indexes the fetched rows. `isPending` and
+  // `isError` are deliberately not read: this is a readout, not a setting, so a loading or
+  // failed fetch renders nothing rather than a locked or error state, exactly like an
+  // absent scan.
+  const { data: thresholdCurve } = useQuery({
+    queryKey: ["threshold-curve", mediaType],
+    queryFn: () => api.thresholdCurve(mediaType),
   });
-  // Locked by DEFAULT (rule 17/36: isPending and error both land here, same as not-yet-loaded
-  // and not-enough-history) -- an operator is shown an editable control only once a real,
-  // resolvable answer is in hand. Folding all four causes into one nullable value, rather
-  // than a separate `locked` boolean beside it, is what lets the JSX below narrow: TypeScript
-  // cannot connect a boolean to the value it was computed from, only to a check on the value
-  // itself, so `ratioAnswer === null` has to be the thing the render branches on.
-  // Allowlist the two states this build can render, never denylist the one it cannot: a
-  // state a future backend adds must land on locked, not on an unlocked card printing
-  // fields it does not have.
-  const ratioAnswer: RatioResolved | RatioFloored | null =
-    ratioPending ||
-    ratioError ||
-    !ratioResolution ||
-    (ratioResolution.state !== "resolved" && ratioResolution.state !== "floored")
-      ? null
-      : ratioResolution;
-  const ratioLocked = ratioAnswer === null;
-
-  // Whether the loaded policy's own applied ratio still means what it did, re-resolved on
-  // the SAVED ratio -- never the slider's own live preview above, so dragging the slider can
-  // never make this notice appear or disappear by itself. Same query shape as the live
-  // preview, so an unmoved slider (the common case right after load) shares its cache entry
-  // rather than firing a second request for the same answer.
-  const savedRatio: AppliedRatio | null = saved?.body.applied_ratio ?? null;
-  const { data: driftResolution } = useQuery({
-    queryKey: ["resolve-ratio", mediaType, savedRatio?.ratio],
-    queryFn: () => api.resolveRatio(mediaType, savedRatio!.ratio),
-    enabled: savedRatio !== null,
-  });
-  // Same allowlist as ratioAnswer: an unrecognized state reads as "cannot confirm the
-  // ratio still holds", which the drift notice's no-longer-works-out arm already says.
-  const driftAnswer: RatioResolved | RatioFloored | null =
-    driftResolution && (driftResolution.state === "resolved" || driftResolution.state === "floored")
-      ? driftResolution
-      : null;
-  const ratioDrifted =
-    savedRatio !== null &&
-    driftResolution !== undefined &&
-    (driftAnswer === null || driftAnswer.score !== savedRatio.resolved_score);
 
   // Pace and limits: a SEPARATE draft with a separate save. Un-hashed on the server, so
   // changing a cap never voids a pending approval -- and deliberately media-type
@@ -1774,10 +1710,10 @@ export function PolicyEditor({
       // without this the operator edits a rule here, walks back, and reads "Keeps every title
       // on it" for a list nothing now protects with (rule 79).
       void queryClient.invalidateQueries({ queryKey: ["lists-configured"] });
-      // The ratio card's resolver reads the saved coverage floor server-side, so a save
-      // moves its answer at save time, before the rescan below lands. `useScanSettled`
+      // The threshold curve reads the saved coverage floor server-side, so a save moves the
+      // consequence sentence at save time, before the rescan below lands. `useScanSettled`
       // covers the scan half; this covers the save half (rule 79).
-      void queryClient.invalidateQueries({ queryKey: ["resolve-ratio"] });
+      void queryClient.invalidateQueries({ queryKey: ["threshold-curve"] });
       // Apply the saved policy to the review queue by re-scanning in the background. The
       // queue and the simulator read the last snapshot's stored verdicts, which were
       // produced by the OLD policy; a rescan re-scores the library under the new one, and the
@@ -2042,6 +1978,7 @@ export function PolicyEditor({
   const preset = activePreset(draft);
   const presetHelp =
     presets().find((p) => p.id === preset)?.help ?? t("policyEditor.presetHelp.custom");
+  const condemnConsequence = condemnConsequenceSentence(thresholdCurve, draft.condemn_at);
 
   const applyPreset = (p: ReturnType<typeof presets>[number]) => {
     const mix = DEFAULT_WEIGHTS[mediaType];
@@ -2055,9 +1992,6 @@ export function PolicyEditor({
     ]);
     update({
       condemn_at: p.condemn_at,
-      // A preset sets the score the same way the hand slider does, so the same rule
-      // applies: whatever ratio last wrote condemn_at no longer describes it.
-      applied_ratio: null,
       signals: draft.signals.map((s, i) => ({ ...s, weight: scaled[i] ?? 0 })),
       custom_condemn: draft.custom_condemn.map((c, i) => ({
         ...c,
@@ -2301,115 +2235,15 @@ export function PolicyEditor({
             // only by leaving the slider to go looking for it (#174).
             aria-describedby={warningsDescribing("condemn_at", warningsAt("condemn_at"))}
             value={draft.condemn_at}
-            // A hand-set score is no longer "from" a ratio: whatever the ratio card last
-            // wrote here, moving this slider directly is the operator overriding it, so the
-            // bookkeeping that names a ratio as this score's source no longer applies.
-            onChange={(e) => update({ condemn_at: Number(e.target.value), applied_ratio: null })}
+            onChange={(e) => update({ condemn_at: Number(e.target.value) })}
           />
           <span className="help">{t("policyEditor.flags.condemnAtHelp")}</span>
+          {/* What the current position means, off this server's own history -- a readout, not
+              a setting, so it renders nothing while the curve has nothing to say (no scan yet,
+              still loading, or a failed read) rather than a locked or error state. */}
+          {condemnConsequence && <p className="help">{condemnConsequence}</p>}
         </label>
         <WarnBlock anchor="condemn_at" warnings={warningsAt("condemn_at")} />
-
-        {/* "One mistake per N cleared", resolved against this server's own fitted rewatch
-            curve into a score -- an alternative way to set condemn_at above, never a second
-            source of truth for it. Apply is the only thing that writes here (a plain draft
-            edit, same as any other control), so previewing a ratio can never dirty the
-            savebar on its own. */}
-        <div className="rules-card">
-          <span className="rule-name">{t("policyEditor.ratioCard.heading")}</span>
-          <p className="help rule-help">{t("policyEditor.ratioCard.sub")}</p>
-
-          {/* `standing`: this is a fact about the loaded policy's stored applied_ratio, true
-              from the page's first paint and unchanged by anything the operator presses here
-              -- not a reply to a press, so it must not interrupt. */}
-          {ratioDrifted && savedRatio && (
-            <Notice tone="warn" standing>
-              {driftAnswer !== null
-                ? t("policyEditor.ratioCard.driftNotice", {
-                    ratio: savedRatio.ratio,
-                    score: driftAnswer.score,
-                  })
-                : t("policyEditor.ratioCard.driftNoLongerResolves", {
-                    ratio: savedRatio.ratio,
-                  })}{" "}
-              {driftAnswer !== null && (
-                <button
-                  type="button"
-                  className="link-btn"
-                  onClick={() =>
-                    update({
-                      condemn_at: driftAnswer.score,
-                      applied_ratio: { ratio: savedRatio.ratio, resolved_score: driftAnswer.score },
-                    })
-                  }
-                >
-                  {t("policyEditor.ratioCard.driftApply")}
-                </button>
-              )}
-            </Notice>
-          )}
-
-          <label className="field">
-            <span className="field-label">
-              {t("policyEditor.ratioCard.sliderLabel")}
-              <strong>{t("policyEditor.ratioCard.sliderValue", { n: ratioTarget })}</strong>
-            </span>
-            <input
-              type="range"
-              min={2}
-              max={99}
-              disabled={ratioLocked}
-              aria-label={t("policyEditor.ratioCard.sliderAriaLabel")}
-              value={ratioTarget}
-              onChange={(e) => setRatioTarget(Number(e.target.value))}
-            />
-          </label>
-
-          <div className="ratio-presets">
-            {ratioPresets().map((p) => (
-              <button
-                key={p.ratio}
-                type="button"
-                className="ratio-preset"
-                disabled={ratioLocked}
-                aria-pressed={ratioTarget === p.ratio}
-                onClick={() => setRatioTarget(p.ratio)}
-              >
-                <span className="ratio-preset-name">{p.name}</span>
-                <span className="ratio-preset-sub">{p.sub}</span>
-              </button>
-            ))}
-          </div>
-
-          {ratioAnswer === null ? (
-            <p className="help rule-help">{t("policyEditor.ratioCard.locked")}</p>
-          ) : (
-            <>
-              {ratioAnswer.state === "floored" ? (
-                // `standing`: a live preview that re-renders on every debounced drag, the same
-                // reason the validator's own WarnBlock notices above are standing -- an alert
-                // per keystroke would talk over the operator continuously.
-                <Notice tone="error" standing>
-                  {ratioEchoSentence(ratioAnswer)}
-                </Notice>
-              ) : (
-                <p className="help rule-help">{ratioEchoSentence(ratioAnswer)}</p>
-              )}
-              <button
-                type="button"
-                className="link-btn"
-                onClick={() =>
-                  update({
-                    condemn_at: ratioAnswer.score,
-                    applied_ratio: { ratio: debouncedRatio, resolved_score: ratioAnswer.score },
-                  })
-                }
-              >
-                {t("policyEditor.ratioCard.applyButton")}
-              </button>
-            </>
-          )}
-        </div>
 
         <label className="field">
           <span className="field-label">

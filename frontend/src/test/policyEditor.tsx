@@ -15,8 +15,8 @@ import type {
   PolicyBody,
   PolicyWarning,
   ProfileSettings,
-  RatioResolution,
   RewatchOddsFit,
+  ThresholdCurve,
 } from "../api";
 import type { PolicySectionId } from "../components/PolicyEditor";
 import { PolicyEditor } from "../components/PolicyEditor";
@@ -64,7 +64,6 @@ export function body(custom: CustomCondemn[] = []): PolicyBody {
     rewatch_recent_days: 365,
     keep_rating_rules: [],
     keep_rating_match: "any",
-    applied_ratio: null,
   };
 }
 
@@ -138,14 +137,11 @@ export function policyEditorKit(apiMock: ApiMock) {
      *  the hold still gets a quiet card; the rewatch-odds hold's own describe block passes a
      *  seeded fit. */
     rewatchFit: RewatchOddsFit | Error = { blocks: [], total_items: 0 },
-    /** What GET /api/policy/resolve-ratio answers, or an Error for a failed read. Defaults
-     *  to the locked default (rule 17/36: not-enough-history is the safe answer for a test
-     *  that does not care about the ratio card), one answer for every ratio it is asked
-     *  about -- a test driving the drift notice passes a function instead, since that reads
-     *  the endpoint twice, once for the slider and once for the saved ratio. */
-    ratioResolution: RatioResolution | Error | ((ratio: number) => RatioResolution | Error) = {
-      state: "not_enough_history",
-    },
+    /** What GET /api/policy/threshold-curve answers, an Error for a failed read, or
+     *  "pending" for one still in flight. Defaults to `no_scan` (the safe answer for a test
+     *  that does not care about the consequence sentence), which renders nothing beneath the
+     *  score slider -- the same as the error and pending arms. */
+    thresholdCurve: ThresholdCurve | Error | "pending" = { state: "no_scan" },
   ) {
     apiMock.policy.mockResolvedValue({
       policy_hash: "hash",
@@ -174,11 +170,10 @@ export function policyEditorKit(apiMock: ApiMock) {
     apiMock.seasonShape.mockResolvedValue({ total_shows: 0, season_counts: {} });
     if (rewatchFit instanceof Error) apiMock.rewatchOddsFit.mockRejectedValue(rewatchFit);
     else apiMock.rewatchOddsFit.mockResolvedValue(rewatchFit);
-    apiMock.resolveRatio.mockImplementation((_mediaType: "movie" | "tv", ratio: number) => {
-      const answer =
-        typeof ratioResolution === "function" ? ratioResolution(ratio) : ratioResolution;
-      return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
-    });
+    if (thresholdCurve === "pending") apiMock.thresholdCurve.mockReturnValue(new Promise(() => {}));
+    else if (thresholdCurve instanceof Error)
+      apiMock.thresholdCurve.mockRejectedValue(thresholdCurve);
+    else apiMock.thresholdCurve.mockResolvedValue(thresholdCurve);
     if (vocabulary) apiMock.vocabulary.mockImplementation(() => Promise.reject(vocabulary));
     else apiMock.vocabulary.mockResolvedValue({ lane: "condemn", fields: [] });
     apiMock.vocabularyValues.mockResolvedValue({ field: "", values: [] });
