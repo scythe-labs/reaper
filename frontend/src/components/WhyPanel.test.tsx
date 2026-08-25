@@ -591,7 +591,9 @@ describe("the rewatch-probability block (#554 stage 2)", () => {
   it("states the cohort, the count and the bound the protection itself compares when measured", () => {
     // bound_pct (38) is the gate's own Wilson upper bound for k=207,n=599 (#936): the
     // sentence quotes it, never the raw 35% rate, with the raw counts kept beside it.
-    show(withOdds({ n: 599, k: 207, lo_days: 730, hi_days: 1095, state: "measured", bound_pct: 38 }));
+    show(
+      withOdds({ n: 599, k: 207, lo_days: 730, hi_days: 1095, state: "measured", bound_pct: 38 }),
+    );
 
     expect(
       screen.getByText(
@@ -604,7 +606,9 @@ describe("the rewatch-probability block (#554 stage 2)", () => {
   it("backfills the bound from k/n when a row predates bound_pct", () => {
     // A season row, and any row predating this field, arrive with `bound_pct: null` rather
     // than the key missing -- the shape the browser actually reads over the wire.
-    show(withOdds({ n: 30, k: 0, lo_days: 730, hi_days: 1095, state: "measured", bound_pct: null }));
+    show(
+      withOdds({ n: 30, k: 0, lo_days: 730, hi_days: 1095, state: "measured", bound_pct: null }),
+    );
 
     expect(
       screen.getByText(

@@ -1149,7 +1149,11 @@ class RewatchOddsGate:
                     "n": n,
                     "floor_pct": floor,
                     "mediaType": self.media_type,
-                    "bound_pct": bound_pct,
+                    # The sentence orders the two numbers ("under the {floor_pct}% you
+                    # keep"), and plain rounding breaks that order near the floor: a 24.9
+                    # bound at a 25 floor would display as "25%, under the 25% you keep".
+                    # Clamp so the displayed bound stays under the floor it is under.
+                    "bound_pct": min(bound_pct, floor - 1),
                 },
             ),
         )

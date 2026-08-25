@@ -82,8 +82,10 @@ const MEDIA_TYPED_IDS = new Set([
 ]);
 
 /** The Wilson 95% upper bound of k/n, as a whole percent -- mirrors
- *  `gates.wilson_upper` (same z, same formula) exactly, so a value computed here and one
- *  computed there never disagree. Used only to backfill `{bound_pct}` on a `rewatch_watched_again`
+ *  `gates.wilson_upper` (same z, same formula). One known divergence: on an exact .5 half
+ *  (216 of 375 is exactly 62.5) Python's round() goes to the even neighbor where
+ *  Math.round goes up, so a legacy row can read one point higher here. Display only,
+ *  never a decision input. Used only to backfill `{bound_pct}` on a `rewatch_watched_again`
  *  / `rewatch_under_floor` row stored before that param shipped (#936): a fresh row always
  *  carries its own `bound_pct` from the gate that decided it, and this never overrides one.
  *  `WhyPanel.tsx`'s own rewatch-odds display block falls back to it the same way, off
@@ -143,7 +145,14 @@ export function composeIn(namespace: string, key: ReasonKey): string {
     typeof params.k === "number" &&
     typeof params.n === "number"
   ) {
-    params.bound_pct = wilsonUpperPct(params.k, params.n);
+    // The gate clamps its own bound_pct below the floor the sentence says it is under
+    // (RewatchOddsGate.evaluate); a backfilled legacy row gets the same clamp so the
+    // sentence never reads "25%, under the 25% you keep".
+    const backfilled = wilsonUpperPct(params.k, params.n);
+    params.bound_pct =
+      aliased.k === "rewatch_under_floor" && typeof params.floor_pct === "number"
+        ? Math.min(backfilled, params.floor_pct - 1)
+        : backfilled;
   }
   if (typeof params.field === "string") {
     const label = lookup(`why.field.${params.field}`);

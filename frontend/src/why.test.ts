@@ -14,6 +14,7 @@ import {
   composeIn,
   composeReason,
   dormantSpan,
+  wilsonUpperPct,
 } from "./why";
 
 describe("composeReason", () => {
@@ -262,6 +263,20 @@ describe("rewatch_watched_again/rewatch_under_floor quote the bound the gate com
     expect(composeReason({ k: "rewatch_watched_again", p: { k: 0, n: 30 } })).toBe(
       "as many as 11% of titles like this could get watched again within a year (0 of 30 measured)",
     );
+  });
+
+  it("clamps a backfilled under-floor bound below the floor the sentence orders it against", () => {
+    // 3 of 31 rounds to the 25% floor itself; the gate clamps its own bound_pct the same
+    // way (RewatchOddsGate.evaluate), and a legacy row must not read "25%, under the 25%".
+    expect(
+      composeReason({ k: "rewatch_under_floor", p: { k: 3, n: 31, floor_pct: 25 } }),
+    ).toContain("As many as 24%");
+  });
+
+  it("agrees with the backend suite's pinned wilson_upper value", () => {
+    // tests/test_signal_quality.py pins wilson_upper(25, 100) near 0.34301. A formula or
+    // z edit on either side of the mirror must fail one of the two suites by name.
+    expect(wilsonUpperPct(25, 100)).toBe(34);
   });
 });
 
