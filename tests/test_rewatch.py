@@ -984,17 +984,21 @@ class TestRewatchOddsContext:
             "lo_days": 0.0,
             "hi_days": None,
             "state": "no_history",
+            "bound_pct": 0,
         }
 
     def test_measured_at_or_above_the_floor(self) -> None:
         block = rewatch.RewatchBlock(lo_days=365.0, hi_days=548.0, n=REWATCH_BLOCK_FLOOR_N, k=9)
         facts = _known_cohort(block)
+        # bound_pct is gates.wilson_upper(9, 30) * 100, rounded (#936) -- the same figure
+        # the gate itself compares, not the 30% point rate.
         assert snapshot._rewatch_odds_context(facts, block) == {
             "n": 30,
             "k": 9,
             "lo_days": 365.0,
             "hi_days": 548.0,
             "state": "measured",
+            "bound_pct": 48,
         }
 
     def test_thin_below_the_floor(self) -> None:

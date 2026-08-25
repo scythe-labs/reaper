@@ -81,6 +81,28 @@ const MEDIA_TYPED_IDS = new Set([
   "rewatch_under_floor",
 ]);
 
+/** The Wilson 95% upper bound of k/n, as a whole percent -- mirrors
+ *  `gates.wilson_upper` (same z, same formula) exactly, so a value computed here and one
+ *  computed there never disagree. Used only to backfill `{bound_pct}` on a `rewatch_watched_again`
+ *  / `rewatch_under_floor` row stored before that param shipped (#936): a fresh row always
+ *  carries its own `bound_pct` from the gate that decided it, and this never overrides one.
+ *  `WhyPanel.tsx`'s own rewatch-odds display block falls back to it the same way, off
+ *  `RewatchOdds.bound_pct`. */
+export function wilsonUpperPct(k: number, n: number): number {
+  if (n <= 0) return 0;
+  const z = 1.96;
+  const p = k / n;
+  const denom = 1 + (z * z) / n;
+  const center = p + (z * z) / (2 * n);
+  const spread = z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n));
+  return Math.round(((center + spread) / denom) * 100);
+}
+
+/** The two `RewatchOddsGate` reasons whose sentence quotes the Wilson bound (#936). Both
+ *  always carry `k`/`n`, so a row frozen before `bound_pct` shipped can still have it
+ *  backfilled from them, the same shape `MEDIA_TYPED_IDS` above handles for `mediaType`. */
+const REWATCH_BOUND_IDS = new Set(["rewatch_watched_again", "rewatch_under_floor"]);
+
 export function composeIn(namespace: string, key: ReasonKey): string {
   if (key.k === "legacy") return String(key.p?.text ?? "");
   const retiredId = namespace === "why" ? RETIRED_SEASON_CAUSE_ALIASES[key.k] : undefined;
@@ -114,6 +136,14 @@ export function composeIn(namespace: string, key: ReasonKey): string {
   }
   if (MEDIA_TYPED_IDS.has(aliased.k) && !("mediaType" in params)) {
     params.mediaType = "movie";
+  }
+  if (
+    REWATCH_BOUND_IDS.has(aliased.k) &&
+    typeof params.bound_pct !== "number" &&
+    typeof params.k === "number" &&
+    typeof params.n === "number"
+  ) {
+    params.bound_pct = wilsonUpperPct(params.k, params.n);
   }
   if (typeof params.field === "string") {
     const label = lookup(`why.field.${params.field}`);

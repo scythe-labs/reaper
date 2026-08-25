@@ -203,26 +203,64 @@ describe("the rewatch gate's three other cohort reasons (#908)", () => {
     expect(composeReason({ k: "rewatch_no_history", p: { mediaType: "season" } })).toBe(
       "Not enough watch history to say how often shows like this get watched.",
     );
+    // bound_pct is the gate's own Wilson upper bound for k=20,n=50 (#936): the sentence
+    // quotes it, not the raw rate, with the raw counts kept alongside it.
     expect(
-      composeReason({ k: "rewatch_watched_again", p: { k: 20, n: 50, mediaType: "season" } }),
-    ).toBe("shows like this keep getting watched: 20 of 50 within a year");
+      composeReason({
+        k: "rewatch_watched_again",
+        p: { k: 20, n: 50, mediaType: "season", bound_pct: 54 },
+      }),
+    ).toBe(
+      "as many as 54% of shows like this could get watched again within a year (20 of 50 measured)",
+    );
     expect(
       composeReason({
         k: "rewatch_under_floor",
-        p: { k: 1, n: 40, floor_pct: 25, mediaType: "season" },
+        p: { k: 1, n: 40, floor_pct: 25, mediaType: "season", bound_pct: 13 },
       }),
-    ).toBe("Of 40 shows like this, 1 was watched again within a year, under the 25% you keep.");
+    ).toBe(
+      "As many as 13% of shows like this get watched again within a year (1 of 40 measured), " +
+        "under the 25% you keep.",
+    );
   });
 
   it("a row frozen before #908 renders its old wording, never raw ICU", () => {
     expect(composeReason({ k: "rewatch_no_history" })).toBe(
       "Not enough watch history to say how often titles like this get watched.",
     );
+    // No mediaType AND no bound_pct: both predate this row, and both are backfilled --
+    // "movie" the fixed default, bound_pct recomputed from k/n (#936).
     expect(composeReason({ k: "rewatch_watched_again", p: { k: 20, n: 50 } })).toBe(
-      "titles like this keep getting watched: 20 of 50 within a year",
+      "as many as 54% of titles like this could get watched again within a year (20 of 50 measured)",
     );
     expect(composeReason({ k: "rewatch_under_floor", p: { k: 2, n: 40, floor_pct: 25 } })).toBe(
-      "Of 40 titles like this, 2 were watched again within a year, under the 25% you keep.",
+      "As many as 17% of titles like this get watched again within a year (2 of 40 measured), " +
+        "under the 25% you keep.",
+    );
+  });
+});
+
+describe("rewatch_watched_again/rewatch_under_floor quote the bound the gate compared, never the raw rate (#936)", () => {
+  it("a 0-of-30 cohort does not claim it keeps getting watched", () => {
+    expect(
+      composeReason({
+        k: "rewatch_watched_again",
+        p: { k: 0, n: 30, mediaType: "movie", bound_pct: 11 },
+      }),
+    ).not.toContain("keep getting watched");
+    expect(
+      composeReason({
+        k: "rewatch_watched_again",
+        p: { k: 0, n: 30, mediaType: "movie", bound_pct: 11 },
+      }),
+    ).toBe(
+      "as many as 11% of titles like this could get watched again within a year (0 of 30 measured)",
+    );
+  });
+
+  it("backfills the bound from k/n alone when a stored row predates bound_pct", () => {
+    expect(composeReason({ k: "rewatch_watched_again", p: { k: 0, n: 30 } })).toBe(
+      "as many as 11% of titles like this could get watched again within a year (0 of 30 measured)",
     );
   });
 });

@@ -1122,13 +1122,21 @@ class RewatchOddsGate:
                 detail=Reason("rewatch_thin", {"mediaType": self.media_type}),
             )
         floor = self.config.threshold
-        if wilson_upper(k, n) * 100 >= floor:
+        raw_bound_pct = wilson_upper(k, n) * 100
+        # The number the decision itself compares (#936): a 0-of-30 cohort can still clear
+        # a low floor on this bound alone, so the sentence quotes IT, not the point rate --
+        # "0 of 30 keep getting watched" was the bug this fixes. Rounded for display only;
+        # the comparison above stays on the unrounded value so display precision never
+        # moves the decision.
+        bound_pct = round(raw_bound_pct)
+        if raw_bound_pct >= floor:
             # Lowercase fragment: it renders in the "Protections that fired" list.
             return GateResult(
                 self.id,
                 PROTECT,
                 detail=Reason(
-                    "rewatch_watched_again", {"k": k, "n": n, "mediaType": self.media_type}
+                    "rewatch_watched_again",
+                    {"k": k, "n": n, "mediaType": self.media_type, "bound_pct": bound_pct},
                 ),
             )
         return GateResult(
@@ -1136,7 +1144,13 @@ class RewatchOddsGate:
             ABSTAIN,
             detail=Reason(
                 "rewatch_under_floor",
-                {"k": k, "n": n, "floor_pct": floor, "mediaType": self.media_type},
+                {
+                    "k": k,
+                    "n": n,
+                    "floor_pct": floor,
+                    "mediaType": self.media_type,
+                    "bound_pct": bound_pct,
+                },
             ),
         )
 

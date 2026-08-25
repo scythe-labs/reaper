@@ -37,7 +37,7 @@ import {
   type SignalState,
 } from "../api";
 import { announce } from "../announce";
-import { blockedParts, composeReason } from "../why";
+import { blockedParts, composeReason, wilsonUpperPct } from "../why";
 import { useSuccessorFocus } from "../focus";
 import { coverage, itemBytes, list, since, spareRemaining } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
@@ -1286,8 +1286,18 @@ function rewatchOddsSentence(odds: RewatchOdds, mediaType: string): string {
   // own `RewatchOddsGate` Reason (`why.rewatch_thin`): the two sentences were byte-identical
   // once both carried the select, so one entry serves both surfaces (rule 144).
   if (odds.state === "thin") return composeReason({ k: "rewatch_thin", p: { mediaType } });
-  const pct = Math.round((100 * odds.k) / odds.n);
-  return i18next.t("why.panel.rewatch.measured", { n: odds.n, k: odds.k, pct, mediaType });
+  // The Wilson upper bound the protection itself compares (gates.wilson_upper, #936), never
+  // the raw point rate: a cohort with very few of its measured titles watched again so far
+  // can still read a real percentage here rather than an understated one. `bound_pct` is
+  // `null` only for a row stored before it shipped; `wilsonUpperPct` recomputes the same
+  // figure from `k`/`n` rather than the panel printing nothing.
+  const boundPct = odds.bound_pct ?? wilsonUpperPct(odds.k, odds.n);
+  return i18next.t("why.panel.rewatch.measured", {
+    n: odds.n,
+    k: odds.k,
+    bound_pct: boundPct,
+    mediaType,
+  });
 }
 
 export function WhyPanel({

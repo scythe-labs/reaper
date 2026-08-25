@@ -68,6 +68,7 @@ from reaper.engine.gates import (
     no_added_at_reason,
     no_key_reason,
     no_size_reason,
+    wilson_upper,
 )
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import PolicyBody, combine_hashes
@@ -2077,13 +2078,24 @@ def _rewatch_odds_context(facts: Facts, block: RewatchBlock | None) -> dict[str,
     if isinstance(facts.rewatch_cohort_n, Absent):
         return None
     if block is None:
-        return {"n": 0, "k": 0, "lo_days": 0.0, "hi_days": None, "state": "no_history"}
+        return {
+            "n": 0,
+            "k": 0,
+            "lo_days": 0.0,
+            "hi_days": None,
+            "state": "no_history",
+            "bound_pct": 0,
+        }
     return {
         "n": block.n,
         "k": block.k,
         "lo_days": block.lo_days,
         "hi_days": block.hi_days,
         "state": "measured" if block.n >= REWATCH_BLOCK_FLOOR_N else "thin",
+        # The same Wilson 95% upper bound the gate itself compares (#936, gates.wilson_upper),
+        # so this display block never reads a lower "probability" than the figure that can
+        # protect the item.
+        "bound_pct": round(wilson_upper(block.k, block.n) * 100),
     }
 
 

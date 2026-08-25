@@ -325,6 +325,14 @@ class RewatchOddsOut(BaseModel):
     """``"measured"`` at or above ``gates.REWATCH_BLOCK_FLOOR_N``, ``"thin"`` below it,
     ``"no_history"`` when the item's dormancy has no usable block at all."""
 
+    bound_pct: int | None = None
+    """The Wilson 95% upper bound of ``k``/``n`` (``gates.wilson_upper``), as a whole
+    percent -- the same figure ``RewatchOddsGate`` compares against the operator's floor
+    (#936), so this display block never reads a lower "probability" than the figure that
+    can actually protect the item. ``None`` only for a row stored before this field
+    shipped; the panel falls back to computing it from ``k``/``n`` itself rather than
+    showing broken text (``frontend/src/why.ts``'s ``wilsonUpperPct``)."""
+
 
 def thaw_threshold(value: object) -> int | None:
     """Read the stored score-to-beat, or nothing where the row carries no legible one.

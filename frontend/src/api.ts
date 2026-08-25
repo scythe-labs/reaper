@@ -413,6 +413,12 @@ export interface RewatchOdds {
   lo_days: number;
   hi_days: number | null;
   state: "measured" | "thin" | "no_history";
+  /** The Wilson 95% upper bound of `k`/`n`, as a whole percent -- the same figure the
+   *  rewatch protection itself compares against the operator's floor (#936), so this
+   *  display block never reads a smaller "probability" than the number that can keep the
+   *  file. `null` only for a row stored before this field shipped; the panel falls back to
+   *  `why.ts`'s `wilsonUpperPct(k, n)` rather than showing nothing. */
+  bound_pct: number | null;
 }
 
 export interface Explanation {
