@@ -967,15 +967,17 @@ describe("the controls a screen reader has to tell apart", () => {
   //
   // Rule 145: this walks a population, so it counts. Asserting "every slider I collected has a
   // name" reads green when the walk collects nothing. The count below is every `range` this
-  // fixture renders -- the two thresholds plus one weight per built-in signal in `body()`
-  // (3) -- reconciled by hand against the source. Its honest limit: a slider added to a
-  // section this fixture does not mount is missing from both the table and the count, and
-  // the two absences hide each other.
+  // fixture renders -- the two thresholds, plus one weight per built-in signal in `body()` (3)
+  // -- reconciled by hand against the source. Its honest limit: a slider added to a section
+  // this fixture does not mount is missing from both the table and the count, and the two
+  // absences hide each other.
   //
   // It went 5 -> 8 -> 5 across this branch: a probe slider per signal, then none. The guard
   // caught the arrival, and the reason they left is the same thing it is watching for -- a
   // second range control under a weight reads as another setting, and the operator cannot
-  // tell which track changes their policy.
+  // tell which track changes their policy. It went to 6 when the retired ratio card's own
+  // slider joined the other two thresholds, and back to 5 when that card was replaced by a
+  // plain sentence under the existing score slider, with no control of its own.
   it("names both thresholds for their label, never for the help text under it", async () => {
     renderEditor({ body: body() });
 
@@ -1693,4 +1695,112 @@ describe("the policy the URL names", () => {
     // to save and no bar offering to.
     await waitFor(() => expect(document.querySelector(".savebar")).toBeNull());
   });
+});
+
+describe("the delete threshold's consequence sentence", () => {
+  const SCORE_NAME = "Put a title on the list once it scores";
+
+  it("pins the sentence at a measured position", async () => {
+    renderEditor(
+      { body: body() }, // condemn_at 70
+      pace,
+      null,
+      [],
+      "flags",
+      "movie",
+      { blocks: [], total_items: 0 },
+      { state: "measured", rows: [{ score: 70, flagged: 20, expected_mistakes: 2 }] },
+    );
+    await screen.findByRole("heading", { name: "Movies policy" });
+    expect(
+      await screen.findByText(
+        "20 titles would be Condemned. About 2 of them may get watched again within a year if you kept them.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("uses the singular at exactly one flagged title", async () => {
+    renderEditor(
+      { body: body() },
+      pace,
+      null,
+      [],
+      "flags",
+      "movie",
+      { blocks: [], total_items: 0 },
+      { state: "measured", rows: [{ score: 70, flagged: 1, expected_mistakes: 1 }] },
+    );
+    await screen.findByRole("heading", { name: "Movies policy" });
+    expect(
+      await screen.findByText(
+        "1 title would be Condemned. About 1 of them may get watched again within a year if you kept them.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the zero-flagged sentence when nothing on the last scan scores this high", async () => {
+    // The curve's only row sits at 40, well under the draft's 70: dense-domain rows never
+    // reach a score this high, so nothing here would ever put a title in front of the
+    // operator at 70.
+    renderEditor(
+      { body: body() },
+      pace,
+      null,
+      [],
+      "flags",
+      "movie",
+      { blocks: [], total_items: 0 },
+      { state: "measured", rows: [{ score: 40, flagged: 5, expected_mistakes: 1 }] },
+    );
+    await screen.findByRole("heading", { name: "Movies policy" });
+    expect(
+      await screen.findByText(
+        "0 titles would be Condemned. Nothing on the last scan scores this high.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("renders only the count when the scan has no trusted rewatch cohort anywhere", async () => {
+    renderEditor(
+      { body: body() },
+      pace,
+      null,
+      [],
+      "flags",
+      "movie",
+      { blocks: [], total_items: 0 },
+      { state: "counts_only", rows: [{ score: 70, flagged: 12 }] },
+    );
+    await screen.findByRole("heading", { name: "Movies policy" });
+    expect(await screen.findByText("12 titles would be Condemned.")).toBeInTheDocument();
+    // Never a made-up comeback estimate with no cohort behind it.
+    expect(screen.queryByText(/may get watched again/)).not.toBeInTheDocument();
+  });
+
+  // This is a readout, not a setting (unlike the retired ratio card, whose slider disabled
+  // itself on the same three states): the score slider works exactly as it does without
+  // this sentence, whatever the curve read answers.
+  const NOTHING_STATES: ReadonlyArray<[string, { state: "no_scan" } | Error | "pending"]> = [
+    ["no scan yet", { state: "no_scan" }],
+    ["a failed read", new Error("threshold-curve unreachable")],
+    ["a still-loading read", "pending"],
+  ];
+  it.each(NOTHING_STATES)(
+    "renders nothing for %s, and the score slider stays enabled",
+    async (_label, curve) => {
+      renderEditor(
+        { body: body() },
+        pace,
+        null,
+        [],
+        "flags",
+        "movie",
+        { blocks: [], total_items: 0 },
+        curve,
+      );
+      await screen.findByRole("heading", { name: "Movies policy" });
+      expect(screen.getByLabelText(SCORE_NAME)).toBeEnabled();
+      expect(screen.queryByText(/would be Condemned/)).not.toBeInTheDocument();
+    },
+  );
 });

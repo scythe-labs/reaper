@@ -63,6 +63,7 @@ from reaper.services import (
 )
 from reaper.services.condemned import (
     effective_verdict,
+    has_blocked_protections_decoded,
     reap_is_effective,
 )
 from reaper.services.planner import MediaRef, PlanError
@@ -816,26 +817,10 @@ def _fired_gates(explanation_json: str) -> list[str]:
 def _has_blocked_protections(explanation_json: str) -> bool:
     """Did this row store any protection that could not be checked?
 
-    Read from the stored explanation's ``protections_unknown`` block, the same record the
-    why-panel renders amber, and parsed by ``_decode_explanation`` so a stored top level
-    that is a list, a null or a number degrades instead of raising out of the simulation.
-
-    The unreadable fallback HOLDS the row (rule 96). This answer is the only thing standing
-    between a row and a score-based condemn in the loop below, so reading an explanation we
-    could not parse as "nothing was blocking" would turn evidence we cannot see into
-    evidence that nothing was wrong, and preview a deletion the scan would refuse. Present
-    but unreadable is blocked; genuinely absent stays permissive, since a readable
-    explanation with no ``protections_unknown`` (or an empty one) is a scan that looked and
-    found nothing holding the item.
-
-    ``_entries`` is deliberately not used to read the list: it drops entries that are not
-    objects, which would read a malformed block as an empty one -- the permissive
-    direction. Any entry at all holds, readable or not.
+    Parsed by ``_decode_explanation`` so a stored top level that is a list, a null or a
+    number degrades instead of raising out of the simulation, then answered by
+    ``condemned.has_blocked_protections_decoded`` -- the one derivation of this question
+    (rule 104), shared with ``api.policy``'s ratio resolver so the two cannot disagree
+    about which rows are unchecked.
     """
-    exp = _decode_explanation(explanation_json)
-    if exp is None:
-        return True
-    unknown = exp.get("protections_unknown")
-    if unknown is None:
-        return False
-    return bool(unknown) if isinstance(unknown, list) else True
+    return has_blocked_protections_decoded(_decode_explanation(explanation_json))

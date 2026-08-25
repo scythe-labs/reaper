@@ -47,6 +47,7 @@ import {
   type RatingSource,
   type RewatchOddsFit,
   type SignalSetting,
+  type ThresholdCurve,
 } from "../api";
 import { announce } from "../announce";
 import { describeError } from "../errors";
@@ -1389,6 +1390,40 @@ function rewatchEchoSentence(
       });
 }
 
+/** The delete-threshold slider's consequence sentence: what the current score would flag on
+ *  the last scan, and about how many of those the operator's own history says come back.
+ *  Reads the curve fetched once per media type (`["threshold-curve", mediaType]`) and
+ *  re-decides locally for `condemnAt`, so dragging the slider costs nothing.
+ *
+ *  `null` covers every state with nothing to say: no curve yet, still loading, or a failed
+ *  read (`curve` undefined), and no scan at all (`"no_scan"`) -- this is a readout, not a
+ *  setting, so those states render nothing rather than a locked or error notice, and the
+ *  slider keeps working exactly as it does without this sentence.
+ *
+ *  A row exists only where it flags something
+ *  (`api.policy.threshold_curve_rows`), and every legal score from 1 up to the curve's peak
+ *  has one (`decide_verdict` is monotone in score), so a missing row at `condemnAt` means
+ *  nothing on the last scan scores that high. */
+function condemnConsequenceSentence(
+  curve: ThresholdCurve | undefined,
+  condemnAt: number,
+): string | null {
+  if (!curve || curve.state === "no_scan") return null;
+  if (curve.state === "counts_only") {
+    const row = curve.rows.find((r) => r.score === condemnAt);
+    return row
+      ? i18next.t("policyEditor.flags.condemnConsequenceCountOnly", { flagged: row.flagged })
+      : i18next.t("policyEditor.flags.condemnConsequenceZero");
+  }
+  const row = curve.rows.find((r) => r.score === condemnAt);
+  return row
+    ? i18next.t("policyEditor.flags.condemnConsequence", {
+        flagged: row.flagged,
+        mistakes: row.expected_mistakes,
+      })
+    : i18next.t("policyEditor.flags.condemnConsequenceZero");
+}
+
 export function PolicyEditor({
   focus,
   mediaType,
@@ -1462,6 +1497,17 @@ export function PolicyEditor({
       setDraft(saved.body);
     }
   }, [saved, draft]);
+
+  // The delete-threshold slider's consequence sentence, read once per media type and
+  // re-decided locally for every position the operator drags to -- no debounce, since
+  // `condemnConsequenceSentence` below just indexes the fetched rows. `isPending` and
+  // `isError` are deliberately not read: this is a readout, not a setting, so a loading or
+  // failed fetch renders nothing rather than a locked or error state, exactly like an
+  // absent scan.
+  const { data: thresholdCurve } = useQuery({
+    queryKey: ["threshold-curve", mediaType],
+    queryFn: () => api.thresholdCurve(mediaType),
+  });
 
   // Pace and limits: a SEPARATE draft with a separate save. Un-hashed on the server, so
   // changing a cap never voids a pending approval -- and deliberately media-type
@@ -1664,6 +1710,10 @@ export function PolicyEditor({
       // without this the operator edits a rule here, walks back, and reads "Keeps every title
       // on it" for a list nothing now protects with (rule 79).
       void queryClient.invalidateQueries({ queryKey: ["lists-configured"] });
+      // The threshold curve reads the saved coverage floor server-side, so a save moves the
+      // consequence sentence at save time, before the rescan below lands. `useScanSettled`
+      // covers the scan half; this covers the save half (rule 79).
+      void queryClient.invalidateQueries({ queryKey: ["threshold-curve"] });
       // Apply the saved policy to the review queue by re-scanning in the background. The
       // queue and the simulator read the last snapshot's stored verdicts, which were
       // produced by the OLD policy; a rescan re-scores the library under the new one, and the
@@ -1928,6 +1978,7 @@ export function PolicyEditor({
   const preset = activePreset(draft);
   const presetHelp =
     presets().find((p) => p.id === preset)?.help ?? t("policyEditor.presetHelp.custom");
+  const condemnConsequence = condemnConsequenceSentence(thresholdCurve, draft.condemn_at);
 
   const applyPreset = (p: ReturnType<typeof presets>[number]) => {
     const mix = DEFAULT_WEIGHTS[mediaType];
@@ -2187,6 +2238,10 @@ export function PolicyEditor({
             onChange={(e) => update({ condemn_at: Number(e.target.value) })}
           />
           <span className="help">{t("policyEditor.flags.condemnAtHelp")}</span>
+          {/* What the current position means, off this server's own history -- a readout, not
+              a setting, so it renders nothing while the curve has nothing to say (no scan yet,
+              still loading, or a failed read) rather than a locked or error state. */}
+          {condemnConsequence && <p className="condemn-consequence">{condemnConsequence}</p>}
         </label>
         <WarnBlock anchor="condemn_at" warnings={warningsAt("condemn_at")} />
 

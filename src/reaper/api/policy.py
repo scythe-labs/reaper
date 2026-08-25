@@ -13,6 +13,9 @@ cannot drift.
 from __future__ import annotations
 
 import json
+import math
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import assert_never
 
 import structlog
@@ -25,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from reaper.api import tags as api_tags
 from reaper.api.deps import session_factory
 from reaper.api.errors import refuse, validation_error_items
+from reaper.api.review import _decode_explanation
 from reaper.api.schemas import (
     ConditionIn,
     GateSettingOut,
@@ -38,6 +42,12 @@ from reaper.api.schemas import (
     RewatchOddsBlockOut,
     RewatchOddsFitOut,
     SignalSettingIn,
+    ThresholdCurveCountsOnlyOut,
+    ThresholdCurveCountsOnlyRowOut,
+    ThresholdCurveMeasuredOut,
+    ThresholdCurveMeasuredRowOut,
+    ThresholdCurveNoScanOut,
+    ThresholdCurveOut,
 )
 from reaper.clock import utcnow
 from reaper.db.models import (
@@ -62,7 +72,9 @@ from reaper.engine.policy_migrations import PolicyRepair
 from reaper.engine.policy_warnings import inspect
 from reaper.engine.preview import UnprobableSignalError, probe_signal
 from reaper.engine.reason import to_wire
-from reaper.engine.signals import SignalConfig
+from reaper.engine.signals import MAX_SCORE, SignalConfig
+from reaper.engine.verdict import decide_verdict
+from reaper.services.condemned import has_blocked_protections_decoded
 from reaper.services.history_sync import horizon
 from reaper.services.profiles import active_policy, active_policy_row, active_profile_settings
 
@@ -330,6 +342,258 @@ async def rewatch_odds_fit(
         ],
         total_items=total,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class RatioCandidate:
+    """One stored candidate's inputs to the threshold curve, decoded once from its frozen
+    verdict, score, coverage and explanation -- everything :func:`threshold_curve_rows`
+    needs, with no JSON or session left in it.
+    """
+
+    protected: bool
+    """A protection fired, whatever threshold is tried. Mirrors ``Candidate.verdict ==
+    "protect"``: ``decide_verdict`` checks PROTECT before the threshold, so the stored
+    verdict already answers this regardless of what ``condemn_at`` produced it."""
+
+    blocked: bool
+    """A protection could not be checked, whatever threshold is tried
+    (``condemned.has_blocked_protections_decoded``). A stored ``verdict`` of "condemn" or
+    "protect" already proves this False -- decide_verdict abstains on a blocked row before
+    ever reading the score -- but it is read the same way for every row regardless, since
+    the explanation is already decoded once for ``rewatch_odds`` below."""
+
+    score: int
+    coverage_bp: int
+
+    rewatch_odds: Mapping[str, object] | None
+    """This item's stored Stage 2 cohort context
+    (``services.snapshot._rewatch_odds_context``), or ``None`` when the row carries none at
+    all (an explanation this build cannot read, or one frozen before the field existed)."""
+
+
+#: The legal ``condemn_at`` domain (``engine.policy.PolicyBody.condemn_at``, ``ge=1, le=100``
+#: -- never 0, which would condemn everything the gates do not save). The curve is built over
+#: every score in it rather than a narrower band, so a title scoring high enough to flag only
+#: at the very top of the range is never missed because it sat outside a shortcut range.
+_CONDEMN_AT_DOMAIN: range = range(1, MAX_SCORE + 1)
+
+
+def _cohort(rewatch_odds: object) -> tuple[int, int, str] | None:
+    """One candidate's stored rewatch-odds cohort as ``(n, k, state)``, or ``None`` when
+    there is nothing usable to read: not a stored block at all, an ``n`` that is not a
+    positive int (the ``"no_history"`` placeholder stores ``n=0``), or a ``k`` that is not
+    an int. ``bool`` is rejected explicitly: JSON's ``true``/``false`` satisfy
+    ``isinstance(_, int)`` and would otherwise read as a cohort of size 1 or 0.
+    """
+    if not isinstance(rewatch_odds, Mapping):
+        return None
+    n, k, state = rewatch_odds.get("n"), rewatch_odds.get("k"), rewatch_odds.get("state")
+    if isinstance(n, bool) or not isinstance(n, int) or n <= 0:
+        return None
+    if isinstance(k, bool) or not isinstance(k, int):
+        return None
+    return (n, k, state) if isinstance(state, str) else None
+
+
+def _measured_or_thin_rate(rewatch_odds: object) -> float | None:
+    """This candidate's own comeback rate, read straight from its cohort: the Wilson 95%
+    upper bound of ``k``/``n`` (``gates.wilson_upper``) for both ``"measured"`` and
+    ``"thin"`` states -- the same bound the hold gate compares and the Policy page
+    displays, never the point rate. The bound is strictly positive for any finite cohort,
+    which is load-bearing: a measured cohort with zero comebacks read as a plain ``0.0``
+    would poison :func:`threshold_curve_rows`'s ``max()`` fallback, zero the expected
+    mistakes, and let every row on the curve understate its risk.
+    ``None`` for anything else, including ``"no_history"``: :func:`threshold_curve_rows`
+    falls back to the worst rate this scan measured anywhere else rather than read that as
+    a bare zero (missing data must not make deletion look safer, the prime directive).
+    """
+    cohort = _cohort(rewatch_odds)
+    if cohort is None:
+        return None
+    n, k, state = cohort
+    if state in ("measured", "thin"):
+        return wilson_upper(k, n)
+    return None
+
+
+def _mistake_probability(rewatch_odds: object, *, fallback: float) -> float:
+    """One flagged candidate's contribution to expected mistakes: its own measured or
+    Wilson-bounded rate, or -- missing, past the fitted range, or a state this build does
+    not recognize -- ``fallback``, the worst rate this scan measured anywhere."""
+    rate = _measured_or_thin_rate(rewatch_odds)
+    return fallback if rate is None else rate
+
+
+def threshold_curve_rows(
+    candidates: Sequence[RatioCandidate], *, coverage_floor_bp: int
+) -> ThresholdCurveMeasuredOut | ThresholdCurveCountsOnlyOut:
+    """The whole score-to-consequence curve behind the delete-threshold slider, over
+    already-decoded rows from the newest scan: for every legal ``condemn_at``
+    (:data:`_CONDEMN_AT_DOMAIN`), how many titles the scan would flag and, where this scan
+    measured a trusted rewatch cohort anywhere, about how many of them its own history says
+    come back. Computed once for every score so the editor answers any slider position
+    locally with zero requests while dragging, rather than the one-ratio-at-a-time question
+    the old resolver answered.
+
+    Re-decides each candidate through the one decision function
+    (``engine.verdict.decide_verdict``, rule 3/22 -- never a hand-rolled ``score >=
+    threshold``) and sums the flagged titles' own dormancy cohorts' comeback probability
+    (:func:`_mistake_probability`), exactly as the retired resolver did for one ratio.
+
+    A row is included only where ``flagged > 0``: a threshold flagging nothing has no
+    consequence to state, and the frontend already renders the "nothing scores this high"
+    sentence for any score above the last included row. Since ``decide_verdict`` is monotone
+    in score, flagged is non-increasing across the domain, so the rows form one leading run
+    and the highest-scoring row is the curve's peak.
+
+    ``counts_only`` when no candidate anywhere in this scan has a cohort this server trusts
+    (mirrors the retired resolver's NOT_ENOUGH_HISTORY guard): the count is real, but making
+    up a comeback estimate with nothing to base it on would be worse than not showing one.
+    An empty candidate set (no scan, or nothing on this media type's lane) has no population
+    to ever flag anything, so it reads the same way, with an empty row list -- every score
+    then falls through to "nothing on the last scan scores this high", which is true of it.
+    Same stored scan, same history, same answer every time (no clock, no randomness).
+    """
+    if not candidates:
+        return ThresholdCurveCountsOnlyOut(rows=[])
+
+    fallback_pool = [
+        rate for c in candidates if (rate := _measured_or_thin_rate(c.rewatch_odds)) is not None
+    ]
+    if not fallback_pool:
+        # No candidate anywhere in this scan has a cohort this server trusts -- the fit
+        # never found a band with REWATCH_BLOCK_FLOOR_N (30) or more titles. Nothing below
+        # would have a real number to compare against, so the count stands alone.
+        counted_rows: list[ThresholdCurveCountsOnlyRowOut] = []
+        for threshold in _CONDEMN_AT_DOMAIN:
+            flagged = sum(
+                1
+                for c in candidates
+                if decide_verdict(
+                    protected=c.protected,
+                    blocked=c.blocked,
+                    score=c.score,
+                    coverage_bp=c.coverage_bp,
+                    condemn_at=threshold,
+                    coverage_floor_bp=coverage_floor_bp,
+                )
+                == "condemn"
+            )
+            if flagged:
+                counted_rows.append(
+                    ThresholdCurveCountsOnlyRowOut(score=threshold, flagged=flagged)
+                )
+        return ThresholdCurveCountsOnlyOut(rows=counted_rows)
+    fallback_probability = max(fallback_pool)
+
+    weighted = [
+        (
+            c.protected,
+            c.blocked,
+            c.score,
+            c.coverage_bp,
+            _mistake_probability(c.rewatch_odds, fallback=fallback_probability),
+        )
+        for c in candidates
+    ]
+
+    measured_rows: list[ThresholdCurveMeasuredRowOut] = []
+    for threshold in _CONDEMN_AT_DOMAIN:
+        flagged = 0
+        mistakes = 0.0
+        for protected, blocked, score, coverage_bp, probability in weighted:
+            verdict = decide_verdict(
+                protected=protected,
+                blocked=blocked,
+                score=score,
+                coverage_bp=coverage_bp,
+                condemn_at=threshold,
+                coverage_floor_bp=coverage_floor_bp,
+            )
+            if verdict == "condemn":
+                flagged += 1
+                mistakes += probability
+        if flagged == 0:
+            continue
+        # mistakes > 0 is guaranteed here: every contributing probability is strictly
+        # positive (`_measured_or_thin_rate`'s own guarantee), and at least one flagged
+        # title contributes one, so `math.ceil` is always >= 1 -- pinned in the tests as
+        # the review's zero-cohort hole staying closed.
+        measured_rows.append(
+            ThresholdCurveMeasuredRowOut(
+                score=threshold, flagged=flagged, expected_mistakes=math.ceil(mistakes)
+            )
+        )
+    return ThresholdCurveMeasuredOut(rows=measured_rows)
+
+
+async def _ratio_candidates(
+    session: AsyncSession, *, snapshot_id: int, candidate_media_type: str
+) -> list[RatioCandidate]:
+    """Every candidate of one snapshot on one lane, decoded once into what the resolver
+    needs. Mirrors ``rewatch_odds_fit``'s own read of the same rows: one query, no second
+    trip per candidate."""
+    rows = (
+        await session.execute(
+            select(
+                Candidate.verdict,
+                Candidate.score,
+                Candidate.coverage_bp,
+                Candidate.explanation_json,
+            ).where(
+                Candidate.snapshot_id == snapshot_id,
+                Candidate.media_type == candidate_media_type,
+            )
+        )
+    ).all()
+    out: list[RatioCandidate] = []
+    for verdict, score, coverage_bp, explanation_json in rows:
+        exp = _decode_explanation(explanation_json)
+        out.append(
+            RatioCandidate(
+                protected=verdict == "protect",
+                blocked=has_blocked_protections_decoded(exp),
+                score=int(score),
+                coverage_bp=int(coverage_bp),
+                rewatch_odds=exp.get("rewatch_odds") if isinstance(exp, dict) else None,
+            )
+        )
+    return out
+
+
+@router.get("/policy/threshold-curve", tags=[api_tags.POLICY])
+async def threshold_curve(
+    request: Request,
+    media_type: str = Query("movie", pattern="^(movie|tv)$"),
+) -> ThresholdCurveOut:
+    """The whole per-score curve behind the delete-threshold slider's consequence sentence,
+    from the newest scan and this server's own fitted rewatch curve.
+
+    Read-only: nothing here saves anything, and nothing here is a setting -- the operator
+    still sets ``condemn_at`` on the slider exactly as before, and this route only states
+    what that position means. Covers both lanes: a movie policy scores movies, a TV policy
+    scores seasons (``_candidate_media_type``), the same split ``rewatch_odds_fit`` reads.
+
+    One request per media type, not one per slider position: the frontend re-decides every
+    row locally as the operator drags, since :func:`threshold_curve_rows` already computed
+    the whole domain. ``no_scan`` when there is nothing to read yet; the frontend renders
+    nothing in that state, and in a failed or still-loading read, rather than a locked or
+    error notice -- a plain score control needs no scan to work.
+    """
+    async with session_factory(request)() as session:
+        newest = (
+            await session.execute(select(Snapshot).order_by(Snapshot.id.desc()).limit(1))
+        ).scalar_one_or_none()
+        if newest is None:
+            return ThresholdCurveNoScanOut()
+        candidates = await _ratio_candidates(
+            session,
+            snapshot_id=newest.id,
+            candidate_media_type=_candidate_media_type(media_type),
+        )
+        active = await active_policy(session, media_type)
+    return threshold_curve_rows(candidates, coverage_floor_bp=active.body.coverage_floor_bp)
 
 
 @router.get("/policy", tags=[api_tags.POLICY])

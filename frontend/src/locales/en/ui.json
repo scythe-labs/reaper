@@ -316,8 +316,8 @@
     "dormancy_past_floor": "Unwatched for {days_span}, past the {floor_days_window} Reaper waits.",
     "rewatch_no_history": "Not enough watch history to say how often {mediaType, select, season {shows} other {titles}} like this get watched.",
     "rewatch_thin": "Too few {mediaType, select, season {shows} other {titles}} like this to say.",
-    "rewatch_watched_again": "{mediaType, select, season {shows} other {titles}} like this keep getting watched: {k} of {n} within a year",
-    "rewatch_under_floor": "Of {n} {mediaType, select, season {shows} other {titles}} like this, {k, plural, one {# was} other {# were}} watched again within a year, under the {floor_pct}% you keep.",
+    "rewatch_watched_again": "as many as {bound_pct}% of {mediaType, select, season {shows} other {titles}} like this could get watched again within a year ({k} of {n} measured)",
+    "rewatch_under_floor": "As many as {bound_pct}% of {mediaType, select, season {shows} other {titles}} like this get watched again within a year ({k} of {n} measured), under the {floor_pct}% you keep.",
     "returned_no_record": "Reaper has nothing on record about this title leaving and coming back.",
     "returned_not_returned": "It has not left your library and come back.",
     "returned_past_hold": "It came back {days_span} ago, past the {hold_days_window} you keep a title that came back.",
@@ -594,7 +594,7 @@
       },
       "rewatch": {
         "heading": "Rewatch probability",
-        "measured": "Of {n} {mediaType, select, season {shows} other {titles}} in your history that had sat unwatched about this long, {k} ({pct}%) were watched again within a year.",
+        "measured": "Up to {bound_pct}% of {mediaType, select, season {shows} other {titles}} in your history that had sat unwatched about this long get watched again within a year, based on {k} of {n} measured.",
         "noHistory": "Not enough watch history yet."
       },
       "ruleTag": "Your rule",
@@ -2083,6 +2083,9 @@
       "blurb": "The reasons to believe nobody will watch it again. The protections below can always overrule the score.",
       "condemnAtHelp": "The higher you set this, the more sure Reaper has to be before it flags a title. Protections below still win.",
       "condemnAtLabel": "Put a title on the list once it scores",
+      "condemnConsequence": "{flagged, plural, one {# title} other {# titles}} would be Condemned. About {mistakes} of them may get watched again within a year if you kept them.",
+      "condemnConsequenceCountOnly": "{flagged, plural, one {# title} other {# titles}} would be Condemned.",
+      "condemnConsequenceZero": "0 titles would be Condemned. Nothing on the last scan scores this high.",
       "coverageFloorHelp": "Reaper judges a title on the reasons below. If it can't check enough of them, it holds the title in Limbo for you to decide.",
       "coverageFloorLabel": "Judge a title only when there's enough to go on"
     },

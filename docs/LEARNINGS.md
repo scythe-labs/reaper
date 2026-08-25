@@ -4467,6 +4467,61 @@ missing-KEY case specifically, not just the missing-VALUE case. `why.ts`'s resol
 defaults `mediaType` onto the params object for every id that carries a select and predates it,
 so the key is always present even when no caller supplied a value.
 
+## The delete threshold buys volume, not precision (2026-08-25)
+
+`scripts/delete_threshold_ratio_measure.py` replays a library at a one-year cutoff, scores
+every title with the shipped `UNWATCHED` signal through the real engine, and counts who came
+back in the following year. Two libraries measured: the live data dir (7.6 years of history
+before the cutoff) and the anonymized second library from `docs/SIGNALS.md`'s backtest (9.5
+years). Both qualify on the criteria the script checks: a year of history before the cutoff
+and cohorts of 30 or more.
+
+- **The score-to-mistake curve is nearly flat.** On the live library, flagged titles fall
+  from 774 at threshold 60 to 374 at 95, but the mistake rate holds at 1 comeback per 8 to
+  10 cleared across the whole range. On the second library, the played-before lane moves
+  from 1-per-11 to 1-per-12 and the never-played lane sits at 1-per-17 everywhere. Raising
+  the threshold shrinks how much is flagged. It barely changes how often a flagged title
+  comes back.
+- **Ratios past the curve's ceiling resolve to no score.** 1 mistake per 20 cleared is
+  reachable at no threshold on either library, in either lane. A control that resolves a
+  ratio into a score needs an explicit "no score delivers this" state on the wire, beside
+  "not enough history". Presets at 1-per-20 and 1-per-50 would sit in that state on both
+  measured libraries.
+- **Never-played titles cannot be back-scored from a data dir.** `reaper.db` keeps no
+  arrival date (`engine/dormancy.py` derives it at scan time and discards it), so that lane
+  is counted but not scored there. The anonymized dump keeps an arrival date, so both lanes
+  measure. Recorded so nobody re-derives it.
+- **Never-played titles come back less, not more.** On the second library the never-played
+  lane's comeback rate is about 6% against the played lane's 9 to 10%. At every threshold
+  measured, a title nobody started is a safer delete than a title somebody once watched.
+
+## Whether an abandoned play predicts a return: it does not, past the noise floor (2026-08-25)
+
+`scripts/abandonment_signal_measure.py` measures whether a partial play -- one
+`services/rewatch.py`'s `qualifies()` discards as abandoned -- predicts a title gets played
+again, on the same two libraries and the same one-year cutoff as the delete-threshold
+measurement above. ABANDONED means every pre-cutoff play failed `qualifies()`; the nearest
+honest same-age control differs by source, since `reaper.db` still keeps no arrival date
+(the same limitation as above): the dump's control is titles with no play at all before the
+cutoff, the live pair's is titles whose only pre-cutoff plays were completed. Both cohorts
+pool only within `REWATCH_BLOCK_FLOOR_N`-sized (30+) dormancy-age bands.
+
+- **The pooled lift sits an order of magnitude under the stop gate on both libraries.** The
+  dump pools one band (47 abandoned titles against 927 control), lift +0.021. The live pair
+  pools two bands (78 against 181), lift +0.012. Neither clears the 0.05 bar this
+  measurement was built to test.
+- **Both libraries lean the same direction, barely.** Abandoners came back slightly more
+  often than their matched control on both sources, never less. If there is a real effect it
+  argues keep, not delete, but it is too small to act on.
+- **Most of the population is too small a cohort to trust.** The abandoned cohort itself is
+  rare: 121 titles on the dump, 148 on the live pair, out of thousands scored. Five of the
+  dump's six dormancy bands and four of the live pair's six sat under the 30-title floor and
+  were excluded from the pooled verdict, several swinging by 0.03 to 0.11 on cohorts of a
+  dozen or two titles.
+- **Verdict: the abandonment signal is not justified.** A negative result, recorded here as
+  prominently as a positive one would be: an "abandoned play" gate or signal is not worth
+  building on what either library's history currently supports.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

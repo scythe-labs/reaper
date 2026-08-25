@@ -3951,7 +3951,11 @@ _QUERY_FAILURE_HANDLES = {
     # the population is the thing this pins.
     "frontend/src/components/PlexPanel.tsx": 6,
     # 4 -> 5 for #554 stage 2's rewatch-odds fit (`RewatchLadder`'s `isError`): undivided, see
-    # the docstring above.
+    # the docstring above. The delete-threshold slider's consequence sentence reads its own
+    # `["threshold-curve", mediaType]` query but never destructures `isError`: it is a
+    # readout, not a safety indicator, so a failed or pending read renders nothing (the same
+    # branchless "no data yet" the sentence already takes for `no_scan`) rather than a
+    # divided isError/isPending state -- nothing here for this walk to count.
     "frontend/src/components/PolicyEditor.tsx": 5,
     "frontend/src/components/PolicyRuleEditors.tsx": 3,
     "frontend/src/components/ReapBreakdown.tsx": 2,

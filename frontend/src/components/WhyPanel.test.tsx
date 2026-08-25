@@ -588,19 +588,38 @@ describe("the rewatch-probability block (#554 stage 2)", () => {
     return detail(WORKED_ROWS, { explanation: { ...base.explanation, rewatch_odds } });
   }
 
-  it("states the cohort, the count and the percentage when measured", () => {
-    show(withOdds({ n: 599, k: 207, lo_days: 730, hi_days: 1095, state: "measured" }));
+  it("states the cohort, the count and the bound the protection itself compares when measured", () => {
+    // bound_pct (38) is the gate's own Wilson upper bound for k=207,n=599 (#936): the
+    // sentence quotes it, never the raw 35% rate, with the raw counts kept beside it.
+    show(
+      withOdds({ n: 599, k: 207, lo_days: 730, hi_days: 1095, state: "measured", bound_pct: 38 }),
+    );
 
     expect(
       screen.getByText(
-        "Of 599 shows in your history that had sat unwatched about this long, 207 (35%) were " +
-          "watched again within a year.",
+        "Up to 38% of shows in your history that had sat unwatched about this long get watched " +
+          "again within a year, based on 207 of 599 measured.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("backfills the bound from k/n when a row predates bound_pct", () => {
+    // A season row, and any row predating this field, arrive with `bound_pct: null` rather
+    // than the key missing -- the shape the browser actually reads over the wire.
+    show(
+      withOdds({ n: 30, k: 0, lo_days: 730, hi_days: 1095, state: "measured", bound_pct: null }),
+    );
+
+    expect(
+      screen.getByText(
+        "Up to 11% of shows in your history that had sat unwatched about this long get watched " +
+          "again within a year, based on 0 of 30 measured.",
       ),
     ).toBeInTheDocument();
   });
 
   it("says too few shows when the cohort is thin", () => {
-    show(withOdds({ n: 4, k: 1, lo_days: 730, hi_days: 1095, state: "thin" }));
+    show(withOdds({ n: 4, k: 1, lo_days: 730, hi_days: 1095, state: "thin", bound_pct: 70 }));
 
     expect(screen.getByText("Too few shows like this to say.")).toBeInTheDocument();
     // Never a percentage on a cohort too thin to trust one.
@@ -608,7 +627,7 @@ describe("the rewatch-probability block (#554 stage 2)", () => {
   });
 
   it("says the mirror is too short when there is no usable block", () => {
-    show(withOdds({ n: 0, k: 0, lo_days: 0, hi_days: null, state: "no_history" }));
+    show(withOdds({ n: 0, k: 0, lo_days: 0, hi_days: null, state: "no_history", bound_pct: 0 }));
 
     expect(screen.getByText("Not enough watch history yet.")).toBeInTheDocument();
   });
@@ -638,7 +657,7 @@ describe("the rewatch-probability block (#554 stage 2)", () => {
               evaluated: true,
             },
           ],
-          rewatch_odds: { n: 10, k: 3, lo_days: 0, hi_days: 365, state: "measured" },
+          rewatch_odds: { n: 10, k: 3, lo_days: 0, hi_days: 365, state: "measured", bound_pct: 60 },
           protections_fired: [
             { gate: "whitelisted", detail_key: legacy("on your keep list, never reaped") },
           ],

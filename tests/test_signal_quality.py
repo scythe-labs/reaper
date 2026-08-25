@@ -252,6 +252,41 @@ class TestTheRewatchOddsGate:
 
         assert result.outcome == PROTECT
 
+    def test_a_zero_of_thirty_cohort_does_not_claim_it_keeps_getting_watched(self) -> None:
+        """#936: 0 of 30 measured still clears a 10% floor on the Wilson upper bound alone
+        (about 11%, ``gates.wilson_upper``), so the gate protects -- but the sentence must
+        not assert these titles "keep getting watched" when not one of the 30 measured did.
+        It quotes the bound the decision at ``RewatchOddsGate.evaluate`` actually compared,
+        with the raw count alongside it, never the raw rate standing in for a claim."""
+        facts = _cohort(Known(value=30, source="fit"), Known(value=0, source="fit"))
+        assert wilson_upper(0, 30) * 100 >= 10  # the bound clears the floor...
+        assert 100 * 0 / 30 < 10  # ...though the point rate does not
+
+        result = RewatchOddsGate(GateConfig(threshold=10)).evaluate(facts)
+
+        assert result.outcome == PROTECT
+        rendered = text(result.detail)
+        assert "keep getting watched" not in rendered, rendered
+        assert "0 of 30" in rendered, rendered
+        assert "11%" in rendered, rendered
+
+    def test_the_abstain_sentence_never_reaches_the_floor_it_is_under(self) -> None:
+        """3 of 31 at a 25% floor abstains on a 24.9 bound, but plain rounding would
+        render "25%, under the 25% you keep" -- a number claimed to be under itself.
+        ``RewatchOddsGate.evaluate`` clamps the displayed bound below the floor; the
+        decision itself stays on the unrounded value."""
+        facts = _cohort(Known(value=31, source="fit"), Known(value=3, source="fit"))
+        raw = wilson_upper(3, 31) * 100
+        assert raw < 25  # abstains...
+        assert round(raw) == 25  # ...but unclamped rounding reaches the floor
+
+        result = RewatchOddsGate(GateConfig(threshold=25)).evaluate(facts)
+
+        assert result.outcome == ABSTAIN
+        rendered = text(result.detail)
+        assert "24%" in rendered, rendered
+        assert "under the 25%" in rendered, rendered
+
     def test_a_cohort_under_the_floor_abstains_whatever_the_threshold(self) -> None:
         """One under ``REWATCH_BLOCK_FLOOR_N``: too few to trust, whether the operator's
         percentage is barely above zero or almost the whole scale."""

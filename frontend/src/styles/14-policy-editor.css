@@ -328,6 +328,19 @@
   background: var(--surface-2);
   border-radius: var(--radius-sm);
 }
+
+/* The delete threshold's consequence sentence: a quiet well under the slider, full text
+   color rather than help gray, because it is the number the operator is actually setting
+   (same fill idiom as .ramp-shows above; the design-approved mockup's echo block). */
+.condemn-consequence {
+  margin: var(--space-md) 0 0;
+  padding: var(--space-md) var(--space-2xl);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--text-md);
+  font-variant-numeric: tabular-nums;
+}
 .ramp-shows > :first-child {
   margin-top: 0;
 }

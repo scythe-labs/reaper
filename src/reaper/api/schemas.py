@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -856,6 +856,67 @@ class RewatchOddsFitOut(BaseModel):
     total_items: int
     """Every candidate of the latest scan on the requested lane, block or no block: what the
     consequence echo states its protected count out of."""
+
+
+class ThresholdCurveMeasuredRowOut(BaseModel):
+    """One legal delete-threshold score, from a scan with a trusted rewatch cohort
+    somewhere in it: what the Policy page's consequence sentence reads off, for whichever
+    score the slider currently sits on.
+    """
+
+    score: int = Field(ge=1, le=100)
+    flagged: int = Field(gt=0)
+    """How many titles the newest scan would put in front of the operator at ``score``."""
+    expected_mistakes: int = Field(ge=1)
+    """About how many of ``flagged`` the operator's own history says come back, rounded up
+    (never down) so the sentence never understates the risk. Never zero: every candidate's
+    contribution is strictly positive (``_measured_or_thin_rate``'s own Wilson-bound
+    guarantee), so at least one flagged title always adds something above zero."""
+
+
+class ThresholdCurveMeasuredOut(BaseModel):
+    """The whole score-to-consequence curve, from a scan with a trusted rewatch cohort
+    somewhere in it. One row per legal score that flags anything at all, in ascending score
+    order; a score between two rows, above the highest one, or below 1 flags nothing this
+    scan measured, and the frontend reads that as the zero-flagged sentence.
+    """
+
+    state: Literal["measured"] = "measured"
+    rows: list[ThresholdCurveMeasuredRowOut]
+
+
+class ThresholdCurveCountsOnlyRowOut(BaseModel):
+    """One legal delete-threshold score's flagged count, from a scan with no rewatch cohort
+    this server trusts anywhere. The count is real; a comeback estimate would not be."""
+
+    score: int = Field(ge=1, le=100)
+    flagged: int = Field(gt=0)
+
+
+class ThresholdCurveCountsOnlyOut(BaseModel):
+    """No candidate anywhere in this scan has a cohort large enough to trust (mirrors the
+    resolver's own NOT_ENOUGH_HISTORY guard), so the sentence renders its count clause
+    alone -- never a made-up comeback estimate with nothing behind it."""
+
+    state: Literal["counts_only"] = "counts_only"
+    rows: list[ThresholdCurveCountsOnlyRowOut]
+
+
+class ThresholdCurveNoScanOut(BaseModel):
+    """No scan has run on this build yet, so there is nothing to read a curve from. The
+    frontend renders nothing rather than a locked or error state: this is a readout, not a
+    setting, and the slider keeps working exactly as it does today."""
+
+    state: Literal["no_scan"] = "no_scan"
+
+
+#: What ``GET /api/policy/threshold-curve`` answers: exactly one of the three states above,
+#: never inferred from which optional fields happen to be present (rule 142) -- the same
+#: discriminated-union shape ``PolicyProbeIn`` documents above as the pattern to copy.
+ThresholdCurveOut = Annotated[
+    ThresholdCurveMeasuredOut | ThresholdCurveCountsOnlyOut | ThresholdCurveNoScanOut,
+    Field(discriminator="state"),
+]
 
 
 class PolicyBodyOut(BaseModel):

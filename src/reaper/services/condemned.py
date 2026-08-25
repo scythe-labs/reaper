@@ -164,6 +164,25 @@ def _protection_entries(value: object) -> tuple[list[dict[Any, Any]], bool]:
     return entries, len(entries) != len(value)
 
 
+def has_blocked_protections_decoded(explanation: object) -> bool:
+    """Did this row's already-decoded explanation carry a protection that could not be
+    checked?
+
+    Read from ``protections_unknown`` through :func:`_protection_entries` -- the same
+    readable/unreadable split :func:`reap_override_verdict_decoded` applies to the same
+    block a few lines below (rule 104), so a malformed entry holds here exactly as it holds
+    a hand reap. Anything that is not a dict at the top level, including a decode failure the
+    caller already turned into ``None``, holds too: evidence this code cannot read must never
+    be read as "nothing was blocking" (rule 96). ``api.simulate``'s threshold-only replay and
+    ``api.policy``'s threshold curve both read this -- the one derivation of "is this row
+    unchecked, whatever the threshold" -- rather than each parsing the block itself.
+    """
+    if not isinstance(explanation, dict):
+        return True
+    unknown, unreadable = _protection_entries(explanation.get("protections_unknown"))
+    return bool(unknown) or unreadable
+
+
 def reap_override_verdict_decoded(explanation: object, *, score: int) -> str:
     """:func:`reap_override_verdict` over an ALREADY-DECODED explanation.
 

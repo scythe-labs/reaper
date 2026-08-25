@@ -16,6 +16,7 @@ import type {
   PolicyWarning,
   ProfileSettings,
   RewatchOddsFit,
+  ThresholdCurve,
 } from "../api";
 import type { PolicySectionId } from "../components/PolicyEditor";
 import { PolicyEditor } from "../components/PolicyEditor";
@@ -136,6 +137,11 @@ export function policyEditorKit(apiMock: ApiMock) {
      *  the hold still gets a quiet card; the rewatch-odds hold's own describe block passes a
      *  seeded fit. */
     rewatchFit: RewatchOddsFit | Error = { blocks: [], total_items: 0 },
+    /** What GET /api/policy/threshold-curve answers, an Error for a failed read, or
+     *  "pending" for one still in flight. Defaults to `no_scan` (the safe answer for a test
+     *  that does not care about the consequence sentence), which renders nothing beneath the
+     *  score slider -- the same as the error and pending arms. */
+    thresholdCurve: ThresholdCurve | Error | "pending" = { state: "no_scan" },
   ) {
     apiMock.policy.mockResolvedValue({
       policy_hash: "hash",
@@ -164,6 +170,10 @@ export function policyEditorKit(apiMock: ApiMock) {
     apiMock.seasonShape.mockResolvedValue({ total_shows: 0, season_counts: {} });
     if (rewatchFit instanceof Error) apiMock.rewatchOddsFit.mockRejectedValue(rewatchFit);
     else apiMock.rewatchOddsFit.mockResolvedValue(rewatchFit);
+    if (thresholdCurve === "pending") apiMock.thresholdCurve.mockReturnValue(new Promise(() => {}));
+    else if (thresholdCurve instanceof Error)
+      apiMock.thresholdCurve.mockRejectedValue(thresholdCurve);
+    else apiMock.thresholdCurve.mockResolvedValue(thresholdCurve);
     if (vocabulary) apiMock.vocabulary.mockImplementation(() => Promise.reject(vocabulary));
     else apiMock.vocabulary.mockResolvedValue({ lane: "condemn", fields: [] });
     apiMock.vocabularyValues.mockResolvedValue({ field: "", values: [] });

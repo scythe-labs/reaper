@@ -413,6 +413,12 @@ export interface RewatchOdds {
   lo_days: number;
   hi_days: number | null;
   state: "measured" | "thin" | "no_history";
+  /** The Wilson 95% upper bound of `k`/`n`, as a whole percent -- the same figure the
+   *  rewatch protection itself compares against the operator's floor (#936), so this
+   *  display block never reads a smaller "probability" than the number that can keep the
+   *  file. `null` only for a row stored before this field shipped; the panel falls back to
+   *  `why.ts`'s `wilsonUpperPct(k, n)` rather than showing nothing. */
+  bound_pct: number | null;
 }
 
 export interface Explanation {
@@ -680,6 +686,54 @@ export interface RewatchOddsFit {
    *  consequence echo states its protected count out of. */
   total_items: number;
 }
+
+/** One legal delete-threshold score, from a scan with a trusted rewatch cohort somewhere in
+ *  it: what the Policy page's consequence sentence reads off, for whichever score the
+ *  slider currently sits on. */
+export interface ThresholdCurveMeasuredRow {
+  score: number;
+  /** How many titles the newest scan would put in front of the operator at `score`. */
+  flagged: number;
+  /** About how many of `flagged` the operator's own history says come back, rounded up so
+   *  the sentence never understates the risk. */
+  expected_mistakes: number;
+}
+
+/** The whole score-to-consequence curve, from a scan with a trusted rewatch cohort
+ *  somewhere in it. One row per legal score that flags anything at all, in ascending score
+ *  order; a score between two rows, above the highest one, or below 1 flags nothing this
+ *  scan measured. */
+export interface ThresholdCurveMeasured {
+  state: "measured";
+  rows: ThresholdCurveMeasuredRow[];
+}
+
+/** One legal delete-threshold score's flagged count, from a scan with no rewatch cohort
+ *  this server trusts anywhere. The count is real; a comeback estimate would not be. */
+export interface ThresholdCurveCountsOnlyRow {
+  score: number;
+  flagged: number;
+}
+
+/** No candidate anywhere in this scan has a cohort large enough to trust, so the sentence
+ *  renders its count clause alone, never a made-up comeback estimate. */
+export interface ThresholdCurveCountsOnly {
+  state: "counts_only";
+  rows: ThresholdCurveCountsOnlyRow[];
+}
+
+/** No scan has run on this build yet. The editor renders nothing rather than a locked or
+ *  error state: this is a readout, not a setting, and the slider keeps working exactly as
+ *  it does today. */
+export interface ThresholdCurveNoScan {
+  state: "no_scan";
+}
+
+/** What `GET /api/policy/threshold-curve` answers: exactly one of the three states above,
+ *  never inferred from which fields happen to be present. Mirrors
+ *  `api.schemas.ThresholdCurveOut`. */
+export type ThresholdCurve =
+  ThresholdCurveMeasured | ThresholdCurveCountsOnly | ThresholdCurveNoScan;
 
 /** What a vocabulary field's value IS, which decides how it is typed, stored and read back
  *  (`engine/fields.py`'s `FieldType`). Two of the six convert. A size is typed in GB and stored
@@ -2221,6 +2275,11 @@ export const api = {
    *  TV seasons carry their own fit, so the ladder never mixes the two lanes. */
   rewatchOddsFit: (mediaType: "movie" | "tv") =>
     request<RewatchOddsFit>(`/api/policy/rewatch-odds?media_type=${mediaType}`),
+  /** The whole score-to-consequence curve behind the delete-threshold slider, from the
+   *  latest scan and this server's own fitted rewatch curve. One request per media type:
+   *  the editor re-decides every row locally as the slider moves, never a call per drag. */
+  thresholdCurve: (mediaType: "movie" | "tv") =>
+    request<ThresholdCurve>(`/api/policy/threshold-curve?media_type=${mediaType}`),
 
   startScan: () => post<ScanStatus>("/api/scan/start", {}),
   scanStatus: () => request<ScanStatus>("/api/scan/status"),

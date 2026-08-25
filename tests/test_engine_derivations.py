@@ -411,6 +411,7 @@ def _written_explanation() -> dict[str, Any]:
                 "lo_days": 365.0,
                 "hi_days": 730.0,
                 "state": "measured",
+                "bound_pct": 38,
             },
         )
     )
@@ -575,6 +576,23 @@ class TestTheStoredExplanationIsWrittenAsItIsDeclared:
         assert body is not None
         assert body.rewatch_odds is None
 
+    def test_a_rewatch_odds_block_without_bound_pct_does_not_blank_the_whole_panel(self) -> None:
+        """#936: ``bound_pct`` shipped after ``rewatch_odds`` did, so a row stored between
+        the two carries the block with no ``bound_pct`` key at all. A required field here
+        would raise out of ``Explanation`` entirely (rule 96's *unreadable* raises, exactly
+        as ``_thaw_rewatch_odds``'s own docstring describes for an illegible inner field) and
+        blank every other block on the panel with it -- not merely lose the rewatch section."""
+        document = _written_explanation()
+        assert "bound_pct" in document["rewatch_odds"]
+        del document["rewatch_odds"]["bound_pct"]
+
+        body = read_explanation(document)
+
+        assert body is not None
+        assert body.rewatch_odds is not None
+        assert body.rewatch_odds.bound_pct is None
+        assert body.rewatch_odds.n == 599  # the rest of the block still reads
+
     def test_rewatch_odds_round_trips_the_written_block(self) -> None:
         """The state written by the scan (``services.snapshot._rewatch_odds_context``) is
         exactly the state the panel reads back."""
@@ -589,3 +607,4 @@ class TestTheStoredExplanationIsWrittenAsItIsDeclared:
         assert body.rewatch_odds.lo_days == 365.0
         assert body.rewatch_odds.hi_days == 730.0
         assert body.rewatch_odds.state == "measured"
+        assert body.rewatch_odds.bound_pct == 38

@@ -2754,6 +2754,7 @@ class TestTheTVCohortFit:
             "lo_days": 0.0,
             "hi_days": 365.0,
             "state": "thin",
+            "bound_pct": 91,
         }
 
     async def test_the_cohort_lookup_uses_the_any_play_anchor_not_the_qualified_one(
