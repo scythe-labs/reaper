@@ -85,16 +85,19 @@ API_TS = REPO / "frontend" / "src" / "api.ts"
 WIRE_PACKAGE = "reaper.api."
 INNER_MODULES = ("reaper.engine.policy", "reaper.engine.explanation")
 
-#: Reconciled by hand against the tree: 128 under ``reaper.api.*`` and 17 across the two engine
+#: Reconciled by hand against the tree: 131 under ``reaper.api.*`` and 18 across the two engine
 #: modules (+1 for ``RewatchOddsOut``, #554 stage 2, mirrored in the browser as ``RewatchOdds``;
 #: +2 more for the same stage's ``RewatchOddsFitOut``/``RewatchOddsBlockOut``, the Policy page's
 #: ladder-and-echo payload, mirrored as ``RewatchOddsFit``/``RewatchOddsBlock``; +1 more for
 #: #868 phase 5's ``DiscordTestOut``, split off ``TestOut`` for the Discord webhook test's
 #: typed reason; -1 for ``NotificationLanguageIn``, gone with the route it bodied -- the
-#: language is one setting now and rides ``GeneralSettingsIn``). It is here because the
+#: language is one setting now and rides ``GeneralSettingsIn``; +3 more under ``reaper.api.*``
+#: for the delete-threshold ratio resolver's ``RatioResolvedOut``/``RatioNotEnoughHistoryOut``/
+#: ``RatioFlooredOut``, and +1 more across the engine modules for ``engine.policy``'s
+#: ``AppliedRatio``, the resolved-ratio metadata ``PolicyBody`` carries). It is here because the
 #: collision assertion below is flag-shaped, and a flag cannot see a member that left the walk
 #: (rule 145).
-_EXPECTED_SERVER_MODELS = 145
+_EXPECTED_SERVER_MODELS = 149
 
 #: Browser types whose server counterpart is spelled differently. Each is a real pair -- the
 #: field sets are compared -- and the rename is the only reason a suffix rule cannot find it.
@@ -171,8 +174,13 @@ CLIENT_ONLY = {
 # the 422 list it describes is a plain list of dicts server-side, not a named model to pair.
 # INTERFACES alone -1 for the i18n legacy-layer cleanup: `Progress` had no reader anywhere in
 # the tree and no server model to sit in CLIENT_ONLY for, so it was deleted rather than kept.
-EXPECTED_INTERFACES = 99
-EXPECTED_PAIRS = 97
+# Both +4 for the delete-threshold ratio resolver: `RatioResolved`, `RatioNotEnoughHistory` and
+# `RatioFloored` pair with `RatioResolvedOut`, `RatioNotEnoughHistoryOut` and `RatioFlooredOut`
+# on the suffix rule (the discriminated union itself, `RatioResolution`, is a type alias like
+# `PolicyProbe` and is counted by neither walk); `AppliedRatio` pairs with the identically-named
+# `engine.policy.AppliedRatio` with no ALIAS entry needed, the same shape as `GateSetting`.
+EXPECTED_INTERFACES = 103
+EXPECTED_PAIRS = 101
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")

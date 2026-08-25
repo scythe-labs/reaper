@@ -63,6 +63,7 @@ export function body(custom: CustomCondemn[] = []): PolicyBody {
     rewatch_recent_days: 365,
     keep_rating_rules: [],
     keep_rating_match: "any",
+    applied_ratio: null,
   };
 }
 

@@ -627,6 +627,15 @@ export interface RatingRule {
  *  Declared beside `PolicyBody` because that is where the keep's own four fields live. */
 export const REWATCH_KEEP = "rewatch_habit";
 
+/** A resolved "one mistake per N cleared" ratio, frozen at the moment it was applied: what
+ *  the operator asked for, and the delete-threshold score `GET /api/policy/resolve-ratio`
+ *  resolved it to then. Display-only; see `PolicyBody.applied_ratio`. Mirrors
+ *  `engine.policy.AppliedRatio`. */
+export interface AppliedRatio {
+  ratio: number;
+  resolved_score: number;
+}
+
 export interface PolicyBody {
   name: string;
   media_type: string;
@@ -654,6 +663,7 @@ export interface PolicyBody {
   rewatch_recent_days: number;
   keep_rating_rules: RatingRule[];
   keep_rating_match: "any" | "all";
+  applied_ratio: AppliedRatio | null;
 }
 
 /** The distribution of content-season counts across shows in the latest snapshot, so the
@@ -686,6 +696,43 @@ export interface RewatchOddsFit {
    *  consequence echo states its protected count out of. */
   total_items: number;
 }
+
+/** A "one mistake per N cleared" ratio resolved to a score, from the current scan and this
+ *  server's own fitted rewatch curve. */
+export interface RatioResolved {
+  state: "resolved";
+  /** The lowest score that still delivers at least the requested ratio. */
+  score: number;
+  /** How many titles the current scan would put in front of the operator at `score`. */
+  flagged_items: number;
+  /** About how many of `flagged_items` the operator's own history says come back, rounded
+   *  up so the echo never understates the risk. */
+  expected_mistakes: number;
+}
+
+/** Locked: no scan, or too little watch history, to resolve a ratio into a score at all.
+ *  The operator keeps setting the score directly. */
+export interface RatioNotEnoughHistory {
+  state: "not_enough_history";
+}
+
+/** The requested ratio is past what this library's curve can deliver at any score. Pinned
+ *  at the highest score the current scan still flags anything at, which is the best ratio
+ *  the library's curve reaches. */
+export interface RatioFloored {
+  state: "floored";
+  score: number;
+  flagged_items: number;
+  expected_mistakes: number;
+  /** The best "1 mistake per N cleared" the library reaches, at `score` -- rounded DOWN, so
+   *  it never overstates how good the library's ceiling really is. */
+  best_ratio: number;
+}
+
+/** What `GET /api/policy/resolve-ratio` answers: exactly one of the three states above,
+ *  never inferred from which fields happen to be present. Mirrors
+ *  `api.schemas.RatioResolutionOut`. */
+export type RatioResolution = RatioResolved | RatioNotEnoughHistory | RatioFloored;
 
 /** What a vocabulary field's value IS, which decides how it is typed, stored and read back
  *  (`engine/fields.py`'s `FieldType`). Two of the six convert. A size is typed in GB and stored
