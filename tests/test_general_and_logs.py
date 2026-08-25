@@ -139,11 +139,9 @@ def _store_raw(tmp_path: Path, key: str, value: object) -> None:
 def _force_text_updated_at(tmp_path: Path, raw: str) -> None:
     """Overwrite every app-setting row's ``updated_at`` with a TEXT value. Raw SQL because the
     ORM type is what keeps these columns integer, so nothing else can put a string there."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")
-    engine = sa_create_engine(settings.sync_database_url)
-    with SyncSession(engine) as session:
-        session.execute(sa_text("UPDATE app_setting SET updated_at = :raw"), {"raw": raw})
-        session.commit()
+    engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)
+    with engine.begin() as conn:
+        conn.execute(sa_text("UPDATE app_setting SET updated_at = :raw"), {"raw": raw})
     engine.dispose()
 
 
