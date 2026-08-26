@@ -83,9 +83,8 @@ first.
 
 Two failure modes read as correct and survive a green test run:
 
-- **A comment that claims a safeguard the code does not implement.** Assistants write
-  confident prose about protections that were discussed and never built. When a comment names
-  a guard, point at the function that is the guard.
+- **A comment that claims a safeguard the code does not implement.** This is rule 7/24, in
+  `CLAUDE.md`: point a comment naming a guard at the function that is the guard.
 - **A test that runs code without asserting anything about it.** It passes forever and proves
   nothing.
 
@@ -376,7 +375,8 @@ editing the line that is now wrong.
 Reaper ships to operators whose servers nobody here will ever see, so nothing identifying
 goes into the repository: no real titles, hostnames, paths, usernames, or library
 statistics, in code, docs, tests, or commit messages alike. Findings from real data are
-recorded as ratios and shapes.
+recorded as ratios and shapes. CLAUDE.md's Golden rules carry the one exception, screenshots
+of the maintainer's own instance.
 
 ---
 
