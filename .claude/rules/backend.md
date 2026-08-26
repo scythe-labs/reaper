@@ -62,8 +62,7 @@ builder sets its input `Absent`, either wire the input or retire the gate: remov
 `GATE_TYPES`, refuse it in `build_gates`, keep its `GateId` so stored explanations still
 decode, and refuse to scan under a policy that enables it. Dead safety-adjacent code is
 deleted, not stockpiled — a method "for when the interlock lands" ships with its interlock and
-tests, or does not exist. A protection that is built, evaluated, hashed, and can never keep a
-file is worse than one that does not exist, because the operator counts on it.
+tests, or does not exist.
 
 **73. A password-gated destructive confirm is content-bound.** The confirm request carries a
 server-verified token derived from the exact content the operator reviewed (recomputed or
@@ -244,10 +243,10 @@ membership — so a value containing one is never an element of its own fact. Wh
 an operator-typed NAME the app later turns into a condition (a list name became an `on_list`
 rule), the refusal belongs on the name, at the boundary that stores it, not on the rule built
 from it: by the time a validator sees the condition the operator is on another screen, and the
-rule reads to every surface as a live protection covering nothing. It fails in both directions
-at once — a list named `Kids, Holiday` protects nothing, and a *different* list named `Holiday`
-silently protects everything on it. So when a stored string will become an element of a joined
-fact, refuse the separator where it is typed, and say so in the operator's words.
+rule reads to every surface as a live protection covering nothing. It fails in both directions at
+once (a list named `Kids, Holiday` protects nothing, and a *different* list named `Holiday`
+protects everything on it). So when a stored string will become an element of a joined fact,
+refuse the separator where it is typed, and say so in the operator's words.
 
 ## Clients & HTTP
 
@@ -304,8 +303,8 @@ Where only a title is known and it is ambiguous, ask each same-titled library in
 `reaper.text.fold`.** When one side of a lookup is lower-cased, the other must be too.
 Lower-casing the source but not the operator's configured value is a fail-open protection bug:
 the protection stops matching and nothing announces it. Every new name-matching path ships a
-mixed-case test. The helper is named here because greppability is the point of it having a
-name, and `test_repo_hygiene.py` bans spelling `.strip().casefold()` again in `src/`. Folding a
+mixed-case test. `test_repo_hygiene.py` bans spelling `.strip().casefold()` again in `src/`.
+Folding a
 PATH is a different job with a different answer (`identity.to_basename`, `to_segments`), and so
 is a token that is not a name.
 
@@ -442,8 +441,7 @@ from the bug the bound was added to fix. `Facts.history_reach_days` is the case.
 that made the same inference reads the type**, and where a consumer sits across a serialization
 boundary, shipping the field there is part of the fix rather than a follow-up. A wording test, a
 substring, a prefix (rule 92's shape) is usually copied, because the producer's sentence is the
-only thing every reader can see. Introducing the typed answer therefore *widens* the gap until
-the field reaches the copies, which cannot be fixed by editing them. So grep the retired test's
+only thing every reader can see. So grep the retired test's
 exact spelling across **both** trees, then for each surviving site either carry the field to it
 (`api/schemas.py` → `api.ts` → the component, rule 64's supply chain) or defer it in writing
 *naming that supply chain*, so the deferral is actionable. **Carry the three-state where old
@@ -478,35 +476,17 @@ where both images *can read the same schema* is what makes the operator's rollba
 survivable, and it is the only thing that does: a `downgrade()` recreating the column does not
 bring its data back.
 
-**What "rollback" means here is putting the image back, not moving the database back**, and the
-distinction is the whole reason release M ships its revision rather than nothing. A database is
-only ever carried forward: it stays at whatever revision it reached, and the older image has to
-be able to serve *that*. So the sequence buys survivability exactly when M+1 shipped no new
-revision — which is the ordinary case, since M is where the schema work happens. When M+1 does
-ship one, its database sits at a revision M has never heard of, and `db/schema_gate.refusal`
-refuses the boot in plain words (#565); Alembic refused it before that too, with
-`Can't locate revision identified by …`. The way back is then M's own backup, not M's image, so
-say which of the two a removal costs when you write the release note.
-
-**Measure the cost against the alternative, not against zero.** Under `render_as_batch`, SQLite
-rebuilds the whole table for anything outside `add_column`/`create_index`/`drop_index` — so the
-`server_default` revision that lets you KEEP a dead column copies the table exactly as dropping
-it would. Where both cost the same rebuild, keeping it buys only a permanent `include_object`
-arm and a registry entry, and defers the drop forever. That symmetry is the reason this rule
-exists; it does not hold for a nullable column, which can be abandoned for free.
+The reasoning behind what "rollback" means here, and why the cost is measured against the
+alternative rather than against zero, is recorded in `docs/DECISIONS.md`'s Migrations section.
 
 **Three obligations on the M+1 revision.** One `batch_alter_table` block per table with every
-one of that table's drops inside it, since each block is another full copy of the table. This
-used to be the obligation that bricked an install, because each block was another chance to
-strand `_alembic_tmp_<table>` behind a failure; #564 put DDL back inside the migration's
-transaction, so a failed sweep now rolls the temp table back with everything else and the
-remaining cost is the copying.
-`drop_index` before `drop_constraint` before `drop_column`, because Alembic reflects an index
-on a column being dropped and recreates it against a column that is gone — a two-line
-authoring slip that is invisible against a fresh database and fatal against a populated one.
-And assert the surviving indexes and named constraints in a test rather than by eye: a batch
-recreate silently drops expression indexes, triggers and `AUTOINCREMENT`, and Alembic's own
-docs record that unnamed CHECK constraints do not survive it.
+one of that table's drops inside it, since each block is another full copy of the table (#564).
+`drop_index` before `drop_constraint` before
+`drop_column`: Alembic reflects an index on a column being dropped and recreates it against a
+column that is gone, a two-line slip invisible on a fresh database and fatal on a populated one.
+Assert the surviving indexes and named constraints in a test rather than by eye: a batch recreate
+silently drops expression indexes, triggers and `AUTOINCREMENT`, and Alembic's docs record that
+unnamed CHECK constraints do not survive it.
 
 **Leave `recreate` at its default.** On SQLite the default already recreates for a drop;
 `recreate="always"` adds nothing here and forces a rebuild on backends that would not need one.

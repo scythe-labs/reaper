@@ -78,11 +78,9 @@ mirror, and rule 103's drift guard binds it here** — that rule sits in `.claud
 and never loads for the file carrying the copy, so the obligation is restated where the mirror
 lives: derive the keys from one declaration, or a test fails when the set changes. `gateMeta`
 is the worked case (`policyMeta.ts` types itself off a `GateId` union that
-`test_api_type_mirror.py` pins against the enum), and it is what four missing labels cost
-before it existed: two ids that fire on ordinary scans reached the fallback, so the simulator
-answered "why was this kept" with `season_progression` and `custom`, title-cased (#551, rule
-21). The fallback is not the safety net here — it is what makes a missing member silent.
-`signalMeta`, `RAMPS` and `BUILTIN_SIGNAL_IDS` are the same shape and still unguarded.
+`test_api_type_mirror.py` pins against the enum). The fallback is not the safety net here — it
+is what makes a missing member silent (#551). `signalMeta`, `RAMPS` and `BUILTIN_SIGNAL_IDS` are
+the same shape and still unguarded.
 
 **85. Success copy fires on settled state.** A toast, timestamp, or "done" indicator is set only
 after the operation it describes has actually completed (refetch settled, final chunk streamed),
@@ -124,11 +122,11 @@ a promise to RENDER it, because claiming is exactly what excludes it from that s
 therefore catches only what no anchor claims, and can never catch an anchor. So a `WarnBlock`
 inside a conditional subtree takes its warning off the page altogether on the branch that subtree
 does not mount, rather than down to the bottom, and its anchor names that condition as its
-`guard` so it claims only while the condition holds. The warning lost that way was the one about
-a setting that lets deletions past the size caps (#145). Both directions are proven in
-`PolicyEditor.warnings.test.tsx`, never argued here: every anchor is driven through the state
-its guard requires, and through every branch it does not name, so a guard that is missing fails
-as loudly as one that is wrong (#167). Action failures everywhere are `.notice.notice-error`
+`guard` so it claims only while the condition holds (#145). `PolicyEditor.warnings.test.tsx`
+proves both directions: every anchor is driven through the state its guard requires, and through
+every branch it does not name, so a guard that is missing fails as loudly as one that is wrong
+(#167).
+Action failures everywhere are `.notice.notice-error`
 with a plain-language lead ("The scan didn't start: …"); bare red `.error` text survives only in
 the review surfaces and the simulator's dedicated failure panel.
 
@@ -148,10 +146,9 @@ covering two controls, and never help detached from the row it explains.
 
 **138. An anchored popover is measured against the viewport before it is drawn.** Absolutely
 placing a popover at `left: 0` inside its anchor is right only while that anchor is far enough
-from the right edge — and on a phone it is not: the toolbar wraps, so `＋ Filter` and the last
-chip of a row both end up flush against it. What runs past the edge is not clipped and cannot be
-scrolled to, because the page has no horizontal scroll, so half a menu is simply unreachable, and
-the operator picks from the half they can see. Every anchor-aligned popover therefore takes its
+from the right edge, and on a phone it is not: the toolbar wraps until `＋ Filter` sits flush
+against the edge, and what runs past it is unreachable, since the page has no horizontal scroll
+to find it with. Every anchor-aligned popover therefore takes its
 offset from `usePopoverShift` (`components/popoverFit.ts`) and reads it back as `--pop-shift`, and
 caps its width so one long value cannot make it wider than the screen. **Measure on every render,
 not once on open:** a list that refilters as you type changes width while it is open. The pull is
@@ -166,9 +163,9 @@ blocker, and so is fixing one of these and leaving its twin (rule 72).
 **139. Text the operator did not choose is given a break opportunity.** A requester handle, a
 title, a path, a host — anything arriving from a portal, a file system, or someone else's
 keyboard — can be one long unbroken string, and on a phone it paints straight through the box
-holding it. Where the page can scroll, the layout slides sideways; where the container clips (a
-side panel, a sheet), the tail is simply unreachable, which is rule 138's failure reached by a
-different route. So an element rendering text from outside the app carries `overflow-wrap:
+holding it: a scrolling page slides sideways, and a clipping container (a side panel, a sheet)
+makes the tail unreachable, rule 138's failure by a different route. So an element rendering
+text from outside the app carries `overflow-wrap:
 anywhere`, the idiom already at a dozen sites across `styles/`, and the fix lands on every surface
 rendering that same value (rule 72): the Scales card's `.fair-name` and the person panel's
 `.scales-head-id h2` are one name in two places. **Wrap, do not truncate** — two handles
@@ -221,13 +218,7 @@ season's own verdict (rule 48). A per-tab `hideReap` on a list row, a read-only 
 **146. A dirty/blocked signal a component reports UPWARD is two claims, and both are checked
 in every state the component can render.** Lifting "this panel is holding something" into a
 parent so the parent can guard on it asserts *there is something to lose* AND *you can still
-get to it*. They are separate facts, they are computed in different places, and one PR broke
-them in opposite directions at once. A panel that reported the bar's contents went quiet about
-a proxy list its own bar drops on purpose, so the field walked out with no confirm; the same
-panel, on a failed refetch, went on reporting a draft while every early return above the render
-had replaced the form with one error paragraph, so the guard demanded a discard for edits with
-no box, no bar and no Discard on screen. Neither was visible from the diff, because the signal
-and the surface read correct on their own lines. So **a hook that reports state upward is
+get to it*. They are separate facts, computed in different places. So **a hook that reports state upward is
 declared above every early return, and every early return is then re-read as a state the report
 still fires in** — say what the parent is told while the component renders "loading", while it
 renders its failure branch, and after it unmounts. Where the reported set and the acting surface

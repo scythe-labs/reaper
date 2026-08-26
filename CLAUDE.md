@@ -43,75 +43,62 @@ haven't touched this session.
 
 This table, each file's `Holds` line, and the count are one fact written four times, so
 `test_every_index_of_the_rules_matches_the_rules` checks all of them and names each one that
-disagrees. They had already drifted (rule 144).
+disagrees.
 
 **A new rule earns its number, and most candidates do not.** Before appending 149, in order:
-**extend an existing rule** if one covers the class — rules 127, 140, 142 and 143 each described
-rule 72's sweep at a different target, five rules where four instances do it; **write the gate
-instead** if the violation is greppable, since `test_repo_hygiene.py` binds an author who never
-read the rules and prose cannot; then **append**, instruction first, incident cut to a clause. A
-rule narrating the gate that enforces it pays twice for one constraint.
+**extend an existing rule** if one covers the class; **write the gate instead** if the
+violation is greppable, since `test_repo_hygiene.py` binds an author who never read the rules
+and prose cannot; then **append**, instruction only, no narrative. A rule narrating the gate
+that enforces it pays twice for one constraint.
 
 ## Golden rules
 
-- **Nothing identifying in the tree** — code, docs, tests, and commit messages alike. Reaper
-  ships to operators whose servers we will never see: never write a real title, host, path,
-  username, or stat into any of them. Live-testing findings are recorded as ratios and shapes,
-  never fingerprints.
-  **Screenshots are the one exception, and only of the maintainer's own instance.** The README
-  and scythelabs.dev show the running app against a real library, because a picture of invented
-  titles sells nothing and that server is theirs to publish. **Other people are never in the
-  exception**: Scales lists the names of everyone who requested something, so a shot of it is
-  cropped above that list rather than retouched, since a crop cannot miss one and painting over
-  twelve rows can. `scripts/gen_screenshot_mockup.py` still builds the invented version under
+- **Nothing identifying in the tree** — code, docs, tests, and commit messages alike: no real
+  titles, hosts, paths, usernames, or library stats. Findings from real data are recorded as
+  ratios and shapes.
+  **Screenshots are the one exception, and only of the maintainer's own instance.**
+  **Other people are never in the exception**: Scales lists the names of everyone who requested
+  something, so a shot of it is cropped above that list, never retouched.
+  `scripts/gen_screenshot_mockup.py` builds an invented version under
   `docs/media/review-queue-mockup.png`, kept so reversing this call is a one-line README edit.
-- **American English everywhere**, including identifiers and commit messages
-  (`normalize_label`, `SeasonJudgment`). The only exceptions are names owned by someone else
-  and spelled British at the source: `asyncio.CancelledError`, `aria-labelledby`.
+- **American English everywhere**, including identifiers and commit messages, except names
+  spelled British at the source (`asyncio.CancelledError`, `aria-labelledby`). CONTRIBUTING.md's
+  Writing section is the full copy.
 - **Treat Reaper as production code.** It will be released; write for an unknown operator,
   never for one specific server.
 - **Operator copy is read at a glance, never twice.** A phrase over a sentence, a sentence
-  over two; lead with the outcome and leave the explanation to help text bound to the
-  control. These surfaces are *scanned* while deciding what to delete, so long copy does not
-  get read at all. After writing an operator string, cut it once more. Rule 21 governs its
-  vocabulary, this rule its length.
+  over two. Lead with the outcome and leave the explanation to help text bound to the control.
+  Help text obeys the same budget, and cut copy is cut, never parked in a code comment.
+  After writing an operator string, cut it once more. Rule 21 governs its vocabulary, this
+  rule its length.
 - **Mock up UI/UX before touching code.** Load the `reaper-artifact` skill, then present a
   rendered, self-contained HTML artifact in Reaper's look and feel and iterate on *that* until it
   is approved — only then edit frontend code. The skill hands you the app's live tokens and
   component styles so the mockup matches without re-researching them.
   Iterating on a picture is far cheaper than iterating on a diff.
-- **Ship additive, non-breaking migrations. Never make a tester rebuild their DB.** Testers
-  run Reaper on real data, so the Alembic baseline (`22777b2b5015`) is **frozen** — never
-  edit it. Every schema change is its own new revision chained onto the current head by
-  `down_revision` (a nullable `ADD COLUMN`, a new table, a backfill), so `alembic upgrade
-  head` on an existing database ordinarily only adds. New columns are nullable or carry a server
-  default, and the next scan backfills them; a not-yet-backfilled `NULL` reads as "unknown,"
-  never as a wrong definite value. `cache.db` stays disposable and unmigrated.
-  **Schema still has to be able to leave, and rule 148 is the only door.** Additive-by-default
-  with no exit is how dead columns accumulate forever behind a growing exclusion list whose
-  job is to hide a `drop_column` from a reviewer — the wrong direction for a repository that
-  fails closed. Removal is a two-release sequence, never an ad-hoc drop.
+- **Ship additive, non-breaking migrations. Never make a tester rebuild their DB.**
+  CONTRIBUTING.md's Database migrations section has the mechanics: the frozen baseline, one
+  revision per change chained by `down_revision`, nullable `ADD COLUMN`s the next scan
+  backfills.
+  **Schema still has to be able to leave, and rule 148 is the only door.** Removal is a
+  two-release sequence, never an ad-hoc drop; the reasoning lives in `docs/DECISIONS.md`'s
+  Migrations section.
 - **A change that alters what the app *does* updates `docs/STATUS.md` in the same commit** —
   edit the line that is now wrong, never append beside it. Measured findings, including
-  negative results, go to `docs/LEARNINGS.md`. `docs/README.md` says what belongs where: state,
-  knowledge, and history have different lifespans and never share a file.
-  **`STATUS.md` records the state, never the route to it, and it is budgeted twice: 120 lines
-  and 100 columns.** Both are enforced, because a line budget alone is not a size budget — the
-  file sat at exactly 200/200 lines for days, so every new fact went onto a line that already
-  existed, and since a markdown table row cannot wrap, one cell reached 21,210 characters and
-  three cells held two thirds of the file. So: **a row holds a phrase, never a sentence**;
-  reasoning behind a locked choice goes to `docs/DECISIONS.md` (one section per daggered row,
-  and `test_repo_hygiene.py` checks the two agree both ways); and **closed work leaves the file
-  entirely** — a shipped fix is not state, its record is the tracker and the code. Narrating a
-  fix you just landed is the single way this file grows, and it reads as diligence, which is why
-  it needs a rule and not just a budget.
+  negative results, go to `docs/LEARNINGS.md`.
+  **`STATUS.md` records the state, never the route to it, and it is budgeted twice at
+  120 lines and 100 columns**, both enforced. `docs/README.md`'s "A line budget is not a
+  size budget" section has the incident that shaped the second cap. **A row holds a phrase,
+  never a sentence.** Reasoning behind a locked choice goes to `docs/DECISIONS.md`, one
+  section per daggered row, and `test_repo_hygiene.py` checks the two agree both ways.
+  **Closed work leaves the file entirely** — a shipped fix is not state, its record is the
+  tracker and the code.
 - **A bug you are not fixing becomes an issue before the session ends — don't wait to be
   asked.** A defect left in a transcript dies with the session, and "I flagged it in the
   summary" is not a record. Every defect leaves fixed or filed, in *every* session, not just
-  `/reaper-review`: most are found while building something else, which is when the temptation
-  to note it and move on is strongest. Filing needs no approval; say what you filed in the
-  summary rather than asking first. **A candidate you could not demonstrate is filed too, as a
-  question** — `Status/Need More Info`, no `Reviewed/` label, because an issue asserting a
+  `/reaper-review`: most are found while building something else. Filing needs no approval; say
+  what you filed in the summary rather than asking first. **A candidate you could not
+  demonstrate is filed too, as a question** — `Status/Need More Info`, no `Reviewed/` label, because an issue asserting a
   defect must not assert what nobody showed. Promoting it later is one label edit *and* the
   evidence that settled it, written into the issue; killing it is a close as `Reviewed/Invalid`.
   The `reaper-review` skill's *Opening issues* section holds every mechanic, label and cap, and
@@ -123,33 +110,22 @@ rule narrating the gate that enforces it pays twice for one constraint.
   `git show origin/dev:<path>` and read the line. If the branch introduced it, it belongs in the
   diff that introduced it, with the test that pins it; filing it instead ships a known-broken
   change and asks someone else to notice.
-  **Filing it costs more than the fix.** Three defects filed off one branch drew a verification
-  pass that measured `dev`, found all three absent, closed them `Reviewed/Invalid` and opened a
-  PR adding three refutations to `references/refuted.md` — the file that stops a future pass
-  re-raising a candidate, so the wrong row there is worse than no row. Two were real. The third
-  was real for a reason the refutation had not reached, and its `Invalid` label would have
-  buried a `Priority/High` lockout. Every verdict in that pass was correct about the tree it read.
   **When a tracking issue is genuinely wanted anyway** — the fix is deferred, or it spans work
   someone else holds — the title says so and the body opens with it: `on <branch>, not on dev`,
   plus the base commit and the `git show` that proves the contrast. An issue that does not say
   which tree it lives on will be verified against `dev`, because that is the only tree a reader
   has, and it will be closed.
-- **Commit as you go, and keep the pull request focused — don't wait to be asked.** Branches
-  are squash-merged, so a branch arrives on `dev` as one commit whose subject is the PR title
-  and whose body is the PR description. **The pull request is the unit that tells one story**:
-  a fix ships with the test that pins it and the doc line it corrects, because those are the
-  same story, and unrelated work earns its own branch. Commits on the branch are working state
-  that gets collapsed on the way in, so commit freely for your own sake and spend the writing
-  care on the title and body, which are what survive. The title is a Conventional Commit and CI
-  checks it. Put the `Co-Authored-By` trailer at the end of the **PR description**, since that
-  is the text that becomes the commit message.
+- **Commit as you go, and keep the pull request focused — don't wait to be asked.**
+  **The pull request is the unit that tells one story**: a fix ships with the test that pins
+  it and the doc line it corrects, and unrelated work earns its own branch. CONTRIBUTING.md's
+  How work lands section covers the squash mechanics. Put the `Co-Authored-By` trailer at the end of
+  the **PR description**, since that is the text that becomes the commit message.
 
 ## Rules that apply everywhere
 
 **7 / 24. A comment may not claim a safeguard that is not implemented, and one that names a
 safeguard cites the function implementing it** — verified to exist and to be called before
-merging. If you cannot cite it, correct the comment in the same commit. A review pass once
-found six safeguards that existed only as prose.
+merging. If you cannot cite it, correct the comment in the same commit.
 
 **15. The shipped artifact keeps building in CI.** Install from the committed lockfile with
 digest-pinned base images; never let unpinned `>=` floors resolve fresh at build time. CI
@@ -167,8 +143,7 @@ reword it. This binds notices, tooltips, empty states, and error text alike. **N
 in operator-facing copy**: reword with a period, comma, or colon. **A middot does not separate
 two facts either, and neither does a dash**: it is punctuation a screen reader may voice
 ("40 titles *middle dot* 1.2 TB freed") or drop entirely, so the separator is a comma, which is
-read as the pause it looks like. This clause used to bless the middot, and 49 of them were
-sitting in running text when someone finally listened to the app (#177). Arrows
+read as the pause it looks like (#177). Arrows
 ("Policy → Deletion") are fine. A middot is still fine where it is *only* decoration — a dot
 between chips, a placeholder for "no value" — and there it carries `aria-hidden`, because
 nothing is lost by not hearing it. The test is whether a reader who never hears the character
@@ -198,12 +173,11 @@ membership you changed. Same sweep each time, so finding one usually means check
 **134. A gate is judged by its exit code, never by the output you kept.** A pipeline exits with
 its LAST command's status, so `npm --prefix frontend run build | tail -4` reports `tail`'s
 success while a failing `tsc` scrolls past, and anything chained after it with `&&` then runs on
-a broken tree — which is exactly how a TypeScript error once reached a commit. Run each gate on
+a broken tree. Run each gate on
 its own and read the status (`cmd > /tmp/out 2>&1; echo "exit: $?"`), and only pipe a command
 whose success you are not currently deciding on. `| head` is worse still: it SIGPIPEs the
 writer, so the command dies partway and reports that as its own result. This binds every
-verification in this file, and reporting a gate green on a pipe's exit code is a false statement
-about the work.
+verification in this file.
 
 **144. Generating one copy of an operator-facing claim raises the risk on every copy you did
 not generate.** Rule 72 sweeps siblings of a *function* and rule 103 guards a *list* mirroring a
@@ -211,50 +185,35 @@ declaration; this is the same obligation for a *sentence*. One fact about what t
 normally stated in several places — a help paragraph, an API description, the error body that
 fires when it is enforced — each written by someone reading a different one. Deriving one from
 the code does not make the rest safe; it makes them **more** dangerous, because the derived copy
-is demonstrably correct and vouches for a consistency that does not exist. The API key fence is
-the case: its auth box was generated from the allowlist, and all three ungenerated siblings were
-then wrong in the same reassuring direction — two denied capabilities a key actually has, and the
-third promised a try-it-out button that cannot send a write at all. So grep the sibling copies of
-any sentence you are about
-to generate, and either generate them from the same declaration or **point the generated one's
-test at them by name** — a failure message naming the other file costs one line, where a comment
-asking future authors to remember does nothing. The direction is not luck: a rounded claim is
-written to reassure, so it fails toward telling the operator the app is safer than it is.
+is demonstrably correct and vouches for a consistency that does not exist. So grep the sibling
+copies of any sentence you are about to generate, and either generate them from the same
+declaration or **point the generated one's test at them by name** — a failure message naming
+the other file costs one line, where a comment asking future authors to remember does nothing.
+A rounded claim is written to reassure, so it fails toward telling the operator the app is
+safer than it is.
 
 ## Branch & merge workflow
 
-- **`dev` is the default branch, and all work lands there.** Every unit of work gets its own
-  branch that merges back into `dev`.
-- **Cut that branch from the latest upstream `dev`, and confirm what "latest" is rather than
-  assuming.** Ask the remote first — `git fetch origin`, then branch explicitly off the remote
-  ref, never off whatever the working copy happens to be sitting on:
-
-  ```
-  git fetch origin
-  git checkout -b <branch> origin/dev     # not `dev`, not the current HEAD
-  ```
-
-  A local `dev` is a cache of the answer, and nothing in a session refreshes it. **A worktree
-  makes this sharper**: the session opens on whatever branch that worktree was cut for, often an
-  old feature branch, so branching from HEAD carries someone else's commits in and the diff
-  reads as yours. Verify with `git log --oneline origin/dev..HEAD` before you start — empty
-  means current, anything else means a stale base.
-- **Re-check before you open the PR, because `dev` moves while you work.** `git fetch origin &&
-  git rebase origin/dev` immediately before pushing, then re-run the gates: a branch that was
-  current when it was cut can still merge into a tree its tests were never run against.
+- **`dev` is the default branch, and all work lands there** (CONTRIBUTING.md's Branches
+  section). Every unit of work gets its own branch that merges back into `dev`.
+- **Cut that branch from the latest upstream `dev`.** CONTRIBUTING.md's Branches section has
+  the `git fetch origin` / `git checkout -b <branch> origin/dev` recipe. **A worktree sharpens
+  this**: the session opens on whatever branch it was cut for, so branching from HEAD can carry
+  someone else's commits in. Check `git log --oneline origin/dev..HEAD` first — empty means
+  current.
+- **Re-check before you open the PR.** CONTRIBUTING.md covers the rebase; then re-run the
+  gates, since a branch current when cut can still merge into a tree its tests never ran
+  against.
 - **A pull request carries its `Kind/` and `Priority/` labels, same vocabulary as an issue**
   (`gh pr create --label "Kind/Bug,Priority/Critical"`, or `gh pr edit <n> --add-label` after
-  the fact). A PR closing an issue inherits that issue's two; `Reviewed/` is issue triage and
-  stays off a PR. Reviewers filter the queue the same way the backlog is filtered, and an
-  unlabeled PR is missing from it.
+  the fact). `Reviewed/` is issue triage and stays off a PR. CONTRIBUTING.md's Review and merge section has the rest.
 - **Landing a branch into `dev` is CI-gated, and the style is `squash`.** It is the only style
   the repository allows; merge commits and rebase merges are both turned off, so there is no
   choice to get wrong. Check the run with `gh pr checks <n>` before merging (a fresh PR sits
   pending for minutes; `--watch` blocks until it settles), then `gh pr merge --squash <n>`.
   **The squash commit takes its subject from the PR title and its body from the PR
-  description** (`squash_merge_commit_title=PR_TITLE`, `squash_merge_commit_message=PR_BODY`),
-  so those two fields *are* the commit message and nothing you wrote on the branch survives
-  beside them. `.github/workflows/pr-validation.yml` checks the title parses as a Conventional
+  description** (`squash_merge_commit_title=PR_TITLE`, `squash_merge_commit_message=PR_BODY`).
+  `.github/workflows/pr-validation.yml` checks the title parses as a Conventional
   Commit, because that subject is permanent and feeds the release notes. The head branch is
   deleted automatically on merge. A **draft will not merge**, but `gh pr ready <n>` clears it,
   so a `WIP:` title is a label for humans and no longer a thing to strip. One round-trip cost
@@ -263,11 +222,9 @@ written to reassure, so it fails toward telling the operator the app is safer th
   merged `dev` rather than three green per-branch runs.
 - **`main` is release-only.** Never push to `main` directly. Promote `dev` with a
   **squash-merged** pull request from a promotion branch, so `main` reads as a sequence of
-  releases while the granular history lives on `dev`. A bare `dev` → `main` PR worked exactly
-  once: squash promotions never connect the two histories, so from the second promotion on,
-  every file changed since the last release reads as an add/add conflict against the
-  repository baseline. The promotion branch carries `main`'s tip without touching the tree,
-  which moves the PR's merge base to `main` and shrinks the diff to what actually landed:
+  releases while the granular history lives on `dev`. The promotion branch carries `main`'s
+  tip without touching the tree, which moves the PR's merge base to `main` and shrinks the
+  diff to what actually landed:
 
   ```
   git fetch origin
@@ -278,9 +235,7 @@ written to reassure, so it fails toward telling the operator the app is safer th
   ```
 
   **`Kind/Release` is what keeps this pull request out of the next release's notes.**
-  `.github/release.yml` excludes that label. Without it the ours-strategy merge below carries
-  this promotion into the following release's notes range, where it reads as a repository
-  chore beside the changes that actually shipped (#934).
+  `.github/release.yml` excludes that label (#934).
 
   Then `gh pr merge --squash <n>`. The ours-strategy merge keeps `dev`'s tree bit for bit
   (release.yml verifies that before tagging) and never conflicts, whatever the histories look
@@ -302,42 +257,20 @@ defeats every other gate.
 
 **A green `npm run test` is not a quiet one.** Vitest's console interception drops test console
 output on some Node versions — nothing on Node 26, printed on CI's pinned Node 24 — so `act()`
-warnings and unhandled rejections are invisible exactly where you would act on them, and 302
-"no queryFn" warnings once piled up behind a green suite. Run `npx vitest run <file>
---disableConsoleIntercept` to see them locally, or read the CI log. Rule 135 is the standing
+warnings and unhandled rejections are invisible exactly where you would act on them. Run
+`npx vitest run <file> --disableConsoleIntercept` to see them locally, or read the CI log. Rule 135 is the standing
 answer: a test with something to tell you must fail, not warn.
 
-**Asking whether CI is green** is far cheaper than reading a log: `gh pr checks <n>` lists one
-row per job with its conclusion, and it is the merge gate above. **Which jobs appear depends on
-what the commit touched.** `ci.yml`'s `changes` job classifies each changed path into one of
-three lanes, first match winning: `manual/*` and `website/*` are the site, `docs/*`, `.claude/*`
-and `*.md` are prose, everything else is code. The site arm is first because `*.md` matches at
-any depth, so with prose first a `manual/` page never reached the site build (#589). Every other
-job in that file reads the verdict rather than filtering itself, so a prose-only commit runs
-`hygiene` alone, a code-only commit runs `check`, `frontend` and `docker`, and a commit
-spanning lanes runs each lane it touched — which is not the same as everything.
-**A lane names a tree, not a job**, so a site-only commit runs `site`, `hygiene` *and*
-`frontend`: the guards that read `manual/` and `website/` live in those last two, and for as
-long as the site lane started only its own build, a hand-edited generated page compiled and
-published with nothing having read it (#783).
-**The manual publishes from Cloudflare Pages, and no workflow here does it** — Pages watches
-`dev`, builds `website/` itself, and asks GitHub nothing, so the `site` job is the only thing
-that reads a page before an operator does and it gates nothing. Its four build settings live
-in `website/docusaurus.config.ts`'s header, beside the `baseUrl` they have to agree with.
-**Two workflows outside it carry their own path lists and have to** — a `paths` filter decides
-whether a workflow starts, so it cannot read another one's output. `codeql.yml` restates the
-prose globs as `paths-ignore` once per trigger, in `**` spelling rather than the `case` globs
-above. `weblate-notes.yml` filters on the two files that can change what it does,
-`frontend/src/locales/en/ui.notes.json` and `src/reaper/locales/en/backend.notes.json`,
-unrelated to any lane here. `tests/test_repo_hygiene.py`
-pins all three by name, so neither a fourth nor a move between files can arrive quietly and
-leave this paragraph stale again. **A workflow skipped by its own
-path filter publishes no check run at all** — a *job* skipped by an `if:` does publish one,
-with conclusion `skipped`, which is what the next sentence relies on. That is why the required
-check is `CI gate`: it runs on every commit, counts a skipped lane as a pass and a cancelled
-one as a failure, and is the one job whose absence means something is genuinely wrong.
-`pr-validation.yml` is separate, runs on every pull request whatever the paths, and reads the
-title alone.
+**Asking whether CI is green** is cheaper than reading a log: `gh pr checks <n>` lists one row per
+job, and `CI gate` is the required check. A `paths` filter that skips a workflow publishes no check
+run. An `if:` that skips a job still publishes one, marked `skipped`, which `CI gate` counts as a
+pass. **Which jobs run depends on what the commit touched.** `ci.yml`'s `changes` job sorts paths
+into three lanes, first match winning: `manual/*`/`website/*` is site (#589), `docs/*`/`.claude/*`/
+`*.md` is prose, everything else is code. Prose runs `hygiene` alone, code runs `check`, `frontend`
+and `docker`, and site runs `site`, `hygiene` and `frontend` too, since the guards that read
+`manual/` and `website/` live in those last two (#783). **The manual publishes from Cloudflare
+Pages**, which reads `dev` directly, so `site` gates nothing. `codeql.yml` and `weblate-notes.yml`
+carry their own path lists, and `tests/test_repo_hygiene.py` pins all three by name.
 
 **Reading a CI log.** `gh run view --log-failed` is almost always the whole answer: it prints
 only the failing steps. `gh run list --branch <branch>` finds the run, `gh run view <id> --log`
@@ -346,10 +279,9 @@ sha you think it is** (`gh run view <id> --json headSha`, against `git rev-parse
 squash-merge or a fresh push means the newest run for a branch is often not the commit you are
 holding, which is the one way to read a green log for someone else's code and believe it.
 
-**Both halves of the tree are machine-formatted, so never hand-argue style.** CONTRIBUTING
-carries the division of territory and prettier's root-directory hazard. The part that matters
-mid-session: if a reformat sweeps files you did not touch, someone skipped the gate, so land it
-as its own commit and add it to `.git-blame-ignore-revs`.
+**Both halves of the tree are machine-formatted, so never hand-argue style.** CONTRIBUTING.md
+carries the division of territory, prettier's root-directory hazard, and what to do if a
+reformat sweeps files you did not touch.
 
 ## Dev environment
 
@@ -410,7 +342,7 @@ streaming veto and played-since-approval check) each resolve toward keeping the 
 
 - `docs/README.md` — what belongs in which file, and the rule that keeps them current.
 - `docs/STATUS.md` — **start here.** What is true right now: milestones, open work, decisions
-  locked. Small and edited in place, budgeted at 120 lines and 100 columns.
+  locked. Small and edited in place, budgeted (see Golden rules).
 - `docs/DECISIONS.md` — why each locked decision is what it is, one section per daggered row of
   `STATUS.md`'s table. Read the row, then this if you are about to change the behavior it
   describes: several of these decisions were reversed once already, and the reversal is the part
