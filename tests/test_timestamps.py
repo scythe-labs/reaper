@@ -130,6 +130,61 @@ class TestStorage:
             await session.flush()
 
 
+#: The instant every text spelling below names.
+_INSTANT = datetime(2026, 8, 24, 14, 30, 56, tzinfo=UTC)
+
+
+async def _read_back_with_created_at(session: AsyncSession, raw: str) -> RecoveryToken:
+    """Store a row, overwrite ``created_at`` with a raw TEXT value, and read it back.
+
+    Raw SQL is the point: it goes around the ORM type, which is the only way one of these
+    columns can hold text at all.
+    """
+    now = utcnow()
+    await _store(session, now, now + timedelta(minutes=15))
+    await session.execute(text("UPDATE recovery_token SET created_at = :raw"), {"raw": raw})
+    session.expunge_all()
+    row = await session.scalar(select(RecoveryToken))
+    assert row is not None
+    return row
+
+
+class TestATextValueInAnEpochColumn:
+    """Nothing in Reaper writes one. A hand ``sqlite3`` edit does, and the read side used to
+    decode unconditionally, so one such row raised a TypeError for *every* reader of it --
+    ``session.get`` decodes the whole row -- and ``GET /api/settings/general`` was the surface
+    that found it (#937)."""
+
+    @pytest.mark.parametrize("raw", ["2026-08-24T14:30:56+00:00", "2026-08-24T10:30:56-04:00"])
+    async def test_an_iso_spelling_that_names_one_instant_decodes(
+        self, session: AsyncSession, raw: str
+    ) -> None:
+        row = await _read_back_with_created_at(session, raw)
+
+        assert row.created_at == _INSTANT
+
+    async def test_an_epoch_typed_as_text_is_an_integer_by_the_time_it_lands(
+        self, session: AsyncSession
+    ) -> None:
+        """SQLite's INTEGER affinity converts a well-formed numeric literal on the way in, so
+        the read side never sees an epoch as text. That is why the decode handles ISO only,
+        and this is the test that says so if the affinity ever stops applying. It passes
+        against the unfixed read side too, and pins the affinity rather than the decode."""
+        row = await _read_back_with_created_at(session, str(int(_INSTANT.timestamp())))
+
+        assert row.created_at == _INSTANT
+
+    @pytest.mark.parametrize("raw", ["2026-08-24T14:30:56", "yesterday", ""])
+    async def test_a_spelling_that_names_no_instant_raises(
+        self, session: AsyncSession, raw: str
+    ) -> None:
+        """Including the naive one. Reading it as ``None`` instead would be worse than the
+        crash: ``NULL`` means "never played" on ``WatchHighWater.last_played_at``, which is
+        the condemn direction."""
+        with pytest.raises(ValueError, match="Unreadable timestamp"):
+            await _read_back_with_created_at(session, raw)
+
+
 class TestEpochConversion:
     """The boundary with Tautulli and Plex, which both speak epoch ints."""
 

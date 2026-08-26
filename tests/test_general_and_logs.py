@@ -35,6 +35,7 @@ import structlog
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
+from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session as SyncSession
 from starlette.requests import Request
 
@@ -135,6 +136,15 @@ def _store_raw(tmp_path: Path, key: str, value: object) -> None:
     engine.dispose()
 
 
+def _force_text_updated_at(tmp_path: Path, raw: str) -> None:
+    """Overwrite every app-setting row's ``updated_at`` with a TEXT value. Raw SQL because the
+    ORM type is what keeps these columns integer, so nothing else can put a string there."""
+    engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)
+    with engine.begin() as conn:
+        conn.execute(sa_text("UPDATE app_setting SET updated_at = :raw"), {"raw": raw})
+    engine.dispose()
+
+
 def _bare(client: TestClient) -> TestClient:
     """A second client over the SAME app: no cookies, no CSRF header, no session."""
     return TestClient(client.app)
@@ -187,6 +197,20 @@ class TestGeneralSettings:
         assert response.json()["code"] == "error.settings.language_invalid"
         # The bad value never landed; the previous language still stands.
         assert client.get("/api/settings/general").json()["language"] == "es"
+
+    def test_a_text_updated_at_does_not_take_this_page_down(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """``updated_at`` is an epoch integer, and a hand ``sqlite3`` edit leaves a string
+        there. ``session.get`` decodes every column of the row it fetches, so one such row
+        used to 500 this route over a column no setting reads (#937)."""
+        client.put("/api/settings/general", json={"language": "es"})
+        _force_text_updated_at(tmp_path, "2026-08-24T14:30:56.744603+00:00")
+
+        response = client.get("/api/settings/general")
+
+        assert response.status_code == 200
+        assert response.json()["language"] == "es"
 
     def test_a_valid_accent_is_saved_lowercased(self, client: TestClient) -> None:
         data = client.put("/api/settings/general", json={"accent_color": "#4F46E5"}).json()
