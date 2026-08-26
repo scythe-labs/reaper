@@ -39,7 +39,7 @@ import {
 import { announce } from "../announce";
 import { blockedParts, composeReason, wilsonUpperPct } from "../why";
 import { useSuccessorFocus } from "../focus";
-import { coverage, itemBytes, list, since, spareRemaining } from "../format";
+import { coverage, date, itemBytes, list, spareRemaining } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { useArtFallback } from "./artFallback";
 import { CollectionChip } from "./CollectionChip";
@@ -1501,7 +1501,9 @@ export function WhyPanel({
 
       {item.first_flagged_at && (
         <p className="flagged">
-          {t("why.panel.onListSince", { when: since(item.first_flagged_at) })}
+          {/* The calendar date, not "3 hours ago": `since` is now minute-granular, and
+              "on the list since 3 hours ago" is not English. */}
+          {t("why.panel.onListSince", { when: date(item.first_flagged_at) })}
         </p>
       )}
 

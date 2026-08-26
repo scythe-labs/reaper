@@ -42,11 +42,12 @@ SHOT = OUT_DIR / "review-queue-mockup.png"
 
 # The capture box. 1440 CSS px keeps the split view (the panel sits beside the list above
 # 1100px) and 2x keeps the text sharp where a README scales the picture down. The height is
-# measured, not guessed: it clears the sixth card's bottom edge (1120) and the panel's (1096),
-# so the picture ends on a whole row rather than slicing one in half. Re-measure it after any
-# change to the list -- the cards below are simply outside the frame.
+# measured, not guessed: it clears the sixth card's bottom edge (1114) and the panel's (1109),
+# and stops short of the seventh card's top (1124), so the picture ends on a whole row rather
+# than slicing one in half. Re-measure it after any change to the list OR to what sits above it
+# -- the cards below are simply outside the frame.
 WIDTH = 1440
-HEIGHT = 1134
+HEIGHT = 1120
 SCALE = 2
 
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
@@ -345,7 +346,7 @@ ITEMS = [
 ]
 
 ACCOUNT = "reaper-demo"
-SCANNED = "Last scanned Mar 12, 2026, 4,812 items"
+SCANNED = "Last scanned 3 hours ago, 4,812 items."
 TOTAL_ITEMS = "418"
 TOTAL_SIZE = "3.9 TiB"
 
@@ -825,7 +826,6 @@ def page() -> str:
         <button class="tab" data-label="Sanctuary">Sanctuary</button>
         <button class="tab" data-label="Limbo">Limbo</button>
       </nav>
-      <p class="blurb">Scored at or above your threshold, with nothing protecting them.</p>
       <div class="queue-toolbar">
         <div class="search-wrap">
           {SEARCH}

@@ -679,7 +679,9 @@ button.danger:hover:not(:disabled) {
 }
 .scan-freshness {
   font-size: var(--text-md);
-  margin: var(--space-lg) 0 0;
+  /* A bottom margin, because the h2 under this has none: the queue's age was sitting on the
+     "Review queue" heading with nothing between them. */
+  margin: var(--space-lg) 0 var(--space-xl);
 }
 .freshness-warn {
   color: var(--unknown);
