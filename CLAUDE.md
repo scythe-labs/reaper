@@ -53,8 +53,9 @@ that enforces it pays twice for one constraint.
 
 ## Golden rules
 
-- **Nothing identifying in the tree** — code, docs, tests, and commit messages alike.
-  CONTRIBUTING.md's Prose section states the rule in full.
+- **Nothing identifying in the tree** — code, docs, tests, and commit messages alike: no real
+  titles, hosts, paths, usernames, or library stats. Findings from real data are recorded as
+  ratios and shapes.
   **Screenshots are the one exception, and only of the maintainer's own instance.**
   **Other people are never in the exception**: Scales lists the names of everyone who requested
   something, so a shot of it is cropped above that list, never retouched.
@@ -77,7 +78,8 @@ that enforces it pays twice for one constraint.
   Iterating on a picture is far cheaper than iterating on a diff.
 - **Ship additive, non-breaking migrations. Never make a tester rebuild their DB.**
   CONTRIBUTING.md's Database migrations section has the mechanics: the frozen baseline, one
-  revision per change, nullable columns the next scan backfills.
+  revision per change chained by `down_revision`, nullable `ADD COLUMN`s the next scan
+  backfills.
   **Schema still has to be able to leave, and rule 148 is the only door.** Removal is a
   two-release sequence, never an ad-hoc drop; the reasoning lives in `docs/DECISIONS.md`'s
   Migrations section.
@@ -116,7 +118,7 @@ that enforces it pays twice for one constraint.
 - **Commit as you go, and keep the pull request focused — don't wait to be asked.**
   **The pull request is the unit that tells one story**: a fix ships with the test that pins
   it and the doc line it corrects, and unrelated work earns its own branch. CONTRIBUTING.md's
-  PR-title section covers the squash mechanics. Put the `Co-Authored-By` trailer at the end of
+  How work lands section covers the squash mechanics. Put the `Co-Authored-By` trailer at the end of
   the **PR description**, since that is the text that becomes the commit message.
 
 ## Rules that apply everywhere
@@ -203,8 +205,8 @@ safer than it is.
   gates, since a branch current when cut can still merge into a tree its tests never ran
   against.
 - **A pull request carries its `Kind/` and `Priority/` labels, same vocabulary as an issue**
-  (`gh pr create --label "Kind/Bug,Priority/Critical"`). `Reviewed/` is issue triage and stays
-  off a PR. CONTRIBUTING.md's Review and merge section has the rest.
+  (`gh pr create --label "Kind/Bug,Priority/Critical"`, or `gh pr edit <n> --add-label` after
+  the fact). `Reviewed/` is issue triage and stays off a PR. CONTRIBUTING.md's Review and merge section has the rest.
 - **Landing a branch into `dev` is CI-gated, and the style is `squash`.** It is the only style
   the repository allows; merge commits and rebase merges are both turned off, so there is no
   choice to get wrong. Check the run with `gh pr checks <n>` before merging (a fresh PR sits
