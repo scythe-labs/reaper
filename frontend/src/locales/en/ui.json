@@ -173,8 +173,8 @@
       "update_available": "Reaper {latest} is out",
       "update_check_failed": "Couldn't check for updates",
       "update_checks_off": "Update checks are off",
-      "update_dev_behind": "The dev branch has moved since this build.",
-      "update_dev_current": "This build matches the dev branch.",
+      "update_dev_behind": "A newer build is available.",
+      "update_dev_current": "You are on the latest dev build.",
       "update_up_to_date": "You are on the newest release."
     },
     "row": {
@@ -1480,7 +1480,7 @@
       "title": "What changed",
       "viewOnGithub": "View on GitHub"
     },
-    "devBuildWarning": "You are running a <code>dev</code> build of Reaper. It changes daily and can break. Use a release unless you are helping test.",
+    "devBuildWarning": "You are running a <code>dev</code> build of Reaper. It changes often and can break.",
     "labels": {
       "dataFolder": "Data folder",
       "license": "License",
@@ -1496,7 +1496,7 @@
     "title": "About",
     "update": {
       "checking": "Checking for updates…",
-      "devSteadier": "Dev builds change often. Releases are the steadier channel.",
+      "devSteadier": "Dev builds change often. Releases are the stable channel.",
       "disabled": "Update checks are off, so Reaper never asks GitHub for versions. Remove REAPER_UPDATE_CHECK from launcher.conf in Reaper's data folder, or from your environment, to turn them back on.",
       "newRelease": "Reaper {version} is out.",
       "noAnswer": "Couldn't check for updates. Reaper will try again later.",
@@ -1504,7 +1504,6 @@
       "seeChanges": "See what changed"
     },
     "updatePill": {
-      "newerDevBuild": "Newer dev build",
       "updateAvailable": "Update available"
     }
   },

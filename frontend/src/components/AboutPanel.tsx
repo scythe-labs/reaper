@@ -54,12 +54,13 @@ export function AboutPanel() {
             <dt>{t("about.labels.version")}</dt>
             <dd>
               {t("about.reaperVersion", { version: data.version })}
+              {/* Amber, and the same three words on both channels. The operator's
+                  question is whether to go and update, which does not change with the
+                  channel; the row beneath is where the two differ. The tone is the dev
+                  banner's above it, not the accent, so "there is something to do" reads
+                  as one signal down the panel rather than two colors for one fact. */}
               {update.data?.update_available && (
-                <span className="update-pill">
-                  {update.data.channel === "dev"
-                    ? t("about.updatePill.newerDevBuild")
-                    : t("about.updatePill.updateAvailable")}
-                </span>
+                <span className="update-pill">{t("about.updatePill.updateAvailable")}</span>
               )}
             </dd>
             <dt>{t("about.labels.update")}</dt>

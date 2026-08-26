@@ -658,6 +658,9 @@
 /* The About version row's update pill. The accent, not a verdict color: an update is
    information, and green or amber would read as protected or unknown in this app's
    language. */
+/* The pill beside the version, drawn only when an update is waiting. It is amber
+   rather than accent because it says the same thing the dev banner above it says, and
+   two tones for one fact reads as two facts. */
 .update-pill {
   display: inline-block;
   vertical-align: 1px;
@@ -666,7 +669,7 @@
   font-weight: var(--weight-semi);
   padding: var(--space-2xs) var(--space-lg);
   border-radius: var(--radius-pill);
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  border: 1px solid var(--accent-ring);
+  background: var(--unknown-soft);
+  color: var(--unknown);
+  border: 1px solid var(--unknown);
 }

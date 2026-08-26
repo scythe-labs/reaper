@@ -1024,6 +1024,14 @@ in-app update check compares against it, so an operator is only ever told about 
 artifacts exist. Dev builds stay sha-named (`dev (abc1234)`): the rolling `dev-build`
 prerelease is replaced nightly and never enters winget or the snap stable channel.
 
+**The dev channel follows the published `:dev` image, not the tip of the dev branch.** Same
+promise, reached the other way: CI builds an image only when the push touched code, so a docs
+or rules merge moves the branch and ships nothing. Following the tip announced an update on
+every one of those, and the link went to a page of commits the operator already had. The
+registry is where "what is published" is actually written down, so the check reads the commit
+CI baked into the image (`REAPER_GIT_SHA`) out of the image config, per architecture, since
+amd64 is rebuilt on every code push and arm64 nightly.
+
 The notes are GitHub's own generation, sectioned by label through `.github/release.yml`, over
 the pull requests between the previous tag and this one. That range only exists on `dev`: the
 promotion squash is one commit for a whole release, so the tag points at the promotion PR's
