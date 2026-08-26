@@ -1509,12 +1509,6 @@
   },
   "lists": {
     "addList": "Add a list",
-    "ago": {
-      "days": "{n, plural, one {# day ago} other {# days ago}}",
-      "hours": "{n, plural, one {# hour ago} other {# hours ago}}",
-      "justNow": "just now",
-      "minutes": "{n, plural, one {# minute ago} other {# minutes ago}}"
-    },
     "blocked": {
       "collection": "Say which collection in that library to read.",
       "imdb": "Paste the list's id or URL. An IMDb list id looks like ls000000000.",
@@ -2823,17 +2817,14 @@
     "stripTitle": "{name}: {lane}{overrideNote}. Open for its full reasoning.",
     "tabs": {
       "abstain": {
-        "blurb": "Below your threshold, or too little to go on. Reaper leaves them be.",
         "empty": "No souls in Limbo.",
         "label": "Limbo"
       },
       "condemn": {
-        "blurb": "Scored at or above your threshold, with nothing protecting them.",
         "empty": "No souls are on the block.",
         "label": "Condemned"
       },
       "protect": {
-        "blurb": "Something is protecting these souls. They stay, whatever they scored.",
         "empty": "No souls are spared by a protection.",
         "label": "Sanctuary"
       }
@@ -3215,7 +3206,7 @@
     },
     "scanFreshness": {
       "degradedNotice": "The last scan came back incomplete, so Reaper won't act on it. <btn>Go to Settings → Jobs</btn> and rescan.",
-      "lastScanned": "Last scanned {date}, {count} items.",
+      "lastScanned": "Last scanned {when}, {count} items.",
       "noScanYet": "No scan has run yet. <btn>Run one from Settings → Jobs</btn> to fill the queue.",
       "readFailed": "Couldn't read the last scan, so Reaper can't say how old this queue is."
     },

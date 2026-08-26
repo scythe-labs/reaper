@@ -1,6 +1,6 @@
 import { Trans, useTranslation } from "react-i18next";
 import { ApiError, type Snapshot } from "../api";
-import { count, date } from "../format";
+import { count, since } from "../format";
 import { Notice } from "./Notice";
 
 /** A slim freshness line on the Review screen: when the queue was last built, and a loud
@@ -55,7 +55,7 @@ export function ScanFreshness({
   return (
     <p className="scan-freshness muted">
       {t("shell.scanFreshness.lastScanned", {
-        date: date(snapshot.created_at),
+        when: since(snapshot.created_at),
         count: count(snapshot.item_count),
       })}
       {snapshot.degraded && (

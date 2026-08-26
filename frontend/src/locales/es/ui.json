@@ -1036,12 +1036,6 @@
     },
     "lists": {
         "addList": "",
-        "ago": {
-            "days": "",
-            "hours": "",
-            "justNow": "",
-            "minutes": ""
-        },
         "blocked": {
             "collection": "",
             "imdb": "",
@@ -2315,17 +2309,14 @@
         "stripTitle": "",
         "tabs": {
             "abstain": {
-                "blurb": "",
                 "empty": "",
                 "label": ""
             },
             "condemn": {
-                "blurb": "",
                 "empty": "",
                 "label": ""
             },
             "protect": {
-                "blurb": "",
                 "empty": "",
                 "label": ""
             }

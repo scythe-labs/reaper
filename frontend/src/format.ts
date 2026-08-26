@@ -232,12 +232,25 @@ export function weekday(dayIndex: number): string {
 
 const relative = perLocale((locale) => new Intl.RelativeTimeFormat(locale, { numeric: "auto" }));
 
-/** How long ago, in the coarse terms the decisions are actually made in. */
+/** How long ago, in the terms the decisions are actually made in: minutes and hours on the
+ *  day it happened, then days, months and years.
+ *
+ *  Sub-day used to collapse to "today", which on a freshness line is the one thing it cannot
+ *  say -- a scan five minutes old and one from this morning read identically, and staleness
+ *  is the whole reason the line is there. */
 export function since(iso: string): string {
-  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  const ms = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(ms)) return iso;
 
-  if (Number.isNaN(days)) return iso;
-  if (days < 1) return relative().format(0, "day");
+  const days = Math.floor(ms / 86_400_000);
+  if (days < 1) {
+    // Rounded to the minute, floored to the hour: "8 minutes ago" reading as 7 is just wrong,
+    // while an hour count that rounds up says 24 hours on a stamp that is still today.
+    const minutes = Math.round(ms / 60_000);
+    if (minutes < 1) return relative().format(0, "second");
+    if (minutes < 60) return relative().format(-minutes, "minute");
+    return relative().format(-Math.floor(minutes / 60), "hour");
+  }
   if (days === 1) return relative().format(-1, "day");
   if (days < 60) return relative().format(-days, "day");
   if (days < 730) return relative().format(-Math.floor(days / 30), "month");

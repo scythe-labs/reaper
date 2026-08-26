@@ -111,7 +111,10 @@ const HOW_TO_UPDATE =
 //: consequence sentence added two back (policyEditor.flags.condemnConsequence and
 //: .condemnConsequenceCountOnly, both carrying an ICU plural). Its third key,
 //: .condemnConsequenceZero, is a plain literal with no argument or tag and stays unrequired.
-const EXPECTED_REQUIRED_COUNT = 1182;
+//: 1179: lists.ago.days/hours/minutes left with the hand-rolled `ago()` they fed. `since()`
+//: in format.ts now formats every relative time through Intl.RelativeTimeFormat, which needs
+//: no catalog string and so no note.
+const EXPECTED_REQUIRED_COUNT = 1179;
 
 describe("translator notes (locales/en/ui.notes.json)", () => {
   it("classifies a plain literal as not required, and an ICU or tagged one as required (rule 145)", () => {

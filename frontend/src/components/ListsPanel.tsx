@@ -31,23 +31,12 @@ import { announce } from "../announce";
 import { api, type ListConfig, type ProtectionList } from "../api";
 import { useBackGuard } from "../backnav";
 import { describeError } from "../errors";
+import { since } from "../format";
 import i18next from "../i18n";
 import { composeIn } from "../why";
 import { ListModal } from "./ListModal";
 import { Notice } from "./Notice";
 import { rescanHeading, rescanQueuedLead } from "./PolicySimulator";
-
-/** How long ago, in the app's usual plain phrasing. Null stamps are handled by the caller,
- *  which has a whole sentence to say about a list that has never checked in. */
-function ago(iso: string): string {
-  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
-  if (minutes < 1) return i18next.t("lists.ago.justNow");
-  if (minutes < 60) return i18next.t("lists.ago.minutes", { n: minutes });
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return i18next.t("lists.ago.hours", { n: hours });
-  const days = Math.round(hours / 24);
-  return i18next.t("lists.ago.days", { n: days });
-}
 
 function titles(n: number): string {
   return i18next.t("lists.titleCount", { n });
@@ -664,7 +653,7 @@ export function ListsPanel({
               tone={shown.tone}
               chipTitle={chipTitle}
               meta={
-                (checked.length ? t("lists.meta.lastChecked", { when: ago(checked[0]!) }) : "") +
+                (checked.length ? t("lists.meta.lastChecked", { when: since(checked[0]!) }) : "") +
                 across +
                 sourceHint(definition)
               }
@@ -697,7 +686,7 @@ export function ListsPanel({
               tone={shown.tone}
               meta={
                 (row.last_checked_at
-                  ? t("lists.meta.lastChecked", { when: ago(row.last_checked_at) })
+                  ? t("lists.meta.lastChecked", { when: since(row.last_checked_at) })
                   : "") + t("lists.orphanNote")
               }
               error={row.error}

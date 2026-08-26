@@ -132,23 +132,20 @@ const PAGE = 40;
 //  render window nears the end of what we have.
 const FETCH_PAGE = 100;
 
-const tabs = (): { verdict: Verdict; label: string; blurb: string; empty: string }[] => [
+const tabs = (): { verdict: Verdict; label: string; empty: string }[] => [
   {
     verdict: "condemn",
     label: i18next.t("reviewQueue.tabs.condemn.label"),
-    blurb: i18next.t("reviewQueue.tabs.condemn.blurb"),
     empty: i18next.t("reviewQueue.tabs.condemn.empty"),
   },
   {
     verdict: "protect",
     label: i18next.t("reviewQueue.tabs.protect.label"),
-    blurb: i18next.t("reviewQueue.tabs.protect.blurb"),
     empty: i18next.t("reviewQueue.tabs.protect.empty"),
   },
   {
     verdict: "abstain",
     label: i18next.t("reviewQueue.tabs.abstain.label"),
-    blurb: i18next.t("reviewQueue.tabs.abstain.blurb"),
     empty: i18next.t("reviewQueue.tabs.abstain.empty"),
   },
 ];
@@ -2462,8 +2459,6 @@ export function ReviewQueue({
                 </button>
               ))}
             </nav>
-
-            <p className="blurb">{tab.blurb}</p>
           </>
         )}
 
