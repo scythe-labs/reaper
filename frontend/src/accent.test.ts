@@ -161,6 +161,17 @@ describe("applyAccent", () => {
     expect(localStorage.getItem(ACCENT_STORAGE_KEY)).toBeNull();
   });
 
+  it("paints the browser's own chrome at the accent", () => {
+    const meta = document.createElement("meta");
+    meta.id = "theme-color";
+    meta.name = "theme-color";
+    meta.content = DEFAULT_ACCENT;
+    document.head.appendChild(meta);
+    applyAccent("#4f46e5");
+    expect(meta.content).toBe("#4f46e5");
+    meta.remove();
+  });
+
   it("caches the ink that rides on the accent, so the pre-paint never recomputes it", () => {
     // #009050 sits almost exactly on the boundary between the two inks (L = 0.2055), which
     // is where index.html's own copy of this maths used to disagree: it rounded the dark
@@ -193,6 +204,14 @@ describe("the pre-paint script in index.html", () => {
     ]) {
       expect(html).toContain(`localStorage.getItem("${key}")`);
     }
+  });
+
+  it("ships the theme-color tag at the built-in accent and rewrites it from the cache", () => {
+    // Rule 144: the static content= here is a second copy of DEFAULT_ACCENT, and index.html
+    // cannot import it. This assertion is the join, so a retune of the built-in accent in
+    // accent.ts fails here rather than shipping a browser chrome stuck on the old color.
+    expect(html).toContain(`<meta id="theme-color" name="theme-color" content="${DEFAULT_ACCENT}"`);
+    expect(html).toContain('document.getElementById("theme-color")');
   });
 
   it("repeats none of the color maths", () => {
