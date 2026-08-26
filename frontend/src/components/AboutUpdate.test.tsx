@@ -107,25 +107,45 @@ describe("the About update row", () => {
     expect(headings.map((h) => h.textContent)).toEqual(["Reaper 2026.9.2", "Reaper 2026.9.1"]);
   });
 
-  it("shows the dev banner and links the branch's run of changes", async () => {
+  it("shows the dev banner and links the commits an update would bring", async () => {
     apiMock.update.mockResolvedValue({
       ...NEWER,
       channel: "dev",
       current: "dev (abc1234)",
       latest: "dev (def5678)",
-      url: "https://github.com/scythe-labs/reaper/commits/dev",
+      // The server sends the range between this build and the published :dev image, so
+      // the page the operator lands on holds only what they do not have yet. Following
+      // the branch instead put every docs commit on that page and announced an update
+      // no image existed for.
+      url: "https://github.com/scythe-labs/reaper/compare/abc1234...def5678",
       changes: [],
     });
     renderAbout();
 
     // The banner is page furniture (standing), so it is read in document order
     // rather than announced; asserting the text is the whole contract.
-    expect(await screen.findByText(/It changes daily and can break/)).toBeInTheDocument();
-    expect(await screen.findByText("Newer dev build")).toBeInTheDocument(); // the pill
+    expect(await screen.findByText(/It changes often and can break/)).toBeInTheDocument();
+    // One pill on both channels: the operator's question is the same either way.
+    expect(await screen.findByText("Update available")).toBeInTheDocument();
     expect(await screen.findByRole("link", { name: "See what changed" })).toHaveAttribute(
       "href",
-      "https://github.com/scythe-labs/reaper/commits/dev",
+      "https://github.com/scythe-labs/reaper/compare/abc1234...def5678",
     );
+  });
+
+  it("reports the published dev image as already taken", async () => {
+    apiMock.update.mockResolvedValue({
+      ...NEWER,
+      channel: "dev",
+      current: "dev (abc1234)",
+      latest: "dev (abc1234)",
+      update_available: false,
+      url: null,
+      changes: [],
+    });
+    renderAbout();
+    expect(await screen.findByText("You are on the latest dev build.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("Update available")).not.toBeInTheDocument());
   });
 
   it("keeps the last answer through a failed refetch, on every surface", async () => {
@@ -151,7 +171,7 @@ describe("the About update row", () => {
     renderAbout(); // DEFAULT_UPDATE: enabled, unanswered
     expect(await screen.findByText(/Couldn't check for updates/)).toBeInTheDocument();
     expect(screen.queryByText("Update available")).not.toBeInTheDocument();
-    expect(screen.queryByText(/It changes daily/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/It changes often/)).not.toBeInTheDocument();
   });
 
   it("says checks are off without asking anything", async () => {

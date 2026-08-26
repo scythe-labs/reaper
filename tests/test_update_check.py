@@ -29,6 +29,41 @@ pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
 _RELEASES = f"https://api.github.com/repos/{DEFAULT_REPO}/releases"
 _DEV_TIP = f"https://api.github.com/repos/{DEFAULT_REPO}/commits/dev"
+_GHCR = f"https://ghcr.io/v2/{DEFAULT_REPO}"
+_INDEX_DIGEST = {"amd64": "sha256:" + "a" * 64, "arm64": "sha256:" + "b" * 64}
+_CONFIG_DIGEST = {"amd64": "sha256:" + "c" * 64, "arm64": "sha256:" + "d" * 64}
+
+
+def _publish_dev_image(
+    mock: respx.Router, commits: Mapping[str, str | None], *, multi_arch: bool = True
+) -> None:
+    """Stand up the four registry reads the dev check makes, with one baked commit per
+    architecture. ``multi_arch=False`` publishes the tag as a plain manifest instead of
+    an index, which is what :dev is before the first nightly stitches arm64 in.
+
+    A value of ``None`` publishes an image config with no ``REAPER_GIT_SHA`` in it.
+    """
+    mock.get("https://ghcr.io/token").mock(return_value=httpx.Response(200, json={"token": "t"}))
+    for arch, commit in commits.items():
+        env = ["REAPER_DATA_DIR=/data"] + ([f"REAPER_GIT_SHA={commit}"] if commit else [])
+        mock.get(f"{_GHCR}/manifests/{_INDEX_DIGEST[arch]}").mock(
+            return_value=httpx.Response(200, json={"config": {"digest": _CONFIG_DIGEST[arch]}})
+        )
+        mock.get(f"{_GHCR}/blobs/{_CONFIG_DIGEST[arch]}").mock(
+            return_value=httpx.Response(200, json={"config": {"Env": env}})
+        )
+    tag: dict[str, Any]
+    if multi_arch:
+        tag = {
+            "manifests": [
+                {"digest": _INDEX_DIGEST[arch], "platform": {"architecture": arch, "os": "linux"}}
+                for arch in commits
+            ]
+        }
+    else:
+        (arch,) = commits
+        tag = {"config": {"digest": _CONFIG_DIGEST[arch]}}
+    mock.get(f"{_GHCR}/manifests/dev").mock(return_value=httpx.Response(200, json=tag))
 
 
 @pytest.fixture
@@ -422,17 +457,17 @@ class TestDebugNarration:
 
 
 class TestDevChannel:
+    """The dev channel follows the published :dev image, never the branch.
+
+    CI builds an image only when a push touched code, so the branch runs ahead of the
+    image on every docs or rules merge. Reading the tip announced an update those
+    operators could not pull, and pointed them at a page of commits that shipped
+    nothing.
+    """
+
     @pytest.mark.usefixtures("_dev_build")
-    async def test_a_moved_dev_branch_is_reported(self, httpx2_mock: respx.Router) -> None:
-        httpx2_mock.get(_DEV_TIP).mock(
-            return_value=httpx.Response(
-                200,
-                json={
-                    "sha": "def5678" + "0" * 33,
-                    "html_url": f"https://github.com/{DEFAULT_REPO}/commit/def5678",
-                },
-            )
-        )
+    async def test_a_newer_image_is_reported(self, httpx2_mock: respx.Router) -> None:
+        _publish_dev_image(httpx2_mock, {"amd64": "def5678", "arm64": "def5678"})
         status = await UpdateChecker().status()
         assert status.channel == "dev"
         assert status.current == "dev (abc1234)"
@@ -440,36 +475,114 @@ class TestDevChannel:
         assert status.update_available is True
 
     @pytest.mark.usefixtures("_dev_build")
-    async def test_the_current_dev_build_reports_no_update(self, httpx2_mock: respx.Router) -> None:
-        httpx2_mock.get(_DEV_TIP).mock(
-            return_value=httpx.Response(200, json={"sha": "abc1234" + "0" * 33})
-        )
+    async def test_the_image_this_build_came_from_reports_no_update(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        _publish_dev_image(httpx2_mock, {"amd64": "abc1234", "arm64": "abc1234"})
         status = await UpdateChecker().status()
         assert status.update_available is False
+
+    @pytest.mark.usefixtures("_dev_build")
+    async def test_the_branch_is_never_asked(self, httpx2_mock: respx.Router) -> None:
+        """The regression this change exists for. A docs merge moves the branch and
+        publishes no image, so the branch tip cannot be consulted at all -- not even as
+        a tiebreak, which would put the old answer back for exactly those pushes."""
+        tip = httpx2_mock.get(_DEV_TIP).mock(
+            return_value=httpx.Response(200, json={"sha": "def5678" + "0" * 33})
+        )
+        _publish_dev_image(httpx2_mock, {"amd64": "abc1234", "arm64": "abc1234"})
+        status = await UpdateChecker().status()
+        assert status.update_available is False
+        assert len(tip.calls) == 0
+
+    @pytest.mark.usefixtures("_dev_build")
+    async def test_the_link_holds_only_the_commits_an_update_would_bring(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        _publish_dev_image(httpx2_mock, {"amd64": "def5678", "arm64": "def5678"})
+        status = await UpdateChecker().status()
+        assert status.url == f"https://github.com/{DEFAULT_REPO}/compare/abc1234...def5678"
+
+    @pytest.mark.usefixtures("_dev_build")
+    async def test_each_architecture_reads_its_own_half(
+        self, httpx2_mock: respx.Router, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """amd64 is rebuilt on every code push and arm64 nightly, so the two halves of
+        :dev routinely name different commits. Reading amd64's on an arm64 box would
+        nag that operator toward an image that does not exist for them yet."""
+        monkeypatch.setattr("reaper.services.update_check.platform.machine", lambda: "aarch64")
+        _publish_dev_image(httpx2_mock, {"amd64": "def5678", "arm64": "abc1234"})
+        status = await UpdateChecker().status()
+        assert status.latest == "dev (abc1234)"
+        assert status.update_available is False
+
+    @pytest.mark.usefixtures("_dev_build")
+    async def test_a_single_architecture_tag_is_read_directly(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """Before the first nightly there is no arm64 half, so :dev is a plain manifest
+        rather than an index and there is no child to pick."""
+        _publish_dev_image(httpx2_mock, {"amd64": "def5678"}, multi_arch=False)
+        status = await UpdateChecker().status()
+        assert status.latest == "dev (def5678)"
+        assert status.update_available is True
+
+    @pytest.mark.usefixtures("_dev_build")
+    async def test_an_architecture_with_no_image_reads_as_unknown(
+        self, httpx2_mock: respx.Router, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Nothing is published for this machine, so both verdicts are wrong."""
+        monkeypatch.setattr("reaper.services.update_check.platform.machine", lambda: "aarch64")
+        _publish_dev_image(httpx2_mock, {"amd64": "def5678"})
+        status = await UpdateChecker().status()
+        assert status.update_available is None
+        assert status.checked_at is None
+
+    @pytest.mark.usefixtures("_dev_build")
+    async def test_an_image_that_names_no_commit_reads_as_unknown(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        _publish_dev_image(httpx2_mock, {"amd64": None, "arm64": None})
+        status = await UpdateChecker().status()
+        assert status.update_available is None
+        assert status.checked_at is None
 
     @pytest.mark.usefixtures("_dev_build")
     async def test_a_build_that_cannot_name_its_commit_reads_as_unknown(
         self, httpx2_mock: respx.Router, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """No baked sha and no readable .git: the tip is still shown, but "update
-        available" is unknown -- a nag that is almost always true helps nobody."""
+        """No baked sha and no readable .git: the image's commit is still shown, but
+        "update available" is unknown -- a nag that is almost always true helps nobody.
+        With no commit to anchor a range on, the link falls back to the commit list."""
         monkeypatch.setattr("reaper.services.update_check.short_commit", lambda: None)
-        httpx2_mock.get(_DEV_TIP).mock(
-            return_value=httpx.Response(200, json={"sha": "def5678" + "0" * 33})
-        )
+        _publish_dev_image(httpx2_mock, {"amd64": "def5678", "arm64": "def5678"})
         status = await UpdateChecker().status()
         assert status.latest == "dev (def5678)"
         assert status.update_available is None
         assert status.checked_at is not None
+        assert status.url == f"https://github.com/{DEFAULT_REPO}/commits/dev"
 
     @pytest.mark.usefixtures("_dev_build")
-    async def test_a_payload_without_a_sha_reads_as_unknown(
-        self, httpx2_mock: respx.Router
+    async def test_a_fork_follows_its_own_image(
+        self, httpx2_mock: respx.Router, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        httpx2_mock.get(_DEV_TIP).mock(return_value=httpx.Response(200, json={"sha": True}))
+        """The registry path is lowercased because Docker requires it, and a repo owner
+        is commonly capitalized."""
+        monkeypatch.setenv("REAPER_UPDATE_REPO", "Fork-Owner/Reaper")
+        httpx2_mock.get("https://ghcr.io/token").mock(
+            return_value=httpx.Response(200, json={"token": "t"})
+        )
+        forked = httpx2_mock.get("https://ghcr.io/v2/fork-owner/reaper/manifests/dev").mock(
+            return_value=httpx.Response(200, json={"config": {"digest": _CONFIG_DIGEST["amd64"]}})
+        )
+        httpx2_mock.get(
+            f"https://ghcr.io/v2/fork-owner/reaper/blobs/{_CONFIG_DIGEST['amd64']}"
+        ).mock(
+            return_value=httpx.Response(200, json={"config": {"Env": ["REAPER_GIT_SHA=def5678"]}})
+        )
         status = await UpdateChecker().status()
-        assert status.update_available is None
-        assert status.checked_at is None
+        assert len(forked.calls) == 1
+        assert status.latest == "dev (def5678)"
 
 
 class TestRoute:
@@ -477,22 +590,14 @@ class TestRoute:
     def test_the_route_answers_from_the_shared_checker(
         self, client: TestClient, httpx2_mock: respx.Router
     ) -> None:
-        httpx2_mock.get(_DEV_TIP).mock(
-            return_value=httpx.Response(
-                200,
-                json={
-                    "sha": "def5678" + "0" * 33,
-                    "html_url": f"https://github.com/{DEFAULT_REPO}/commit/def5678",
-                },
-            )
-        )
+        _publish_dev_image(httpx2_mock, {"amd64": "def5678", "arm64": "def5678"})
         body = client.get("/api/about/update").json()
         assert body["channel"] == "dev"
         assert body["enabled"] is True
         assert body["current"] == "dev (abc1234)"
         assert body["latest"] == "dev (def5678)"
         assert body["update_available"] is True
-        assert body["url"].endswith("/commits/dev")
+        assert body["url"].endswith("/compare/abc1234...def5678")
         assert body["checked_at"] is not None
 
     @pytest.mark.usefixtures("_dev_build")
@@ -500,7 +605,7 @@ class TestRoute:
         self, client: TestClient, httpx2_mock: respx.Router
     ) -> None:
         """The route never fails a page over a network problem: unknown, not 502."""
-        httpx2_mock.get(_DEV_TIP).mock(return_value=httpx.Response(500))
+        httpx2_mock.get("https://ghcr.io/token").mock(return_value=httpx.Response(500))
         response = client.get("/api/about/update")
         assert response.status_code == 200
         body = response.json()

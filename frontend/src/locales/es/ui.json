@@ -1031,8 +1031,7 @@
             "seeChanges": ""
         },
         "updatePill": {
-            "newerDevBuild": "",
-            "updateAvailable": ""
+                  "updateAvailable": ""
         }
     },
     "lists": {

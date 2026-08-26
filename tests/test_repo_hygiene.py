@@ -8088,7 +8088,10 @@ _EXPECTED_REFUSAL_CODES = 309
 #: +2 for `config.RuntimeSafety.why_blocked`'s two `Reason(...)` returns, reusing the two
 #: `error.safety.*` codes the executor's own backstop and the execute route already raise
 #: (rule 144) -- no new code, two new sites.
-_EXPECTED_REFUSAL_SITES = 362
+#: -2 for `update_check._incomplete()`, which builds the one
+#: `error.integration.update_check_incomplete` five callers raise. The code count did not
+#: move, so this is the tree holding fewer sites, not the walk seeing fewer.
+_EXPECTED_REFUSAL_SITES = 360
 
 
 def test_every_refusal_code_has_a_raiser_and_a_catalog_entry() -> None:

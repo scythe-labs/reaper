@@ -2,9 +2,14 @@
 """Checking GitHub for a newer Reaper, on this build's own channel.
 
 A release build compares its version against the newest published release; every
-other build -- the ``:dev`` image, a dev binary, a source checkout -- follows the tip
-of the dev branch. The answer feeds read-only UI: the About row, and the account
-chip's light in the header.
+other build -- the ``:dev`` image, a dev binary, a source checkout -- follows the
+published ``:dev`` container image. The answer feeds read-only UI: the About row, and
+the account chip's light in the header.
+
+**The dev channel follows the image, never the branch.** CI builds a ``:dev`` image
+only when the push touched code, so a docs or rules commit moves the branch and ships
+nothing to pull. Reading the branch tip told every dev operator an update was waiting
+whenever that happened, and there was nothing on the other end of the link.
 
 The check informs; it never gates. A failure (no network, GitHub down, an API limit)
 resolves to "unknown" and is retried after a short pause, so an air-gapped install
@@ -35,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import platform
 import re
 import time
 from collections.abc import Callable
@@ -58,8 +64,28 @@ from reaper.clock import utcnow
 log = structlog.get_logger(__name__)
 
 _API = "https://api.github.com"
+_GHCR = "https://ghcr.io"
 _DEV_BRANCH = "dev"
+_DEV_TAG = "dev"
 DEFAULT_REPO = "scythe-labs/reaper"
+
+#: What the registry may answer the tag with: a multi-arch index, or a plain
+#: single-architecture manifest. Both shapes are handled, because ``:dev`` is
+#: amd64-only until the first nightly publishes an arm64 half to stitch in.
+_MANIFEST_TYPES = ", ".join(
+    (
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+        "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.docker.distribution.manifest.v2+json",
+    )
+)
+
+#: This machine's architecture in the registry's spelling. The two halves of ``:dev``
+#: are built on different schedules -- amd64 on every code push, arm64 nightly -- so
+#: reading the wrong half tells an arm64 operator to pull an image that does not exist
+#: for them yet. Anything unrecognized reads amd64, the half that always exists.
+_ARCH = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
 
 #: ``owner/name`` and nothing else: the slug is spliced into a URL path, so a value
 #: that could smuggle a separator falls back to the default instead of being sent.
@@ -267,7 +293,7 @@ class UpdateChecker:
             if isinstance(tag, str) and tag.strip():
                 entries.append((tag.strip().removeprefix("v"), row))
         if not entries:
-            raise IntegrationError("update-check", "error.integration.update_check_incomplete")
+            raise _incomplete()
 
         orderable = sorted(
             ((parsed, version, row) for version, row in entries if (parsed := _parse(version))),
@@ -297,14 +323,22 @@ class UpdateChecker:
         )
 
     async def _check_dev(self, current: str) -> UpdateStatus:
-        payload = await self._fetch(f"/repos/{self._repo}/commits/{_DEV_BRANCH}")
-        if not isinstance(payload, dict):
-            raise IntegrationError(
-                "update-check", "error.integration.unexpected_shape", path="/commits"
-            )
-        sha = payload.get("sha")
-        if not isinstance(sha, str) or len(sha) < 7:
-            raise IntegrationError("update-check", "error.integration.update_check_incomplete")
+        """The commit inside the published ``:dev`` image, never the tip of the branch.
+
+        CI builds an image only when the push touched code, so a docs commit moves the
+        branch and publishes nothing. Following the branch reported an update the
+        operator could not pull, on every prose merge.
+
+        The registry is the one place that fact is written down, and reading it takes
+        four hops: an anonymous pull token, the tag's index, this platform's child
+        manifest, and the image config, whose ``REAPER_GIT_SHA`` the Dockerfile bakes
+        in. Any hop that answers a shape this does not recognize raises, so the surface
+        says "couldn't check" rather than naming a version nobody verified. A private
+        or missing package reads the same way, which is the direction a fork should
+        fail in.
+        """
+        async with PublicClient(_GHCR) as client:
+            sha = await self._dev_image_commit(client)
         mine = short_commit()
         return UpdateStatus(
             channel="dev",
@@ -314,12 +348,39 @@ class UpdateChecker:
             # A local checkout that cannot name its own commit gets "unknown", never a
             # nag that is almost always true and almost never actionable.
             update_available=None if mine is None else not sha.startswith(mine),
-            # The branch's commit list, not the tip commit the payload names: "what
-            # changed" on the dev channel is a run of commits, and the single-commit
-            # page shows exactly one of them.
-            url=f"https://github.com/{self._repo}/commits/{_DEV_BRANCH}",
+            url=self._dev_url(mine, sha),
             checked_at=utcnow(),
         )
+
+    async def _dev_image_commit(self, client: PublicClient) -> str:
+        """The short commit baked into this platform's half of the published ``:dev``
+        image. The registry path is lowercased because Docker requires it and a repo
+        owner is commonly capitalized."""
+        repo = self._repo.lower()
+        token = _text(
+            await client.get_json(
+                "/token", params={"scope": f"repository:{repo}:pull", "service": "ghcr.io"}
+            ),
+            "token",
+        )
+        headers = {"Authorization": f"Bearer {token}", "Accept": _MANIFEST_TYPES}
+        manifest = await client.get_json(f"/v2/{repo}/manifests/{_DEV_TAG}", headers=headers)
+        child = _child_digest(manifest)
+        if child is not None:
+            manifest = await client.get_json(f"/v2/{repo}/manifests/{child}", headers=headers)
+        blob = await client.get_json(
+            f"/v2/{repo}/blobs/{_text(manifest, 'config', 'digest')}", headers=headers
+        )
+        return _baked_commit(blob)
+
+    def _dev_url(self, mine: str | None, sha: str) -> str:
+        """Where "see what changed" goes: the run of commits between the build running
+        here and the one in the image, so the page holds only what an update would
+        bring. A build that cannot name its own commit has no range to ask for, and
+        falls back to the branch's commit list."""
+        if mine and not sha.startswith(mine):
+            return f"https://github.com/{self._repo}/compare/{mine}...{sha[:7]}"
+        return f"https://github.com/{self._repo}/commits/{_DEV_BRANCH}"
 
     async def _fetch(self, path: str, *, params: dict[str, Any] | None = None) -> Any:
         """One GET, shape-checked by the caller: the release read wants a list, the
@@ -328,6 +389,57 @@ class UpdateChecker:
             return await client.get_json(
                 path, params=params, headers={"Accept": "application/vnd.github+json"}
             )
+
+
+def _incomplete() -> IntegrationError:
+    """The one error every unrecognized registry answer raises. It reaches the operator
+    as "couldn't check for updates", which is what a shape nobody expected means."""
+    return IntegrationError("update-check", "error.integration.update_check_incomplete")
+
+
+def _text(payload: Any, *keys: str) -> str:
+    """One nested string out of a JSON answer, or the shared incomplete error. Every
+    registry read is shape-checked through here rather than trusted."""
+    value: Any = payload
+    for key in keys:
+        value = value.get(key) if isinstance(value, dict) else None
+    if not isinstance(value, str) or not value.strip():
+        raise _incomplete()
+    return value.strip()
+
+
+def _child_digest(manifest: Any) -> str | None:
+    """This platform's image inside a multi-arch index, or ``None`` when the tag is a
+    plain single-architecture manifest and is itself the answer.
+
+    An index that publishes no half for this architecture raises: there is no image to
+    pull here, so "up to date" and "update available" are both wrong.
+    """
+    children = manifest.get("manifests") if isinstance(manifest, dict) else None
+    if not isinstance(children, list):
+        return None
+    want = _ARCH.get(platform.machine().strip().lower(), "amd64")
+    for child in children:
+        if not isinstance(child, dict):
+            continue
+        where = child.get("platform")
+        if isinstance(where, dict) and where.get("architecture") == want:
+            return _text(child, "digest")
+    raise _incomplete()
+
+
+def _baked_commit(config: Any) -> str:
+    """The commit CI passed as ``REAPER_GIT_SHA``, read back out of the image config's
+    environment. The Dockerfile turns that build arg into an ``ENV``, which is what puts
+    it here and what makes the running container able to name the same value."""
+    inner = config.get("config") if isinstance(config, dict) else None
+    env = inner.get("Env") if isinstance(inner, dict) else None
+    for entry in env if isinstance(env, list) else ():
+        if isinstance(entry, str) and entry.startswith("REAPER_GIT_SHA="):
+            value = entry.partition("=")[2].strip()
+            if value:
+                return value
+    raise _incomplete()
 
 
 def _change(version: str, row: dict[str, Any]) -> ReleaseChange:
