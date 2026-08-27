@@ -14,7 +14,8 @@
 //                        "Match my device" can flip mid-session and the CSS picks by media
 //                        query without asking this module again.
 // The hover / soft / ring shades are pure color-mix() of --accent in the stylesheet, so they
-// follow along on their own.
+// follow along on their own. The tab favicon and the browser's own chrome (the theme-color
+// meta) follow too, so what sits outside the page carries the install's color as well.
 //
 // index.html applies these same properties before first paint, from a localStorage cache, so
 // a custom accent does not flash the sky-blue default on load. This module writes that cache
@@ -144,6 +145,7 @@ export function applyAccent(color: string | null | undefined): void {
   root.style.setProperty("--accent-text-light", light);
   root.style.setProperty("--accent-text-dark", dark);
   applyFavicon(hex);
+  applyThemeColor(hex);
   try {
     localStorage.setItem(ACCENT_STORAGE_KEY, hex);
     localStorage.setItem(ACCENT_INK_STORAGE_KEY, ink);
@@ -167,4 +169,13 @@ function applyFavicon(hex: string): void {
   } catch {
     // storage unavailable: the tab still shows the accent this session.
   }
+}
+
+/** Paint the browser's own chrome at the accent. Safari's tab bar and Chrome's toolbar read
+ *  `<meta name="theme-color">`. The browser picks its own readable ink for anything it draws
+ *  there, so `accentInk` does not apply here. No cache key of its own: index.html pre-paints
+ *  the tag from the accent it already reads back. */
+function applyThemeColor(hex: string): void {
+  const meta = document.getElementById("theme-color");
+  if (meta instanceof HTMLMetaElement) meta.content = hex;
 }

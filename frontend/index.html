@@ -4,6 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
+    <!-- The color the browser paints its own chrome with: Safari's tab bar, Chrome's
+         toolbar. Ships at the built-in accent and is rewritten to the install's accent by
+         the pre-paint below and by accent.ts. The web manifest's theme_color is a static
+         file and cannot follow a per-install setting, so this tag is what carries it. -->
+    <meta id="theme-color" name="theme-color" content="#25c3ff" />
     <title>Reaper</title>
     <!-- Raster fallback FIRST, the accent-following SVG (#favicon, rewritten by accent.ts and
          the pre-paint script below) LAST: when two icons are equally appropriate the HTML spec
@@ -36,6 +41,8 @@
         var reaperAccent = localStorage.getItem("reaper-accent");
         if (reaperAccent && /^#[0-9a-fA-F]{6}$/.test(reaperAccent)) {
           document.documentElement.style.setProperty("--accent", reaperAccent);
+          var reaperChrome = document.getElementById("theme-color");
+          if (reaperChrome) reaperChrome.content = reaperAccent;
         }
         var reaperAccentInk = localStorage.getItem("reaper-accent-ink");
         if (reaperAccentInk && /^#[0-9a-fA-F]{6}$/.test(reaperAccentInk)) {
