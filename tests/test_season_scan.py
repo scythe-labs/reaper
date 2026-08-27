@@ -241,32 +241,32 @@ class TestTheShowJoin:
         assert self._match(self._index(), "Nowhere", None) is None
 
     def test_a_duplicate_title_is_disambiguated_by_year(self) -> None:
-        index = self._index((1, "The Office", 2001), (2, "The Office", 2005))  # UK, US
-        assert self._match(index, "The Office", 2005) == 2
+        index = self._index((1, "Same Title", 2001), (2, "Same Title", 2005))  # original, remake
+        assert self._match(index, "Same Title", 2005) == 2
 
     def test_a_duplicate_title_with_no_year_refuses_to_guess(self) -> None:
         """The wrong show join reads the wrong show's watch history and could condemn a
         season people are watching. With nothing to disambiguate on, this refuses. The
         season goes Unknown and abstains, rather than being matched arbitrarily.
         """
-        index = self._index((1, "The Office", 2001), (2, "The Office", 2005))
-        assert self._match(index, "The Office", None) is None
+        index = self._index((1, "Same Title", 2001), (2, "Same Title", 2005))
+        assert self._match(index, "Same Title", None) is None
 
     def test_a_lone_title_match_with_a_conflicting_year_is_refused(self) -> None:
-        """The US series is scanned, but the only Plex show with that title is the UK one,
-        since the US show is indexed under a different title. A single title hit is not a
-        safe join when the known years disagree, because binding would read the UK show's
+        """The remake is scanned, but the only Plex show with that title is the original,
+        since the remake is indexed under a different title. A single title hit is not a
+        safe join when the known years disagree, because binding would read the original's
         history.
         """
-        index = self._index((1, "The Office", 2001))
-        assert self._match(index, "The Office", 2005) is None
+        index = self._index((1, "Same Title", 2001))
+        assert self._match(index, "Same Title", 2005) is None
 
     def test_a_lone_title_match_with_an_agreeing_year_binds(self) -> None:
-        assert self._match(self._index((1, "The Office", 2005)), "The Office", 2005) == 1
+        assert self._match(self._index((1, "Same Title", 2005)), "Same Title", 2005) == 1
 
     def test_a_lone_title_match_binds_when_a_year_is_missing(self) -> None:
         """Plex often has no year. A title-only join stays as safe as the movie path's."""
-        assert self._match(self._index((1, "The Office", None)), "The Office", 2005) == 1
+        assert self._match(self._index((1, "Same Title", None)), "Same Title", 2005) == 1
 
 
 class TestResolveSeasonKeys:

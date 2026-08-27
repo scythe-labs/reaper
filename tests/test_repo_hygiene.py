@@ -612,6 +612,27 @@ def test_no_bare_exception_assertions_in_tests() -> None:
     assert not offenders, "assert the domain error, not bare Exception:\n" + "\n".join(offenders)
 
 
+# The ids a fixture may carry. IMDb numbers titles from ``tt0000001`` up, so a low number
+# reads as a placeholder and any other seven-digit number points at a real film or show.
+_PLACEHOLDER_IMDB_ID = re.compile(r"tt(?:000\d{4}|1234567|9999999)")
+
+
+def test_fixtures_carry_no_real_imdb_id() -> None:
+    """A test names an invented title and an invented id, never a real film or show.
+
+    Nothing identifying lives in the tree. A real id in a fixture points at a real title,
+    and the comment beside it usually names that title (#950).
+    """
+    offenders = [
+        f"{p.relative_to(REPO)}:{n}: {m.group()}"
+        for p in [*TESTS.rglob("*.py"), *SRC.rglob("*.py")]
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        for m in re.finditer(r"tt\d{7}", line)
+        if not _PLACEHOLDER_IMDB_ID.fullmatch(m.group())
+    ]
+    assert not offenders, "swap in a placeholder id (tt000NNNN):\n" + "\n".join(offenders)
+
+
 def test_http_clients_are_only_constructed_in_clients() -> None:
     """All HTTP clients are constructed inside ``clients/``.
 
