@@ -1,22 +1,22 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """add snapshot.watch_blind_items
 
-Settings -> Plex offers to discard Reaper's recorded watch evidence, and the one number that
-tells an operator whether they need to is how many items the last scan found had plays it could
-no longer read. This column is that count, written by the scan.
+Settings > Plex offers to discard Reaper's recorded watch evidence. The number an operator
+needs before doing that is how many items the last scan found had plays it could no longer
+read. This column is that count, written by the scan.
 
-It counts what was measured, not what was decided. Such an item is normally held, but by three
-gates the operator can each switch off, and nothing here consults the verdict, so no copy
-anywhere may call this figure items held back or kept (rule 144).
+It counts what was measured, not what was decided. Such an item is normally held back, but
+by gates the operator can turn off, and this count does not consult the final verdict. So no
+copy may describe this figure as items held back or kept.
 
-Counted at scan time rather than derived later on purpose. The alternative is to read each
-stored explanation back and match the reason text, which is exactly rule 92's coupling: that
-string is operator copy, it will be reworded, and the count would silently fall to zero when
-it is. A typed integer written where the decision is made cannot drift from it.
+The scan counts this directly rather than deriving it later from stored explanations. Those
+explanation strings are operator-facing copy that gets reworded, and matching against their
+text would let the count silently fall to zero when the wording changes. A typed integer
+written at the moment of the decision cannot drift from it.
 
-Non-breaking by construction: a single nullable column. Every snapshot taken before this reads
-NULL, which the API reports as "not recorded" rather than as zero -- a scan that never counted
-must not be shown as a scan that counted none. Testers never rebuild their database.
+The new column is nullable. Every snapshot taken before this migration reads NULL, which the
+API reports as "not recorded" rather than as zero. A scan that never counted this must not
+look like a scan that counted zero. No tester database needs to be rebuilt.
 
 Revision ID: d5e6f708192a
 Revises: c4d5e6f70819

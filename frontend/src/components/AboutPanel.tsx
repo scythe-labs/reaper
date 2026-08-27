@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Settings -> About: which version is running, what changed in the ones after it, and how much
-// room the database is taking.
+// Settings -> About: which version is running, what changed since then, and how much
+// database space is used.
 //
-// Read-only, so it holds no draft and `dirtyPanels` in Settings.tsx classifies it `false`. The
-// update check is the shared `useUpdateStatus` the masthead chip's light reads, so that light and
-// the row here answer from one read rather than two that can disagree. The *pill* is local to this
-// file, which is why the note further down names all three surfaces apart.
+// This panel is read-only, so it holds no draft. `dirtyPanels` in Settings.tsx marks it
+// `false`. The update check uses the shared `useUpdateStatus` hook, the same one the masthead
+// chip's light reads, so the light and this row always answer from the same read. The pill
+// shown here is local to this file, which is why the note further down tells all three
+// surfaces apart.
 //
 // The copy lives in `locales/en/ui.json` under `about.*`.
 
@@ -31,9 +32,8 @@ export function AboutPanel() {
     <div className="panel">
       <h2>{t("about.title")}</h2>
       <p className="blurb">{t("about.blurb")}</p>
-      {/* standing: which channel this build is on is a fact about the install, true on
-          first paint and unchanged for the process's whole life -- page furniture, not a
-          reaction to anything pressed. */}
+      {/* standing: the build's channel does not change while the app is running, so this
+          notice shows from the first paint. It never reacts to something the operator did. */}
       {update.data?.channel === "dev" && (
         <Notice tone="warn" standing>
           <Trans i18nKey="about.devBuildWarning" components={{ code: <code /> }} />
@@ -41,11 +41,12 @@ export function AboutPanel() {
       )}
       {isPending && <p className="muted">{t("common.loading")}</p>}
       {/* Two cases, not one. React Query keeps the last good row through a failed refetch and
-          raises isError beside it, so an undivided `isError` printed "couldn't load this page"
-          directly above the fully drawn page (rule 17/36). The trigger is a remount past
-          `staleTime` -- leaving About and coming back 30 seconds later while the server is
-          unreachable. Not window focus, which `main.tsx` turns off app-wide and only `useSafety`
-          asks back, and not an invalidation: nothing in the app invalidates `["about"]`. */}
+          sets isError beside it, so treating isError as one case would print "couldn't load
+          this page" directly above the page it just drew. The trigger is a remount past
+          `staleTime`: leaving About and coming back 30 seconds later while the server is
+          unreachable. It is not window focus (`main.tsx` turns that off app-wide; only
+          `useSafety` turns it back on for its own query), and not an invalidation, since
+          nothing in the app invalidates `["about"]`. */}
       {isError && !data && <Notice tone="error">{t("common.pageLoadError")}</Notice>}
       {isError && data && <StaleReadNotice what={t("about.staleReadWhat")} />}
       {data && (
@@ -54,11 +55,11 @@ export function AboutPanel() {
             <dt>{t("about.labels.version")}</dt>
             <dd>
               {t("about.reaperVersion", { version: data.version })}
-              {/* Amber, and the same three words on both channels. The operator's
-                  question is whether to go and update, which does not change with the
-                  channel; the row beneath is where the two differ. The tone is the dev
-                  banner's above it, not the accent, so "there is something to do" reads
-                  as one signal down the panel rather than two colors for one fact. */}
+              {/* Amber, and the same three words on both channels. The operator's question
+                  is always whether to go update; the row beneath is where the channels
+                  differ. This pill shares the dev banner's amber, not the accent color, so
+                  "there is something to do" reads as one signal down the panel instead of
+                  two colors for one fact. */}
               {update.data?.update_available && (
                 <span className="update-pill">{t("about.updatePill.updateAvailable")}</span>
               )}
@@ -92,16 +93,15 @@ export function AboutPanel() {
 }
 
 /** The Update row's sentence, one branch per state the check can be in. Pending and a
- *  failed read are spelled out (rule 17/36), and both no-answer shapes -- the HTTP
- *  call failing with nothing in hand, and the server answering "unknown" -- read the
- *  same, because to the operator they are the same fact: no answer today, and nothing
- *  they must do.
+ *  failed read each get their own branch. Both no-answer shapes, the HTTP call failing
+ *  with nothing in hand and the server answering "unknown", read the same, since to the
+ *  operator they are the same fact: no answer today, and nothing they must do.
  *
- *  A failed REFETCH is deliberately not a branch: React Query keeps the last good
- *  answer and raises `isError` beside it, and the pill, the chip light, and the dev
- *  banner all render that retained answer -- so this row must too, or the pill says
- *  "Update available" directly above a row claiming the check failed (the exact
- *  stale-read split the `about` query above documents). */
+ *  A failed REFETCH is deliberately not a branch. React Query keeps the last good
+ *  answer and sets `isError` beside it, and the pill, the chip light, and the dev banner
+ *  all render that retained answer, so this row must too. Otherwise the pill could say
+ *  "Update available" directly above a row claiming the check failed, the same stale-read
+ *  split the `about` query above handles. */
 function UpdateCell({
   status,
   onSeeChanges,
@@ -111,10 +111,9 @@ function UpdateCell({
 }) {
   const { t } = useTranslation();
   const { data, isPending } = status;
-  // The two no-answer shapes read the same (see above), so the sentence is written once:
-  // one operator claim in two places is two chances to drift (rule 144). "Later" is the
-  // scheduled check (Settings, Jobs), which is what makes the promise real -- before it
-  // existed nothing retried on a server nobody opened (#464).
+  // The two no-answer shapes read the same (see above), so the sentence is written once
+  // here instead of copied into each branch that needs it. "Later" refers to the
+  // scheduled check (Settings, Jobs), which is what actually retries the read.
   const noAnswer = <span className="muted">{t("about.update.noAnswer")}</span>;
   if (isPending) return <span className="muted">{t("about.update.checking")}</span>;
   if (!data) return noAnswer;
@@ -148,20 +147,19 @@ function UpdateCell({
         {t("about.update.seeChanges")}
       </button>
       <br />
-      {/* Points at the schedule rather than naming one: the operator can change the cron
-          or turn the job off, so a sentence saying "daily" is wrong the moment they do
-          (rule 86). This used to say "Reaper checks a few times a day" while nothing
-          checked on its own at all (#464, rule 25). */}
+      {/* Points at the schedule rather than naming a cadence: the operator can change the
+          cron or turn the job off, so a sentence saying "daily" would go wrong the moment
+          they do. */}
       <span className="muted">{t("about.update.schedule")}</span>
     </>
   );
 }
 
 /** The GitHub changelog for every release the operator has not taken, newest first, in
- *  the one modal shell. The markdown is rendered sanitized -- react-markdown emits no
- *  raw HTML, images are dropped so a note cannot phone home just for being read, and
- *  headings are demoted under the dialog's own so the outline stays honest. Every
- *  link inside leaves for GitHub in a new tab. */
+ *  the one modal shell. The markdown renders sanitized: react-markdown emits no raw
+ *  HTML, images are dropped so opening a note cannot load anything from another host,
+ *  and headings are demoted below the dialog's own so the outline stays honest. Every
+ *  link inside opens GitHub in a new tab. */
 function ChangesModal({
   changes,
   url,
@@ -193,15 +191,15 @@ function ChangesModal({
             {c.notes ? (
               <div className="changes-notes">
                 <Markdown
-                  // Images out: a rendered <img> fetches from wherever the note says,
-                  // beside copy promising nothing leaves the box just for reading.
+                  // Drop <img> tags: a rendered <img> would fetch from whatever host the
+                  // note names, just from being displayed.
                   disallowedElements={["img"]}
                   components={{
                     a: ({ node: _node, ...props }) => (
                       <a {...props} target="_blank" rel="noreferrer" />
                     ),
-                    // GitHub's generated notes open at h2; undemoted that outranks the
-                    // per-release h3 and sits level with the dialog's own name.
+                    // GitHub's generated notes start at h2. Left alone, that would outrank
+                    // the per-release h3 above it and match the dialog's own title.
                     h1: ({ node: _node, ...props }) => <h4 {...props} />,
                     h2: ({ node: _node, ...props }) => <h4 {...props} />,
                     h3: ({ node: _node, ...props }) => <h4 {...props} />,

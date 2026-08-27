@@ -10,7 +10,7 @@ describe("the complete api mock", () => {
   it("hands out a fresh set each call, so call counts never cross a file boundary", () => {
     // `vi.fn()` carries its own call history. One shared instance would leak counts between the
     // files that imported it, and the failure would land in whichever file happened to run
-    // second under `-n auto` (rule 133).
+    // second under `-n auto`.
     const first = makeApiMock();
     const second = makeApiMock();
     expect(first.safety).not.toBe(second.safety);

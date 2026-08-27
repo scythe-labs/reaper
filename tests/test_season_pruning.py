@@ -3,7 +3,7 @@
 
 "Keep the last N seasons" is where TV pruning goes wrong, so each guard has a test that
 is really a re-enactment of a bug a shipping competitor has. Every case here resolves
-toward keeping a season; the ones that prune are the ones where every guard agreed.
+toward keeping a season. The ones that prune are the ones where every guard agreed.
 """
 
 from __future__ import annotations
@@ -31,14 +31,14 @@ from tests._reasons import text
 GB = 1024**3
 
 #: ``plan_series_prune`` flags that pick the sentence a hold carries without being a hold
-#: themselves, and why each is one. Classified in writing rather than skipped (rule 103),
-#: because "holds nothing" is a claim about the arm rather than permission to stop checking
-#: it: the reason it names still has to be one ``UNANSWERABLE_REASONS`` knows.
+#: themselves, and why each is one. Classified in writing rather than skipped, because
+#: "holds nothing" is a claim about the arm rather than permission to stop checking it.
+#: The reason it names still has to be one ``UNANSWERABLE_REASONS`` knows.
 _HOLDS_NOTHING_ALONE = {
-    # The show has no Plex rating key anywhere, so no play was queried and no depth of mirror
-    # can name a viewer's place. It re-words whichever real cause fired. Holding on it would
-    # move every unmatched show off the review queue and onto the Protected page, which #486
-    # declined and `test_a_show_plex_never_matched_at_all_is_left_alone` pins (#489).
+    # The show has no Plex rating key anywhere, so no play was queried and no depth of
+    # mirror can name a viewer's place. It re-words whichever real cause fired. Holding
+    # on it would move every unmatched show off the review queue and onto the Protected
+    # page, which `test_a_show_plex_never_matched_at_all_is_left_alone` pins against.
     "progress_show_unmatched",
 }
 
@@ -128,11 +128,11 @@ class TestKeepFirstSeason:
 class TestEveryKeepReasonStatesOnlyWhatWasObserved:
     """A kept season's reason is read on a panel the operator can check against Sonarr,
     so a reason that overstates its evidence gets caught being wrong and costs the panel
-    its credibility on the rows that matter (rule 21).
+    its credibility on the rows that matter.
 
-    Three of these reasons named what the observation is *usually* a sign of rather than
-    the observation: a download in progress, a season on the air, the pilot. Each is
-    routinely false, and each case below is the ordinary shape rather than an edge.
+    Three of these reasons named what the observation is *usually* a sign of, rather
+    than the observation itself: a download in progress, a season on the air, the pilot.
+    Each is routinely false, and each case below is the ordinary shape rather than an edge.
     """
 
     def test_a_permanently_short_season_is_not_called_a_download(self) -> None:
@@ -170,7 +170,7 @@ class TestEveryKeepReasonStatesOnlyWhatWasObserved:
 
     def test_the_earliest_season_on_disk_is_not_called_the_first(self) -> None:
         """``first_real`` is the minimum over seasons that HAVE files. Where season 1 was
-        never downloaded or was deleted by hand, season 2 wore the reason -- and keeping
+        never downloaded or was deleted by hand, season 2 wore the reason, but keeping
         season 2 does not let anyone start the show, which is the whole justification the
         sentence offered."""
         seasons = [_season(2), _season(3), _season(4)]
@@ -181,23 +181,25 @@ class TestEveryKeepReasonStatesOnlyWhatWasObserved:
         assert reason == "the earliest season on disk, so there is somewhere to start"
 
     def test_the_mid_binge_clause_stays_about_the_show(self) -> None:
-        """``_because`` restates a reason for the conflict message, it never sharpens it.
-        It used to rewrite "part-way through the show" as "part-way through *it*", moving
-        the claim onto one season -- and ``sequential_protections`` protects the untouched
-        NEXT season too, so the same sentence could say nobody had played it while
-        claiming someone was midway through it."""
+        """``_because`` restates a reason for the conflict message. It never sharpens it.
+
+        Rewriting "part-way through the show" as "part-way through *it*" would move the
+        claim onto one season, but ``sequential_protections`` protects the untouched NEXT
+        season too, so the same sentence could say nobody had played it while claiming
+        someone was midway through it."""
         assert text(_because(Reason("season_keep.midbinge"))) == (
             "a viewer is part-way through the show"
         )
 
     def test_every_reason_this_module_produces_has_a_because_clause(self) -> None:
-        """``_protection_reason`` and ``_because`` are one closed vocabulary, and a reword
-        landing on only one side degrades every conflict message to the generic clause
-        with nothing failing. So drive the real producer over every branch that reaches
-        ``_because`` and check each is still recognized (rule 119).
+        """``_protection_reason`` and ``_because`` are one closed vocabulary. A reword
+        landing on only one side turns every conflict message into the generic clause,
+        with nothing failing to say so. So this drives the real producer over every
+        branch that reaches ``_because`` and checks each is still recognized.
 
-        Specials are the one reason with no clause of its own: ``_detect_conflicts``
-        excludes Season 0 from both sides, so it can never be the kept season in a message.
+        Specials are the one reason with no clause of its own. ``_detect_conflicts``
+        excludes Season 0 from both sides, so it can never be the kept season in a
+        message.
         """
         plans = [
             # Missing episodes, a mid-binge hold, and the newest season of a running show.
@@ -287,33 +289,32 @@ class TestSequentialProgression:
         assert sequential_protections({"alice": {3: None}}, {3: 10}) == {3, 4}
 
     def test_finishing_a_season_advances_over_a_hole_to_the_next_real_one(self) -> None:
-        """Rule 124: the anchored position must be a season that exists.
+        """The anchored position must be a season that exists.
 
-        Seasons are not always a contiguous run -- Sonarr never filled one, someone deleted
+        Seasons are not always a contiguous run. Sonarr never filled one, someone deleted
         one by hand, or Reaper pruned one on an earlier run. Advancing to `anchor + 1`
-        blindly pinned the hold on a number nothing holds, so the viewer got no protection
-        at all and season 5, the one they are about to watch, stayed prunable. With the
-        default lookahead of 0 nothing else covers it, and each prune widens the hole that
-        hides the next one.
+        blindly would pin the hold on a number nothing holds, leaving the viewer with no
+        protection at all while season 5, the one they are about to watch, stays
+        prunable. With the default lookahead of 0 nothing else covers it, and each prune
+        widens the hole that hides the next one.
         """
         assert sequential_protections({"alice": {3: 10}}, {3: 10}, on_disk={3, 5}) == {5}
 
     def test_finishing_the_last_season_protects_nothing(self) -> None:
         """Someone who finished the show is not mid-binge, so the guard holds nothing.
 
-        Unchanged in effect from before the hole fix: `anchor + 1` simply matched no season.
-        Stated as its own case so advancing-over-a-hole cannot quietly grow into protecting
-        the finale of every completed show.
+        `anchor + 1` simply matches no season here. Stated as its own case so advancing
+        over a hole cannot quietly grow into protecting the finale of every completed show.
         """
         assert sequential_protections({"alice": {3: 10}}, {3: 10}, on_disk={1, 2, 3}) == set()
 
     def test_the_lookahead_counts_seasons_on_disk_over_a_hole(self) -> None:
-        """The other half of rule 124: the cushion lands on seasons that exist too.
+        """The cushion lands on seasons that exist too.
 
         Mid-way through season 2 of a show numbered 1, 2, 18, 19, 20, the viewer's next
-        season is 18. `start + offset` gave them 3, which nothing holds, so no lookahead
-        value reached the season they are about to watch while the anchor stayed held and
-        hid it.
+        season is 18. `start + offset` would give them 3, which nothing holds, so no
+        lookahead value would reach the season they are about to watch while the anchor
+        stayed held and hid it.
         """
         on_disk = {1, 2, 18, 19, 20}
         assert sequential_protections({"a": {2: 5}}, {2: 10}, lookahead=1, on_disk=on_disk) == {
@@ -340,13 +341,13 @@ class TestSequentialProgression:
         assert sequential_protections({"alice": {2: 3}, "bob": {5: 8}}, {2: 10, 5: 8}) == {2, 6}
 
     def test_a_rewatcher_is_anchored_where_they_actually_are(self) -> None:
-        """The bug this rule exists for: someone who finished the show and started again.
+        """A rewatcher: someone who finished the show and started again.
 
         By season NUMBER they are anchored on the finale, judged ready for a season that
-        does not exist, and protected nowhere -- so the season they are working through
-        today is prunable, and the conflict detector does not catch it either (every
-        season shares the same all-time watcher count). By TIME they are exactly where
-        they are.
+        does not exist, and protected nowhere. So the season they are working through
+        today would be prunable, and the conflict detector would not catch it either
+        (every season shares the same all-time watcher count). By TIME they are exactly
+        where they are.
         """
         progress = {"alice": {1: 10, 2: 3, 3: 10, 4: 10, 5: 10, 6: 10}}
         finals = dict.fromkeys(range(1, 7), 10)
@@ -364,7 +365,7 @@ class TestSequentialProgression:
         assert 2 in sequential_protections(progress, finals, last_play_by_user=times)
 
     def test_the_number_anchor_survives_a_dip_into_an_old_season(self) -> None:
-        """Recency alone is not enough either: someone mid-binge on the newest season who
+        """Recency alone is not enough either. Someone mid-binge on the newest season who
         watches one old episode today must not lose the hold on the season they are on."""
         progress = {"alice": {2: 10, 6: 4}}  # finished 2 long ago, part-way through 6
         finals = {2: 10, 6: 10}
@@ -402,7 +403,7 @@ class TestSequentialProgression:
         assert sequential_protections({"a": {0: 10}}, {0: 10}, include_specials=True) == set()
 
     def test_a_mid_binge_season_is_not_deleted(self) -> None:
-        """The bug: 'keep last 2' would delete season 3 out from under someone still watching it."""
+        """'Keep last 2' would delete season 3 out from under someone still watching it."""
         seasons = [_season(n) for n in range(1, 7)]  # 1..6
         plan = plan_series_prune(
             series_title="Show",
@@ -418,7 +419,7 @@ class TestSequentialProgression:
 
 class TestKeepRuleConflict:
     def test_a_more_watched_pruned_season_raises_a_conflict(self) -> None:
-        """'Season 1 is the only good one': it is old (prunable by rank) but far more
+        """'Season 1 is the only good one.' It is old (prunable by rank) but far more
         watched than the recent seasons the rule keeps."""
         seasons = [_season(n) for n in range(1, 5)]  # 1..4
         plan = plan_series_prune(
@@ -438,13 +439,13 @@ class TestKeepRuleConflict:
         """A season on disk that Plex never resolved has no watch history to read, and
         neither reading it as 0 nor skipping it is right.
 
-        Reading it as 0 turned "we could not measure it" into "we measured it and nobody
-        watched", so the operator was told in plain words that N people watched one season
-        more than another, against a number that was never taken. Skipping it, which
-        replaced that, threw away the hold along with the bad sentence: a well-watched
-        prunable season became auto-approvable purely because the season it would have
-        been measured against could not be read. That is unreadable evidence clearing a
-        protection (rule 93).
+        Reading it as 0 would turn "we could not measure it" into "we measured it and
+        nobody watched," telling the operator in plain words that N people watched one
+        season more than another, against a number that was never taken. Skipping it
+        instead would throw away the hold along with the bad sentence: a well-watched
+        prunable season would become auto-approvable purely because the season it would
+        have been measured against could not be read. Unreadable evidence must never
+        clear a protection.
 
         So the hold stays and only the arithmetic goes. Here season 3 is the unmeasured
         one the rule keeps.
@@ -510,8 +511,9 @@ class TestKeepRuleConflict:
         assert 2 in plan.prunable  # dormant middle season, cleanly prunable
 
     def test_the_detector_can_be_switched_off(self) -> None:
-        """flag_keep_conflicts=False: the same lopsided watch pattern raises nothing, and
-        the plan is auto-approvable -- the owner asked Reaper to follow the rule quietly."""
+        """flag_keep_conflicts=False. The same lopsided watch pattern raises nothing, and
+        the plan is auto-approvable, since the owner asked Reaper to follow the rule
+        quietly."""
         seasons = [_season(n) for n in range(1, 5)]
         plan = plan_series_prune(
             series_title="Show",
@@ -526,10 +528,10 @@ class TestKeepRuleConflict:
         assert plan.auto_approvable
 
     def test_the_message_names_a_still_downloading_kept_season(self) -> None:
-        """The real case behind this: keep-last off, keep-first off, so the only thing
-        protecting Season 4 is that Sonarr has not finished downloading it. An older,
-        more-watched season conflicts with it, and the message must name THAT reason --
-        not a vague 'your keep rule protects'."""
+        """With keep-last off and keep-first off, the only thing protecting Season 4 is
+        that Sonarr has not finished downloading it. An older, more-watched season
+        conflicts with it, and the message must name that real reason, not a vague
+        'your keep rule protects'."""
         seasons = [_season(n) for n in range(1, 4)] + [_season(4, wanted=10, files=5)]
         plan = plan_series_prune(
             series_title="Show",
@@ -574,22 +576,22 @@ class TestATruncatedMirrorCannotClearTheConflict:
     """
 
     def test_a_truncated_mirror_reaches_the_same_decision_as_a_full_one(self) -> None:
-        """The filed bug, driven both ways. A show added five years ago whose Season 1 had
-        five viewers four years back, seen through a Tautulli installed a year ago: every
-        one of those plays is behind the horizon, so the count reads 0 and cannot out-rank
-        anything. The show went from "Needs a look" to auto-approvable and its older seasons
-        became removable on score alone.
+        """The reported failure, driven both ways. A show added five years ago whose
+        Season 1 had five viewers four years back is seen through a Tautulli installed a
+        year ago. Every one of those plays is behind the horizon, so the count reads 0
+        and cannot out-rank anything. The show would go from "Needs a look" to
+        auto-approvable, and its older seasons would become removable on score alone.
 
-        The two mirrors are the SAME library. Only the evidence differs, so the decision may
-        not: whatever the mirror can see, Reaper must not conclude more than it saw.
+        The two mirrors are the SAME library. Only the evidence differs, so the decision
+        must not. Whatever the mirror can see, Reaper must not conclude more than it saw.
         """
         seasons = [_season(n) for n in (1, 2, 3)]
         full = plan_series_prune(
             series_title="Show",
             seasons=seasons,
             keep_last=1,  # keeps 3
-            # The non-default, needed to make Season 1 prunable at all and reproduce the
-            # filed transcript.
+            # The non-default, needed to make Season 1 prunable at all and match the
+            # reported scenario.
             keep_first_season=False,
             watchers_by_season={1: 5, 2: 3, 3: 1},
         )
@@ -610,13 +612,12 @@ class TestATruncatedMirrorCannotClearTheConflict:
         assert truncated.auto_approvable is False
 
     def test_marking_the_truncated_count_unreadable_would_not_have_done_it(self) -> None:
-        """The trap this fix had to get past, pinned so a later simplification cannot walk
-        back into it.
+        """A trap a later simplification could walk back into, pinned here.
 
         ``None`` on the pruned side means "nobody could measure this" and takes the same
-        skip a 0 takes, so routing a truncated count to ``None`` changes nothing: same
-        branch, same skip, same lost hold. The hold has to come from the reach arm, which is
-        why an unreadable count and an unsupported one are kept apart.
+        skip a 0 takes, so routing a truncated count to ``None`` would change nothing.
+        Same branch, same skip, same lost hold. The hold has to come from the reach arm,
+        which is why an unreadable count and an unsupported one are kept apart.
         """
         seasons = [_season(n) for n in (1, 2, 3)]
         unreadable = plan_series_prune(
@@ -630,8 +631,8 @@ class TestATruncatedMirrorCannotClearTheConflict:
         assert unreadable.auto_approvable is True  # ...which is exactly why it is not the fix
 
     def test_a_zero_the_mirror_cannot_support_is_not_an_unwatched_season(self) -> None:
-        """The load-bearing arm. A 0 read over a mirror that covers the season's whole life
-        is a measurement; the same 0 read over a shorter one is silence."""
+        """The load-bearing arm. A 0 read over a mirror that covers the season's whole
+        life is a measurement. The same 0 read over a shorter one is silence."""
         seasons = [_season(n) for n in range(1, 5)]
         common = {
             "series_title": "Show",
@@ -645,21 +646,22 @@ class TestATruncatedMirrorCannotClearTheConflict:
 
         unsupported = plan_series_prune(**common, shortfall_by_season={1: SHORT})  # type: ignore[arg-type]
         assert [(c.pruned_season, c.kept_season) for c in unsupported.conflicts] == [(1, 3), (1, 4)]
-        # Season 2's own count IS supported, so its 0 still clears. The bound is applied per
-        # season, not per show: a season backfilled into an old show arrived recently.
+        # Season 2's own count IS supported, so its 0 still clears. The bound is applied
+        # per season, not per show, since a season backfilled into an old show arrived
+        # recently.
         assert all(c.pruned_season != 2 for c in unsupported.conflicts)
 
     def test_an_answered_count_still_clears_against_a_truncated_kept_season(self) -> None:
-        """The other direction, and it must NOT hold: more history can only ever raise the
-        kept count, so a pruned count already below it stays below it. An outcome the bound
-        already earns needs no reach at all (``fields._survives_more_history``).
+        """The other direction, and it must NOT hold. More history can only ever raise
+        the kept count, so a pruned count already below it stays below it. An outcome
+        the bound already earns needs no reach at all (``fields._survives_more_history``).
 
-        The pruned count is 1 rather than 0 deliberately (rule 118). A 0 takes the
-        ``pruned_watchers == 0`` skip *before* the kept loop is entered, so the earlier
-        version of this test proved nothing about the arm it named: ``for kept in
-        kept_seasons`` never executed, and the empty list came from the skip. Now the pair
-        reaches the loop and the empty list comes from the ``else: continue`` this is about
-        -- which is what makes the blanket-hold mutation fail here (see the sibling test).
+        The pruned count is 1 rather than 0 deliberately. A 0 would take the
+        ``pruned_watchers == 0`` skip before the kept loop is entered, which would prove
+        nothing about the arm this test is for: ``for kept in kept_seasons`` would never
+        execute, and the empty list would come from that skip instead of from the
+        ``else: continue`` this test is about. That distinction is what makes the
+        blanket-hold mutation fail here (see the sibling test).
         """
         plan = plan_series_prune(
             series_title="Show",
@@ -673,21 +675,19 @@ class TestATruncatedMirrorCannotClearTheConflict:
         assert plan.auto_approvable is True
 
     def test_a_short_mirror_holds_every_prunable_season_of_an_old_show(self) -> None:
-        """The blanket effect, pinned because it is large and was once denied in writing.
+        """The blanket effect, pinned because it is large and easy to mistake for a defect.
 
-        Where the mirror does not reach back to when ANY prunable season arrived, every one
-        of them conflicts against every kept season regardless of the counts: each count is
-        a lower bound and more history can always lift it above the others. Nothing is
-        auto-approvable, so TV pruning is inert on such a show until the mirror catches up
-        or a human decides -- and because every conflict carries ``shortfall``,
-        ``season_evidence.guard_result`` marks all of them as comparisons it did not make, which
-        is what the operator's chip says on the card.
+        Where the mirror does not reach back to when ANY prunable season arrived, every
+        one of them conflicts against every kept season regardless of the counts, since
+        each count is a lower bound and more history can always lift it above the others.
+        Nothing is auto-approvable, so TV pruning is inert on such a show until the
+        mirror catches up or a human decides. Because every conflict carries
+        ``shortfall``, ``season_evidence.guard_result`` marks all of them as comparisons
+        it did not make, which is what the operator's chip says on the card.
 
-        This is the prime directive's answer, not a defect -- but the docstring of
-        ``_detect_conflicts`` once claimed the detector did *not* degenerate this way, and
-        the mutation that makes the degeneration total (``elif pruned_shortfall is not None
-        or kept_shortfall is not None``) passed the entire 2626-test suite. Rule 118: the
-        behavior a reader is most likely to try to "simplify" needs a test that fails.
+        This is the prime directive's answer, not a defect. It is also the behavior a
+        reader is most likely to try to "simplify" away, so it needs a test that fails
+        when that happens.
         """
         plan = plan_series_prune(
             series_title="Show",
@@ -715,19 +715,19 @@ class TestATruncatedMirrorCannotClearTheConflict:
         assert not any("0 people watched" in text(c.message) for c in plan.conflicts)
 
     def test_the_policy_page_now_speaks_for_the_hold_this_test_pins(self) -> None:
-        """The other half of #224, tied to this test so neither can drift alone.
+        """Tied to the sibling test above so neither can drift alone.
 
-        The sibling above proves the scan holds every prunable season of a show older than the
-        mirror. That was true and the policy editor said NOTHING about it, which is the whole
-        of #224: an operator saw an empty automatic lane, no warning, and no way to learn their
-        watch history was the cause.
+        The sibling above proves the scan holds every prunable season of a show older
+        than the mirror. The policy editor used to say nothing about it. An operator saw
+        an empty automatic lane, no warning, and no way to learn their watch history was
+        the cause.
 
-        ``policy_warnings.inspect``'s warning asserts a behavior of THIS module, across a module
-        boundary, so it is the shape rule 144 warns about: a sentence that reads as
-        demonstrably correct while vouching for a consistency nothing checks. If
-        ``_detect_conflicts`` ever stops degenerating this way, the sibling above goes red and
-        so does this, rather than leaving a warning that quietly became a lie. That is why the
-        pin lives here beside the behavior and not only in ``test_policy``.
+        ``policy_warnings.inspect``'s warning asserts a behavior of THIS module across a
+        module boundary. That is a sentence that reads as demonstrably correct while
+        vouching for a consistency nothing else checks. If ``_detect_conflicts`` ever
+        stops degenerating this way, the sibling above goes red, and so does this,
+        rather than leaving a warning that quietly became a lie. That is why the pin
+        lives here beside the behavior and not only in ``test_policy``.
         """
         plan = plan_series_prune(
             series_title="Show",
@@ -761,10 +761,10 @@ class TestATruncatedMirrorCannotClearTheConflict:
     def test_a_truncated_count_that_already_out_ranks_an_answered_one_still_compares(
         self,
     ) -> None:
-        """The same "already earned" reading on the losing side: the pruned count is a lower
-        bound, more history can only raise it, and it ALREADY beats a kept count the mirror
-        supports. That is a comparison Reaper really made, so it keeps the comparison wording
-        and stays the operator's call to overrule."""
+        """The same "already earned" reading on the losing side. The pruned count is a
+        lower bound, more history can only raise it, and it ALREADY beats a kept count
+        the mirror supports. That is a comparison Reaper really made, so it keeps the
+        comparison wording and stays the operator's call to overrule."""
         plan = plan_series_prune(
             series_title="Show",
             seasons=[_season(n) for n in range(1, 5)],
@@ -778,10 +778,11 @@ class TestATruncatedMirrorCannotClearTheConflict:
         assert "more than watched Season 3" in text(conflict.message)
 
     def test_a_truncated_kept_count_stops_asserting_arithmetic_it_cannot_take(self) -> None:
-        """The rule lost, but only against a lower bound: more history could lift the kept
-        season back above the pruned one. The season is held either way, so what changes is
-        the sentence. Reaper must not tell an operator deciding what to delete that one
-        season was watched "more than" another off a number that can still move."""
+        """The rule lost, but only against a lower bound. More history could lift the
+        kept season back above the pruned one. The season is held either way, so what
+        changes is the sentence. Reaper must not tell an operator deciding what to
+        delete that one season was watched "more than" another off a number that can
+        still move."""
         plan = plan_series_prune(
             series_title="Show",
             seasons=[_season(n) for n in range(1, 5)],
@@ -801,9 +802,9 @@ class TestATruncatedMirrorCannotClearTheConflict:
         assert not [c for c in plan.conflicts if c.pruned_season == 1 and c.kept_season == 4]
 
     def test_the_message_says_why_and_never_invents_a_count(self) -> None:
-        """Operator copy, checked as copy (rule 21): it names both seasons, gives the real
-        reason in the words every other reader of a truncated count uses, and states no
-        number, because no number was established."""
+        """Operator copy, checked as copy. It names both seasons, gives the real reason
+        in the words every other reader of a truncated count uses, and states no number,
+        because no number was established."""
         plan = plan_series_prune(
             series_title="Show",
             seasons=[_season(n) for n in (1, 2, 3)],
@@ -818,25 +819,23 @@ class TestATruncatedMirrorCannotClearTheConflict:
             "watch history only goes back 12 months. Season 3 is kept because it is one of "
             "the newest seasons your rule keeps."
         )
-        # Rule 21: no em dashes in operator copy. Escaped rather than written literally, so
-        # the assertion does not itself smuggle the character ruff bans (RUF001).
+        # No em dashes in operator copy. Escaped rather than written literally, so the
+        # assertion does not itself smuggle the character ruff bans (RUF001).
         assert "\u2014" not in message and "\u2013" not in message
 
     def test_every_conflict_shape_invites_the_decision_the_engine_now_honors(self) -> None:
         """The closing phrase and the reap must agree, in whichever direction they point.
 
-        This was briefly split. While a blocked gate still held a hand reap, the two refused
-        shapes ended "Kept for now" instead, because inviting a decision the engine would
-        refuse is rule 92's failure pointed at operator copy: an operator who acts on "Left
-        for you to decide" got the reap declined and a generic "a protection couldn't be
-        checked" in place of the sentence they acted on. ``engine.verdict`` no longer works
-        that way, so all three shapes are the operator's to settle and the split would now be
-        the misleading half. Swept over all three rather than asserted on one, because the
-        failure mode is one shape drifting away from the others.
+        If a blocked gate held a hand reap, ending the two refused shapes with "Kept for
+        now" instead would invite a decision the engine would refuse: an operator who
+        acts on "Left for you to decide" would get the reap declined and a generic "a
+        protection couldn't be checked" in place of the sentence they acted on.
+        ``engine.verdict`` does not work that way, so all three shapes are the operator's
+        to settle. Swept over all three rather than asserted on one, because the failure
+        mode is one shape drifting away from the others.
 
-        What does NOT depend on the reversal, and is asserted beside it: no refused shape
-        states a watcher count it cannot stand behind. That was the other half of the same
-        fix and it survives the reap changing hands.
+        Asserted beside that: no refused shape states a watcher count it cannot stand
+        behind, whichever way the reap goes.
         """
         common = {
             "series_title": "Show",
@@ -862,21 +861,21 @@ class TestATruncatedMirrorCannotClearTheConflict:
             assert message.endswith("your rule keeps.")
             assert "Kept for now" not in message
         # The two Reaper could not settle still assert no arithmetic. The unsupported one
-        # cannot stand behind its own count; the unreadable one cannot stand behind the
-        # kept season's.
+        # cannot stand behind its own count, and the unreadable one cannot stand behind
+        # the kept season's.
         assert "0 people watched" not in text(unsupported.conflicts[0].message)
         assert "more than watched" not in text(unreadable.conflicts[0].message)
         # ...while the comparison that WAS made still states it.
         assert "more than watched Season 3" in text(settleable.conflicts[0].message)
 
     def test_an_unreadable_kept_count_never_prints_a_bound_as_a_measurement(self) -> None:
-        """The pruned season's own shortfall rides on the conflict even when what could not
-        be read is the KEPT count, because the message is chosen off it.
+        """The pruned season's own shortfall rides on the conflict even when what could
+        not be read is the KEPT count, because the message is chosen off it.
 
-        Without it this arm printed "0 people watched Season 1" for a count the same call
-        had just ruled unsupportable, one line from a chip saying Reaper could not check who
-        watched these seasons. The hold does not move (both shapes refuse); the sentence
-        does. Found independently by all three review lanes.
+        Without this, the arm would print "0 people watched Season 1" for a count the
+        same call had just ruled unsupportable, one line from a chip saying Reaper could
+        not check who watched these seasons. The hold does not move either way, both
+        shapes refuse, but the sentence does.
         """
         plan = plan_series_prune(
             series_title="Show",
@@ -894,7 +893,7 @@ class TestATruncatedMirrorCannotClearTheConflict:
 
     def test_the_off_switch_silences_the_reach_arm_too(self) -> None:
         """``flag_keep_conflicts`` off means the operator asked Reaper to follow the keep
-        rule quietly. The new arm is part of that detector, not a second one behind it."""
+        rule quietly. This arm is part of that detector, not a second one behind it."""
         plan = plan_series_prune(
             series_title="Show",
             seasons=[_season(n) for n in (1, 2, 3)],
@@ -946,7 +945,8 @@ PROGRESS = {"alice": {3: 5}, "bob": {5: 8}}
 
 
 class TestInProgressExpiry:
-    """active_progress: the hold half of the mid-binge guard. Every edge keeps the viewer."""
+    """``active_progress``, the hold half of the mid-binge guard. Every edge keeps the
+    viewer."""
 
     def test_zero_hold_days_never_expires(self) -> None:
         last = {"alice": _days_ago(10_000), "bob": _days_ago(10_000)}
@@ -958,7 +958,8 @@ class TestInProgressExpiry:
         assert set(held) == {"bob"}
 
     def test_activity_exactly_at_the_bound_still_holds(self) -> None:
-        """>= not >: reduced precision on the boundary resolves toward keeping."""
+        """>= rather than >, so reduced precision on the boundary resolves toward
+        keeping."""
         last = {"alice": _days_ago(180), "bob": _days_ago(181)}
         held = active_progress(PROGRESS, last, now=NOW, hold_days=180)
         assert set(held) == {"alice"}
@@ -968,7 +969,7 @@ class TestInProgressExpiry:
         last: dict[str, datetime | None] = {"alice": None}
         held = active_progress(PROGRESS, last, now=NOW, hold_days=180)
         assert "alice" in held
-        # bob is absent from the map entirely -- same unknown, same hold.
+        # bob is absent from the map entirely, same unknown, same hold.
         assert "bob" in held
 
     def test_an_expired_viewer_no_longer_pins_a_season(self) -> None:
@@ -988,11 +989,12 @@ class TestInProgressExpiry:
 
 
 class TestTheMirrorMustSpanTheHold:
-    """progress_is_establishable: the guard's claim is only as good as the mirror under it.
+    """``progress_is_establishable``. The guard's claim is only as good as the mirror
+    under it.
 
-    ``in_progress_hold_days`` is not a bound on the watch mirror, it is the span the guard
-    claims to cover, so a mirror shallower than it leaves viewers the guard cannot see --
-    and a viewer with no rows is indistinguishable from no viewer at all (rules 93 and 140).
+    ``in_progress_hold_days`` is not a bound on the watch mirror. It is the span the
+    guard claims to cover, so a mirror shallower than it leaves viewers the guard cannot
+    see, and a viewer with no rows is indistinguishable from no viewer at all.
     """
 
     @pytest.mark.parametrize(
@@ -1001,7 +1003,7 @@ class TestTheMirrorMustSpanTheHold:
             (400, 180, True),  # the mirror covers the whole hold window
             (180, 180, True),  # exactly spanning is spanning
             (179, 180, False),  # one day short is short
-            (90, 180, False),  # the shallow mirror from the issue
+            (90, 180, False),  # a shallow mirror that misses the window
             (0, 30, False),  # an empty mirror establishes nothing
             (400, 0, False),  # a hold that never expires...
             (10_000, 0, False),  # ...which no reach covers, however deep
@@ -1021,7 +1023,7 @@ class TestTheMirrorMustSpanTheHold:
         )
 
     def test_a_negative_hold_is_not_reachable_so_nothing_here_pins_it(self) -> None:
-        """Stated rather than tested, because a test could not fail (rule 118).
+        """Stated rather than tested, because a test could not fail.
 
         ``hold_days <= 0`` also catches a negative, but ``PolicyBody.in_progress_hold_days``
         is `ge=0`, so no stored policy can produce one. Mutating the ``<=`` to ``==`` is
@@ -1032,10 +1034,10 @@ class TestTheMirrorMustSpanTheHold:
         assert PolicyBody.model_fields["in_progress_hold_days"].metadata[0].ge == 0
 
     def test_a_viewer_the_mirror_cannot_see_still_holds_the_next_season(self) -> None:
-        """The reproduction from the issue: one viewer finished Season 3 120 days ago, under
-        the shipped 180-day hold. The two runs are identical but for how far the mirror
-        reaches -- and at 90 days it holds none of that viewer's plays, so they contribute no
-        rows and the guard is asked a question the history cannot answer."""
+        """One viewer finished Season 3 120 days ago, under the shipped 180-day hold.
+        The two runs are identical except for how far the mirror reaches. At 90 days it
+        holds none of that viewer's plays, so they contribute no rows, and the guard is
+        asked a question the history cannot answer."""
         common = {
             "series_title": "Show",
             "seasons": [_season(n) for n in range(1, 7)],
@@ -1044,8 +1046,8 @@ class TestTheMirrorMustSpanTheHold:
             "season_final_episode": {3: 10},
         }
 
-        # 400 days: the play is inside the mirror, and the guard names the season they are up
-        # to -- Season 3 is finished, so the hold advances to Season 4.
+        # At 400 days, the play is inside the mirror, and the guard names the season
+        # they are up to. Season 3 is finished, so the hold advances to Season 4.
         deep = plan_series_prune(
             **common,  # type: ignore[arg-type]
             progress_by_user=active_progress(
@@ -1056,7 +1058,7 @@ class TestTheMirrorMustSpanTheHold:
         assert deep.prunable == [1, 2, 3]
         assert _reasons(deep)[4] == "a viewer is part-way through the show"
 
-        # 90 days: that same play predates the horizon, so the viewer is simply absent.
+        # At 90 days, that same play predates the horizon, so the viewer is simply absent.
         shallow = plan_series_prune(
             **common,  # type: ignore[arg-type]
             progress_by_user={},
@@ -1070,7 +1072,7 @@ class TestTheMirrorMustSpanTheHold:
 
     def test_an_unbounded_hold_is_never_establishable(self) -> None:
         """0 holds a viewer's place forever, and a viewer whose every play predates the
-        horizon is invisible at any reach -- with no expiry to make that harmless."""
+        horizon is invisible at any reach, with no expiry to make that harmless."""
         plan = plan_series_prune(
             series_title="Show",
             seasons=[_season(n) for n in range(1, 7)],
@@ -1114,10 +1116,11 @@ class TestTheMirrorMustSpanTheHold:
     def test_an_unanswerable_hold_is_marked_unestablishable_and_a_real_one_is_not(self) -> None:
         """The hold carries a typed flag, because the two kinds of keep are not the same.
 
-        A season kept because a protection *fired* is a definite keep. A season kept because
-        the guard could not be ANSWERED is Unknown (rule 93), and only the second may hold a
-        hand reap -- `season_evidence.guard_result` reads this flag to mark the result blocked.
-        Pinned on a plan carrying both, so a fix that flags every protected season fails.
+        A season kept because a protection *fired* is a definite keep. A season kept
+        because the guard could not be ANSWERED is Unknown, and only the second may hold
+        a hand reap. `season_evidence.guard_result` reads this flag to mark the result
+        blocked. Pinned on a plan carrying both, so a fix that flags every protected
+        season fails.
         """
         plan = plan_series_prune(
             series_title="Show",
@@ -1137,19 +1140,20 @@ class TestTheMirrorMustSpanTheHold:
 
 
 class TestASeasonWithNoPlexKeyHidesItsViewer:
-    """``progress_seasons_unmatched``: the third route to an unanswerable mid-binge guard.
+    """``progress_seasons_unmatched``, the third route to an unanswerable mid-binge guard.
 
-    The mirror can span the hold perfectly and every play still be readable, and the guard
-    still have no answer -- because a season with no Plex rating key was never *asked* about.
-    Its plays sit under a key the scan never learned, so its viewer is absent from
-    ``progress_by_user`` the same way a viewer beyond the horizon is, and for the same reason
-    the absence must not read as "nobody is part-way through" (rules 93, 140).
+    The mirror can span the hold perfectly and every play still be readable, and the
+    guard can still have no answer, because a season with no Plex rating key was never
+    *asked* about. Its plays sit under a key the scan never learned, so its viewer is
+    absent from ``progress_by_user`` the same way a viewer beyond the horizon is, and
+    for the same reason the absence must not read as "nobody is part-way through."
     """
 
     def test_an_unmatched_season_holds_the_seasons_that_did_resolve(self) -> None:
-        """The counterfactual pair, at this module's own interface. A viewer finished Season 3
-        and is about to start Season 4; with Season 3 resolved the guard names Season 4, and
-        with it unresolved the viewer is invisible and Season 4 is offered for reaping."""
+        """The counterfactual pair, at this module's own interface. A viewer finished
+        Season 3 and is about to start Season 4. With Season 3 resolved, the guard names
+        Season 4. With it unresolved, the viewer is invisible and Season 4 is offered
+        for reaping."""
         common = {
             "series_title": "Show",
             "seasons": [_season(n) for n in range(1, 7)],
@@ -1177,8 +1181,8 @@ class TestASeasonWithNoPlexKeyHidesItsViewer:
         )
 
     def test_the_hold_is_marked_unanswerable_and_a_visible_viewer_is_not(self) -> None:
-        """Rule 93's encoding: a check that could not be ANSWERED is blocked, and a
-        protection that fired stays a definite keep. Pinned on a plan carrying both."""
+        """A check that could not be ANSWERED is blocked, and a protection that fired
+        stays a definite keep. Pinned on a plan carrying both."""
         plan = plan_series_prune(
             series_title="Show",
             seasons=[_season(n) for n in range(1, 7)],
@@ -1206,12 +1210,12 @@ class TestASeasonWithNoPlexKeyHidesItsViewer:
         assert plan.prunable == [1, 2, 3, 4]
 
     def test_a_show_that_never_bound_is_not_blamed_on_the_mirror(self) -> None:
-        """#489. A show with no Plex rating key anywhere held every prunable season with "your
-        watch history is too short to tell who is part-way through" -- true, and the one
-        remedy that cannot work: with no address, nobody's place is readable at any depth.
+        """A show with no Plex rating key anywhere held every prunable season with "your
+        watch history is too short to tell who is part-way through," true, but the one
+        remedy that cannot work. With no address, nobody's place is readable at any depth.
 
-        It still holds exactly the same seasons. Only the sentence moves, which is the whole
-        change: this arm is reporting, not protecting.
+        It still holds exactly the same seasons. Only the sentence moves. This arm is
+        reporting, not protecting.
         """
         common = {
             "series_title": "Show",
@@ -1227,8 +1231,8 @@ class TestASeasonWithNoPlexKeyHidesItsViewer:
         assert _reasons(unbound)[1] == (
             "This show isn't matched in Plex, so who's part-way through is unknown."
         )
-        # The premise: without the show-level fact the same call names the mirror, so the
-        # assertion above is reading the new arm and not a coincidence.
+        # The premise. Without the show-level fact, the same call names the mirror, so
+        # the assertion above is reading the new arm and not a coincidence.
         assert _reasons(
             plan_series_prune(**common, progress_established=False)  # type: ignore[arg-type]
         )[1] == ("Your watch history is too short to tell who's part-way through.")
@@ -1236,10 +1240,10 @@ class TestASeasonWithNoPlexKeyHidesItsViewer:
         assert unbound.prunable == []
 
     def test_the_wider_failures_are_named_first(self) -> None:
-        """All three unanswerable causes at once. The reason shown is the widest, because its
-        remedy is the one that fixes the others as a side effect -- and copy naming the
-        narrowest would send the operator to inspect one season when their whole mirror is
-        too short."""
+        """All three unanswerable causes at once. The reason shown is the widest, because
+        its remedy is the one that fixes the others as a side effect, and copy naming
+        the narrowest would send the operator to inspect one season when their whole
+        mirror is too short."""
         common = {
             "series_title": "Show",
             "seasons": [_season(n) for n in range(1, 7)],
@@ -1265,20 +1269,17 @@ class TestASeasonWithNoPlexKeyHidesItsViewer:
         )
 
     def test_every_unanswerable_cause_produces_a_reason_the_flag_set_names(self) -> None:
-        """``UNANSWERABLE_REASONS`` is what turns a hold into a *blocked* one, so a cause whose
-        reason the set does not name is a hold that renders green -- "checked and passed" for a
-        check that never ran (rules 93, 142).
+        """``UNANSWERABLE_REASONS`` is what turns a hold into a *blocked* one, so a cause
+        whose reason the set does not name is a hold that renders green, "checked and
+        passed" for a check that never ran.
 
         The causes are discovered from ``plan_series_prune``'s own signature rather than
-        listed, so a fifth is covered the moment it is added: a hand-written list can only
-        pin the members somebody remembered (rule 145). Each is driven by inverting its
+        listed, so a fifth is covered the moment it is added. A hand-written list can
+        only pin the members somebody remembered. Each is driven by inverting its
         default, since ``progress_established`` reads the opposite way from the others.
 
-        The fourth arrived exactly this way. ``progress_show_unmatched`` (#489) reddened this
-        test on the commit that added it, before any test written *for* it ran, which is the
-        whole reason the walk discovers rather than lists -- and what it caught was real: the
-        first draft held on it, which moves every unmatched show off the review queue and onto
-        the Protected page, the trade #486 declined.
+        Discovering the causes this way matters in practice: a hand-written list can
+        miss a cause the moment it is added, silently narrowing what this test covers.
         """
         causes = {
             name: param.default
@@ -1295,9 +1296,9 @@ class TestASeasonWithNoPlexKeyHidesItsViewer:
                 keep_last=2,
                 keep_first_season=False,
                 # A reporting-only flag holds nothing by itself, so it is driven with the
-                # widest holding cause beside it. Classified rather than skipped (rule 103):
-                # the reason it names still has to be one UNANSWERABLE_REASONS knows, or the
-                # hold it re-words renders green.
+                # widest holding cause beside it. Classified rather than skipped, since
+                # the reason it names still has to be one UNANSWERABLE_REASONS knows, or
+                # the hold it re-words renders green.
                 **({"progress_established": False} if name in _HOLDS_NOTHING_ALONE else {}),  # type: ignore[arg-type]
                 **{name: not default},  # type: ignore[arg-type]
             )

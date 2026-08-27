@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Push a repo notes file into Weblate as each unit's explanation, for every component that
-carries one: `ui` (`frontend/src/locales/en/ui.notes.json`) and, since phase 10b, `backend`
+carries one: `ui` (`frontend/src/locales/en/ui.notes.json`) and `backend`
 (`src/reaper/locales/en/backend.notes.json`).
 
-Standalone by design (stdlib only, rule 15): the CI job that runs this on every push to either
-notes file installs nothing beyond Python itself. Weblate stores a translator note per source
-string as a unit's `explanation` field; this script is the one place that writes it, so a note is
-edited here, in the repository, never by hand on Weblate (CONTRIBUTING's "Translate it").
+Standalone by design, using only the standard library: the CI job that runs this on
+every push to either notes file installs nothing beyond Python itself. Weblate stores
+a translator note per source string as a unit's `explanation` field. This script is
+the one place that writes it, so a note is edited here, in the repository, never by
+hand on Weblate (see CONTRIBUTING's "Translate it" section).
 
     python3 scripts/weblate_notes.py            # writes the diff, both components
     python3 scripts/weblate_notes.py --dry-run   # prints the diff, writes nothing
@@ -30,9 +31,9 @@ API_ROOT = "https://hosted.weblate.org/api"
 PROJECT = "reaper"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-#: Every component this script keeps in sync, and the one repo file that holds its notes. Both
-#: sides are edited only here (CONTRIBUTING's "Translate it"): Weblate's own explanation field
-#: is overwritten by the next push regardless of a hand edit there.
+#: Every component this script keeps in sync, and the one repo file that holds its notes.
+#: Both sides are edited only here (see CONTRIBUTING's "Translate it" section). Weblate's
+#: own explanation field is overwritten by the next push, regardless of any hand edit there.
 _COMPONENTS: tuple[tuple[str, Path], ...] = (
     ("ui", REPO_ROOT / "frontend/src/locales/en/ui.notes.json"),
     ("backend", REPO_ROOT / "src/reaper/locales/en/backend.notes.json"),
@@ -48,8 +49,8 @@ def _units_url(component: str) -> str:
 
 
 def _fetch_units(key: str, units_url: str) -> dict[str, dict[str, Any]]:
-    """Every English unit's `context` (the dotted catalog key) mapped to its `source_unit`
-    URL and current `explanation`, paging through `next` until it is null."""
+    """Return every English unit's `context` (the dotted catalog key) mapped to its
+    `source_unit` URL and current `explanation`, paging through `next` until it is null."""
     units: dict[str, dict[str, Any]] = {}
     url: str | None = units_url
     while url is not None:
@@ -58,8 +59,8 @@ def _fetch_units(key: str, units_url: str) -> dict[str, dict[str, Any]]:
             context = unit.get("context")
             if not context:
                 continue
-            # The English translation IS the source language here, so `source_unit` is
-            # usually this same unit's own URL; falling back to `url` covers a component
+            # The English translation is the source language here, so `source_unit` is
+            # usually this same unit's own URL. Falling back to `url` covers a component
             # where Weblate ever leaves it null instead.
             units[context] = {
                 "explanation": unit.get("explanation") or "",
@@ -74,11 +75,11 @@ def sync(
 ) -> None:
     """Write every note that differs from Weblate's stored explanation.
 
-    A key with no matching unit is reported as `missing`, not raised: it is the ordinary gap
-    between a merge landing here and Weblate's next pull of `dev`, not a failure this job should
-    fail CI over. An HTTP failure is the one thing that ends the run non-zero, and it does that
-    by propagating out of `_weblate_http.request` uncaught, since a PATCH that failed partway
-    through is not a state a "missing" count can describe.
+    A key with no matching unit is reported as `missing`, not raised. That gap is the
+    ordinary lag between a merge landing here and Weblate's next pull of `dev`, not a
+    failure this job should fail CI over. An HTTP failure is the one thing that ends
+    the run non-zero. It propagates out of `_weblate_http.request` uncaught, since a
+    PATCH that failed partway through is not a state a "missing" count can describe.
     """
     changed = unchanged = missing = 0
     for context in sorted(notes):
@@ -112,11 +113,11 @@ def main(argv: list[str] | None = None) -> int:
     key = api_key(args.key_file)
     for component, notes_path in _COMPONENTS:
         print(f"== {component} ==")
-        # A component this script's own notes file names before `scripts/weblate_component.py`
-        # has created it: the workflow fires on the same push that adds a component's notes
-        # file, which can land before anyone runs that script by hand. Skipping rather than
-        # raising keeps that push from failing CI over a component that is created moments
-        # later -- the next push (or a manual re-run) picks up the notes once it exists.
+        # A component this script's own notes file names, before `scripts/weblate_component.py`
+        # has created it. The workflow fires on the same push that adds a component's notes
+        # file, which can land before anyone runs that script by hand. Skipping instead of
+        # raising keeps that push from failing CI over a component created moments later.
+        # The next push, or a manual re-run, picks up the notes once it exists.
         if request(_component_url(component), key=key, allow_404=True) is None:
             print(f"  {component} does not exist on Weblate yet, skipping")
             continue

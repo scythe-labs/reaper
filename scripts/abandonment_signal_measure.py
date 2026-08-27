@@ -2,72 +2,73 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Measure whether an abandoned (partial) play predicts a title gets played again.
 
-Somebody starting a title and quitting partway through is evidence they were interested
-(they will come back) and equally evidence they tried it and did not want it (they will
-not). This script measures which one wins on real watch history, so the app can decide
-whether an "abandoned play" signal is worth building at all. A negative result -- no
-measurable lift either way -- is a successful measurement, not a failed one.
+When someone starts a title and stops partway through, that could mean they plan to
+finish it, or that they tried it and did not want it. This script checks which is true
+more often, using real watch history, so the app can decide whether an abandoned-play
+signal is worth adding. Finding no measurable difference either way still counts as a
+successful measurement.
 
-Read-only over both input shapes, and it prints ratios, counts and spans only: never a
-title, path, id, or username (the source path an operator passes on the command line is
-the one exception, exactly as ``delete_threshold_ratio_measure.py`` prints it).
+This script prints only ratios, counts, and spans. It never prints a title, path, id, or
+username, except the input path the operator gives on the command line (the same rule
+``delete_threshold_ratio_measure.py`` follows).
 
     uv run python scripts/abandonment_signal_measure.py data/
     uv run python scripts/abandonment_signal_measure.py reaper-dump.json.gz
 
 ## What "abandoned" means
 
-A play is abandoned when ``services/rewatch.py``'s ``qualifies()`` would discard it as
-partial -- imported and called directly here, never re-derived, so this measures exactly
-the rows the rewatch engine throws away. In order: a reported ``watched_status`` under 0.5
-is abandoned; with no status, a ``percent_complete`` under 50 is abandoned; a status-less
-0 percent play is NOT abandoned, because ``qualifies()`` counts it as a play (unknown
-resolves toward keeping).
+A play counts as abandoned when ``qualifies()`` in ``services/rewatch.py`` would discard
+it as partial. This script imports and calls that function directly instead of
+reimplementing it, so it measures exactly the plays the rewatch engine discards.
+
+``qualifies()`` checks, in order: a reported ``watched_status`` under 0.5 counts as
+abandoned. With no status, a ``percent_complete`` under 50 counts as abandoned. A play
+with no status and 0 percent complete still counts as a completed play, because an
+unknown status favors keeping the title.
 
 ## The two lanes
 
 * **ABANDONED** -- a title with at least one abandoned play and no completed
   (qualifying) play before the cutoff. A title with both an abandoned and a completed
-  play before the cutoff is a mixed history and excluded from every cohort: it is neither
-  an honest abandoned-only title nor an honest completed-only control.
-* **CONTROL** -- the nearest honest same-age comparison, one shape per input source
-  (module docstring below explains why they differ):
-    * the anonymized dump carries an arrival date, so its control is titles with NO plays
-      at all before the cutoff, matched on the same dormancy-age band;
-    * the Reaper data directory's ``reaper.db`` keeps no arrival date (the same limitation
-      ``delete_threshold_ratio_measure.py`` hit, ``docs/LEARNINGS.md``, "The delete
-      threshold buys volume, not precision"), so a never-played title cannot be anchored
-      there. Its control is instead titles whose only pre-cutoff plays are completed,
-      matched on the same bands.
+  play before the cutoff has a mixed history, so it is excluded from every cohort
+  instead of assigned to one.
+* **CONTROL** -- the closest honest same-age comparison. Its shape depends on the input:
+    * the anonymized dump carries an arrival date, so its control is titles with no
+      plays at all before the cutoff, matched on the same dormancy-age band;
+    * the Reaper data directory's ``reaper.db`` keeps no arrival date
+      (``docs/LEARNINGS.md`` covers this limitation), so a never-played title cannot be
+      anchored there. Its control is instead titles whose only pre-cutoff plays are
+      completed, matched on the same bands.
 
-Both lanes are compared within fixed dormancy-age bands (``reaper.services.rewatch``'s own
-``_BUCKET_EDGES`` -- the app's already-validated bucketing for exactly this shape of
-question, dormancy-at-cutoff against watched-again-within-a-year) and pooled only over
-bands with at least ``REWATCH_BLOCK_FLOOR_N`` titles on BOTH sides, so a thin band cannot
-swing the pooled verdict. Any rate is reported beside its Wilson 95% upper bound
-(``gates.wilson_upper``) so a small cohort's zero is never read as "never happens".
+Both lanes are compared within fixed dormancy-age bands, the same ``_BUCKET_EDGES``
+``reaper.services.rewatch`` already uses for this kind of question, and pooled only over
+bands with at least ``REWATCH_BLOCK_FLOOR_N`` titles on both sides, so a thin band
+cannot swing the pooled result. Every rate is reported beside its Wilson 95% upper bound
+(``gates.wilson_upper``), so a small cohort's zero is never read as "never happens".
 
 ## The cutoff
 
-One wall-clock instant for the whole server, exactly like
-``delete_threshold_ratio_measure.py``: ``cutoff = now - 365 days``. ``now`` is never the
-wall clock -- the dump path reads ``reference_now``, the data-dir path takes the newest
-``watch_event`` row -- so two runs over the same input print identical bytes.
+One wall-clock instant for the whole server, the same rule
+``delete_threshold_ratio_measure.py`` uses: ``cutoff = now - 365 days``. ``now`` always
+comes from the data, never the wall clock (the dump path reads ``reference_now``, the
+data-dir path takes the newest ``watch_event`` row), so two runs over the same input
+print identical output.
 
 ## Reusing the step-2 script
 
 This script imports ``scripts/delete_threshold_ratio_measure.py`` for its dump-reading
-(gzip-or-plain JSON) and its cutoff/window constants, rather than re-writing them. It does
-NOT modify that file. Its two SQL sweeps read two extra columns
-(``watched_status``, ``percent_complete``) that script's own sweeps do not select, since
-this measurement needs them and that one does not; the sweep shape (candidates from the
-latest snapshot, one query per media kind) is a deliberate thin copy of
-``load_datadir``'s, named at each call site below.
+(gzip-or-plain JSON) and its cutoff/window constants, instead of duplicating them. It
+does not modify that file. Its two SQL sweeps read two extra columns
+(``watched_status``, ``percent_complete``) that the other script's sweeps do not select,
+since only this measurement needs them. The sweep shape, candidates from the latest
+snapshot, one query per media kind, matches ``load_datadir``'s, noted at each call site
+below.
 
 ## The stop gate
 
-The pooled absolute lift (replay-probability difference, abandoned minus control) decides
-it: under 0.05, the abandonment signal is not built. Printed as one VERDICT line per run.
+The pooled absolute lift (replay-probability difference, abandoned minus control)
+decides the result: under 0.05, the abandonment signal is not built. Each run prints
+one VERDICT line.
 """
 
 from __future__ import annotations
@@ -94,14 +95,14 @@ ABANDONED = "abandoned"
 CONTROL_COMPLETED = "completed_only"
 CONTROL_NEVER_PLAYED = "never_played"
 
-#: One band's ``(lo_days, hi_days]`` key -> per-cohort-label counts in it. Defined ahead of
-#: ``Cohort`` itself: a ``type`` alias's body is lazily evaluated (PEP 695), so the forward
-#: reference resolves once the module finishes loading.
+#: Maps one band's ``(lo_days, hi_days]`` key to per-cohort-label counts in it. Defined
+#: before ``Cohort`` because a ``type`` alias evaluates its body lazily (PEP 695), so the
+#: forward reference to ``Cohort`` resolves once the module finishes loading.
 type BandTable = dict[tuple[float, float | None], dict[str, Cohort]]
 
-#: The two live-pair SQL sweeps, a thin copy of ``delete_threshold_ratio_measure.py``'s
-#: ``_MOVIE_SWEEP_SQL`` / ``_SEASON_SWEEP_SQL`` extended with the two columns
-#: ``qualifies()`` needs, which that script's own sweeps do not select (module docstring).
+#: The two live-pair SQL sweeps: copies of ``delete_threshold_ratio_measure.py``'s
+#: ``_MOVIE_SWEEP_SQL`` and ``_SEASON_SWEEP_SQL``, extended with the two columns
+#: ``qualifies()`` needs, which that script's own sweeps do not select.
 _MOVIE_SWEEP_SQL = (
     "SELECT rating_key, watched_at, watched_status, percent_complete FROM watch_event "
     "WHERE media_type = ? AND rating_key IS NOT NULL"
@@ -130,14 +131,15 @@ def _rate(cohort: Cohort) -> float:
 def classify_title(
     *, has_abandoned: bool, has_qualified: bool, has_play_before: bool
 ) -> str | None:
-    """Which cohort one title's pre-cutoff plays put it in, or ``None`` when its history
-    is mixed (both an abandoned and a completed play before the cutoff) -- excluded from
-    every cohort rather than assigned to one, since a mixed history is neither an honest
-    abandoned-only title nor an honest completed-only control.
+    """Return which cohort a title's pre-cutoff plays place it in.
 
-    ``has_play_before=False`` always reads as :data:`CONTROL_NEVER_PLAYED`; the caller
-    decides whether that label is usable on its input source (the live pair has no arrival
-    date to anchor it, module docstring) or must be withheld for lack of an honest anchor.
+    Returns ``None`` when the title has both an abandoned and a completed play before
+    the cutoff. That mixed history fits neither an abandoned-only nor a completed-only
+    cohort, so it is excluded rather than assigned to one.
+
+    ``has_play_before=False`` always returns :data:`CONTROL_NEVER_PLAYED`. The caller
+    decides whether that label can be used: the live pair has no arrival date to anchor
+    a never-played title, so it must be withheld there instead.
     """
     if not has_play_before:
         return CONTROL_NEVER_PLAYED
@@ -149,13 +151,12 @@ def classify_title(
 
 
 def band_for(days: float) -> tuple[float, float | None]:
-    """Which fixed dormancy-age band ``days`` falls in, over :data:`DORMANCY_BAND_EDGES`.
+    """Return which fixed dormancy-age band ``days`` falls in, over :data:`DORMANCY_BAND_EDGES`.
 
-    Half-open ``(lo, hi]``, closed at zero -- the identical edge rule
-    ``reaper.services.rewatch.fit_blocks``/``block_for`` apply to the same edges, so a
-    title measured at exactly 0 days dormancy lands in the first band rather than falling
-    through every bucket (that rule's own docstring: a dormancy of exactly 0 days is a
-    title played the day of the cutoff).
+    Each band is half-open, ``(lo, hi]``, and closed at zero. ``reaper.services.rewatch``'s
+    ``fit_blocks`` and ``block_for`` use the same rule on the same edges, so a title
+    measured at exactly 0 days dormancy (played the day of the cutoff) lands in the
+    first band instead of matching no band at all.
     """
     bounds = [*itertools.pairwise(DORMANCY_BAND_EDGES), (DORMANCY_BAND_EDGES[-1], None)]
     for lo, hi in bounds:
@@ -175,9 +176,11 @@ def _add(
 def pooled_lift(
     bands: BandTable, control_label: str, floor: int
 ) -> tuple[float | None, Cohort, Cohort, list[tuple[float, float | None]]]:
-    """The pooled absolute lift (abandoned rate minus control rate) over every band with
-    at least ``floor`` titles on BOTH sides, plus the two pooled cohorts and which bands
-    were included. ``lift is None`` when no band qualifies -- nothing to pool.
+    """Return the pooled absolute lift (abandoned rate minus control rate).
+
+    Pools every band with at least ``floor`` titles on both sides, and also returns the
+    two pooled cohorts and which bands were included. Returns ``lift=None`` when no
+    band qualifies, since there is nothing to pool.
     """
     included = [
         band
@@ -216,9 +219,11 @@ def verdict_line(lift: float | None) -> str:
 
 def load_datadir_observations(path: Path, cutoff_days: int) -> tuple[BandTable, dict[str, int]]:
     """Read ``reaper.db`` (candidates, for item context) and ``cache.db`` (``watch_event``),
-    read-only. A thin copy of ``delete_threshold_ratio_measure.py``'s ``load_datadir``
-    snapshot/candidate read (module docstring), extended to carry ``watched_status`` and
-    ``percent_complete`` so :func:`classify_title` can apply ``qualifies()``.
+    both read-only.
+
+    Copies ``delete_threshold_ratio_measure.py``'s ``load_datadir`` snapshot/candidate
+    read, extended to carry ``watched_status`` and ``percent_complete`` so
+    :func:`classify_title` can apply ``qualifies()``.
     """
     rdb = sqlite3.connect(f"file:{path / 'reaper.db'}?mode=ro", uri=True)
     cdb = sqlite3.connect(f"file:{path / 'cache.db'}?mode=ro", uri=True)
@@ -286,9 +291,8 @@ def load_datadir_observations(path: Path, cutoff_days: int) -> tuple[BandTable, 
                 continue
             if label == CONTROL_NEVER_PLAYED:
                 # reaper.db keeps no arrival date, so a title with no play before the
-                # cutoff cannot be anchored here -- it is not this source's control
-                # (module docstring; docs/LEARNINGS.md, "The delete threshold buys
-                # volume, not precision").
+                # cutoff cannot be anchored here. It is not this source's control
+                # (docs/LEARNINGS.md).
                 counts["unanchored_excluded"] += 1
                 continue
             reference_epoch = max(e for e, _, _ in before)
@@ -307,11 +311,12 @@ def load_datadir_observations(path: Path, cutoff_days: int) -> tuple[BandTable, 
 
 def load_dump_observations(path: Path, cutoff_days: int) -> tuple[BandTable, dict[str, int]]:
     """Read a ``scripts/tautulli_anon_dump.py`` dump via
-    ``delete_threshold_ratio_measure._load_dump`` (gzip-or-plain JSON, imported rather than
-    re-written). ``reference_now`` is the clock (module docstring). A thin copy of that
-    script's ``load_dump`` item/season/play traversal, extended to carry
+    ``delete_threshold_ratio_measure._load_dump`` (gzip-or-plain JSON, imported rather
+    than rewritten here). ``reference_now`` in the dump is the clock.
+
+    Copies that script's ``load_dump`` item/season/play traversal, extended to carry
     ``watched_status`` and ``percent_complete`` per play so :func:`classify_title` can
-    apply ``qualifies()`` -- fields that loader discards.
+    apply ``qualifies()``. That loader discards both fields.
     """
     data = ratio_measure._load_dump(path)
     now_epoch = int(data["reference_now"])
@@ -358,9 +363,9 @@ def load_dump_observations(path: Path, cutoff_days: int) -> tuple[BandTable, dic
             counts["mixed_excluded"] += 1
             return
         if label == CONTROL_COMPLETED:
-            # This source's control is CONTROL_NEVER_PLAYED (module docstring); a title
-            # played and fully completed before the cutoff is neither cohort here, so it
-            # is counted for transparency and left out of every band.
+            # This source's control is CONTROL_NEVER_PLAYED. A title played and fully
+            # completed before the cutoff fits neither cohort here, so it is counted
+            # for transparency and left out of every band.
             counts["completed_not_used"] += 1
             return
         if before:
@@ -368,9 +373,9 @@ def load_dump_observations(path: Path, cutoff_days: int) -> tuple[BandTable, dic
         elif added_at is not None and added_at <= cutoff_epoch:
             reference_epoch = added_at
         else:
-            # No plays before the cutoff and no usable arrival date either: the same
-            # withhold rule ``rewatch.training_pair`` states, matched here by hand since
-            # this needs the raw (status, percent) pairs that helper does not carry.
+            # No plays before the cutoff and no usable arrival date either. This
+            # matches by hand the same withhold rule ``rewatch.training_pair`` states,
+            # since this needs the raw (status, percent) pairs that helper does not carry.
             counts["withheld"] += 1
             return
         days = (cutoff_epoch - reference_epoch) / ratio_measure.DAY_SECONDS

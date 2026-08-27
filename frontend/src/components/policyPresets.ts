@@ -4,9 +4,8 @@
 // arithmetic that keeps the removal lane totalling 100, and the test for whether a draft is
 // still one of the presets.
 //
-// Pulled out of PolicyEditor.tsx, which was a single 2,700-line module holding these, five
-// rule editors and a 1,000-line component (R-2). None of it renders; all of it is pure, which
-// is why the tests can call it directly.
+// Split out of PolicyEditor.tsx into its own module. None of it renders; all of it is pure,
+// which is why the tests can call it directly.
 //
 // The preset labels and help sentences live in `locales/en/ui.json` under `policyMeta.*`.
 // This is a data module, not a component, so it reads the catalog through the plain
@@ -18,11 +17,11 @@ import type { PolicyBody, ProfileSettings } from "../api";
 import i18next from "../i18n";
 
 // ---------------------------------------------------------------------------
-// Presets: three starting points that stage (never save) the threshold and the
-// pace. Weights are RESET to the shipped mix on apply -- a preset is a known
-// place to start from, not a tweak -- and the operator's own removal rules are
-// rescaled alongside it (rescaleToBudget) so the lane still totals 100. The
-// badge only claims a preset while the draft actually matches it.
+// Presets: three starting points that stage, never save, the threshold and the pace. Weights
+// reset to the shipped mix on apply, since a preset is a known place to start from, not a
+// tweak, and the operator's own removal rules are rescaled alongside it (rescaleToBudget) so
+// the lane still totals 100. The badge only claims a preset while the draft actually matches
+// it.
 // ---------------------------------------------------------------------------
 
 export type PresetId = "cautious" | "balanced" | "aggressive";
@@ -40,17 +39,16 @@ export type PresetCaps = Pick<
   | "max_items_per_30d"
   | "max_bytes_per_30d"
   | "grace_days"
-  // Every preset promises enforcement ("removes less per run"), so it must also turn the
-  // caps ON. Staging the numbers while leaving caps off saved an uncapped profile (B-10).
+  // Every preset promises enforcement ("removes less per run"), so it must also turn the caps
+  // on. Staging the numbers while leaving caps off would save an uncapped profile.
   | "caps_enabled"
-  // Turning the caps on is what activates `policy._run_cap_within_rolling_cap`, which
-  // early-returns while they are off -- so a preset that writes a SUBSET of the caps can
-  // build a combination out of one the operator was allowed to store. This field was the
-  // subset's one omission: the allowance accepts up to 25 items with no size, Cautious sets
-  // 5 items per run, and the validator refuses a run that may delete more unmeasured items
-  // than items. An operator who had raised the allowance clicked a starting point and got a
-  // 422 instead (#256). Every cap the validator reads is named here now, so the preset can
-  // only ever produce a combination it has stated in full.
+  // Turning the caps on activates `policy._run_cap_within_rolling_cap`, which early-returns
+  // while they are off, so a preset that writes only a subset of the caps can produce a
+  // combination the operator was never allowed to store directly: an allowance of up to 25
+  // unmeasured items combined with Cautious's 5-items-per-run cap fails the validator, which
+  // refuses a run that may delete more unmeasured items than items. Naming every cap the
+  // validator reads here means a preset can only ever produce a combination it has stated in
+  // full.
   | "max_unmeasured_per_run"
 >;
 
@@ -74,9 +72,9 @@ export const presets = (): {
       grace_days: 30,
       caps_enabled: true,
       // The shipped default, on all three: no preset's help text says anything about items
-      // whose size nothing will report, so none of them may quietly admit any. It is also
-      // the only value that is legal under every preset's per-run item cap, and the one that
-      // holds those items back (rule 31 -- a preset resolves toward keeping the file).
+      // whose size nothing will report, so none of them may quietly admit any. It is also the
+      // only value that is legal under every preset's per-run item cap, and the value that
+      // holds those items back, since a preset resolves toward keeping the file.
       max_unmeasured_per_run: 0,
     },
   },
@@ -119,15 +117,15 @@ export const REMOVAL_POINTS = 100;
 /** A set of removal weights rescaled so they total exactly REMOVAL_POINTS, using the same
  *  largest-remainder arithmetic the server uses to repair a stored policy
  *  (engine/policy_migrations.rebalance). Score-preserving: the score is already
- *  100 * (pressure / total weight), so scaling every weight by one factor cannot move it,
- *  and largest-remainder keeps the rounding under a point.
+ *  100 * (weighted signal total / total weight), so scaling every weight by one factor
+ *  cannot move it, and largest-remainder keeps the rounding under a point.
  *
- *  A preset needs this because the shipped mix alone is already the whole budget, so
- *  without it any rule of the operator's own put the draft over budget and blocked Save
+ *  A preset needs this because the shipped mix alone is already the whole budget, so without
+ *  it, any removal rule of the operator's own would push the draft over budget and block Save
  *  for the pace draft too.
  *
- *  Returns the weights unchanged when there is nothing to scale (no weight at all), which
- *  the budget readout then reports as under budget, as before.
+ *  Returns the weights unchanged when there is nothing to scale (no weight at all), which the
+ *  budget readout then reports as under budget.
  */
 export function rescaleToBudget(weights: number[]): number[] {
   return rescaleTo(weights, REMOVAL_POINTS);
@@ -142,8 +140,8 @@ export function rescaleTo(weights: number[], target: number): number[] {
   const exact = weights.map((w) => (w * target) / total);
   const floors = exact.map((x) => Math.floor(x));
   const spare = target - floors.reduce((sum, f) => sum + f, 0);
-  // Largest fractional remainder first; ties keep their original order, as the server's
-  // stable sort does.
+  // Largest fractional remainder first. Ties keep their original order, the same way the
+  // server's stable sort does.
   const order = floors
     .map((_, i) => i)
     .sort((a, b) => exact[b]! - floors[b]! - (exact[a]! - floors[a]!));
@@ -151,20 +149,18 @@ export function rescaleTo(weights: number[], target: number): number[] {
   return floors;
 }
 
-/** Whether the built-in weights still have the shipped mix's SHAPE.
+/** Whether the built-in weights still have the shipped mix's shape.
  *
- *  Exact equality was the old test, and it broke the moment the operator had one rule of
- *  their own: applyPreset writes the mix and then rescales the WHOLE removal lane back to
- *  the 100-point budget, so what gets stored is the mix times a factor, never the mix
- *  itself. Clicking "Cautious" with a custom rule lit no segment at all and flipped the
- *  help line to "Custom: your own tuning, not a preset." on the very click that applied
- *  it, contradicted by the "Staged, not saved" line right below (U-8).
+ *  Exact equality is not enough: applyPreset writes the mix and then rescales the whole
+ *  removal lane back to the 100-point budget, so what gets stored is the mix times a factor,
+ *  never the mix itself. Once the operator has one removal rule of their own, a preset's
+ *  weights are never exactly equal to the shipped mix, even right after applying it.
  *
- *  Rescaling is score-preserving, so the same shape IS the same preset. With nothing to
- *  rescale the comparison stays exact, to the point. Otherwise the mix is scaled to the
- *  draft's own built-in total with the same largest-remainder arithmetic, and allowed to
- *  differ by the one point that arithmetic can itself move a weight -- below that a hand
- *  tune and a rounding are the same number, and no test can tell them apart.
+ *  Rescaling is score-preserving, so the same shape is the same preset. With nothing to
+ *  rescale, the comparison stays exact. Otherwise the mix is scaled to the draft's own
+ *  built-in total with the same largest-remainder arithmetic, and allowed to differ by the
+ *  one point that arithmetic can itself move a weight: below that, a hand tune and a
+ *  rounding are the same number, and no test can tell them apart.
  */
 export function weightsMatchMix(draft: PolicyBody, mix: Record<string, number>): boolean {
   const want = draft.signals.map((s) => mix[s.signal] ?? 0);
@@ -181,7 +177,7 @@ export function weightsMatchMix(draft: PolicyBody, mix: Record<string, number>):
 
 /** Which preset the draft currently IS, or null for "Custom". Honest by construction: a
  *  preset badge is only shown while the threshold matches it AND the built-ins still carry
- *  the shipped mix's shape -- hand-tuned weights always read as Custom. */
+ *  the shipped mix's shape. Hand-tuned weights always read as Custom. */
 export function activePreset(draft: PolicyBody): PresetId | null {
   const mix = DEFAULT_WEIGHTS[draft.media_type === "tv" ? "tv" : "movie"];
   if (!weightsMatchMix(draft, mix)) return null;

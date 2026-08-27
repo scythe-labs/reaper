@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The local-account sheet declares aria-modal="true", which promises the page behind it is
-// unreachable. It keeps its own markup (it slides up rather than appearing over a scrim),
-// so these pin the part it borrows from ModalShell: Tab stays inside the sheet, in both
+// unreachable. It keeps its own markup (it slides up rather than appearing over a scrim), so
+// these tests pin the part it borrows from ModalShell. Tab stays inside the sheet, in both
 // directions, instead of landing on the sign-in buttons behind it.
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -15,8 +15,8 @@ const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
-// The one read every case here shares: the sign-in page branches on it before it draws a form,
-// so it carries a default rather than being set per test.
+// Every case here shares this one read. The sign-in page branches on it before it draws a
+// form, so it carries a default instead of being set per test.
 apiMock.authContext.mockResolvedValue({
   setup_needed: false,
   plex_linked: true,
@@ -37,11 +37,11 @@ async function openSheet() {
 
 describe("the local-account sheet", () => {
   // This sheet is the only way into Reaper for an operator with no Plex account, and it is the
-  // first screen anyone meets. A username or password box a reader cannot name locks them out of
-  // the app with nothing to try.
-  // `pageLevel`, unlike the panel audits: the sign-in screen IS the whole page rather than a
-  // piece of one, so it has to answer for its own landmarks, and the signed-in shell's audit
-  // cannot answer for it. It had none at all until `auth-card` became a `main`.
+  // first screen anyone meets. A username or password box a reader cannot name locks them out
+  // of the app with nothing to try.
+  // This uses `pageLevel`, unlike the panel audits, because the sign-in screen is the whole
+  // page rather than a piece of one. It has to answer for its own landmarks, since the
+  // signed-in shell's audit cannot answer for it.
   it("has no accessibility violations", async () => {
     await openSheet();
     await screen.findByLabelText(/username/i);
@@ -83,10 +83,9 @@ describe("the local-account sheet", () => {
     }
   });
 
-  // #382: the sheet used to assert the safeguard flat, so on an install that had no local
-  // account the promise and its own denial rendered one above the other. The claim now
-  // renders only where it is true, which is what these two pin -- from opposite directions,
-  // because a claim narrowed to nowhere is the same failure the other way round.
+  // The claim renders only where it is true, which is what these two tests pin from opposite
+  // directions. A claim narrowed to nowhere is the same failure as a claim that contradicts
+  // itself.
   it("promises the fallback on an install that actually has one", async () => {
     await openSheet();
     const blurb = await screen.findByText(/fallback for when plex is unreachable/i);
@@ -107,12 +106,13 @@ describe("the local-account sheet", () => {
       // And the way out is the one reachable from this browser. The host command stays for
       // an operator who cannot reach plex.tv, which is the case they opened this sheet in.
       //
-      // Found by its words rather than by `role="alert"`, which it no longer carries: whether
+      // Found by its words rather than by `role="alert"`, which it no longer carries. Whether
       // this install has a local account is read from `["authContext"]` on first load, so the
-      // notice is on the sheet before anything is pressed and is `standing` (#394). The sheet is
-      // always mounted and only translated off-screen, so the press that opens it reveals a node
-      // that was already there. Asserted rather than merely worked around, so putting the alert
-      // back fails here.
+      // notice sits on the sheet from the start, before anything is pressed, rather than
+      // appearing only after an action. The sheet is always mounted and only translated
+      // off-screen, so the press that opens it reveals a node that was already there. This is
+      // asserted directly, rather than merely worked around, so putting the alert role back
+      // fails this test.
       const notice = screen.getByText(/sign in with plex above/i).closest(".notice");
       expect(notice).not.toHaveAttribute("role", "alert");
       expect(notice).toHaveTextContent(/reaper-admin create-admin/i);
@@ -128,8 +128,8 @@ describe("the local-account sheet", () => {
 
 describe("the Plex sign-in popup", () => {
   it("opens with noopener, so plex.tv gets no handle on the page that takes the password", async () => {
-    // S-4: without it the auth page holds `window.opener` pointing at this window and can
-    // navigate it -- and what it would be navigating away from is Reaper's own sign-in.
+    // Without noopener, the auth page holds `window.opener` pointing at this window and can
+    // navigate it, away from Reaper's own sign-in page.
     apiMock.plexStart.mockResolvedValue({ pin_id: 1, auth_url: "https://plex.test/link" });
     apiMock.plexPoll.mockResolvedValue({ status: "pending" });
     const open = vi.fn<typeof window.open>(() => null);
@@ -146,9 +146,8 @@ describe("the Plex sign-in popup", () => {
 
   it("says so when the wait turns into a list of servers to choose from", async () => {
     // The picker replaces the "Waiting for Plex" block on a two-second poll rather than on a
-    // press, so the screen grew a list of servers with nothing to say it had (#177). The
-    // Settings link panel already announced this and its twin here did not, which is the whole
-    // shape of rule 72: one of a pair fixed, the other left.
+    // press, so the screen can grow a list of servers with nothing announcing it. The Settings
+    // link panel already announced this, and its twin here did not, until now.
     apiMock.plexStart.mockResolvedValue({ pin_id: 1, auth_url: "https://plex.test/link" });
     apiMock.plexPoll.mockResolvedValue({
       status: "choose_server",
@@ -158,8 +157,8 @@ describe("the Plex sign-in popup", () => {
       "open",
       vi.fn<typeof window.open>(() => null),
     );
-    // The first poll is a 2s tick away, which is past every default timeout in here. Rule 133:
-    // restored in the `finally`, or the next test in the file inherits the fake clock.
+    // The first poll is a 2-second tick away, past every default timeout used here. The fake
+    // clock is restored in the `finally` block, or the next test in the file would inherit it.
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       renderWithProviders(
@@ -196,14 +195,13 @@ describe("the Plex sign-in popup", () => {
 
 describe("the recovery card", () => {
   it("names both places the code is, and the log is not one of them", async () => {
-    // mint_recovery_token prints its banner rather than logging it, deliberately, so the
-    // code never reaches the in-app Logs tab or the files that tab downloads. The card used
-    // to say "to its log", which sent people to Settings -> Logs to find nothing (U-11).
+    // mint_recovery_token prints its banner rather than logging it, deliberately, so the code
+    // never reaches the in-app Logs tab or the files that tab downloads.
     //
-    // The file is the half this test was missing: the console is not a channel at all on a
-    // windowed Windows build or a Finder-launched .app, so naming it alone left the operators
-    // who most need this screen with nowhere to look (#433). Both are asserted, because a card
-    // naming one of two is exactly as wrong for half the install base as naming neither.
+    // The console is not a channel at all on a windowed Windows build or a Finder-launched
+    // .app, so naming only the file, or only the console, leaves the operators who most need
+    // this screen with nowhere to look. Both are asserted, because a card naming one of two is
+    // exactly as wrong for half the install base as naming neither.
     window.history.pushState({}, "", "/recover");
     renderWithProviders(<Login />);
 
@@ -211,17 +209,17 @@ describe("the recovery card", () => {
     expect(note.textContent).toContain("recovery.txt");
     expect(note.textContent).toContain("console output");
     expect(note.textContent).not.toContain("to its log");
-    // The promise this screen makes about where it lands the operator. It was false until the
-    // session carried a recovery mark, so it is pinned rather than left to read as decoration.
+    // This is the promise the screen makes about where it lands the operator, so it is pinned
+    // rather than left to read as decoration.
     expect(note.textContent).toContain("without the old one");
     window.history.pushState({}, "", "/");
   });
 
   it("has no accessibility violations, landmarks included", async () => {
-    // The twin of the sign-in card's `main`, and the half that nothing pinned: reverting only
-    // this one back to a `div` left every test in this file green. A locked-out operator
-    // reaches this screen and no other, so its landmarks are the only ones on the page and the
-    // sheet audit above cannot answer for them (rule 72, rule 118).
+    // This is the twin of the sign-in card's `main`. Reverting it back to a `div` would leave
+    // every other test in this file passing, so this is the only guard on it. A locked-out
+    // operator reaches this screen and no other, so its landmarks are the only ones on the
+    // page, and the sheet audit above cannot answer for them.
     window.history.pushState({}, "", "/recover");
     renderWithProviders(<Login />);
 

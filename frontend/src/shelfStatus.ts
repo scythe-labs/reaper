@@ -5,16 +5,15 @@
 // Two records describe it and only one of them is current: `last`, the last pass that
 // completed, and `last_skip`, a scan that finished without updating the shelf at all.
 // `leaving_soon.after_scan` writes the skip and deliberately leaves the completed pass
-// alone, because a skipped pass wrote nothing to Plex -- the shelf still holds what the
+// alone, because a skipped pass wrote nothing to Plex: the shelf still holds what the
 // last completed pass put there, and those counts are the only true ones anybody has.
 // Nothing ever clears a skip, so what retires it is a later pass carrying a later
 // timestamp, which makes this comparison the whole mechanism.
 //
-// Written once because two surfaces make it (rule 104): the Jobs row, which turns it red
-// and names the reason, and the Plex panel's shelf status line, which for its whole life
-// read `last` alone and so reported a shelf that had silently stopped updating as a
-// confident current verdict, on the screen an operator goes to when they suspect exactly
-// that.
+// Written once because two surfaces need it: the Jobs row, which turns it red and names
+// the reason, and the Plex panel's shelf status line. Both must read the same comparison,
+// or one could report a shelf that has silently stopped updating as a confident current
+// verdict, on the exact screen an operator goes to when they suspect that.
 
 import type { LeavingSoonSettings } from "./api";
 
@@ -35,8 +34,8 @@ export function shelfSkipIsCurrent(shelf: LeavingSoonSettings | undefined): bool
  *
  *  Saving a name stores it and nothing else: moving the shelf is a whole-library reconcile
  *  per library, so the next pass does it and Plex keeps showing the old name until then.
- *  The two surfaces that report a shelf both have to say so, which is why this is here and
- *  not in either of them (rule 104).
+ *  The two surfaces that report a shelf both have to say so, which is why this lives here
+ *  and not in either of them.
  *
  *  False while the shelf is off. No pass runs then, so the names would disagree forever and
  *  the sentence would be about a shelf that is not in the library at all.

@@ -3,11 +3,11 @@
 //
 // What is on disk under `manual/`, audited against what the docs declare.
 //
-// This is deliberately NOT in `manual.gen.test.ts`. That file WRITES the pages under `-u`, and a
-// directory walk sharing a run with the writer reads the tree mid-flush: the first version of
-// this check sat beside the snapshots, found nothing, and reported zero pages against five docs.
-// A gate that races the thing it audits is not a gate. So the writing lives there and the
-// looking lives here, and this file never writes.
+// This is deliberately not in `manual.gen.test.ts`. That file writes the pages under `-u`, and
+// a directory walk sharing a run with the writer would read the tree mid-flush, finding nothing
+// and reporting zero pages against however many docs exist. A gate that races the thing it
+// audits is not a gate. So the writing lives there and the looking lives here, and this file
+// never writes.
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
@@ -42,25 +42,25 @@ function generatedPages(): string[] {
 }
 
 describe("the manual's generated pages", () => {
-  // Rule 64: retiring a doc has to retire its page too. The generator only ever visits docs that
-  // still exist, so a renamed or deleted doc leaves its old page behind and the site goes on
-  // serving it, with nothing else looking.
+  // Retiring a doc has to retire its page too. The generator only ever visits docs that still
+  // exist, so a renamed or deleted doc leaves its old page behind, and the site goes on serving
+  // it with nothing else looking.
   it("leaves no page behind for a doc that no longer exists", () => {
     const expected = new Set(DOCS.map((doc) => manualPath(doc)));
     expect(generatedPages().filter((p) => !expected.has(p))).toEqual([]);
   });
 
-  // Rule 145: the check above passes vacuously on an empty walk, which is the one way it can be
-  // wrong and silent. Pin the count the walk collects: if you added a doc, this number moves with
-  // it; if you did not, a page dropped out of the walk.
+  // The check above passes vacuously on an empty walk, which is the one way it can be wrong and
+  // silent. This pins the count the walk collects. Adding a doc moves this number with it. If
+  // the count changes without a doc being added, a page dropped out of the walk.
   it("finds exactly one generated page per doc", () => {
     expect(generatedPages()).toHaveLength(DOCS.length);
     expect(DOCS).toHaveLength(6);
   });
 
-  // Rule 147: the marker is a source-text matcher, so pin the population it scans as well as the
-  // population it selects. These two numbers moving together is the normal case; only one moving
-  // means a hand-written page grew a banner, or a generated one lost it.
+  // The marker is a source-text matcher, so this pins the population it scans as well as the
+  // population it selects. These two numbers moving together is the normal case. Only one
+  // moving means a hand-written page grew a banner, or a generated one lost it.
   it("counts the hand-written pages that sit beside them", () => {
     expect(allPages()).toHaveLength(21);
     expect(allPages().length - generatedPages().length).toBe(15);

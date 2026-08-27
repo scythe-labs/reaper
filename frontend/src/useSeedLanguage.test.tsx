@@ -3,10 +3,10 @@
 // The language seed: the one moment the browser's own preference reaches the server.
 //
 // The setting lives on the server because a notification is composed there, with no browser to
-// ask. But nothing before sign-in can carry a browser's answer -- `AuthGuard` opens only
-// `/api/health` and `/api/auth/` -- so the first authenticated read is where this fires. Without
-// it, an install that upgraded into this change would show one language in the picker while
-// writing notifications in another, which is the split the whole change closes.
+// ask. But nothing before sign-in can carry a browser's answer, since `AuthGuard` opens only
+// `/api/health` and `/api/auth/`. So the first authenticated read is where this fires. Without
+// it, an upgraded install would show one language in the picker while writing notifications in
+// another.
 
 import { waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -78,7 +78,7 @@ describe("the language seed", () => {
     renderHookWithProviders(() => useSeedLanguage());
 
     // The app is already painting in this language and Settings can still set it, so a failed
-    // seed is not worth a screen. It must not become an unhandled rejection either (rule 135).
+    // seed is not worth a screen. It must not become an unhandled rejection either.
     await waitFor(() => expect(apiMock.saveGeneral).toHaveBeenCalledTimes(1));
   });
 });

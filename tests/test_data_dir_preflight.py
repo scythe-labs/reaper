@@ -5,9 +5,9 @@ An unwritable data folder is the single most common deploy failure (a bind mount
 owned by root while the container runs unprivileged). These lock in that it fails
 with a plain, actionable message rather than SQLite's opaque driver traceback.
 
-One test here is uid-dependent and always will be: root bypasses directory permissions,
-so a chmod-based probe cannot fail for it. CI runs jobs in a container whose uid this
-repository does not pin, so that test may or may not run there -- which is why the real
+One test here is uid-dependent and always will be. Root bypasses directory permissions, so
+a chmod-based probe cannot fail for it. CI runs jobs in a container whose uid this
+repository does not pin, so that test may or may not run there, which is why the real
 filesystem is also exercised by a case no uid can bypass
 (``test_a_real_unusable_data_dir_is_caught_whatever_the_uid``). The coverage no longer
 depends on who the runner happens to be.
@@ -76,13 +76,13 @@ def test_a_real_unusable_data_dir_is_caught_whatever_the_uid(tmp_path: Path) -> 
     """A genuine filesystem refusal, on every runner, root or not.
 
     The permission case below is the one operators actually hit, but root bypasses
-    directory permissions, so on a CI runner that runs jobs as root it silently skips --
-    and the module's stated subject ("the single most common deploy failure") goes
-    unverified with nothing on screen to say so. Its two other siblings monkeypatch
-    ``TemporaryFile`` to raise, which tests the *message* rather than the probe.
+    directory permissions, so on a CI runner that runs jobs as root it silently skips, and
+    the module's stated subject ("the single most common deploy failure") goes unverified
+    with nothing on screen to say so. Its two other siblings monkeypatch ``TemporaryFile``
+    to raise, which tests the *message* rather than the probe.
 
-    A data dir under a regular FILE is the failure no uid can bypass: ``mkdir`` gets
-    ENOTDIR from the kernel whoever asks. Different errno, same contract -- a real OSError
+    A data dir under a regular *file* is the failure no uid can bypass. ``mkdir`` gets
+    ENOTDIR from the kernel whoever asks. Different errno, same contract. A real OSError
     from a real path becomes a plain ``DataDirError`` rather than SQLite's opaque
     "unable to open database file" several layers later.
     """
@@ -123,7 +123,7 @@ def test_preflight_clears_a_staged_restore_nobody_confirmed(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Boot is the one place that can reclaim a staging whose token died with the browser
-    that held it, so the wiring is pinned here and not only the sweep itself (#388)."""
+    that held it, so the wiring is pinned here and not only the sweep itself."""
     settings = _settings(tmp_path)
     settings.ensure_data_dir()
     pending = tmp_path / restore.PENDING_DIR
@@ -144,8 +144,8 @@ def test_preflight_says_when_it_cleared_crash_leftovers(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The twin of the line above, swept for the same reason (rule 72): both sweeps report
-    what they took, and neither message had a test."""
+    """The twin of the line above, swept for the same reason. Both sweeps report what they
+    took, and neither message had a test."""
     settings = _settings(tmp_path)
     settings.ensure_data_dir()
     (tmp_path / ".restore-tmp-abandoned").mkdir()
@@ -214,9 +214,9 @@ class TestBootSurvivesHousekeeping:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        # The sibling of the one above, and the reason it is here: the two handlers are the
-        # same shape, so a change that narrows one is a change that should have swept both
-        # (rule 72). This one had no test either.
+        # The sibling of the one above, and the reason it is here. The two handlers are
+        # the same shape, so a change that narrows one is a change that should have swept
+        # both. This one had no test either.
         monkeypatch.setattr(preflight, "get_settings", lambda: _settings(tmp_path))
         monkeypatch.setattr(backup, "sweep_stale_temp", self._raise)
 
@@ -256,25 +256,25 @@ def test_preflight_prints_message_and_returns_one(
 
 
 class TestTheFourFatalMessagesReachTheCaller:
-    """A frozen desktop build's operator sees a refusal, or sees nothing at all (#622).
+    """A frozen desktop build's operator sees a refusal, or sees nothing at all.
 
     Windows is windowed and macOS is `LSUIElement`, PyInstaller leaves the streams `None`,
     and `packaging/pyinstaller/entry.py` rebinds them to `os.devnull`. So a stderr-only
-    refusal is written to the null device: a double-clicked Reaper that will not start
+    refusal is written to the null device. A double-clicked Reaper that will not start
     closes with no window, no dialog and no message. `preflight.main` returned an int and
     kept its sentence to itself, so the launcher had nothing to hand `_say`.
 
-    **Three fatal messages rode this path, not the two the issue names.** The third is the
+    Three fatal messages ride this path, not the two originally reported. The third is the
     schema gate's refusal, which `audit/simplification-plan` added, and it has exactly the
-    same shape. A fix written against `dev` would have covered two and left it invisible.
+    same shape. A fix written against `dev` alone would have covered two and left it
+    invisible.
 
-    **The fourth is a pre-migration snapshot that could not be written** (#566), and its
-    test is not here: it needs a database migrated to a real revision, so it lives with the
-    rest of that feature, as
+    The fourth is a pre-migration snapshot that could not be written, and its test is not
+    here. It needs a database migrated to a real revision, so it lives with the rest of
+    that feature, as
     `test_pre_migration_snapshot.TestPreflightRefusesRatherThanMigrateUnprotected
     ::test_a_snapshot_that_cannot_be_written_stops_the_boot`. Three tests below, four
-    messages, and this paragraph is what says so rather than the class implying otherwise
-    (rule 132).
+    messages, and this paragraph is what says so rather than the class implying otherwise.
     """
 
     @staticmethod
@@ -296,7 +296,7 @@ class TestTheFourFatalMessagesReachTheCaller:
 
         assert len(seen) == 1
         assert "chown -R" in seen[0]
-        # And it is no longer ALSO on stderr, so a caller routing it elsewhere does not
+        # And it is no longer *also* on stderr, so a caller routing it elsewhere does not
         # print it twice on a console build.
         assert capsys.readouterr().err == ""
 
@@ -321,7 +321,7 @@ class TestTheFourFatalMessagesReachTheCaller:
         """The third one, and the reason this could not be fixed on `dev`.
 
         `preflight.main` gained the schema-gate refusal on this branch, in the same
-        stderr-only shape as the two the issue names.
+        stderr-only shape as the two originally reported.
         """
         monkeypatch.setattr(preflight, "get_settings", lambda: _settings(tmp_path))
         monkeypatch.setattr(

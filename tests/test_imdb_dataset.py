@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The IMDb ratings dataset.
 
-Every other unknown in Reaper protects an item. A missing *rating* does not: the rule
-is "keep this if IMDb >= 7.5", so an absent rating means the protection cannot fire
-and a well-rated film becomes deletable. An empty or half-loaded table would therefore
-strip protection from the entire library -- silently, and in the one direction that
-destroys data. So these tests are mostly about refusing to answer.
+Every other unknown in Reaper protects an item. A missing *rating* does not. The rule is
+"keep this if IMDb >= 7.5", so an absent rating means the protection cannot fire and a
+well-rated film becomes deletable. An empty or half-loaded table would therefore strip
+protection from the entire library, silently, and in the one direction that destroys data.
+So these tests are mostly about refusing to answer.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ SAMPLE = (
     "tconst\taverageRating\tnumVotes\n"
     "tt0111161\t9.3\t3206008\n"  # Shawshank
     "tt0068646\t9.2\t2236351\n"  # The Godfather
-    "tt0944947\t9.2\t2633825\n"  # Game of Thrones (a SERIES -- the dataset covers TV)
+    "tt0944947\t9.2\t2633825\n"  # Game of Thrones (a *series*, since the dataset covers TV)
     "tt9999999\t8.9\t12\n"  # high rating, 12 votes: noise
     "tt0000000\t\\N\t\\N\n"  # IMDb's null
     "malformed-line\n"
@@ -64,8 +64,8 @@ class TestParsing:
         assert ("tt0111161", 9.3, 3_206_008) in rows
 
     def test_nulls_are_skipped_not_coerced_to_zero(self, archive: Path) -> None:
-        """IMDb writes \\N for null. A rating of 0.0 would read as 'terrible film,
-        delete it' -- the precise inversion of the truth."""
+        """IMDb writes \\N for null. A rating of 0.0 would read as 'terrible film, delete
+        it', the precise inversion of the truth."""
         with archive.open("rb") as handle:
             ids = [r[0] for r in parse_rows(handle)]
 
@@ -92,9 +92,9 @@ class TestDegradedStateRefusesToAnswer:
     """The heart of it."""
 
     async def test_lookup_before_any_load_raises(self, engine: AsyncEngine) -> None:
-        """It must NOT return an empty dict. The caller would read that as 'none of
-        these films are rated', conclude no rating protection applies, and hand the
-        whole library to the reaper."""
+        """It must not return an empty dict. The caller would read that as 'none of these
+        films are rated', conclude no rating protection applies, and hand the whole
+        library to the reaper."""
         with pytest.raises(DatasetDegradedError, match="missing or stale"):
             await ImdbRatings(engine).lookup(["tt0111161"])
 
@@ -137,13 +137,13 @@ class TestAtomicLoad:
         """The skip count is what tells anyone the file's format moved under us.
 
         A load that keeps millions of rows but drops half of them still clears the
-        zero-row tripwire, so nothing else catches it -- and every rating it lost is a
-        title that no longer has a rating to protect it. Logging alone left it where no
-        operator would ever look.
+        zero-row tripwire, so nothing else catches it, and every rating it lost is a title
+        that no longer has a rating to protect it. Logging alone left it where no operator
+        would ever look.
         """
         loaded = await load(engine, archive)
 
-        assert loaded.skipped == 2  # the two IMDb nulls; the malformed line has 2 columns
+        assert loaded.skipped == 2  # the two IMDb nulls, and the malformed line has 2 columns
         assert loaded.skip_fraction > 0
         assert loaded.drifted is True  # 2 of 6 read, far past the drift threshold
 
@@ -207,7 +207,7 @@ class TestLookup:
     async def test_covers_television_not_just_film(
         self, engine: AsyncEngine, archive: Path
     ) -> None:
-        """The reason to prefer the dataset over an API: it rates TV series and
+        """The reason to prefer the dataset over an API. It rates TV series and
         individual episodes, which nothing else gives us for free."""
         await load(engine, archive)
 
@@ -215,9 +215,8 @@ class TestLookup:
         assert found["tt0944947"].num_votes > 1_000_000
 
     async def test_an_unknown_id_is_simply_absent(self, engine: AsyncEngine, archive: Path) -> None:
-        """Absent from a HEALTHY dataset is a real answer -- this title genuinely has
-        no IMDb rating. That is different from the dataset being broken, which
-        raises."""
+        """Absent from a *healthy* dataset is a real answer. This title genuinely has no
+        IMDb rating. That is different from the dataset being broken, which raises."""
         await load(engine, archive)
 
         found = await ImdbRatings(engine).lookup(["tt0000404"])
@@ -226,9 +225,9 @@ class TestLookup:
     async def test_the_vote_count_is_what_makes_a_floor_meaningful(
         self, engine: AsyncEngine, archive: Path
     ) -> None:
-        """8.9/10 from 12 votes is noise: an obscure title carrying a high score on a
-        tiny number of votes, and every library holds a handful. Without the vote count,
-        a rating floor would protect every one and fill the library with well-rated junk."""
+        """8.9/10 from 12 votes is noise. It is an obscure title carrying a high score on a
+        tiny number of votes, and every library holds a handful. Without the vote count, a
+        rating floor would protect every one and fill the library with well-rated junk."""
         await load(engine, archive)
         found = await ImdbRatings(engine).lookup(["tt9999999"])
 

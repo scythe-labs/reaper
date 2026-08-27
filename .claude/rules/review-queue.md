@@ -9,7 +9,8 @@ paths:
 
 # The review queue: fate, overrides, and the two-level spare
 
-Blockers, not suggestions. **Rule numbers are permanent** (tests and comments cite them); where
+Blockers, not suggestions. **Rule numbers are permanent** (tests and the archived review passes
+cite them; code comments do not cite rule numbers); where
 two overlap, the more specific governs. Split out of `.claude/rules/frontend.md` because these
 seven bind one cluster — the queue, its override controls, the show panel, and the `reviewFate`
 helpers they share — and were loading on every Settings, Policy, Plex, and Logs session for
@@ -17,7 +18,7 @@ nothing. The SPA's general UI grammar stays in `frontend.md`; rules binding ever
 the root `CLAUDE.md`. Holds 48–50, 120–123.
 
 **Read this with `frontend.md`, not instead of it.** Rule 51 governs the row layout these
-controls sit in and stays there, because the stylesheet cites it eight times.
+controls sit in and stays there.
 
 **48. Reap is dropped wherever the item is already condemned; keep-first colors the pair.** A
 hand Reap does nothing to an already-condemned item, so it is hidden in every surface carrying

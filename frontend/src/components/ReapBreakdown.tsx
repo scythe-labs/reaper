@@ -3,11 +3,12 @@
 // What this reap removes: the ledger, and why.
 //
 // The Reap page's context above the plan. It reads the latest scan and the owner's live
-// overrides and shows what a reap would remove -- what the policy condemned, what the owner
-// changed by hand, the net -- and why the policy condemned them, tallied from each title's
-// own stored signals. It has no per-item controls: sparing or reconsidering a single title
-// is the Review queue's job, and this links there rather than growing a second, weaker copy
-// of it. Deletes nothing; the plan is still built, dry-run, and executed below.
+// overrides and shows what a reap would remove: what the policy condemned, what the owner
+// changed by hand, and the net, plus why the policy condemned them, tallied from each
+// title's own stored signals. It has no per-item controls: sparing or reconsidering a single
+// title is the Review queue's job, and this links there rather than growing a second, weaker
+// copy of it. This page deletes nothing. The plan is still built, dry-run, and executed
+// below.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trans, useTranslation } from "react-i18next";
@@ -81,21 +82,21 @@ export function ReapBreakdown({
   });
   // The planner holds unmeasured items back only while the unknown-size allowance is 0 (its
   // default). Above zero it admits them, so the "won't remove them" line and the count that
-  // subtracts them would both be lies (B-8). One shared query key, so this is free here.
-  // Every number on this page turns on it, so a read that FAILED is said out loud rather
-  // than defaulted: the card's safe default (assume held back) would silently shrink a
-  // delete count here, which is the unsafe direction.
+  // subtracts them would both be lies. One shared query key, so this is free here. Every
+  // number on this page turns on it, so a read that FAILED is said out loud rather than
+  // defaulted: the card's safe default (assume held back) would silently shrink a delete
+  // count here, which is the unsafe direction.
   const allowance = useHoldsBackUnmeasured();
   const holdsBackUnmeasured = allowance.holdsBack;
   // The one action the expired-spares notice below offers: a scan is what realizes a spare's
   // clock, so it is the only thing that hands those titles back to policy. Declared up here
-  // with the other hooks -- the early returns below are what makes that necessary.
+  // with the other hooks, since the early returns below are what makes that necessary.
   //
   // The shared `["scanStatus"]` cache, so this costs no request of its own: the shell already
   // polls it, and a scan already running (the scheduler, another device) must show here rather
-  // than offer a button that starts a second one. What the finished scan then refreshes --
-  // this ledger included -- is the shell's `useScanSettled`, not this component, which the
-  // operator can navigate away from mid-scan.
+  // than offer a button that starts a second one. What the finished scan then refreshes, this
+  // ledger included, is the shell's `useScanSettled`, not this component, which the operator
+  // can navigate away from mid-scan.
   const queryClient = useQueryClient();
   const { data: scanStatus } = useQuery({ queryKey: ["scanStatus"], queryFn: api.scanStatus });
   const scanning = scanStatus?.running ?? false;
@@ -110,17 +111,16 @@ export function ReapBreakdown({
   // An unreadable breakdown must never look like "nothing to reap": say we couldn't look,
   // in the amber tone, rather than rendering an empty ledger.
   //
-  // Undivided on purpose, and the one site in the #190 sweep that stays that way. Everywhere
-  // else a failed refetch keeps the last good value and says it may be out of date, because what
-  // is held beats nothing. What is held HERE is a set of delete counts, and ["reap-breakdown"]
-  // is override-aware, so one Spare click refetches it: keeping the old ledger would state how
-  // many titles this reap removes at the moment the operator changed that number. `PolicyEditor`
-  // settles the same question the same way for the simulator's column ("a stale count shown as
-  // current is exactly what this column must never do"), so refusing is the consistent answer
-  // rather than an unswept branch. The arm covers both reads and the `!data` disjunct says so:
-  // a first read that failed settles at `isError` with `data` still undefined, which `isPending`
-  // above does not catch. Only the OTHER case, a failed refetch with a ledger still in hand, is
-  // dropping anything, and it is the one this note is about.
+  // Undivided on purpose, unlike most reads in this app. Elsewhere a failed refetch keeps the
+  // last good value and says it may be out of date, because what is held beats nothing. What
+  // is held HERE is a set of delete counts, and ["reap-breakdown"] is override-aware, so one
+  // Spare click refetches it: keeping the old ledger would state how many titles this reap
+  // removes at the moment the operator changed that number. `PolicyEditor` settles the same
+  // question the same way for the simulator's column: a stale count shown as current is
+  // exactly what a page like this must never do. The check covers both reads, and the `!data`
+  // half matters because a first read that failed settles at `isError` with `data` still
+  // undefined, which `isPending` above does not catch. Only the other case, a failed refetch
+  // with a ledger still in hand, is dropping anything, and it is the one this note is about.
   if (isError || !data) {
     return <Notice tone="warn">{t("reapPlan.breakdown.loadFailed")}</Notice>;
   }
@@ -137,21 +137,20 @@ export function ReapBreakdown({
   const overrides = data.hand_spared > 0 || data.hand_reaped > 0;
   // The count the run will actually reap. With the allowance off (the default) the planner
   // drops the unmeasured tail, so the headline and total must match the confirmed count, not
-  // will_reap, which still counts those held-back items (B-8, rule 30). Bytes already sum only
-  // what is measured, so they need no adjustment.
+  // will_reap, which still counts those held-back items. Bytes already sum only what is
+  // measured, so they need no adjustment.
   const reapCount = holdsBackUnmeasured
     ? Math.max(0, data.will_reap - data.will_reap_unknown)
     : data.will_reap;
   // The split runs over the same set as the total above it, subtracting the same held-back
-  // rows. Printing the raw figures beside an adjusted total had one page stating two
-  // different counts for one reap (rule 30).
+  // rows. Printing the raw figures beside an adjusted total would state two different counts
+  // for one reap on the same page.
   const movies = holdsBackUnmeasured ? Math.max(0, data.movies - data.movies_unknown) : data.movies;
   const seasons = holdsBackUnmeasured
     ? Math.max(0, data.seasons - data.seasons_unknown)
     : data.seasons;
-  // Without the allowance there is no honest count to print -- but only when something on
-  // the list is actually unmeasured; otherwise the two answers agree and the read doesn't
-  // matter.
+  // Without the allowance there is no honest count to print, but only when something on the
+  // list is actually unmeasured. Otherwise the two answers agree and the read doesn't matter.
   const allowanceUnknown = allowance.isError && data.will_reap_unknown > 0;
   // The unmeasured note is its own line only while a ledger is showing; the empty state
   // says the same thing in one sentence rather than two.
@@ -178,7 +177,7 @@ export function ReapBreakdown({
 
       {allowanceUnknown ? (
         <>
-          {/* No reload advice (#195): this renders on the Reap page, above a plan the operator
+          {/* No reload advice here: this renders on the Reap page, above a plan the operator
               may have spent a queue's worth of Spare and Reap decisions arriving at. */}
           <Notice tone="warn">
             {t("reapPlan.breakdown.allowanceUnknown", {
@@ -243,22 +242,22 @@ export function ReapBreakdown({
       )}
 
       {/* Spares whose clock has passed. They are counted in "You spared by hand" above and are
-          absent from the total, with nothing else on the page to say why -- a spare's expiry is
-          realized only by a SCAN (`whitelist.purge_expired_spares`), so until one runs the
-          planner, this ledger and the executor all still read it and the file is genuinely kept.
-          Outside the reapCount branch on purpose: when every condemned title was spared and
-          those spares have since expired, the empty state is exactly when this matters most.
-          Warn tone with its own action, like the page's stale-plan notice, because the operator
-          has to do something (scan) for these to move -- not the informational `.rb-line` the
-          held reaps use, which only points at Review. */}
+          absent from the total, with nothing else on the page to say why. A spare's expiry is
+          realized only by a scan (`whitelist.purge_expired_spares`), so until one runs, the
+          planner, this ledger and the executor all still read it and the file is genuinely
+          kept. Outside the reapCount branch on purpose: when every condemned title was spared
+          and those spares have since expired, the empty state is exactly when this matters
+          most. Warn tone with its own action, like the page's stale-plan notice, because the
+          operator has to do something (scan) for these to move. The informational `.rb-line`
+          the held reaps use only points at Review, which would not fix this. */}
       {data.spares_expired > 0 && (
-        // `standing`: a scan-derived count, true before this page loaded and until the next scan
-        // moves it. Its sibling below is the opposite -- `startScan.isError` answers the Scan now
-        // press inside this notice -- and stays an alert.
+        // `standing`: a scan-derived count, true before this page loaded and until the next
+        // scan moves it. Its sibling below is the opposite: `startScan.isError` answers the
+        // Scan now press inside this notice, and stays an alert.
         <Notice tone="warn" standing>
           {/* Titles, not spares: the server counts the rows a scan would hand back, and one
               whole-show spare can be holding five condemned seasons. Calling those "5 spares"
-              named a thing the operator has one of (rule 21). */}
+              would name a thing the operator has one of, not five. */}
           <Trans
             i18nKey="reapPlan.breakdown.expiredSpares"
             values={{ n: data.spares_expired, count: count(data.spares_expired) }}
@@ -278,7 +277,7 @@ export function ReapBreakdown({
         </Notice>
       )}
       {/* Its own notice in the shared error tone, not red text inside the warning above:
-          every action failure in the app reads the same way (rule 42). */}
+          every action failure in the app reads the same way. */}
       {data.spares_expired > 0 && startScan.isError && (
         <Notice tone="error">{t("reapPlan.breakdown.scanFailed")}</Notice>
       )}
@@ -286,7 +285,7 @@ export function ReapBreakdown({
         <div className="rb-line">
           {/* "this reap", not "a scan": a scan never removes anything, and the Jobs page
               says exactly that in the same product ("A scan only reads. It cannot
-              delete."). What holds these back is the reap this page is about (U-10). */}
+              delete."). What holds these back is the reap this page is about. */}
           {t("reapPlan.breakdown.handReapedHeld", {
             n: data.hand_reaped_held,
             count: count(data.hand_reaped_held),

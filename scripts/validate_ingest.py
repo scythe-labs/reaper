@@ -65,7 +65,7 @@ from reaper.clients.tautulli import TautulliClient  # noqa: E402
 SAFETY = RuntimeSafety(destructive_enabled=False)
 UNITS = {"year": 365, "years": 365, "month": 30, "months": 30, "day": 1, "days": 1}
 #: humanize_days keeps the two most significant units, so a "years, months" phrase
-#: truncates up to 29 days -- agreement within this bound is exact.
+#: truncates up to 29 days. Agreement within this bound counts as exact.
 HUMANIZE_SLACK_DAYS = 30
 
 failures: list[str] = []
@@ -90,7 +90,7 @@ def load_env() -> dict[str, str]:
 
 
 def parse_humanized(text: str) -> float | None:
-    """Invert ``clock.humanize_days``, cutting the gate detail's threshold phrase."""
+    """Invert ``clock.humanize_days``, and cut the gate detail's threshold phrase."""
     text = re.split(r", (?:less than|past) ", text)[0]
     if "today" in text:
         return 0.0
@@ -145,9 +145,10 @@ async def check_history(
         f"gap; source rows older than the mirror's newest yet absent: {len(missing_old)})",
     )
 
-    # The true oldest rows sit PAST recordsTotal: live sessions are prepended to the
-    # list but not counted, shifting every persisted row down by the live count. Page
-    # from recordsTotal - 5 through the end of the real set to cover both offsets.
+    # The true oldest rows sit past recordsTotal. Live sessions are prepended to the
+    # list but not counted, which shifts every persisted row down by the live count.
+    # This pages from recordsTotal - 5 through the end of the real set to cover both
+    # offsets.
     tail_rows: list[dict[str, Any]] = []
     start = max(0, records_total - 5)
     while True:
@@ -160,9 +161,10 @@ async def check_history(
     tail_dates = [int(r.get("date") or r.get("started")) for r in sync_style_rows(tail_rows)]
     source_oldest = min(tail_dates) if tail_dates else None
     mirror_min = cdb.execute("SELECT MIN(watched_at) FROM watch_event").fetchone()[0]
-    # mirror older than source is legitimate (the mirror preserves rows the source may
-    # later delete); source older than mirror would mean the sync never ingested the
-    # oldest history, which understates the horizon and is a real ingest bug.
+    # A mirror older than the source is legitimate, since it preserves rows the source
+    # may later delete. A source older than the mirror would mean the sync never
+    # ingested the oldest history, which understates the horizon and points to a real
+    # ingest bug.
     report(
         "history-horizon",
         source_oldest is None or mirror_min is None or mirror_min <= source_oldest,
@@ -225,7 +227,7 @@ async def check_history(
             mismatch["season_last_played"] += 1
         if len({r["user_id"] for r in src_rows}) != users:
             mismatch["season_watchers"] += 1
-        # The mid-binge guard's aggregate: per-user max COMPLETED episode.
+        # The mid-binge guard's aggregate: each user's highest completed episode index.
         src_progress: dict[int, int] = {}
         for r in src_rows:
             if float(r.get("watched_status") or 0) == 1 and r.get("media_index") not in (None, ""):
@@ -347,8 +349,9 @@ def check_imdb(
             candidate_ids,
         )
     }
-    # Ids in one side only, or with different numbers, are drift; absent from both is
-    # simply a title the dataset does not rate (correctly Absent in the scan).
+    # An id on only one side, or with different numbers, counts as drift. An id absent
+    # from both sides is simply a title the dataset does not rate, correctly recorded
+    # as Absent in the scan.
     candidate_bad = sum(
         1
         for t in candidate_ids
@@ -403,7 +406,7 @@ async def check_radarr(
             mismatch["imdb_id"] += 1
     snapshot_only = len(candidates) - joined
     # Genre edits and library changes since the snapshot are source-side drift, not
-    # ingest bugs -- flagged only when they exceed a handful.
+    # ingest bugs, and are flagged only when they exceed a handful.
     drift = sum(mismatch.values()) + snapshot_only
     report(
         f"radarr-{instance_id}",

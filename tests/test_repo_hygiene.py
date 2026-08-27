@@ -1,13 +1,13 @@
-"""Repo-wide invariants that were previously only prose in the instruction files.
+"""Repo-wide rules enforced as code instead of left as prose in the instruction files.
 
-CLAUDE.md and ``.claude/rules/*.md`` are context, not enforcement: an agent that never
-loads them, or a human who never reads them, breaks the rule silently. Every rule in here
-is one that can be checked mechanically, so it costs nothing to enforce and catches humans
-and agents alike. A rule that needs judgment stays prose; only the greppable ones live here.
+CLAUDE.md and ``.claude/rules/*.md`` describe the rules but do not enforce them: an agent
+that never reads them, or a human who skips them, can break a rule and nothing stops it.
+Every rule tested here is one a machine can check; a rule that needs judgment stays prose
+only.
 
-These are filesystem checks over this checkout, and they reach no network. Two things they do
-reach: ``reaper.engine.gates`` is imported for the one guard that derives its expectation by
-running the gate, and ``git`` is run to list the files ``_repo_text_files`` walks.
+These are filesystem checks over this checkout, and none of them reach the network. Two
+exceptions: ``reaper.engine.gates`` is imported so one guard can run the real gate to build
+its expected output, and ``git`` lists the files that ``_repo_text_files`` walks.
 """
 
 from __future__ import annotations
@@ -33,9 +33,9 @@ import yaml
 
 from reaper.api import settings as settings_api
 
-# The one guard here that reads the app rather than the tree: the documented example of a
-# checked protection is derived by running the gate that builds it, never transcribed
-# (rule 119). The hygiene CI lane installs the whole package, so this costs nothing extra.
+# The one guard here that reads the app instead of the tree: it derives its example of a
+# checked protection by running the gate that builds it, never by copying the output by hand.
+# The hygiene CI lane installs the whole package, so this costs nothing extra.
 from reaper.engine.gates import (
     Facts,
     GateConfig,
@@ -63,27 +63,25 @@ HISTORY = DOCS / "history"
 # its stale dates, TBD placeholders and superseded rule wordings are correct as written.
 STATUS_DOC = DOCS / "STATUS.md"
 STATUS_MAX_LINES = 120
-# A line budget alone is not a size budget. STATUS.md sat at exactly 200/200 lines for days, so
-# every new fact had to be appended to a line that already existed -- and a markdown table row
-# cannot wrap, so one "Decisions locked" cell reached 21,210 characters. The width cap is what
-# makes the line cap honest, and it is the repo's one width (ruff line-length, prettier
-# printWidth). Together they bound the file's total size, which is the thing that has to stay
-# small.
+# A line budget alone does not cap the file's size. Without a width limit, a markdown table row
+# cannot wrap, so one cell here once reached 21,210 characters. The width cap uses the repo's
+# one line-length setting (ruff's line-length, prettier's printWidth), and together the two
+# caps bound the file's total size.
 STATUS_MAX_COLUMNS = 100
 DECISIONS_DOC = DOCS / "DECISIONS.md"
-# Rows of "Decisions locked" carrying the dagger, reconciled by hand against DECISIONS.md's
-# sections (rule 145: a set-equality assertion cannot tell a member that complies from one that
-# dropped out of the walk).
+# Count of "Decisions locked" rows carrying the dagger, reconciled by hand against DECISIONS.md's
+# sections. A count catches a row silently dropping out of the table; a set-equality check on
+# its own could not tell a row that matches from one that went missing.
 DECISION_SECTIONS = 19
 
 
 def _live_docs() -> list[Path]:
-    """Every doc that claims to describe the present. Excludes the frozen archive.
+    """Every doc that describes the current state of the repo, excluding the frozen archive.
 
-    ``docs/history/`` is out of every gate below, and that is what the exclusion is for. Its
-    files quote the tree as it stood before each change, so a citation or a figure that no
-    longer resolves is the record working rather than rot. Re-pathing them against today's tree
-    destroys the history they exist to keep.
+    ``docs/history/`` is excluded from every gate below. Its files quote the tree as it stood
+    at a past point, so a citation or a figure that no longer matches today's tree is the
+    record working as intended, not rot. Checking them against today's tree would destroy the
+    history they exist to keep.
     """
     return sorted(p for p in DOCS.rglob("*.md") if HISTORY not in p.parents)
 
@@ -96,17 +94,17 @@ INSTRUCTION_FILES = [REPO / "CLAUDE.md", *sorted((REPO / ".claude" / "rules").gl
 _ALLOWED_CONTROL_BYTES = frozenset(b"\t\n\r")
 
 
-# Cached because the two walks in this file are its whole runtime: eleven call sites re-globbed
-# the tree, and seven of them re-read every byte of it. The staleness question is answered by
-# what this file is -- filesystem checks over a checkout nothing here mutates, so the tree cannot
-# change under the cache mid-session. Every caller builds a new list from the result and none
-# sorts or appends in place, so the cached value needs no defensive copy. Cost: the text walk
-# pins about 23 MiB per xdist worker for the session.
+# Cached because the two walks in this file are its whole runtime cost: many call sites re-glob
+# the tree, and most of them re-read every byte of it. Caching is safe because these are
+# filesystem checks over a checkout nothing here mutates, so the tree cannot change under the
+# cache mid-session. Every caller builds a new list from the cached result, and none sorts or
+# appends in place, so the cached value needs no defensive copy.
 #
-# One exception, and it is the reason it is written down. Both walks read the module global
-# ``REPO``, and ``test_the_repo_walk_never_reads_a_gitignored_file`` repoints it at a synthetic
-# tree, so there the cache CAN go stale. It calls ``cache_clear`` on both sides of the swap.
-# A later swap that skips the clear serves that two-file walk to every gate downstream.
+# One exception, and it is the reason it is written down. Both walks read the module-level
+# ``REPO`` variable. ``test_the_repo_walk_never_reads_a_gitignored_file`` points it at a
+# temporary tree instead, so the cache can go stale there. That test calls ``cache_clear`` on
+# both sides of the swap. Skipping that call would serve its temporary two-file walk to every
+# gate that runs after it.
 @lru_cache
 def _source_files_to_scan() -> list[Path]:
     """Every hand-written source and instruction file, for the byte-level scan below."""
@@ -123,20 +121,17 @@ def _source_files_to_scan() -> list[Path]:
 
 
 def test_no_source_file_holds_an_invisible_control_character() -> None:
-    """A stray control byte blinds every grep-shaped gate in this file, silently.
+    """A stray control byte makes every text-scanning gate in this file silently skip that file.
 
-    A NUL reached a string literal in ``ServiceModal.tsx`` during #178 -- as the separator in a
-    ``.join()``, so it was syntactically fine and behaved correctly. ``tsc``, ``eslint``,
-    ``prettier`` and 809 vitest tests all passed on it. What broke was **reading**: ``grep`` classes
-    a file holding a NUL as binary and reports no matches at all rather than an error, and ``file``
-    called it ``data``. So `grep -n ModalShell ServiceModal.tsx` came back empty on a file that
-    imports it on line 21.
+    A NUL byte inside a string literal is syntactically valid and can behave correctly at
+    runtime, so tools like ``tsc``, ``eslint``, and ``prettier`` will not catch it. But
+    ``grep`` treats a file holding a NUL as binary and reports no matches at all instead of an
+    error, and ``file`` reports it as generic ``data``. So a plain ``grep`` for a name the file
+    actually imports can come back empty.
 
-    That is the whole failure: this suite's guards are source-text scans, and rule 147 bounds them
-    by the syntax they can parse. A file grep silently declines to read is absent from every one of
-    them while they all stay green -- the same shape as a member dropping out of a walk (rule 145),
-    reached by a route no matcher can see. Hence a byte-level check, which is the only kind that can
-    catch it.
+    Every guard in this suite is a source-text scan, so a file a grep silently skips is
+    invisible to all of them while they stay green. This check reads raw bytes instead of
+    grepping, which is the only way to catch a control byte the other guards cannot see.
     """
     offenders: list[str] = []
     for path in _source_files_to_scan():
@@ -161,18 +156,17 @@ def test_no_source_file_holds_an_invisible_control_character() -> None:
     )
 
 
-# A middot written as anything except itself. Every one of these renders as the character, and
-# not one of them is visible to ``grep '·'`` -- which is the entire reason this gate exists.
-# The escape forms are pinned to their exact digit counts (``\u`` takes four, ``\U`` eight), so
-# an ordinary escape that merely opens with those digits -- a four-digit U+B7C1 -- is not
-# collected.
+# Every spelling of a middot that renders as the character but is invisible to a literal
+# ``grep '·'`` search. The escape forms require an exact digit count (a lowercase-u escape
+# takes four digits, an uppercase-U escape takes eight), so an escape that only starts with
+# those same digits but names an unrelated code point does not match.
 _MIDDOT_IN_DISGUISE = re.compile(
     r"&middot;|&#0*183;|&#x0*b7;|\\u00b7|\\U000000b7|\\u\{0*b7\}|\\xb7|\\N\{MIDDLE DOT\}",
     re.IGNORECASE,
 )
-# The CSS spelling has no ``u``: ``content: "\B7"``, up to four leading zeros. Scoped to
-# stylesheets because the same shape is ``\b`` (a word boundary) followed by a 7 in a Python
-# regex, and a gate with a false positive is a gate someone deletes.
+# The CSS escape has no ``u``: ``content: "\B7"``, with up to four leading zeros allowed. This
+# check only runs on stylesheets, because the same character sequence also matches a word
+# boundary followed by a 7 in a Python regex, and a gate with false positives gets deleted.
 _MIDDOT_CSS_ESCAPE = re.compile(r"\\0*b7(?![0-9a-f])", re.IGNORECASE)
 
 
@@ -184,29 +178,27 @@ def _middot_in_disguise(path: Path, line: str) -> bool:
 
 
 def test_a_middot_is_written_as_itself_everywhere() -> None:
-    """A character spelled as an entity or an escape is invisible to the sweep that removes it.
+    """A character spelled as an HTML entity or an escape is invisible to a literal-text search.
 
-    Rule 21 stopped blessing the middot as a separator between two facts: a reader either voices
-    it ("40 titles *middle dot* 1.2 TB freed") or drops it and runs the two facts together, so
-    the separator is a comma now. The sweep that converted 49 of them (#177) matched the literal
-    character -- and four sites spelling it ``&middot;`` plus one spelling it ``\\u00b7`` came
-    through untouched, still separating two facts in running text on the scan bar, the show panel
-    and the why panel (#299). They were not missed by judgment. They were unreadable to the tool.
+    The middot is not allowed as a separator between two facts in operator-facing text, because
+    a screen reader either voices it awkwardly or drops it and runs the two facts together
+    ("40 titles, 1.2 TB freed" uses a comma instead). A decorative middot is still fine, as long
+    as it carries ``aria-hidden``.
 
-    So this does not police what a middot MEANS -- rule 21 owns that, and a decorative one is
-    still fine where it carries ``aria-hidden``. It polices the one thing a matcher can settle:
-    that the tree spells the character exactly one way, so the next person's ``grep '·'`` sees
-    every site there is. That is rule 147 turned on its own population: the guard against a
-    source-text scan being bounded by the syntax it can parse is to leave the tree only one
-    syntax to parse.
+    This test does not decide what a middot means; it only checks that every middot in the tree
+    is written as the literal character, never as an HTML entity or an escape sequence. That
+    way a plain ``grep '·'`` finds every site there is, instead of missing the ones spelled
+    another way.
     """
-    # ``index.html`` joins the usual walk because the named entity is HTML's OWN spelling, so the
-    # one hand-written HTML file here is the likeliest place for it and sits outside every other
-    # scan in this module. This file itself drops out: its tables below hold every spelling.
+    # ``index.html`` joins the usual walk because the named entity is HTML's own spelling, so
+    # the one hand-written HTML file here is the likeliest place for it and sits outside every
+    # other scan in this module. This file itself drops out: its tables below hold every
+    # spelling.
     index_html = REPO / "frontend" / "index.html"
     scanned = [p for p in (*_source_files_to_scan(), index_html) if p != SELF]
     # A zero-offender assertion passes just as happily over an empty walk, which is how a
-    # mis-rooted glob hides (rule 145). The frontend is the half the defect shipped in.
+    # mis-rooted glob hides. The frontend is where a `.tsx` file would show up if the walk
+    # were reaching it.
     assert any(p.suffix == ".tsx" for p in scanned), "the walk reached no components at all"
 
     offenders = [
@@ -223,12 +215,11 @@ def test_a_middot_is_written_as_itself_everywhere() -> None:
 
 
 def test_the_middot_spelling_matcher_reads_every_spelling_it_claims() -> None:
-    """Rule 147: the ban above is bounded by what its regex can parse, so prove the parse.
+    """Proves the regex above matches every spelling of a middot it claims to catch, and no others.
 
-    The accepted list is every form that renders as a middot; the two that actually shipped are
-    the first of the entities and the first of the escapes. The rejects are the near misses that
-    must stay out -- above all the literal character, which is the spelling the ban is steering
-    the tree TOWARD and would be an absurd thing to fire on.
+    The accepted list covers every form that renders as a middot. The rejected list covers the
+    near misses that must stay unmatched, especially the literal character itself, which is the
+    spelling this check wants the tree to use and must never flag.
     """
     css = Path("x.css")
     ts = Path("x.tsx")
@@ -301,10 +292,10 @@ def _code_and_live_docs() -> list[Path]:
 
 
 #: The directories holding copy in a language other than English: a UI catalog Weblate writes
-#: under ``frontend/src/locales/<tag>/`` and a manual under ``frontend/src/docs/content/<tag>/``.
+#: under ``frontend/src/locales/<tag>/``, and a manual under ``frontend/src/docs/content/<tag>/``.
 #: The English originals sit at ``locales/en/`` and directly in ``content/``. The
-#: American-English gate reads source copy and leaves these alone (docs/history/I18N_PLAN.md
-#: §8); every other gate walking the tree is language-neutral and keeps reading them.
+#: American-English gate reads only source copy and skips these; every other gate that walks
+#: the tree is language-neutral and still reads them.
 _TRANSLATED_ROOTS = (FRONTEND_SRC / "locales", FRONTEND_SRC / "docs" / "content")
 
 
@@ -330,8 +321,8 @@ def _defined_rules() -> dict[int, list[Path]]:
 def test_instruction_files_exist() -> None:
     """The routing table in CLAUDE.md points at files that exist.
 
-    Rule 64: removing a surface removes its whole supply chain. A rule file named by the
-    index but absent from disk is the same failure as a dangling route.
+    A rule file named in the index but missing from disk breaks navigation the same way a
+    dangling route would.
     """
     missing = [p for p in INSTRUCTION_FILES if not p.is_file()]
     assert not missing, f"instruction files named but absent: {missing}"
@@ -383,15 +374,13 @@ def _expand(cell: str) -> set[int]:
 def test_every_index_of_the_rules_matches_the_rules() -> None:
     """Every restatement of "which rules live where" is checked against the files.
 
-    Rule 144: one fact about the app is normally written down in several places, and deriving
-    one of them does not make the rest safe. This is that fact for the rule corpus itself --
-    the count and the per-file ranges appear in CLAUDE.md's routing table, in each rule file's
-    own "Holds" line, and in the review skill. They drifted exactly as rule 144 predicts: the
-    skill claimed 133 blockers for 13 rules' worth of growth, in the same paragraph that tells
-    a reviewer not to restate the rules.
+    The rule count and each file's rule ranges are stated in three places: CLAUDE.md's routing
+    table, each rule file's own "Holds" line, and the review skill. Writing one from the others
+    does not keep the rest correct, so this test compares all three against the rule files
+    themselves.
 
-    The failure message names every file to edit, because a test that only says "these
-    disagree" costs the next author the search that this test exists to spare them.
+    The failure message names every file to edit, so fixing it does not require a separate
+    search.
     """
     actual = _rules_by_file()
     claude_md = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
@@ -452,8 +441,8 @@ def test_every_index_of_the_rules_matches_the_rules() -> None:
 def test_every_rule_citation_in_code_resolves() -> None:
     """A comment may only cite a rule that exists.
 
-    A review pass found 37 comments citing rules 70-87 while the list ended at 69, making
-    every one of them unverifiable. This is the guard that makes that impossible.
+    A citation to a rule number past the end of the list is unverifiable: nobody can check a
+    constraint that is not written down anywhere.
     """
     defined = _defined_rules()
     dangling: list[str] = []
@@ -468,10 +457,10 @@ def test_every_rule_citation_in_code_resolves() -> None:
 
 
 def test_plex_sections_are_never_resolved_by_title() -> None:
-    """Rule 57: ``library.section(title)`` is banned in ``src/`` outright.
+    """``library.section(title)`` is banned in ``src/`` outright.
 
-    Two libraries can share a title, and the first match silently wins -- so a removal can
-    address the wrong library. ``sectionByID`` is the only resolver.
+    Two libraries can share a title, and the first match silently wins, so a removal built on
+    a title lookup can address the wrong library. ``sectionByID`` is the only resolver allowed.
     """
     offenders = [
         f"{p.relative_to(REPO)}:{n}"
@@ -483,28 +472,26 @@ def test_plex_sections_are_never_resolved_by_title() -> None:
 
 
 #: Every spelling an *arr, Seerr or list payload uses for an external id. Reading one of these
-#: off a payload is an identity read, and rule 29 sends it through ``identity.ExternalIds.of``.
+#: off a payload is an identity read, and it must go through ``identity.ExternalIds.of``.
 _ID_PAYLOAD_KEYS = frozenset({"imdbId", "ImdbId", "tmdbId", "TmdbId", "tvdbId", "TvdbId"})
 
-#: How many of those literals ``src/`` holds, reconciled by hand (rules 145, 147): 3 in
-#: ``clients/seerr.py``, 2 in ``services/executor.py``, 6 in ``services/lists.py``, 9 in
-#: ``services/season_scan.py``, 4 in ``services/snapshot.py``. A count of the population the
-#: ban itself scans, so a reader that drops out of the walk is visible: a flag-shaped
-#: assertion alone cannot tell a compliant site from one the parse never saw.
+#: How many of those literals ``src/`` holds, reconciled by hand against the files. Counting
+#: the population the ban itself scans matters because a flag-shaped assertion alone cannot
+#: tell a compliant site from one the parse silently missed.
 ID_PAYLOAD_KEY_READS = 24
 
-#: The reads that are NOT identity reads, classified in writing rather than silenced (rule 103).
+#: Reads exempted from the identity-read requirement, classified here in writing.
 _NOT_AN_IDENTITY_READ = {
-    # Radarr's import-exclusion list, matched against itself. Both sides read this key raw off
-    # the same instance, and ``tmdb_id == 0`` is the no-id sentinel the send already fails
-    # closed on before deleting anything. Cleaning it would change the spelling and nothing
-    # else, since no cross-system join is being made.
+    # Radarr's import-exclusion list, matched against itself. Both sides read this raw key off
+    # the same instance, and ``tmdb_id == 0`` is the sentinel for "no id" that already stops
+    # the send from deleting anything. Routing it through ExternalIds.of would only change the
+    # spelling, since no cross-system id lookup happens here.
     ("services/executor.py", "tmdbId"),
 }
 
-#: How many reads `_NOT_AN_IDENTITY_READ` actually waves through. The set is keyed on
-#: (file, key) and cannot bound a count on its own, so this is what makes a third read in an
-#: already-named file fail rather than inherit the exemption.
+#: How many reads ``_NOT_AN_IDENTITY_READ`` actually exempts. The set is keyed on (file, key)
+#: alone, so a count is what stops a third read in an already-listed file from silently
+#: inheriting the exemption.
 EXEMPTED_ID_KEY_READS = 2
 
 
@@ -521,10 +508,10 @@ def _is_external_ids_of(func: ast.expr) -> bool:
 def _id_key_reads(source: str) -> list[tuple[int, str, bool]]:
     """``(line, key, went_through_the_door)`` for every id-key literal in one module.
 
-    Parsed, not matched on text: the calls span several lines, sit inside comprehensions and
-    argument lists, and a delimiter-anchored regex reads one of those spellings and not the
-    rest (rule 147). Anything lexically inside an ``ExternalIds.of(...)`` call counts as
-    through the door, which is what makes a multi-line call and a nested ``.get`` both pass.
+    Parsed with the ``ast`` module instead of matched on text, because the calls span several
+    lines and sit inside comprehensions and argument lists that a regex anchored on a delimiter
+    cannot reliably follow. Anything lexically inside an ``ExternalIds.of(...)`` call counts as
+    through the door, so a multi-line call and a nested ``.get`` both pass.
     """
     tree = ast.parse(source)
     guarded: set[int] = set()
@@ -541,13 +528,14 @@ def _id_key_reads(source: str) -> list[tuple[int, str, bool]]:
 
 
 def test_every_external_id_read_goes_through_the_sentinel_filter() -> None:
-    """Rule 29, and ``ExternalIds.of``'s claim to be "the only safe door in" (rule 7/24).
+    """An external id read must go through ``ExternalIds.of``, which filters sentinel values.
 
-    Some sources emit ``tt0000000`` / ``tt0`` for "unknown". A sentinel is truthy, so a raw
-    ``imdbId`` carried onto a stored or in-memory record shadows the cleaned id Plex matched
-    at every ``item.imdb_id or item.plex_imdb_id`` below it, and the keep-list lookup then
-    runs under an id no list row carries. That fails toward deleting a keep-listed file, so
-    the filter belongs at the write and this gate is what keeps a tenth site from arriving.
+    Some sources emit ``tt0000000`` or ``tt0`` for "unknown". Because that value is truthy, a
+    raw ``imdbId`` carried onto a stored or in-memory record shadows the cleaned id Plex
+    actually matched wherever code falls back with ``item.imdb_id or item.plex_imdb_id``. The
+    keep-list lookup then runs against an id no list row carries, which can let a keep-listed
+    file get deleted. Filtering the value at the read is what stops a new unfiltered site from
+    ever landing.
     """
     scanned = 0
     exempted = 0
@@ -570,11 +558,9 @@ def test_every_external_id_read_goes_through_the_sentinel_filter() -> None:
         "the count by hand and update ID_PAYLOAD_KEY_READS: a ban with no count cannot tell a "
         "compliant reader from one that dropped out of the walk."
     )
-    # The exemption is keyed on (file, key), so it waves through EVERY `tmdbId` read in
-    # `executor.py`, not the two that were classified. Counting them is what stops a third
-    # arriving unexamined in the one module that sends the delete: without this, the only
-    # signal is the total above, and its message asks the author to reconcile the count by
-    # hand -- which they would do, landing a raw id read on the send path.
+    # The exemption is keyed on (file, key), so it waves through every `tmdbId` read in
+    # `executor.py`, however many exist, not just the two current ones. Counting them here is
+    # what stops a third, unexamined read from landing in the module that sends the delete.
     assert exempted == EXEMPTED_ID_KEY_READS, (
         f"{exempted} external-id reads are exempt, not {EXEMPTED_ID_KEY_READS}. A new one in a "
         "file already named in _NOT_AN_IDENTITY_READ is waved through by the key alone, so it "
@@ -583,11 +569,11 @@ def test_every_external_id_read_goes_through_the_sentinel_filter() -> None:
 
 
 def test_the_external_id_matcher_reads_every_spelling_it_claims() -> None:
-    """Rule 147: the ban is bounded by what it parses, so prove it on both verdicts.
+    """Proves the parser above matches every call shape it claims to catch, and no others.
 
-    Accepts a call however the module reaches ``ExternalIds`` and however it wraps the
-    arguments; rejects a bare payload read, and rejects the constructor, which applies no
-    filter at all. That last one is the near miss a name-only matcher would wave through.
+    It accepts a call however the module imports ``ExternalIds`` and however the arguments are
+    wrapped. It rejects a bare payload read, and it rejects the bare constructor call, which
+    applies no filter at all, the near miss a matcher keyed only on the name would wave through.
     """
     accepted = [
         'x = identity.ExternalIds.of(imdb=m.get("imdbId"), tmdb=m.get("tmdbId"))',
@@ -612,10 +598,10 @@ def test_the_external_id_matcher_reads_every_spelling_it_claims() -> None:
 
 
 def test_no_bare_exception_assertions_in_tests() -> None:
-    """Rule 119: assert the domain error and its message, never ``pytest.raises(Exception)``.
+    """A test asserts the domain error and its message, never ``pytest.raises(Exception)``.
 
-    A bare Exception assertion passes when the code raises something entirely unrelated,
-    including the AttributeError of a refactor that broke the path under test.
+    A bare ``Exception`` assertion passes even when the code raises something unrelated, such
+    as the ``AttributeError`` from a refactor that broke the path under test.
     """
     offenders = [
         f"{p.relative_to(REPO)}:{n}"
@@ -627,12 +613,12 @@ def test_no_bare_exception_assertions_in_tests() -> None:
 
 
 def test_http_clients_are_only_constructed_in_clients() -> None:
-    """Rule 33: all HTTP lives in ``clients/``.
+    """All HTTP clients are constructed inside ``clients/``.
 
-    The transport guard is installed by the shared clients; a client built anywhere else
-    carries no guard, so a mutating call could leave without an armed host or a journalled
-    intent. ``notify/discord.py`` is the one sanctioned exception (its webhook URL embeds a
-    per-operator secret path the guard's allow-list cannot express).
+    The shared clients install the transport guard. A client built anywhere else carries no
+    guard, so a mutating call from it could leave without an armed host or a journalled intent.
+    ``notify/discord.py`` is the one sanctioned exception, because its webhook URL embeds a
+    per-operator secret path the guard's allow-list cannot express.
     """
     sanctioned = {SRC / "notify" / "discord.py"}
     constructors = re.compile(r"\b(?:httpx2?|requests)\.(?:Async)?(?:Client|Session)\s*\(")
@@ -647,28 +633,24 @@ def test_http_clients_are_only_constructed_in_clients() -> None:
 
 
 def test_the_admin_password_lockout_is_reached_through_one_function() -> None:
-    """Rules 11/98 as a gate: only ``api/deps.py`` reaches the lockout or the verify.
+    """Only ``api/deps.py`` may reach the admin-password lockout or the verify call.
 
-    Four routes ask for the admin password before doing something consequential, and each
-    used to run the same four steps by hand: check the lockout, verify, record the failure,
-    clear both keys on success. Copying them is how a fifth gate arrives with three of the
-    four, and the step most easily dropped is the one no route-level test used to reach --
-    ``record_success``, whose absence makes a near-miss cost the operator a real lockout.
+    Four routes ask for the admin password before doing something consequential. Each one
+    needs the same four steps: check the lockout, verify the password, record the failure, and
+    clear both keys on success. A route that copies these steps by hand can easily drop
+    ``record_success``, since no route-level test reaches it directly, and the gap costs the
+    operator a real lockout later.
 
-    Prose cannot bind an author who never read it, so the ban is on the names instead: a route
-    that can reach neither the throttle nor the verify cannot get the ritual wrong. Two names
-    are banned rather than one, and the second is the one that matters. Banning
-    ``password_throttle`` alone stops a gate with three of the four steps; a gate calling
-    ``admin_password.verify`` straight is a gate with **none** of them, and every one of these
-    routers already imports that module, so it is the shorter mistake to make.
+    So the ban targets the function names instead of relying on anyone reading this comment: a
+    route that cannot call the throttle or the verify function cannot get the steps wrong. Both
+    names are banned, not just one. Banning ``password_throttle`` alone would still allow a
+    route to call ``admin_password.verify`` directly, skipping every one of the four steps, and
+    every one of these routers already imports that module, so it is the easier mistake to make.
 
-    **Measured against the spellings, not assumed (rule 147).** The matcher is a substring test
-    over `_strip_prose`, so it catches the dotted form
+    The matcher is a substring test over ``_strip_prose``, so it catches the dotted form
     (``ratelimit.password_throttle.record_failure(...)``), the fully qualified form, and an
-    ``import ... as`` rebinding, which is caught at the import line. What it does not catch is a
-    name assembled at runtime (``getattr(ratelimit, "password_" + "throttle")``). An earlier
-    version of this docstring named the first two as blind spots and both were already covered;
-    the escape it missed is the one now banned on the second line.
+    ``import ... as`` rebinding at the import line. It cannot catch a name assembled at
+    runtime, such as ``getattr(ratelimit, "password_" + "throttle")``.
     """
     allowed = {
         "password_throttle": {SRC / "auth" / "ratelimit.py", SRC / "api" / "deps.py"},
@@ -691,24 +673,20 @@ def test_the_admin_password_lockout_is_reached_through_one_function() -> None:
 
 
 def test_the_comparison_form_of_a_name_is_one_derivation() -> None:
-    """Rule 88, as a gate. ``reaper.text.fold`` is the trim-then-casefold every name
-    comparison takes, and it was spelled 37 times over 33 lines in 13 modules.
+    """``reaper.text.fold`` is the one trim-then-casefold every name comparison uses.
 
-    **It bans the composite only.** A bare ``.casefold()`` on a value a line above already
-    stripped is not an offender: ``fields._split_csv``, ``fields._shared`` and
-    ``list_config._clean_config`` all read input their caller stripped, so folding again
-    would be identical and an exemption entry for each would be a skip list nobody rereads.
+    This bans only the composite call, ``.strip().casefold()`` written out again. A bare
+    ``.casefold()`` on a value the caller already stripped is not an offender:
+    ``fields._split_csv``, ``fields._shared``, and ``list_config._clean_config`` all read
+    input their caller stripped, so folding it again would look identical to calling ``fold``.
 
-    **What it cannot catch, stated rather than implied**: a new site written as a bare
-    ``.casefold()`` on unstripped input, or as ``.strip().lower()``. Eleven of the latter
-    exist at this tip and every one is deliberate -- env tokens, hostnames, media types, hex
-    colors -- two of them folding PATHS (``identity.to_basename``, ``to_segments``), whose
-    docstrings say why lower is the right answer there. That figure is measured at the tip
-    rather than at ``dev``, where it is sixteen: #668 landed on this same branch and took
-    six of them.
+    What this cannot catch: a new site written as a bare ``.casefold()`` on unstripped input,
+    or as ``.strip().lower()``. Several sites use ``.strip().lower()`` deliberately, for values
+    that must stay case-sensitive apart from case itself, such as env tokens, hostnames, media
+    types, and hex colors, plus file paths (see ``identity.to_basename`` and ``to_segments``
+    for why lowercase is correct there).
 
-    ``alembic/`` is out of scope: those revisions are frozen and five of them carry the
-    idiom.
+    ``alembic/`` is out of scope, since those migration files are frozen once written.
     """
     offenders = [
         f"{p.relative_to(REPO)}:{n}"
@@ -728,28 +706,28 @@ def test_the_comparison_form_of_a_name_is_one_derivation() -> None:
 # how the boot log says which mode the database settled on; the set is what writes.
 _JOURNAL_MODE_SET = re.compile(r"PRAGMA\s+journal_mode\s*=", re.IGNORECASE)
 #: One site, ``db.session._configure_sqlite``. Pinned as a count as well as a file set, because
-#: a file set alone cannot tell a second site inside the same module from none (rule 145).
+#: a file set alone cannot tell a second site inside the same module from none.
 _JOURNAL_MODE_SET_SITES = 1
 
 
 def test_the_journal_mode_pragma_is_set_in_exactly_one_module() -> None:
-    """``PRAGMA journal_mode=WAL`` WRITES the file it is pointed at.
+    """``PRAGMA journal_mode=WAL`` writes to the file it is pointed at.
 
-    Header bytes 18 and 19 flip and persist, so the app's pragma set may only ever reach a
-    database Reaper owns. Three sqlite connections in ``src/`` deliberately issue no journal
-    pragma, and each reads or writes a file nobody has vouched for yet:
+    Setting it flips and persists two header bytes, so the app may only issue this pragma
+    against a database Reaper owns. Three sqlite connections in ``src/`` deliberately issue no
+    journal pragma, because each reads or writes a file nobody has verified yet:
     ``db.schema_gate.stored_revision`` reads the database unpacked from an operator-supplied
-    ``.reaper`` inside the rule 74 artifact gate, before the schema is checked and before the
-    operator confirms, and ``restore``'s ``_force_destructive_off`` and ``_purge_auth_state``
-    run on that same staged file a moment later. Adding the set to any of them turns a read of
-    an unverified artifact into a write against it.
+    ``.reaper`` file, before the schema is checked and before the operator confirms the
+    restore, and ``restore``'s ``_force_destructive_off`` and ``_purge_auth_state`` run on that
+    same staged file a moment later. Adding the set to any of them would turn a read of an
+    unverified file into a write against it.
 
-    **What the matcher accepts and refuses** (rule 147). It takes any casing and any spacing
-    around the ``=``, and it reads the line with backticked spans stripped, so a comment
-    quoting the pragma is not an offender: ``db/session.py`` itself has two occurrences and
-    only one is code. It cannot see a pragma assembled at runtime (``"PRAGMA " + name``), and
-    nothing in the tree spells one that way. ``tests/`` is out of scope on purpose:
-    ``test_startup_log.py`` sets ``journal_mode=DELETE`` to drive the boot log's WAL check.
+    The matcher takes any casing and any spacing around the ``=``, and it strips backticked
+    spans first, so a comment that quotes the pragma is not an offender (``db/session.py``
+    itself has two occurrences and only one is code). It cannot see a pragma assembled at
+    runtime, such as ``"PRAGMA " + name``, and nothing in the tree does that today. ``tests/``
+    is excluded on purpose: ``test_startup_log.py`` sets ``journal_mode=DELETE`` to drive the
+    boot log's WAL check.
     """
     sites = [
         f"{p.relative_to(REPO)}:{n}"
@@ -773,9 +751,9 @@ def _busy_timeout_files() -> list[Path]:
     """The two roots both busy-timeout walks read, the same pair the journal-mode gate reads.
 
     ``alembic/`` is in scope because the migration engine opens its own connections, and
-    ``env.py``'s connect hook is the obvious place to answer a migration that hit a locked
-    database. Scoped to ``src/`` alone, a declaration landing there passed both gates
-    (rule 72: the journal-mode gate 60 lines up already decided this).
+    ``env.py``'s connect hook is the natural place to handle a migration that hits a locked
+    database. Scoping this to ``src/`` alone would let a declaration there pass both gates
+    unnoticed.
     """
     return [p for root in (SRC, REPO / "alembic") for p in sorted(root.rglob("*.py"))]
 
@@ -783,52 +761,44 @@ def _busy_timeout_files() -> list[Path]:
 def _busy_timeout_prose(path: Path) -> str:
     """One line of prose per file: comment markers dropped, then whitespace collapsed.
 
-    The markers come out first so a passage wrapped across two ``#`` lines still reads as one
-    sentence. Leaving them in turned ``backup._build_into``'s "the 5s busy timeout" into
-    "busy # timeout" and left that module one passage short of its count, which any reformat
-    can do to any of them (rule 147).
+    Comment markers are dropped before whitespace is collapsed, so a passage that wraps across
+    two ``#`` lines still reads as one sentence. Collapsing without dropping the markers first
+    would split a phrase like "the 5s busy timeout" across a comment break into "busy # timeout",
+    which a reformat could do to any passage at any time.
     """
     return re.sub(r"\s+", " ", re.sub(r"(?m)^\s*#+:? ?", " ", path.read_text(encoding="utf-8")))
 
 
-#: A quotation of a busy timeout is a seconds figure and an anchor -- the pragma's name, or a
-#: ``db.session`` citation -- in either order, in the same sentence, within 120 characters. Both
-#: anchors are needed and neither is enough alone: two copies never name the pragma
-#: (``scan_runner.scan_running``, ``scheduler.sweep_old_snapshots``), and one never cites
-#: ``db.session`` (``imdb_dataset.load``, which is about ``cache.db``, whose engine listens to
-#: the same ``_configure_sqlite``).
+#: A quoted busy timeout is a seconds figure and an anchor, either the pragma's name or a
+#: ``db.session`` citation, appearing in either order in the same sentence, within 120
+#: characters of each other. Both anchor forms are needed: some passages cite ``db.session``
+#: but never name the pragma (``scan_runner.scan_running``, ``scheduler.sweep_old_snapshots``),
+#: and one names the pragma but never cites ``db.session`` (``imdb_dataset.load``, which is
+#: about ``cache.db``, whose engine uses the same ``_configure_sqlite``).
 #:
-#: Spellings accepted, run and confirmed (rule 147). Six are forms the tree uses:
-#: ``5s ``busy_timeout```, ```busy_timeout`` (5s``, ``5s for it (``db.session``)``,
-#: ``5s busy timeout`` spaced, ``db/session.py`` as the citation, and a passage split across two
-#: ``#`` lines. Two more are accepted against no passage: ``5s BUSY_TIMEOUT`` is what
-#: ``re.IGNORECASE`` takes, the tree spelling it lowercase everywhere, and ``5-second`` is the
-#: adjectival form, which no busy-timeout passage uses but 39 other durations in ``src/`` do
-#: (``ratelimit``'s ``2-second``, and ``30-day`` 18 times over eight files) -- so it is the form
-#: a new passage is most likely to arrive in, and it was a quiet pass until it was accepted.
+#: Accepted spellings include a backtick-quoted ``busy_timeout``, a spaced form ("5s busy
+#: timeout"), the file citation ``db/session.py``, a passage split across two ``#`` comment
+#: lines, case-insensitive ``BUSY_TIMEOUT``, and the adjectival form ("5-second"), which matches
+#: how most other durations in ``src/`` are written even though no busy-timeout passage uses it
+#: yet.
 #:
-#: Rejected, run and confirmed: ``five seconds`` in words, ``5 s`` with a space
-#: (``docs/LEARNINGS.md``'s), ``5000ms``, ``session.py`` without ``db``, a figure past 120
-#: characters, and a figure on the far side of a sentence boundary. That last one is the gap's
-#: own bound rather than a judgment, so it also rejects a period that ends no sentence: a passage
-#: writing ``the ``busy_timeout``, i.e. 5s`` goes unread, and ``src/reaper/services/`` carries 11
-#: ``e.g.``/``i.e.``/``vs.`` today.
+#: Rejected spellings include the figure written in words ("five seconds"), a spaced unit
+#: ("5 s"), milliseconds ("5000ms"), "session.py" without "db", a figure more than 120
+#: characters from its anchor, and a figure on the far side of a sentence boundary from its
+#: anchor. The sentence-boundary rule also skips a period that does not end a sentence, such as
+#: inside "i.e." or "e.g.", so an abbreviation between the figure and its anchor does not break
+#: the match.
 #:
-#: **The sentence bound is doing work the window alone did not.** The figure pattern reads every
-#: status-code plural in ``src/`` (``404s``, ``409s``, ``429s``, ``500s``, ``502s``) and every
-#: other seconds figure besides. Measured over every anchor in both roots: eleven figures fall
-#: inside a 120-character window, and exactly one of them carries a sentence break in its gap --
-#: ``scheduler``'s *measured* ``8s`` vacuum, 86 characters past a ``db.session`` it is not about.
-#: Deleting ``scheduler``'s real copy showed what that costs: the window alone then reports
-#: "quotes 8s", substituting an unrelated measurement for the passage that left, while the
-#: sentence bound reports "no longer quotes it", which is the truth. Nearest status-code plural
-#: to any anchor at this tip: 17,851 characters.
+#: The sentence boundary matters because the figure pattern alone would also match unrelated
+#: numbers within the 120-character window, such as HTTP status-code plurals (``404s``,
+#: ``409s``, ``429s``, ``500s``, ``502s``) or other seconds figures that are not busy-timeout
+#: quotes at all.
 #:
-#: It bounds proximity, not meaning, so a figure sharing a sentence with an anchor it is not
-#: about is still collected. That lands as a red gate naming the module **when the module's real
-#: passage is collected first**; where the spurious figure comes first and the module has one
-#: anchor, the real match is the one that loses, and a module already at its count reads green.
-#: ``scan_runner.scan_running`` is that shape today, one anchor with its figure before it.
+#: This check bounds proximity, not meaning, so a figure that shares a sentence with an anchor
+#: it is not actually about is still collected. In a module with only one anchor, if that
+#: unrelated figure appears before the real passage, the real match loses and the module reads
+#: as passing even though its real quote is gone. ``scan_runner.scan_running`` has this shape
+#: today: one anchor, with its real figure appearing before it in the text.
 _BUSY_TIMEOUT_ANCHOR = r"(?:db[./]session|busy[_ ]timeout)"
 _BUSY_TIMEOUT_GAP = r"(?:(?!\.\s).){0,120}?"
 _BUSY_TIMEOUT_FIGURE = r"\b(\d+)(?:s|-seconds?)\b"
@@ -840,25 +810,24 @@ _BUSY_TIMEOUT_QUOTED = re.compile(
 _BUSY_TIMEOUT_PRAGMA = re.compile(r"PRAGMA\s+busy_timeout\s*=\s*(\d+)")
 
 #: Declaring file -> how many ``PRAGMA busy_timeout`` calls it makes. Pinned so a fourth
-#: declaration cannot arrive without someone deciding which passages describe it (rule 145).
+#: declaration cannot arrive without someone deciding which passages describe it.
 _BUSY_TIMEOUT_DECLARATIONS = {
     "src/reaper/db/session.py": 1,
     "src/reaper/services/backup.py": 1,
     "src/reaper/services/retention.py": 1,
 }
 
-#: File -> which declaration each of its passages quotes -> how many quote it. **The second
-#: column is the point**: three declarations exist and they are not one fact.
-#: ``db.session._configure_sqlite`` sets 5000 for every app connection, ``retention._compact_sync``
-#: sets 30000 on the connection it opens for ``VACUUM``, and ``backup._build_into`` sets 5000 on
-#: its own for ``VACUUM INTO``. Backup's figure equals the app's by coincidence, so a single
-#: column would tie two values that have no reason to move together and read as a proof that
-#: they do. Every figure is read out of the declaration named here, never written here.
+#: File -> which declaration each of its passages quotes -> how many quote it. The second
+#: column matters because three separate declarations exist here, and they are not the same
+#: fact: ``db.session._configure_sqlite`` sets 5000 for every app connection,
+#: ``retention._compact_sync`` sets 30000 on the connection it opens for ``VACUUM``, and
+#: ``backup._build_into`` sets 5000 on its own connection for ``VACUUM INTO``. Backup's figure
+#: matches the app's by coincidence, so treating them as one column would tie two unrelated
+#: values together as if they had to move in step. Every figure below is read out of the
+#: declaration it names, never written here directly.
 #:
-#: Eleven passages over eight files, reconciled by hand against both roots (rule 145): eight
-#: quote ``db/session.py``, two quote backup's own, one quotes retention's own. The count is the
-#: part a set of file names cannot hold, since the walk collects passages and a second copy
-#: inside an already-listed file would hide behind the first (rule 147).
+#: Reconciled by hand against both roots. Counting matters because a set of file names alone
+#: cannot show a second passage hiding inside a file that is already listed.
 _BUSY_TIMEOUT_PROSE: dict[str, dict[str, int]] = {
     "src/reaper/services/backup.py": {"src/reaper/services/backup.py": 2},
     "src/reaper/services/executor.py": {"src/reaper/db/session.py": 1},
@@ -875,38 +844,34 @@ _BUSY_TIMEOUT_PROSE: dict[str, dict[str, int]] = {
 
 
 def test_every_prose_copy_of_the_busy_timeout_states_the_declared_value() -> None:
-    """Rule 144: one fact in eleven passages, and three declarations under them.
+    """Every prose copy of the busy timeout must match the value it declares.
 
     ``PRAGMA busy_timeout=5000`` in ``db.session._configure_sqlite`` is how long every app
-    connection waits for a write lock, and eight passages quote it as the reason something else
-    is the way it is. The one on the deletion path is load-bearing: ``executor._commit_journal``
-    gives the journal two attempts with no sleep between them *because* the timeout already
-    waited inside each. Move the pragma and that reasoning is silently wrong, on the write that
-    records what was deleted.
+    connection waits for a write lock, and several passages quote it as the reason something
+    else works the way it does. The copy on the deletion path matters most:
+    ``executor._commit_journal`` gives the journal two attempts with no sleep between them
+    because the timeout already waits inside each attempt. Moving the pragma without updating
+    that comment would leave the reasoning silently wrong on the write that records what was
+    deleted.
 
-    **Two more declarations sit beside it, and they are not the same fact.**
-    ``retention._compact_sync`` sets 30000 on the connection it opens for ``VACUUM``, and
-    ``backup._build_into`` sets 5000 on its own for ``VACUUM INTO``. Backup's figure equals the
-    app's by coincidence, so its two passages are checked against backup's own declaration.
-    Checking them against ``db.session``'s would make two unrelated values move together forever
-    and read as a proof that they must.
+    Two more declarations exist besides the one in ``db.session``, and they are not the same
+    value. ``retention._compact_sync`` sets 30000 on the connection it opens for ``VACUUM``,
+    and ``backup._build_into`` sets 5000 on its own connection for ``VACUUM INTO``. Backup's
+    value matches the app's by coincidence, so its passages are checked against backup's own
+    declaration, not against ``db.session``'s. Checking them against ``db.session`` instead
+    would tie two unrelated values together as if they had to move in step.
 
-    Every figure is read out of the declaration its passage is about, so no number is written
-    here, and the failure names each file so the sweep is the fix rather than a note asking the
-    next author to remember.
+    Every expected figure is read out of the declaration its passage is about, so no number is
+    hardcoded here, and a failure names each file that needs a fix.
 
-    **What the walk cannot see, named rather than implied** (rule 147). A copy carrying no figure
-    at all is invisible, and one survives deliberately: ``imdb_dataset.load`` says "wait out the
-    timeout" three lines under its own "5s ``busy_timeout``", in the same sentence's subject, so
-    it restates the figure it was just given rather than holding a second one. A copy spelling
-    the value in words ("five seconds") is invisible the same way; the two roots hold none today,
-    and the per-file count is what turns a rewording into a failure rather than a quiet pass.
-    Within one file the comparison is a multiset, so two passages that swapped each other's
-    figures would still balance: ``retention.py`` is the only file quoting two declarations, and
-    its three sit apart, two docstrings and the ``SWEEP_BATCH`` comment.
-    ``docs/LEARNINGS.md`` quotes both timeouts as ``5 s`` and
-    ``30 s`` and is deliberately out of scope: it records what was measured on the tree of the
-    day, and rewriting a measurement to match a later default would falsify it.
+    What this cannot catch: a copy that quotes no figure at all, and a copy that spells the
+    value in words instead of digits, such as "five seconds". ``imdb_dataset.load`` restates
+    its own figure ("wait out the timeout", right after its own "5s ``busy_timeout``") rather
+    than adding a second one, which is why it is not double-counted. The comparison within one
+    file is a multiset, so two passages that swapped figures with each other would still pass;
+    only ``retention.py`` quotes more than one declaration today. ``docs/LEARNINGS.md`` quotes
+    both timeouts and is deliberately excluded, since it records a value measured at a past
+    point in time, and rewriting it to match a later default would falsify that record.
     """
     declared: dict[str, list[str]] = {}
     for path in _busy_timeout_files():
@@ -983,11 +948,11 @@ def test_american_english_everywhere() -> None:
     ``aria-labelledby`` attribute keep their real spelling.
     """
     offenders: list[str] = []
-    # The English catalog joins the walk: since Stage 4 it holds the operator copy the walk
-    # used to read in the components. Its translator notes join it too (#868 phase 6): they
-    # are prose written for a translator, not operator copy, but the same rule binds them. A
+    # The English catalog joins the walk, since it holds the operator copy the components
+    # read at render time. Its translator notes join it too: they are prose written for a
+    # translator rather than operator copy, but the same American-English rule binds them. A
     # translated catalog or manual is the one thing this gate leaves alone, because a French
-    # manual is French.
+    # manual is written in French.
     for path in [
         *_code_and_live_docs(),
         FRONTEND_SRC / "locales" / "en" / "ui.json",
@@ -1037,18 +1002,17 @@ def test_dynamic_favicon_link_is_declared_last() -> None:
 
 
 def test_dev_proxy_target_follows_the_api_port() -> None:
-    """``REAPER_PORT`` moves the dev API, so it has to move the proxy sitting in front of it.
+    """``REAPER_PORT`` moves the dev API, so it has to move the proxy sitting in front of it too.
 
-    ``scripts/dev-local.sh`` advertises ``REAPER_PORT`` as the way to run a SECOND instance --
-    a parallel agent session, a PR test-drive -- and passes it to uvicorn. While
-    ``frontend/vite.config.ts`` hardcoded its ``/api`` target, the API came up correctly on the
-    new port and every call through Vite answered 502, so the UI was a dead shell that read as a
-    crashed backend. ``REAPER_WEB_PORT`` did work, which is what made the pair read as supported
-    with only half of it wired.
+    ``scripts/dev-local.sh`` uses ``REAPER_PORT`` to run a second instance, such as a parallel
+    agent session or a PR test drive, and passes it to uvicorn. If
+    ``frontend/vite.config.ts`` hardcoded its ``/api`` target instead, the API would come up
+    correctly on the new port while every call through Vite failed, since the proxy would
+    still point at the old one.
 
-    Both halves are pinned here because either alone is silently useless: a config reading a
-    variable nothing exports, and a script exporting a variable nothing reads, each look correct
-    on their own line. Rule 144 -- this is one fact stated in two files, so neither may move
+    Both halves are checked here because either one alone is silently useless: a config
+    reading a variable nothing exports, and a script exporting a variable nothing reads, each
+    look correct on its own line. This is one fact stated in two files, so neither may move
     without the other.
     """
     config = (REPO / "frontend" / "vite.config.ts").read_text(encoding="utf-8")
@@ -1074,31 +1038,30 @@ def test_dev_proxy_target_follows_the_api_port() -> None:
         )
 
 
-# Spellings that turn Vite's port strictness back off, written down before shipping the matcher
-# (rule 147): the config field ``strictPort: false``, and the two CLI forms a launcher can pass,
-# ``--strictPort false`` and ``--no-strictPort``. It reads the value, so quoting and spacing do
-# not matter, and it cannot swallow ``--strictPort`` alone, which is the form that turns it ON.
+# Spellings that turn Vite's port strictness back off: the config field ``strictPort: false``,
+# and the two CLI forms a launcher can pass, ``--strictPort false`` and ``--no-strictPort``. It
+# reads the value, so quoting and spacing do not matter, and it cannot match ``--strictPort``
+# alone, which is the form that turns it ON.
 _STRICT_PORT_OFF = re.compile(r"(?:--no-strictPort\b|strictPort[\"'\s:=]+false\b)")
 
 
 def test_the_vite_dev_server_refuses_a_taken_port() -> None:
     """A dev server that cannot have the port it was told to use must say so, not pick another.
 
-    Vite's ``strictPort`` defaults to false, so beside a running instance it slides to the next
-    free port and says so only in its own log. A launcher that also omits ``REAPER_PORT`` then
-    proxies ``/api`` to the FIRST instance's API, and the result is a UI serving this tree's
-    code over someone else's backend with every request answering 200 -- an agent verifies a
-    change end to end against a build that does not contain it (#239). The quiet inverse of the
-    502 in ``test_dev_proxy_target_follows_the_api_port`` above, and the more dangerous one,
-    because that one at least fails visibly.
+    Vite's ``strictPort`` defaults to false, so next to a running instance it silently moves to
+    the next free port and only logs the change itself. A launcher that also omits
+    ``REAPER_PORT`` then proxies ``/api`` to the first instance's API. The result is a UI
+    serving this tree's code over a different backend, with every request still answering
+    successfully, so a person verifying a change end to end could be looking at a build that
+    does not contain it. This is quieter and more dangerous than the proxy pointing at nothing,
+    which at least fails visibly.
 
-    **Not a per-launch walk, unlike ``--no-proxy-headers``.** That flag lives on each uvicorn
-    command line, so nothing but a walk can prove every launch carries it. This one lives in
-    ``frontend/vite.config.ts``, which every launcher goes through -- ``.claude/launch.json``,
-    the verify skill's manual boot, ``README.md``, ``scripts/dev-local.sh`` -- so the config is
-    the whole population, and what a launcher can still do is override it back. Both halves are
-    checked here; the ban runs over the same ``_repo_text_files`` walk the other gates use, so a
-    launcher added anywhere in this checkout is inside it from the moment it is written.
+    This check reads one file instead of walking every launch site, unlike a per-launcher flag
+    such as ``--no-proxy-headers``, because ``strictPort`` lives in
+    ``frontend/vite.config.ts``, which every launcher goes through: ``.claude/launch.json``,
+    the verify skill's manual boot, ``README.md``, and ``scripts/dev-local.sh``. So the config
+    file is the whole population to check, though a launcher could still override the setting
+    back off, which is the second half this test also checks for across the whole repo.
     """
     config = (REPO / "frontend" / "vite.config.ts").read_text(encoding="utf-8")
     assert re.search(r"strictPort:\s*true", config), (
@@ -1119,39 +1082,37 @@ def test_the_vite_dev_server_refuses_a_taken_port() -> None:
 
 
 _PRESETS_TS = FRONTEND_SRC / "components" / "policyPresets.ts"
-#: The ``Pick<ProfileSettings, ...>`` union naming the fields a preset writes. Read as the whole
-#: declaration up to its ``>;`` and picked apart inside, rather than anchored on a delimiter one
-#: spelling happens to put there: the union is comment-interleaved, so a per-line matcher would
-#: be reading prose (rule 147). ``|`` is the only separator TypeScript allows here.
+#: The ``Pick<ProfileSettings, ...>`` union naming the fields a preset writes. Read as the
+#: whole declaration up to its ``>;`` and picked apart inside, rather than anchored on a
+#: delimiter one spelling happens to put there: the union is comment-interleaved, so a
+#: per-line matcher would be reading prose. ``|`` is the only separator TypeScript allows here.
 _PRESET_CAPS_TYPE = re.compile(r"PresetCaps\s*=\s*Pick<\s*ProfileSettings\s*,(.*?)>;", re.DOTALL)
 _TS_LITERAL = re.compile(r'"(\w+)"')
-#: ``caps: { ... }`` holds no nested braces, so the character class is the whole parser and a
-#: nested one would fail loudly here rather than silently truncate the block (rule 147).
+#: ``caps: { ... }`` holds no nested braces, so the character class is the whole parser, and a
+#: nested one would fail loudly here rather than silently truncate the block.
 _PRESET_CAPS = re.compile(r"caps:\s*\{([^{}]*)\}")
 _CAPS_FIELD = re.compile(r"^\s*(\w+):\s*([\w_]+),")
 #: Cautious, Balanced, Aggressive. Pinned because a flag-shaped assertion cannot tell a preset
-#: that validates from one this parser stopped collecting -- both read green (rule 145).
+#: that validates from one this parser stopped collecting, since both would read green.
 _EXPECTED_PRESETS = 3
 
 
 def test_a_caps_preset_writes_every_field_its_validator_reads() -> None:
     """A starting point may not build a combination the operator is refused for choosing.
 
-    Each preset sets ``caps_enabled: true``, and that switch is what activates
-    ``policy._run_cap_within_rolling_cap`` -- it early-returns while the caps are off. The
-    preset then MERGES its fields into the stored pace, so every cap it does not name keeps the
-    operator's own value, and a hand-maintained subset can build a combination out of one they
-    were allowed to store. ``max_unmeasured_per_run`` was the omission: the allowance accepts
-    up to 25, Cautious sets 5 items per run, and an operator who had raised it clicked a button
-    whose help text calls it a starting point and got a 422 (#256).
+    Each preset sets ``caps_enabled: true``, which activates
+    ``policy._run_cap_within_rolling_cap`` (it returns early while caps are off). The preset
+    then merges its fields into the operator's stored settings rather than replacing them, so
+    any cap it does not name keeps the operator's existing value. A preset with an incomplete,
+    hand-maintained field list can therefore combine its own values with an old operator value
+    into a setting the validator rejects.
 
-    **The omission is the defect, not the values**, which is what the first draft of this test
-    got wrong: deleting a field from a preset leaves ``ProfileSettings`` supplying its default,
-    so validating each preset alone passes on exactly the mutation it exists to catch. The
-    field list is what has to be complete. So it is derived from the validator's own source
-    (rule 144: generate the copy, or the ungenerated one drifts toward reassuring), and the
-    values are then run through the real validator on top (rule 3/22) so a preset cannot also
-    carry a combination that is illegal on its face.
+    The missing field is the defect, not the values it carries: deleting a field from a preset
+    leaves ``ProfileSettings`` supplying its own default, so testing each preset in isolation
+    passes even on the exact mutation this test exists to catch. So the expected field list is
+    derived from the validator's own source instead of hand copied, and the resulting values
+    are then run through the real validator, to also catch a preset carrying a combination
+    that is illegal on its own.
     """
     import inspect
 
@@ -1197,27 +1158,26 @@ def test_a_caps_preset_writes_every_field_its_validator_reads() -> None:
         ProfileSettings(**caps)
 
 
-# ``pkill``/``killall`` select processes by PATTERN, which is machine-wide: nothing in the
+# ``pkill``/``killall`` select processes by pattern, which is machine-wide: nothing in the
 # pattern distinguishes this dev instance from a parallel one. ``pgrep`` only counts when the
-# same line goes on to kill (``pgrep -f x | xargs kill``); read-only, it is a status check and
-# owes no scope.
+# same line goes on to kill it (``pgrep -f x | xargs kill``); read alone, it is a status check
+# and needs no scope.
 #
-# Spellings this accepts, written down before shipping the matcher (rule 147): ``pkill -f x``,
-# ``pkill -9 -f x``, ``killall x``, a leading path (``/usr/bin/pkill``), a ``sudo`` prefix, and
-# ``pgrep -f x | xargs kill``. It reads the command WORD, so flags, quoting and argument order
-# do not matter. It does NOT read a kill assembled through a variable (``K=pkill; $K x``) or one
-# routed through ``ps | awk | xargs kill``; neither is spelled anywhere in this tree, and both
-# would need this matcher widened rather than the ban weakened.
-# The lookbehind excludes word characters and ``-`` but NOT ``/``, so ``/usr/bin/pkill`` is
-# still a kill while ``uv-pkill`` is not. Writing ``/`` into that class is what a first draft
-# does, and it silently exempts every absolute invocation.
+# Accepted spellings: ``pkill -f x``, ``pkill -9 -f x``, ``killall x``, a leading path
+# (``/usr/bin/pkill``), a ``sudo`` prefix, and ``pgrep -f x | xargs kill``. It reads the
+# command word, so flags, quoting and argument order do not matter. A kill assembled through a
+# variable (``K=pkill; $K x``) or routed through ``ps | awk | xargs kill`` would need this
+# matcher widened, since nothing in this tree is spelled that way today.
+# The lookbehind excludes word characters and ``-`` but keeps ``/`` out of that class, so
+# ``/usr/bin/pkill`` still counts as a kill while ``uv-pkill`` does not. Adding ``/`` to that
+# class would silently exempt every absolute invocation.
 _PATTERN_KILL = re.compile(r"(?<![\w-])(?:pkill|killall)(?![\w-])")
 _PGREP = re.compile(r"(?<![\w-])pgrep(?![\w-])")
 _KILL_WORD = re.compile(r"(?<![\w-])kill(?![\w-])")
-# A shell comment, so prose ABOUT a kill is not read as one. ``#`` must open a word, which is
-# the shell's own rule. A ``#`` inside a quoted string that happens to follow a space is read as
-# a comment here -- that can only hide a kill, never invent one, and the pinned count below is
-# what notices a member going missing.
+# A shell comment, so prose about a kill is not read as one. ``#`` must open a word, which is
+# the shell's own rule. A ``#`` inside a quoted string that happens to follow a space is read
+# as a comment here. That can only hide a real kill, never invent one, and the pinned count
+# below is what notices a member going missing.
 _SHELL_COMMENT = re.compile(r"(?:^|\s)#.*$")
 # ``$API_PORT``, ``${WEB_PORT}``, ``$REAPER_PORT``.
 _PORT_VAR = re.compile(r"\$\{?[A-Za-z_][A-Za-z0-9_]*PORT\b")
@@ -1236,22 +1196,20 @@ def _selects_processes_by_pattern(line: str) -> bool:
 _EXPECTED_SHELL_SCRIPTS = 4
 #: Both in ``dev-local.sh``'s ``stop_all``: the TERM sweep, and the KILL for a survivor of it.
 #: Pinned separately from the script count because the walk and the ban cover different
-#: populations (rule 147): a script that drops out of the walk is absent from both, so a single
-#: figure would agree with itself while disagreeing with the tree.
+#: populations: a script that drops out of the walk is absent from both, so a single figure
+#: would agree with itself while disagreeing with the tree.
 _EXPECTED_PATTERN_KILLS = 2
 
 
 def test_a_dev_script_kills_only_its_own_ports() -> None:
     """A pattern is not a scope: a kill that selects by name must also name a port.
 
-    ``scripts/dev-local.sh`` ended ``stop_all`` with ``pkill -f`` on a pattern that named the app
-    and nothing else, so it matched every Reaper API on the machine. ``up`` calls ``stop_all``
-    unconditionally, and the script advertises ``REAPER_PORT``/``REAPER_WEB_PORT`` as the
-    supported way to run a second instance -- so following the documented workflow killed the
-    instance it was meant to leave alone, before printing a line about what it was doing. Quiet
-    in the worst way: only the API dies, the first instance's Vite keeps serving its own port, so
-    the browser still loads the app and every request fails against a backend that is gone, which
-    reads as an app bug rather than a dev-script one (#223).
+    A ``pkill -f`` pattern that names only the app, with no port, matches every Reaper API on
+    the machine, since ``REAPER_PORT``/``REAPER_WEB_PORT`` are the supported way to run a
+    second instance side by side. This can kill an instance a dev script was meant to leave
+    alone, and the failure is quiet: only the API dies, a different instance's Vite server
+    keeps serving its own port, so the browser still loads the app while every request fails
+    against a backend that is gone, which reads as an app bug rather than a dev-script one.
 
     A port is the only thing in a dev script that tells this instance from a parallel one, so a
     pattern kill has to carry one. Killing by pid or by port is already scoped and is not
@@ -1291,11 +1249,11 @@ def test_a_dev_script_kills_only_its_own_ports() -> None:
 
 
 def test_the_pattern_kill_matcher_reads_every_spelling_it_claims() -> None:
-    """Rule 147: the ban above is bounded by what its regex can parse, so prove the parse.
+    """Proves the regex above matches every spelling of a pattern kill it claims to catch.
 
-    A matcher anchored on the literal ``pkill -f`` would read the one line this fixed and
-    nothing else. The rejects are the near misses that must stay out: a kill already scoped by
-    pid, and prose describing a kill. A false positive is a gate that gets deleted.
+    A matcher anchored on the literal ``pkill -f`` would read only that one exact spelling.
+    The rejects are the near misses that must stay out: a kill already scoped by pid, and
+    prose describing a kill rather than running one.
     """
     accepted = [
         'pkill -f "uvicorn reaper.main:create_app"',
@@ -1322,17 +1280,17 @@ def test_the_pattern_kill_matcher_reads_every_spelling_it_claims() -> None:
     )
 
 
-# A FILE inside a log directory -- ``$LOG_DIR/``, ``${LOG_DIR}/``, ``$API_LOGDIR/``. The trailing
+# A file inside a log directory: ``$LOG_DIR/``, ``${LOG_DIR}/``, ``$API_LOGDIR/``. The trailing
 # separator is what makes this a file rather than the directory: ``mkdir -p "$LOG_DIR"`` and
-# ``ls "$LOG_DIR"`` act on the directory, which is per-tree on purpose, and must not be collected.
-# The leading class accepts ZERO characters before ``LOG``, which a first draft does not: written
-# as ``[A-Za-z_][A-Za-z0-9_]*LOG_?DIR`` it requires a prefix and reads every spelling EXCEPT the
-# bare ``$LOG_DIR`` this tree actually uses, i.e. it collects nothing and passes (rule 147).
+# ``ls "$LOG_DIR"`` act on the directory itself, which is per-tree on purpose and must not be
+# collected. The leading character class accepts zero characters before ``LOG``, which matters
+# because a stricter class requiring at least one prefix character would miss the bare
+# ``$LOG_DIR`` this tree actually uses, matching nothing and passing without checking anything.
 _LOG_DIR_FILE = re.compile(r"\$\{?[A-Za-z0-9_]*LOG_?DIR\}?/")
 
 #: ``API_LOG`` and ``WEB_LOG`` in ``scripts/dev-local.sh``. Pinned because the ban below cannot
-#: tell a path that carries its port from one the walk no longer reaches -- both read green
-#: (rule 147). The population is the log-path lines, not the scripts: dev-local.sh dropping out
+#: tell a path that carries its port from one the walk no longer reaches, since both read
+#: green. The population is the log-path lines, not the scripts: dev-local.sh dropping out
 #: of the walk takes this count to 0, so one figure covers both losses.
 _EXPECTED_INSTANCE_LOG_PATHS = 2
 
@@ -1340,18 +1298,15 @@ _EXPECTED_INSTANCE_LOG_PATHS = 2
 def test_a_dev_script_writes_only_its_own_logs() -> None:
     """A per-instance file names the instance: a log path must carry the port that owns it.
 
-    ``scripts/dev-local.sh`` keyed ``LOG_DIR`` to the TREE while keying every other per-instance
-    resource to the port, so two instances started from one checkout shared one pair of log
-    files. ``nohup ... > "$API_LOG"`` truncates on open, so the second instance's start emptied
-    the log the first was still writing to, and the first one's uvicorn held its file offset
-    across that truncation and kept appending at a stale one. ``logs`` then tailed whichever
-    instance opened the file last, and nothing in either instance's output said so, which is the
-    part that costs a debugging session: the output is a real instance's, just not the one the
-    reader meant (#235).
+    If a log path is keyed to the checkout instead of the port, two instances started from one
+    checkout write to the same log file. ``nohup ... > "$API_LOG"`` truncates the file on open,
+    so starting a second instance empties the log the first instance is still writing to, and
+    the first instance's process keeps appending at a now-stale file offset. Reading logs
+    afterward then shows whichever instance opened the file last, with nothing in the output
+    saying so, which makes a debugging session trust output from the wrong instance.
 
-    Same class as the unscoped kill above (#223) at a different resource -- a dev script acting
-    outside its own scope -- and the same fix, since the port is the only thing that tells this
-    instance from a parallel one.
+    Same class of bug as the unscoped kill above, a dev script acting outside its own scope,
+    and the same fix: the port is the only thing that tells this instance from a parallel one.
     """
     scripts = sorted(p for p, _ in _repo_text_files() if p.suffix == ".sh")
     paths = [
@@ -1381,11 +1336,11 @@ def test_a_dev_script_writes_only_its_own_logs() -> None:
 
 
 def test_the_log_path_matcher_reads_every_spelling_it_claims() -> None:
-    """Rule 147: the ban above is bounded by what its regex can parse, so prove the parse.
+    """Proves the regex above matches every spelling of a log-dir file path it claims to catch.
 
-    The rejects are the near misses that must stay out. Two are the log DIRECTORY, which is
-    per-tree by design and would be a false positive; a gate that fires on ``mkdir`` is a gate
-    someone deletes. The third is prose about a log path, which is not one.
+    The rejects are the near misses that must stay out. Two are the log directory itself,
+    which is per-tree by design and would be a false positive if flagged; a gate that fires on
+    ``mkdir`` gets deleted. The third is prose about a log path, not a real one.
     """
     accepted = [
         'API_LOG="$LOG_DIR/api-$API_PORT.log"',
@@ -1416,34 +1371,27 @@ def test_the_log_path_matcher_reads_every_spelling_it_claims() -> None:
 # Cached for the reason stated above ``_source_files_to_scan``, and this is the walk that costs.
 @lru_cache
 def _repo_text_files() -> list[tuple[Path, str]]:
-    """Every readable text file git considers part of THIS checkout, with its contents.
+    """Every readable text file git considers part of this checkout, with its contents.
 
     The population comes from git, not from ``rglob``, which honors no ignore file. Gitignored
-    directories sit inside the repo root and every gate below reads whatever this walk hands
-    it. Three of them are the ones that bit. ``.claude/worktrees/`` holds agent worktrees,
-    entire repo copies, so a raw walk judges other branches' files as if they were ours, and a
-    worktree's ``.git`` is a *file*, so skipping that name does not stop the descent.
-    ``.claude/review-findings/`` is session handoff scratch. ``.dev-logs/`` is whatever the dev
-    servers last printed, and a stack trace echoing a uvicorn command line is collected there
-    as a LAUNCH SITE. Each one fails ``uv run pytest`` in a checkout that has it on disk while
-    CI, which has none, stays green. A gate nobody can turn green from their own branch is a
-    gate that gets deleted.
+    directories can sit inside the repo root, and every gate below reads whatever this walk
+    hands it. ``.claude/worktrees/`` holds entire copies of other branches as agent worktrees,
+    so a raw walk would judge their files as if they belonged to this branch; a worktree's
+    ``.git`` is a file, so skipping that name alone would not stop the descent into it.
+    ``.claude/review-findings/`` is session handoff scratch. ``.dev-logs/`` holds whatever the
+    dev servers last printed, and a stack trace that echoes a uvicorn command line would be
+    collected as a launch site by mistake. Reading git's own file list instead of the
+    filesystem avoids all three at once, and keeps working the same way when a new one is
+    added later. ``--others --exclude-standard`` keeps a file that is created but not yet
+    staged, which is the state a gate is most useful in.
 
-    This replaced a hand-kept skip set, a mirror of ``.gitignore`` that needed an edit every
-    time the ignore file grew (rule 103). It was four entries behind when it was deleted:
-    ``.claude/review-findings/``, ``.hypothesis/``, ``.pytest_cache/`` and
-    ``mutation-report-*.json``. Two of those four are created by running this very suite,
-    which is why the set could not stay current by anyone's diligence.
-    ``--others --exclude-standard`` keeps a file created but not yet staged, which is the
-    state a gate is most useful in.
-
-    ``cwd=REPO`` carries the weight, and it inherits a trap worth recording. The skip set was
-    matched on the repo-RELATIVE path, because matching ``path.parts`` of the absolute one
-    matches the worktree the suite is *running in* and skips every file in the tree.
-    ``git ls-files`` prints paths relative to the process's own directory, so running it
-    anywhere but ``REPO`` makes every ``REPO / name`` join name a file that does not exist,
-    ``is_file()`` drops all of them, and the walk comes back empty and green. Same failure,
-    one layer down.
+    ``cwd=REPO`` matters here. Any path comparison in this walk must use the repo-relative
+    path, never ``path.parts`` of the absolute one, because the absolute path also matches the
+    worktree the suite happens to be running in, which would skip every file in the tree.
+    ``git ls-files`` prints paths relative to the process's own working directory, so running
+    it anywhere other than ``REPO`` would make every ``REPO / name`` join name a file that does
+    not exist, and ``is_file()`` would drop all of them, leaving the walk empty and silently
+    passing.
     """
     # stderr is left inherited, so git's own "not a git repository" reaches whoever ran this.
     listing = subprocess.run(
@@ -1452,8 +1400,8 @@ def _repo_text_files() -> list[tuple[Path, str]]:
         cwd=REPO,
         stdout=subprocess.PIPE,
         check=True,
-        # ``-z`` was chosen so an odd filename survives the split; a strict decode would give
-        # that back, raising out of the walk and taking every gate built on it with it.
+        # ``-z`` lets an odd filename survive the split. Without it, a strict decode would raise
+        # on that filename, breaking the walk and every gate built on it.
     ).stdout.decode(errors="surrogateescape")
     found: list[tuple[Path, str]] = []
     for name in listing.split("\0"):
@@ -1473,29 +1421,31 @@ def _repo_text_files() -> list[tuple[Path, str]]:
 def test_the_repo_walk_never_reads_a_gitignored_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Rule 145: the count is pinned over a tree whose membership is controlled.
+    """Proves the walk never reads a file git ignores, using a tree whose membership is controlled.
 
-    Counting the real checkout would pin a number that moves with every file added, so the
-    population is five files here, two of them ignored, reconciled by hand. The ignored pair
-    is shaped like what broke this: a directory of session scratch, and a log holding a line
-    a gate would read as a launch site. Neither is reachable from a branch, so a walk that
-    collects them is red in every checkout that has them and green in CI forever.
+    Counting the real checkout would pin a number that moves every time a file is added, so
+    this test builds a small tree instead: five files, two of them gitignored. The ignored
+    pair is shaped like the failures this check exists to prevent: a directory of session
+    scratch, and a log holding a line that a gate would misread as a launch site. Neither is
+    reachable from a real branch, so a walk that collects them would fail locally forever
+    while staying green in CI, which never has them on disk.
 
-    **Each argument owns one member of the expected set**, or one can be dropped and this
-    still reads green. ``kept.md`` is staged, so only ``--cached`` reaches it; ``.gitignore``
-    is untracked and not ignored, so only ``--others`` does; dropping ``--exclude-standard``
-    adds the ignored pair back; and the non-UTF8 name is what ``-z`` and the walk's
-    ``surrogateescape`` decode are for, a strict decode raising out of the walk instead.
+    Each expected file is reached by exactly one git flag, so dropping any flag drops that
+    file from the result. ``kept.md`` is staged, so only ``--cached`` reaches it. ``.gitignore``
+    is untracked but not ignored, so only ``--others`` reaches it. Dropping
+    ``--exclude-standard`` would add the ignored pair back. The non-UTF-8 name exercises
+    ``-z`` and the walk's ``surrogateescape`` decode, since a strict decode would raise and
+    drop that file out of the walk instead.
 
-    **The git environment is scrubbed three ways, and each closes a hole that was measured
-    rather than imagined** (rule 119). ``GIT_DIR`` and ``GIT_WORK_TREE`` beat ``cwd=``, so an
-    inherited one makes ``git init`` a no-op against someone else's repository, ``git add``
-    write into that repository's index, and this test pass having proved nothing. Clearing
-    every ``GIT_*`` name is what stops that. ``GIT_CONFIG_GLOBAL`` and ``GIT_CONFIG_SYSTEM``
-    then keep a developer's ``init.templateDir`` from seeding ``.git/info/exclude``. And
-    ``core.excludesFile`` is pinned inside the repo, because its DEFAULT is
-    ``$XDG_CONFIG_HOME/git/ignore``, which ``--exclude-standard`` reads with no config file
-    involved and which a repo-level setting is the only thing that overrides.
+    The git environment is scrubbed three ways. ``GIT_DIR`` and ``GIT_WORK_TREE`` take
+    priority over ``cwd=``, so an inherited one would make ``git init`` a no-op against a
+    different repository and ``git add`` write into that repository's index, letting this test
+    pass without proving anything. Clearing every ``GIT_*`` variable stops that.
+    ``GIT_CONFIG_GLOBAL`` and ``GIT_CONFIG_SYSTEM`` keep a developer's own
+    ``init.templateDir`` setting from seeding ``.git/info/exclude`` on the test's temporary
+    repo. ``core.excludesFile`` is pinned inside the temporary repo because its default
+    location is ``$XDG_CONFIG_HOME/git/ignore``, which ``--exclude-standard`` reads even with
+    no config file involved, and only a repo-level setting can override it.
     """
     for name in [key for key in os.environ if key.startswith("GIT_")]:
         monkeypatch.delenv(name)
@@ -1530,32 +1480,28 @@ def test_the_repo_walk_never_reads_a_gitignored_file(
     assert found == {".gitignore", "kept.md", odd}, found
 
 
-# Every real invocation of the app carries ``--factory``, because ``create_app`` IS a factory
+# Every real invocation of the app carries ``--factory``, because ``create_app`` is a factory
 # and uvicorn cannot boot it otherwise. That is what separates an invocation from a mention:
 # dev-local.sh's ``pkill -f "uvicorn reaper.main:create_app"`` names the same string and is not
 # a launch. Matching on the pair means there is no list of files here to remember to update.
 #
-# The separator class is load-bearing, and cost a launch to learn. ``\s+`` alone reads a shell
-# command line and nothing else: an argv ARRAY spells the two tokens ``"uvicorn",
-# "reaper.main:create_app"``, where what sits between them is a quote and a comma. So
-# ``.claude/launch.json`` -- the launch CLAUDE.md tells interactive sessions to use, and the one
-# that was still missing ``--no-proxy-headers`` -- was invisible to this test while the comment
-# here claimed every invocation in the tree was covered. Accepting quotes and commas is what
-# makes that claim true rather than reassuring. It cannot swallow the ``pkill`` line, which
-# carries no ``--factory``.
+# The separator class matters: ``\s+`` alone reads a shell command line and nothing else. An
+# argv array spells the two tokens ``"uvicorn", "reaper.main:create_app"``, where what sits
+# between them is a quote and a comma, as in ``.claude/launch.json``. Accepting quotes and
+# commas is what lets this pattern cover a launcher config as well as the shell-command form.
+# It cannot swallow the ``pkill`` line, which carries no ``--factory``.
 _UVICORN_LAUNCH = re.compile(r"uvicorn[\"',\s]+reaper\.main:create_app\b")
 
 #: The shipped ``CMD``, ``scripts/dev-local.sh``, ``CONTRIBUTING.md``, ``.claude/launch.json``
-#: and ``.claude/skills/verify/SKILL.md``. It said ``README.md`` for the third, which carries no
-#: uvicorn line at all -- the count was right and the file named was not, which is the drift a
-#: pinned count cannot see (#389). Pinned because "every launch carries the flag" is only
-#: worth as much as the walk that finds them: the flag assertion below cannot distinguish a
-#: launch that complies from one this matcher no longer sees, and both read as green (rule 145).
+#: and ``.claude/skills/verify/SKILL.md``. Pinned as a count because "every launch carries the
+#: flag" is only worth as much as the walk that finds them: the flag assertion below cannot
+#: distinguish a launch that complies from one this matcher no longer sees, and both read as
+#: green.
 _EXPECTED_LAUNCHES = 5
 
 
 def _uvicorn_launches() -> list[tuple[Path, int, str]]:
-    """Every line in one of THIS checkout's own text files that boots the app under uvicorn.
+    """Every line in this checkout's own text files that boots the app under uvicorn.
 
     The walk is ``_repo_text_files``, which is scoped to this checkout for reasons worth
     reading before changing either caller.
@@ -1569,20 +1515,22 @@ def _uvicorn_launches() -> list[tuple[Path, int, str]]:
 
 
 def test_every_uvicorn_launch_disables_proxy_headers() -> None:
-    """Rule 101: peer trust is decided by ``reaper.auth.proxy``, so the server must abstain.
+    """Peer trust is decided by ``reaper.auth.proxy``, so the uvicorn server itself must abstain.
 
-    uvicorn defaults to ``proxy_headers=True`` with ``forwarded_allow_ips="127.0.0.1"``, and
-    its ``ProxyHeadersMiddleware`` rewrites ``scope["client"]`` and ``scope["scheme"]`` from
-    ``X-Forwarded-For``/``-Proto`` before any application code exists. On an install whose
-    caller really is loopback -- host networking, a same-host proxy published to
-    ``127.0.0.1:8420``, another container sharing the netns, a dev server -- a caller could
-    then rotate a fake address past the per-IP sign-in lockout, and hand itself a
-    ``Secure``/``__Host-`` cookie its own browser drops on a plain-HTTP install. Both with
-    reverse-proxy trust switched OFF, from a default the operator never set.
+    uvicorn defaults to ``proxy_headers=True`` with ``forwarded_allow_ips="127.0.0.1"``. Its
+    ``ProxyHeadersMiddleware`` rewrites ``scope["client"]`` and ``scope["scheme"]`` from the
+    ``X-Forwarded-For``/``-Proto`` headers before any application code runs. On an install
+    where the caller really is loopback, such as host networking, a same-host proxy published
+    to ``127.0.0.1:8420``, another container sharing the network namespace, or a dev server, a
+    caller could send those headers to rotate a fake address past the per-IP sign-in lockout,
+    and hand itself a ``Secure``/``__Host-`` cookie its own browser would otherwise drop on a
+    plain-HTTP install. Both attacks work even though reverse-proxy trust is switched off by
+    default.
 
-    So this is not style: dropping the flag from any launch re-opens it there. The check is on
-    the invocation rather than on one named file, because the shipped ``CMD`` and the dev
-    script are twins (rule 72) and a third launch would inherit the same defect silently.
+    Dropping ``--no-proxy-headers`` from any launch reopens this there. The check runs on
+    every invocation instead of one named file, because the shipped ``CMD`` and the dev script
+    are the same launch written twice, and a third launch would inherit the same defect
+    silently.
     """
     launches = _uvicorn_launches()
     assert len(launches) == _EXPECTED_LAUNCHES, (
@@ -1614,26 +1562,25 @@ _PREFLIGHT_SOURCE = {
 }
 
 #: The one launch that still does not, pinned so the gap cannot grow back quietly. It is a
-#: launcher config that spawns a single executable from ``runtimeArgs``, so adding a step means
-#: changing its shape rather than its arguments, and that is the repository owner's call and not
-#: this test's (#389).
+#: launcher config that spawns a single executable from ``runtimeArgs``, so adding a preflight
+#: step means changing its shape rather than its arguments, which is a call for whoever owns
+#: this config to make, not this test.
 _PREFLIGHT_GAP = {".claude/launch.json"}
 
 
 def test_every_uvicorn_launch_runs_preflight() -> None:
-    """Rule 127: ``preflight``'s docstring says EVERY way of starting Reaper runs it.
+    """Every way of starting Reaper runs ``python -m reaper.preflight`` first.
 
-    Nothing enforced that, and three developer recipes did not -- ``CONTRIBUTING.md``,
-    ``.claude/skills/verify/SKILL.md`` and ``.claude/launch.json``. It is the shape that goes
-    wrong quietly, because preflight is what applies a staged restore: a launch that skips it
-    does not fail, it just never finishes the operator's restore, and the banner asks for a
-    restart that cannot complete however many times it is given one (#381, #389).
+    Preflight is what applies a staged restore. A launch that skips it does not fail visibly.
+    It just never finishes the operator's restore, and the restart banner keeps asking for
+    another restart that can never complete.
 
-    Every shipped path was and is fine. This binds the developer ones, and any launch added
-    later by an author who never read the docstring, which is what prose cannot do.
+    The shipped launch paths already do this. This test binds the developer recipes too, and
+    any launch added later, since a launch author has no reason to read preflight's own
+    docstring.
 
-    The membership assertion comes first for rule 145's reason: a "names preflight" check
-    cannot tell a launch that complies from one this walk no longer sees, and both read green.
+    The membership assertion runs first because a "names preflight" check alone cannot tell a
+    launch that complies from one this walk no longer sees; both would read green.
     """
     texts = {str(path.relative_to(REPO)): text for path, text in _repo_text_files()}
     found = {str(path.relative_to(REPO)) for path, _, _ in _uvicorn_launches()}
@@ -1656,12 +1603,10 @@ def test_every_uvicorn_launch_runs_preflight() -> None:
     )
 
 
-# Where the operator is told what REAPER_PORT does. The Dockerfile's CMD is the declaration;
-# these are the prose copies of it, and rule 144 is that deriving one does not make the rest
-# safe. docker-compose.yml carried the wrong one for a while: it said REAPER_PORT "does not
-# move" the container's port, beside a CMD that has always read it, so an operator following
-# the compose file published on a port the app was not serving and read the healthcheck's
-# failure as a broken image.
+# Where the operator is told what REAPER_PORT does. The Dockerfile's CMD reads it; these are
+# the prose copies that must agree. A denial here, saying REAPER_PORT "does not move" the
+# container's port, would send an operator to publish on a port the app is not serving, and
+# they would read the healthcheck's failure as a broken image instead of a misconfigured port.
 _PORT_PROSE = ("docker-compose.yml", ".env.example", "scripts/try-image.sh")
 
 # Said of REAPER_PORT, each of these is false. Matched against the flattened text, so a
@@ -1682,24 +1627,24 @@ def _flatten_prose(text: str) -> str:
     """One lowercase line, with per-line comment leaders removed.
 
     Every one of these copies lives in a comment, so a sentence long enough to matter wraps,
-    and each continuation line carries its own ``#``. Collapsing whitespace alone leaves that
-    marker sitting mid-sentence ("reaper_port does not # move it"), which a substring ban
-    reads straight past -- the exact shape of the claim this exists to catch (rule 147).
+    and each continuation line carries its own ``#``. Collapsing whitespace alone would leave
+    that marker sitting mid-sentence ("reaper_port does not # move it"), which a substring
+    search would read straight past, missing the exact claim this check exists to catch.
     """
     stripped = [_COMMENT_LEADER.sub("", line) for line in text.splitlines()]
     return " ".join(" ".join(stripped).split()).lower()
 
 
 def test_no_file_denies_that_reaper_port_moves_the_container_port() -> None:
-    """Rule 144: the CMD reads REAPER_PORT, so no prose copy may say it does not.
+    """The CMD reads REAPER_PORT, so no prose copy may say it does not.
 
-    The image's ``CMD`` passes ``--port "${REAPER_PORT:-8420}"`` to uvicorn and its
+    The image's ``CMD`` passes ``--port "${REAPER_PORT:-8420}"`` to uvicorn, and its
     ``HEALTHCHECK`` reads the same variable, so setting it genuinely moves the port the
-    container serves on. That fact is written out again in three places an operator
-    actually reads, and each was written by someone looking at a different one.
+    container serves on. That fact is written out again in three places an operator actually
+    reads, each written by someone looking at a different one.
 
-    The direction of the failure is the point: a wrong denial here reads as reassurance
-    ("you cannot break it, the right side is fixed"), which is why it survived review.
+    A wrong denial here reads as reassurance ("you cannot break it, the right side is
+    fixed"), which makes it easy to miss on a read-through.
     """
     cmd = (REPO / "Dockerfile").read_text(encoding="utf-8")
     assert "REAPER_PORT:-8420" in cmd, (
@@ -1723,15 +1668,14 @@ def test_no_file_denies_that_reaper_port_moves_the_container_port() -> None:
 
 
 def test_the_port_denial_matcher_reads_every_spelling_it_claims() -> None:
-    """Rule 147: the ban above is a substring match, so prove what it does and does not read.
+    """Proves what the substring matcher above does and does not read as a denial.
 
-    The accepts include the form the whole design rests on -- a sentence broken across two
-    comment lines, which is how the wrong one was actually written and how a matcher
-    anchored per-line would have missed it.
+    The accepted cases include a sentence broken across two comment lines, the form a
+    per-line-anchored matcher would miss.
 
-    The rejects matter more here than usual. Every one of them is text that states the
-    behavior *correctly*, and a matcher that trips on those gets deleted the first time it
-    cries wolf, taking the real check with it.
+    The rejected cases matter more here than usual. Every one of them states the behavior
+    correctly, and a matcher that trips on correct text gets deleted the first time it cries
+    wolf, taking the real check down with it.
     """
     accepted = [
         "# REAPER_PORT does not move it",
@@ -1754,7 +1698,7 @@ def test_the_port_denial_matcher_reads_every_spelling_it_claims() -> None:
     ]
 
     def denies(text: str) -> bool:
-        # The same normalizer the ban runs, never a copy of it (rule 119).
+        # Calls the same normalizer the ban runs, instead of a separate copy of it.
         flat = _flatten_prose(text)
         return any(denial in flat for denial in _PORT_DENIALS)
 
@@ -1796,13 +1740,12 @@ _CA_PROFILE_ROOT = "CommunityApplications"
 
 
 def test_the_unraid_profile_is_shaped_the_way_the_submission_scanner_reads_it() -> None:
-    """A ``<Profile>`` root parses, so no XML check the repo runs can see this one.
+    """A ``<Profile>`` root parses as valid XML, so no ordinary XML check catches the wrong shape.
 
-    The file shipped with ``<Profile>`` as its root element and the description in a
-    ``<Description>`` child. That is well-formed XML naming every field the spec names, and
-    Community Applications rejected the submission for a missing ``<Profile>`` field, because
-    the field it wants is a child of ``<CommunityApplications>``. Parsing is the whole gate
-    here, and parsing passed.
+    A file with ``<Profile>`` as its root element and the description in a ``<Description>``
+    child is well-formed XML that still fails: Community Applications wants that field as a
+    child of ``<CommunityApplications>``, and reports a document shaped like this as missing
+    ``<Profile>`` entirely. Parsing alone cannot catch this, since parsing succeeds either way.
     """
     root = ET.parse(REPO / _CA_PROFILE).getroot()  # noqa: S314 - a committed file, not input
     assert root.tag == _CA_PROFILE_ROOT, (
@@ -1821,7 +1764,8 @@ def test_the_unraid_profile_is_shaped_the_way_the_submission_scanner_reads_it() 
 # arrangement break quietly, so both are pinned here.
 _UNRAID_TEMPLATES = REPO / "contrib" / "unraid"
 _RETENTION = REPO / ".github" / "workflows" / "registry-retention.yml"
-# One entry, not one per channel: a second template file is the split this replaced coming back.
+# One entry, not one per channel: a second template file would split the channels back into
+# separate store listings for the same app.
 _UNRAID_TEMPLATE_COUNT = 1
 
 
@@ -1831,19 +1775,19 @@ def test_the_unraid_template_offers_every_channel_it_declares() -> None:
     Community Applications expands one install row per ``<Branch>``, showing its ``<Tag>``
     beside its ``<TagDescription>``, above a Default row that installs ``<Repository>`` as
     written. The only branch ``include/exec.php`` skips is one that spells ``<Tag>`` twice
-    inside a single ``<Branch>``; a tag matching ``<Repository>``'s is expanded like any other,
-    and 539 templates in the live app feed list theirs that way.
+    inside a single ``<Branch>``. A tag that matches ``<Repository>``'s own tag is still
+    expanded like any other branch, which is the common pattern across the live app feed.
 
-    Both halves of that were once believed backwards, and this test enforced the belief. The
-    release channel lost its ``<Branch>`` and was described by an invented
-    ``<DefaultTagDescription>``, a name no file in the Community Applications source reads: the
-    Default row's text is hardcoded in ``include/helpers.php``, so the release channel shipped
-    with no description at all. An invented element parses, installs, and renders nothing.
+    ``<DefaultTagDescription>`` is not a real field: no file in the Community Applications
+    source reads it, because the Default row's text is hardcoded in
+    ``include/helpers.php``. A template using it parses, installs, and renders no description
+    at all. So the release channel's own tag must carry a real ``<Branch>`` like every other
+    channel, and this invented field must stay out of the template.
 
-    So the repository's own tag carries a ``<Branch>`` like every other channel, that invented
-    field stays gone, and the tags are read off the registry retention job rather than copied
-    into a literal here: everything outside its protected set is swept after a week, so offering
-    a tag from outside it hands the operator a channel whose image stops resolving (rule 25).
+    The protected tag set comes from the registry retention job instead of a literal copied
+    here, because everything outside that set is swept after a week: offering a tag the
+    retention job does not protect would hand the operator a channel whose image eventually
+    stops resolving.
     """
     templates = sorted(_UNRAID_TEMPLATES.glob("*.xml"))
     assert len(templates) == _UNRAID_TEMPLATE_COUNT, (
@@ -1868,7 +1812,7 @@ def test_the_unraid_template_offers_every_channel_it_declares() -> None:
             f"the {tag} branch has no <TagDescription>, so its dropdown row is blank"
         )
 
-    # CA splits the repository on its FIRST colon, so a registry port ("host:5000/org/app")
+    # CA splits the repository on its first colon, so a registry port ("host:5000/org/app")
     # would be read as the tag and the image name mangled. ghcr.io carries no port; this pins
     # that, because the failure would otherwise surface as a broken pull.
     assert repository.count(":") == 1, (
@@ -1926,12 +1870,12 @@ def test_scoped_rule_files_declare_their_paths(path: Path) -> None:
 
 # --- the pins, and the one thing that moves them -------------------------------------------
 #
-# Rule 15 pins the shipped artifact: digest-pinned base images, sha-pinned action shas, an
+# The shipped artifact is pinned: digest-pinned base images, sha-pinned action shas, an
 # install from the committed lockfiles. `.github/dependabot.yml` is the only thing in the
 # repository that moves any of them, and it fails silently in both directions. An ecosystem
 # nobody added simply never raises a pull request, which looks exactly like a week with no
 # updates; and a pull request it does raise can die on a required check whose reason lives in
-# a different file nobody was editing. These three check both halves.
+# a different file nobody was editing. These three tests check both halves.
 
 DEPENDABOT = REPO / ".github" / "dependabot.yml"
 PR_TITLE_WORKFLOW = REPO / ".github" / "workflows" / "pr-validation.yml"
@@ -1955,9 +1899,9 @@ _UNWATCHED_MANIFESTS = {"docker-compose.yml"}
 
 #: Reconciled by hand against the tree: the two lockfiles, the Dockerfile, the compose file and
 #: the workflows directory. Pinned because the two-way check below cannot tell a manifest that
-#: complies from one the walk stopped seeing (rule 145) -- renaming `Dockerfile` to
-#: `Containerfile` empties the discovered side and orphans nothing, so every other assertion
-#: here passes while the image base is no longer watched by anything.
+#: complies from one the walk stopped seeing: renaming `Dockerfile` to `Containerfile` would
+#: empty the discovered side and orphan nothing, so every other assertion here would pass
+#: while the image base is no longer watched by anything.
 _EXPECTED_MANIFEST_KINDS = {
     ("github-actions", "/"),
     ("docker", "/"),
@@ -2062,11 +2006,10 @@ _EXPECTED_COOLDOWN_DAYS = {
 def test_every_ecosystem_quarantines_a_release_before_proposing_it() -> None:
     """A compromised release looks exactly like a good one on the day it ships.
 
-    The delay is the whole defense: it is what lets somebody else find the compromise before
-    this repository merges it. So an ecosystem added later with no ``cooldown`` is not a
-    smaller version of this protection, it is none of it, and nothing else in the tree would
-    say so. Dependabot security updates ignore cooldown, so an advisory-backed fix is not
-    delayed by any of these numbers.
+    The delay is the whole defense: it gives somebody else time to find the compromise before
+    this repository merges it. An ecosystem added later with no ``cooldown`` gets none of this
+    protection, and nothing else in the tree would say so. Dependabot security updates ignore
+    cooldown, so an advisory-backed fix is never delayed by these numbers.
     """
     declared = {
         str(u.get("package-ecosystem")): (u.get("cooldown") or {}).get("default-days")
@@ -2081,16 +2024,16 @@ def test_every_ecosystem_quarantines_a_release_before_proposing_it() -> None:
 
 
 #: typescript-eslint's declared ``typescript`` peer range, as locked in
-#: ``frontend/package-lock.json``. TypeScript 7 falls outside it, which is the entire reason
+#: ``frontend/package-lock.json``. TypeScript 7 falls outside it, which is the whole reason
 #: ``.github/dependabot.yml`` ignores TypeScript majors.
 #:
 #: Pinned as an exact string rather than parsed, deliberately. A range parser here would be a
-#: second semver implementation written to be believed, and the failure it could hide is the
-#: one that matters: a widened range that this test reads as still-narrow leaves the deferral
-#: in place forever with nobody looking. An exact match cannot do that. It is over-eager by
-#: design, firing on any change to the range including one that still excludes 7, because the
-#: cost of that is a minute of reading and the cost of the other direction is being stranded on
-#: TypeScript 5 indefinitely.
+#: second semver implementation trusted without question, and the failure it could hide
+#: matters most: a widened range that this test still reads as narrow would leave the
+#: deferral in place forever with nobody looking. An exact match cannot hide that. It fires on
+#: any change to the range, even one that still excludes TypeScript 7, because that costs a
+#: minute of reading, while missing a real widening costs being stranded on TypeScript 5
+#: indefinitely.
 _TS_ESLINT_PEER_ON_TYPESCRIPT = ">=4.8.4 <6.1.0"
 FRONTEND_LOCK = REPO / "frontend" / "package-lock.json"
 WEBSITE_LOCK = REPO / "website" / "package-lock.json"
@@ -2166,8 +2109,8 @@ def test_the_manual_sites_typescript_deferral_still_has_a_reason() -> None:
 
     TypeScript 7 removed ``baseUrl``. ``@docusaurus/tsconfig`` still sets one, and
     ``website/tsconfig.json`` extends it, so ``tsc --noEmit`` fails on the inherited option no
-    matter what the local config says (#414). Escaping it means inlining upstream's compiler
-    options and never tracking them again, which is a poor trade for a typecheck-only bump.
+    matter what the local config says. Escaping it means inlining upstream's compiler options
+    and never tracking them again, which is a poor trade for a typecheck-only bump.
 
     When it fails, read the new ``@docusaurus/tsconfig``. If ``baseUrl`` is gone, drop the
     ``typescript`` entry from the ``/website`` ``ignore``. If it is still there, move the
@@ -2297,17 +2240,17 @@ def _accepted_title_types() -> set[str]:
 
 
 def test_a_dependabot_pull_request_arrives_shaped_like_every_other_one() -> None:
-    """Rule 144: one fact about how a pull request must look, written in two files.
+    """One fact about how a pull request must look, written in two files.
 
     A squash-merge makes the pull request title the permanent commit message, so
-    ``pr-validation.yml`` gates it as a Conventional Commit; Dependabot's own default title
-    ("Bump x from a to b") does not parse, and ``commit-message.prefix`` is what fixes that.
-    Neither file names the other, and the failure lands days later on a pull request nobody
-    opened, so a type dropped from that workflow's list reads as Dependabot being broken.
+    ``pr-validation.yml`` gates it as a Conventional Commit. Dependabot's own default title
+    ("Bump x from a to b") does not parse, so ``commit-message.prefix`` is what fixes that.
+    Neither file names the other, so a type dropped from that workflow's list reads as
+    Dependabot being broken, days later, on a pull request nobody opened.
 
     The labels are the same shape of fact: the queue is filtered by ``Kind/`` and
-    ``Priority/``, and Dependabot applies only labels that already exist and drops the rest
-    without a word, so a renamed label makes these pull requests invisible rather than red.
+    ``Priority/``, and Dependabot applies only labels that already exist, silently dropping
+    the rest. So a renamed label makes these pull requests invisible instead of failing loudly.
     """
     accepted = _accepted_title_types()
     assert accepted, (
@@ -2339,15 +2282,15 @@ def test_a_dependabot_pull_request_arrives_shaped_like_every_other_one() -> None
 
 
 def test_the_promotion_label_is_excluded_from_the_generated_notes() -> None:
-    """Rule 144: one label name, written in `.github/release.yml` and in CLAUDE.md's recipe.
+    """One label name, written in `.github/release.yml` and in CLAUDE.md's recipe.
 
     The promotion pull request is the only one merging into ``main``, and the next
-    promotion's ours-strategy merge pulls it into that release's notes range. So it
-    printed in every release's notes as a chore beside the changes that shipped (#934).
-    ``.github/release.yml`` drops it by label, and CLAUDE.md's ``gh pr create`` line is
-    where the label gets applied. Neither file names the other, and a rename in one
-    fails nowhere: the notes come out wrong once, months later, where nobody re-reads
-    them.
+    promotion's ours-strategy merge pulls it into that release's notes range. Without an
+    exclusion, it would print in every release's notes as a chore beside the changes that
+    actually shipped. ``.github/release.yml`` drops it by label, and CLAUDE.md's
+    ``gh pr create`` line is where the label gets applied. Neither file names the other, so a
+    rename in one fails silently: the notes come out wrong months later, where nobody
+    re-reads them.
     """
     config = yaml.safe_load((REPO / ".github" / "release.yml").read_text(encoding="utf-8"))
     excluded = (config.get("changelog", {}).get("exclude", {}) or {}).get("labels") or []
@@ -2381,40 +2324,40 @@ CODEQL_WORKFLOW = REPO / ".github" / "workflows" / "codeql.yml"
 #: extractor three times.
 #:
 #: The tree is half the pin and the reason this is not just a spelling check. A language whose
-#: tree moved is analyzing nothing, and an empty analysis is reported as a clean one — the same
-#: shape as a walk that silently collects no members (rule 145).
+#: tree moved is analyzing nothing, and an empty analysis is reported as a clean one, the same
+#: shape as a walk that silently collects no members.
 _CODEQL_LANGUAGES = {
     "actions": ".github/workflows",
     "javascript-typescript": "frontend/src",
     "python": "src/reaper",
 }
 
-#: What ``codeql.yml`` declines to scan, which is ``ci.yml``'s prose lane written in glob rather
-#: than in a shell ``case``. The two spellings cannot be diffed, so they are pinned instead and
-#: the failure below names the other file (rule 144).
+#: What ``codeql.yml`` declines to scan, which is ``ci.yml``'s prose lane written in glob
+#: rather than in a shell ``case``. The two spellings cannot be diffed against each other, so
+#: they are pinned instead and the failure below names the other file.
 #:
-#: The arms agree on spelling and not on reach: ``ci.yml`` classifies ``manual/`` and
-#: ``website/`` ahead of its prose arm (#589), so a ``.md`` there is site rather than prose,
-#: while ``**/*.md`` here still covers it. Nothing rides on that, since neither extractor reads
-#: markdown.
+#: The two arms agree on spelling but not on reach: ``ci.yml`` classifies ``manual/`` and
+#: ``website/`` ahead of its prose arm, so a ``.md`` file there counts as site rather than
+#: prose, while ``**/*.md`` here still covers it. Nothing depends on that difference, since
+#: neither extractor reads markdown.
 _CODEQL_PATHS_IGNORE = ["docs/**", ".claude/**", "**/*.md"]
 
 
 def test_the_codeql_analysis_still_covers_every_tree() -> None:
-    """Code scanning is configuration, so it is held like the rest of it.
+    """Code scanning is configuration, so it is held to the same standard as the rest of it.
 
-    This moved out of a settings page precisely because a settings page has no diff: deselecting
-    a language there stops analyzing a tree, and it looks exactly like a quiet week. Here it is
-    a deleted line, and this is what makes it a red test as well.
+    A settings page has no diff: deselecting a language there stops analyzing a tree, and it
+    looks exactly like a quiet week. Written as config, the same change is a deleted line,
+    which this test can catch.
 
-    Four facts, each of which fails silently rather than loudly if it drifts. The languages and
-    the trees they point at, because an extractor aimed at a moved directory reports no findings
+    Four facts checked here, each of which fails silently if it drifts. The languages and the
+    trees they point at, because an extractor aimed at a moved directory reports no findings
     the same way a clean tree does. The absence of a ``queries:`` override, because adding the
-    extended suite is a decision about triage load and not a tuning knob to reach for quietly.
-    ``category``, because without it each upload replaces the last and only the language that
-    finished last keeps its results. And ``paths-ignore``, which is safe only while CodeQL is not
-    a required check: a skipped workflow publishes no check run, so requiring one that a
-    prose-only pull request never runs strands it forever.
+    extended suite is a decision about triage load, not a tuning knob to reach for quietly.
+    ``category``, because without it each upload replaces the last, and only the language that
+    finished last keeps its results. And ``paths-ignore``, which is safe only while CodeQL is
+    not a required check: a skipped workflow publishes no check run, so requiring one that a
+    prose-only pull request never runs would strand that pull request forever.
     """
     workflow = yaml.safe_load(CODEQL_WORKFLOW.read_text(encoding="utf-8"))
 
@@ -2465,16 +2408,16 @@ def test_the_codeql_analysis_still_covers_every_tree() -> None:
 
 
 #: Both spellings of "which Node major" in this checkout: the image's ``FROM node:24-alpine``
-#: and the workflow's ``node-version: "24"``. The quote is optional on the second because yaml
-#: reads the bare form identically, and a matcher that only accepts quotes goes blind on an
-#: edit that is not even a change (rule 147).
+#: and the workflow's ``node-version: "24"``. The quote is optional on the second because
+#: YAML reads the bare form identically, and a matcher that only accepts quotes would go
+#: blind on an edit that changes nothing.
 _NODE_MAJOR = re.compile(r"""(?:FROM\s+node:|node-version:\s*)["']?(\d+)""")
 
 #: The Dockerfile, ci.yml twice (the `frontend` and `site` jobs), and binaries.yml (the
 #: packaged builds bundle the SPA on the same Node the frontend job tested it on). Pinned
-#: because the agreement assertion below is vacuously true on one site, or on none (rule 145).
+#: because the agreement assertion below would be vacuously true on one site, or on none.
 #:
-#: The manual site's `site` job is here for the same reason as the others rather than as
+#: The manual site's `site` job matters for the same reason as the others, not just as
 #: bookkeeping: it builds with `npm ci` against a committed lockfile, so a Node major that
 #: drifts from the one the lockfile was resolved on breaks a tree nothing else exercises.
 #: Cloudflare Pages builds that same directory on its own Node and reads nothing from this
@@ -2485,16 +2428,15 @@ _EXPECTED_NODE_SITES = 4
 def test_the_node_major_is_one_supported_lts_line_in_the_image_and_in_ci() -> None:
     """The image builds the bundle on the Node the frontend job tested it on, and it is an LTS.
 
-    Two files name a Node major and nothing held them together, which cost nothing while both
-    only moved by hand. Dependabot moves the Dockerfile's: ``node``'s tag carries a version, so
-    a major bump arrives as a pull request that edits one of the two. Left alone, ``npm run
-    build`` in CI proves a bundle on one runtime and the shipped image builds it on another.
+    Two files name a Node major, and nothing else holds them together. Dependabot moves the
+    Dockerfile's on its own, since ``node``'s tag carries a version, so a major bump can arrive
+    as a pull request that edits only one of the two. Left unchecked, ``npm run build`` in CI
+    would prove a bundle on one runtime while the shipped image builds it on another.
 
-    The parity is the second half of the same fact, and it is checked rather than remembered
-    because "take the newest major" is wrong for Node specifically: only even majors are
-    promoted to LTS, and an odd one is end-of-life within about eight months. The first pull
-    request ``.github/dependabot.yml`` ever opened proposed 24 to 25, two months after 25 had
-    died. The config now declines to raise that; this declines to merge it however it arrives.
+    Checking the two files agree is only half of what matters here, because "take the newest
+    major" is wrong for Node specifically: only even majors are promoted to LTS, and an odd
+    one reaches end of life within about eight months. This test rejects an odd major
+    regardless of which file proposes it.
     """
     sites = [
         (path.relative_to(REPO), lineno, match.group(1))
@@ -2524,15 +2466,15 @@ def test_the_node_major_is_one_supported_lts_line_in_the_image_and_in_ci() -> No
 
 #: Every spelling of the typecheck invocation: the workflow step, CONTRIBUTING's gate list, and
 #: the review skill's apply-the-fixes list. Matched on the whole argument run rather than on a
-#: fixed prefix, because a matcher anchored on ``mypy src/reaper`` reads a site that has NOT been
-#: widened as agreeing (rule 147).
+#: fixed prefix, because a matcher anchored on ``mypy src/reaper`` would read a site that was
+#: never widened as if it agreed with one that was.
 _MYPY_INVOCATION = re.compile(r"uv run mypy ((?:[\w./\[\]*-]+ ?)+?)(?=\s*(?:#|`|$))", re.M)
 
 #: `.github/workflows/ci.yml`, `CONTRIBUTING.md`, `.claude/skills/reaper-review/SKILL.md`, and
-#: `tests/_fakes.py`'s own docstring -- which is the copy most likely to go stale, since it is
-#: the file arguing for its place on the gate. `docs/history/**` is frozen and records what the
-#: gate was at the time, so it is skipped rather than counted. The translation plan's proposed
-#: gate sits there now.
+#: `tests/_fakes.py`'s own docstring, the copy most likely to go stale, since it is the file
+#: arguing for its place on the gate. `docs/history/**` is frozen and records what the gate
+#: was at the time, so it is skipped rather than counted. The translation plan's proposed gate
+#: sits there now.
 _EXPECTED_MYPY_SITES = 4
 
 #: Files that quote the command as a record rather than as the instruction to follow. A record
@@ -2544,17 +2486,16 @@ _MYPY_RECORDS = ("docs/history/",)
 def test_the_typecheck_gate_names_the_same_targets_everywhere_it_is_written() -> None:
     """`tests/` rides on the mypy run, and four files say so independently.
 
-    Two things have to hold, and each is checked below. **`tests/` is named**, or nothing in
-    it is type-checked and the structural fakes that inherit their real client prove nothing
-    by doing so (#580). And **`src/reaper` is named alongside it**, or mypy resolves `reaper`
-    from site-packages, finds no py.typed marker, and reports 731 import errors while
-    silently checking almost none of the tree -- a run that looks like it did the work.
+    Two things have to hold, and each is checked below. `tests/` must be named, or nothing in
+    it is type-checked, and the structural fakes that inherit their real client prove nothing
+    by doing so. `src/reaper` must be named alongside it, or mypy resolves `reaper` from
+    site-packages, finds no py.typed marker, and reports import errors on nearly everything
+    while silently checking almost none of the tree, a run that looks like it did the work.
 
     The invocation is written four times, by four authors reading each other. A developer
-    running CONTRIBUTING's list would otherwise get a narrower check than CI runs and see a
-    clean tree that CI rejects, or the reverse. Rule 144, and the direction is the dangerous
-    one: a stale copy reads as the shorter, safer-looking command, so nothing about it looks
-    wrong.
+    running CONTRIBUTING's list would otherwise get a narrower check than CI runs, and see a
+    clean tree that CI rejects, or the reverse. The direction is the dangerous one: a stale
+    copy reads as the shorter, safer-looking command, so nothing about it looks wrong.
     """
     sites = [
         (path.relative_to(REPO), lineno, " ".join(match.group(1).split()))
@@ -2592,20 +2533,16 @@ def test_the_typecheck_gate_names_the_same_targets_everywhere_it_is_written() ->
 
 
 #: Every `paths:` / `paths-ignore:` list under `.github/workflows/`, reconciled by hand and
-#: **named, not counted**. `codeql.yml` filters both its triggers, `weblate-notes.yml` filters
-#: its one (on the two files that can change what it does,
-#: `frontend/src/locales/en/ui.notes.json` and, since phase 10b,
-#: `src/reaper/locales/en/backend.notes.json`), and `ci.yml` has none deliberately -- it runs on
-#: everything and classifies the diff inside a job, so its verdict can be read by other jobs
+#: named, not counted. `codeql.yml` filters both its triggers, `weblate-notes.yml` filters its
+#: one (on the two files that can change what it does, `frontend/src/locales/en/ui.notes.json`
+#: and `src/reaper/locales/en/backend.notes.json`), and `ci.yml` has none deliberately: it runs
+#: on everything and classifies the diff inside a job, so its verdict can be read by other jobs
 #: and a skipped lane still reports.
 #:
-#: This is here because two sentences describe the arrangement in prose and both were wrong:
-#: `ci.yml`'s `changes` comment and CLAUDE.md's "which jobs appear" paragraph each said nothing
-#: else in the repository restated the path list, while three lists sat in two files (rule
-#: 7/24). It is a SET rather than a number because those sentences name which file holds which,
-#: and a count cannot see a filter moving between files -- move one of codeql's to
-#: `release.yml` and a pinned `3` stays green while both sentences go false (rule 145: pin the
-#: population, and a scalar is not one).
+#: This is a set rather than a count because two prose copies name which file holds which
+#: list: `ci.yml`'s `changes` comment and CLAUDE.md's "which jobs appear" paragraph. A count
+#: cannot see a filter moving between files: moving one of codeql's to `release.yml` would
+#: keep a pinned count green while both prose copies went false.
 _WORKFLOW_PATH_FILTERS = frozenset(
     {
         "codeql.yml:push:paths-ignore",
@@ -2618,22 +2555,22 @@ _WORKFLOW_PATH_FILTERS = frozenset(
 def test_the_workflows_that_filter_themselves_by_path_are_the_ones_the_prose_names() -> None:
     """A `paths` filter decides whether a workflow starts, so it cannot read `ci.yml`.
 
-    That is the whole reason more than one list exists, and it is not going away: a workflow
-    skipped by its own filter publishes no check run at all, which is safe here only while
-    neither of these two is a required check. `ci.yml` answers the same question the other
-    way, inside a job -- and a JOB skipped by an `if:` does report, with conclusion `skipped`,
-    which is what lets `CI gate` count one as a pass.
+    That is the whole reason more than one list exists: a workflow skipped by its own filter
+    publishes no check run at all, which is safe here only while neither of these two is a
+    required check. `ci.yml` answers the same question the other way, inside a job, and a job
+    skipped by an `if:` does report, with conclusion `skipped`, which is what lets `CI gate`
+    count it as a pass.
 
-    **Two prose copies say which file holds which list** -- `.github/workflows/ci.yml`'s
-    `changes` comment and CLAUDE.md's "Which jobs appear depends on what the commit touched"
-    paragraph. Both are named in the failure below, because a set that moves without them is
-    the same falsehood arriving a second time (rule 144).
+    Two prose copies say which file holds which list: `.github/workflows/ci.yml`'s `changes`
+    comment, and CLAUDE.md's "Which jobs appear depends on what the commit touched" paragraph.
+    Both are named in the failure below, since a set that moves without updating them leaves
+    both descriptions wrong.
     """
     found: dict[str, list[str]] = {}
     workflows = REPO / ".github" / "workflows"
     # Both extensions, because GitHub reads both and the tree happens to use one. A walk
-    # matching only what is there today reports a clean repository for a filter added in the
-    # spelling it does not look for (rule 147).
+    # matching only what is there today would report a clean repository for a filter added in
+    # the spelling it does not look for.
     for path in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")]):
         workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
         # `on` is YAML 1.1's boolean true, which is why the key is read both ways.
@@ -2654,9 +2591,9 @@ def test_the_workflows_that_filter_themselves_by_path_are_the_ones_the_prose_nam
         "corrected in the same commit: the `changes` job's comment in\n"
         ".github/workflows/ci.yml, and CLAUDE.md's paragraph on which jobs appear."
     )
-    # What codeql's two lists CONTAIN is pinned by `_CODEQL_PATHS_IGNORE` above, which asserts
-    # each trigger equals it by value -- strictly stronger than the two agreeing with each
-    # other, so nothing is repeated here.
+    # What codeql's two lists contain is pinned by `_CODEQL_PATHS_IGNORE` above, which asserts
+    # each trigger equals it by value. That is strictly stronger than the two agreeing with
+    # each other, so nothing is repeated here.
 
 
 CI_WORKFLOW = REPO / ".github" / "workflows" / "ci.yml"
@@ -2668,9 +2605,8 @@ _CI_LANE_ARM = re.compile(r"^\s*([^\s#)]+)\)\s*(\w+)=true\s*;;", re.MULTILINE)
 _CI_LANE_REF = re.compile(r"needs\.changes\.outputs\.(\w+)\s*==\s*'true'")
 
 #: `ci.yml`'s lane classification, in the order the `case` tries the arms. First match wins, so
-#: the order is load-bearing: `*.md` matches at any depth, and with prose ahead of site a
-#: `manual/guide.md` skipped the site build while the publisher of the day pushed it live
-#: anyway (#589). Cloudflare Pages publishes on the same trigger now, so the order still is.
+#: the order matters: `*.md` matches at any depth, and if prose came ahead of site, a
+#: `manual/guide.md` would skip the site build while Cloudflare Pages still published it live.
 _CI_LANE_ARMS = (
     ("manual/*|website/*", "site"),
     ("docs/*|.claude/*|*.md", "prose"),
@@ -2681,10 +2617,10 @@ _CI_LANE_ARMS = (
 #: `if:` are excluded below and named there: `changes` produces the verdict and `ci-gate`
 #: reports on every commit.
 #:
-#: **`frontend` and `hygiene` each name `site` as well as the lane they were written for**, and
-#: that is the fix for #783 rather than a convenience. A commit touching only `manual/` or
-#: `website/` ran the site build alone, which compiles a hand-edited generated page exactly as
-#: happily as a correct one; both guards below live in jobs that lane did not start.
+#: `frontend` and `hygiene` each name `site` as well as the lane they were written for. Without
+#: that, a commit touching only `manual/` or `website/` would run the site build alone, which
+#: compiles a hand-edited generated page exactly as happily as a correct one, since both
+#: guards below live in jobs that lane would not start.
 _CI_JOB_LANES = {
     "check": {"code"},
     "frontend": {"code", "site"},
@@ -2693,7 +2629,7 @@ _CI_JOB_LANES = {
     "site": {"site"},
 }
 
-#: The guards that READ `manual/` or `website/`, against the `ci.yml` job that runs each. Four
+#: The guards that read `manual/` or `website/`, against the `ci.yml` job that runs each. Four
 #: walks in this file read `manual/features.mdx`, `manual/**/*.mdx` and
 #: `website/src/css/custom.css`; `manual.gen.test.ts` is the drift gate for every generated page
 #: and is collected by `npm run test` in `frontend`.
@@ -2704,13 +2640,13 @@ _SITE_TREE_GUARDS = {
 
 
 def test_a_commit_touching_only_the_manual_runs_the_guards_that_read_it() -> None:
-    """The site lane starts the jobs holding the guards for the trees it classifies (#783).
+    """The site lane starts the jobs holding the guards for the trees it classifies.
 
-    Three facts, and the gap needed all three to be true at once. `manual/` and `website/`
-    classify as `site`, in an arm ordered ahead of prose. `frontend` and `hygiene` name `site`
-    in their `if:` beside the lane each was written for. And the two guard files still sit where
-    those jobs run them: a `manual.gen.test.ts` moved out of `frontend/src` is dropped by
-    vitest's include and reports nothing, which is what a clean tree looks like.
+    Three facts hold together here. `manual/` and `website/` classify as `site`, in an arm
+    ordered ahead of prose. `frontend` and `hygiene` name `site` in their `if:` beside the
+    lane each was written for. And the two guard files still sit where those jobs run them: a
+    `manual.gen.test.ts` moved out of `frontend/src` would be dropped by vitest's include and
+    report nothing, which is what a clean tree looks like.
 
     `if:` is what makes a skipped lane reportable, so widening one is safe for `CI gate`: a job
     skipped by an `if:` publishes a check run with conclusion `skipped`, which that gate counts
@@ -2766,12 +2702,12 @@ BINARIES_WORKFLOW = REPO / ".github" / "workflows" / "binaries.yml"
 def test_binaries_publish_is_gated_to_the_dev_ref() -> None:
     """A hand dispatch of binaries.yml on a branch may build and boot-probe, never publish.
 
-    The Decide step's publish output feeds three channels at once — the dev-build
-    prerelease, the snap edge channel, and the ghcr :dev arm64 fold — and the workflow's
-    own header recommends dispatching against a branch to prove a packaging change.
-    Without the ref gate, ticking the publish input on that dispatch replaces all three
-    with unmerged branch code described as dev until the next nightly. The gate is one
-    line of shell the header's promise depends on (rule 7/24), so its presence is pinned.
+    The Decide step's publish output feeds three channels at once: the dev-build prerelease,
+    the snap edge channel, and the ghcr :dev arm64 fold. The workflow's own header recommends
+    dispatching against a branch to prove a packaging change. Without the ref gate, ticking
+    the publish input on that dispatch would replace all three with unmerged branch code
+    described as dev until the next nightly. The gate is one line of shell the header's
+    promise depends on, so its presence is pinned.
     """
     text = BINARIES_WORKFLOW.read_text(encoding="utf-8")
     assert '"${GITHUB_REF}" != "refs/heads/dev"' in text, (
@@ -2782,11 +2718,9 @@ def test_binaries_publish_is_gated_to_the_dev_ref() -> None:
 
 
 #: Every ``run:`` script under `.github/workflows/` that turns on `pipefail`, counted so a
-#: block leaving the walk is visible rather than silently dropping out of the ban below
-#: (rule 145). Reconciled against the walk: `binaries.yml` 8, `ci.yml` 3, `release.yml` 5,
-#: `virustotal.yml` 2. The other five workflows set it nowhere, and a block without it is
-#: out of scope on purpose: there the pipeline's status is the reader's, which is the answer
-#: the step wanted. A first hand count said 14, and the walk is what corrected it.
+#: block leaving the walk is visible rather than silently dropping out of the ban below.
+#: The other workflows set it nowhere, and a block without it is out of scope on purpose:
+#: there the pipeline's status is the reader's, which is the answer the step wanted.
 _PIPEFAIL_RUN_BLOCKS = 18
 
 
@@ -2795,17 +2729,15 @@ def test_no_pipefail_gate_reads_its_verdict_through_a_short_circuiting_pipe() ->
 
     `head -c N` and `grep -q` both exit as soon as they have their answer, which can kill the
     writer with SIGPIPE. The pipeline's status is then the writer's, so the step fails while
-    the thing it was testing succeeded. **Whether it fires depends on how much the writer
-    produced**: under the pipe buffer the writer finishes and exits 0 before either reader
-    closes. `binaries.yml`'s three boot probes read the served page through
-    `curl … | head -c 200 | grep -qi`, and were measured passing on a 4 KB page and failing on
-    a 200 KB one, so a healthy build whose page grew would have read as a bundle that lost its
-    SPA. CLAUDE.md's rule 134 names the mechanism; this is the gate for it, because the prose
-    binds an author who read it and a workflow is edited by one who did not.
+    the thing it was testing succeeded. Whether it fires depends on how much the writer
+    produced: under the pipe buffer size, the writer finishes and exits 0 before either reader
+    closes. So a healthy build whose output grows past that size can read as a failure with no
+    code change at all.
 
-    **Spellings accepted** (rule 147): `| head`, `|head`, and the same two for `tail`, anywhere
-    in a script that sets `pipefail`. A reader that short-circuits under another name is out of
-    reach and is named here rather than implied covered. Redirect to a file and read the file.
+    Accepted spellings: `| head`, `|head`, and the same two for `tail`, anywhere in a script
+    that sets `pipefail`. A reader that short-circuits under another name is out of this
+    check's reach and is named here rather than assumed covered. Redirect to a file and read
+    the file instead.
     """
     workflows = REPO / ".github" / "workflows"
     scripts: list[tuple[str, str]] = []
@@ -2841,9 +2773,9 @@ def test_no_pipefail_gate_reads_its_verdict_through_a_short_circuiting_pipe() ->
     )
 
 
-#: ``plan`` and the four jobs it fans out to. Pinned because the reconciliation below is
-#: vacuously true against a walk that stopped finding jobs (rule 145): a publisher renamed
-#: out of the scan is missing from the check and from its own count at the same time.
+#: ``plan`` and the four jobs it fans out to. Pinned because the reconciliation below would be
+#: vacuously true against a walk that stopped finding jobs: a publisher renamed out of the
+#: scan is missing from the check and from its own count at the same time.
 _EXPECTED_BINARIES_JOBS = 5
 
 
@@ -2854,19 +2786,19 @@ def test_every_nightly_publisher_gates_the_release_that_records_the_night() -> N
     dev's tip, and ``publish-dev`` is what moves that target. So the release doubles as the
     record of a finished night, and every job that publishes for one has to be a ``needs``
     of it: a target that failed must leave the sha unrecorded, or the next nightly reads the
-    night as done and skips the retry (#457). ``docker-arm64`` was not a ``needs``, so a
-    failed arm64 image was recorded as built and ``:dev`` kept serving an arm64 layer older
-    than its amd64 half until dev moved again.
+    night as done and skips the retry. If ``docker-arm64`` were missing from that list, a
+    failed arm64 image would be recorded as built, and ``:dev`` would keep serving an arm64
+    layer older than its amd64 half until dev moved again.
 
     A publisher is any job gated on the publish decision, wherever it reads it: ``snap``
     checks it on the step that pushes to the store, ``docker-arm64`` on the job. The parsed
-    job is searched rather than the file text, so neither placement can hide one (rule 147).
+    job is searched rather than the file text, so neither placement can hide one.
 
     The second assertion is what makes the first safe. Adding a ``needs`` means ``publish-dev``
     now skips whenever that job skips, which is harmless only while ``docker-arm64`` cannot
-    skip on its own: its ``if`` also reads ``build``, and that is redundant purely because
-    ``plan`` never clears ``build`` without clearing ``publish`` in the same breath. Split
-    those two assignments and a no-op night would stop refreshing the prerelease.
+    skip on its own: its ``if`` also reads ``build``, which is redundant only because
+    ``plan`` never clears ``build`` without clearing ``publish`` in the same breath. Splitting
+    those two assignments would make a no-op night stop refreshing the prerelease.
     """
     workflow = yaml.safe_load(BINARIES_WORKFLOW.read_text(encoding="utf-8"))
     jobs = workflow["jobs"]
@@ -2910,7 +2842,7 @@ def test_every_nightly_publisher_gates_the_release_that_records_the_night() -> N
 
 # --- the docs discipline -----------------------------------------------------------------
 #
-# These check the STRUCTURE of docs/, never the truth of a sentence. CI can prove that an
+# These check the structure of docs/, never the truth of a sentence. CI can prove that an
 # archived file says it is frozen; it cannot prove a paragraph is still accurate. The point is
 # to make the cheap failures impossible so the expensive ones stay visible.
 
@@ -2918,9 +2850,9 @@ def test_every_nightly_publisher_gates_the_release_that_records_the_night() -> N
 def test_status_doc_stays_small() -> None:
     """``docs/STATUS.md`` is the live state, and it only works while it is small.
 
-    The plan it replaced reached 3,508 append-only lines, at which point updating it meant
-    first reading enough of it to find where the update went. Co-change with code commits fell
-    to 24.7%. A doc you edit in place stays cheap to edit; this budget is what keeps it one.
+    An append-only doc that grows past a few thousand lines makes each update start with
+    reading enough of the file to find where the update belongs. A doc edited in place instead
+    stays cheap to edit, and this budget is what keeps it that way.
     """
     lines = len(STATUS_DOC.read_text(encoding="utf-8").splitlines())
     assert lines <= STATUS_MAX_LINES, (
@@ -2934,14 +2866,13 @@ def test_status_doc_stays_small() -> None:
 def test_status_doc_lines_stay_narrow() -> None:
     """No line of ``docs/STATUS.md`` is wider than the repo's one width.
 
-    This is the other half of the line budget, and the half that was missing. With only a line
-    cap, a file sitting at its limit can still absorb any amount of new text -- by lengthening
-    a line that already exists. That is what happened: a "Decisions locked" cell reached 21,210
-    characters, three cells held 66% of the file, and every agent editing a row had to rewrite a
-    paragraph-length line to change a phrase.
+    This is the other half of the line budget. With only a line cap, a file sitting at its
+    limit can still absorb any amount of new text by lengthening a line that already exists: a
+    "Decisions locked" cell once reached 21,210 characters, and an agent editing that row had
+    to rewrite a paragraph-length line to change a phrase.
 
-    A markdown table row cannot be wrapped, so this cap is also what keeps narration out of a
-    table cell: at 100 columns a cell holds a phrase and nothing longer. The reasoning belongs in
+    A markdown table row cannot wrap, so this cap is also what keeps narration out of a table
+    cell: at 100 columns a cell holds a phrase and nothing longer. The reasoning belongs in
     ``docs/DECISIONS.md``, where prose can wrap.
     """
     offenders = [
@@ -2976,11 +2907,11 @@ def _dagger_rows() -> set[str]:
 def test_the_documented_status_budget_matches_the_enforced_one() -> None:
     """The budget is stated in prose four times, so the prose is checked against the constants.
 
-    Rule 144: one fact about how the tool works, written in several places by authors each
-    reading a different one. Nothing here is generated, so a cap lowered in this file would leave
-    four confident sentences quoting the old number -- and a reader who trusts them writes to a
-    budget that is no longer enforced. Cheaper to name the files in a failure message than to ask
-    the next author to remember them.
+    One fact about how the tool works, written in several places by authors each reading a
+    different one. Nothing here is generated, so a cap lowered in this file would leave four
+    confident sentences quoting the old number, and a reader who trusts them would write to a
+    budget that is no longer enforced. Naming the files in a failure message costs less than
+    asking the next author to remember them.
     """
     phrase = f"{STATUS_MAX_LINES} lines and {STATUS_MAX_COLUMNS} columns"
     sites = [REPO / "CLAUDE.md", DOCS / "README.md", STATUS_DOC]
@@ -2998,7 +2929,8 @@ def test_the_documented_status_budget_matches_the_enforced_one() -> None:
 #: The rewatch curve, as the two source comments quote it: dormancy band -> the percentage each
 #: states. Both are prose justifying a shipped default (the 1,095-day dormancy floor, and the
 #: 365/1825 UNWATCHED ramp), and the measurement behind them lives only in `docs/SIGNALS.md`.
-#: The constant that used to tie the three together went with the engine that measured it.
+#: No single constant ties the three together, since the engine that measured this curve is
+#: gone.
 _REWATCH_CURVE_CLAIMS = {
     "engine/gates.py": ("61%", "30%", "19%", "13%"),
     "engine/policy.py": ("61%", "13%"),
@@ -3006,20 +2938,19 @@ _REWATCH_CURVE_CLAIMS = {
 
 
 def test_the_rewatch_percentages_in_source_are_the_ones_signals_md_measured() -> None:
-    """Rule 144, for the file's most-quoted table.
+    """Checks that the file's most-quoted table agrees with what it quotes.
 
     Two docstrings in ``src/`` state percentages off the rewatch curve as the measured reason a
-    shipped default is what it is, and neither is generated from anything. Nothing else in the
-    tree carries those numbers: the constant that did was deleted with the replay engine, and
-    the test that pinned the constant went with it. So a re-measurement that edits
-    ``docs/SIGNALS.md`` alone leaves two confident sentences quoting the old curve as
-    justification for a floor derived from it -- and the operator reading the why-panel is
-    told a number nobody stands behind any more.
+    shipped default is what it is, and neither is generated from anything. No constant in the
+    tree carries those numbers today, so a re-measurement that edits ``docs/SIGNALS.md`` alone
+    would leave two confident sentences quoting the old curve as justification for a floor
+    derived from it. The operator reading the why-panel would then see a number nobody stands
+    behind any more.
 
     Checked against the "Ground truth" table rather than against a copy here, so this test
-    cannot drift from the measurement either. It names both source files in the failure, which
-    is the whole of rule 144's remedy: a comment asking the next author to remember does
-    nothing, and a failure message costs one line.
+    cannot drift from the measurement either. It names both source files in the failure, since
+    a comment asking the next author to remember does nothing, and a failure message costs
+    one line.
     """
     table = (DOCS / "SIGNALS.md").read_text(encoding="utf-8")
     heading = "## Ground truth: rewatch probability by dormancy"
@@ -3051,8 +2982,8 @@ def test_every_decisions_section_matches_a_locked_decision_row() -> None:
     STATUS.md holds each choice as a phrase and marks with a dagger the ones whose reasoning
     lives in DECISIONS.md. That dagger is a promise to the reader, so it is checked: a section
     renamed on one side and not the other leaves either a pointer into nothing or reasoning
-    nobody can find from the table. Rule 144 -- one fact written in two places, so the test names
-    the other file rather than a comment asking the next author to remember.
+    nobody can find from the table. This is one fact written in two places, so the test names
+    the other file rather than leaving a comment asking the next author to remember.
     """
     sections = {
         line.removeprefix("## ").strip()
@@ -3094,9 +3025,9 @@ def _worked_example_facts(*, watchers: int) -> Facts:
 def _checked_examples() -> dict[str, list[Path]]:
     """Each real "checked, did not fire" sentence, against the files quoting that one.
 
-    Derived by running the gate, never transcribed (rule 119). Two different gates, because
-    the docs do not all illustrate the same lane: the panel's own worked example is the
-    dormancy sentence, and the manual's is the popularity one.
+    Derived by running the gate, never transcribed by hand. Two different gates, because the
+    docs do not all illustrate the same lane: the panel's own worked example is the dormancy
+    sentence, and the manual's is the popularity one.
     """
     dormancy = MinDormancyGate(GateConfig(threshold=1_095))
     popularity = ServerPopularityGate(GateConfig(threshold=3, window_days=365))
@@ -3119,25 +3050,22 @@ def _checked_examples() -> dict[str, list[Path]]:
 def test_the_documented_checked_example_is_one_a_gate_emits() -> None:
     """Every file illustrating a checked protection quotes a string the code really builds.
 
-    Rule 144, and the case that prompted its "grep the sibling copies" clause. One fact about
-    what the panel shows was written in six places by authors each reading a different copy,
-    and every one drifted onto an invented ``"checked: <label> -- <numbers>"`` shape no gate has
-    ever emitted (#419) -- including the README bullet naming the differentiator Reaper exists
-    for, and the docstring on the field that carries the strings. The drift ran the direction
-    that rule predicts: the invention was more specific and more reassuring than the real
-    output, so it flattered the feature it documented.
+    One fact about what the panel shows is written in six places, each by an author reading a
+    different copy. An invented example reads as more specific and more reassuring than the
+    real output, which is what makes a hand-written copy drift here in particular: it looks
+    more convincing than the truth, so nobody double checks it.
 
-    So the examples are *derived* here by running the gates, and this test names the other files
-    rather than a comment asking the next author to remember. Reword a gate's ABSTAIN branch and
-    this fails with the list of files to correct.
+    So the examples are derived here by running the gates, and this test names the other
+    files rather than leaving a comment asking the next author to remember. Reword a gate's
+    abstain branch and this fails with the list of files to correct.
     """
 
     # Both sides collapse to single spaces, because a doc wraps its prose and a quoted
     # sentence lands across two lines as often as not. That bounds the matcher to a
-    # continuation line carrying no prefix of its own (rule 147): a wrapped ``//`` comment
-    # keeps its slashes and reads as a miss, which the message below tells the author to fix
-    # by unwrapping. Only whitespace is normalized, never punctuation -- the em dash and the
-    # trailing period are exactly what drifted.
+    # continuation line carrying no prefix of its own: a wrapped ``//`` comment keeps its
+    # slashes and reads as a miss, which the message below tells the author to fix by
+    # unwrapping. Only whitespace is normalized, never punctuation, since it is exactly the
+    # punctuation that drifted in the invented copies.
     def flat(text: str) -> str:
         return " ".join(text.split())
 
@@ -3157,12 +3085,11 @@ def test_the_documented_checked_example_is_one_a_gate_emits() -> None:
 def test_no_file_invents_a_floor_the_operator_never_reads() -> None:
     """``your floor is`` is the tell of the invented example, and no gate says it.
 
-    The positive test above pins the files that already quote the real string; it cannot see a
-    NEW file inventing a new example, which is how the first six got written. This is the cheap
-    half of that population (rule 145): the invented family all reached for "your floor is N"
-    where every real string names the bar in the operator's own words ("past the 3 years it has
-    to sit unwatched first", "below the 7.5 you keep"). A gate that legitimately starts saying
-    this must retire the ban in the same change.
+    The positive test above pins the files that already quote the real string. It cannot see
+    a new file inventing a new example the same way. Every real string names the bar in the
+    operator's own words ("past the 3 years it has to sit unwatched first", "below the 7.5
+    you keep"), never as "your floor is N". A gate that legitimately starts saying this must
+    retire the ban in the same change.
     """
     haystacks = [*_source_files_to_scan(), REPO / "README.md", REPO / "manual" / "features.mdx"]
     offenders = [
@@ -3188,8 +3115,8 @@ TAGLINE = "Grave decisions, clearly explained"
 TAGLINE_SITES = (
     "README.md",
     # The masthead (App.tsx) and the sign-in card (Login.tsx) both read the catalog's one
-    # `shell.app.brandTagline` key since Stage 4, so the catalog is their site; the
-    # frontend's key gate holds each component to that key.
+    # `shell.app.brandTagline` key, so the catalog is their site. The frontend's key gate
+    # holds each component to that key.
     "frontend/src/locales/en/ui.json",
     "website/docusaurus.config.ts",
     "manual/index.mdx",
@@ -3204,12 +3131,13 @@ RETIRED_TAGLINE = "Explainable pruning for Plex"
 def test_every_surface_states_the_same_tagline() -> None:
     """The words under the mark are the same words wherever the app introduces itself.
 
-    Rule 144. The masthead, the README, the manual's site header and the API's own description
-    all carried this string; the sign-in card carried its own, and drifted alone for as long as
-    nobody saw two of them at once. Each surface is written by someone reading a different one.
+    The masthead, the README, the manual's site header, and the API's own description all
+    state this string. A surface that drifts to its own wording goes unnoticed as long as
+    nobody reads two of these at once, since each is written by someone reading a different
+    one.
 
-    A tagline is retired by editing this constant, which fails here naming every file still on
-    the old words.
+    A tagline is retired by editing this constant, which fails here naming every file still
+    on the old words.
     """
     absent = [
         site for site in TAGLINE_SITES if TAGLINE not in (REPO / site).read_text(encoding="utf-8")
@@ -3225,7 +3153,7 @@ def test_the_tagline_sites_all_exist() -> None:
     """A site renamed out from under the list above drops silently out of the guard.
 
     ``read_text`` would raise there, which fails for the wrong reason and reads as a broken
-    test rather than a missing surface (rule 118).
+    test rather than a missing surface.
     """
     gone = [site for site in TAGLINE_SITES if not (REPO / site).is_file()]
     assert not gone, (
@@ -3235,10 +3163,10 @@ def test_the_tagline_sites_all_exist() -> None:
 
 
 def test_no_surface_keeps_the_retired_tagline() -> None:
-    """The positive test cannot see a NEW surface inventing its own words.
+    """The positive test cannot see a new surface inventing its own words.
 
-    This is the cheap half of that population (rule 145): it catches the one wording already
-    known to have drifted, including a revert, and it costs one grep.
+    This check catches the one wording already known to have drifted, including a revert
+    back to it, at the cost of one grep.
     """
     haystacks = [
         *_source_files_to_scan(),
@@ -3301,28 +3229,25 @@ def _assert_messages(path: Path) -> list[tuple[int, str]]:
 def test_no_failure_message_sends_an_author_into_the_frozen_archive() -> None:
     """A gate's message is an instruction, and nothing under ``docs/history/`` can be edited.
 
-    Six count guards named a figure in the archived simplification plan and told the author to
-    bump it there too (#813). That file's own banner says do not update it, so the instruction
-    could only be followed by breaking a stated rule. Following it made a correct record false
-    besides, since every figure in there is a measurement at a named commit. Nobody had followed
-    it, which is why two of the figures were already stale by two when one of those messages was
-    written.
+    A failure message that tells the author to bump a figure inside an archived plan cannot
+    be followed, since that file's own banner says not to update it. Following it anyway
+    would also make a correct historical record false, since every figure there is a
+    measurement tied to a specific commit.
 
-    A docstring may still cite the archive for the reasoning behind a decision, which is why the
-    plan is archived rather than deleted. This reads assert messages alone.
+    A docstring may still cite the archive for the reasoning behind a decision, which is why
+    the plan is archived rather than deleted. This check reads assert messages alone.
 
-    **What it cannot see is a path built at runtime** (rule 147). ``tests/test_migrations.py``'s
-    ``_GET_BIND_CLAIM_SITES`` reached its message through an f-string over a tuple, so the
-    strongest form of this defect, a gate that FAILS until the frozen file is edited, was
-    invisible here. That one was found by reading.
+    What it cannot see is a message built from a path assembled at runtime, such as an
+    f-string over a tuple, rather than written as a literal string. A gate whose message is
+    built that way needs to be found by reading, not by this check.
 
-    Deliberately not a count (rule 145). The population is every assert in the suite and it moves
-    with ordinary writing, so a number here would be bumped without being read. The non-empty
-    floor is what catches a walk that collected nothing.
+    Deliberately not a count. The population is every assert in the suite and it grows with
+    ordinary writing, so a number here would be bumped without being read. The non-empty
+    assertion below is what catches a walk that collected nothing at all.
     """
-    #: The spellings the matcher takes and the ones it drops, run rather than claimed (rule 147).
-    #: A path hard-wrapped across two literals joins whole above. One wrapped AT the slash, with
-    #: the newline inside the literal, does not, and that is the hole this cannot close.
+    #: The spellings the matcher takes and the ones it drops, run rather than claimed.
+    #: A path hard-wrapped across two literals joins whole above. One wrapped at the slash,
+    #: with the newline inside the literal, does not, and that is the hole this cannot close.
     assert _ARCHIVED_FILE.search("docs/history/SIMPLIFICATION_PLAN.md's S7 paragraph")
     assert _ARCHIVED_FILE.search("`docs/history/SIMPLIFICATION_" + "PLAN.md`")
     assert not _ARCHIVED_FILE.search("docs/history/\nSIMPLIFICATION_PLAN.md")
@@ -3350,8 +3275,9 @@ def test_no_failure_message_sends_an_author_into_the_frozen_archive() -> None:
 def test_live_docs_carry_no_unresolved_placeholders() -> None:
     """A live doc never ships a ``TBD``.
 
-    The retired plan carried two unresolved ``(dev @ TBD)`` commit placeholders for days.
-    Placeholders in ``docs/history/`` are fine: that file is a record of what was written then.
+    An unresolved ``(dev @ TBD)`` commit placeholder left in a live doc is a fact nobody
+    finished writing. Placeholders in ``docs/history/`` are fine, since that file is a record
+    of what was written then.
     """
     offenders = [
         f"{p.relative_to(REPO)}:{n}"
@@ -3365,8 +3291,8 @@ def test_live_docs_carry_no_unresolved_placeholders() -> None:
 def test_docs_referenced_from_code_exist() -> None:
     """A ``docs/…`` path named in code resolves to a real file.
 
-    Rule 64: removing a surface removes its whole supply chain. Moving a doc without updating
-    the comments that cite it leaves a reader chasing a path that is not there.
+    Moving a doc without updating the comments that cite it leaves a reader chasing a path
+    that is not there.
     """
     ref = re.compile(r"docs/[\w./-]+\.md")
     dangling: list[str] = []
@@ -3379,18 +3305,19 @@ def test_docs_referenced_from_code_exist() -> None:
 
 
 #: A dotted citation of one of this repository's own symbols, as prose writes it:
-#: ``api.review._chip``, ``services.snapshot.build_facts``, ``engine.gates.PROTECT``. Anchored on
-#: the four layered packages plus ``db`` and ``auth``, because those are the names that appear
-#: bare in a comment; a fully-qualified ``reaper.api.review._chip`` matches too, since the
-#: pattern is not anchored at a word start on the left.
+#: ``api.review._chip``, ``services.snapshot.build_facts``, ``engine.gates.PROTECT``. Anchored
+#: on the four layered packages plus ``db`` and ``auth``, because those are the names that
+#: appear bare in a comment. A fully-qualified ``reaper.api.review._chip`` matches too, since
+#: the pattern is not anchored at a word start on the left.
 #: A leading ``/`` is what tells a citation from a URL or a file path, and nothing else does:
-#: ``https://api.github.com``, ``https://api.radarr.video/v1/…`` and ``frontend/src/api.test.ts``
-#: are all shaped exactly like ``api.review._chip``, and two of the three sit in the same double
-#: backticks this repository cites code with. So the pattern refuses a match preceded by a slash.
-#: The lookbehind refuses `/` and a word character but NOT a dot, so a fully-qualified
-#: `reaper.api.review._chip` matches on its `api.` segment. Adding `.` to that class reads as
-#: tighter and silently drops every `:func:`reaper.…`` cross-reference in the tree, which is the
-#: spelling both pre-existing stale citations this guard first caught were written in.
+#: ``https://api.github.com``, ``https://api.radarr.video/v1/…`` and
+#: ``frontend/src/api.test.ts`` are all shaped exactly like ``api.review._chip``, and two of
+#: the three sit in the same double backticks this repository cites code with. So the pattern
+#: refuses a match preceded by a slash.
+#: The lookbehind refuses ``/`` and a word character but not a dot, so a fully-qualified
+#: ``reaper.api.review._chip`` matches on its ``api.`` segment. Adding a dot to that class
+#: would read as tighter but would silently drop every ``:func:`reaper.…``` cross-reference in
+#: the tree, which is how those references are written.
 @functools.cache
 def _ui_catalog_leaves() -> tuple[tuple[str, str], ...]:
     """Every (dotted key, message) leaf of the hand-edited en-US UI catalog."""
@@ -3410,14 +3337,14 @@ def _ui_catalog_leaves() -> tuple[tuple[str, str], ...]:
 
 
 def _ui_catalog_keys() -> frozenset[str]:
-    """Every dotted key a citation can legitimately name: leaves, the ``t()`` shape, PLUS every
-    section path above them, the ``composeIn(namespace, reason)`` shape (#868 phase 5).
+    """Every dotted key a citation can legitimately name: leaves, the ``t()`` shape, plus every
+    section path above them, the ``composeIn(namespace, reason)`` shape.
 
-    A namespace argument is a section, never a leaf -- ``composeIn("services.discord.testResult",
-    reason)`` looks up ``services.discord.testResult.<reason.k>``, so the bare section is what the
-    code and its comments cite, and ``services.discord.testResult`` on its own is a dict in
-    ``ui.json``, not a string. ``_ui_catalog_leaves()`` stays leaf-only for its other callers
-    (the word-scan tests), which read each entry as a rendered message.
+    A namespace argument names a section, never a leaf. ``composeIn("services.discord.testResult",
+    reason)`` looks up ``services.discord.testResult.<reason.k>``, so the bare section is what
+    the code and its comments cite, and ``services.discord.testResult`` on its own is a dict
+    in ``ui.json``, not a string. ``_ui_catalog_leaves()`` stays leaf-only for its other
+    callers (the word-scan tests), which read each entry as a rendered message.
     """
     catalog = json.loads((FRONTEND_SRC / "locales" / "en" / "ui.json").read_text(encoding="utf-8"))
     keys: set[str] = set()
@@ -3443,25 +3370,23 @@ _DOTTED_SYMBOL = re.compile(
 def test_a_dotted_symbol_citation_resolves_to_a_real_symbol() -> None:
     """A comment naming ``package.module.symbol`` names one that exists.
 
-    Rule 64's supply chain, for the citation form no other guard covers.
-    ``test_docs_referenced_from_code_exist`` above does this for a ``docs/`` path; nothing did it
-    for a symbol, so splitting a module left every comment pointing at its old address, and the
-    only thing that found them was `docs/history/SIMPLIFICATION_PLAN.md` happening to warn that they
-    existed. Splitting the API routes module into five moved **39** of these across 26 files, and
-    the plan's own first estimate of that population was "roughly ten".
+    This is the same supply-chain check as ``test_docs_referenced_from_code_exist`` above, but
+    for a symbol citation instead of a ``docs/`` path: a comment pointing at a symbol should
+    still resolve after the symbol's module moves or splits.
 
-    **What it catches, stated as a bound rather than a boast.** A retired module named any of the
-    three ways prose names one (a path, a bare module name, a dotted package path), and a
-    symbol that is not reachable from the module cited. **What it does not catch: a symbol that
-    moved to a sibling while the old module still imports it.** ``api.simulate._replayed_evidence``
-    resolves green here, because `simulate` imports that name from `review` for its own use, and
-    the guard cannot tell an import kept for use from one kept by accident. A stricter
-    "defined here" test was written and withdrawn: it flags every monkeypatch target in the suite
-    (`services.snapshot.utcnow` is imported into `snapshot`, which is exactly why patching it
-    works), so it trades this hole for a much larger false-positive class.
+    What this catches: a retired module named any of the three ways prose names one (a path, a
+    bare module name, a dotted package path), and a symbol that is not reachable from the
+    module cited. What this does not catch: a symbol that moved to a sibling module while the
+    old module still imports it. ``api.simulate._replayed_evidence`` resolves green here,
+    because ``simulate`` imports that name from ``review`` for its own use, and the guard
+    cannot tell an import kept for use from one kept by accident. A stricter "defined here"
+    check would also flag every monkeypatch target in the suite, since
+    ``services.snapshot.utcnow`` is imported into ``snapshot``, which is exactly why patching
+    it works there. That trade would swap this gap for a much larger false-positive class, so
+    this check accepts the gap instead.
 
-    Deliberately not a count (rule 145). The population is every comment in the tree and it moves
-    with ordinary writing, so a number here would be bumped without being read. What cannot drift
+    Deliberately not a count. The population is every comment in the tree and it moves with
+    ordinary writing, so a number here would be bumped without being read. What cannot drift
     is whether each one resolves.
     """
     import importlib
@@ -3469,31 +3394,29 @@ def test_a_dotted_symbol_citation_resolves_to_a_real_symbol() -> None:
 
     #: A dotted name ending in one of these is a filename, not a symbol: `api.types.gen.ts`.
     suffixes = (".ts", ".tsx", ".py", ".md", ".mdx", ".json", ".css", ".html", ".yml", ".yaml")
-    #: This file names the retired module to DECLARE it, in `retired_modules` and in the prose
+    #: This file names the retired module to declare it, in `retired_modules` and in the prose
     #: explaining why the tombstone exists, so the tombstone check skips its own declaration.
-    #: Scoped to that check alone -- the dotted check below still reads this file.
+    #: Scoped to that check alone: the dotted check below still reads this file.
     declares_the_tombstone = REPO / "tests" / "test_repo_hygiene.py"
 
-    #: Every module under `src/reaper/`, to check the OTHER two spellings prose uses for one.
-    #: `api/routes.py` (a path) and `routes._chip` (a bare module name) are cited as often as the
-    #: dotted form, and both survived the sweep this test was written for: 25 citations across
-    #: `src/`, `tests/`, `frontend/src/`, a rules file and `CLAUDE.md`, found by a reviewer rather
-    #: than by the guard, because the pattern above requires a package prefix and refuses a
-    #: leading slash. A guard covering one spelling of three is rule 145's failure wearing the
-    #: shape of the thing it checks.
+    #: Every module under `src/reaper/`, to check the other two spellings prose uses for one.
+    #: `api/routes.py` (a path) and `routes._chip` (a bare module name) are cited as often as
+    #: the dotted form, and the pattern above misses both, since it requires a package prefix
+    #: and refuses a leading slash. A guard covering only the dotted spelling misses citations
+    #: written the other two ways.
     modules = {
         str(q.relative_to(REPO / "src" / "reaper")) for q in (REPO / "src" / "reaper").rglob("*.py")
     }
-    #: The retired module's OTHER two spellings, tombstoned rather than derived. A "does this
-    #: path exist" check cannot be general here: prose legitimately names files the tree does not
-    #: have -- `api/deps.py` is phase 8's planned module, `engine/requester.py` and
-    #: `engine/custom_gate.py` are proposals -- so a derived check flags the plan for planning.
-    #: What is NOT legitimate is naming a module that used to exist and does not, which is
-    #: exactly what a split leaves behind, and that is a list of one line per retirement.
-    #: The bare form is undecidable in prose on its own -- `routes._chip` and a local
-    #: `result._asdict` are the same shape, and one of the twelve real sites
-    #: (`engine/explanation.py`) was not even in backticks -- so this is keyed on the retired
-    #: name rather than derived. One entry per retirement: package, then module.
+    #: The retired module's other two spellings, tombstoned rather than derived. A "does this
+    #: path exist" check cannot be general here: prose legitimately names files the tree does
+    #: not have yet, such as a planned or proposed module, so a derived check would flag the
+    #: plan for planning. What is not legitimate is naming a module that used to exist and does
+    #: not any more, which is exactly what a split leaves behind, so this is a list of one line
+    #: per retirement.
+    #: The bare form is undecidable in prose on its own: `routes._chip` and a local
+    #: `result._asdict` are the same shape, and not every real site quotes it in backticks. So
+    #: this is keyed on the retired name rather than derived. One entry per retirement:
+    #: package, then module.
     retired_modules = {"routes": "api"}
     names = "|".join(retired_modules)
     packages = "|".join(dict.fromkeys(retired_modules.values()))
@@ -3513,17 +3436,17 @@ def test_a_dotted_symbol_citation_resolves_to_a_real_symbol() -> None:
                 if match.group(0).endswith(suffixes):
                     continue
                 # An i18n catalog key ("common.brand.discord") is shaped exactly like a
-                # dotted citation of `reaper.common`. It resolves in its own symbol
-                # table -- the en-US catalog -- and the frontend's missing-key gate
-                # (i18n-keys.test.ts) is what holds a stale one, so this guard defers.
+                # dotted citation of `reaper.common`. It resolves in its own symbol table,
+                # the en-US catalog, and the frontend's missing-key gate (i18n-keys.test.ts)
+                # is what holds a stale one, so this guard defers.
                 if match.group(0) in _ui_catalog_keys():
                     continue
                 package, middle, symbol = match.groups()
-                # Resolve by importing the longest prefix that IS a module, then walking what is
-                # left with getattr. A citation is not always module-then-symbol: `httpx2` in
-                # `clients.base.httpx2.AsyncHTTPTransport` is an alias bound inside a module, and
-                # a monkeypatch target reads the same way. Splitting on the last dot instead
-                # would flag every one of those as a missing module.
+                # Resolve by importing the longest prefix that is a module, then walking what
+                # is left with getattr. A citation is not always module-then-symbol: `httpx2`
+                # in `clients.base.httpx2.AsyncHTTPTransport` is an alias bound inside a
+                # module, and a monkeypatch target reads the same way. Splitting on the last
+                # dot instead would flag every one of those as a missing module.
                 parts = f"reaper.{package}{middle}.{symbol}".split(".")
                 mod, depth = None, 0
                 for i in range(len(parts), 1, -1):
@@ -3591,67 +3514,10 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
     assert not offenders, "the rules live in .claude/rules/, not in docs/:\n" + "\n".join(offenders)
 
 
-# Every notice the app renders, counted once. Rule 145: the assertion below cannot tell a
-# notice that complies from one that dropped out of the walk, and reads green for both.
+# Every notice the app renders, counted once. The assertion below cannot tell a notice that
+# complies from one that dropped out of the walk, and reads green either way.
 #
-# 108, and it does not line up with the 109 hand-rolled sites this replaced -- the two figures
-# mean different things and are deliberately not derived from each other. The 109 is a fact about
-# the past; this is a count of what is in the tree now, and several things moved it: the two
-# draft-refusal notices were byte-identical twins in Settings and PolicyEditor and now render
-# through the single Notice inside ``SwitchConfirm`` (rule 18); ``ReapPlan``'s plan loader was
-# missed by the sweep entirely, because the ban could not parse a ternary ``className``; and the
-# About, Jobs and Notifications panels each grew a second hand-rolled notice while this branch was
-# in flight, when their failed-read handling was split into a never-loaded case and a stale case.
-# Then 109: the service form's malformed-external-URL complaint became a notice of its own beside
-# the box it is about, instead of a sentence written into the form's shared error slot 150 lines
-# below it, which is where a failed save and a failed connection test also land (#174, rule 42).
-# Then 112: the Plex panel's watch-history group added three at once, which is one group's full
-# set -- a never-loaded error, an action failure, and a standing warning that says what pressing
-# the control costs.
-# Then 114: the why-panel's per-title twin of that control (#275) -- a standing warning carrying
-# the button, and the action failure beside it.
-# Then 125: telling the operator BEFORE the button what the execute route refuses after it
-# (#383) -- one on the wizard's finish panel and one on the Reap page, each with the
-# unreadable-setup branch beside it (rule 17/36) -- plus the wizard's restore door, whose modal
-# says so too when it cannot tell whether a restore is already armed. The restore card's own
-# four moved out of Settings into `RestoreCard.tsx` and are not part of that bump.
-# Then 127: the armed restore card, which had a notice and no way to contradict it (#386). It
-# gained the state after `Restart now` is pressed, and the failure slot that state made
-# unavoidable -- both of the armed card's buttons can be refused by the server, and until now
-# neither refusal rendered anywhere at all.
-# Then 128: the wizard's scan step, which offered "Run first scan" whatever was connected. The
-# start route answers 200 either way and the refusal is raised inside the detached task, so the
-# operator watched a spinner for a scan that could never run and was then sent to Settings, which
-# is behind the wizard they had not left. The notice carries the way back instead (rule 42).
-# Then 132: the service editor and the wizard's Connect step, on the change that made a service
-# prove its connection before it can be saved. Three of the four are states that could not arise
-# before -- a folder list the test could not read (said apart from an instance that genuinely has
-# none), the same for a Seerr portal's services, and the close guard's own sentence, which exists
-# because `canClose` is a mute gate and a dismissal that silently does nothing is worse than one
-# that says why. The fourth is a removal refused on the Connect step, which is new because the
-# step had no Remove until now.
-# Then 135, from the review of that change: a folder probe that failed while the grid it would
-# have refreshed is still on screen (and its Seerr twin), and a Plex library list whose SYNC
-# failed -- three states that each used to render as a positive claim about a service or a
-# server nobody reached.
-# Then 136 -> 137: Settings -> Lists, whose unreadable answer is a positive claim about every
-# protection list at once if it stays silent (#475).
-# Then 137 -> 142, the rest of that screen: a check that would not run (on the row whose button
-# started it, rule 42), a Plex that could not be reached at all so no row can say why, a removal
-# that was refused, and the add/edit form's own save failure and its switched-off warning.
-# Then 141 -> 144, from that screen's UI review: a failed "Check all now", which on an install
-# with no migrated rows had no sink at all and went back to rest saying nothing; the Review
-# page's incomplete-scan line, which was a bare styled span so amber was its only severity
-# signal; and a retired protection still switched on, which refuses every scan while reading as
-# an ordinary healthy one.
-# Then 144 -> 143: the policy editor's three hand-written recovery notices became two renders
-# over `REPAIR_NOTICES`, one per placement, so a repair kind added later gets its sentence from
-# the map instead of a fourth copy of the same JSX (#516). The population shrank; the number of
-# notices an operator can see did not.
-# Then 143 -> 142: the why panel's and the Scales panel's loading/error fallbacks became one
-# `PanelFallback` the two hand three strings (W11-24). One fewer call site, the same two notices
-# on screen.
-# Re-derive it by running the test, never by arithmetic on this comment.
+# Re-derive this number by running the test. Never update it by hand arithmetic on a diff.
 _EXPECTED_NOTICES = 142
 
 
@@ -3665,36 +3531,34 @@ def _shipped_tsx() -> list[Path]:
 
 
 def test_every_notice_goes_through_the_one_component_that_announces_it() -> None:
-    """A hand-rolled ``.notice`` is a notice no screen reader will read out (#155).
+    """A hand-rolled ``.notice`` is a notice no screen reader will read out.
 
-    There were 109 of these written by hand and seven live regions in the whole frontend, and
-    not one of the seven was a notice. Nothing the app said after an operator pressed something
-    -- a failed save, a refused switch, a wrong password on the control that arms deletion --
-    was announced at all. ``Notice`` owns ``role="alert"`` so the answer is written once
-    (rule 18); this is what stops the 110th copy being written by hand and shipping mute.
+    Nothing the app says after an operator presses something, such as a failed save, a
+    refused switch, or a wrong password on the control that arms deletion, reaches a screen
+    reader unless it goes through ``Notice``. ``Notice`` owns ``role="alert"`` so the answer
+    is written once, which is what stops the next copy being written by hand and shipping
+    mute.
 
-    Rule 144 is why the *count* is here rather than only the ban: the number 109 appears in
-    issue #155, in ``Notice.tsx``'s own docblock and in ``Notice.test.tsx``. Deriving it in one
-    place and leaving the others to drift is the failure that rule describes, so the message
-    below names them.
+    The count is here rather than only the ban because a name-only ban cannot tell a
+    component that carries no notice from one carrying it under a spelling the walk cannot
+    see, so the count is checked against both ``Notice.tsx``'s own docblock and
+    ``Notice.test.tsx``.
     """
     component = FRONTEND_SRC / "components" / "Notice.tsx"
-    # Read the WHOLE ``className`` value -- a quoted literal or a ``{...}`` expression -- and then
-    # every quoted run inside it. A ternary and a template literal are ordinary ways to write this
-    # attribute, and the quote-anchored pattern this replaces could parse neither: it required a
-    # quote immediately after ``className=`` or after ``{``. ``ReapPlan``'s plan loader sat in that
-    # blind spot as ``className={runPending ? "help" : "notice notice-error"}`` and shipped mute
-    # while this test passed. The count below could not see it either -- a site that was never
-    # converted is absent from both halves -- which is rule 145 exactly: the ban read green over
-    # the one thing it existed to catch.
+    # Read the whole ``className`` value, a quoted literal or a ``{...}`` expression, and
+    # then every quoted run inside it. A ternary and a template literal are ordinary ways to
+    # write this attribute, and a pattern anchored on a quote immediately after
+    # ``className=`` or after ``{`` would parse neither, going blind to a component whose
+    # className is a ternary such as
+    # ``className={runPending ? "help" : "notice notice-error"}``.
     #
     # The bare ``notice`` token, not a substring of one: ``budget-notice`` and ``kept-notice``
-    # are layout classes that ride ON a Notice via its ``className`` prop, and a ``\bnotice\b``
+    # are layout classes that ride on a Notice via its ``className`` prop, and a ``\bnotice\b``
     # match counts them as offenders because the hyphen is a word boundary.
     #
-    # ``_strip_prose`` is deliberately NOT used here. It drops every backticked span, which in a
-    # .tsx file is a template literal rather than prose, so it would blind this check to one of
-    # the two forms it was just widened to catch. Whole-line comments are skipped instead.
+    # ``_strip_prose`` is deliberately not used here. It drops every backticked span, which in
+    # a .tsx file is a template literal rather than prose, so it would blind this check to one
+    # of the two forms it needs to catch. Whole-line comments are skipped instead.
     attr = re.compile(r"className=(\{(?:[^{}]|\{[^{}]*\})*\}|\"[^\"]*\"|`[^`]*`)")
     quoted = re.compile(r"\"([^\"]*)\"|`([^`]*)`")
     offenders = list(
@@ -3732,41 +3596,10 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
     )
 
 
-# Every notice that opts OUT of announcing itself. Rule 145 again, for the other direction: the
-# count above proves a notice exists, and says nothing about whether it speaks.
+# Every notice that opts out of announcing itself. The count above proves a notice exists,
+# and says nothing about whether it speaks; this is the count for that other direction.
 #
-# 16. Eight were the sweep in #375/#376 -- six notices that were page furniture and interrupted
-# anyway (the armed restore card, the Reap page's expired-spares prompt, its two stale-plan
-# notices, the Plex trash warning on both its surfaces, and the why-panel's "Kept to be safe"),
-# plus the log's two failure notices, which a 2s poll re-announced on every flap.
-# Then 31: #394 swept the rest of the tree against the sharper question, which is not what a
-# notice's mount condition READS but what refetches the query under it -- `main.tsx` turns
-# `refetchOnWindowFocus` off app-wide, so a read moves on a mount, an interval, or an
-# invalidation, and only the first two reach a notice with nothing pressed. Fifteen did: a run
-# started on another device, a scheduled scan crashing or finishing degraded (three sites off one
-# 15s poll), five facts about the install that are true on first paint, three load-time recovery
-# flags, and the password form's live complaint, whose `{pw.length} so far` mutated inside a live
-# region on every keystroke.
-# Then 34: the policy editor's other three readers of `["validate", debounced]`, which is keyed on
-# the draft and so refires as the operator types -- the same query whose `WarnBlock` notices were
-# already `standing` for that reason, and rule 72 for the two that were not.
-# Then 35: About's dev-build banner, a fact about the install that is true on first paint
-# and unchanged for the process's whole life.
-# Then 36: the Review page's incomplete-scan line, which became a `Notice` so its severity is
-# not amber alone. It is the age of the snapshot the queue below is built from, so it is page
-# furniture for as long as that snapshot is the one on hand; the scan that produces it
-# announces itself from `ScanBar`, where the transition actually happens.
-# Then 36 -> 35: the policy editor's two standing recovery notices became one render over the
-# `top` half of `REPAIR_NOTICES`. Still standing, and for the same reason -- a repair is carried
-# by the fetch, so it is the state of the page from its first paint (#516).
-# Then 36: the setup wizard's password step, the second drawing of `AdminPasswordForm` and the
-# one place its live complaint was still announced. Same `{pw.length} so far` inside a live
-# region on every keystroke, on the form that sets the key arming deletion; the sibling above has
-# been standing since #394 and this copy was never swept (rule 72).
-# Then 37: the policy editor's `savebar` half of `REPAIR_NOTICES`, the twin of the `top` half two
-# entries up. Same repair, carried by the same fetch, and it interrupted when the save bar
-# appeared while `top` stayed silent (#718, rule 72).
-# Re-derive it by running the test, never by arithmetic on this comment.
+# Re-derive this number by running the test. Never update it by hand arithmetic on a diff.
 _EXPECTED_STANDING = 37
 
 # ``standing`` as a JSX attribute, never as a substring of a class name or a word in prose.
@@ -3780,9 +3613,9 @@ _JUSTIFY_WINDOW = 12
 def _notice_openings(text: str) -> list[tuple[int, str]]:
     """Every ``<Notice`` opening tag, as ``(line number, attribute text)``.
 
-    Reads the whole tag rather than anchoring on a delimiter, which is rule 147's instruction
-    after the quote-anchored ban shipped blind to a ternary. The tag ends at the first ``>`` at
-    brace depth zero and outside a string, so ``key={b.key}``, ``className={cx ? a : b}`` and a
+    Reads the whole tag rather than anchoring on a delimiter, since a pattern anchored on a
+    quote would go blind to a ternary ``className``. The tag ends at the first ``>`` at brace
+    depth zero and outside a string, so ``key={b.key}``, ``className={cx ? a : b}`` and a
     tag broken across five lines all read the same way.
     """
     out: list[tuple[int, str]] = []
@@ -3807,12 +3640,11 @@ def _notice_openings(text: str) -> list[tuple[int, str]]:
 
 
 def test_the_matcher_for_standing_reads_every_spelling_the_tree_uses() -> None:
-    """Rule 147: the spellings a source-text scan accepts are written down and driven, both ways.
+    """The spellings a source-text scan accepts are written down and driven, both ways.
 
-    The ban this sits beside shipped green over the one site it existed to catch, because a
-    ternary ``className`` was a spelling its pattern could not parse. So the accepted and
-    rejected forms are a table here rather than a claim in a comment, and the walk below is only
-    as good as this.
+    A pattern anchored on a quote cannot parse a ternary ``className``, so the ban this sits
+    beside would go blind to a Notice written that way. The accepted and rejected forms are a
+    table here rather than a claim in a comment, and the walk below is only as good as this.
     """
     accepted = [
         '<Notice tone="warn" standing>',
@@ -3843,19 +3675,21 @@ def test_the_matcher_for_standing_reads_every_spelling_the_tree_uses() -> None:
 
 
 def test_every_silent_notice_says_why_it_is_silent() -> None:
-    """``standing`` takes a notice out of the screen reader's path, so it argues for itself (#375).
+    """``standing`` takes a notice out of the screen reader's path, so it argues for itself.
 
-    ``Notice`` announces by default and the flag is the opt-out, which makes the flag the only
-    thing standing between an operator and a message they will never hear. Six notices were page
-    furniture and interrupted anyway; the reverse mistake is the one this catches, because it is
-    the one that is silent in both the app and the diff. ``Notice.tsx`` asks for the reason in a
-    comment at the call site, and prose cannot bind an author who never read it.
+    ``Notice`` announces by default, and the flag is the opt-out, which makes the flag the
+    only thing standing between an operator and a message they will never hear. A notice that
+    is page furniture and interrupts anyway is one mistake; a notice that silences a real
+    reaction with no explanation is the other, and it is the one that is silent in both the
+    app and the diff, so ``Notice.tsx`` asks for the reason in a comment at the call site,
+    since prose cannot bind an author who never read it.
 
-    What this proves is that a reason was WRITTEN, never that it is true -- whether a mount
-    condition is really furniture is a judgment no regex makes. It is deliberately the cheap half:
-    an author who has to name the condition out loud has already done the thinking that the six
-    skipped. The window can also be satisfied by a neighbour's comment where two standing notices
-    sit within ``_JUSTIFY_WINDOW`` lines, which is a false pass and not a false failure.
+    What this proves is that a reason was written, never that it is true: whether a mount
+    condition is really furniture is a judgment no regex makes. It is deliberately the cheap
+    half: an author who has to name the condition out loud has already done the thinking a
+    silent flag would skip. The window can also be satisfied by a neighbour's comment where
+    two standing notices sit within ``_JUSTIFY_WINDOW`` lines, which is a false pass and not a
+    false failure.
     """
     component = FRONTEND_SRC / "components" / "Notice.tsx"
     silent: list[str] = []
@@ -3887,113 +3721,101 @@ def test_every_silent_notice_says_why_it_is_silent() -> None:
     )
 
 
-# Every handle on a READ's failure the shipped app binds, by the file that binds it.
+# Every handle on a read's failure the shipped app binds, by the file that binds it. Counted
+# rather than banned, because a branch that tests a query's failure without asking whether the
+# value is still in hand is easy to miss during review, and nothing else counts the population.
 #
-# The sweep for branches that test a query's failure without asking whether the value is still in
-# hand has now run three times -- #140, then #166/#181, then the nine deferred into #190 -- and
-# every pass found sites the previous one missed, including one inside the very file being edited.
-# Nothing counted the population, so the next one was caught by the next human reviewer or not at
-# all (#197). This is that count.
+# What a handle is: one `error` or `isError` a component can branch on, resolved to the hook
+# that produced it: `const { isError } = useQuery(…)`, `const { error: vocabError } =
+# useQuery(…)`, and `libraries.isError` where `libraries` came from a `useQuery`. A file with
+# three components each destructuring `isError` has three.
 #
-# **What a handle is.** One `error` or `isError` a component can branch on, resolved to the hook
-# that produced it: `const { isError } = useQuery(…)`, `const { error: vocabError } = useQuery(…)`,
-# and `libraries.isError` where `libraries` came from a `useQuery`. A file with three components
-# each destructuring `isError` has three.
+# What is in the walk, and what is not: reads are in; a mutation's `error` is an action
+# failure, a different population that a different check covers, and is out. The two lists
+# below are the whole of what the matcher will accept, and an initializer spelled `use*` that
+# is in neither fails the test rather than being guessed at either way, since a new read hook
+# silently landing in the mutation bucket is exactly how a site would go missing from this walk.
 #
-# **What is in the walk, and what is not.** Reads are in; a mutation's `error` is an action
-# failure, a different population with a different rule (rule 42's `.notice.notice-error`), and is
-# out. The two lists below are the whole of what the matcher will accept, and an initializer
-# spelled `use*` that is in neither FAILS the test rather than being guessed at either way -- a new
-# read hook silently landing in the mutation bucket is exactly how a site goes missing from a walk
-# that reads green (rules 145, 147).
-#
-# **Roughly half of these are deliberately undivided, and that is the point of counting rather than
-# banning.** Every safety indicator reads an unreadable state as *unknown* on purpose, which is
-# fail-closed and the opposite of the #190 fix: `App`'s two `useSafety` gates, `DeletionToggle`,
-# `ReapPlan` and `ReapConfirm`'s safety reads, both `usePlexTrash` call sites, `ReapBreakdown`'s
-# unknown-size allowance AND its ledger (which states delete counts, so a held one would be a stale
-# number shown as current), `queueSettings`' allowance, and `PolicyEditor`'s simulator column,
-# which argues the same thing in as many words. The rewatch-odds fit (#554 stage 2) joins them:
-# `RewatchLadder` says "couldn't read" outright rather than holding a previous ladder on screen,
-# because the ladder and the echo below it exist so the operator's percentage box means what it
-# says, and a stale library number would defeat that. A ban would have to exempt all of them; a
-# count does not care which way a site resolved, only that nobody added one without deciding.
+# Roughly half of these are deliberately undivided, and that is the point of counting rather
+# than banning. Every safety indicator reads an unreadable state as unknown on purpose, which
+# is fail-closed: `App`'s two `useSafety` gates, `DeletionToggle`, `ReapPlan` and
+# `ReapConfirm`'s safety reads, both `usePlexTrash` call sites, `ReapBreakdown`'s unknown-size
+# allowance and its ledger (which states delete counts, so a held one would show a stale
+# number as current), `queueSettings`' allowance, and `PolicyEditor`'s simulator column, which
+# argues the same thing in as many words. `RewatchLadder` joins them: it says "couldn't read"
+# outright rather than holding a previous ladder on screen, because the ladder and the echo
+# below it exist so the operator's percentage box means what it says, and a stale number would
+# defeat that. A ban would have to exempt all of them; a count does not care which way a site
+# resolved, only that nobody added one without deciding.
 _QUERY_FAILURE_HANDLES = {
     "frontend/src/App.tsx": 7,
-    # The seven settings panels below held one entry between them, ``Settings.tsx: 8``, until the
-    # file became a shell and each panel got its own module. Nothing about any branch changed:
-    # the 8 redistribute exactly, and Settings.tsx leaves the walk because the shell binds no
-    # read at all.
     "frontend/src/components/AboutPanel.tsx": 1,
     "frontend/src/components/BackupPanel.tsx": 1,
     "frontend/src/components/DeletionToggle.tsx": 1,
     "frontend/src/components/Fairness.tsx": 1,
     "frontend/src/components/GeneralPanel.tsx": 1,
     "frontend/src/components/JobsPanel.tsx": 2,
-    # Whether each protection list is still protecting anything (#475). Undivided on purpose,
-    # like the safety reads above: this screen exists so an operator can tell a list that
-    # stopped working from one that is simply not on a title's side, so an unreadable answer
-    # must say it could not tell them. Keeping a previous good answer on screen would state
-    # that the lists are fine at the one moment nobody knows whether they are, and that is the
-    # direction a keep list fails in. Both arms are pinned in `ListsPanel.test.tsx`.
+    # Whether each protection list is still protecting anything. Undivided on purpose, like
+    # the safety reads above: this screen exists so an operator can tell a list that stopped
+    # working from one that is simply not on a title's side, so an unreadable answer must say
+    # it could not tell them. Keeping a previous good answer on screen would state that the
+    # lists are fine at the one moment nobody knows whether they are, which is the direction a
+    # keep list must never fail in. Both arms are pinned in `ListsPanel.test.tsx`.
     #
-    # 1 -> 2 when the screen gained the list DEFINITIONS beside the membership. Same question
-    # asked of the second read, and it is the read that decides whether a row exists at all:
+    # The second read is the list definitions, which decides whether a row exists at all:
     # failing it silently would render a page with no rows and an Add button, which reads as
     # "you have no lists" to an operator who has several. Both reads share one failure branch
     # for that reason, and each is driven into it on its own in the tests.
     "frontend/src/components/ListsPanel.tsx": 2,
     "frontend/src/components/LogsPanel.tsx": 1,
     "frontend/src/components/NotificationsPanel.tsx": 1,
-    # 5 -> 6 when the library list moved to ``usePlexLibraries``. No branch here changed: the
-    # panel's JSX is untouched, and the extra handle is the walk seeing the bag's two members
-    # where a directly-bound ``useQuery`` had been one. Counted rather than excused, because
-    # the population is the thing this pins.
+    # The panel's JSX branches on one read, but ``usePlexLibraries`` returns a bag with two
+    # members, so the walk counts two handles for it. Counted rather than excused, because the
+    # population is the thing this pins.
     "frontend/src/components/PlexPanel.tsx": 6,
-    # 4 -> 5 for #554 stage 2's rewatch-odds fit (`RewatchLadder`'s `isError`): undivided, see
-    # the docstring above. The delete-threshold slider's consequence sentence reads its own
-    # `["threshold-curve", mediaType]` query but never destructures `isError`: it is a
-    # readout, not a safety indicator, so a failed or pending read renders nothing (the same
-    # branchless "no data yet" the sentence already takes for `no_scan`) rather than a
-    # divided isError/isPending state -- nothing here for this walk to count.
+    # `RewatchLadder`'s `isError` is undivided, see the docstring above. The delete-threshold
+    # slider's consequence sentence reads its own `["threshold-curve", mediaType]` query but
+    # never destructures `isError`: it is a readout, not a safety indicator, so a failed or
+    # pending read renders nothing rather than a divided isError/isPending state, which is
+    # nothing here for this walk to count.
     "frontend/src/components/PolicyEditor.tsx": 5,
     "frontend/src/components/PolicyRuleEditors.tsx": 3,
     "frontend/src/components/ReapBreakdown.tsx": 2,
     "frontend/src/components/ReapConfirm.tsx": 2,
-    # 4th: the pre-flight read that says what would turn a real run away (#383). Deliberately
-    # undivided in the same way as the safety reads above -- an unreadable setup status is
-    # UNKNOWN, and the page says so rather than staying silent, because silence there reads as
-    # "nothing is missing" over a run the server is about to refuse.
+    # The pre-flight read says what would turn a real run away. Deliberately undivided in the
+    # same way as the safety reads above: an unreadable setup status is unknown, and the page
+    # says so rather than staying silent, because silence there reads as "nothing is missing"
+    # over a run the server is about to refuse.
     "frontend/src/components/ReapPlan.tsx": 4,
-    # 3 -> 6: the collection screen's three fate-lane reads (condemned/protected/abstained) each
-    # gained a branch on their OWN failure. `isPending` alone reads true on an error exactly as
-    # it does on a success, so a lane that exhausted its retries used to render as loaded with
-    # its count defaulted to 0 -- a false zero and an undercounted "N in the last scan" (rule
-    # 17/36). Undivided like the safety reads above: a failed lane withholds the whole summary
-    # rather than mixing two real counts beside a false one, in the same `.error` text the
-    # queue's own never-loaded branch already uses.
+    # The collection screen's three fate-lane reads (condemned/protected/abstained) each
+    # branch on their own failure. `isPending` alone reads true on an error exactly as it does
+    # on a success, so a lane that exhausted its retries would otherwise render as loaded with
+    # its count defaulted to 0, a false zero that undercounts "N in the last scan". Undivided
+    # like the safety reads above: a failed lane withholds the whole summary rather than
+    # mixing two real counts beside a false one, in the same `.error` text the queue's own
+    # never-loaded branch already uses.
     "frontend/src/components/ReviewQueue.tsx": 6,
-    # 4 render branches, plus 2 in the save handler (#204). Those two are neither of the
-    # questions the docstring below names: they ask "may I PRUNE against this list", where a
-    # failed read means the list is merely out of date and pruning would delete a stored
-    # mapping nothing confirmed is gone. The render branches beside them already keep their
-    # grid and say it may be stale, which is why `.data` alone could not answer this.
-    # Moved out of App.tsx with the component rather than added: the banner's amber
-    # "we could not look" branch is the same handle it always had, now in its own module so
-    # the wizard states the regime from the same declaration.
+    # Four render branches, plus two in the save handler. Those two ask a different question,
+    # "may I prune against this list": a failed read there means the list is merely out of
+    # date, and pruning against it would delete a stored mapping nothing confirmed is gone.
+    # The render branches beside them already keep their grid and say it may be stale, which
+    # is why `.data` alone could not answer this.
+    # Moved out of App.tsx with the component rather than added: the banner's amber "we could
+    # not look" branch is the same handle it always had, now in its own module so the wizard
+    # states the regime from the same declaration.
     "frontend/src/components/SafetyBanner.tsx": 1,
     "frontend/src/components/SectionNav.tsx": 1,
     "frontend/src/components/SecurityPanel.tsx": 1,
-    # 6 -> 7: the library pickers now consult the SYNC's failure as well as the query's. A read
-    # that lands empty while the sync that would fill it fails is the ordinary answer when Plex
-    # is not linked at all, and with only the query consulted the panel stated as fact that the
-    # server holds no libraries of this kind -- about a server nobody reached.
+    # The library pickers consult the sync's failure as well as the query's. A read that lands
+    # empty while the sync that would fill it fails is the ordinary answer when Plex is not
+    # linked at all. Consulting only the query would state as fact that the server holds no
+    # libraries of this kind, about a server nobody reached.
     "frontend/src/components/ServiceModal.tsx": 7,
     "frontend/src/components/ServicesPanel.tsx": 1,
     "frontend/src/components/SetupConnectStep.tsx": 1,
-    # 1 -> 2: the same sync failure, on the step that renders the Libraries grid. It drew an
-    # empty grid and said nothing at all, so "no libraries" and "we never got to look" were one
-    # picture (rule 93).
+    # The same sync failure, on the step that renders the Libraries grid. Without this, an
+    # empty grid says nothing at all, so "no libraries" and "we never got to look" would look
+    # the same.
     "frontend/src/components/SetupPlexStep.tsx": 2,
     # Whether a restore is already armed. Never-loaded only: the modal mounts on the press and
     # holds no earlier good answer to keep, and falling through to the idle card would invite an
@@ -4002,60 +3824,57 @@ _QUERY_FAILURE_HANDLES = {
     "frontend/src/components/SetupWizard.tsx": 1,
     "frontend/src/components/queueSettings.tsx": 1,
     # The policy editor's probe: what the engine says a rule would do at a value the operator
-    # is dragging. A READ, and one that deliberately does NOT keep its content -- the hook
-    # nulls the answer on failure rather than leaving the last one on screen, because the
-    # last one is about a value the operator has already moved past, and a points figure
-    # under a slider reads as being about where the slider is now.
+    # is dragging. A read whose hook nulls the answer on failure rather than leaving the last
+    # one on screen, because the last one is about a value the operator has already moved
+    # past, and a points figure under a slider reads as being about where the slider is now.
     #
-    # It is one handle rather than two because the hook answers the read-or-action question
+    # This is one handle rather than two because the hook answers the read-or-action question
     # once and hands down a `failed` boolean, so `PolicyEditor` stays at 4: its branch is on
-    # the derived flag and this walk never sees it. That is the arrangement this population
-    # is meant to encourage, not a gap in it -- the decision is made in one place instead of
-    # re-made at every call site.
+    # the derived flag and this walk never sees it. That is the arrangement this population is
+    # meant to encourage: the decision is made in one place instead of re-made at every call
+    # site.
     "frontend/src/usePolicyProbe.ts": 1,
 }
 
-# The hooks that hand back a READ's failure. The last three wrap a ``useQuery`` in their own
-# module, so the branch that acts on the failure is written at the CALL site and only this list
-# reaches it.
+# The hooks that hand back a read's failure. The last three wrap a ``useQuery`` in their own
+# module, so the branch that acts on the failure is written at the call site and only this
+# list reaches it.
 _READ_HOOKS = {
     "useQuery",
     "useInfiniteQuery",
     "useSafety",
     "usePlexTrash",
     "useHoldsBackUnmeasured",
-    # The second BAG, after ``useOverrideMutations`` below, and the first MIXED one: it hands
-    # back ``{ libraries, sync }``, a query and the mutation that fills it when it has never
-    # been filled. Filed as a read because the handle every call site branches on is the
-    # query's -- "could we read your Plex libraries" -- and a failed refetch there leaves the
-    # last good list in the pickers, which is exactly the keep-your-content case. Its mutation
-    # half is not unclassified by omission: ``PlexPanel`` renders ``sync.error`` through the
-    # action slot it already shared with ``saveLibraries``.
+    # Hands back ``{ libraries, sync }``, a query and the mutation that fills it when it has
+    # never been filled. Filed as a read because the handle every call site branches on is the
+    # query's, "could we read your Plex libraries", and a failed refetch there leaves the last
+    # good list in the pickers, which is exactly the keep-your-content case. Its mutation half
+    # is not unclassified by omission: ``PlexPanel`` renders ``sync.error`` through the action
+    # slot it already shared with ``saveLibraries``.
     "usePlexLibraries",
     # Wraps the general-settings query and returns the whole result, so `GeneralPanel` still
     # branches on `general.isError` and the number does not move.
     "useGeneralSettings",
 }
 
-# The hooks that hand back PAYLOAD and no failure handle at all, so a member of their result
-# named ``error`` is the SERVER's word rather than a read that failed.
+# The hooks that hand back payload and no failure handle at all, so a member of their result
+# named ``error`` is the server's word rather than a read that failed.
 #
 # ``ScanStatus.error`` is the case: the scan bar and the wizard both render "The scan hit a
-# problem: {status.error}", which is a finished scan reporting what went wrong. The walk already
-# refused to count that through ``_QUERY_PRIMITIVES``, while the query was declared inline and
-# destructured; hoisting it into ``useScanStatus`` moved the same expression onto an unknown hook
-# bound whole. Filing it as a read adds two handles for branches that do not exist (rule 141).
+# problem: {status.error}", which is a finished scan reporting what went wrong, not a failed
+# read. Filing it as a read would add handles for branches that do not exist.
 _PAYLOAD_HOOKS = {"useScanStatus"}
 
-# The hooks whose failure is an action's, not a read's. Listed rather than assumed, so the walk
-# fails on a hook it has never seen instead of quietly filing it here.
+# The hooks whose failure is an action's, not a read's. Listed rather than assumed, so the
+# walk fails on a hook it has never seen instead of quietly filing it here.
 #
-# ``useOverrideMutations`` is the tree's one BAG -- it hands back ``{ setOverride, clearOverride,
-# refresh }`` and the call site reads ``setOverride.isError`` -- so it arrives here through the
-# member branch of the walk rather than through a directly bound ``useMutation``. Both members are
-# ``useMutation``, so a spare or a reap that fails is an action's failure. It is listed for the
-# shape as much as the answer: a READ hook written this way is the one that would otherwise be
-# invisible, and now it stops the run here until someone says which it is.
+# ``useOverrideMutations`` hands back ``{ setOverride, clearOverride, refresh }``, and the
+# call site reads ``setOverride.isError``, so it arrives here through the member branch of
+# the walk rather than through a directly bound ``useMutation``. Both members are
+# ``useMutation``, so a spare or a reap that fails is an action's failure. It is listed for
+# the shape as much as the answer: a read hook written this way would otherwise be invisible
+# to this walk, and listing it here stops the run until someone says which kind a new one
+# like it is.
 _ACTION_HOOKS = {"useMutation", "useOverrideMutations"}
 
 # React Query's own hooks, whose result shape the walk already knows: a member other than
@@ -4080,14 +3899,15 @@ def _shipped_frontend_source() -> list[Path]:
 def _query_failure_handles() -> tuple[dict[str, int], set[str]]:
     """Read-failure handles per file, and every ``use*`` hook name the walk met.
 
-    Both binding spellings the tree uses (rule 147): the whole result (``const libraries =
-    useQuery(…)``, counted once per ``.error`` / ``.isError`` the same file goes on to read) and
-    the destructure (``const { isError } = useSafety()``), including a rename (``error:
+    Both binding spellings the tree uses: the whole result (``const libraries = useQuery(…)``,
+    counted once per ``.error`` / ``.isError`` the same file goes on to read) and the
+    destructure (``const { isError } = useSafety()``), including a rename (``error:
     vocabError``). Comments come out first, since several of them quote these very expressions.
 
-    It does NOT resolve a handle passed into a function or through a prop -- ``NotInScanPanel``
-    takes a plain ``error`` boolean from its parent, and the parent's own handle is what is
-    counted. That is the right end to count from: the parent is where the query lives.
+    A handle passed into a function or through a prop is resolved at the parent instead:
+    ``NotInScanPanel`` takes a plain ``error`` boolean from its parent, and the parent's own
+    handle is what is counted. That is the right end to count from, since the parent is where
+    the query lives.
     """
     per_file: dict[str, int] = {}
     hooks: set[str] = set()
@@ -4120,18 +3940,19 @@ def _query_failure_handles() -> tuple[dict[str, int], set[str]]:
                     hooks.add(hook)
                     found += 1 if hook in _READ_HOOKS else 0
                     continue
-                # A BAG: ``const { health } = usePlexHealth()``, where the handle is a member of
-                # the returned object and the ``useQuery`` lives in the hook's own module. Without
-                # this the walk resolved nothing -- the member is not named ``error``, and the
-                # hook's own file binds it to a name this file never mentions -- so such a read
-                # was absent from the count AND from the unknown-hook arm, landing nowhere while
-                # the gate stayed green. The tree already spells hooks this way.
+                # A bag: ``const { health } = usePlexHealth()``, where the handle is a member of
+                # the returned object and the ``useQuery`` lives in the hook's own module.
+                # Without this, the walk would resolve nothing, since the member is not named
+                # ``error`` and the hook's own file binds it to a name this file never
+                # mentions, so such a read would be absent from both the count and the
+                # unknown-hook arm, landing nowhere while the gate stayed green. The tree
+                # already spells hooks this way.
                 #
                 # Only for a hook whose result shape this walk does not already know. React
                 # Query's own hooks return payload under ``data``, and two of the tree's scan
                 # lines rename it (``const { data: status } = useQuery``) and then read
-                # ``status.error`` -- the SERVER's error message on the payload, not a handle.
-                # Counting those would have moved the number for a read that does not exist.
+                # ``status.error``, the server's error message on the payload, not a handle.
+                # Counting those would move the number for a read that does not exist.
                 if hook in _QUERY_PRIMITIVES or hook in _PAYLOAD_HOOKS:
                     continue
                 reads = [
@@ -4148,21 +3969,19 @@ def _query_failure_handles() -> tuple[dict[str, int], set[str]]:
 
 
 def test_every_query_failure_branch_is_counted() -> None:
-    """A branch on a failed read is a decision, so a new one cannot arrive without one (#197).
+    """A branch on a failed read is a decision, so a new one cannot arrive without one.
 
-    React Query keeps the last good value through a failed refetch and raises the failure beside
-    it, so ``isError`` alone answers "did a read fail", never "is there still something to show".
-    Half the sites in this tree want the first question (a safety indicator reading unknown, which
-    is fail-closed) and half want the second (a panel keeping its content and saying it may be
-    stale). Both are correct; picking without noticing there is a choice is not, and three sweeps
-    running found sites the previous one missed.
+    React Query keeps the last good value through a failed refetch and raises the failure
+    beside it, so ``isError`` alone answers "did a read fail", never "is there still something
+    to show". Half the sites in this tree want the first question (a safety indicator reading
+    unknown, which is fail-closed) and half want the second (a panel keeping its content and
+    saying it may be stale). Both are correct; picking without noticing there is a choice is
+    not.
 
-    **This pins the population, not the shape.** It cannot tell a divided branch from an undivided
-    one -- that would need the answer to a question only a human has -- so a file that swaps one
-    kind for the other reads green here. What it does is make a new branch, or a deleted one, land
-    as a failure with the classification comment above it in the message, where the previous gate
-    (a count of ``<Notice>`` call sites) was a different population entirely and agreed with
-    itself while disagreeing with the tree (rule 145).
+    This pins the population, not the shape. It cannot tell a divided branch from an undivided
+    one, since that would need the answer to a question only a human has, so a file that swaps
+    one kind for the other reads green here. What it does is make a new branch, or a deleted
+    one, land as a failure with the classification comment above it in the message.
     """
     per_file, hooks = _query_failure_handles()
     unknown = sorted(hooks - _READ_HOOKS - _ACTION_HOOKS - _PAYLOAD_HOOKS)
@@ -4188,80 +4007,68 @@ def test_every_query_failure_branch_is_counted() -> None:
 # Every sentence in the shipped app that says the word "reload", by the file that renders it.
 #
 # A reload discards whatever is typed, staged or selected, and there is no ``beforeunload``
-# handler anywhere in ``frontend/src`` to ask first -- so this advice is destructive exactly where
-# there is something to destroy. #153 took it off the shared ``StaleReadNotice``; #195 took it off
-# the eight hand-written siblings that render while a draft, a pasted secret or a bulk selection is
-# on screen. What is left is here so the next one has to be classified rather than typed.
+# handler anywhere in ``frontend/src`` to ask first, so this advice is destructive exactly
+# where there is something to destroy. What is left here is a deliberate keep, classified
+# rather than typed freely.
 #
-# Per file, and every entry is a deliberate keep:
+# Per file:
 #   AboutPanel.tsx (1)       the About read's never-loaded branch
 #   BackupPanel.tsx (1)      the backup summary's never-loaded branch
-#   Fairness.tsx (1)         NOT advice: the Refresh button's ``title``, "Reload requests and
-#                            watch history". It is in the walk because the walk is of a word, and
-#                            dropping it by hand is how a matcher starts lying about its own scope
+#   Fairness.tsx (1)         not advice: the Refresh button's ``title``, "Reload requests and
+#                            watch history". It is in the walk because the walk matches a
+#                            word, and dropping it by hand is how a matcher starts lying about
+#                            its own scope
 #   GeneralPanel.tsx (1)     the general settings' never-loaded branch
 #   JobsPanel.tsx (2)        two never-loaded branches, the upkeep jobs and the shelf status
-#   NotInScanPanel.tsx (1)   a read-only panel with no draft, and now only on the arm where the
-#                            list never landed (#190)
+#   NotInScanPanel.tsx (1)   a read-only panel with no draft, on the arm where the list never
+#                            landed
 #   PlexPanel.tsx (1)        the panel's own never-loaded status read
 #   PolicyEditor.tsx (1)     the policy's never-loaded branch, above no form
-#   ReapBreakdown.tsx (1)    the ledger's refusal, which is undivided on purpose (#190)
+#   ReapBreakdown.tsx (1)    the ledger's refusal, which is undivided on purpose
 #   ReapConfirm.tsx (1)      the not-armed branch, before the confirmation box exists
-#   ReapPlan.tsx (1)         the plan loader. Not in #195's enumeration; see the note below
-#   RestoreCard.tsx (3)      the stopping state -- the sentence, the button that performs it, and
-#                            the call that button makes. The one site here where the advice is
-#                            not about a failed read: it renders only after the operator pressed
-#                            `Restart now` and the server took it, so the page is about to stop
-#                            answering whatever anyone does. Nothing is on screen to lose -- the
-#                            staged summary and the password typed against it went at the confirm,
-#                            two states earlier -- and what comes back is a different database
-#                            anyway, which is the point of pressing it (#386)
+#   ReapPlan.tsx (1)         the plan loader
+#   RestoreCard.tsx (3)      the stopping state: the sentence, the button that performs it,
+#                            and the call that button makes. The one site here where the
+#                            advice is not about a failed read: it renders only after the
+#                            operator presses `Restart now` and the server accepts it, so the
+#                            page is about to stop answering whatever anyone does. Nothing is
+#                            on screen to lose, since the staged summary and the password
+#                            typed against it were used two states earlier, at the confirm,
+#                            and what comes back is a different database anyway
 #   SecurityPanel.tsx (1)    the security settings' never-loaded branch
 #
-# The five settings panels above were one entry, ``Settings.tsx (6)``, until that file became a
-# shell holding no read of its own. Same six branches, each on a read that never landed with
-# nothing on screen to lose; only the file rendering each one is now named. The single entry said
-# "above a form that never rendered", which was never true of all six -- About is read-only and
-# the shelf-status branch sits above a status row.
-#
-# **#195's enumeration was not the whole population**, which is why this counts rather than
-# trusting the issue: it named 8 to fix and 9 to leave, called that 15, and did not reach the reap
-# sheet, the plan loader, the ledger refusal or the not-in-scan panel at all. #225 asked what those
-# four cost, and the component tree answers it: ``<main>`` is a plain ternary on one ``view``
-# state, so exactly one section is mounted. The plan loader, the ledger refusal and the not-in-scan
-# panel all sit in a different arm from ``ReviewQueue``, so reaching them has already unmounted the
-# queue and destroyed the selection -- their advice costs nothing the queue owned, and they stay.
-# The reap sheet was the one that did not: it renders OUTSIDE ``<main>``, gated on ``reapSheetRun``,
-# which the reap bar's View sets without touching ``view``, so it opens over a mounted queue by
-# construction. Its line now points at the close the modal already has, and ``App.tsx`` is gone
-# from this dict.
+# The component tree explains why some reads are safe to leave: ``<main>`` is a plain ternary
+# on one ``view`` state, so exactly one section is mounted. The plan loader, the ledger
+# refusal, and the not-in-scan panel all sit in a different arm from ``ReviewQueue``, so
+# reaching them has already unmounted the queue and destroyed the selection, so their advice
+# costs nothing the queue owned. The reap sheet is different: it renders outside ``<main>``,
+# gated on ``reapSheetRun``, which the reap bar's View sets without touching ``view``, so it
+# opens over a mounted queue by construction. Its line points at the close the modal already
+# has, and ``App.tsx`` is gone from this dict.
 _RELOAD_ADVICE = {
     # The word survives inside the backup.restore.reloadButton key literals; the advice
     # itself lives in the catalog row below.
     "frontend/src/components/RestoreCard.tsx": 2,
-    # Every converted surface's advice, one count per catalog message carrying the
-    # word, plus the catalog's own reloadButton label. Stage 4 converted every
-    # component that gave it, so this is the whole population but for RestoreCard's
-    # key literals above.
+    # Every converted surface's advice, one count per catalog message carrying the word, plus
+    # the catalog's own reloadButton label.
     #
-    # Phase 8b's error.* catalog (docs/history/I18N_PLAN.md) added two more, both already the
-    # server's own English in reaper.refusal.MESSAGES and newly reachable through this walk
-    # only because they now also live in ui.json: error.lists.not_found ("That list no longer
-    # exists. Reload the page.") fires from an edit/remove on a list already gone, so there is
-    # no draft worth keeping -- the thing it was an edit OF no longer exists. error.runs.
-    # confirmation_mismatch ("... Reload, review, and confirm again.") fires when the reap
-    # plan on screen no longer matches what the server holds, so the confirmation box it is
-    # about is already stale; nothing else on that page is a draft, a staged file, a secret or
-    # a selection.
+    # Two entries are the error catalog's own English, already used server-side in
+    # ``reaper.refusal.MESSAGES``: ``error.lists.not_found`` ("That list no longer exists.
+    # Reload the page.") fires from an edit or remove on a list already gone, so there is no
+    # draft worth keeping, since the thing it was an edit of no longer exists.
+    # ``error.runs.confirmation_mismatch`` ("... Reload, review, and confirm again.") fires
+    # when the reap plan on screen no longer matches what the server holds, so the
+    # confirmation box it is about is already stale, and nothing else on that page is a
+    # draft, a staged file, a secret, or a selection.
     "frontend/src/locales/en/ui.json": 13,
     # Not advice: `setLanguage`'s own `location.reload()`. Picking a display language reloads,
-    # because eleven module-scope tables across the tree read their labels from the catalog when
+    # because module-scope tables across the tree read their labels from the catalog when
     # their chunk is first imported, and switching in place would freeze each in whatever
-    # language its chunk loaded in (the reasoning is written out over that function). The draft
-    # this walk exists to protect is the only one that can be on screen when it fires -- the
-    # General panel's own save bar, since Settings shows one panel at a time -- and the select
-    # is `disabled` while that bar holds anything, so there is nothing to lose by the time the
-    # reload can happen.
+    # language its chunk loaded in (the reasoning is written out over that function). The
+    # draft this walk exists to protect is the only one that can be on screen when it fires,
+    # the General panel's own save bar, since Settings shows one panel at a time, and the
+    # select is `disabled` while that bar holds anything, so there is nothing to lose by the
+    # time the reload can happen.
     "frontend/src/i18n.ts": 1,
 }
 
@@ -4272,36 +4079,36 @@ def _without_comments(text: str) -> str:
     """``text`` with every block comment and every ``//`` run to end-of-line removed.
 
     Block comments first, because a ``{/* … */}`` in JSX wraps over many lines and none of the
-    inner ones start with a marker a per-line skip could see -- which is the shape most of this
+    inner lines start with a marker a per-line skip could see. That is the shape most of this
     tree's explanatory comments have, and several of them discuss reloads at length.
     """
     return _without_line_comments(_BLOCK_COMMENT.sub("", text))
 
 
 def test_the_reload_advice_population_is_pinned_per_file() -> None:
-    """Telling an operator to reload throws away their draft, so each one is deliberate (#195).
+    """Telling an operator to reload throws away their draft, so each one is deliberate.
 
-    Matches the bare word ``reload``, case-insensitively, in what is left of a shipped ``.tsx`` or
-    ``.ts`` once comments are gone. Deliberately looser than the sentence it is about (rule 147):
-    the tree spells the advice three ways -- "Reload to try again.", "Reload the page to try
-    again." and "then reload this page." -- and the second of those WRAPS across two source lines in
-    ``NotInScanPanel``, so a per-line match on the full phrase would have missed it. A word cannot
-    wrap. The cost is that the walk also collects a Refresh button's tooltip, which is listed
-    above rather than filtered out, because a matcher that quietly drops what does not fit stops
-    being a count of anything.
+    Matches the bare word ``reload``, case-insensitively, in what is left of a shipped ``.tsx``
+    or ``.ts`` once comments are gone. Deliberately looser than the sentence it is about: the
+    tree spells the advice three ways, "Reload to try again.", "Reload the page to try
+    again." and "then reload this page.", and the second of those wraps across two source
+    lines in ``NotInScanPanel``, so a per-line match on the full phrase would miss it. A word
+    cannot wrap. The cost is that the walk also collects a Refresh button's tooltip, which is
+    listed above rather than filtered out, because a matcher that quietly drops what does not
+    fit stops being a count of anything.
 
-    What this proves is that no site GAINED the advice and none of the fixed ones got it back. It
-    says nothing about which branch inside a file renders it, so a file swapping one keep for a new
-    one reads green here: the per-branch claims are pinned in the component tests.
+    This proves the set of files carrying the advice, not which branch inside a file renders
+    it, so a file swapping one occurrence for a new one still reads green here. The per-branch
+    claims are pinned in the component tests.
     """
     found: dict[str, int] = {}
     for path in _shipped_frontend_source():
         n = len(re.findall(r"(?i)\breload", _without_comments(path.read_text(encoding="utf-8"))))
         if n:
             found[str(path.relative_to(REPO))] = n
-    # Stage 4 moves a converted surface's sentences into the catalog, advice included, so the
-    # catalog is part of the population: an extraction moves a count here, and a NEW advice
-    # sentence still cannot arrive unpinned through either door.
+    # A converted surface's sentences live in the catalog, advice included, so the catalog is
+    # part of the population: moving a sentence into the catalog moves its count here, and a
+    # new advice sentence still cannot arrive unpinned through either door.
     in_catalog = len(
         re.findall(r"(?i)\breload", " ".join(value for _, value in _ui_catalog_leaves()))
     )
@@ -4317,22 +4124,18 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
     )
 
 
-# Every "couldn't load" sentence the shipped tree renders, and the file rendering each one --
-# which, for a surface Stage 4 has converted, is the en-US catalog: the sentence moves there
-# with its surface, one entry per key that spells it. The
-# count above matches the WORD `reload` per file, so it is blind to two panels drifting apart on
-# the sentence they print when a read never landed. That is what W11-36 is about: "Couldn't load
-# these settings. Reload to try again." was written at four keys and "Couldn't load this page.
-# Reload to try again." at two, until the catalog de-dupe folded each into one `common.*` key
-# that every panel reads. One key below still holds two files, and the finding named none of them.
+# Every "couldn't load" sentence the shipped tree renders, for a surface converted to the
+# en-US catalog, keyed by sentence with the file rendering each one. The count above matches
+# the word `reload` per file, so it is blind to two panels drifting apart on the sentence they
+# print when a read never landed. This is that check, one entry per distinct sentence.
 #
-# `PolicyEditor`'s "Couldn't load these settings." is the deliberate fifth copy and holds a key of
-# its own. The distinction is per BRANCH rather than per panel, and that file carries both: at
-# `:1618` the whole draft failed to read, so the workspace never rendered and there is nothing to
-# lose, while `:2355` sits inside a mounted editor whose savebar may be holding unsaved edits, and
-# a reload takes them with no ask (#195; `frontend/src` has no `beforeunload` handler). So the two
-# keys differing by exactly that clause are both correct, and a sixth site dropping the advice
-# earns its own key here with the same reasoning written down.
+# `PolicyEditor`'s "Couldn't load these settings." is a deliberate fifth copy with its own
+# key. The distinction is per branch rather than per panel: at `:1618` the whole draft failed
+# to read, so the workspace never rendered and there is nothing to lose, while `:2355` sits
+# inside a mounted editor whose savebar may be holding unsaved edits, and a reload takes them
+# with no ask, since `frontend/src` has no `beforeunload` handler. The two keys differing by
+# exactly that clause are both correct, and a sixth site dropping the advice earns its own key
+# here with the same reasoning written down.
 _NEVER_LOADED_COPY = {
     "Couldn't load Scales.": [
         "frontend/src/locales/en/ui.json",
@@ -4412,37 +4215,36 @@ _NEVER_LOADED_COPY = {
 }
 
 #: What makes a run of text one of these. Accepts the spellings the tree uses plus the ones it
-#: could reach for without anyone noticing (rule 147): ``couldn't load``, ``could not load``, and
-#: the same with a typographic apostrophe (U+2019, which an editor substitutes on its own), in any
+#: could reach for without anyone noticing: ``couldn't load``, ``could not load``, and the
+#: same with a typographic apostrophe (U+2019, which an editor substitutes on its own), in any
 #: casing and anywhere in the run.
 _NEVER_LOADED = re.compile("(?i)could(?:n['\\u2019]t| not) load")
 
-#: What bounds one. The key is the WHOLE run between two of these, not the sentence starting at
-#: the matched words, so a clause added at the FRONT of one copy moves that key: matching forward
-#: from ``could`` left the front open, and prepending "Something went wrong." to one of a pinned
-#: pair read green. These five are where JSX text, a string literal and a template all end.
-#: Everything is read off the file flattened to a single line, so a sentence that WRAPS across
-#: source lines is still one run, which four of them do. What this cannot see is a sentence
-#: interpolating a value, since the run ends at the brace, and one assembled in a local; both land
-#: as a shorter key rather than as a silent pass.
+#: What bounds one. The key is the whole run between two of these, not the sentence starting
+#: at the matched words, so a clause added at the front of one copy would move that key:
+#: matching forward from ``could`` alone would leave the front open, letting a prefix like
+#: "Something went wrong." merge into a pinned sentence unnoticed. These five characters are
+#: where JSX text, a string literal, and a template all end.
+#: Everything is read off the file flattened to a single line, so a sentence that wraps across
+#: source lines is still one run, which several of them do. What this cannot see is a sentence
+#: interpolating a value, since the run ends at the brace, and one assembled in a local
+#: variable; both land as a shorter key rather than as a silent pass.
 _TEXT_RUN = re.compile(r"[<>\"`{}]")
 
 
 def test_the_never_loaded_sentences_are_pinned_per_sentence() -> None:
-    """Five of these are written at more than one site, so they drift apart one copy at a time.
+    """Some of these are written at more than one site, so they drift apart one copy at a time.
 
-    Rule 144's shape on failure copy. One fact, "this panel has nothing to show you", is written
-    32 times in 25 sentences, each by someone reading a different one. The reload-advice count
-    above cannot see it: a file keeps its ``reload`` count while the sentence around the word
-    changes.
+    One fact, "this panel has nothing to show you", is written as several different sentences,
+    each by someone reading a different one. The reload-advice count above cannot see it: a
+    file keeps its ``reload`` count while the sentence around the word changes.
 
-    Keyed by sentence rather than by file, because a copy moving between files is not what this
-    is about. A fifth panel picking up "Couldn't load these settings. Reload to try again." has to
-    add itself to that key's list, where the four already on it are in view.
+    Keyed by sentence rather than by file, because a copy moving between files is not what
+    this is about. A fifth panel picking up "Couldn't load these settings. Reload to try
+    again." has to add itself to that key's list, where the four already on it are in view.
 
     Over ``.ts`` as well as ``.tsx``, because a sentence exported from a ``.ts`` module and
-    rendered from a component is invisible to a ``.tsx``-only walk. That was demonstrated: a 26th
-    sentence declared that way read green before the walk was widened.
+    rendered from a component would be invisible to a ``.tsx``-only walk.
     """
     found: dict[str, list[str]] = {}
     for path in _shipped_frontend_source():
@@ -4450,8 +4252,8 @@ def test_the_never_loaded_sentences_are_pinned_per_sentence() -> None:
         for run in _TEXT_RUN.split(flat):
             if _NEVER_LOADED.search(run):
                 found.setdefault(run.strip(), []).append(str(path.relative_to(REPO)))
-    # The catalog carries a converted surface's sentences (Stage 4), one value per key, so a
-    # sentence two panels share appears once per key that spells it and drift stays visible.
+    # The catalog carries a converted surface's sentences, one value per key, so a sentence
+    # two panels share appears once per key that spells it and drift stays visible.
     for _, value in _ui_catalog_leaves():
         for run in _TEXT_RUN.split(" ".join(value.split())):
             if _NEVER_LOADED.search(run):
@@ -4467,12 +4269,12 @@ def test_the_never_loaded_sentences_are_pinned_per_sentence() -> None:
 
 
 #: Every `.field-sm` container the shipped tree writes, by file and by tag. `.field-sm` is a
-#: `<label>` wherever exactly one control renders inside it, which is what lets the box name its
-#: control with no `htmlFor`/`id` pair to keep in step, and a `<div>` wherever no single control
-#: does. The four `<div>` sites and why each one is not a label: `ListModal`'s tag editor holds a
-#: `TagsEditor` and a `Segmented`; `ServiceModal`'s library and instance pickers each render a
-#: `<select>` per row of a `.map()`; `SetupPlexStep`'s manual address holds a host box and a port
-#: box. That rule held at 26 sites across 9 files and was written down nowhere until this (W11-23).
+#: `<label>` wherever exactly one control renders inside it, which is what lets the box name
+#: its control with no `htmlFor`/`id` pair to keep in step, and a `<div>` wherever no single
+#: control does. The four `<div>` sites and why each one is not a label: `ListModal`'s tag
+#: editor holds a `TagsEditor` and a `Segmented`; `ServiceModal`'s library and instance
+#: pickers each render a `<select>` per row of a `.map()`; `SetupPlexStep`'s manual address
+#: holds a host box and a port box.
 _FIELD_SM_CONTAINERS = {
     "frontend/src/components/DiscordModal.tsx": {"label": 1},
     "frontend/src/components/JobsPanel.tsx": {"label": 2},
@@ -4485,12 +4287,13 @@ _FIELD_SM_CONTAINERS = {
     "frontend/src/components/SetupPlexStep.tsx": {"div": 1, "label": 2},
 }
 
-#: One whole line: a `<label>` or `<div>` open tag whose `className` is the only attribute on it.
-#: Accepts the two spellings the tree uses, a string literal and any one-line braced expression,
-#: which covers `SecurityPanel`'s `viaRecovery ? "field-sm dim" : "field-sm"` and a template
-#: literal alike. Rejects a class list broken over several lines, a second attribute on the open
-#: tag, and any other tag. Those three leave the walk while `_FIELD_SM_WORD` still reads their
-#: line, so the assertion below names them rather than skipping them (rule 147).
+#: One whole line: a `<label>` or `<div>` open tag whose `className` is the only attribute on
+#: it. Accepts the two spellings the tree uses, a string literal and any one-line braced
+#: expression, which covers `SecurityPanel`'s `viaRecovery ? "field-sm dim" : "field-sm"` and
+#: a template literal alike. Rejects a class list broken over several lines, a second
+#: attribute on the open tag, and any other tag. Those three leave the walk while
+#: `_FIELD_SM_WORD` still reads their line, so the assertion below names them rather than
+#: skipping them.
 _FIELD_SM_OPEN = re.compile(r'^\s*<(label|div) className=(?:"[^"\n]*"|\{[^\n]*\})>\s*$')
 _FIELD_SM_WORD = re.compile(r"\bfield-sm\b")
 _FIELD_LABEL_SPAN = '<span className="field-label">'
@@ -4499,24 +4302,22 @@ _FIELD_LABEL_SPAN = '<span className="field-label">'
 def test_every_field_sm_box_names_itself_and_the_population_holds_still() -> None:
     """A `<label>` around two controls names the first one and leaves the second nameless.
 
-    26 boxes across 9 files ride that rule and nothing declared it, so the 27th would copy
-    whichever of the 26 its author had open. `.field-sm` is a `<label>` wherever exactly one
-    control renders inside it and a `<div>` wherever no single control does.
+    Every box in this population follows that rule, with nothing enforcing it, so a new box
+    would copy whichever example its author had open. `.field-sm` is a `<label>` wherever
+    exactly one control renders inside it and a `<div>` wherever no single control does.
 
-    **This does not check the rule, and is named for what it does check** (rule 118). It pins two
-    things: that every box opens with one `span.field-label`, and the population per file and per
-    tag. What decides label-versus-div is invisible in source text, so a tag count would read the
-    tree backwards at three of the 26. `ListModal`'s Plex library box holds a `<select>` and an
-    `<input>` in the two arms of a ternary, so one renders. `ServiceModal`'s two pickers hold one
-    `<select>` inside a `.map()`, so many do. A label over two controls therefore reads green
-    here, and the per-file tag counts are what a wrong choice has to get past instead: a new
-    `<div className="field-sm">` cannot be added without editing the comment above that says why
-    each existing one is a div.
+    This does not check the rule; it is named for what it does check. It pins two things:
+    that every box opens with one `span.field-label`, and the population per file and per
+    tag. What decides label-versus-div is invisible in source text, so a tag count alone
+    would read some of the tree backwards. `ListModal`'s Plex library box holds a `<select>`
+    and an `<input>` in the two arms of a ternary, so exactly one renders. `ServiceModal`'s
+    two pickers hold one `<select>` inside a `.map()`, so more than one can render. A label
+    over two controls therefore reads green here, and the per-file tag counts are what a
+    wrong choice has to get past instead: a new `<div className="field-sm">` cannot be added
+    without editing the comment above that says why each existing one is a div.
 
-    Over `.ts` as well as `.tsx`, because a box taking its class from a constant in a `.ts` module
-    leaves BOTH the matcher and the count at once, which is the shape rule 145 warns about. That
-    was demonstrated: a 27th box holding two controls and no name read green before the walk was
-    widened.
+    Over `.ts` as well as `.tsx`, because a box taking its class from a constant in a `.ts`
+    module would leave both the matcher and the count blind to it at once.
     """
     walked: dict[str, dict[str, int]] = {}
     unnamed: list[str] = []
@@ -4561,10 +4362,11 @@ def test_every_field_sm_box_names_itself_and_the_population_holds_still() -> Non
 
 
 #: The surfaces that hold a connection-test verdict beside the fingerprint it was computed for,
-#: so a badge can be withdrawn once it stops describing what is on screen. This is the population
-#: the ban below scans, not a second one beside it (rule 147): every shipped file spelling an
-#: ``of:`` key outside a comment. Pinned by name, because the fifth surface is written by copying
-#: whichever of these four its author happened to open, and three of the four were the wrong copy.
+#: so a badge can be withdrawn once it stops describing what is on screen. This is the
+#: population the ban below scans, not a second one beside it: every shipped file spelling an
+#: ``of:`` key outside a comment. Pinned by name, because a new surface is often written by
+#: copying whichever of these its author happened to open, which can copy the wrong pattern
+#: along with the right one.
 _VOUCHED_TEST_SURFACES = {
     "frontend/src/components/ServiceModal.tsx",
     "frontend/src/components/ServicesPanel.tsx",
@@ -4592,11 +4394,11 @@ def _without_comments_keeping_lines(text: str) -> str:
 def _value_after_of(line: str) -> str | None:
     """The expression ``line`` hands to an ``of:`` key, or ``None`` where it has no such key.
 
-    Bounded crudely, at the first ``,``, ``;`` or closing bracket. That cuts a value carrying one
-    of those inside a string (``of: `${kind}, ${baseUrl()}` ``) short, and the check below is
-    written so a short read is a FAILURE rather than a pass: half a template literal is not a
-    name either. An exact walk over bracket depth was tried first and is what made the cut matter,
-    since it counted brackets and not quotes and so mis-read the same line the other way.
+    Bounded crudely, at the first ``,``, ``;`` or closing bracket. That cuts a value carrying
+    one of those inside a string (``of: `${kind}, ${baseUrl()}` ``) short, and the check below
+    is written so a short read is a failure rather than a pass, since half a template literal
+    is not a name either. A bracket-depth walk would count brackets, not quotes, and so
+    misread the same line the other way.
     """
     key = _OF_KEY.search(line)
     if key is None:
@@ -4612,9 +4414,9 @@ def _settle_time_fingerprints(text: str) -> list[int]:
 
     Written as an allowlist rather than as a hunt for a call, because the defect is not "a call
     ran here" but "this value was computed here", and a template literal spelling out the same
-    fingerprint is the same defect with no call in it. The first draft asked for a call and let
-    exactly that through. So the two shapes a stored fingerprint may take are named and everything
-    else fails, which is the direction a gate on this tree resolves.
+    fingerprint is the same defect with no call in it. So the two shapes a stored fingerprint
+    may take are named and everything else fails, which is the direction a gate on this tree
+    resolves.
     """
     found = []
     for n, line in enumerate(_without_comments_keeping_lines(text).splitlines(), 1):
@@ -4629,31 +4431,28 @@ def _settle_time_fingerprints(text: str) -> list[int]:
 def test_a_held_test_result_is_stamped_when_its_request_is_issued() -> None:
     """A "Passed" badge must describe the address that was tested, not the one now on screen.
 
-    Two surfaces store ``{ result, of }`` and show the badge only while ``of`` still matches what
-    the form holds (four before the webhook-test copies were consolidated into ``ServiceModal``'s
-    ``useWebhookTest``). That comparison is the honesty of the badge (rule 85), and it is
-    satisfied by computing the fingerprint at EITHER end -- which is why three of the four
-    computed it at success time, where it is no longer the address the request asked about. The
-    boxes stay live while the request is out, so pasting a second webhook while the first is being
-    sent to left the two matching by construction and "Passed" beside a channel nobody tried.
-    ``ServiceModal`` captured it in ``onMutate`` and the other three did not, and nothing in the
-    suite could see the difference; #178 and #264 each fixed one site of this family by hand.
+    Two surfaces store ``{ result, of }`` and show the badge only while ``of`` still matches
+    what the form holds. That comparison is the whole honesty of the badge, and it can be
+    satisfied by computing the fingerprint at either end, issuance or success. Computing it at
+    success time is wrong: the box stays live while the request is out, so pasting a second
+    address while the first is still in flight leaves the two matching by construction, and
+    the badge reads "Passed" beside a channel nobody tried. ``ServiceModal`` captures it in
+    ``onMutate`` instead.
 
-    **The forms this reads** (rule 147): the value an ``of:`` key is handed, on a line that does
-    not also spell ``onMutate``, in a shipped ``.ts``/``.tsx`` with block comments blanked and
-    ``//`` runs cut. It passes a name or a path of names, ``issued.of`` and ``string``; everything
-    else fails, template literals and concatenations included.
+    What this reads: the value an ``of:`` key is handed, on a line that does not also spell
+    ``onMutate``, in a shipped ``.ts``/``.tsx`` with block comments blanked and ``//`` runs
+    cut. It passes a name or a path of names, ``issued.of`` and ``string``; everything else
+    fails, template literals and concatenations included.
     ``test_the_fingerprint_matcher_reads_every_spelling_the_tree_puts_after_of`` runs both lists.
 
-    One thing it cannot see, and the population pin is what covers it: a fingerprint computed into
-    a local at success time and handed over by that local's name. The pin is over the same ``of:``
-    keys this scans rather than over the helper's name, so a fifth surface arrives here to be read
-    whatever it calls its fingerprint.
+    One thing it cannot see, and the population pin is what covers it: a fingerprint computed
+    into a local at success time and handed over by that local's name. The pin is over the
+    same ``of:`` keys this scans rather than over the helper's name, so a fifth surface arrives
+    here to be read whatever it calls its fingerprint.
 
-    One thing the pin cannot see either, named rather than implied: ``_BLOCK_COMMENT`` reads a
-    ``/*`` inside a string literal as an opener, so the span to the next ``*/`` is blanked. The
-    tree holds one, ``docs/toMdx.ts:21``'s ``GENERATED_MARKER``, measured at 123 characters over
-    no line break and covering no ``of:``.
+    One more blind spot, named rather than implied: ``_BLOCK_COMMENT`` reads a ``/*`` inside a
+    string literal as an opener, so the span to the next ``*/`` is blanked. The tree holds one
+    such string, in ``docs/toMdx.ts``'s ``GENERATED_MARKER``, which covers no ``of:`` key.
     """
     holders = {
         str(path.relative_to(REPO))
@@ -4690,14 +4489,13 @@ def test_a_held_test_result_is_stamped_when_its_request_is_issued() -> None:
 
 
 def test_the_fingerprint_matcher_reads_every_spelling_the_tree_puts_after_of() -> None:
-    """The gate above is a source-text scan, so it is worth what its matcher can parse (rule 147).
+    """Proves the matcher above reads every spelling the tree puts after ``of:``, both ways.
 
-    Every case here is a way the check could read green over a real one, or red over an innocent
-    line. Four earned their place by failing a draft of it: the call hunt this replaced passed
-    ``of: [kind, baseUrl()].join(" ")``, then passed an inlined template literal with no call in
-    it at all, and the bracket walk written to fix the first counted brackets and not quotes, so a
-    comma inside a template literal ended the value early. The JSX case is the fail-closed one, a
-    block comment's continuation line, which the per-line prefix skip could not see.
+    Every case here is a way the check could read green over a real problem, or red over an
+    innocent line: a call assembling the fingerprint from parts, an inlined template literal
+    with no call in it at all, and a comma inside a template literal that could end the value
+    early. The JSX case is the fail-closed one, a block comment's continuation line, which a
+    per-line prefix skip could not see.
     """
     caught = [
         "      setTest({ result: r, of: testedWith() });",
@@ -4715,8 +4513,8 @@ def test_the_fingerprint_matcher_reads_every_spelling_the_tree_puts_after_of() -
         # The value is a name; the call belongs to the member after it.
         "      setTest({ of: issued.of, result: normalize(r) });",
         # Prose, in the three shapes the tree writes it. Both blocks are whole, because a
-        # continuation line is only ever reached with its opener: `ListsPanel` writes the JSDoc
-        # one, "covers only part of:", and the diff that added this gate wrote the JSX one.
+        # continuation line is only ever reached with its opener: `ListsPanel` writes the
+        # JSDoc one, "covers only part of:".
         "      // of: testedWith() is what this used to be",
         "/** A list a rule covers\n *  only part of: what it keeps (roughly).\n */",
         "{/* Two lines, and this is the second:\n    of: the operator presses Test again. */}",
@@ -4727,15 +4525,9 @@ def test_the_fingerprint_matcher_reads_every_spelling_the_tree_puts_after_of() -
         assert _settle_time_fingerprints(line) == [], f"should NOT be caught: {line}"
 
 
-# Every ``<select>`` the app ships, counted by the scan below rather than believed. The two the
-# count once carried past were #147's library pickers, which shipped nameless; they have names
-# now, and the number is here so a twentieth that does not cannot hide behind them (rule 145).
-# +1 for the Plex library picker on Settings -> Lists: the field #483 was about, which stops
-# being a name Reaper guesses and becomes one the operator picks off their own server. +1 for
-# `PolicyRuleEditors`'s ListNameSelect, the picker an `on_list` keep rule names its list from --
-# a rule that matches on the name, so it is a picker rather than a box (rule 108's separator half).
-# -1 for `NotificationsPanel`'s language picker, gone: the language is one setting now, and
-# `GeneralPanel`'s picker (already counted) decides what a notification is written in too.
+# Every ``<select>`` the app ships, counted by the scan below rather than believed. Pinned as
+# a count because an unnamed one added later could otherwise hide behind the ones that already
+# have names.
 _EXPECTED_SELECTS = 24
 
 
@@ -4754,16 +4546,15 @@ def _without_line_comments(chunk: str) -> str:
 def _select_is_named(tag: str, text: str) -> bool:
     """Whether ``tag`` carries a name a screen reader can say, resolved against its own file.
 
-    Accepts, and these are the spellings the tree actually uses (rule 147):
+    Accepted spellings:
       - ``aria-label="…"`` and ``aria-label={…}``
       - ``aria-labelledby=…``
-      - ``id=X`` where the SAME file holds a ``htmlFor=X``, matched on the raw attribute value
+      - ``id=X`` where the same file holds a ``htmlFor=X``, matched on the raw attribute value
         so ``id="tz"``/``htmlFor="tz"`` and ``id={rowId}``/``htmlFor={rowId}`` both resolve.
 
-    Rejects, each of which the previous matcher accepted:
-      - ``id=X`` with no ``htmlFor`` anywhere -- an id names nothing on its own, and the
-        assertion's own message promised a label that nothing looked for (rule 7/24)
-      - ``id=X`` where the file's only ``htmlFor`` points at a DIFFERENT id
+    Rejected:
+      - ``id=X`` with no ``htmlFor`` anywhere, since an id names nothing on its own
+      - ``id=X`` where the file's only ``htmlFor`` points at a different id
       - a comment inside the tag that merely mentions ``aria-label=`` or ``id=``
     """
     if re.search(r"\baria-label(?:ledby)?=", tag):
@@ -4777,22 +4568,21 @@ def _select_is_named(tag: str, text: str) -> bool:
 def _shipped_selects() -> list[tuple[Path, int, str]]:
     """Every ``<select>`` opening tag in shipped .tsx, as (path, line, tag text).
 
-    **Brace-aware, and that is the whole implementation.** Every other check in this file is a
-    per-line regex, and here that shape is catastrophically wrong: measured against the tree,
-    only 3 of the named selects put ``aria-label`` on the same line as the tag. JSX wraps, and a
-    picker with a handler and three attributes always wraps. A per-line matcher would report
-    sixteen false offenders, be deleted within the week, and take the two real ones with it.
+    Brace-aware, and that is the whole implementation. Every other check in this file is a
+    per-line regex, and here that shape would be wrong: JSX wraps, and a picker with a handler
+    and three attributes always wraps across several lines. A per-line matcher would report
+    many false offenders and miss real ones.
 
-    So the walk goes from ``<select`` to the first ``>`` at brace depth 0 -- past every
-    ``onChange={(e) => ...}`` whose own ``>`` and ``}`` sit inside the attribute -- and hands
-    back the whole tag to be inspected as one string. That is rule 147: prefer reading the whole
-    attribute or call over anchoring on a delimiter one spelling happens to put there.
+    So the walk goes from ``<select`` to the first ``>`` at brace depth 0, past every
+    ``onChange={(e) => ...}`` whose own ``>`` and ``}`` sit inside the attribute, and hands
+    back the whole tag to be inspected as one string. This reads the whole attribute instead
+    of anchoring on a delimiter that only one spelling happens to put there.
 
-    **A ``//`` comment inside the tag is dropped before anything reads it**, and that is not
-    hypothetical tidying: two selects in this tree carry a multi-line comment between their
-    attributes. Left in, the comment text is part of the string the name search runs against, so
-    a comment merely *mentioning* ``aria-label=`` names the control -- and a ``>`` inside one
-    ends the walk early, handing back half a tag.
+    A ``//`` comment inside the tag is dropped before anything reads it, and that is not
+    hypothetical tidying: some selects in this tree carry a multi-line comment between their
+    attributes. Left in, the comment text is part of the string the name search runs against,
+    so a comment merely mentioning ``aria-label=`` would name the control, and a ``>`` inside
+    the comment would end the walk early, handing back half a tag.
     """
     found: list[tuple[Path, int, str]] = []
     for path in _shipped_tsx():
@@ -4814,10 +4604,10 @@ def _shipped_selects() -> list[tuple[Path, int, str]]:
                     break
                 i += 1
             tag = " ".join(_without_line_comments(text[match.start() : i + 1]).split())
-            # The bare word ``<select>`` inside a comment is prose about a select, not one:
-            # three sites in the tree talk about the element, and a scan that counts them
-            # reports permanent offenders nobody can fix. A real one always carries at least a
-            # `value` or a `defaultValue`, so an attribute-free tag is never markup here.
+            # The bare word ``<select>`` inside a comment is prose about a select, not one: the
+            # tree talks about the element in running comments, and a scan that counts them
+            # would report permanent offenders nobody can fix. A real one always carries at
+            # least a `value` or a `defaultValue`, so an attribute-free tag is never markup here.
             if tag == "<select>":
                 continue
             found.append((path, text[: match.start()].count("\n") + 1, tag))
@@ -4829,15 +4619,15 @@ def test_every_select_says_what_it_is_for() -> None:
 
     The component tests reach controls by the name an operator can hear, which is the right
     shape and is blind in one specific way: a control on a branch no fixture mounts is missing
-    from the walk and from the count alike, and the two absences hide each other. A static scan
-    closes that for ``<select>`` specifically, where the defect is *absence* of a name and a
-    scanner can see absence (#180).
+    from the walk and from the count alike, and the two absences hide each other. A static
+    scan closes that for ``<select>`` specifically, where the defect is absence of a name and
+    a scanner can see absence.
 
-    **Why ``<select>`` and not every control.** Measured: a static ``<input>`` scan is 43 shipped
-    inputs, 25 named, 18 unnamed -- and 17 of the 18 are inside a ``<label>`` wrapper and
-    perfectly correct. 94% false positives, so that gate would be noise. ``<button>`` is worse
-    still, because its defect class is an *ambiguous but present* name, which no scanner can
-    see. This one is a two-line result set that went to zero when #147 landed and stays there.
+    Why ``<select>`` and not every control: a static ``<input>`` scan would flag most inputs
+    that are already correctly wrapped in a ``<label>``, so that gate would be mostly noise.
+    ``<button>`` is worse still, because its defect class is an ambiguous but present name,
+    which no scanner can see. ``<select>`` is the one control where a static scan finds real
+    defects without also flagging correct code.
     """
     selects = _shipped_selects()
     assert len(selects) == _EXPECTED_SELECTS, (
@@ -4861,10 +4651,10 @@ def test_every_select_says_what_it_is_for() -> None:
 def test_the_select_name_matcher_rejects_what_it_claims_to_reject() -> None:
     """The gate above is a source-text scan, so it is worth exactly what its matcher can parse.
 
-    Rule 147: a matcher ships with the spellings it accepts AND the ones it rejects, run. Both
-    rejections below were live holes -- the first shipped promising a ``<label htmlFor>`` lookup
-    that did not exist (rule 7/24), and the second let a comment name a control, on a gate whose
-    own commit put multi-line comments inside two select tags.
+    A matcher ships with the spellings it accepts and the ones it rejects, run. Both
+    rejections below are real risks: an ``id`` with no matching ``<label htmlFor>`` names
+    nothing, and a comment that merely mentions ``aria-label=`` or ``id=`` must not be read
+    as naming the control.
     """
     labelled = '<label htmlFor="tz">Zone</label>'
     accepted = [
@@ -4886,9 +4676,9 @@ def test_the_select_name_matcher_rejects_what_it_claims_to_reject() -> None:
     for tag, text in rejected:
         assert not _select_is_named(tag, text), f"should NOT count as named: {tag}"
 
-    # And the comment stripping, which happens before the matcher ever sees the tag: prose about
-    # a name is not a name, so a comment mentioning either spelling must not survive into the
-    # string that gets searched. These are both spellings the old matcher fell for.
+    # And the comment stripping, which happens before the matcher ever sees the tag: prose
+    # about a name is not a name, so a comment mentioning either spelling must not survive
+    # into the string that gets searched.
     for comment in ("// no aria-label= needed here", "// matches the id= of the row above"):
         stripped = " ".join(
             _without_line_comments(f"<select\n  {comment}\n  value={{tz}}>").split()
@@ -4896,12 +4686,12 @@ def test_the_select_name_matcher_rejects_what_it_claims_to_reject() -> None:
         assert not _select_is_named(stripped, ""), f"comment named the control: {comment}"
 
 
-# Test files that mount a tree and deliberately do not audit it, because what they render is not
-# an operator surface of its own. The first five are shared primitives, audited wherever they are
-# actually mounted -- auditing them alone would pin the same tree twice and, for a primitive that
-# needs a labelled parent, would report a defect the running app does not have. The rest drive
-# behavior (an announcement, a history entry, a focus move, a failed read) against whatever markup
-# is cheapest, so their trees are fixtures rather than screens.
+# Test files that mount a tree and deliberately do not audit it, because what they render is
+# not an operator surface of its own. The first five are shared primitives, audited wherever
+# they are actually mounted: auditing them alone would pin the same tree twice, and for a
+# primitive that needs a labelled parent, would report a defect the running app does not
+# have. The rest drive behavior (an announcement, a history entry, a focus move, a failed
+# read) against whatever markup is cheapest, so their trees are fixtures rather than screens.
 _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
     "components/ModalShell.test.tsx": "the shell every modal is audited through",
     "components/Notice.test.tsx": "a primitive, audited in each panel that raises one",
@@ -4927,62 +4717,35 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 }
 
 # The population the walk itself collects: every `*.test.tsx` under frontend/src that mounts
-# something. Pinned separately from the audited count because they are DIFFERENT sets, and a file
-# that drops out of the walk is otherwise missing from both halves while the two numbers agree
-# (rule 145). Re-derive by running the test, never by arithmetic on the maps above.
-# +1 for `ListModal.test.tsx`, the add/edit form on Settings -> Lists, which is a screen of its
-# own and carries its own audit rather than being covered by the panel that opens it.
-# +1 for `JobsShelfSkip.test.tsx`, which mounts the Jobs panel to drive the shelf row's
-# skipped-scan branch and audits that branch, since the row draws copy no other test renders.
-# +1 for `SetupPlexStep.test.tsx`, the wizard's Plex step, which had no test of its own while the
-# settings panel's copy of the same behavior had a careful one (W10-7). It audits its linked
-# state, where the server and connection pickers are.
-# +1 for `PanelHead.test.tsx`, which mounts the item panel and the show panel to compare the head
-# they share. It audits that head with every link set, the state neither panel's own suite drives.
-# +1 for `AppFocus.test.tsx`, which is exempt rather than audited: it mounts the shell to ask
-# which view is holding a jump's aim, and the two routes it drives to are stubs printing a prop.
-# +1 for `artFallback.test.tsx`, which mounts `WhyHero` to drive the art-then-poster ladder the
-# hook now declares once. It audits the banner on both rungs, the fallback included.
-# +1 for `AppUrl.test.tsx`, exempt for `AppFocus.test.tsx`'s reason: it mounts the shell to ask
-# which section a URL lands on. Three of the five it drives to are stubs; the two that are real,
-# the queue and the settings rail, are audited in their own files.
-# +1 for `JobsSweepSchedule.test.tsx`, which mounts the Jobs panel to read the history sweep's
-# every-3-days schedule back in words, and opens its editor. It audits the editor open over the
-# panel, the state no other Jobs file drives.
-# +1 for `docs/DocsModal.locale.test.tsx`, which mounts the docs modal over a translated manual,
-# the state `docs.test.tsx` cannot reach with the real loader. It audits that state, where the
-# pane and the index carry a `lang` the dialog around them does not.
-# +1 for `PolicyEditor.warnings.test.tsx`, the warning-anchor walk split out of
-# `PolicyEditor.test.tsx` so the two run on different workers. It mounts the same page, which the
-# file it left audits, so it is named in the map rather than audited twice.
-# +1 for `NotificationsPanel.test.tsx` (phase 10b), auditing the new language select.
+# something. Pinned separately from the audited count because they are different sets, and a
+# file that drops out of the walk is otherwise missing from both halves while the two numbers
+# still agree with each other. Re-derive by running the test, never by arithmetic on the maps
+# above.
 _EXPECTED_RENDERING_TEST_FILES = 63
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
-    """A new panel must not ship unaudited just because nobody remembered (#231).
+    """A new panel must not ship unaudited just because nobody remembered.
 
-    ``src/test/a11y.ts`` is the only layer that reads the tree the browser BUILT, so a name
-    assembled from props or a role that prunes its own children is visible to it and to nothing
-    else. Whether a surface carries one was a convention, and rule 147 is the standing answer
-    that prose cannot bind an author who never read it: a component could ship with a test that
-    mounts it, render a control with no accessible name, and leave every gate green.
+    ``src/test/a11y.ts`` is the only layer that reads the tree the browser built, so a name
+    assembled from props or a role that prunes its own children is visible to it and to
+    nothing else. Whether a surface carries this audit was previously just a convention: a
+    component could ship with a test that mounts it, render a control with no accessible
+    name, and leave every gate green.
 
-    So membership is total. Every rendering test file is audited, or named in one of the two maps
-    above, and a new one that is neither fails here with its own path in the message. The count of
-    the walk is pinned beside it, because a flag-shaped assertion cannot tell a member that
-    complies from one that dropped out of the walk (rule 145).
+    So membership is total. Every rendering test file is audited, or named in one of the two
+    maps above, and a new one that is neither fails here with its own path in the message. The
+    count of the walk is pinned beside it, because a flag-shaped assertion alone cannot tell a
+    member that complies from one that dropped out of the walk.
     """
     rendering: dict[str, int] = {}
     for path in sorted(FRONTEND_SRC.rglob("*.test.tsx")):
         body = path.read_text(encoding="utf-8")
-        # Every spelling of "mounts a tree" the suite uses, not just the bare one (rule 147):
+        # Every spelling of "mounts a tree" the suite uses, not just the bare one:
         # testing-library's `render(` and `renderHook(`, the shared `renderWithProviders(` and
         # `renderHookWithProviders(`, and the file-local `renderPanel(`/`renderQueue(` helpers
-        # that wrap them. `\b` keeps `rerender(` out, which mounts nothing new. This matched
-        # `render(` alone until the provider trees moved onto the shared helper, and 29 of the
-        # 53 files below silently left the walk in one commit -- caught by the count, which is
-        # what it is here for.
+        # that wrap them. `\b` keeps `rerender(` out, which mounts nothing new. The count below
+        # is what catches a file silently leaving this walk if the spelling changes again.
         if not re.search(r"\brender[A-Za-z]*\(", body):
             continue
         rel = path.relative_to(FRONTEND_SRC).as_posix()
@@ -5025,11 +4788,10 @@ def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
 def test_the_plex_sign_in_window_has_a_page_that_closes_it() -> None:
     """The forward path, the page it names, and the two callers that ask for it agree.
 
-    Reaper closes the Plex sign-in window by having plex.tv forward it to a page whose
-    only job is ``window.close()``. Nothing fails loudly when that breaks: the sign-in
-    still works and the window simply stays open, which is the bug it was built to fix
-    (#372). So the three halves are pinned to each other here rather than left to a
-    rename.
+    Reaper closes the Plex sign-in window by having plex.tv forward it to a page whose only
+    job is ``window.close()``. Nothing fails loudly when that breaks: the sign-in still works
+    and the window simply stays open with nothing telling the operator to close it by hand.
+    So the three halves are pinned to each other here rather than left to a rename.
     """
     forward_path = re.search(
         r'^PLEX_FORWARD_PATH = "([^"]+)"$', (SRC / "api" / "schemas.py").read_text(), re.M
@@ -5051,7 +4813,7 @@ def test_the_plex_sign_in_window_has_a_page_that_closes_it() -> None:
     callers = (FRONTEND_SRC / "api.ts").read_text()
     for route in ("/api/auth/plex/start", "/api/settings/plex/link/start"):
         # The body is whatever follows the path on that line. Matching a balanced argument
-        # list would reject `plexForward()` on its own parenthesis (rule 147).
+        # list would reject `plexForward()` on its own parenthesis.
         call = re.search(rf'"{re.escape(route)}",([^\n]+)', callers)
         assert call, f"{route} is no longer posted from api.ts under a matchable spelling"
         assert "plexForward()" in call.group(1), (
@@ -5062,14 +4824,13 @@ def test_the_plex_sign_in_window_has_a_page_that_closes_it() -> None:
 
 # --- the reap-readiness tie -------------------------------------------------------------
 #
-# `reap_ready` is one fact declared in Python and re-derived in TypeScript, because "not ready"
-# is not a sentence: the Reap page and the wizard's last step each need to say what to go and
-# do. `reapReadiness.ts` said in prose that a test would fail if the server's definition changed
-# and it did not, and no such test existed -- the agreement test beside it hand-transcribes the
-# Python expression into the same file as its own assertion, so it can only prove the module
-# agrees with that transcription. Adding a conjunct to `reap_ready` left the whole frontend
-# suite green. This is rule 144's remedy: the generated-looking claim gets a test pointed at the
-# other copy BY NAME, rather than a comment asking the next author to remember.
+# `reap_ready` is one fact declared in Python and re-derived in TypeScript, because "not
+# ready" is not a sentence: the Reap page and the wizard's last step each need to say what to
+# go and do. A test that hand-transcribes the Python expression into its own assertion can
+# only prove the module agrees with that transcription, not with the real server code. So
+# this test reads the real expression out of `setup.py` by parsing it, and compares that
+# against what the frontend actually reads, rather than trusting a comment to keep the two in
+# sync.
 
 
 def _reap_ready_fields() -> set[str]:
@@ -5132,9 +4893,8 @@ def test_the_frontend_reap_blockers_read_the_fields_the_server_builds_reap_ready
     """A conjunct added on one side and not the other must fail here.
 
     The failure it exists for is silent and points the reassuring way: the server gains a
-    requirement, the browser does not hear about it, and an install is told "You're all set" over
-    a run that will be refused at the button -- which is #383 arriving a second time, by the exact
-    route the first one took.
+    requirement, the browser does not hear about it, and an install is told "You're all set"
+    over a run that will be refused at the button.
     """
     server = _reap_ready_fields()
 
@@ -5159,14 +4919,13 @@ def test_the_frontend_reap_blockers_read_the_fields_the_server_builds_reap_ready
 
 #: The site copies Reaper's tokens rather than importing them, because the app and the site are
 #: separate builds and sharing a stylesheet across that boundary would tie two node projects
-#: together for a handful of hex values. A copy is exactly what rule 144 warns about, so the copy
-#: is checked here instead of trusted.
+#: together for a handful of hex values. The copy is checked here instead of trusted.
 _APP_TOKEN_CSS = REPO / "frontend" / "src" / "styles" / "00-tokens.css"
 _SITE_TOKEN_CSS = REPO / "website" / "src" / "css" / "custom.css"
 
-#: Reconciled by hand against `website/src/css/custom.css`: every `--rp-*` token it declares in
-#: BOTH themes. Pinned because the comparison below is driven by what the site declares, and a
-#: token deleted from the site drops out of the comparison rather than failing it (rule 145).
+#: Reconciled by hand against `website/src/css/custom.css`: every `--rp-*` token it declares
+#: in both themes. Pinned because the comparison below is driven by what the site declares,
+#: and a token deleted from the site would drop out of the comparison rather than fail it.
 _EXPECTED_SHARED_TOKENS = 19
 
 
@@ -5185,21 +4944,22 @@ def _css_block(text: str, opener: str) -> str:
 
 
 #: `--accent-text` is deliberately not the same declaration in the two files, so comparing it
-#: would fail forever on a difference that is correct. The app writes a MEASURED ink at runtime
-#: (`accent.ts` searches for a value clearing WCAG AA against each theme's ground, because the
-#: accent is operator-configurable and a fixed darken does not clear a pale yellow), and the
-#: token there is `var(--accent-text-light, <fallback>)` so the measurement can win. The site has
-#: no runtime measurement and no custom accent, so it carries the fallback alone. The fallbacks
-#: themselves are compared: they are the substring this exclusion does not reach.
+#: would fail forever on a difference that is correct. The app writes a measured ink at
+#: runtime (`accent.ts` searches for a value clearing WCAG AA against each theme's ground,
+#: because the accent is operator-configurable and a fixed darken does not clear a pale
+#: yellow), and the token there is `var(--accent-text-light, <fallback>)` so the measurement
+#: can win. The site has no runtime measurement and no custom accent, so it carries the
+#: fallback alone. The fallbacks themselves are compared: they are the substring this
+#: exclusion does not reach.
 _PALETTE_EXCLUDED = {"--rp-accent-text"}
 
 
 def _declarations(block: str) -> dict[str, str]:
     """``--name: value`` pairs, whitespace collapsed so formatting cannot fail the compare.
 
-    Comments are stripped first. Both files explain their tokens inline, and a `/* … */` sitting
-    between two declarations otherwise lands inside the preceding value: the first run of this
-    check read `--radius-sm` as seven pixels followed by a paragraph about progress fills.
+    Comments are stripped first. Both files explain their tokens inline, and a `/* … */`
+    sitting between two declarations would otherwise land inside the preceding value, turning
+    `--radius-sm` into seven pixels followed by a paragraph about progress fills.
     """
     block = re.sub(r"/\*.*?\*/", "", block, flags=re.DOTALL)
     return {
@@ -5211,12 +4971,11 @@ def _declarations(block: str) -> dict[str, str]:
 def test_the_site_palette_matches_the_app_palette() -> None:
     """Every color the manual site copies from the app still says what the app says.
 
-    Named from `website/src/css/custom.css`, which tells the next author this check exists;
-    rule 7 makes that comment a promise, and this is the promise kept. The failure it exists for
-    is quiet and cosmetic-looking: someone retunes an accent in the app for contrast, the site
-    keeps the old value, and the two surfaces of one product drift apart a shade at a time. The
-    accent tokens are the ones that matter, because the app's are the output of a WCAG AA
-    contrast search and a stale copy here fails that bar while looking fine.
+    The failure this exists for is quiet and cosmetic-looking: someone retunes an accent in
+    the app for contrast, the site keeps the old value, and the two surfaces of one product
+    drift apart a shade at a time. The accent tokens matter most, because the app's are the
+    output of a WCAG AA contrast search, and a stale copy here fails that bar while looking
+    fine.
     """
     app = _APP_TOKEN_CSS.read_text(encoding="utf-8")
     site = _SITE_TOKEN_CSS.read_text(encoding="utf-8")
@@ -5274,29 +5033,28 @@ def test_the_site_palette_matches_the_app_palette() -> None:
 # --------------------------------------------------------------------------------------------
 _ARTIFACT_SKILL = REPO / ".claude" / "skills" / "reaper-artifact" / "SKILL.md"
 
-#: Files the skill sends an agent to read for the app's current look. Each must exist AND still be
-#: named in the skill: the tokens already moved once (index.css -> styles/00-tokens.css), which is
-#: the exact break this catches.
+#: Files the skill sends an agent to read for the app's current look. Each must exist and
+#: still be named in the skill: a token file that moves without updating the skill is exactly
+#: the failure this catches.
 _ARTIFACT_SKILL_SOURCES = (
     "frontend/src/index.css",
     "frontend/src/styles/00-tokens.css",
 )
 
-#: Concrete `--tokens` the skill names in "The variables you will reach for", reconciled by hand
-#: against that section. Family forms (`--text-*`, `--space-*`) are excluded on purpose: the
-#: matcher takes only a backtick span whose whole content is `--<name>`, so a `*` form never
-#: matches (rule 147), and a family cannot be checked against one declaration anyway. Pinned so a
-#: token dropped from the skill leaves the scan rather than failing it (rule 145).
+#: Concrete `--tokens` the skill names in "The variables you will reach for", reconciled by
+#: hand against that section. Family forms (`--text-*`, `--space-*`) are excluded on purpose:
+#: the matcher takes only a backtick span whose whole content is `--<name>`, so a `*` form
+#: never matches, and a family cannot be checked against one declaration anyway. Pinned so a
+#: token dropped from the skill leaves the scan rather than failing it.
 _ARTIFACT_SKILL_TOKENS = 16
 
 
 def test_the_artifact_skill_points_at_files_that_exist() -> None:
     """The reaper-artifact skill's file pointers still resolve, so its mockup guidance is live.
 
-    The skill tells an agent to read the app's own stylesheet and token file to build an artifact
-    in Reaper's look. When one of those files moves and the skill is not repointed, the guidance
-    reads fine and sends the agent nowhere. That already happened to the tokens once, so the path
-    is guarded rather than trusted (rule 68).
+    The skill tells an agent to read the app's own stylesheet and token file to build an
+    artifact in Reaper's look. When one of those files moves and the skill is not repointed,
+    the guidance reads fine and sends the agent nowhere.
     """
     skill = _ARTIFACT_SKILL.read_text(encoding="utf-8")
     for rel in _ARTIFACT_SKILL_SOURCES:
@@ -5314,18 +5072,18 @@ def test_the_artifact_skill_names_live_tokens() -> None:
     """Every design token the reaper-artifact skill names still exists in 00-tokens.css.
 
     The skill lists the variables an agent reaches for: the verdict colors, the accent, the
-    neutrals. Rename or drop one in the token file without fixing the skill, and a mockup built on
-    the old name renders wrong with no error, because the browser resolves an undefined custom
-    property to nothing. The count is pinned for rule 145's reason: a name silently dropped from
-    the skill leaves the scan and stops being checked, and a "names a live token" assertion cannot
-    tell that from compliance.
+    neutrals. Rename or drop one in the token file without fixing the skill, and a mockup
+    built on the old name renders wrong with no error, because the browser resolves an
+    undefined custom property to nothing. The count is pinned because a name silently dropped
+    from the skill would leave the scan and stop being checked, and a "names a live token"
+    assertion alone cannot tell that from compliance.
     """
     skill = _ARTIFACT_SKILL.read_text(encoding="utf-8")
     root = _declarations(_css_block(_APP_TOKEN_CSS.read_text(encoding="utf-8"), ":root {"))
 
-    # The population: every backtick span whose ENTIRE content is `--<name>`. A family spelled
-    # `--text-*` carries a `*` and never matches, which is deliberate (rule 147): it names a scale,
-    # not one declaration.
+    # The population: every backtick span whose entire content is `--<name>`. A family spelled
+    # `--text-*` carries a `*` and never matches, which is deliberate: it names a scale, not
+    # one declaration.
     named = set(re.findall(r"`(--[a-z0-9-]+)`", skill))
 
     missing = sorted(t for t in named if t not in root)
@@ -5345,12 +5103,11 @@ def test_the_manual_states_the_ramp_the_shipped_policy_actually_uses() -> None:
     """The manual's signals table is the fourth copy of "what earns these points".
 
     The signal card's two bound boxes, the strip under them, and the why-panel row all derive
-    the ramp from the policy the operator is holding. This table is written by hand, and rule
-    144 is about exactly that pair: deriving three copies makes the fourth MORE dangerous, not
-    less, because the derived ones are demonstrably right and vouch for a consistency nobody
-    checked. It fails in the reassuring direction too, since a reader told a signal is worth
-    10 points and not told it adds none of them above IMDb 6.0 concludes the wrong thing about
-    their own library.
+    the ramp from the policy the operator is holding. This table is written by hand, and the
+    other three copies being derived makes the fourth more dangerous, not less, because the
+    derived ones are demonstrably right and vouch for a consistency nobody checked. It fails
+    in the reassuring direction too, since a reader told a signal is worth 10 points and not
+    told it adds none of them above IMDb 6.0 concludes the wrong thing about their own library.
 
     So the figures are held against the shipped policies here rather than by a comment asking
     the next author to remember.
@@ -5401,31 +5158,30 @@ def test_the_manual_states_the_ramp_the_shipped_policy_actually_uses() -> None:
 
 _JOBS_PANEL_TSX = FRONTEND_SRC / "components" / "JobsPanel.tsx"
 #: ``jobMeta`` read as the whole function up to the ``}`` that closes it, then picked apart
-#: inside, rather than anchored on a delimiter one spelling happens to put there (rule 147).
-#: It was a frozen ``JOB_META`` table until Stage 4 moved the copy into the i18n catalog;
-#: now each job id is a ``case`` whose arm reads its ``jobs.meta.*`` keys, and a case may
-#: name the id as a literal or through a module constant -- both are ordinary here.
+#: inside, rather than anchored on a delimiter one spelling happens to put there. Each job id
+#: is a ``case`` whose arm reads its ``jobs.meta.*`` keys, and a case may name the id as a
+#: literal or through a module constant, both are ordinary here.
 _JOB_META_BLOCK = re.compile(r"function jobMeta\(id: string\): JobMeta \{(.*?)\n\}", re.DOTALL)
 _JOB_META_KEY = re.compile(r'^    case (?:(\w+)|"(\w+)"):', re.MULTILINE)
 _ID_CONST = re.compile(r'const (SCAN_ID|UPDATE_CHECK_ID) = "(\w+)";')
 #: Every case's arm carries exactly one multiline ``title:``, so counting them counts the
 #: population the key matcher is supposed to collect (the ``default`` arm returns inline and
-#: is rightly not counted: it is the fallback, not copy). A flag-shaped assertion cannot
-#: tell an entry that complies from one this parser stopped seeing -- both read green
-#: (rule 145/147).
+#: is rightly not counted: it is the fallback, not copy). A flag-shaped assertion alone
+#: cannot tell an entry that complies from one this parser stopped seeing, since both would
+#: read green.
 _JOB_META_TITLE = re.compile(r"^        title:", re.MULTILINE)
 
 
 def test_every_scheduled_job_has_operator_copy_on_the_jobs_page() -> None:
     """A job the server schedules renders on the Jobs page with a title a person wrote.
 
-    The list itself is the server's (rule 66): ``JobsPanel`` maps over the response, so a job
-    added in ``scheduler.DEFAULT_MAINTENANCE_CRONS`` appears with no frontend edit at all --
-    and ``jobMeta``'s fallback then prints the raw id as its title, so the operator reads
+    The list itself is the server's: ``JobsPanel`` maps over the response, so a job added in
+    ``scheduler.DEFAULT_MAINTENANCE_CRONS`` appears with no frontend edit at all, and
+    ``jobMeta``'s fallback then prints the raw id as its title, so the operator reads
     "check_for_updates" where every neighbor reads a sentence, with no description and no
-    off-warning under the switch that turns it off. Nothing failed when the nightly update
-    check was added (#464), which is why this is a test and not a note: the fallback exists
-    for the type checker, not as a shipping state.
+    off-warning under the switch that turns it off. Nothing fails when a job like that is
+    added, which is why this is a test and not a note: the fallback exists for the type
+    checker, not as a shipping state.
 
     Both directions. A stale entry for a job that no longer exists is dead copy nobody will
     ever see, and it is the half a hand-maintained map keeps longest.
@@ -5466,19 +5222,19 @@ def test_every_scheduled_job_has_operator_copy_on_the_jobs_page() -> None:
 #: package LATER in this tuple runs downward and is fine; one that reaches a package EARLIER
 #: runs upward, and refusing that is the whole of the test below.
 #:
-#: **`clients` above `engine` is the one position the prose does not hand you**, and the live
-#: edge is what fixes it: `clients/plex.py` takes `PlexFile`, `PlexItem`, `parse_guids` and
-#: `to_basename` from `engine/identity.py`, whose own *Why this module is pure* section says it
-#: holds data types and pure functions while the index builders that call Plex and Tautulli live
-#: above it and hand the frozen types in. So that edge is the shape the module was designed for,
-#: and the one that would be wrong is its reverse -- the decision engine reaching for a client,
-#: which is zero today and which this ordering is what holds at zero.
+#: `clients` above `engine` is the one position the prose does not hand you directly, and the
+#: live edge is what fixes it: `clients/plex.py` takes `PlexFile`, `PlexItem`, `parse_guids`
+#: and `to_basename` from `engine/identity.py`, whose own *Why this module is pure* section
+#: says it holds data types and pure functions while the index builders that call Plex and
+#: Tautulli live above it and hand the frozen types in. So that edge is the shape the module
+#: was designed for. The wrong direction would be its reverse, the decision engine reaching
+#: for a client, which is zero today and which this ordering is what holds at zero.
 #:
 #: **Scoped to these four deliberately.** `notify` and `services` are a real runtime two-cycle
 #: (`notify/discord.py` <-> `services/leaving_soon.py`), so a gate that swept every package under
 #: `src/reaper` would be red the day it landed and would get deleted rather than fixed.
 #:
-#: That pair is a cycle between PACKAGES and not between modules: `discord.py` imports
+#: That pair is a cycle between packages and not between modules: `discord.py` imports
 #: `services/app_settings.py`, `leaving_soon.py` imports `discord.py`, and neither module
 #: reaches itself. So `test_every_import_cycle_under_src_is_one_someone_declared` below does
 #: sweep all of `src/reaper`, at module granularity, and the pair is not one of the two it
@@ -5488,9 +5244,7 @@ _LAYERS = ("api", "services", "clients", "engine")
 
 #: Every `.py` file under those four, which is the population the walk parses. It moves when a
 #: module is added, split or deleted, and it is pinned because a walk that quietly stopped
-#: reading the tree would satisfy every assertion below by finding nothing at all (rule 145).
-#: 89 adds `api/errors.py` (phase 8a: `refuse`/`RefusalHTTPException`/`refusal_body`, the one
-#: conversion of a coded refusal into an HTTP response every route goes through).
+#: reading the tree would satisfy every assertion below by finding nothing at all.
 _EXPECTED_LAYERED_MODULES = 89
 
 #: Every ordered pair where one of the four imports another, reconciled by hand: all six
@@ -5507,16 +5261,15 @@ _EXPECTED_LAYER_EDGES = frozenset(
     }
 )
 
-#: Every cross-package import that does NOT run at module import time, by importing file, target
-#: and how it is deferred. Written out rather than counted: a deferred import is how a layering
-#: violation hides from a runtime graph, so a new one is a decision made here by hand, never a
-#: number bumped to make a red test go green.
+#: Every cross-package import that does not run at module import time, by importing file,
+#: target, and how it is deferred. Written out rather than counted: a deferred import is how
+#: a layering violation hides from a runtime graph, so a new one is a decision made here by
+#: hand, never a number bumped to make a red test go green.
 #:
-#: **Empty, all three of wave 9's gone.** The last was `services/executor.py`'s `TYPE_CHECKING`
-#: block, which named two symbols from `reaper.clients.plex` while the line above it imported
-#: that same module at runtime, so the deferral hid nothing from any graph. Empty is the
-#: interesting state for this set, not a broken one: every cross-package edge in the four
-#: packages now runs at import time, so the runtime graph is the whole truth about them.
+#: Empty is the interesting state for this set, not a broken one: every cross-package edge in
+#: the four packages currently runs at import time, so the runtime graph is the whole truth
+#: about them. A `TYPE_CHECKING` block or a function-local import that merely repeats a
+#: module already imported at runtime hides nothing and does not belong here.
 _DEFERRED_CROSS_PACKAGE_IMPORTS: frozenset[tuple[str, str, str]] = frozenset()
 
 
@@ -5573,17 +5326,17 @@ def _imported_modules(node: ast.Import | ast.ImportFrom, package: str) -> list[s
     ``import a.b`` and ``import a.b as c`` both name ``a.b``. ``from a.b import c`` names
     ``a.b``, the ``c`` being a symbol rather than a module in every case but one.
 
-    **The exception is ``from reaper import services``**, where the `from` clause is the
-    parent and the imported NAME is the package. Reading the clause alone made that edge
-    vanish, which is a layering violation the gate reported as clean, and the idiom is live
-    in the tree: `api/logs.py` and `api/settings.py` both spell it, and both are non-edges
-    today only because `logbuffer` and `launcher` are not among the four. One package over
-    and it is silent. So each name is checked too, whenever the clause resolves to `reaper`
-    itself. `from a.b import c` is left alone: `c` there really is a symbol, and a package
-    that deep would already have been named by the clause.
+    The exception is ``from reaper import services``, where the `from` clause is the parent
+    and the imported name is the package itself. Reading the clause alone would miss that
+    edge entirely, which would report a layering violation as clean. The idiom is live in the
+    tree: `api/logs.py` and `api/settings.py` both spell it, and both are non-edges today
+    only because `logbuffer` and `launcher` are not among the four; one package over and it
+    would go silent. So each imported name is checked too, whenever the clause resolves to
+    `reaper` itself. `from a.b import c` is left alone: `c` there really is a symbol, and a
+    package that deep would already have been named by the clause.
 
-    A relative ``from . import x`` resolves against ``package``: the four hold none today,
-    and one that arrives must not drop out of the walk unseen (rule 147).
+    A relative ``from . import x`` resolves against ``package``. The four hold none today,
+    and one that arrives must not drop out of the walk unseen.
     """
     if isinstance(node, ast.Import):
         return [alias.name for alias in node.names]
@@ -5599,8 +5352,8 @@ def _imported_modules(node: ast.Import | ast.ImportFrom, package: str) -> list[s
 def _edges_in(source: str, path: str) -> list[_Edge]:
     """Every cross-package import in ``source``, for a file at repo-relative ``path``.
 
-    Split out from the walk so the classifier can be run against the import forms the tree
-    does not currently spell as well as the ones it does (rule 147).
+    Split out from the walk so the classifier can be run against import forms the tree does
+    not currently spell as well as the ones it does.
     """
     parts = Path(path).with_suffix("").parts
     src = parts[1]
@@ -5647,20 +5400,20 @@ def test_the_four_packages_import_only_downward() -> None:
 
     The claim it makes is a dependency direction: routers sit on services, services compose
     the decision engine and the HTTP clients, and neither of those two reaches back up. That
-    is true today and was true only because everyone who touched it happened to keep it true.
-    The failure it prevents is not a crash -- Python imports a cycle happily until it does
-    not -- it is `engine/` growing a reason to know about `services/`, at which point the one
-    place a fate is decided stops being separable from the code that acts on it.
+    holds today only because everyone who has touched it kept it true by hand. The failure
+    this prevents is not a crash, since Python imports a cycle happily until it does not; it
+    is `engine/` growing a reason to know about `services/`, at which point the one place a
+    fate is decided stops being separable from the code that acts on it.
 
-    **The pinned module count is the load-bearing half** (rule 145). A direction assertion is
-    a flag: it cannot tell a module that complies from one the walk never opened, so a scan
-    scoped to the wrong root, or one that stopped parsing, reports a clean stack while reading
-    nothing. Same for `_EXPECTED_LAYER_EDGES`, which is an equality for the same reason.
+    The pinned module count is the load-bearing half. A direction assertion is a flag: it
+    cannot tell a module that complies from one the walk never opened, so a scan scoped to
+    the wrong root, or one that stopped parsing, would report a clean stack while reading
+    nothing. The same applies to `_EXPECTED_LAYER_EDGES`, which is an equality for the same
+    reason.
 
-    The plan this landed under expected the test to skip deferred imports to be green on day
-    one. Measured, it does not need to: every cross-package import that does not run at module
-    import time runs downward, so they are held to the same rule as the rest and pinned by name
-    in the test below.
+    Every cross-package import that does not run at module import time still runs downward,
+    so deferred imports are held to the same rule as the rest and pinned by name in the test
+    below.
     """
     modules = _layered_modules()
     assert len(modules) == _EXPECTED_LAYERED_MODULES, (
@@ -5700,19 +5453,14 @@ def test_every_deferred_cross_package_import_is_named() -> None:
     """An import that does not run at module import time is invisible to a runtime graph.
 
     That is what makes the escape hatch worth pinning rather than counting. `if TYPE_CHECKING:`
-    and a `def`-local import are both legitimate -- they are how a genuine cycle gets broken --
-    and they are also exactly where a layering violation would go to hide, since the module
-    graph a tool draws does not have the edge at all.
+    and a `def`-local import are both legitimate, since they are how a genuine cycle gets
+    broken, and they are also exactly where a layering violation would go to hide, since the
+    module graph a tool draws does not have the edge at all.
 
-    `docs/history/SIMPLIFICATION_PLAN.md`'s wave 9 measured all three of these and found that none
-    breaks the cycle it looks like it was written for. All three are gone. This list is what
-    made that deletion visible: without it the walk skips the sites, the count never moves, and
-    the gate is blind to the one change it exists to watch.
-
-    **Empty, and still a live assertion.** It fires on any deferred cross-package import that
+    Empty, and still a live assertion. It fires on any deferred cross-package import that
     arrives. What it cannot notice on its own is a walk that collects nothing, since an empty
-    walk equals an empty expectation; `test_the_four_packages_import_only_downward` is what
-    covers that, pinning the module count and a non-empty edge set off the same walk.
+    walk equals an empty expectation. `test_the_four_packages_import_only_downward` covers
+    that, pinning the module count and a non-empty edge set off the same walk.
     """
     deferred = frozenset(
         (e.path, e.target, e.deferred) for e in _cross_package_edges() if e.deferred
@@ -5730,10 +5478,10 @@ def test_every_deferred_cross_package_import_is_named() -> None:
 def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> None:
     """The walk above is worth what its parser can resolve, so the forms are run, not assumed.
 
-    Rule 147: a matcher ships with the spellings it accepts AND the ones it rejects. The
-    relative forms are the sharp ones -- the four packages hold none today, so nothing in the
-    tree would notice `from ..engine import x` silently resolving to nothing and dropping out
-    of the walk, which is a layering violation the gate reports as clean.
+    A matcher ships with the spellings it accepts and the ones it rejects. The relative forms
+    are the sharp ones: the four packages hold none today, so nothing in the tree would
+    notice `from ..engine import x` silently resolving to nothing and dropping out of the
+    walk, which is a layering violation the gate would report as clean.
     """
     cases = {
         "from reaper.engine.gates import Facts": ("engine", "reaper.engine.gates", ""),
@@ -5742,10 +5490,10 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
         "import reaper.clients.plex as plex": ("clients", "reaper.clients.plex", ""),
         "from ..engine.gates import Facts": ("engine", "reaper.engine.gates", ""),
         "from ..engine import gates": ("engine", "reaper.engine", ""),
-        # The `from` clause is the PARENT, so the package is the imported name. Reading the
-        # clause alone dropped this edge entirely, and `from reaper import <name>` is spelled
-        # in two of the four packages already -- for modules outside them, which is the only
-        # reason it was not a live hole.
+        # The `from` clause is the parent, so the package is the imported name. Reading the
+        # clause alone would drop this edge entirely, and `from reaper import <name>` is
+        # spelled in two of the four packages already, for modules outside them, which is the
+        # only reason it is not a live hole.
         "from reaper import engine": ("engine", "reaper.engine", ""),
         "from .. import engine": ("engine", "reaper.engine", ""),
         "from reaper import engine as e": ("engine", "reaper.engine", ""),
@@ -5791,14 +5539,14 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
             f"{edges[0].deferred!r}, expected {dst}/{target}/{deferred!r}"
         )
 
-    # And the forms that are correctly NOT an edge: the package importing itself, a package
+    # And the forms that are correctly not an edge: the package importing itself, a package
     # outside the four, and a third-party module whose name merely starts the same way.
     for source in (
         "from reaper.services.planner import MediaRef",
         "from reaper.notify.discord import DiscordNotifier",
         "from reaper.config import Settings",
         "import structlog",
-        # The `from reaper import <name>` arm above must not turn a module OUTSIDE the four
+        # The `from reaper import <name>` arm above must not turn a module outside the four
         # into an edge. Both of these are spelled in the tree today.
         "from reaper import logbuffer",
         "from reaper import launcher, crypto",
@@ -5809,30 +5557,25 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
 # --- the import cycles under src/reaper are declared, not discovered -----------------------
 
 #: Every `.py` file under `src/reaper`, which is the population the cycle walk parses. Pinned
-#: for the reason `_EXPECTED_LAYERED_MODULES` is (rule 145): a walk that stopped reading the
-#: tree finds no cycles at all, and the assertion below cannot tell that from a clean graph.
-#: A different population from that constant, which counts what is under the four packages
-#: only. Its value is not restated here. The two are pinned separately, so a bump to one had no
-#: reason to touch this line, and it sat naming a count the sibling had already moved past
-#: (#882, rule 144). The failure message below names the constant the same way.
-#: 122 adds `api/errors.py` and top-level `refusal.py` (phase 8a's catalog and typed refusal).
-#: 124 adds top-level `i18n.py` and the new `locales` package's `__init__.py` (phase 10a's
-#: Discord/launcher backend catalog; `locales/en/backend.json` carries no `.py` and does not
-#: join this walk).
+#: for the same reason `_EXPECTED_LAYERED_MODULES` is: a walk that stopped reading the tree
+#: finds no cycles at all, and the assertion below cannot tell that from a clean graph. A
+#: different population from that constant, which counts what is under the four packages
+#: only, so a bump to one has no reason to touch the other. The failure message below names
+#: the constant the same way.
 _EXPECTED_SOURCE_MODULES = 124
 
 #: Every import cycle under `src/reaper`, each rotated to start at its smallest member. Two,
-#: and both are one edge: `api/settings.py` imports `reaper.launcher` at module level, `launcher`
-#: reaches `main` to serve, and `main` mounts every router. Written out rather than counted,
-#: because a cycle is a coupling someone chose and the next reader needs to know which two.
+#: and both are one edge: `api/settings.py` imports `reaper.launcher` at module level,
+#: `launcher` reaches `main` to serve, and `main` mounts every router. Written out rather
+#: than counted, because a cycle is a coupling someone chose and the next reader needs to
+#: know which two.
 #:
-#: **That edge is two function calls, not two constants**, so it is not another one-string move:
+#: That edge is two function calls, not two constants, so it is not a one-string fix:
 #: `_desktop_out` calls `launcher.desktop_platform()` and the desktop save calls
 #: `launcher.write_conf_values()`. Breaking it means moving behavior, not a name.
 #:
-#: There were **nine** before `LAUNCHER_CONF_NAME` moved to `config.py`; the seven that went
-#: were `services/backup.py` and `services/restore.py` importing the process entry point for a
-#: filename. Nothing failed when they were there, which is why this list exists.
+#: Nothing fails while a cycle like this exists, which is why this list exists: a constant
+#: imported only for its value, such as a filename, is the shape most likely to add one back.
 _KNOWN_IMPORT_CYCLES = frozenset(
     {
         ("reaper.api.plex", "reaper.api.settings", "reaper.launcher", "reaper.main"),
@@ -5844,12 +5587,12 @@ _KNOWN_IMPORT_CYCLES = frozenset(
 def _module_candidates(node: ast.Import | ast.ImportFrom, package: str) -> list[str]:
     """Every dotted name ``node`` could be naming, made absolute against ``package``.
 
-    `_imported_modules` above answers which PACKAGE an import reaches, which is all the
-    layering walk needs. This needs the MODULE, so each imported name is offered as a
+    `_imported_modules` above answers which package an import reaches, which is all the
+    layering walk needs. This needs the module, so each imported name is offered as a
     submodule too: `from reaper.services import app_settings` reaches
-    `services/app_settings.py`, and reading the `from` clause alone stops at the package's
-    empty `__init__.py` and loses the edge. Names that are symbols rather than modules
-    resolve to nothing and drop out in `_module_import_graph`.
+    `services/app_settings.py`, and reading the `from` clause alone would stop at the
+    package's empty `__init__.py` and lose the edge. Names that are symbols rather than
+    modules resolve to nothing and drop out in `_module_import_graph`.
     """
     if isinstance(node, ast.Import):
         return [alias.name for alias in node.names]
@@ -5864,18 +5607,18 @@ def _module_candidates(node: ast.Import | ast.ImportFrom, package: str) -> list[
 
 @lru_cache(maxsize=1)
 def _module_import_graph() -> dict[str, frozenset[str]]:
-    """Every module under `src/reaper`, mapped to the in-tree modules it imports at RUNTIME.
+    """Every module under `src/reaper`, mapped to the in-tree modules it imports at runtime.
 
     Top-level and function-local imports both count; `if TYPE_CHECKING:` does not, because it
-    never runs and cannot make a cycle real. **Counting the function-local ones is the whole
-    reason this gate works**: the top-level graph alone is acyclic today and stays acyclic
-    when the cycles below are put back, since `launcher.main()` imports `reaper.preflight`
-    and `reaper.main` from inside the function. A cycle broken by deferring one edge is still
-    a cycle, and the deferral is what a module graph drawn from top-level imports cannot see.
+    never runs and cannot make a cycle real. Counting the function-local ones is the whole
+    reason this gate works: the top-level graph alone is acyclic today and stays acyclic when
+    the cycles below are put back, since `launcher.main()` imports `reaper.preflight` and
+    `reaper.main` from inside the function. A cycle broken by deferring one edge is still a
+    cycle, and the deferral is what a module graph drawn from top-level imports cannot see.
 
     A package's `__init__.py` is a module here like any other, because importing
-    `reaper.services.app_settings` executes `reaper/services/__init__.py` as well. All nine
-    of them import nothing today, so they carry no outgoing edges.
+    `reaper.services.app_settings` executes `reaper/services/__init__.py` as well. Every such
+    file imports nothing today, so they carry no outgoing edges.
     """
     names = {}
     for path in sorted(SRC.rglob("*.py")):
@@ -5905,9 +5648,8 @@ def _import_cycles(graph: dict[str, frozenset[str]]) -> set[tuple[str, ...]]:
     """Every simple cycle in ``graph``, each rotated to start at its smallest member.
 
     Enumerated from the smallest member outward, so each cycle is found exactly once and the
-    result needs no de-duplication. Measured at 47ms over this tree's 115 modules and 667
-    edges; the graph is a DAG plus two back edges, which is what keeps a walk over simple
-    paths cheap.
+    result needs no de-duplication. The graph is a DAG plus a small number of back edges,
+    which is what keeps a walk over simple paths cheap.
     """
     order = {node: i for i, node in enumerate(sorted(graph))}
     found: set[tuple[str, ...]] = set()
@@ -5927,25 +5669,23 @@ def _import_cycles(graph: dict[str, frozenset[str]]) -> set[tuple[str, ...]]:
 def test_every_import_cycle_under_src_is_one_someone_declared() -> None:
     """Nothing held the module graph, and a returning cycle costs one import line to add.
 
-    Measured against this tree: `services/backup.py` and `services/restore.py` imported
-    `reaper.launcher` for one filename, and that single edge was **7 of the 9** cycles under
-    `src/reaper`. Putting `LAUNCHER_CONF_NAME` in `config.py` removed all 7, and re-adding
-    either import restores them.
+    A constant imported only for its value, such as a filename, is the shape most likely to
+    create a cycle like this: `services/backup.py` or `services/restore.py` importing
+    `reaper.launcher` for one filename would close a cycle through `launcher` and `main`.
 
-    **Nothing failed while they were there, and three gates were looking.** The layering walk
-    above reads the four packages only and `reaper.launcher` is outside them; the
-    deferred-import gate reads cross-package imports that do not run, and these run; and a
-    graph built from top-level imports alone is acyclic either way, because the edges that
-    close every one of these cycles are the function-local imports in `launcher.main()`.
+    Nothing would fail while such an import exists, and three other gates would miss it too.
+    The layering walk above reads the four packages only, and `reaper.launcher` is outside
+    them. The deferred-import gate reads cross-package imports that do not run, and this one
+    would run. A graph built from top-level imports alone stays acyclic either way, because
+    the edge that closes the cycle is a function-local import inside `launcher.main()`.
 
-    Python imports a cycle happily until it does not. The failure this prevents is the one a
-    review pass measured in phase 6: a five-module cut whose graph would not have booted, and
-    which read as clean right up to the boot.
+    Python imports a cycle happily until it does not. The failure this prevents is a module
+    cut whose graph would not boot, reading as clean right up to the boot.
 
-    **It excludes ``TYPE_CHECKING`` edges, so a cycle broken by a type-only import is invisible
-    to it** (rule 147). That is deliberate -- those imports do not run, so they cannot fail a
-    boot -- but it means the walk is not an inventory of couplings. ``services/lists.py`` and
-    ``services/list_config.py`` are the live example: they import each other, one of them under
+    It excludes ``TYPE_CHECKING`` edges, so a cycle broken by a type-only import is invisible
+    to it. That is deliberate, since those imports do not run and cannot fail a boot, but it
+    means the walk is not an inventory of every coupling. ``services/lists.py`` and
+    ``services/list_config.py`` are a live example: they import each other, one of them under
     ``TYPE_CHECKING``, and promoting that one raises ``ImportError`` on three modules. Nothing
     here would say so, and the deferred-import gate skips it too for being same-package.
     """
@@ -5979,15 +5719,15 @@ def test_every_import_cycle_under_src_is_one_someone_declared() -> None:
 
 
 def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
-    """The gate above is mostly an absence, so the detector is driven (rule 145).
+    """The gate above is mostly an absence, so the detector is driven directly by test cases.
 
     A walk that returned nothing would be green on any tree with no cycles left to lose, and
-    two of these shapes are ones a wrong detector reports: a diamond has two paths to one
-    module and no cycle, and a self-edge-free chain has neither.
+    two of these shapes are ones a wrong detector could misreport: a diamond has two paths to
+    one module and no cycle, and a self-edge-free chain has neither.
 
-    The classifier gets the same treatment (rule 147). `from reaper.services import
-    app_settings` is the form that decides whether this graph has module edges at all, and
-    reading the `from` clause alone resolves it to the package's empty `__init__.py`.
+    The classifier gets the same treatment. `from reaper.services import app_settings` is
+    the form that decides whether this graph has module edges at all, and reading the `from`
+    clause alone would resolve it to the package's empty `__init__.py`.
     """
     two = {"a": frozenset({"b"}), "b": frozenset({"a"})}
     assert _import_cycles(two) == {("a", "b")}
@@ -6032,45 +5772,44 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 
 # --- the frontend has no import cycles at all ----------------------------------------------
 
-#: Every `.ts`/`.tsx` file under `frontend/src`, which is the population the walk below parses.
-#: Pinned for `_EXPECTED_SOURCE_MODULES`' reason (rule 145), and it carries more weight here:
-#: the expected cycle set is EMPTY, so a walk that stopped reading the tree agrees with a clean
-#: graph exactly.
+#: Every `.ts`/`.tsx` file under `frontend/src`, which is the population the walk below
+#: parses. Pinned for the same reason as `_EXPECTED_SOURCE_MODULES`, and it carries more
+#: weight here: the expected cycle set is empty, so a walk that stopped reading the tree
+#: would agree with a clean graph exactly.
 _EXPECTED_FRONTEND_MODULES = 245
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")
 
-#: A static `import`/`export` of a relative specifier, in every spelling the tree uses: a bare
-#: side-effect import, a default, a braced list running over several lines, and a re-export.
-#: The body may not cross a quote, a backtick, a paren or a semicolon, so it cannot run out of
-#: its own statement into the next one's string. Anchored at a line start or a `;`, since
-#: prettier puts every statement on its own line and the `;` arm is the belt for a file that
-#: somehow arrives unformatted.
+#: A static `import`/`export` of a relative specifier, in every spelling the tree uses: a
+#: bare side-effect import, a default, a braced list running over several lines, and a
+#: re-export. The body may not cross a quote, a backtick, a paren, or a semicolon, so it
+#: cannot run out of its own statement into the next one's string. Anchored at a line start
+#: or a `;`, since prettier puts every statement on its own line and the `;` arm is the belt
+#: for a file that somehow arrives unformatted.
 #:
 #: `import type` and `export type` are left out, and under `verbatimModuleSyntax` (set in
-#: `frontend/tsconfig.json`) that is the exact line the compiler draws: the `type` STATEMENT is
-#: erased, and `import { type A } from "./x"` emits `import {} from "./x"`, a real runtime edge
-#: this therefore counts. Measured on this tree, putting the type-only edges back changes
-#: nothing: both spellings of the walk found the same two cycles before wave 9 and find none now.
+#: `frontend/tsconfig.json`) that is the exact line the compiler draws: the `type` statement
+#: is erased, and `import { type A } from "./x"` emits `import {} from "./x"`, a real
+#: runtime edge this therefore counts.
 #:
 #: It runs over `_without_comments`, so a commented-out import is not an edge. Reading a
-#: quotation of an import as a real one is fail-CLOSED, a cycle nobody wrote, which is the
-#: harmless direction and still a false red somebody has to chase.
+#: quotation of an import as a real one is fail-closed: it invents a cycle nobody wrote,
+#: which is the harmless direction and still a false red somebody has to chase.
 _TS_STATIC_IMPORT = re.compile(
     r"""(?m)(?:^|;)[ \t]*(?:import|export)\s+(?!type[\s{])"""
     r"""(?:[^'"`();]*?\bfrom\s*)?['"](\.[^'"]+)['"]"""
 )
 
-#: `await import("./x")`, which is a runtime edge like any other: `App.tsx` reaches five of the
-#: six routes this way, and the policy editor is reached by nothing else in that file.
+#: `await import("./x")`, which is a runtime edge like any other: `App.tsx` reaches five of
+#: the six routes this way, and the policy editor is reached by nothing else in that file.
 #:
-#: Three spellings the first version of this missed, all of them fail-OPEN, which is the
-#: direction that loses a cycle rather than inventing one: Vite's documented
+#: Three spellings this must still catch, all of them fail-open, which is the direction that
+#: loses a cycle rather than inventing one: Vite's documented
 #: `import(/* @vite-ignore */ "./x")`, a backtick specifier, and `typeof` separated from
-#: `import(` by anything but one space. `typeof` is matched and discarded rather than excluded
-#: by a lookbehind, because Python's lookbehind is fixed-width and `typeof\n  import("./x")` is
-#: legal.
+#: `import(` by anything but one space. `typeof` is matched and discarded rather than
+#: excluded by a lookbehind, because Python's lookbehind is fixed-width and
+#: `typeof\n  import("./x")` is legal.
 _TS_DYNAMIC_IMPORT = re.compile(
     r"""(?P<typeof>\btypeof\s+)?\bimport\(\s*(?:/\*.*?\*/\s*)?['"`](\.[^'"`]+)['"`]""",
     re.S,
@@ -6084,18 +5823,17 @@ def _ts_module_key(path: Path) -> str:
 
 @lru_cache(maxsize=1)
 def _frontend_import_graph() -> dict[str, frozenset[str]]:
-    """Every module under `frontend/src`, mapped to the in-tree modules it imports at RUNTIME.
+    """Every module under `frontend/src`, mapped to the in-tree modules it imports at runtime.
 
     Test files are in the population rather than filtered out. A component never imports a
     test, so they close no cycle, and leaving them in means no skip list to keep current.
 
-    **A specifier resolves the way the bundler resolves it, and the near-miss is the bug.** The
-    candidates are the specifier itself *only when it already spells a module extension*, then
+    A specifier resolves the way the bundler resolves it, and the near-miss is the bug. The
+    candidates are the specifier itself only when it already spells a module extension, then
     the specifier plus each extension, then an `index` barrel under it. Taking the bare
-    specifier unconditionally and stripping a suffix off it is what the first version did, and
-    `./dissolve.generated` then resolved to `brand/dissolve`: three modules carried an edge
-    their source does not have, harmless only while that file stays a leaf. `./index.css`
-    resolving to nothing was the same accident wearing the right answer.
+    specifier unconditionally and stripping a suffix off it instead would resolve
+    `./dissolve.generated` to `brand/dissolve`, giving a module an edge its source does not
+    have, and would resolve `./index.css` to nothing at all.
 
     There are no barrels in the tree today, so that pair of candidates is what stops a future
     one from silently dropping its edges. Every candidate is checked for containment before it
@@ -6139,21 +5877,15 @@ def _frontend_import_graph() -> dict[str, frozenset[str]]:
 
 
 def test_the_frontend_has_no_import_cycles() -> None:
-    """The SPA had two, and each was one borrowed symbol.
+    """The SPA has no import cycles, and the expected set is empty rather than declared.
 
-    `PolicyRuleEditors` was lifted out of `PolicyEditor` and left three lookup tables behind,
-    so the new module imported them back out of the file it had just left; the same import
-    also carried `humanDays`, which `PolicyEditor` re-exported after the function itself had
-    already moved to `format.ts` to break a different cycle. `UnmatchedList` reached into
-    `ScalesPanel` for a twelve-line poster placeholder, while `ScalesPanel` renders
-    `UnmatchedList`. Both are gone, and the expected set is empty rather than declared: a
-    browser bundle tolerates a cycle until an initialization order changes under it, and
-    nothing here needs one.
+    A browser bundle tolerates a cycle until an initialization order changes under it, and
+    nothing here needs one, unlike the Python twin above, which declares its two because
+    those are a coupling someone chose and cannot cheaply undo.
 
-    The Python twin above declares its two instead, because those are a coupling someone chose
-    and cannot cheaply undo. The walk is shared: this builds the graph, `_import_cycles` finds
-    the cycles, and `test_the_cycle_walk_reports_the_cycles_it_is_given` is what proves the
-    finder is not simply returning nothing.
+    The walk is shared: this builds the graph, `_import_cycles` finds the cycles, and
+    `test_the_cycle_walk_reports_the_cycles_it_is_given` is what proves the finder is not
+    simply returning nothing.
     """
     graph = _frontend_import_graph()
     assert len(graph) == _EXPECTED_FRONTEND_MODULES, (
@@ -6175,21 +5907,22 @@ def test_the_frontend_has_no_import_cycles() -> None:
 
 
 def test_the_frontend_import_walk_reads_the_spellings_the_tree_uses() -> None:
-    """The gate above is an absence, so the two matchers behind it are driven (rule 147).
+    """The gate above is an absence, so the two matchers behind it are driven by test cases.
 
     A regex is bounded by the syntax it parses. The synthetic half fixes what each spelling
-    must resolve to, **including every one that must resolve to NOTHING** — those are the cases
-    a matcher passes by doing nothing at all, so they are written out rather than assumed. The
-    live half then asserts edges the real tree has, because a matcher can be right about a
-    string and still never fire against a file: `App.tsx` reaches `ReviewQueue` statically and
-    the policy editor only through `lazy(async () => (await import(...)))`, which is that file's
-    one non-type reference to it, so those two edges are one proof each for the two matchers.
+    must resolve to, including every one that must resolve to nothing, since those are the
+    cases a matcher passes by doing nothing at all, so they are written out rather than
+    assumed. The live half then asserts edges the real tree has, because a matcher can be
+    right about a string and still never fire against a file: `App.tsx` reaches
+    `ReviewQueue` statically and the policy editor only through
+    `lazy(async () => (await import(...)))`, which is that file's one non-type reference to
+    it, so those two edges are one proof each for the two matchers.
 
-    **The fail-open cases are the ones worth the lines.** A spelling the dynamic matcher misses
-    is a real runtime edge dropped, which is a cycle this gate then reports as absent, and three
-    of them shipped in the first version: `import(/* @vite-ignore */ "./x")`, a backtick
-    specifier, and `typeof` separated from `import(` by a newline. A spelling the static matcher
-    over-reads is the other direction, a cycle nobody wrote, and those are listed too.
+    The fail-open cases are the ones worth the lines. A spelling the dynamic matcher misses
+    is a real runtime edge dropped, which is a cycle this gate then reports as absent:
+    `import(/* @vite-ignore */ "./x")`, a backtick specifier, and `typeof` separated from
+    `import(` by a newline. A spelling the static matcher over-reads is the other direction,
+    a cycle nobody wrote, and those are listed too.
     """
     graph = _frontend_import_graph()
     assert "components/ReviewQueue" in graph["App"], (
@@ -6251,13 +5984,13 @@ def test_the_frontend_import_walk_reads_the_spellings_the_tree_uses() -> None:
         ] == expected, f"the dynamic-import matcher misread {source!r}"
 
 
-# --- the HTTP status an InstanceError means is declared once (rule 144) ---------------
+# --- the HTTP status an InstanceError means is declared once ---------------------------
 
 #: Every `except` arm in `api/` that catches one of the `services.instances` errors. Pinned
 #: because the ban below can only judge the handlers the walk collected, and a walk that
-#: stopped reading the tree would pass by finding none (rule 145). Six today: five map the
-#: error to a response, and `test_new_instance`'s arm reports it as `map_error` copy beside a
-#: passed connection test instead, which is why the second number is not the first.
+#: stopped reading the tree would pass by finding none. Six today: five map the error to a
+#: response, and `test_new_instance`'s arm reports it as `map_error` copy beside a passed
+#: connection test instead, which is why the second number is not the first.
 _EXPECTED_INSTANCE_ERROR_HANDLERS = 6
 _EXPECTED_INSTANCE_ERROR_RESPONSES = 5
 
@@ -6274,11 +6007,10 @@ def _names_an_instance_error(node: ast.expr | None) -> bool:
 
     Four forms reach here: a bare ``InstanceError``, a dotted ``instances.InstanceError``, a
     tuple holding either beside an unrelated error (``(IntegrationError,
-    instances.InstanceError)``, live in the tree), and a bare ``except:`` -- which names
+    instances.InstanceError)``, live in the tree), and a bare ``except:``, which names
     nothing and so catches these too, but cannot be told apart from any other blanket catch
     and is banned elsewhere. Reading the trailing name is what makes the first two one case;
-    anchoring on the dotted spelling would have read only the one the tree happens to use
-    (rule 147).
+    anchoring on the dotted spelling instead would only read the one the tree happens to use.
     """
     if node is None:
         return False
@@ -6298,16 +6030,15 @@ def _http_status_sites(handler: ast.ExceptHandler) -> list[tuple[int, str, ast.e
     (``raise HTTPException(...)``) or a bare ``ast.Expr`` (``refuse(...)``, ``refuse`` being
     typed ``NoReturn`` and raising internally), so neither wrapper needs its own branch.
 
-    **Four spellings, because the tree spells it four ways**: ``raise HTTPException(status,
+    Four spellings, because the tree spells it four ways: ``raise HTTPException(status,
     ...)`` positionally; ``status_code=``, which ``api/lists.py`` uses twice; ``refuse(status,
-    code, ...)`` (phase 8a), hand-writing a status the same way; and ``refuse_from(exc)``
-    (phase 8a's second wave) -- the one spelling that carries no status argument at all,
-    because ``api.errors.refuse_from`` always reads ``exc.status`` internally, which is what
-    makes the five instance-error arms this walk exists for structurally unable to hand-write
-    one any more. A reader missing any one spelling does not report that arm as a violation --
-    it drops the arm out of the population entirely, so the count below fails saying an arm
-    stopped answering when the truth is that it answered in a spelling nobody could read
-    (rule 147).
+    code, ...)``, hand-writing a status the same way; and ``refuse_from(exc)``, the one
+    spelling that carries no status argument at all, because ``api.errors.refuse_from``
+    always reads ``exc.status`` internally, which is what makes the five instance-error arms
+    this walk exists for structurally unable to hand-write one any more. A reader missing any
+    one spelling does not report that arm as a violation. It drops the arm out of the
+    population entirely, so the count below fails saying an arm stopped answering when the
+    truth is that it answered in a spelling nobody could read.
     """
     out: list[tuple[int, str, ast.expr | None]] = []
     for node in ast.walk(handler):
@@ -6339,18 +6070,18 @@ def _instance_error_handlers() -> list[tuple[str, int, ast.ExceptHandler]]:
 def test_no_route_hand_writes_the_status_an_instance_error_already_declares() -> None:
     """The status comes from ``exc.status``, never from a number typed at the ``except``.
 
-    ``services.instances`` declares one status per subclass -- 422 for the base, 404 for
-    not-found, 409 for a name clash -- and each subclass's docstring says why. The five arms
-    that answer these used to hand-write the number instead, and two of them wrote 404 for the
-    base class: correct only because those callees can raise nothing but ``InstanceNotFound``
-    today, so a service that grew a blank-field guard the way ``create_instance`` has would
-    have told the operator the instance did not exist. Reading the declaration is what makes
-    that unable to happen again.
+    ``services.instances`` declares one status per subclass: 422 for the base, 404 for
+    not-found, 409 for a name clash, and each subclass's docstring says why. Hand-writing the
+    number at the call site instead can go stale silently: a callee that can currently raise
+    only ``InstanceNotFound`` and gets a hand-written 404 would keep answering 404 even after
+    it grows a reason to raise the base class, telling the operator the instance does not
+    exist when the real problem is something else. Reading the declaration through
+    ``refuse_from(exc)`` is what makes that unable to happen.
 
-    Phase 8a's second wave moved all five to ``refuse_from(exc)``, which reads ``exc.status``
-    internally and takes no status argument to hand-write in the first place -- so what this
-    now guards is that a sixth arm (or an edit to one of the five) does not slip back to a
-    bare ``refuse``/``HTTPException`` call that types the number in again (rule 144).
+    All five arms use ``refuse_from(exc)``, which reads ``exc.status`` internally and takes
+    no status argument to hand-write in the first place, so what this guards is that a sixth
+    arm (or an edit to one of the five) does not slip back to a bare
+    ``refuse``/``HTTPException`` call that types the number in again.
     """
     handlers = _instance_error_handlers()
     assert len(handlers) == _EXPECTED_INSTANCE_ERROR_HANDLERS, (
@@ -6374,7 +6105,7 @@ def test_no_route_hand_writes_the_status_an_instance_error_already_declares() ->
 
 
 def test_the_instance_error_matcher_reads_every_form_the_clause_can_take() -> None:
-    """The four forms it must collect, and the ones it must leave alone (rule 147).
+    """The four forms it must collect, and the ones it must leave alone.
 
     The ban above is only as wide as this classifier: an arm it does not collect is absent
     from the count and from the assertion at once, so the two agree while disagreeing with the
@@ -6408,13 +6139,12 @@ def test_the_instance_error_matcher_reads_every_form_the_clause_can_take() -> No
 def test_the_status_reader_finds_a_hand_written_one_wherever_it_sits() -> None:
     """``_http_status_sites`` reads the whole handler body, not its first line.
 
-    An arm that logs first, or branches before raising, still raises a status -- and a reader
+    An arm that logs first, or branches before raising, still raises a status, and a reader
     that only inspected ``handler.body[0]`` would call both of those clean. Driven against a
-    nested raise, since that is the shape a future arm most plausibly takes, and against
+    nested raise, since that is the shape a future arm most plausibly takes, against
     ``status_code=``, which is a live spelling in ``api/lists.py`` and reaches the ban only
-    because the reader takes it, and against both ``refuse(...)`` (phase 8a) and
-    ``refuse_from(...)`` (phase 8a's second wave), bare calls rather than a ``raise`` at all
-    (rule 147).
+    because the reader takes it, and against both ``refuse(...)`` and ``refuse_from(...)``,
+    bare calls rather than a ``raise`` at all.
     """
     nested = ast.parse(
         "try:\n"
@@ -6483,7 +6213,7 @@ def test_the_status_reader_finds_a_hand_written_one_wherever_it_sits() -> None:
     assert _http_status_sites(handler) == []
 
 
-# --- the bold-when-active strut, and the sentence enumerating it (rule 144) -----------
+# --- the bold-when-active strut, and the sentence enumerating it ---------------------
 
 _STYLES = FRONTEND_SRC / "styles"
 
@@ -6494,11 +6224,11 @@ _STYLES = FRONTEND_SRC / "styles"
 _STRUT_ENUMERATION = _STYLES / "04-buttons.css"
 
 #: Every control that bolds when active or selected. Pinned because both assertions below
-#: are set comparisons, and a walk that stopped reading the tree satisfies a set comparison
-#: by finding nothing on both sides at once (rule 145).
+#: are set comparisons, and a walk that stopped reading the tree would satisfy a set
+#: comparison by finding nothing on both sides at once.
 _EXPECTED_BOLD_WHEN_ACTIVE = 6
 
-#: The one that bolds and deliberately carries no strut, with the reason -- classified in
+#: The one that bolds and deliberately carries no strut, with the reason. Classified in
 #: writing rather than silenced, since the assertion below is an equality and would otherwise
 #: just be relaxed. A vertical list has no sideways neighbor to shove.
 _BOLDS_WITHOUT_A_STRUT = {".filter-mi": "a vertical menu item, so nothing sits beside it"}
@@ -6513,7 +6243,7 @@ _LEAD_CLASS = re.compile(r"^\s*(\.[a-z0-9-]+)")
 def _css_rules() -> list[tuple[str, int, str, str]]:
     """Every flat CSS rule under `styles/`, as (file, line, selector, body).
 
-    Flat, so a rule nested in `@media` is read too -- ``10-layout.css`` turns `.view-tab`'s
+    Flat, so a rule nested in `@media` is read too: ``10-layout.css`` turns `.view-tab`'s
     strut back off inside one, and a walk that skipped media queries would not see it.
     """
     out: list[tuple[str, int, str, str]] = []
@@ -6542,7 +6272,7 @@ def _bolding_and_strutted() -> tuple[set[str], set[str]]:
     for _, _, selector, body in _css_rules():
         if "font-weight" in body and _ACTIVE_STATE.search(selector):
             bolding |= _lead_classes(selector)
-        # `content: none` is the phone bar turning the strut OFF, not a control carrying one.
+        # `content: none` is the phone bar turning the strut off, not a control carrying one.
         if "[data-label]" in selector and "::after" in selector and "content: none" not in body:
             strutted |= _lead_classes(selector)
     return bolding, strutted
@@ -6551,9 +6281,9 @@ def _bolding_and_strutted() -> tuple[set[str], set[str]]:
 #: The sentence in ``04-buttons.css`` that makes the claim. The matcher anchors on it rather
 #: than on the comment block, and the block rather than the file, because both wider readings
 #: are satisfied by prose: the file mentions `.seg2` and `.intent-band` in unrelated comments,
-#: and the block's own closing paragraph names `.view-tab` while narrating the drift -- so
-#: deleting the name from the list left the test green (rule 147). Reading the claim itself is
-#: the only scope where a name's presence means what the test says it means.
+#: and the block's own closing paragraph names `.view-tab` while narrating the history, so
+#: deleting a name from the list there would still leave the test green. Reading the claim
+#: itself is the only scope where a name's presence means what the test says it means.
 _STRUT_CLAIM_OPENER = "Applied to every control that bolds when active"
 
 
@@ -6591,16 +6321,11 @@ def test_every_control_that_bolds_when_chosen_reserves_the_bold_width() -> None:
 def test_the_strut_comment_names_every_control_that_carries_one() -> None:
     """The enumeration in ``04-buttons.css`` and the selectors are one fact, checked both ways.
 
-    It claimed to cover "every control that bolds when active" and listed four, while five
-    carried a strut: `.view-tab`'s rule lives in ``02-masthead.css``, so the author of either
-    file could read their own and be right. That is rule 144's shape -- one sentence about what
-    the app does, stated where the code it describes is not -- and the direction it failed in
-    is the reassuring one, since a reader checking whether a control needs a strut was told the
-    list was complete.
-
-    Both directions, because they fail differently: a strutted control missing from the
-    sentence is the drift that happened, and a name in the sentence with no rule behind it is a
-    strut someone deleted while leaving the claim standing (rule 7/24).
+    `.view-tab`'s rule lives in ``02-masthead.css``, a different file from the one making the
+    claim, so the author of either file could read their own copy and believe it complete.
+    This checks both directions, because they fail differently: a strutted control missing
+    from the sentence is drift that already happened, and a name in the sentence with no
+    rule behind it is a strut someone deleted while leaving the claim standing.
     """
     _, strutted = _bolding_and_strutted()
     named = {f".{name}" for name in re.findall(r"`\.([a-z0-9-]+)`", _strut_comment())}
@@ -6619,12 +6344,12 @@ def test_the_strut_comment_names_every_control_that_carries_one() -> None:
 
 
 def test_the_css_walk_reads_the_forms_the_stylesheets_spell(tmp_path: Path) -> None:
-    """The two assertions above are only as wide as this walk (rule 147).
+    """The two assertions above are only as wide as this walk.
 
-    Driven against the spellings `styles/` uses -- a grouped selector, a rule nested in a media
-    query, a state class other than `.active` -- and against the one that must NOT count, the
-    phone bar's `content: none`, which turns a strut off rather than declaring one. A walk that
-    counted that would report `.view-tab` strutted on a build where it is not.
+    Driven against the spellings `styles/` uses: a grouped selector, a rule nested in a media
+    query, a state class other than `.active`, and against the one that must not count, the
+    phone bar's `content: none`, which turns a strut off rather than declaring one. A walk
+    that counted that would report `.view-tab` strutted on a build where it is not.
     """
     assert _lead_classes(".tab[data-label]::after, .seg[data-label]::after") == {".tab", ".seg"}
     assert _lead_classes(".view-tab.active:hover:not(:disabled)") == {".view-tab"}
@@ -6651,22 +6376,23 @@ def test_the_css_walk_reads_the_forms_the_stylesheets_spell(tmp_path: Path) -> N
 
 
 # ---------------------------------------------------------------------------
-# Rule 94: a scan-sized ``IN`` is chunked
+# A scan-sized ``IN`` is chunked
 # ---------------------------------------------------------------------------
 
 #: The membership operators SQLAlchemy spells a ``WHERE col IN (...)`` with. ``not_in`` and
-#: its legacy ``notin_`` alias expand identically -- one bound variable per element -- so a
-#: ban that read only ``in_`` would miss half the population it claims to cover (rule 147).
+#: its legacy ``notin_`` alias expand identically, one bound variable per element, so a ban
+#: that read only ``in_`` would miss half the population it claims to cover.
 _MEMBERSHIP_CALLS = frozenset({"in_", "not_in", "notin_"})
 
-#: The third spelling, and the one that hides: a placeholder list built by hand and pasted into
-#: the SQL, which is neither an ORM operator nor an ``expanding`` bindparam.
-#: ``imdb_dataset.lookup`` does exactly this. A walk collecting only the first two reported 17
-#: functions and had no count to pin for the eighteenth, which is rule 147's shape -- a form
-#: that never enters the walk is missing from the ban and from the count alike.
+#: The third spelling, and the one that hides: a placeholder list built by hand and pasted
+#: into the SQL, which is neither an ORM operator nor an ``expanding`` bindparam.
+#: ``imdb_dataset.lookup`` does exactly this. A walk collecting only the first two would miss
+#: it entirely: a form that never enters the walk is missing from the ban and from the count
+#: alike.
 #:
-#: Read against string literals only, so the ``#:`` comments spelling ``IN (...)`` in prose are
-#: not sites. Upper-case with a word boundary, so ``MIN(``, ``JOIN (`` and the rest do not match.
+#: Read against string literals only, so the ``#:`` comments spelling ``IN (...)`` in prose
+#: are not sites. Uppercase with a word boundary, so ``MIN(``, ``JOIN (`` and the rest do not
+#: match.
 _RAW_IN = re.compile(r"\bIN\s*\(")
 
 
@@ -6674,13 +6400,13 @@ class _Membership(NamedTuple):
     """What one function does with membership filters."""
 
     sites: int
-    """How many it carries. Counted rather than flagged so a SECOND filter added inside an
+    """How many it carries. Counted rather than flagged so a second filter added inside an
     already-classified function fails here too, instead of riding the first one's line."""
     chunked: bool
-    """Whether its CODE reads ``KEY_CHUNK``. Not proof that the chunking is correct -- it is
+    """Whether its code reads ``KEY_CHUNK``. Not proof that the chunking is correct, it is
     what stops a line below claiming "chunked" about a function that does no chunking. Read
     off the syntax tree rather than the text, because the text includes the comment saying
-    why the read is chunked, and a check that comment satisfies proves nothing (rule 147)."""
+    why the read is chunked, and a check that only reads the comment would prove nothing."""
 
 
 class _MembershipWalk(ast.NodeVisitor):
@@ -6757,7 +6483,7 @@ def _membership_sites(root: Path) -> dict[str, _Membership]:
 #: Every membership filter in ``src/reaper``, and what bounds the list it expands. A line
 #: starting ``chunked`` means the read loops on ``KEY_CHUNK``; one starting ``bounded`` says
 #: what holds its input under SQLite's ceiling without chunking. Reconciled by hand, and by
-#: site count, so a filter added beside a classified one cannot ride its line (rule 145).
+#: site count, so a filter added beside a classified one cannot ride its line.
 _MEMBERSHIP_INVENTORY: dict[str, tuple[int, str]] = {
     "src/reaper/api/review.py::list_candidates": (
         5,
@@ -6805,20 +6531,17 @@ _MEMBERSHIP_INVENTORY: dict[str, tuple[int, str]] = {
 
 
 def test_every_scan_sized_in_clause_is_chunked_or_classified() -> None:
-    """Rule 94, which was prose and nowhere in code until #556.
-
-    An expanding ``IN`` binds one variable per key and SQLite refuses a statement past its
+    """An expanding ``IN`` binds one variable per key and SQLite refuses a statement past its
     ceiling, so a filter over a library-sized set is a scan or a report that dies outright
-    rather than one that runs slowly. The grace report shipped that way: nothing bounds the
-    condemned set, and the read raised ``OperationalError``, which is not an
-    ``IntegrationError`` and so was caught nowhere.
+    rather than one that runs slowly, with no error type distinct enough to be caught
+    anywhere else.
 
-    Reading the code is the only way to tell a scan-sized list from a two-element one, so this
-    does not try to: it collects the three spellings the tree uses and requires each site to
-    carry a written classification. A new one fails here, which is the point -- the site that
-    broke was missed because nothing made anyone look at it. A **fourth** spelling would be
-    missing from this walk and from its counts alike (rule 147), which is why the walk is
-    driven against each form in the test below rather than trusted.
+    Reading the code is the only way to tell a scan-sized list from a two-element one, so
+    this does not try to: it collects the three spellings the tree uses and requires each
+    site to carry a written classification. A new site fails here, since nothing else would
+    make anyone look at it. A fourth spelling would be missing from this walk and from its
+    counts alike, which is why the walk is driven against each form in the test below rather
+    than trusted.
     """
     found = _membership_sites(SRC)
 
@@ -6854,11 +6577,11 @@ def test_every_scan_sized_in_clause_is_chunked_or_classified() -> None:
 
 
 def test_the_membership_walk_reads_the_forms_the_tree_spells(tmp_path: Path) -> None:
-    """The guard above is only as wide as this walk (rule 147).
+    """The guard above is only as wide as this walk.
 
-    Driven against every spelling ``src/`` uses -- the three ORM operators, a raw-SQL
+    Driven against every spelling ``src/`` uses: the three ORM operators, a raw-SQL
     ``expanding`` bindparam, a hand-built placeholder list inside an f-string, several filters
-    in one function, a method inside a class -- and against the three that must NOT count: a
+    in one function, a method inside a class, and against the three that must not count: a
     plain ``bindparam`` binds one value and cannot overflow anything, an unrelated method whose
     name merely ends in the same letters is not a membership filter, and neither is SQL naming
     a function that happens to end in those two letters.
@@ -6919,23 +6642,21 @@ _ARR_CONSTRUCTION_ARGS = frozenset({"safety", "verify", "api_path_prefix"})
 _ARR_CLIENTS = ("RadarrClient", "SonarrClient")
 
 #: Reconciled by hand against the tree, so a site that leaves the walk is noticed rather
-#: than silently dropping out of the assertion below (rule 145). **Six, which is three
-#: functions building two classes each**: ``scan_runner.build_sources``,
-#: ``scan_runner.build_reap_gateway`` and ``instances._client``. The plan's finding says
-#: "three places" and means the functions; this number counts calls, and the first draft of
-#: this constant wrote the finding's figure down without re-deriving it.
+#: than silently dropping out of the assertion below. Six, which is three functions building
+#: two classes each: ``scan_runner.build_sources``, ``scan_runner.build_reap_gateway``, and
+#: ``instances._client``.
 _EXPECTED_ARR_CONSTRUCTIONS = 6
 
 
 def _client_construction_sites(root: Path, names: tuple[str, ...]) -> dict[str, set[str]]:
     """Every ``<name>(...)`` call under ``src/`` for the given client classes, by address.
 
-    Two gates read this, the *arr one below over six sites and the TLS one over 21. Reads the
-    call node and inspects its keywords, rather than anchoring on the text after the paren:
-    most sites wrap across several lines and some are a single line, so a line-oriented
-    matcher reads one spelling and misses the rest (rule 147). A ``**kwargs`` splat would
-    defeat this, and none exists; if one arrives it is recorded as passing nothing, and the
-    caller's membership assertion names it.
+    Two gates read this, the *arr one below and a TLS one elsewhere. Reads the call node and
+    inspects its keywords, rather than anchoring on the text after the paren, since most
+    sites wrap across several lines and some are a single line, so a line-oriented matcher
+    would read one spelling and miss the rest. A ``**kwargs`` splat would defeat this, and
+    none exists today; if one arrives it is recorded as passing nothing, and the caller's
+    membership assertion names it.
     """
     found: dict[str, set[str]] = {}
     for path in sorted(root.rglob("*.py")):
@@ -6955,11 +6676,11 @@ def _client_construction_sites(root: Path, names: tuple[str, ...]) -> dict[str, 
 def test_every_arr_client_is_built_with_the_same_arguments() -> None:
     """The scan, the reap gateway and Test Connection each build these three ways.
 
-    ``api_path_prefix`` once reached the first two and not the third, so a green connection
-    test vouched for a path the scan does not use. The fix was adding the argument, and
-    ``instances._client`` still carries the note. Nothing binds a fourth site written by
-    someone who never read that note, which is what this is (rule 72, and CLAUDE.md's "write
-    the gate instead" -- a shared constructor would only bind the sites that call it).
+    If ``api_path_prefix`` reached only two of the three, a green connection test would
+    vouch for a path the scan does not actually use. ``instances._client`` carries a note
+    about this. Nothing binds a fourth site written by someone who never read that note,
+    which is what this test does instead: a shared constructor would only bind the sites
+    that call it.
     """
     sites = _client_construction_sites(SRC, _ARR_CLIENTS)
     assert len(sites) == _EXPECTED_ARR_CONSTRUCTIONS, (
@@ -6981,14 +6702,14 @@ def test_every_arr_client_is_built_with_the_same_arguments() -> None:
 
 
 def test_the_arr_construction_walk_reads_every_spelling_the_tree_uses(tmp_path: Path) -> None:
-    """A guard that scans source is bounded by the syntax it parses (rule 147).
+    """A guard that scans source is bounded by the syntax it parses.
 
-    The tree spells these two ways -- one call per line, and one wrapped across five -- and a
-    matcher anchored on the text after the paren reads the first and misses the second. This
-    drives both, plus the form that must NOT be collected under any name set: a same-named
-    method call, ``self.RadarrClient(...)`` being an Attribute rather than a Name. The
-    ``**kwargs`` splat is the one shape that defeats the argument check rather than the walk,
-    so it is collected as passing nothing and the membership assertion is what names it.
+    The tree spells these two ways: one call per line, and one wrapped across five, and a
+    matcher anchored on the text after the paren would read the first and miss the second.
+    This drives both, plus the form that must not be collected under any name set: a
+    same-named method call, ``self.RadarrClient(...)`` being an Attribute rather than a Name.
+    The ``**kwargs`` splat is the one shape that defeats the argument check rather than the
+    walk, so it is collected as passing nothing and the membership assertion is what names it.
 
     The ``TautulliClient`` call is collected by the TLS name set and not by the *arr one, off
     one scratch file read twice. A matcher serving two populations is proven in both.
@@ -7044,10 +6765,10 @@ def test_the_arr_construction_walk_reads_every_spelling_the_tree_uses(tmp_path: 
 #: nothing announces the difference.
 _TLS_CLIENT_ARGS = frozenset({"safety", "verify"})
 
-#: Every class in ``clients/`` that is CONSTRUCTED against an address the operator stored.
+#: Every class in ``clients/`` that is constructed against an address the operator stored.
 #: This list is the walk's real bound and no count can cover it, since a class the matcher
-#: never names contributes zero sites and the number below never moves (rule 145). So the
-#: four classes that also declare ``verify`` are excluded in writing rather than by omission:
+#: never names contributes zero sites and the number below never moves. So the four classes
+#: that also declare ``verify`` are excluded in writing rather than by omission:
 #:
 #: * ``PlexTvClient`` reaches plex.tv, an address nobody configured, and declares no
 #:   ``verify`` at all.
@@ -7067,33 +6788,29 @@ _TLS_CLIENTS = (
 )
 
 #: Reconciled by hand against the tree, so a site that leaves the walk is noticed rather than
-#: silently dropping out of the assertion (rule 145). **Twenty-one**: six ``PlexClient``, five
+#: silently dropping out of the assertion. Twenty-one: six ``PlexClient``, five
 #: ``TautulliClient``, three ``SeerrClient``, one ``_ProbeClient``, and the six ``*arr`` the
-#: gate above counts separately. The six Plex ones are W3b-8's population, by AST at this tip.
+#: gate above counts separately.
 _EXPECTED_TLS_CONSTRUCTIONS = 21
 
 
 def test_every_client_carries_the_operators_own_tls_setting() -> None:
-    """W3b-8's six ``PlexClient`` constructions, and the fifteen siblings beside them.
+    """Every ``PlexClient`` construction, and every sibling built against a stored address.
 
-    The row proposed folding the six into one helper. Measured, that nets about six lines
-    and binds only the callers that adopt it, which is the reasoning
-    ``test_every_arr_client_is_built_with_the_same_arguments`` already wrote down one gate up.
-    So the row is killed and its obligation lands here instead, widened to every client built
-    against a stored address (rule 72). The *arr gate stays separate because it requires a
-    third argument these do not have.
+    Every client built against an address the operator stored gets the same treatment,
+    widened from the *arr-specific gate above: the *arr gate stays separate because it
+    requires a third argument these do not have.
 
-    **Two spellings are out of reach rather than covered** (rule 147): the walk matches an
-    ``ast.Name``, so ``some_module.PlexClient(...)`` and ``from … import PlexClient as PC``
-    are invisible to it. Neither is in the tree, checked by AST across ``src/`` at this tip,
-    and the count above cannot see one arriving because a site the walk never collected is
-    missing from both halves. Reading the whole call is what the shared walk already does;
-    resolving a local alias per file is what ``_pending_pin_construction_sites`` does already.
+    Two spellings are out of reach rather than covered: the walk matches an ``ast.Name``, so
+    ``some_module.PlexClient(...)`` and ``from … import PlexClient as PC`` are invisible to
+    it. Neither is in the tree today, and the count above cannot see one arriving because a
+    site the walk never collected is missing from both halves. Reading the whole call is
+    what the shared walk already does; resolving a local alias per file is what
+    ``_pending_pin_construction_sites`` does already.
 
-    **The ceiling on the check itself**: it reads that ``verify`` was PASSED, not what was
-    passed. ``verify=True`` written by hand would satisfy it and mean the opposite. All 21
-    sites pass a stored value today (``server.verify_tls``, ``row.verify_tls``, ``r
-    .verify_tls``, ``plex_verify``, ``verify``), and a literal there is a code review's job.
+    The ceiling on the check itself: it reads that ``verify`` was passed, not what was
+    passed. ``verify=True`` written by hand would satisfy it and mean the opposite. Every
+    site passes a stored value today, and a literal there is a code review's job.
     """
     sites = _client_construction_sites(SRC, _TLS_CLIENTS)
     assert len(sites) == _EXPECTED_TLS_CONSTRUCTIONS, (
@@ -7119,22 +6836,20 @@ def test_every_client_carries_the_operators_own_tls_setting() -> None:
 
 #: The one place a pending plex.tv PIN is written, ``plex_link.start_pin``.
 #:
-#: Two flows wrote their own before W3b-6 merged them, and the merge buys exactly one
-#: thing: a third flow cannot arrive without the expiry sweep and without a ``purpose``.
-#: Both matter. The sweep is the only thing bounding the table, and ``purpose`` is the
-#: fence between an open sign-in route and an admin-only link route, so a row created
+#: Writing only through ``start_pin`` guarantees two things a hand-written row would skip:
+#: the expiry sweep, which is the only thing bounding the table, and a ``purpose``, which is
+#: the fence between an open sign-in route and an admin-only link route, so a row created
 #: without one is a row either poller might spend. A docstring saying "go through
-#: ``start_pin``" binds nobody who has not read it, which is what this counts instead
-#: (rule 72, and CLAUDE.md's "write the gate instead").
+#: ``start_pin``" binds nobody who has not read it, which is what this counts instead.
 #:
-#: **Spellings the walk reads** (rule 147, written down before shipping the matcher, and
-#: each one driven in ``test_the_pending_pin_walk_reads_every_spelling``): the bare name;
-#: the ``models.PendingPlexLogin(...)`` attribute form; a local alias, because
+#: Spellings the walk reads, each one driven in
+#: ``test_the_pending_pin_walk_reads_every_spelling``: the bare name; the
+#: ``models.PendingPlexLogin(...)`` attribute form; a local alias, because
 #: ``from … import X as Y`` is live idiom here and not a hypothetical
 #: (``services/list_rules.py`` imports ``Policy as PolicyModel``); and the Core
 #: ``insert(PendingPlexLogin)``, which is a write with no construction in it at all.
-#: **What it cannot read**: a name reached through ``getattr``. Nothing in ``src/``
-#: addresses a model that way, and a walk that tried would be matching strings.
+#: What it cannot read: a name reached through ``getattr``. Nothing in ``src/`` addresses a
+#: model that way, and a walk that tried would be matching strings.
 _PENDING_PIN_CONSTRUCTION_SITE = "src/reaper/services/plex_link.py"
 
 
@@ -7151,10 +6866,10 @@ def _pending_pin_construction_sites(root: Path) -> set[str]:
     """Every write of a ``PendingPlexLogin`` row under ``src/``, by address.
 
     Resolves the model's local names per file from that file's own ``ImportFrom`` nodes,
-    rather than matching the class's own spelling: anchoring on the spelling would read
-    the site that already complies and go blind to an aliased one, which is the form a
-    second site is most likely to arrive in (rule 147). The constant above lists every
-    spelling this accepts and the one it does not.
+    rather than matching the class's own spelling: anchoring on the spelling would read the
+    site that already complies and go blind to an aliased one, which is the form a second
+    site is most likely to arrive in. The constant above lists every spelling this accepts
+    and the one it does not.
     """
     found: set[str] = set()
     for path in sorted(root.rglob("*.py")):
@@ -7196,14 +6911,14 @@ def test_a_pending_plex_pin_is_written_in_exactly_one_place() -> None:
 
 
 def test_the_pending_pin_ttl_outlives_the_browsers_poll() -> None:
-    """``PIN_TTL`` is a producer bound whose consumer is in the other language (rule 131).
+    """``PIN_TTL`` is a producer bound whose consumer is in the other language.
 
     The row `start_pin` writes has to outlive the window the browser polls for, or it
     expires under an operator who is still on plex.tv and the sign-in fails for a reason
-    nothing reports. The two numbers are declared 5 minutes apart in two languages and
-    nothing but this reads both, which is why `PIN_TTL`'s comment used to cite
-    ``PlexTvClient.PIN_TIMEOUT`` instead: same 5 minutes, but it governs ``wait_for_pin``,
-    whose only caller is the CLI ``link``, and that path writes no pending row.
+    nothing reports. The two numbers are declared in two separate languages, and nothing but
+    this test reads both. ``PlexTvClient.PIN_TIMEOUT`` is a different bound: it governs
+    ``wait_for_pin``, whose only caller is the CLI ``link``, and that path writes no pending
+    row.
     """
     source = (REPO / "frontend" / "src" / "components" / "PlexPin.tsx").read_text()
     match = re.search(r"^const DEADLINE_MS = (.+);$", source, re.MULTILINE)
@@ -7224,12 +6939,12 @@ def test_the_pending_pin_ttl_outlives_the_browsers_poll() -> None:
 
 
 def test_the_pending_pin_walk_reads_every_spelling(tmp_path: Path) -> None:
-    """Rule 147: proven against the forms the tree does NOT use today, since those are
-    the ones a second site arrives in, and against the reads it must not collect.
+    """Proven against the forms the tree does not use today, since those are the ones a
+    second site arrives in, and against the reads it must not collect.
 
-    The aliased form is the one that matters. A first draft of this walk matched the
-    class's own spelling, and `from reaper.db.models import PendingPlexLogin as Pending`
-    walked straight past it while the gate stayed green.
+    The aliased form is the one that matters: matching only the class's own spelling would
+    let `from reaper.db.models import PendingPlexLogin as Pending` walk straight past a
+    write while the gate stayed green.
     """
     scratch = tmp_path / "src" / "reaper"
     scratch.mkdir(parents=True)
@@ -7258,7 +6973,7 @@ def test_the_pending_pin_walk_reads_every_spelling(tmp_path: Path) -> None:
         "    session.add(Pending(pin_id=4, purpose='login'))\n",
         encoding="utf-8",
     )
-    # A local named `Pending` that is NOT this model: the alias set is per file, so the
+    # A local named `Pending` that is not this model: the alias set is per file, so the
     # name is only privileged in the file that imported the model under it.
     (scratch / "other.py").write_text(
         "from somewhere.other import Pending\ndef unrelated():\n    return Pending(whatever=1)\n",
@@ -7293,22 +7008,22 @@ _LANE_ARGUMENTS = frozenset(
 _LANES = frozenset({"movie", "tv"})
 
 #: Reconciled by hand against the tree, so a call that leaves the walk is noticed rather than
-#: dropping out of the assertions below (rule 145). Two: the movie loop and the season loop,
-#: both in ``services/snapshot.py``.
+#: dropping out of the assertions below. Two: the movie loop and the season loop, both in
+#: ``services/snapshot.py``.
 _EXPECTED_JUDGE_ITEM_CALLS = 2
 
 
 def _judge_item_lane_arguments(root: Path) -> dict[str, dict[str, str]]:
     """Every ``_judge_item(...)`` call under ``src/``, and the lane locals it passes.
 
-    Reads the call node's keywords rather than the text after the paren: the two sites wrap
-    across 67 and 52 lines, so a line-oriented matcher reads one keyword per attempt
-    (rule 147). A bare ``_judge_item(...)`` and a qualified ``snapshot._judge_item(...)`` are
-    both collected, since the count below is what notices a site leaving the walk and a
+    Reads the call node's keywords rather than the text after the paren, since both sites
+    wrap across many lines, so a line-oriented matcher would read one keyword per attempt. A
+    bare ``_judge_item(...)`` and a qualified ``snapshot._judge_item(...)`` are both
+    collected, since the count below is what notices a site leaving the walk, and a
     qualified call would otherwise take a third site out of both halves.
 
     Only a bare ``Name`` whose first segment is a lane counts as a lane local, so an
-    attribute, a call result or an unprefixed name is absent from the mapping and the
+    attribute, a call result, or an unprefixed name is absent from the mapping and the
     keyword-set assertion below is what names it. A ``**kwargs`` splat passes nothing.
     """
     found: dict[str, dict[str, str]] = {}
@@ -7335,16 +7050,14 @@ def _judge_item_lane_arguments(root: Path) -> dict[str, dict[str, str]]:
 def test_a_judged_item_is_never_handed_the_other_lanes_policy() -> None:
     """The movie loop cannot reach a TV local, and the season loop cannot reach a movie one.
 
-    Measured, on this tree: cross ``custom_condemn``, ``keeps`` and ``policy`` at the movie call
-    site and this is the only test in the whole suite that fails. So the keep rules a movie is
-    judged against, and the threshold it is condemned at, can both come from the TV policy with
-    nothing else saying a word (rule 118). ``gates``, ``signals`` and ``window_days`` are the
-    three ``test_scan_pipeline.py`` already catches.
+    Crossing ``custom_condemn``, ``keeps``, or ``policy`` at the movie call site is caught by
+    nothing else in the suite: the keep rules a movie is judged against, and the threshold it
+    is condemned at, could both come from the TV policy with nothing else saying a word.
+    ``gates``, ``signals``, and ``window_days`` are the three ``test_scan_pipeline.py``
+    already catches.
 
-    This is the gate rather than a lane carrier, per CLAUDE.md's "write the gate instead": a
-    carrier binds the sites that adopt it, and ``services/snapshot.py`` is the deletion path.
-    ``docs/history/SIMPLIFICATION_PLAN.md``'s wave 3 parameter-object paragraph carries the
-    measurement.
+    This is the gate rather than a lane carrier: a carrier binds the sites that adopt it, and
+    ``services/snapshot.py`` is the deletion path.
     """
     sites = _judge_item_lane_arguments(SRC)
     assert len(sites) == _EXPECTED_JUDGE_ITEM_CALLS, (
@@ -7377,7 +7090,7 @@ def test_a_judged_item_is_never_handed_the_other_lanes_policy() -> None:
 
 
 def test_the_lane_walk_reads_every_spelling_the_tree_uses(tmp_path: Path) -> None:
-    """A guard that scans source is bounded by the syntax it parses (rule 147).
+    """A guard that scans source is bounded by the syntax it parses.
 
     Drives the wrapped form the tree actually spells, the flat one it does not, and the two
     qualified spellings a third site could arrive in. Plus the four shapes that must not be
@@ -7452,15 +7165,15 @@ def test_the_lane_walk_reads_every_spelling_the_tree_uses(tmp_path: Path) -> Non
 #: another function is read by the same walk.
 _DISPLAY_PACK_SOURCES: dict[str, type] = {"item": RawItem, "judgment": SeasonJudgment}
 
-#: The fields one pack leaves at the ``None`` default, and why. Hand-written, and the first
-#: draft of this gate derived it instead: a pack was allowed to skip any field its source
-#: record did not declare BY NAME, which read the movie pack's missing ``ratings_json`` as
-#: permitted, because the movie lane builds that value out of ``item.plex_ratings`` and the
-#: dataset rather than copying a same-named field. Deleting it was green while deleting the
-#: season's went red, and it blanks the ratings row for the whole movie lane
-#: (``api/review.py``'s ``_ratings_out``). A derivation that reads a NAME cannot see a value
-#: assembled from other fields, so the classification is written out (rule 103), and adding a
-#: member here is an author saying in the diff why one lane cannot answer.
+#: The fields one pack leaves at the ``None`` default, and why. Hand-written rather than
+#: derived: a derivation that allows a pack to skip any field its source record does not
+#: declare by name would read the movie pack's missing ``ratings_json`` as permitted, because
+#: the movie lane builds that value out of ``item.plex_ratings`` and the dataset rather than
+#: copying a same-named field. Deleting it would go undetected while deleting the season's
+#: would not, and it blanks the ratings row for the whole movie lane (``api/review.py``'s
+#: ``_ratings_out``). A derivation that reads a name cannot see a value assembled from other
+#: fields, so the classification is written out here, and adding a member is an author saying
+#: in the diff why one lane cannot answer.
 _DISPLAY_LANE_EXCEPTIONS: dict[str, str] = {
     "group_key": "a movie is not part of a show, so it joins no group",
     "group_title": "same, and the queue draws a movie under its own title",
@@ -7468,9 +7181,9 @@ _DISPLAY_LANE_EXCEPTIONS: dict[str, str] = {
     "video_resolution": "a season spans episodes, so it has no single resolution",
 }
 
-#: Reconciled by hand against the tree (rule 145). Three ``Display(...)`` calls under
-#: ``src/``: the two packs, plus the ``_NO_DISPLAY`` singleton, which sets nothing and is the
-#: "no display fields" default.
+#: Reconciled by hand against the tree. Three ``Display(...)`` calls under ``src/``: the two
+#: packs, plus the ``_NO_DISPLAY`` singleton, which sets nothing and is the "no display
+#: fields" default.
 _EXPECTED_DISPLAY_CALLS = 3
 
 
@@ -7478,20 +7191,19 @@ def _display_pack_sites(root: Path) -> dict[str, tuple[frozenset[str], frozenset
     """Every ``Display(...)`` call under ``src/``: the fields it sets, and the source records
     its values read off.
 
-    Reads the call node rather than the text after the paren, because the two packs wrap
-    across 24 and 16 lines (rule 147). The source base comes from every ``Name`` anywhere
-    inside a keyword's value, not just a bare ``item.year``: the movie pack reaches ``item``
-    through ``item.imdb_id or item.plex_imdb_id`` and through the arguments of
-    ``build_ratings_json(...)``, and a base-of-the-attribute matcher would read neither.
-    A keyword whose value names no source at all (``tvdb_id=None``) contributes no base and
-    is still counted as set: an explicit ``None`` is an author saying the field does not
-    apply.
+    Reads the call node rather than the text after the paren, because both packs wrap across
+    many lines. The source base comes from every ``Name`` anywhere inside a keyword's value,
+    not just a bare ``item.year``: the movie pack reaches ``item`` through
+    ``item.imdb_id or item.plex_imdb_id`` and through the arguments of
+    ``build_ratings_json(...)``, and a base-of-the-attribute matcher would read neither. A
+    keyword whose value names no source at all (``tvdb_id=None``) contributes no base and is
+    still counted as set: an explicit ``None`` is an author saying the field does not apply.
 
-    **Two spellings this cannot see**, written down rather than guessed at (rule 147): a pack
-    built by ``dataclasses.replace(_NO_DISPLAY, …)``, and one calling ``Display`` through an
-    aliased import. Neither is in the tree, and the count below cannot cover either, because a
-    site that never entered the walk was never in the number. A positional argument and a
-    ``**splat`` ARE covered, both by leaving the field out of ``keywords``.
+    Two spellings this cannot see, written down rather than guessed at: a pack built by
+    ``dataclasses.replace(_NO_DISPLAY, …)``, and one calling ``Display`` through an aliased
+    import. Neither is in the tree, and the count below cannot cover either, because a site
+    that never entered the walk was never in the number. A positional argument and a
+    ``**splat`` are covered, both by leaving the field out of ``keywords``.
     """
     found: dict[str, tuple[frozenset[str], frozenset[str]]] = {}
     for path in sorted(root.rglob("*.py")):
@@ -7518,21 +7230,15 @@ def _display_pack_sites(root: Path) -> dict[str, tuple[frozenset[str], frozenset
 def test_every_display_field_the_source_carries_reaches_its_lanes_pack() -> None:
     """A field added to ``Display`` and packed on one lane only is silent today.
 
-    All fifteen default to ``None``, so an omission raises nothing and mypy sees nothing: the
-    movie pack and the season pack are two hand-written mirrors of one dataclass (rule 103).
-    Four of the fifteen do more than draw a queue row -- ``tmdb_id``, ``imdb_id`` and
-    ``tvdb_id`` are what ``services/fairness.py`` joins a request to its candidate on, and
-    ``title_slug`` builds the Sonarr link -- so a sixteenth of that kind, forgotten on one
-    lane, drops that join for that lane rather than blanking a column (rules 29/106).
+    Every field defaults to ``None``, so an omission raises nothing and mypy sees nothing:
+    the movie pack and the season pack are two hand-written mirrors of one dataclass. Some
+    fields do more than draw a queue row: ``tmdb_id``, ``imdb_id``, and ``tvdb_id`` are what
+    ``services/fairness.py`` joins a request to its candidate on, and ``title_slug`` builds
+    the Sonarr link, so a field of that kind, forgotten on one lane, drops that join for that
+    lane rather than just blanking a column.
 
-    Every field is set at both packs unless ``_DISPLAY_LANE_EXCEPTIONS`` names it, which is
-    four today. That list is hand-written on purpose: see the constant for the derivation
-    that replaced it and the movie-lane omission it read as permitted.
-
-    ``docs/history/SIMPLIFICATION_PLAN.md``'s W5-2 row carries the measurement, including why the
-    collapse this replaces was killed: ``_judge_item`` already takes ``Display`` whole, so
-    merging the packs removes no parameter and no line. What it would have removed is this
-    hazard, and the gate removes it from ``tests/``.
+    Every field is set at both packs unless ``_DISPLAY_LANE_EXCEPTIONS`` names it. That list
+    is hand-written on purpose: see the constant for why a derivation cannot replace it.
     """
     declared = frozenset(f.name for f in dataclasses.fields(Display))
     stale = sorted(set(_DISPLAY_LANE_EXCEPTIONS) - declared)
@@ -7592,15 +7298,14 @@ def test_every_display_field_the_source_carries_reaches_its_lanes_pack() -> None
 #: already compared against the app's token by `test_the_site_palette_matches_the_app_palette`,
 #: and a second check of the same pair would fail twice for one edit.
 _ACCENT_DEFAULT_COPIES: dict[str, int] = {
-    # The Python-side refusal sentence moved into the catalog module (phase 8a):
-    # `refusal.MESSAGES["error.settings.accent_color_invalid"]`, no longer inline in the route.
+    # The Python-side refusal sentence lives in the catalog module:
+    # `refusal.MESSAGES["error.settings.accent_color_invalid"]`, not inline in the route.
     "src/reaper/refusal.py": 1,
     "frontend/src/accent.ts": 1,
-    # One client-side validation message (general.accent.error) has named the color since Stage
-    # 4; the savebar's own copy of it (general.savebar.accentBlocked) was folded into that same
-    # key in the i18n catalog consolidation, so it no longer adds a second count. Phase 8b's
-    # error.* catalog added the other: the SAME server refusal above
-    # (`error.settings.accent_color_invalid`) is now also reachable from ui.json, so a client
+    # One client-side validation message (general.accent.error) names the color; the
+    # savebar's own copy of it (general.savebar.accentBlocked) reads the same catalog key, so
+    # it does not add a second count. The other copy is the same server refusal above
+    # (`error.settings.accent_color_invalid`), also reachable from ui.json, so a client
     # bypassing the local check (an API client, a race) still names the color rather than
     # reading a raw code.
     "frontend/src/locales/en/ui.json": 2,
@@ -7612,20 +7317,19 @@ def test_the_accent_default_and_its_hex_shape_agree_across_both_languages() -> N
     """The accent is declared once in Python and mirrored eight times, twice of that in
     TypeScript and twice more inside a sentence an operator reads.
 
-    Rule 144's case, and the reason it is a gate rather than a comment: nothing here can be
-    generated. A stylesheet needs a literal so the page paints before any script runs,
-    `index.html` pre-paints from the same literal for the same reason, and the two refusal
-    sentences are operator copy that has to name a real color. So every copy is hand-written,
-    and the failure is quiet in the worst direction -- the app refuses a color while telling
-    the operator to type a different one, or Reset returns to a shade the backend does not
-    store.
+    Nothing here can be generated. A stylesheet needs a literal so the page paints before
+    any script runs, `index.html` pre-paints from the same literal for the same reason, and
+    the two refusal sentences are operator copy that has to name a real color. So every copy
+    is hand-written, and the failure is quiet in the worst direction: the app refuses a
+    color while telling the operator to type a different one, or Reset returns to a shade
+    the backend does not store.
 
-    The hex SHAPE is the same duplication one layer down: `api/settings.py` refuses on one
+    The hex shape is the same duplication one layer down: `api/settings.py` refuses on one
     regex and `accent.ts` disables the save on another, so a widening on either side alone is
     a value one language accepts and the other rejects.
 
     The failure message names each file, because a comment asking the next author to remember
-    the others does nothing (rule 144).
+    the others does nothing.
     """
     expected = app_settings.DEFAULT_ACCENT_COLOR
     assert re.fullmatch(r"#[0-9a-f]{6}", expected), (
@@ -7668,7 +7372,7 @@ def test_the_accent_default_and_its_hex_shape_agree_across_both_languages() -> N
     )
 
 
-# --- the mutation zones' function lists (#598) ---------------------------------------
+# --- the mutation zones' function lists ------------------------------------------------
 
 
 def _mutation_scope() -> Any:
@@ -7691,11 +7395,10 @@ def _mutation_scope() -> Any:
 
 
 def test_every_mutation_zone_accounts_for_its_whole_module() -> None:
-    """A zone's ``functions=`` is a hand-written mirror of its module's callables (rule 103).
+    """A zone's ``functions=`` is a hand-written mirror of its module's callables.
 
-    The `engine-gates` zone declared 12 of 22 and reported on those, so a run read as a clean
-    sweep of the gate layer while a fifth of its mutable surface was never asked about. The
-    undeclared eight held three survivors, one live on a default policy (#598).
+    A zone that declares only some of its module's callables still reports as a clean sweep
+    of that layer, while the undeclared functions are never asked about at all.
 
     This lives here rather than only in the script because the script is not in CI, so a zone
     that has drifted is otherwise discovered by whoever next runs it. A callable belongs in
@@ -7733,7 +7436,7 @@ def test_every_mutation_omission_carries_a_reason() -> None:
             assert group.functions, f"the {name} zone has an Omission naming no functions"
 
 
-# --- a rule file's paths: against CLAUDE.md's Governs cell (#685) ---------------------
+# --- a rule file's paths: against CLAUDE.md's Governs cell -----------------------------
 
 
 def _expand_braces(pattern: str) -> list[str]:
@@ -7800,18 +7503,13 @@ def test_each_rule_files_paths_and_its_governs_cell_describe_the_same_files() ->
     disagree the prose says a file is covered while the loader skips it, and the session edits
     that file having read none of the rules scoped to it.
 
-    Twice already, both found by hand rather than by a gate: `auth.md` scoped rules to
-    `api/settings.py` and the watch-evidence gate then moved to `api/plex.py`; and
-    `api/auth.py`, which held every admin-password helper, was never under
-    `src/reaper/auth/**/*.py` at all (#685).
-
-    **The comparison is the set of repository files each side matches**, not the glob strings,
-    which are deliberately not written the same way: the cell abbreviates, and the review-queue
-    row names components rather than paths. Two rules resolve a cell fragment, and they are the
-    two the five rows actually use -- a fragment is tried as written from the repo root, and
-    then as ``**/<fragment>*``, which is what makes `secrets.py` and `ReviewQueue` resolve. A
-    fragment that resolves to nothing fails rather than being skipped, since a fragment nobody
-    can resolve is exactly the drift this reads for (rule 147).
+    The comparison is the set of repository files each side matches, not the glob strings,
+    which are deliberately not written the same way: the cell abbreviates, and the
+    review-queue row names components rather than paths. Two rules resolve a cell fragment,
+    and they are the two the five rows actually use: a fragment is tried as written from the
+    repo root, and then as ``**/<fragment>*``, which is what makes `secrets.py` and
+    `ReviewQueue` resolve. A fragment that resolves to nothing fails rather than being
+    skipped, since a fragment nobody can resolve is exactly the drift this reads for.
     """
     population = [str(path.relative_to(REPO)) for path, _ in _repo_text_files()]
     complaints: list[str] = []
@@ -7855,32 +7553,32 @@ def test_each_rule_files_paths_and_its_governs_cell_describe_the_same_files() ->
 
 
 # --------------------------------------------------------------------------------------
-# A destructive revision cannot forget to ask for its snapshot (#566)
+# A destructive revision cannot forget to ask for its snapshot
 # --------------------------------------------------------------------------------------
 
 #: The Alembic operations that make a revision unrecoverable by its own ``downgrade()``, so a
 #: revision performing one must carry ``needs_snapshot = True``
 #: (:data:`reaper.db.schema_gate.SNAPSHOT_ATTR`).
 #:
-#: **What this matcher accepts, written down before it shipped (rule 147).** It reads the AST of
-#: each revision and collects the attribute name of every call inside ``upgrade()``, so it sees
-#: ``op.drop_column(...)``, ``batch_op.drop_column(...)``, a call nested in an ``if``, and one
-#: reached through any receiver name at all. It does not see a drop spelled as raw
+#: What this matcher accepts. It reads the AST of each revision and collects the attribute
+#: name of every call inside ``upgrade()``, so it sees ``op.drop_column(...)``,
+#: ``batch_op.drop_column(...)``, a call nested in an ``if``, and one reached through any
+#: receiver name at all. It does not see a drop spelled as raw
 #: ``op.execute(sa.text("ALTER TABLE ... DROP COLUMN ..."))``, which nothing in the tree does
 #: and which the population count below is what would surface.
 #:
-#: **Two operations are deliberately absent.** ``batch_alter_table`` is the context manager, not
-#: the change: 15 shipped revisions open one to ``add_column`` alone, so matching it would flag
-#: every additive revision and produce exactly the growing exclusion list CLAUDE.md warns about.
-#: ``drop_index`` and ``drop_constraint`` lose no rows and are recreated by their own
+#: Two operations are deliberately absent. ``batch_alter_table`` is the context manager, not
+#: the change: many shipped revisions open one to ``add_column`` alone, so matching it would
+#: flag every additive revision and produce exactly the growing exclusion list CLAUDE.md warns
+#: about. ``drop_index`` and ``drop_constraint`` lose no rows and are recreated by their own
 #: ``downgrade()``. The collation hazard a rebuild carries is held by a behavioral test rather
 #: than by this list: ``test_migrations.TestAListNameIsUniqueWithoutRegardToCase`` migrates to
 #: head and asserts the constraint still refuses a case collision, which catches any revision
 #: that drops it, including one spelled in a form this matcher cannot read.
 _UNRECOVERABLE_OPS = frozenset({"alter_column", "drop_column", "drop_table"})
 
-#: The revision files walked, pinned for rule 145's reason: a flag-shaped assertion cannot tell
-#: a revision that complies from one that dropped out of the walk. Bump the first with any new
+#: The revision files walked, pinned because a flag-shaped assertion alone cannot tell a
+#: revision that complies from one that dropped out of the walk. Bump the first with any new
 #: revision, the second only with one performing an operation above.
 _EXPECTED_REVISION_FILES = 30
 _EXPECTED_UNRECOVERABLE_REVISIONS = 5
@@ -7928,13 +7626,10 @@ def test_a_revision_that_cannot_be_undone_asks_for_a_snapshot() -> None:
     """The marker is the whole mechanism, and prose cannot bind the author who never read it.
 
     ``preflight`` copies the database aside before ``alembic upgrade head`` only for a pending
-    revision carrying ``needs_snapshot = True`` (#566). Nothing about writing a ``drop_column``
+    revision carrying ``needs_snapshot = True``. Nothing about writing a ``drop_column``
     suggests the attribute exists, and a revision that omits it produces a green, silent,
     unprotected upgrade: "no snapshot needed" is exactly what an ordinary additive boot looks
-    like, so no other test can tell the two apart (rule 38/117).
-
-    So the obligation is a gate rather than a sentence in rule 148, per CLAUDE.md: write the
-    gate instead, when the violation is greppable.
+    like, so no other test can tell the two apart.
     """
     missing = [
         f"  {name} calls {', '.join(sorted(ops))} and has no `needs_snapshot = True`"
@@ -7951,7 +7646,7 @@ def test_a_revision_that_cannot_be_undone_asks_for_a_snapshot() -> None:
 
 
 def test_the_revision_walk_still_sees_every_revision() -> None:
-    """Rule 145: the gate above passes vacuously on a walk that collected nothing.
+    """The gate above would pass vacuously on a walk that collected nothing.
 
     Both populations are pinned, because they answer different questions. The first says the
     walk still reaches ``alembic/versions/``; the second says the matcher still selects the
@@ -7972,26 +7667,26 @@ def test_the_revision_walk_still_sees_every_revision() -> None:
     )
 
 
-# --- phase 8a: every coded refusal has a raiser, and no route composes English on the spot ---
+# --- every coded refusal has a raiser, and no route composes English on the spot ---
 
-#: Every shape phase 8a's conversion left in the tree that carries an `"error.*"` code as a
-#: literal: `refuse(status, code, ...)` and `RefusalHTTPException(status, code, ...)` (the API
-#: layer's own raise), `Refusal(code, ...)` (the engine/service layer's -- `error.policy.*`'s
-#: 37 sites among them), `PydanticCustomError(code, ...)` (the three wire-schema validators),
-#: `Reason(code, ...)` (`services.leaving_soon`'s stored skip reasons, which ride the engine's
-#: typed-reason container rather than an HTTP-shaped exception), and a `super().__init__(code,
-#: ...)` inside a `Refusal` subclass's own `__init__` (the three `LeavingSoon*Error` classes,
-#: which take no constructor argument at their call site). Phase 8a's second wave turned every
-#: remaining service exception that used to compose its own English (`LoginError`,
-#: `PasswordError`, `PlexLinkError` and its retryable sibling, `RestoreError`, the `Instance*`
-#: family, `ListConfigError`, `PlanError`, `ExecutionError`, `ScanConfigError`) into a `Refusal`
-#: subclass too, each keeping `code` as its own raise-site argument exactly like `Refusal`
-#: itself -- so they read the same way and need no separate shape here. Two shapes hold no call
-#: argument at all and are read separately below: a `code=` keyword on any call
-#: (`require_admin_password(..., code=...)`), and a bare `return code` / `return code, params`
-#: (`api.middleware.api_key_refusal`, whose two codes never reach a call argument). Every site
-#: is filtered to a string constant starting with `"error."`, which is the whole catalog's
-#: namespace and nothing else in the tree spells that way.
+#: Every shape in the tree that carries an `"error.*"` code as a literal: `refuse(status,
+#: code, ...)` and `RefusalHTTPException(status, code, ...)` (the API layer's own raise),
+#: `Refusal(code, ...)` (the engine/service layer's), `PydanticCustomError(code, ...)` (the
+#: three wire-schema validators), `Reason(code, ...)` (`services.leaving_soon`'s stored skip
+#: reasons, which ride the engine's typed-reason container rather than an HTTP-shaped
+#: exception), and a `super().__init__(code, ...)` inside a `Refusal` subclass's own
+#: `__init__` (the three `LeavingSoon*Error` classes, which take no constructor argument at
+#: their call site). Every other service exception that composes a coded refusal
+#: (`LoginError`, `PasswordError`, `PlexLinkError` and its retryable sibling, `RestoreError`,
+#: the `Instance*` family, `ListConfigError`, `PlanError`, `ExecutionError`,
+#: `ScanConfigError`) is a `Refusal` subclass too, each keeping `code` as its own raise-site
+#: argument exactly like `Refusal` itself, so they read the same way and need no separate
+#: shape here. Two shapes hold no call argument at all and are read separately below: a
+#: `code=` keyword on any call (`require_admin_password(..., code=...)`), and a bare
+#: `return code` / `return code, params` (`api.middleware.api_key_refusal`, whose two codes
+#: never reach a call argument). Every site is filtered to a string constant starting with
+#: `"error."`, which is the whole catalog's namespace and nothing else in the tree spells
+#: that way.
 _CODE_CALL_INDEX: dict[str, int] = {
     "refuse": 1,
     "Refusal": 0,
@@ -7999,10 +7694,10 @@ _CODE_CALL_INDEX: dict[str, int] = {
     "RefusalHTTPException": 1,
     "_reject": 2,
     "Reason": 0,
-    # Phase 8a's second wave: every service exception that used to compose its own English
-    # is now a `Refusal` subclass, and each keeps `code` as its own first positional arg
-    # (some through a thin per-subclass `__init__` that only fixes the default `status`),
-    # so every one of these reads exactly like `Refusal` itself at its raise site.
+    # Every service exception that composes a coded refusal is a `Refusal` subclass, and
+    # each keeps `code` as its own first positional arg (some through a thin per-subclass
+    # `__init__` that only fixes the default `status`), so every one of these reads exactly
+    # like `Refusal` itself at its raise site.
     "LoginError": 0,
     "PasswordError": 0,
     "PlexLinkError": 0,
@@ -8015,11 +7710,11 @@ _CODE_CALL_INDEX: dict[str, int] = {
     "PlanError": 0,
     "ExecutionError": 0,
     "ScanConfigError": 0,
-    # A later wave, same shape, one layer further from the operator: the client layer's own
-    # exceptions (`clients/base.py`, `clients/plex.py`) carry a code instead of composing a
-    # sentence, so their raise sites read the same way too. `IntegrationError`'s code is its
-    # SECOND positional arg (`service` is first); `PlexError` and `SafetyViolationError` have
-    # no service (Plex is singular; the transport guard is not a remote service at all), so
+    # Same shape, one layer further from the operator: the client layer's own exceptions
+    # (`clients/base.py`, `clients/plex.py`) carry a code instead of composing a sentence, so
+    # their raise sites read the same way too. `IntegrationError`'s code is its second
+    # positional arg (`service` is first); `PlexError` and `SafetyViolationError` have no
+    # service (Plex is singular; the transport guard is not a remote service at all), so
     # `code` is first, like `Refusal` itself.
     "IntegrationError": 1,
     "PlexError": 0,
@@ -8031,10 +7726,10 @@ def _refusal_code_sites() -> dict[str, list[str]]:
     """Every `"error.*"` code raised anywhere under `src/reaper`, mapped to its sites.
 
     See `_CODE_CALL_INDEX`'s comment for the call shapes; a `code=` keyword and a bare
-    `return` are read directly below since neither is one of those calls. Rule 145: both
-    directions are reconciled against `reaper.refusal.MESSAGES` by hand in the test below, and
-    both populations -- codes and sites -- are pinned so a walk that stopped reading part of
-    the tree cannot pass by agreeing with a catalog measured the same way.
+    `return` are read directly below since neither is one of those calls. Both directions are
+    reconciled against `reaper.refusal.MESSAGES` by hand in the test below, and both
+    populations, codes and sites, are pinned so a walk that stopped reading part of the tree
+    cannot pass by agreeing with a catalog measured the same way.
     """
     sites: dict[str, list[str]] = {}
     for path in sorted(SRC.rglob("*.py")):
@@ -8085,32 +7780,30 @@ def _refusal_code_sites() -> dict[str, list[str]]:
 
 
 _EXPECTED_REFUSAL_CODES = 309
-#: +2 for `config.RuntimeSafety.why_blocked`'s two `Reason(...)` returns, reusing the two
-#: `error.safety.*` codes the executor's own backstop and the execute route already raise
-#: (rule 144) -- no new code, two new sites.
-#: -2 for `update_check._incomplete()`, which builds the one
-#: `error.integration.update_check_incomplete` five callers raise. The code count did not
-#: move, so this is the tree holding fewer sites, not the walk seeing fewer.
+#: Multiple call sites can raise the same code, such as `config.RuntimeSafety.why_blocked`
+#: reusing an `error.safety.*` code the executor's own backstop already raises, or
+#: `update_check._incomplete()` building one `error.integration.update_check_incomplete`
+#: for several callers. So the site count moves independently of the code count.
 _EXPECTED_REFUSAL_SITES = 360
 
 
 def test_every_refusal_code_has_a_raiser_and_a_catalog_entry() -> None:
-    """The two-way agreement rule 145 asks for, modeled on
-    ``test_review_chips.py``'s ``TestTheMatchStatusVocabulary``: every code the engine, a
-    service or a route can raise is a key in ``reaper.refusal.MESSAGES``, and every key in
-    that catalog has somewhere in ``src/reaper`` that actually raises it. A code with no
-    template renders as itself (``Refusal.__str__``'s fallback) rather than failing loudly, so
-    an orphan on either side is silent in production until someone reads the raw response;
-    this is what catches it in review instead.
+    """Every code the engine, a service, or a route can raise is a key in
+    ``reaper.refusal.MESSAGES``, and every key in that catalog has somewhere in
+    ``src/reaper`` that actually raises it.
 
-    **Both populations are pinned** (rule 145): the count of codes AND the count of raising
-    sites, not just the two sets. A walk that quietly stopped reading half the tree would
-    still agree on the SET it found with a catalog built the same way, so the counts are the
-    only thing that can say the walk regressed rather than the catalog having shrunk to match.
+    A code with no template renders as itself (``Refusal.__str__``'s fallback) rather than
+    failing loudly, so an orphan on either side is silent in production until someone reads
+    the raw response. This is what catches it in review instead.
 
-    The catalog side of this -- every code above also being a key under ``ui.json``'s
-    ``error.*`` namespace, which the browser composes -- is
-    ``test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose`` below, phase 8b's.
+    Both populations are pinned: the count of codes and the count of raising sites, not just
+    the two sets. A walk that quietly stopped reading half the tree would still agree on the
+    set it found with a catalog built the same way, so the counts are the only thing that can
+    say the walk regressed rather than the catalog having shrunk to match.
+
+    The catalog side of this, every code above also being a key under ``ui.json``'s
+    ``error.*`` namespace, which the browser composes, is
+    ``test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose`` below.
     """
     sites = _refusal_code_sites()
     total = sum(len(v) for v in sites.values())
@@ -8139,8 +7832,8 @@ def test_every_refusal_code_has_a_raiser_and_a_catalog_entry() -> None:
 
 #: The three codes `frontend/src/api.ts` sets itself, for a body that carried no coded reason
 #: at all (no reply, a reply with no reason, a reply the browser could not parse). Nothing
-#: under `src/reaper` ever raises them -- there is no Python raise site for "the browser
-#: couldn't reach me" -- so they are the one deliberate exception to the two-way equality
+#: under `src/reaper` ever raises them, since there is no Python raise site for "the browser
+#: couldn't reach me", so they are the one deliberate exception to the two-way equality
 #: below, the same shape `NARROWED`/`WIDENED`/`PENDING_PHASE_8B` hold their own deliberate
 #: exceptions in `tests/test_api_type_mirror.py`.
 _TRANSPORT_ONLY_CODES = frozenset(
@@ -8152,7 +7845,7 @@ _TRANSPORT_ONLY_CODES = frozenset(
 )
 
 #: `len(MESSAGES) + len(_TRANSPORT_ONLY_CODES)`, pinned so the population this test collects
-#: cannot silently shrink to match a catalog that lost entries (rule 145).
+#: cannot silently shrink to match a catalog that lost entries.
 _EXPECTED_CATALOG_ERROR_KEYS = 312
 
 
@@ -8163,7 +7856,7 @@ def test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose() -> None
     has a raise site. This proves the other hop: every ``MESSAGES`` code is also a leaf of
     ``ui.json``'s ``error.*`` namespace (which the browser composes via ``why.ts``'s
     ``composeIn("error", ...)``), and every ``error.*`` leaf is one of those codes or a
-    declared transport-only exception -- never an orphan a translator was handed for nothing,
+    declared transport-only exception. Never an orphan a translator was handed for nothing,
     and never a code the browser has no words for.
     """
     catalog_error_keys = {key for key, _ in _ui_catalog_leaves() if key.startswith("error.")}
@@ -8204,7 +7897,7 @@ _PASSWORD_MISMATCH_WRAPPERS: dict[str, str | None] = {
 
 
 def test_a_password_mismatch_states_its_consequence_exactly_once() -> None:
-    """A refused password says what did not happen once, from the wrapper or from itself.
+    """A refused password states its consequence exactly once, from the wrapper or from itself.
 
     Two of the four prompts render inside a lead-in that already carries the consequence
     (``RestoreCard.tsx``'s "The restore didn't start: {message}",
@@ -8213,10 +7906,6 @@ def test_a_password_mismatch_states_its_consequence_exactly_once() -> None:
     (``DeletionToggle.tsx``'s ``setError(describeError(e))``, ``PlexPanel.tsx``'s notice), so
     they carry the tail themselves. ``reaper.refusal.MESSAGES`` carries the tail on all four:
     its readers are API clients and log lines, which never see a wrapper.
-
-    #905 read the two bare-by-design catalog strings as a dropped tail and asked for it back,
-    which would have rendered "The restore didn't start: That password didn't match. Nothing
-    was restored." Pinning both shapes here is what stops the next reader repeating it.
     """
     catalog = dict(_ui_catalog_leaves())
 
@@ -8248,10 +7937,10 @@ _EXPECTED_BARE_HTTPEXCEPTION_SITES = 2
 def _http_exception_detail_sites() -> list[tuple[str, int, ast.expr]]:
     """Every bare ``HTTPException(...)`` call under ``src/reaper/api/``, with its ``detail`` arg.
 
-    ``RefusalHTTPException`` -- a different name -- is exempt by construction: it always
-    formats its detail from ``reaper.refusal.MESSAGES``, which is the whole point of it
-    existing, so this walk is only ever pointed at bare ``HTTPException``, the one spelling a
-    route can still reach for instead of ``api.errors.refuse``.
+    ``RefusalHTTPException``, a different name, is exempt by construction: it always formats
+    its detail from ``reaper.refusal.MESSAGES``, which is the whole point of it existing, so
+    this walk is only ever pointed at bare ``HTTPException``, the one spelling a route can
+    still reach for instead of ``api.errors.refuse``.
     """
     found: list[tuple[str, int, ast.expr]] = []
     for path in sorted((SRC / "api").rglob("*.py")):
@@ -8274,9 +7963,9 @@ def _http_exception_detail_sites() -> list[tuple[str, int, ast.expr]]:
 def _is_composed_on_the_spot(node: ast.expr) -> bool:
     """Whether a ``detail`` argument is prose written at the raise site rather than a coded
     lookup: a string literal, an f-string, or a bare ``str(...)`` call.
-    ``validation_error_items(...)`` -- the one shape a ``detail`` is still allowed to come
-    from -- is none of these; driven against both directions in
-    ``test_the_bare_httpexception_matcher_reads_every_shape_it_claims`` (rule 147).
+    ``validation_error_items(...)``, the one shape a ``detail`` is still allowed to come
+    from, is none of these; driven against both directions in
+    ``test_the_bare_httpexception_matcher_reads_every_shape_it_claims``.
     """
     if isinstance(node, ast.JoinedStr):
         return True
@@ -8290,16 +7979,16 @@ def _is_composed_on_the_spot(node: ast.expr) -> bool:
 
 
 def test_no_route_raises_a_bare_httpexception_with_composed_english() -> None:
-    """Every operator-facing refusal is a catalog code now (phase 8a), never English composed
-    at the raise site. ``api.errors.refuse`` and ``RefusalHTTPException`` are the only doors:
-    this bans the one FastAPI itself still accepts, ``raise HTTPException(status, "some
-    sentence")``, from ever coming back under ``src/reaper/api/``.
+    """Every operator-facing refusal is a catalog code, never English composed at the raise
+    site. ``api.errors.refuse`` and ``RefusalHTTPException`` are the only doors: this bans
+    the one FastAPI itself still accepts, ``raise HTTPException(status, "some sentence")``,
+    from ever coming back under ``src/reaper/api/``.
 
-    Exempt nothing, per the plan this landed under: the two sites this walk still finds
-    (``api.policy._to_body``, ``api.runs.update_profile``) pass
-    ``detail=validation_error_items(...)`` -- a list of per-field dicts, not a sentence --
-    which is the one shape FastAPI's own ``RequestValidationError`` handler answers with too,
-    so it is read here and left alone rather than carved out by name.
+    Exempt nothing: the two sites this walk still finds (``api.policy._to_body``,
+    ``api.runs.update_profile``) pass ``detail=validation_error_items(...)``, a list of
+    per-field dicts, not a sentence, which is the one shape FastAPI's own
+    ``RequestValidationError`` handler answers with too, so it is read here and left alone
+    rather than carved out by name.
     """
     sites = _http_exception_detail_sites()
     assert len(sites) == _EXPECTED_BARE_HTTPEXCEPTION_SITES, (
@@ -8318,8 +8007,8 @@ def test_no_route_raises_a_bare_httpexception_with_composed_english() -> None:
 
 
 def test_the_bare_httpexception_matcher_reads_every_shape_it_claims() -> None:
-    """Rule 147: the ban's own matcher, driven against what it must catch and what it must
-    leave alone, so a future call shape cannot silently fall out of the population it counts.
+    """The ban's own matcher, driven against what it must catch and what it must leave alone,
+    so a future call shape cannot silently fall out of the population it counts.
     """
     caught = (
         'raise HTTPException(422, "Pick one.")',

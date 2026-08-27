@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The reap plan. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* ---- reap plan ----------------------------------------------------------- */
+ * The reap plan. See `../index.css` for how this file fits into the stylesheet's load
+ * order. */
 
 .reap {
   margin-top: var(--space-4xl);
@@ -65,7 +64,7 @@
    line rather than running on from the state word, and capped in `ch` because the State column
    is the narrowest in the table: left to the column it would set the table's width from one
    long sentence and push the whole thing sideways. `overflow-wrap` because the sentence can
-   carry a title or a path the operator did not choose (rule 139). */
+   carry a title or a path the operator did not choose. */
 .step-why {
   display: block;
   margin-top: var(--space-xs);
@@ -126,7 +125,7 @@
   margin: 0.2rem 0 0.6rem;
 }
 
-/* The ledger: policy verdict, hand changes, the net -- three aligned columns. */
+/* The ledger: policy verdict, hand changes, the net, three aligned columns. */
 .rb-ledger {
   margin: 0.1rem 0 0.4rem;
 }
@@ -152,7 +151,7 @@
   min-width: 4.5rem;
   color: var(--muted);
 }
-/* A hand spare keeps a file (green); a hand reap adds one to the deletion set (red). */
+/* A hand spare keeps a file (green). A hand reap adds one to the deletion set (red). */
 .rb-spare .rb-lab,
 .rb-spare .rb-n {
   color: var(--protect);

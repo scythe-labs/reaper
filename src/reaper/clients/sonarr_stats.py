@@ -1,31 +1,25 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Reading Sonarr season statistics correctly.
+"""How to read Sonarr's season statistics without being misled by one field.
 
-This module exists because of one field that is a trap. The behavior below was
-confirmed against a production Sonarr instance holding a four-figure number of
-series.
+``seasons[].statistics.episodeCount`` counts Sonarr's download intent: episodes
+that have aired and are monitored, plus any episode that already has a file. It is
+easy to mistake for the number of episodes a season actually has, and treating it
+that way causes three problems:
 
-``seasons[].statistics.episodeCount`` is **not** "how many episodes this season
-has". It is Sonarr's *download intent*: roughly, episodes that have aired and are
-monitored, plus any episode that already has a file. Three consequences, each
-observed on a large fraction of seasons:
+* A show mid-download can want more episodes than it has on disk, so
+  ``episodeCount`` can be higher than ``episodeFileCount``.
+* A monitored season with nothing aired yet reports ``episodeCount=0``.
+* An unmonitored season reports ``episodeCount=0`` even when it is complete, with a
+  non-zero ``totalEpisodeCount`` and every episode aired long ago. On a mature
+  library, most finished seasons fall into this case, because finished shows get
+  unmonitored.
 
-* ``episodeCount > episodeFileCount`` wherever Sonarr *wants* episodes it does not
-  have -- a long-running show mid-download reports more episodes than exist on disk.
-* A monitored season whose episodes have not aired yet reports ``episodeCount=0``.
-* **An unmonitored season reports ``episodeCount=0`` even when it is complete**, with
-  a non-zero ``totalEpisodeCount`` and every episode long since aired. On a mature
-  library this is the *majority* case, because finished shows get unmonitored.
+A rule that keeps the last 2 seasons based on ``episodeCount`` would misjudge which
+seasons hold files. Worse, it could read a complete, unmonitored season as empty.
 
-So a "keep the last 2 seasons" rule built on ``episodeCount`` would misjudge which
-seasons hold bytes, and -- far worse -- would read a complete, unmonitored season as
-empty and conclude there is nothing there to protect.
-
-**For any decision about what exists on disk, use ``episodeFileCount`` and
-``sizeOnDisk``. They are the only fields that describe reality.**
-
-``totalEpisodeCount`` is the honest "how long is this season" figure -- it counts
-every episode including unaired -- and is what season *ranking* should use.
+Use ``episodeFileCount`` and ``sizeOnDisk`` to decide what is actually on disk.
+``totalEpisodeCount`` counts every episode, aired or not, so season ranking should
+use it instead.
 """
 
 from __future__ import annotations
@@ -41,59 +35,58 @@ class SeasonStats:
     season_number: int
     monitored: bool
 
-    # On disk. The only fields safe to reason about for deletion.
+    # On disk right now. Safe to use for a deletion decision.
     episode_file_count: int
 
     size_on_disk: int | None
-    """Bytes the season's episode files hold, or ``None`` when Sonarr reported files but
-    no size.
+    """Bytes the season's episode files hold, or ``None`` when Sonarr reported files but no
+    size.
 
-    ``None`` is not zero. A season with ``episode_file_count > 0`` and no ``sizeOnDisk``
-    is a partial statistics payload, not an empty season -- and carried as ``0`` it
-    becomes an affirmative measurement: it reads as maximum pressure on a size signal
-    and silently withdraws any "keep large files" rule. ``has_content`` deliberately
-    reads the file COUNT, not this, so "does it hold files" survives an unreadable size.
+    Treat ``None`` as unknown, not zero. A season with ``episode_file_count > 0`` and no
+    ``sizeOnDisk`` has an incomplete statistics payload, not an empty season. Reading it
+    as ``0`` would score it as taking the least possible space, which would silently
+    disable any "keep large files" rule. ``has_content`` checks the file count instead of
+    this field, so "does it hold files" still works when the size cannot be read.
 
-    Episode FILES, not the season folder: the statistic sums the same ``EpisodeFiles``
-    rows a season prune deletes one by one, so the number and what the delete frees are
-    one quantity. That is why #317's movie gap has no season counterpart -- there the
-    delete takes the whole folder while the number counts files. Measured too: a season
-    folder held 0.008% more than its files at the median, all of it sidecars the prune
-    does not touch anyway.
+    This counts the episode files Sonarr tracks, the same files a season prune deletes,
+    so the number matches what a delete actually frees. The movie side works
+    differently: a movie delete removes the whole folder, while this counts only files.
+    A season folder itself holds slightly more than the sum of its files, but the
+    difference is sidecar files a prune leaves in place.
 
-    The movie path draws the same line (``services.snapshot._reported_size``); see
+    The movie path applies the same rule; see ``services.snapshot._reported_size`` and
     ``tests/test_fact_layer_states.py``.
     """
 
-    # How long the season is, including unaired episodes. Safe for ranking.
+    # Episode count including ones that have not aired yet. Safe to use for ranking.
     total_episode_count: int
 
-    # Sonarr's download intent. Retained for display only -- see the module
-    # docstring. NEVER branch on this to decide what to delete.
+    # Sonarr's download intent, kept only for display. See the module docstring.
+    # Never use this to decide what to delete.
     wanted_episode_count: int
 
     @property
     def has_content(self) -> bool:
-        """Does this season occupy disk?
+        """Does this season hold any files on disk?
 
-        Note this is deliberately *not* ``wanted_episode_count > 0``: a monitored
-        season with nothing aired reports zero wanted episodes while still holding
-        files, and an unmonitored season reports zero while holding gigabytes.
+        This checks ``episode_file_count``, not ``wanted_episode_count``: a monitored
+        season with nothing aired yet reports zero wanted episodes while still holding
+        files, and an unmonitored season reports zero while holding gigabytes of files.
         """
         return self.episode_file_count > 0
 
     @property
     def is_incomplete(self) -> bool:
-        """Sonarr wants episodes it does not have.
+        """Sonarr wants episodes it does not have yet.
 
-        Worth surfacing rather than acting on: pruning a season mid-download is a
-        good way to make Reaper and Sonarr fight each other.
+        This is useful to show the operator, not to act on. Pruning a season
+        mid-download would make Reaper delete what Sonarr is still trying to fetch.
         """
         return self.wanted_episode_count > self.episode_file_count
 
 
 def _reported_size(raw: Any) -> int | None:
-    """A size Sonarr actually reported, or ``None``. Zero and missing are both ``None``."""
+    """A size Sonarr reported, or ``None``. Both zero and a missing value count as ``None``."""
     return int(raw) if isinstance(raw, int | float) and raw > 0 else None
 
 
@@ -115,20 +108,20 @@ def parse_season_stats(season: dict[str, Any]) -> SeasonStats | None:
 
 
 def rank_seasons(seasons: list[SeasonStats], *, include_specials: bool = False) -> dict[int, int]:
-    """Rank seasons newest-first: rank 1 is the most recent season *with files on disk*.
+    """Rank seasons newest-first. Rank 1 is the most recent season that has files on disk.
 
-    This is what a "keep the last N seasons" rule counts against.
+    A "keep the last N seasons" rule counts against this rank.
 
-    Specials (season 0) are excluded by default. They are not part of the run of
-    the show, they are frequently the oldest-numbered and newest-dated content at
-    once, and letting them occupy a rank slot silently shifts every real season by
-    one -- so "keep the last 2" would keep specials plus one real season.
+    Specials (season 0) are excluded by default. They are not part of the show's normal
+    run, and they can be both the oldest-numbered and the most recently added content at
+    once. Giving them a rank would shift every real season down by one, so "keep the
+    last 2" would keep specials plus only one real season.
 
-    Seasons without files are excluded for the same reason: an announced-but-
-    undownloaded next season would otherwise take rank 1 and shift every real season
-    down one, so "keep the last 2" would protect the empty shell plus one real season
-    and leave the season the rule meant to keep prunable. There is nothing to keep in
-    a season with no files, so it never occupies a keep-slot.
+    Seasons without files are excluded for the same reason. An announced season that has
+    not downloaded yet would otherwise take rank 1 and shift every real season down one,
+    so "keep the last 2" would protect an empty shell instead of the season the rule
+    meant to keep. A season with no files has nothing to keep, so it never takes a rank
+    slot.
     """
     real = [s for s in seasons if s.has_content and (include_specials or s.season_number > 0)]
     ordered = sorted(real, key=lambda s: s.season_number, reverse=True)

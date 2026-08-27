@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// What a finished scan refreshes. This used to live in the scan bar, which only Settings
-// mounts, so a scan started from the Reap page's "Scan now" (or the scheduler, or another
-// device) ended with the page in front of the operator still quoting the previous snapshot --
-// the expired-spares notice included, which is the one line whose whole purpose is to go away
-// after a scan. It belongs on the shell, and these pin the edge it fires on.
+// What a finished scan refreshes. This lives on the shell rather than the scan bar, so a scan
+// started from the Reap page's "Scan now", the scheduler, or another device still updates
+// whichever page the operator is looking at, including the expired-spares notice, whose whole
+// purpose is to go away after a scan. These tests pin the edge it fires on.
 
 import { renderHook } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -21,11 +20,11 @@ function harness() {
     invalidated.push(JSON.stringify(filters?.queryKey));
     return Promise.resolve();
   });
-  // The one provider tree still built by hand, and `renderHookWithProviders` is why it stays
-  // one: `Announcer` has to be a SIBLING above the hook, because `announce()` returns early
-  // when no region is listening -- without it the hook's sentence is dropped and a test about
-  // it passes against silence. The app mounts it above every route, so this is the shipped
-  // arrangement, and the shared helper wraps the hook alone.
+  // This is the one provider tree still built by hand, and it stays that way because
+  // `renderHookWithProviders` wraps the hook alone. `Announcer` has to be a sibling above the
+  // hook, since `announce()` returns early when no region is listening. Without it, the hook's
+  // sentence is dropped and a test about it would pass against silence. The app mounts
+  // `Announcer` above every route, so this is the shipped arrangement.
   const wrapper = ({ children }: { children: ReactNode }) =>
     createElement(QueryClientProvider, { client }, createElement(Announcer), children);
   const view = renderHook(
@@ -50,27 +49,28 @@ describe("useScanSettled", () => {
     // The whole list, so a surface added to it later is covered by this test rather than
     // discovered missing by an operator reading a stale number.
     expect(invalidated).toEqual(SCAN_SETTLED_KEYS.map((k) => JSON.stringify(k)));
-    // Keys named outright, because the assertion above cannot reach a key that is missing from
-    // the list: it compares the list to itself, so it pins the ORDER and the firing, and reads
-    // green for a surface nobody added (rule 141). Every one of these has actually been absent.
+    // These keys are named outright, because the assertion above cannot reach a key that is
+    // missing from the list. It compares the list to itself, so it pins the order and the
+    // firing, and it would read green for a surface nobody added. Every one of these keys has
+    // actually been missing from the list at some point.
     //
     // The Reap page's ledger is the one this batch exists for.
     expect(invalidated).toContain(JSON.stringify(["reap-breakdown"]));
-    // The policy editor's warnings, refreshed from a second copy of this effect inside
-    // `PolicyEditor` while this list claimed to be the single place (#205).
+    // The policy editor's warnings, once refreshed from a second copy of this effect inside
+    // `PolicyEditor` while this list claimed to be the single place.
     expect(invalidated).toContain(JSON.stringify(["validate"]));
-    // The Jobs page's shelf row, which a scan updates on its way out and which only its own
-    // "Update now" used to refresh -- so the counts under "Runs after every scan" were the
-    // previous pass's for as long as the panel stayed mounted.
+    // The Jobs page's shelf row, which a scan updates on its way out. Its own "Update now"
+    // button used to be the only thing that refreshed it, so the counts under "Runs after
+    // every scan" were the previous pass's for as long as the panel stayed mounted.
     expect(invalidated).toContain(JSON.stringify(["leaving-soon-settings"]));
     // Plex's recorded-watch-history line, whose sentence names the last scan while quoting a
-    // number a scan is what moves.
+    // number that only a scan moves.
     expect(invalidated).toContain(JSON.stringify(["watch-evidence"]));
   });
 
   it("does nothing on a mount that arrives after the scan already ended", () => {
-    // Otherwise every navigation re-invalidated what it had just fetched. The transition is
-    // the signal, not the value.
+    // Otherwise every navigation would re-invalidate what it had just fetched. The transition
+    // is the signal, not the value.
     const { invalidated } = harness();
     expect(invalidated).toEqual([]);
   });
@@ -90,10 +90,10 @@ describe("useScanSettled", () => {
 
 describe("what a background scan tells an operator using a screen reader", () => {
   // Every cache in `SCAN_SETTLED_KEYS` goes stale at once here, which is most of the numbers in
-  // the app moving -- and the trigger can be the scheduler, another device, or another tab, so
-  // there is no press to hang a sentence on and no control that changed. The transition was
-  // entirely visual (#177). (It said "Thirteen caches" and the list had grown to sixteen; a count
-  // written in prose beside the list it counts goes stale on the next append.)
+  // the app moving. The trigger can be the scheduler, another device, or another tab, so there
+  // is no press to hang a sentence on and no control that visibly changed. This transition is
+  // entirely visual. A count written in prose beside the list it counts goes stale the next
+  // time an entry is appended, so this comment does not state one.
   const spoken = () =>
     [...document.querySelectorAll('[aria-live="polite"]')].map((n) => n.textContent).join("");
 
@@ -109,8 +109,8 @@ describe("what a background scan tells an operator using a screen reader", () =>
   });
 
   it("says nothing on a mount that arrives after the scan already ended", () => {
-    // Same edge discipline the invalidation keeps: a navigation must not announce a scan that
-    // finished before this hook existed.
+    // This keeps the same edge discipline as the invalidation. A navigation must not announce
+    // a scan that finished before this hook existed.
     harness();
 
     expect(spoken()).toBe("");
@@ -118,10 +118,10 @@ describe("what a background scan tells an operator using a screen reader", () =>
 
   it("says a crashed scan stopped, instead of reporting numbers it did not update", () => {
     // `api/scan.py` clears `running` inside a `finally`, so a scan that crashed arrives at this
-    // exact edge carrying its message. The sentence above then told the operator a scan had
-    // finished and the page had been updated, when nothing had been: no snapshot is written by
-    // a run that crashed. This hook is the ONLY voice on every page except the one mounting the
-    // scan bar, so there was nothing else to correct it (#177).
+    // exact edge carrying its message. Without this branch, the sentence above would tell the
+    // operator a scan had finished and the page had been updated, when nothing had, since no
+    // snapshot is written by a run that crashed. This hook is the only voice on every page
+    // except the one mounting the scan bar, so nothing else would correct it.
     const { view } = harness();
 
     view.rerender({ scanning: true });
@@ -131,9 +131,9 @@ describe("what a background scan tells an operator using a screen reader", () =>
     });
 
     expect(spoken()).toContain("stopped before it finished");
-    // Named outright rather than left to the sentence above: the two branches must not be able
-    // to converge on wording that claims an update (rule 118). "finished" alone cannot
-    // discriminate them -- the failure sentence contains the word too.
+    // This is named outright rather than left to the sentence above. The two branches must not
+    // be able to converge on wording that claims an update. "finished" alone cannot
+    // discriminate them, since the failure sentence contains that word too.
     expect(spoken()).not.toContain("have been updated");
   });
 
@@ -153,8 +153,8 @@ describe("what a background scan tells an operator using a screen reader", () =>
   });
 
   it("names no count, because the refetches it just triggered have not landed", () => {
-    // A figure said here would be the PREVIOUS scan's -- this hook marks caches stale and never
-    // reads them (rule 85). The sentence is deliberately about the change, not about a number.
+    // A figure stated here would be the previous scan's, since this hook marks caches stale
+    // and never reads them. The sentence is deliberately about the change, not about a number.
     const { view } = harness();
     view.rerender({ scanning: true });
     view.rerender({ scanning: false });

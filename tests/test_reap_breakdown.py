@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The reap breakdown: what a reap would remove, and why.
+"""Checks what a reap would remove, and why.
 
-Pins the ledger (policy verdict, hand-spares out, hand-reaps in, the net), the movie/season
-split, and the by-reason participation tally -- which counts every condemned title that
-trips each signal, so the counts overlap and never partition.
+This pins the ledger (policy verdict, hand-spares out, hand-reaps in, and the net), the
+movie and season split, and the by-reason participation tally. That tally counts every
+condemned title that trips each signal, so the counts overlap and never add up to the total.
 """
 
 from __future__ import annotations
@@ -56,9 +56,9 @@ def _explain(adds: list[str], *, keeps: list[str] | None = None) -> str:
 def _document(**blocks: object) -> str:
     """One stored explanation carrying every block a real one carries.
 
-    A reap is refused on any document the why panel cannot render (#142), so a fixture that
-    names only the block it varies describes a row no scan could produce, and every hand reap
-    over it would be held for a reason the test is not about.
+    A hand reap is refused on any document the why panel cannot render, so a fixture that
+    names only the block it varies describes a row no scan could ever produce. A hand reap
+    over a row like that would be held for a reason unrelated to what the test is checking.
     """
     return json.dumps(
         {
@@ -76,10 +76,10 @@ def _document(**blocks: object) -> str:
 def _refused_explain(*, match: object = None) -> str:
     """A frozen explanation whose hand reap ``condemned.reap_override_verdict`` refuses.
 
-    Two shapes are left that do (``engine.verdict``): a *fired* structural gate, and a row
-    whose identity is in doubt. A protection that merely could not be CHECKED is no longer
-    one of them, which is why this helper stopped building one -- a fixture that still did
-    would report zero held reaps and the assertions below would pass on an empty set.
+    ``engine.verdict`` refuses a hand reap for two reasons: a fired structural gate, or a
+    row whose identity is in doubt. A protection that could not be CHECKED is not one of
+    them, so this helper never builds that shape. If it did, every held-reap assertion below
+    would pass vacuously, on an empty set.
     """
     return _document(
         protections_fired=(
@@ -156,8 +156,8 @@ async def test_ledger_without_overrides(session: AsyncSession) -> None:
 
 
 async def test_the_split_carries_its_unmeasured_share(session: AsyncSession) -> None:
-    """The page subtracts the held-back rows from the split as well as the total, so the
-    split needs its own unmeasured counts -- otherwise one reap gets two numbers."""
+    """The page subtracts the held-back rows from the split as well as the total. The split
+    needs its own unmeasured counts, or one reap would get two different numbers."""
     snap = await _snapshot(session)
     await _add(session, snapshot_id=snap, media_key="radarr:1:1", size=3 * GB)
     await _add(session, snapshot_id=snap, media_key="radarr:1:2", size=None)
@@ -192,18 +192,17 @@ async def test_a_hand_spare_leaves_the_net(session: AsyncSession) -> None:
 async def test_an_expired_spare_still_keeps_the_title_and_is_counted_as_expired(
     session: AsyncSession,
 ) -> None:
-    """A spare whose clock has passed goes on keeping the file until a SCAN realizes it.
+    """A spare whose clock has passed keeps the file until a scan notices.
 
-    That is why the count exists. ``purge_expired_spares`` runs only inside the scan
-    transaction, so between the clock passing and the next scan this ledger, the planner
-    and the executor all still read the spare -- the title is genuinely kept and genuinely
-    absent from the reap, with nothing else on the page to explain why. The count is what lets
-    the Reap page say so.
+    ``purge_expired_spares`` runs only inside the scan transaction. Between the clock
+    passing and the next scan, this ledger, the planner, and the executor all still read the
+    spare, so the title is genuinely kept and genuinely absent from the reap, with nothing
+    else on the page to explain why. This count is what lets the Reap page say so.
     """
     snap = await _snapshot(session)
     await _add(session, snapshot_id=snap, media_key="radarr:1:1")
     await _add(session, snapshot_id=snap, media_key="radarr:1:2")
-    # One spare set 30 days ago for 10 days: expired 20 days back.
+    # A spare set 30 days ago for 10 days, expired 20 days back.
     await whitelist.set_override(
         session,
         media_key="radarr:1:1",
@@ -250,22 +249,23 @@ async def test_a_forever_spare_never_counts_as_expired(session: AsyncSession) ->
 async def test_the_count_is_scoped_to_this_snapshot_s_condemned_rows(
     session: AsyncSession,
 ) -> None:
-    """The notice claims those titles are being held out of THIS reap, so the count is taken
-    over the snapshot's condemned rows -- not over the whitelist, which outlives any one scan.
+    """The notice claims those titles are held out of THIS reap, so the count is taken over
+    the snapshot's condemned rows, not over the whitelist, which outlives any one scan.
 
-    Two rows an expired spare must NOT speak for: one the scan left alone (nothing is being
-    held back), and one that is not in the snapshot at all (a spare on a title since removed
-    from the library). Counting either would send the operator scanning for no change.
+    An expired spare must not speak for two kinds of row: one the scan left alone, where
+    nothing is being held back, and one that is not in the snapshot at all, such as a spare
+    on a title since removed from the library. Counting either would send the operator
+    scanning for a change that never happened.
 
-    The ``spared_rows`` filter this walks is load-bearing, and the first row below pins it:
-    the sum asks "would this still be spared after the purge?", which an unspared condemned
-    row also answers no to. Walking all condemned rows would count every one of them.
+    The ``spared_rows`` filter this walks matters, and the first row below proves it. The
+    filter asks "would this still be spared after the purge?", which an unspared condemned
+    row also answers no to. Walking all condemned rows instead would count every one of them.
     """
     snap = await _snapshot(session)
     await _add(session, snapshot_id=snap, media_key="radarr:1:1")  # condemned, no override
     await _add(session, snapshot_id=snap, media_key="radarr:1:9", verdict="abstain")
     long_ago = NOW - timedelta(days=30)
-    # Spared and expired, but the scan left it alone: it is keeping nothing out of the reap.
+    # Spared and expired, but the scan left it alone. It keeps nothing out of the reap.
     await whitelist.set_override(
         session,
         media_key="radarr:1:9",
@@ -298,10 +298,10 @@ async def test_a_season_kept_by_a_second_spare_is_not_counted_as_released(
     """A title only counts when a scan would actually hand it back to policy.
 
     Spares nest. A season spared for 10 days inside a show spared forever has a clock of its
-    own that has passed, but ``purge_expired_spares`` deletes only the season's row -- and the
-    show's forever spare goes on keeping it. Counting it would put "1 title is kept by a spare
-    that expired. A new scan judges it again" on the Reap page for a title that cannot move,
-    which is the false promise the notice exists to avoid (rule 61).
+    own that has passed, but ``purge_expired_spares`` deletes only the season's row. The
+    show's forever spare goes on keeping it. Counting it would put "1 title is kept by a
+    spare that expired. A new scan judges it again" on the Reap page for a title that cannot
+    move, which is a promise the notice must never make.
     """
     snap = await _snapshot(session)
     await _add(session, snapshot_id=snap, media_key="sonarr:1:7:2", media_type="season")
@@ -326,7 +326,7 @@ async def test_a_season_kept_by_a_second_spare_is_not_counted_as_released(
 
 
 async def test_a_whole_show_spare_counts_every_season_it_holds(session: AsyncSession) -> None:
-    """The count is TITLES, not spares: one expired whole-show spare holding three condemned
+    """The count is TITLES, not spares. One expired whole-show spare holding three condemned
     seasons releases three titles, and the page says so in those words."""
     snap = await _snapshot(session)
     for n in (1, 2, 3):
@@ -372,12 +372,12 @@ async def test_a_hand_reap_joins_the_net(session: AsyncSession) -> None:
 
 
 async def test_a_refused_hand_reap_is_reported_as_held(session: AsyncSession) -> None:
-    """A hand reap the engine refuses is HELD: not in the net, but counted so the operator's
-    mark is not silently dropped (PR-2).
+    """A hand reap the engine refuses is HELD. It is not in the net, but it is still counted,
+    so the operator's mark is not silently dropped.
 
-    Both surviving refusals are seeded, because they refuse for unrelated reasons and the
-    breakdown must count either: a structural stop (something playing right now) and a row
-    whose Plex match Reaper could not read, so it does not know what the row even is.
+    Both surviving refusal reasons are seeded here, because the breakdown must count either
+    one: a structural stop, such as something playing right now, and a row whose Plex match
+    Reaper could not read, so it does not know what the row even is.
     """
     snap = await _snapshot(session)
     await _add(session, snapshot_id=snap, media_key="radarr:1:1")  # condemned by policy
@@ -400,9 +400,9 @@ async def test_a_refused_hand_reap_is_reported_as_held(session: AsyncSession) ->
 async def test_a_hand_reap_past_a_protection_nobody_could_check_is_in_the_net(
     session: AsyncSession,
 ) -> None:
-    """The counterpart, and the reason the fixture above stopped using a blocked protection.
+    """The counterpart to the refused-reap test above.
 
-    A protection that could not be CHECKED no longer refuses a hand reap, so a row carrying
+    A protection that could not be CHECKED does not refuse a hand reap, so a row carrying
     one is a net reap like any other. Counting it as held would understate what the operator
     is about to remove, on the page whose whole job is that number.
     """
@@ -432,7 +432,7 @@ async def test_a_hand_reap_past_a_protection_nobody_could_check_is_in_the_net(
 
 async def test_by_reason_participation_overlaps(session: AsyncSession) -> None:
     snap = await _snapshot(session)
-    # One trips two signals, the other trips one. Counts overlap: unwatched=2, low_rating=1.
+    # One trips two signals, the other trips one, so counts overlap: unwatched=2, low_rating=1.
     await _add(
         session,
         snapshot_id=snap,
@@ -454,8 +454,8 @@ async def test_by_reason_participation_overlaps(session: AsyncSession) -> None:
 
 
 async def test_state_absent_falls_back_to_contribution(session: AsyncSession) -> None:
-    """Rows frozen before the ``state`` field: a positive contribution still counts as a
-    driver, a zero one does not."""
+    """For rows frozen before the ``state`` field existed, a positive contribution still
+    counts as a driver, and a zero one does not."""
     snap = await _snapshot(session)
     exp = json.dumps(
         {

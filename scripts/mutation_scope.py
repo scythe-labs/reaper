@@ -1,47 +1,50 @@
-"""Scoped mutation runner: break one function on purpose, see whether a test notices.
+"""Scoped mutation runner: break one function on purpose, and see whether a test notices.
 
-Not a coverage tool and not a score. It answers one question per mutant -- *if this line
-silently stopped doing its job, would the suite fail?* -- and a survivor is a branch nothing
-is defending. `docs/LEARNINGS.md` records what the first run found.
+This measures whether a test would catch a broken line, not how much code a test
+suite covers. For each mutant, it asks one question: if this line silently stopped
+doing its job, would the suite fail? A survivor is a branch nothing defends.
+``docs/LEARNINGS.md`` records what running it has found.
 
 Run it, one zone per run:
 
     uv run python scripts/mutation_scope.py --zone <name>
     uv run python scripts/mutation_scope.py --help    # every zone there is
 
-The names are not listed here on purpose. `--zone` is `choices=sorted(ZONES)`, so `--help`
-answers off the declaration and a copy in this docstring could only ever drift from it --
-it already had, silently omitting a shipped zone (rule 144).
+The zone names are not listed here on purpose. ``--zone`` reads its choices straight
+from ``ZONES``, so ``--help`` always matches the declaration, while a list copied into
+this docstring could drift from it unnoticed.
 
-Add a zone to `ZONES` below: the module, the functions (`Class.method` for a method), the tests
-that could plausibly kill a mutant in them, and a probe. **Scope by function, not by file.**
-The two shims are 60 mutants and three minutes, the save boundary 78; the same operators over
-all of `policy.py` would be past a thousand, which is how an exercise like this stops being
-run at all. One function can still be big -- `inspect` alone is 321 -- and that is the ceiling
-worth paying, because it is a ceiling per *answer* rather than per file.
+Add a zone to ``ZONES`` below: the module, the functions (``Class.method`` for a
+method), the tests that could plausibly kill a mutant in them, and a probe. Scope each
+zone by function, not by file. Running the same operators over a whole large module
+generates far more mutants than one sitting can run through, which is how an exercise
+like this stops getting run at all. A single function can still be large, and that is
+a cost worth paying, because it is a cost per answer rather than per file.
 
-Two passes per mutant:
+Two passes run over each mutant:
 
-1. *kill or survive* -- run the tests against the mutated source.
-2. *direction* -- for survivors only, re-run the zone's `probe` corpus and diff
-   against baseline. This is the half that makes the output readable: "seven survived" is a
-   number, while "each of these makes the shim refuse a legal repair, leaving the operator's
-   bar empty" is a finding. Reaper's whole safety argument is directional, so a survivor that
-   widens what gets deleted is not the same finding as one that keeps more.
+1. Kill or survive: run the tests against the mutated source.
+2. Direction, for survivors only: re-run the zone's ``probe`` corpus and diff it
+   against the baseline. This is what makes the output readable. "Seven survived" is
+   just a number, while "each of these makes the shim refuse a legal repair, leaving
+   the operator's bar empty" is a finding. Reaper's safety argument depends on
+   direction, so a survivor that widens what gets deleted is a different finding from
+   one that keeps more.
 
-Mutation is a byte-precise text splice, never an AST unparse, so a mutant differs from the
-original on one line and reports as `func:line '<=' -> '<'`, readable straight against the
-source. Splicing is also what gives `1 <= floor <= 100` two separately-addressable mutants:
-the AST hands back a single `Compare` node with a list of operators and no position for any
-of them.
+Mutation works as a byte-precise text splice, never an AST unparse, so a mutant
+differs from the original on exactly one line and reports as
+``func:line '<=' -> '<'``, readable straight against the source. Splicing also lets
+``1 <= floor <= 100`` produce two separately addressable mutants, since the AST
+represents that as a single ``Compare`` node with a list of operators and no position
+for any one of them.
 
-**A probe only sees what it records, and each zone is responsible for something different.**
-Zone 1 returns a repaired body, zone 2 an accept-or-refuse plus the operator's sentence, zone 3
-whether the gate still holds the file. Getting that wrong has cost three findings so far: a
-corpus that imported a test fixture inherited the blind spot hiding the defect; one recording
-only a verdict called an operator string reading "-1" no change; and one passing a percentage
-rating unnormalized tested an 800% bar against a 75% floor. So **read "no change on the probe
-corpus" as a question**, and sanity-check what the baseline actually answers before trusting a
+A probe only sees what it records, and each zone's probe records something different:
+zone 1 returns a repaired body, zone 2 an accept-or-refuse verdict plus the operator's
+sentence, zone 3 whether the gate still holds the file. Getting that wrong has produced
+false readings before: a probe that only records a verdict can call a reworded operator
+string "no change", and a probe that never normalizes a percentage rating can test the
+wrong bar entirely. Treat "no change on the probe corpus" as a question to check, not
+an answer to trust, and confirm what the baseline actually measures before trusting a
 survivor list built on it.
 """
 
@@ -69,9 +72,10 @@ REPO = Path(__file__).resolve().parents[1]
 class Omission:
     """Callables in a zone's module that the zone deliberately does not mutate.
 
-    One written reason per group. A name is here or in ``functions``; being in neither is
-    what ``zone_drift`` fails on. Grouped rather than one line each because the reasons
-    genuinely repeat: a zone scoped to two shims omits the rest of its file for one reason.
+    Each group carries one written reason. Every name must appear in ``functions`` or
+    here, since ``zone_drift`` fails on any name in neither. Grouped rather than listed
+    one line each because the reasons genuinely repeat: a zone scoped to two shims
+    omits the rest of its file for one reason.
     """
 
     reason: str
@@ -80,16 +84,17 @@ class Omission:
 
 @dataclass(frozen=True)
 class Zone:
-    """What to mutate, what gets to object, and how to tell survivors apart.
+    """What to mutate, what gets a say, and how to tell survivors apart.
 
-    ``probe`` is Python source run in a fresh subprocess against the mutated module. It must
-    print ``{"cases": {name: answer}}`` as JSON. Whatever an "answer" is, it has to be a value
-    the direction of a change is readable from: a returned body for a repair shim, an
+    ``probe`` is Python source run in a fresh subprocess against the mutated module. It
+    must print ``{"cases": {name: answer}}`` as JSON. Each "answer" has to be a value
+    that shows the direction of a change: a returned body for a repair shim, an
     accepted-or-rejected verdict for a validator.
 
-    ``functions`` and ``omits`` together account for every callable in ``module``, checked by
-    ``zone_drift``. A function with no mutable token is declarable and reports zero, which is
-    what ``evaluate_all`` already did; silence is the thing that is not allowed.
+    ``functions`` and ``omits`` together must account for every callable in ``module``,
+    checked by ``zone_drift``. A function with no mutable token can still be declared
+    and will report zero mutants. Leaving it out of both lists entirely is what
+    ``zone_drift`` does not allow.
     """
 
     module: Path
@@ -100,10 +105,11 @@ class Zone:
 
 
 def module_callables(module: Path) -> set[str]:
-    """Every function and method in a module, named the way a zone names one.
+    """Return every function and method in a module, named the way a zone names one.
 
-    A method is ``Class.method``. Bare method names are deliberately not produced here even
-    though ``func_spans`` accepts them, so a zone's list and this set compare as written.
+    A method is named ``Class.method``. This never produces a bare method name, even
+    though ``func_spans`` accepts one, so a zone's list and this set can be compared as
+    written.
     """
     tree = ast.parse((REPO / module).read_text(encoding="utf-8"))
     names: set[str] = set()
@@ -121,13 +127,12 @@ def module_callables(module: Path) -> set[str]:
 
 
 def zone_drift(name: str, zone: Zone) -> list[str]:
-    """Complaints about a zone whose list no longer matches its module, one line each.
+    """Return complaints about a zone whose list no longer matches its module, one line each.
 
-    The `engine-gates` zone declared 12 of its module's 22 callables and reported on those, so
-    a run read as a clean sweep of the gate layer while a fifth of its mutable surface was
-    never asked about -- and the undeclared eight held three survivors, one of them live on a
-    default policy (#598). The list is hand-written, so rule 103 applies to it as it does to
-    any other mirror of a declaration.
+    A zone's function list is hand-written, so it can silently fall out of sync with
+    its module: a zone that declares only some of a module's callables reports a clean
+    sweep while the rest of its mutable surface goes untested. This check catches that
+    drift before a run is trusted.
     """
     declared = set(zone.functions)
     omitted = {f for group in zone.omits for f in group.functions}
@@ -175,15 +180,16 @@ class Mutant:
 
 
 def func_spans(source: str, functions: tuple[str, ...], module: Path) -> dict[str, tuple[int, int]]:
-    """Body line span of each named function, docstring excluded.
+    """Return the body line span of each named function, docstring excluded.
 
-    The docstrings here are long and carry prose comparisons; mutating them produces mutants
-    no test could ever kill and no author would ever act on.
+    Docstrings in this codebase are long and carry prose comparisons. Mutating them
+    would produce mutants no test could ever kill and no author would ever act on.
 
-    A method is named ``Class.method``, because a bare name is not unique: `engine/gates.py`
-    holds nine `evaluate` methods, and keying on the bare name silently kept the last one --
-    a report about a function nobody asked for, reading exactly like a real answer. So an
-    ambiguous name raises instead of binding, the way anything else here refuses to guess.
+    A method is named ``Class.method``, because a bare name is not unique:
+    ``engine/gates.py`` alone defines several ``evaluate`` methods, and keying on the
+    bare name would silently keep the last match, reporting on a function nobody asked
+    about as if it were a real answer. An ambiguous name raises instead, the same way
+    everything else here refuses to guess.
     """
     found: dict[str, list[tuple[int, int]]] = {}
 
@@ -270,8 +276,9 @@ def statement_deletions(
 ) -> list[Mutant]:
     """Replace one assignment with `pass`.
 
-    This is the operator that catches a line doing real work that nothing asserts on -- the
-    shape rule 7/24 is about. It found the schema restamp.
+    This is the operator that catches a line doing real work that nothing asserts on:
+    a comment can claim a safeguard runs, and only a mutant like this one checks that
+    a test would notice if it stopped running.
     """
     lines = source.splitlines()
     out: list[Mutant] = []
@@ -298,22 +305,21 @@ def statement_deletions(
 
 
 def _spliceable_header(node: ast.If) -> bool:
-    """Whether ``if <test>:`` fits on the one line the splice can rewrite."""
+    """Return whether ``if <test>:`` fits on the one line the splice can rewrite."""
     return node.test.lineno == node.lineno and node.test.end_lineno == node.test.lineno
 
 
 def skipped_guards(source: str, spans: dict[str, tuple[int, int]]) -> dict[str, list[int]]:
-    """Branches the operator below cannot make dead, grouped by the reason, so `main` says so.
+    """Return branches the operator below cannot make dead, grouped by reason for `main` to report.
 
-    The two spellings it rejects (rule 147). A **wrapped** ``if`` header cannot take a
-    byte-precise single-line splice; a **ternary** is a branch this operator was simply not
-    written for. Token swaps still reach inside both tests, so neither is wholly unmutated --
-    what is missing is specifically the delete-this-guard edit.
+    Two shapes are skipped. A wrapped ``if`` header cannot take a byte-precise
+    single-line splice. A ternary is a branch this operator was not written to rewrite.
+    Token swaps still reach inside both kinds of test, so neither is left entirely
+    unmutated; what is missing is specifically the delete-this-guard edit.
 
-    Never drop the count from the report: "27 guards mutated" printed beside a silent 11
-    skipped reads as a complete sweep, which is the claim shape this runner exists to
-    distrust. A bound the tool declines to mention is the same silent cap the guard operator
-    was added to remove.
+    The count of skipped branches always stays in the report. Printing a mutant count
+    next to a silent gap in coverage would read as a complete sweep, which is the same
+    kind of unearned claim this runner exists to catch.
     """
     wrapped: list[int] = []
     ternary: list[int] = []
@@ -332,24 +338,24 @@ def skipped_guards(source: str, spans: dict[str, tuple[int, int]]) -> dict[str, 
 def guard_deletions(source: str, spans: dict[str, tuple[int, int]], start_id: int) -> list[Mutant]:
     """Make one branch dead: ``if <test>:`` becomes ``if (<test>) and False:``.
 
-    The operator the rest of the set could not express. Token swaps need a token with an
-    opposite, and the deletion above walks assignments only, so a guard on ``isinstance`` or
-    ``in`` produced nothing at all -- and a function holding no mutable token reported exactly
-    like one whose mutants all died. That blind spot covered the shape this codebase is most
-    about: rule 2's fail-closed guards parse and type-check after the edit, so nothing else
-    catches their removal either.
+    This is the operator the rest of the set cannot express. Token swaps need a token
+    with an opposite, and the assignment-deletion operator above only walks
+    assignments, so a guard built on ``isinstance`` or ``in`` produced no mutant at
+    all. A function with no mutable token reported exactly like one whose mutants all
+    died, hiding a fail-closed guard from every other operator here.
 
-    Two choices worth keeping. **The test is still evaluated**, rather than replaced by
-    ``False`` outright, so a walrus (``if blocked := _blocked(...)``) still binds its name and
-    the mutant fails on the missing branch instead of a ``NameError`` two lines down --
-    reporting the guard as undefended for the right reason. And the parentheses are not
-    cosmetic: ``if a or b:`` spliced without them binds as ``a or (b and False)``, which is
-    still live down the ``a`` arm and would report a killed guard as surviving.
+    Two choices matter. The test is still evaluated, rather than replaced by ``False``
+    outright, so a walrus assignment (``if blocked := _blocked(...)``) still binds its
+    name. The mutant then fails on the missing branch instead of a ``NameError`` two
+    lines down, reporting the guard as undefended for the right reason. The
+    parentheses are not cosmetic either: ``if a or b:`` spliced without them binds as
+    ``a or (b and False)``, which stays live down the ``a`` arm and would report a
+    killed guard as surviving.
 
-    Single-line ``if`` headers only, like every other operator here, because the splice is
-    byte precise: a test wrapped across lines is skipped rather than half-rewritten, and a
-    ternary is left alone. `skipped_guards` groups both and `main` prints them -- 77 of the 78
-    ``if``s in the shipped zones are covered, beside 10 ternaries that are not.
+    This only rewrites single-line ``if`` headers, like every other operator here,
+    because the splice is byte precise: a test wrapped across lines is skipped rather
+    than half-rewritten, and a ternary is left alone. `skipped_guards` groups both
+    kinds of skip and `main` prints them.
     """
     lines = source.splitlines()
     out: list[Mutant] = []
@@ -388,7 +394,8 @@ def splice(source: str, m: Mutant) -> str:
     if found != m.original:
         raise ValueError(f"{m.ident}: expected {m.original!r} at {m.line}:{m.col}, found {found!r}")
     if m.kind == "drop-not":
-        # `not x` -> `x`: swallow the trailing space so the result still parses.
+        # `not x` becomes `x`. This also swallows the trailing space, so the result
+        # still parses.
         head, tail = line[: m.col], line[m.end_col :].lstrip(" ")
         lines[m.line - 1] = head + tail
     else:
@@ -396,20 +403,19 @@ def splice(source: str, m: Mutant) -> str:
     return "".join(lines)
 
 
-#: Everything a worker copy needs to run the suite. Two non-obvious members:
+#: Everything a worker copy needs to run the suite. Two members are not obvious:
 #: `README.md`, because `[project] readme` points at it and the build backend reads it during
-#: `uv sync`; and `frontend/src`, because some backend tests reconcile a Python vocabulary
-#: against the TSX that renders it (`test_review_chips.py` opens `WhyPanel.tsx`). Listed as a
-#: nested path deliberately -- copying all of `frontend` would drag `node_modules` into every
-#: worker. If a zone's tests need something absent here, the baseline check says so before any
-#: mutant runs, which is exactly how `frontend/src` got found.
+#: `uv sync`; and `frontend/src`, because some backend tests check a Python vocabulary against
+#: the TSX that renders it (`test_review_chips.py` opens `WhyPanel.tsx`). `frontend/src` is
+#: listed as a nested path on purpose, since copying all of `frontend` would drag
+#: `node_modules` into every worker. If a zone's tests need something not listed here, the
+#: baseline check reports that before any mutant runs.
 WORKER_PATHS = (
     "src",
     "tests",
-    # `tests/test_baseline_capture.py` reads `scripts/baseline_capture.py` and errored at
-    # collection inside a worker without this, which silently capped what any zone's `tests=`
-    # could name: a whole file was uncollectable, so a mutant it would have killed read as a
-    # survivor (#598).
+    # A worker missing this path fails to collect any test that reads a script under
+    # `scripts/`, and an uncollectable test file makes every mutant it would have
+    # caught read as a survivor instead.
     "scripts",
     "alembic",
     "alembic.ini",
@@ -421,29 +427,28 @@ WORKER_PATHS = (
 
 
 def make_worker(root: Path) -> Path:
-    """A throwaway copy of the tree with its own venv, so a mutant never touches the real one.
+    """Copy the tree, with its own venv, so a mutant never touches the real one.
 
-    This is what lets the run go parallel, but the isolation is the bigger win on its own: the
-    first version of this script wrote each mutant into the actual source file and restored it
-    in a `finally`, which means an interrupted run leaves the tree modified. Here the real
-    checkout is only ever read.
+    This lets the run go parallel, but the isolation matters even alone: an
+    interrupted run can never leave the real checkout modified, since it is only ever
+    read.
 
-    Cheap enough to stop being a trade-off. On APFS the copy is a clone (`cp -Rc`, ~0.1s) and
-    `uv sync` against a warm cache is well under a second, so a worker costs about as much as
-    one mutant. `uv sync` inside the copy is also what makes the isolation real: it installs
-    the project editable against the COPY's `src`, so `import reaper` there cannot reach back
-    to the original.
+    On APFS the copy is a clone (`cp -Rc`), and `uv sync` against a warm cache is
+    fast, so a worker costs little more than one mutant does. `uv sync` inside the
+    copy is also what makes the isolation real: it installs the project editable
+    against the copy's own `src`, so `import reaper` there cannot reach back to the
+    original.
     """
     root.mkdir(parents=True, exist_ok=True)
     for rel in WORKER_PATHS:
         source = REPO / rel
         if not source.exists():
             continue
-        # Copy INTO the path's own parent, so a nested member lands where its readers expect
-        # it rather than flattened to the root.
+        # Copies into the path's own parent, so a nested member lands where its
+        # readers expect it instead of flattened to the root.
         destination = root / rel
         destination.parent.mkdir(parents=True, exist_ok=True)
-        # -c asks for APFS clones; other filesystems fall back to a real copy.
+        # -c asks for an APFS clone. Other filesystems fall back to a real copy.
         for flags in ("-Rc", "-R"):
             proc = subprocess.run(  # noqa: S603 -- flags and paths are this file's own
                 ["cp", flags, str(source), str(destination)],  # noqa: S607 -- `cp` from PATH
@@ -466,7 +471,7 @@ def make_worker(root: Path) -> Path:
 
 
 def run_tests(zone: Zone, workdir: Path, timeout: float) -> str:
-    """`killed` when the suite notices, `survived` when it does not."""
+    """Return `killed` when the suite notices, `survived` when it does not."""
     argv = [
         "uv",
         "run",
@@ -490,10 +495,9 @@ def run_tests(zone: Zone, workdir: Path, timeout: float) -> str:
 
 #: Run in a subprocess so each mutant is probed by a fresh import of the mutated module.
 #:
-#: The recovery bodies are assembled from the stored shape by hand, NOT by dumping the current
-#: model: the first run's one real defect was a fixture that stamped the current
-#: `schema_version` where a genuinely affected body carries the previous one, and a probe built
-#: on that fixture could not see it either.
+#: The recovery bodies are assembled from the stored shape by hand, instead of dumping the
+#: current model. A fixture that stamps the current `schema_version` where a genuinely
+#: affected body carries the previous one would hide the same defect from a probe built on it.
 REPAIR_SHIM_PROBE = r"""
 import json
 from reaper.engine.gates import GateId
@@ -558,15 +562,15 @@ print(json.dumps({"order": order, "cases": cases}))
 """
 
 
-#: Zone 2: the save boundary. Twelve validators decide what an operator is allowed to store,
-#: so the dangerous direction here is the opposite of a repair shim's -- a mutant that makes a
-#: validator ACCEPT what it should refuse lets a policy that protects nothing be saved, while
-#: one that refuses a legal policy only blocks the operator, loudly. The probe records
-#: accepted-or-rejected rather than a value, so that asymmetry is what the diff shows.
+#: Zone 2: the save boundary. A set of validators decides what an operator is allowed to
+#: store, so the dangerous direction here is the opposite of a repair shim's. A mutant that
+#: makes a validator accept what it should refuse lets a policy that protects nothing be
+#: saved, while one that refuses a legal policy only blocks the operator, loudly. The probe
+#: records accepted-or-rejected rather than a value, so that asymmetry is what the diff shows.
 #:
-#: Field keys and rating sources are drawn from the live registries rather than hardcoded: a
-#: probe naming a field that later moves lanes would silently stop testing the branch it was
-#: written for.
+#: Field keys and rating sources are drawn from the live registries rather than hardcoded, so
+#: a probe naming a field that later moves lanes cannot silently stop testing the branch it
+#: was written for.
 SAVE_BOUNDARY_PROBE = r"""
 import json
 from reaper.engine.fields import BY_KEY, Lane, Op
@@ -700,13 +704,13 @@ print(json.dumps({"order": order, "cases": cases}))
 
 
 #: Zone 3: the gates. These are the hard protections, so the probe records what a caller acts
-#: on -- the outcome, whether the gate blocked, and the sentence the panel prints.
+#: on: the outcome, whether the gate blocked, and the sentence the panel prints.
 #:
-#: The direction rule here is one predicate: **does this result still hold the file?** A gate
-#: holds it by protecting outright, or by blocking because it could not check (rule 93's
-#: corollary -- a hold standing in for "we could not answer" is `blocked`, and it holds). So a
-#: survivor that turns holds into does-not-hold has silently withdrawn a protection library-wide,
-#: and one that turns does-not-hold into holds has only kept a file nobody asked to keep.
+#: The direction rule here is one question: does this result still hold the file? A gate
+#: holds it either by protecting outright, or by blocking because it could not check (a hold
+#: standing in for "we could not answer" is `blocked`, and it still holds). A survivor that
+#: turns a hold into a does-not-hold has silently withdrawn a protection library-wide, while
+#: one that turns a does-not-hold into a hold has only kept a file nobody asked to keep.
 GATES_PROBE = r"""
 import json
 from reaper.engine.gates import (
@@ -891,12 +895,12 @@ print(json.dumps({"order": order, "cases": cases}))
 """
 
 
-#: `ratings.py` is the layer *under* the rating bar: `RatingFloorGate` holds a file only where
-#: `Rating.meets` says the bar cleared, and it can only ever consider a rating the two parsers
-#: managed to interpret. So the direction here is the opposite of a validator's -- a mutant that
+#: `ratings.py` is the layer under the rating bar: `RatingFloorGate` holds a file only where
+#: `Rating.meets` says the bar cleared, and it can only consider a rating the two parsers
+#: managed to interpret. The direction here is the opposite of a validator's: a mutant that
 #: makes `meets` answer False, or makes a parser return None where a number was readable, does
-#: not refuse a save, it silently withdraws the protection and hands the file to the reap list.
-#: `keeps` / `lets-go` is recorded per case for exactly that reason.
+#: not refuse a save, it silently withdraws the protection and hands the file to the reap
+#: list. `keeps` / `lets-go` is recorded per case for exactly that reason.
 RATINGS_PROBE = r"""
 import json
 from reaper.ratings import (
@@ -1067,20 +1071,19 @@ print(json.dumps({"order": order, "cases": cases}))
 
 
 #: `inspect` is the dangerous-config detector: it refuses nothing and deletes nothing, it
-#: only *speaks*. So the whole answer is the sentences, and the probe records every warning
-#: verbatim -- a corpus recording counts would call a reworded remedy no change.
+#: only speaks. The whole answer is the sentences it produces, so the probe records every
+#: warning verbatim. A corpus that only recorded counts would call a reworded remedy no
+#: change.
 #:
-#: The direction rule is which way a survivor moves the operator. A mutant that DROPS a
-#: warning leaves someone staring at a page that looks fine while a bar of 0.7 keeps
-#: everything or a threshold of 20 condemns it; one that ADDS a warning to a healthy policy
-#: is noise, and noise is what teaches an operator to ignore the panel. Dropping is worse,
-#: and `severity` is part of each recorded answer because a `danger` demoted to a `warn` is
-#: the same loss in a quieter form.
+#: The direction rule is which way a survivor moves the operator. A mutant that drops a
+#: warning leaves someone staring at a page that looks fine while a dangerous setting stays
+#: live; one that adds a warning to a healthy policy is noise, and noise is what teaches an
+#: operator to ignore the panel. Dropping a warning is worse, and `severity` is part of each
+#: recorded answer because demoting a `danger` to a `warn` is the same loss in a quieter form.
 #:
-#: **The corpus is boundary-driven, not example-driven** (#243). Every branch below was
-#: reachable by the old suite, and every one of them was driven only well inside its region
-#: -- 96 against `>= 90`, 7 against `<= 20`, 20 against `<= 30` -- which is a corpus that
-#: cannot tell `>=` from `>`. Each threshold here is driven at the value, one either side.
+#: The corpus is built around each threshold's boundary rather than an arbitrary example
+#: value, since a case driven well inside a region cannot tell `>=` from `>`. Each threshold
+#: here is driven at the value, and at one point on either side of it.
 INSPECT_PROBE = r"""
 import json
 from reaper.engine.policy import (
@@ -1287,12 +1290,11 @@ ZONES: dict[str, Zone] = {
             "wilson_upper",
             "DataHorizonGate.evaluate",
             "evaluate_all",
-            # The eight the zone omitted while reporting a clean sweep of the gate layer
-            # (#598). `_blocked` matters most in principle: it is the one fail-closed helper
-            # every gate routes through, so deleting its `Unknown` guard withdraws the block
-            # from all five at once. `_miss_reason` (né `_miss_phrase`) matters most in fact --
-            # all three survivors a supplementary run found were in it, one live on a default
-            # policy.
+            # `_blocked` matters most in principle: it is the one fail-closed helper every
+            # gate routes through, so deleting its `Unknown` guard would withdraw the block
+            # from every gate that uses it at once. `_miss_reason` matters most in practice,
+            # since it is where survivors have actually turned up before, including one live
+            # on a default policy.
             # The four `Evaluation` properties carry no mutable token and report zero, which
             # is the honest answer `evaluate_all` already gave.
             "_blocked",
@@ -1320,9 +1322,10 @@ ZONES: dict[str, Zone] = {
             "tests/test_policy.py",
             "tests/test_facts_codec.py",
             "tests/test_override_truth.py",
-            # The only file that kills a deletion of either `RatingFloorGate` guard. Without
-            # it the zone reported two survivors the full suite fails on, and a false
-            # survivor costs a reader the trust the real ones need.
+            # The only test file that kills a deletion of either `RatingFloorGate` guard.
+            # Without it, those two mutants would report as survivors even though the full
+            # suite fails on them, and a false survivor costs a reader the trust the real
+            # ones need.
             "tests/test_policy_permutations.py",
         ),
         probe=GATES_PROBE,
@@ -1331,10 +1334,9 @@ ZONES: dict[str, Zone] = {
         module=Path("src/reaper/ratings.py"),
         functions=(
             "Rating.meets",
-            # Declared with `meets`, which used to carry this predicate inline. Hoisting a
-            # shared helper out of a zoned function moves its mutants somewhere no zone names
-            # unless the helper is named too -- the gap `describe_votes` opened once already
-            # (docs/LEARNINGS.md, rule 145).
+            # Declared alongside `meets`. Hoisting a shared helper out of a zoned function
+            # moves its mutants somewhere no zone covers unless the helper is named too, the
+            # same kind of gap `describe_votes` opened once before (docs/LEARNINGS.md).
             "Rating.short_of_vote_floor",
             "Rating.has_meaningful_vote_count",
             "Rating.describe",
@@ -1360,15 +1362,15 @@ ZONES: dict[str, Zone] = {
         ),
         probe=RATINGS_PROBE,
     ),
-    # One function, and the largest zone here by a distance: `inspect` is 900 lines because
-    # every warning the policy editor prints is a branch in it. Splitting it by warning was
-    # the alternative and it would report per-slice kill rates that no longer add up to an
-    # answer about the detector, so it is scoped whole.
+    # One function, and by far the largest zone here: every warning the policy editor
+    # prints is a branch inside `inspect`. Splitting it by warning would report per-slice
+    # kill rates that no longer add up to one answer about the detector, so it stays
+    # scoped whole.
     "policy-inspect": Zone(
         module=Path("src/reaper/engine/policy_warnings.py"),
-        # `_protect_blocks_on_reach` decides one of `inspect`'s warnings and was undeclared, so
-        # the zone's own "one function" note was true of the list rather than of the module.
-        # `INSPECT_PROBE` reads the warnings out, so its mutants are answerable here.
+        # `_protect_blocks_on_reach` decides one of `inspect`'s warnings, so it belongs in
+        # this zone too. `INSPECT_PROBE` reads the warnings out, so its mutants are
+        # answerable here.
         functions=("inspect", "_protect_blocks_on_reach"),
         tests=(
             "tests/test_policy.py",
@@ -1376,8 +1378,8 @@ ZONES: dict[str, Zone] = {
             "tests/test_season_pruning.py",
             "tests/test_policy_permutations.py",
             # The route that hands these warnings to the editor. It kills nothing the file
-            # above does not, and it is here because a mutant that changes the SHAPE of a
-            # warning breaks at the serializer rather than at an assertion.
+            # above does not, and it is here because a mutant that changes a warning's shape
+            # breaks at the serializer rather than at an assertion.
             "tests/test_api.py::TestPolicyValidation",
         ),
         probe=INSPECT_PROBE,
@@ -1385,10 +1387,10 @@ ZONES: dict[str, Zone] = {
 }
 DEFAULT_ZONE = "policy-repair-shims"
 
-#: The two delegating validators contribute no mutants: they hand the whole decision to the
-#: `fields` registry, so there is nothing here to flip. They are named in the zone anyway,
-#: because a zone claiming to be "the save boundary" and quietly omitting two of its members
-#: would be the flag-shaped coverage claim rule 145 is about. Their logic is a separate zone.
+#: The two delegating validators contribute no mutants, since they hand the whole decision to
+#: the `fields` registry and leave nothing here to flip. They are still named in the zone,
+#: because a zone claiming to be "the save boundary" while quietly omitting two of its members
+#: would overstate its own coverage. Their logic lives in a separate zone.
 
 
 def probe(zone: Zone, workdir: Path, timeout: float) -> dict[str, object] | str:
@@ -1416,13 +1418,12 @@ class FunctionTally:
 
 
 def tally(zone: Zone, mutants: list[Mutant]) -> dict[str, FunctionTally]:
-    """Per-function counts, keyed on the functions the ZONE declares.
+    """Return per-function counts, keyed on the functions the zone declares.
 
-    Counting the mutants instead would drop a function that generated none, and a function
-    missing from the report reads exactly like one whose mutants all died -- the flag-shaped
-    coverage claim of rule 145, in the tool built to find it. A zero here says the run tried
-    nothing at all in that function, which is a different answer from "defended" and has to
-    look like one.
+    Counting only the mutants that were generated would drop a function that generated
+    none, and a function missing from the report would read exactly like one whose
+    mutants all died. A row showing zero says the run tried nothing at all in that
+    function, which is a different answer from "defended" and needs to look like one.
     """
     rows = {fn: FunctionTally() for fn in zone.functions}
     for m in mutants:
@@ -1452,9 +1453,10 @@ def main() -> int:
     name, zone = args.zone, ZONES[args.zone]
     report = args.report or REPO / f"mutation-report-{name}.json"
 
-    # Before anything is copied or run: a zone whose list has drifted reports a clean sweep of
-    # a surface it never asked about (#598). `tests/test_repo_hygiene.py` checks every zone in
-    # CI, which this script is not in; this is the same check for the person running it.
+    # Checked before anything is copied or run, since a zone whose list has drifted would
+    # report a clean sweep of a surface it never asked about. `tests/test_repo_hygiene.py`
+    # checks every zone in CI, but this script does not run in CI, so this is the same check
+    # for the person running it by hand.
     if drift := zone_drift(name, zone):
         raise SystemExit("\n".join(drift))
 
@@ -1526,10 +1528,11 @@ def main() -> int:
             report_one(m)
 
         def drain(index: int) -> None:
-            """One thread per worker, taking every mutant.
+            """Run one thread per worker, taking every mutant.
 
-            Round-robin rather than contiguous blocks: mutants in the same function tend to
-            cost the same, so slicing by position would hand one worker every slow one.
+            Round-robin rather than contiguous blocks, because mutants in the same
+            function tend to cost the same. Slicing by position would hand one worker
+            every slow one.
             """
             root = roots[index]
             for m in mutants[index::workers]:
@@ -1545,7 +1548,7 @@ def main() -> int:
             print(f"\nworker copies left at {pool}", flush=True)
         else:
             shutil.rmtree(pool, ignore_errors=True)
-        # The real tree is only ever read: mutants are written into the worker copies.
+        # The real tree is only ever read. Mutants are written into the worker copies instead.
         assert (REPO / zone.module).read_text() == original, "the source under test changed"
 
     per_function = tally(zone, mutants)

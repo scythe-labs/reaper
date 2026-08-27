@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The scan-history sweep.
 
-Nothing ever deleted a snapshot, so the candidate table grew by the whole library on every
-scan and the database grew without limit (#315). These tests pin the window itself, the
-cascade that makes it cheap, the two things the sweep must never take (a snapshot a run is
-bound to, and an operator's own decision), and the batching that lets a preexisting install
-drain a backlog without holding the write lock across the lot.
+Without it, the candidate table would grow by the whole library on every scan, and the
+database would grow without limit. These tests pin the window itself, the cascade that
+makes it cheap, the two things the sweep must never take (a snapshot a run is bound to,
+and an operator's own decision), and the batching that lets a preexisting install drain a
+backlog without holding the write lock across the lot.
 
 ``keep`` is deliberately passed as something other than :data:`retention.KEEP_SNAPSHOTS`
-throughout (rule 141): pinning the production default would hold whether or not the
-argument reached the query. One test pins the shipped constant on its own, since thirty is
+throughout, since pinning the production default would pass whether or not the argument
+actually reached the query. One test pins the shipped constant on its own, since thirty is
 a promise to the operator about how much disk this costs.
 """
 
@@ -113,10 +113,10 @@ async def _season_evidence_count(factory: async_sessionmaker[AsyncSession]) -> i
 
 
 def _bytes_on_disk(data_dir: Path) -> int:
-    """What the operator's ``du`` says: the database and both of its WAL companions.
+    """What the operator's ``du`` would say: the database plus both of its WAL companions.
 
-    The wal is counted because a ``VACUUM`` in WAL mode moves the file's bulk INTO it,
-    so measuring ``reaper.db`` alone would report a reclaim that only relocated bytes.
+    The wal file is counted because a ``VACUUM`` in WAL mode moves the file's bulk INTO
+    it, so measuring ``reaper.db`` alone would report a reclaim that only relocated bytes.
     """
     return sum(
         (data_dir / name).stat().st_size
@@ -126,10 +126,10 @@ def _bytes_on_disk(data_dir: Path) -> int:
 
 
 def _pages(data_dir: Path) -> tuple[int, int]:
-    """``(page_count, freelist_count)`` -- the file's real shape, not its size on disk.
+    """``(page_count, freelist_count)``, the file's real shape rather than its size on disk.
 
     The database is in WAL mode, so committed pages sit in ``reaper.db-wal`` until a
-    checkpoint and the main file's byte size says nothing about how much of it is dead.
+    checkpoint, and the main file's byte size says nothing about how much of it is dead.
     These two pragmas are what :func:`retention._compact_sync` itself decides on.
     """
     con = sqlite3.connect(data_dir / "reaper.db", isolation_level=None)
@@ -164,15 +164,15 @@ class TestTheWindow:
     async def test_an_install_that_has_never_scanned_sweeps_nothing(
         self, factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        """The empty case is the one that must not raise on a fresh install: the sweep
-        fires twice a day from boot, long before the first scan on many installs."""
+        """The empty case must not raise on a fresh install. The sweep fires twice a day
+        from boot, long before the first scan on many installs."""
         assert await retention.sweep_old_snapshots(factory, keep=4) == 0
 
     async def test_the_candidates_go_with_their_snapshot(
         self, factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        """The cascade is what makes this cheap, and it is a schema property -- delete it
-        from the model and the rows are orphaned rather than removed."""
+        """The cascade is what makes this cheap, and it is a schema property. Delete it
+        from the model, and the rows are orphaned rather than removed."""
         await _seed(factory, 5, items=4)
         assert await _candidate_count(factory) == 20
 
@@ -185,10 +185,10 @@ class TestTheWindow:
     ) -> None:
         """The same cascade for the per-show season bundles a scan freezes beside the Facts.
 
-        A second table hanging off ``Snapshot`` and no second sweep: this is the property
-        that lets ``services.retention`` stay one ``DELETE`` (rule 72's sibling sweep, asked
-        of the schema rather than of the code). Without the FK's ``ON DELETE CASCADE`` these
-        rows would outlive every scan that wrote them and grow without bound.
+        A second table hangs off ``Snapshot`` with no second sweep needed, which is the
+        property that lets ``services.retention`` stay one ``DELETE``. Without the FK's
+        ``ON DELETE CASCADE`` these rows would outlive every scan that wrote them and
+        grow without bound.
         """
         await _seed(factory, 5, items=4)
         assert await _season_evidence_count(factory) == 20
@@ -207,17 +207,17 @@ class TestWhatTheSweepMayNotTake:
     async def test_a_snapshot_a_run_is_bound_to_survives_forever(
         self, factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        """The journal is the audit trail and a run's approval is bound to the exact rows
-        it was planned against, so the oldest scan in the database stays if a run points at
-        it -- whatever the run's state, and however far past the window it falls.
+        """The journal is the audit trail, and a run's approval is bound to the exact rows
+        it was planned against, so the oldest scan in the database stays if a run points
+        at it, whatever the run's state and however far past the window it falls.
 
-        This is a SAFETY interlock, not deference to the schema's RESTRICT.
+        This is a safety interlock the schema's own RESTRICT also happens to enforce.
         ``executor._rolling_30d_deletions`` prices the operator's rolling delete budget by
         joining each action step back to the candidate row of the snapshot its own run was
         planned against, on a soft ``media_key`` with no foreign key behind it. The join is
-        an inner one, so a swept candidate does not raise -- it drops that past deletion out
-        of the tally, and the cap lets the next run spend past what the operator set
-        (rule 5/30). Narrow this exclusion to live or recent runs and that is what happens.
+        an inner one, so a swept candidate does not raise. It silently drops that past
+        deletion out of the tally, letting the next run spend past what the operator set.
+        Narrowing this exclusion to live or recent runs would cause exactly that.
         """
         ids = await _seed(factory, 6, items=2)
         async with factory() as session:
@@ -246,10 +246,10 @@ class TestWhatTheSweepMayNotTake:
     async def test_operator_decisions_outlive_the_scans_that_surfaced_them(
         self, factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        """A hand spare and the grace clock are keyed by media, not by scan -- deliberately
-        "a decision about a file, not a property of the scan that happened to surface it".
-        Sweeping the scan that first showed the item must not drop either, or a spare would
-        silently lapse and a grace window would restart from zero."""
+        """A hand spare and the grace clock are keyed by media, deliberately, since each is
+        a decision about a file rather than a property of the scan that happened to
+        surface it. Sweeping the scan that first showed the item must not drop either, or
+        a spare would silently lapse and a grace window would restart from zero."""
         await _seed(factory, 4, items=1)
         async with factory() as session:
             session.add(
@@ -280,8 +280,8 @@ class TestWhatTheSweepMayNotTake:
     async def test_a_window_below_one_raises_rather_than_emptying_the_queue(
         self, factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        """Rule 1: an empty selection must never expand to everything. A zero here would
-        take the newest snapshot too, which is the one every read path reads."""
+        """An empty selection must never expand to everything. A zero here would take the
+        newest snapshot too, which is the one every read path reads."""
         await _seed(factory, 3)
 
         with pytest.raises(ValueError, match="keep must be at least 1"):
@@ -294,9 +294,9 @@ class TestPreexistingInstalls:
     async def test_a_backlog_larger_than_one_batch_drains_in_a_single_pass(
         self, factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        """The upgrade case: an install that has been scanning for months arrives with far
+        """The upgrade case. An install that has been scanning for months arrives with far
         more than one batch to drop, and must not need a fortnight of firings to catch up.
-        Sized off the real batch constant so raising it cannot silently make this a
+        Sized off the real batch constant, so raising it cannot silently make this a
         single-batch test that proves nothing about the loop."""
         backlog = retention.SWEEP_BATCH * 2 + 3
         ids = await _seed(factory, backlog + 2, items=1)
@@ -312,10 +312,10 @@ class TestPreexistingInstalls:
         factory: async_sessionmaker[AsyncSession],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The scheduler logs only that the firing failed, so on the upgrade drain -- the
-        one case this is written for -- a sweep that dropped none of thousands and one that
+        """The scheduler logs only that the firing failed. On the upgrade drain, the one
+        case this is written for, a sweep that dropped none of thousands and one that
         dropped all but the last read identically. The batches already committed stay
-        either way; what the count changes is whether an operator waits or intervenes."""
+        either way. What the count changes is whether an operator waits or intervenes."""
         events: list[tuple[str, int]] = []
         monkeypatch.setattr(
             retention.log,
@@ -345,11 +345,11 @@ class TestPreexistingInstalls:
         factory: async_sessionmaker[AsyncSession],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The runaway guard on the drain loop, which is the only bound on it -- without a
-        test, replacing the bounded loop with ``while True`` is green (rule 118).
+        """The runaway guard on the drain loop is the only bound on it. Without a test for
+        it, replacing the bounded loop with ``while True`` would still pass.
 
         The batch ceiling is lowered rather than a 50,000-snapshot backlog built, and it
-        stops mid-drain deliberately: the returned count must be what this pass actually
+        stops mid-drain deliberately. The returned count must be what this pass actually
         removed, and the leftovers must still be there for the next firing to take, since
         the sweep's whole recovery story is that it commits per batch and resumes."""
         backlog = retention.SWEEP_BATCH * 3
@@ -368,8 +368,8 @@ class TestPreexistingInstalls:
 
 class TestCompaction:
     """``VACUUM`` is what actually hands disk back, since SQLite never returns freed pages
-    on its own. The thresholds are monkeypatched down rather than met for real: proving the
-    decision needs a fragmented file, not a 64 MB one.
+    on its own. The thresholds are monkeypatched down rather than met for real, since
+    proving the decision needs a fragmented file rather than a 64 MB one.
     """
 
     async def test_it_declines_a_database_with_nothing_to_reclaim(
@@ -387,9 +387,9 @@ class TestCompaction:
     ) -> None:
         """The assertion is BYTES ON DISK, deliberately, and the pragmas below are the
         supporting detail rather than the proof. Asserting only that ``page_count`` fell
-        and ``freelist_count`` reached zero is what let a ``VACUUM`` that handed back
-        nothing ship green: in WAL mode both are true of a file whose size never moved
-        (rule 118)."""
+        and ``freelist_count`` reached zero is not enough. In WAL mode both can be true
+        of a file whose size on disk never moved, which is exactly what a ``VACUUM`` that
+        handed back nothing would still show."""
         await _seed(factory, 40, items=60)
         await retention.sweep_old_snapshots(factory, keep=1)
         pages_before, free_before = _pages(tmp_path)
@@ -410,9 +410,9 @@ class TestCompaction:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Both thresholds have to agree. With the byte floor out of the way the ratio is
-        what declines the lock, which is the steady state: one snapshot of thirty freed is
-        some 3% of the file, and the next scan reuses those pages anyway."""
+        """Both thresholds have to agree. With the byte floor out of the way, the ratio is
+        what declines the lock, at the steady state where one snapshot of thirty freed is
+        around 3% of the file. The next scan reuses those pages anyway."""
         await _seed(factory, 40, items=60)
         await retention.sweep_old_snapshots(factory, keep=39)
         monkeypatch.setattr(retention, "COMPACT_MIN_FREE_BYTES", 1024)

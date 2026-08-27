@@ -5,10 +5,9 @@
 // OUTSIDE the app and cannot ask the DOM for it -- the README banner and the social preview
 // card.
 //
-// Both had drifted, and in different directions: the banner read "reaper" at semibold, the card
-// read "REAPER" tracked out to 8.5, and the app read "Reaper" at bold. Three surfaces, three
-// spellings, each written by someone reading a different one (rule 144). Whichever of the three
-// you looked at, the other two were wrong.
+// Three surfaces can each spell the name differently if each is maintained by hand: the banner,
+// the card, and the app's own masthead. Reading from the app here keeps the other two in sync
+// with it instead of drifting on their own.
 //
 // This lives here, not in `brand/`, because it reads the filesystem: `brand/appIcon.ts` and
 // `brand/socialCard.ts` are imported by the app and by a rasterizer with no `node:fs`. Only
@@ -72,10 +71,10 @@ export function trackingAt(fontSize: number): number {
 }
 
 /** The OTHER surface drawing this lockup inside the app. `BRAND_WORD` comes from the masthead,
- *  so anything built on it agrees with the masthead by construction and can say nothing about
- *  the sign-in card -- which is the surface both assets actually reproduce. A derived value
- *  vouching for a sibling nobody checked is how the lowercase banner survived review, so the
- *  sibling is read here by name (rule 144, rule 72). */
+ *  so anything built on it agrees with the masthead by construction and says nothing about the
+ *  sign-in card, which is the surface both assets actually reproduce. A derived value that
+ *  vouches for a sibling nobody checked can hide a real mismatch, so the sibling is read here
+ *  by name instead. */
 export function signInCardSpellsTheWord(): boolean {
   const login = readFileSync(join(REPO, "frontend/src/components/Login.tsx"), "utf8");
   return login.includes(`<h1 className="brand-word">${BRAND_WORD}</h1>`);

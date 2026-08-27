@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The head the item panel and the show panel share. It was written twice and the two copies had
-// drifted: the item panel's title carried the outbound arrow and the show panel's did not, and the
-// two spelled the jump pills in different orders (Sonarr first on the show, last on the item). So
-// what this file pins is not that each panel is right on its own, which is how both copies stayed
-// wrong, but that the two AGREE -- every assertion below reads both panels and compares them.
+// The head the item panel and the show panel share. What this file checks is not that each
+// panel is right on its own, since two separately written copies can each look plausible while
+// disagreeing, but that the two AGREE: every assertion below reads both panels and compares
+// them.
 import { within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -17,15 +16,15 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import { ShowPanel } from "./ShowPanel";
 import { WhyPanel } from "./WhyPanel";
 
-// Spreads the real module for ApiError (rule 135): describeError's `instanceof ApiError`
-// check throws against a mock that answers for `api` alone.
+// Spreads the real module for ApiError: describeError's `instanceof ApiError` check throws
+// against a mock that answers for `api` alone.
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   api: { override: vi.fn(), clearOverride: vi.fn(), profile: vi.fn(), general: vi.fn() },
 }));
 
 // Both panels read settings through hooks no assertion here names: the unmeasured allowance
-// (["profile"]) and the Spare control's default length (["general-settings"]). Rule 135.
+// (["profile"]) and the Spare control's default length (["general-settings"]).
 beforeEach(() => {
   vi.mocked(api.profile).mockResolvedValue(DEFAULT_PROFILE);
   vi.mocked(api.general).mockResolvedValue(DEFAULT_GENERAL);
@@ -34,7 +33,7 @@ beforeEach(() => {
 /** The order the head declares, written from the decision rather than read back off the
  *  component: what was played, who asked for it, then the app to go change it. At most one of
  *  radarr/sonarr is ever set on a real row, so a real panel's row always ends on the app that
- *  manages the file (rule 119: an expectation from the spec, not a transcription). */
+ *  manages the file. */
 const PILL_ORDER = ["Tautulli", "Seerr", "Radarr", "Sonarr"];
 
 /** Every link set at once. No route sends this -- `LinksOut` sets at most one of radarr/sonarr --
@@ -139,7 +138,7 @@ function headOf(which: "item" | "show", links: Links): HTMLElement {
   const { container } = renderWithProviders(node, { client });
   const heads = container.querySelectorAll(".why-head");
   // One head per panel, asserted before anything reads it: a second would leave every comparison
-  // below ambiguous about which one it measured (rule 145).
+  // below ambiguous about which one it measured.
   expect(heads, `${which}: expected exactly one panel head`).toHaveLength(1);
   return heads[0] as HTMLElement;
 }
@@ -151,14 +150,15 @@ const pillsIn = (head: HTMLElement): string[] =>
 
 describe("the panel head the two title panels share", () => {
   it("puts the jump pills in the same order on both", () => {
-    // The old show panel led with Sonarr, so this fails on the tree before the extraction.
+    // Both panels must render the pills in the same order; a panel spelling its own order
+    // independently is what let the two drift apart.
     expect(pillsIn(headOf("item", ALL_LINKS))).toEqual(PILL_ORDER);
     expect(pillsIn(headOf("show", ALL_LINKS))).toEqual(PILL_ORDER);
   });
 
   it("ends both rows on the app that manages the file, on the links a route really sends", () => {
     // A movie reaches Radarr and a show reaches Sonarr, so a fixture pinning one manager cannot
-    // tell a shared order from a hardcoded one (rule 141): sweep both.
+    // tell a shared order from a hardcoded one: sweep both.
     expect(pillsIn(headOf("item", { ...ALL_LINKS, sonarr: null }))).toEqual([
       "Tautulli",
       "Seerr",
@@ -201,14 +201,14 @@ describe("the panel head the two title panels share", () => {
   });
 });
 
-// The assertions above compare two renders, so they hold just as well if someone writes the head
-// out a second time and happens to spell it the same way. That is how these two drifted in the
-// first place, and this is what says the head is written once.
+// The assertions above compare two renders, so they would still pass if someone wrote the head
+// out a second time and happened to spell it the same way. This section checks the head is
+// written once, in one shared component.
 //
-// It reads source text, so it is bounded by what a substring match can see (rule 147): it accepts
-// the class and label tokens exactly as the tree spells them today, one per line, and it would
-// not see either name assembled from a variable or a template literal. What it does hold is the
-// shape that actually recurs here, a head pasted into a panel.
+// It reads source text, so it is bounded by what a substring match can see: it accepts the
+// class and label tokens exactly as the tree spells them today, one per line, and would not see
+// either name assembled from a variable or a template literal. What it does hold is the shape
+// that actually recurs here, a head pasted into a panel.
 describe("one declaration, not two", () => {
   const HERE = dirname(fileURLToPath(import.meta.url));
   const sourceOf = (name: string) => readFileSync(join(HERE, name), "utf8");

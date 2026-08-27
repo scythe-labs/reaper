@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The two read-only surfaces: what Scales counts, and what the shelf announces.
 
-Scales deletes nothing, so its findings are all the same shape -- a number the operator
-reads while deciding, that did not mean what it said. A request for seasons the scan does
-not hold inflated the board's request count and the watch-rate denominator while appearing
-in neither list an operator could open (B2-19). One title reached through two id groups
-charged the same person twice (B-14). Leaving Soon's half is the announced set, read at the
-top of a pass and written at the bottom with minutes of network I/O in between (B2-20), plus
-the Plex clients its read-only path built and never closed (PR-3).
+Scales deletes nothing, so its findings are all the same shape. Each one is a number the
+operator reads while deciding, and that number must mean what it says. A request for
+seasons the scan does not hold must not inflate the board's request count or the
+watch-rate denominator while appearing in no list an operator can open. One title reached
+through two id groups must not charge the same person twice. Leaving Soon's half is the
+announced set, read at the top of a pass and written at the bottom with minutes of network
+I/O in between, and the Plex clients its read-only path builds must always be closed.
 """
 
 from __future__ import annotations
@@ -104,10 +104,13 @@ def _season(
 
 
 class TestASeasonTheScanDoesNotHold:
-    """A season-scoped request is the DEFAULT shape Seerr sends, and a scan routinely holds
-    only some of a show's seasons (the rest protected, or filtered out). The show still
-    matched, so the request was not "not in scan"; its own seasons scoped to nothing, so the
-    drawer skipped it. It counted, and it was nowhere (B2-19)."""
+    """A season-scoped request is the default shape Seerr sends, and a scan routinely holds
+    only some of a show's seasons (the rest protected, or filtered out).
+
+    The show itself still matched the scan, so a check that only looked at the show would
+    call this request "in scan." But its specific seasons scoped to nothing the scan held,
+    so the drawer skipped it. It counted toward totals, yet appeared on no list.
+    """
 
     def test_it_is_not_counted_as_a_request_the_scan_has(self) -> None:
         report = roll_up(
@@ -120,8 +123,8 @@ class TestASeasonTheScanDoesNotHold:
         assert report.not_in_scan == 1
 
     def test_it_lands_in_the_not_in_scan_panel_where_it_can_be_seen(self) -> None:
-        """The alternative fix -- skip it in the roll-up and stop there -- makes the request
-        vanish from every surface, which is a quieter version of the same problem."""
+        """Simply skipping this request in the roll-up would make it vanish from every
+        surface instead, which is a quieter version of the same problem."""
         report = roll_up(
             [_req(plex_id=100, name="A", seasons=(5,))],
             [_season(cid=1, number=1, rating_key=555)],
@@ -134,8 +137,8 @@ class TestASeasonTheScanDoesNotHold:
         assert row.requested_by == ["A"]
 
     def test_a_co_requester_who_asked_for_a_season_in_the_scan_is_untouched(self) -> None:
-        """Classified per request, not per group: one person's phantom season must not take
-        their co-requester's real one off the board with it."""
+        """Requests are classified per request, not per group. One person's phantom season
+        must not take their co-requester's real one off the board with it."""
         report = roll_up(
             [
                 _req(plex_id=100, name="A", seasons=(1,), request_id=1),
@@ -149,11 +152,14 @@ class TestASeasonTheScanDoesNotHold:
         assert report.not_in_scan == 1
 
     def test_the_watch_rate_denominator_only_counts_what_could_move_its_numerator(self) -> None:
-        """The board divides ``played_by_them`` by ``requests_made``. A request that scopes to
-        nothing can never increment the numerator, and the old per-group dedup counted the
-        FIRST request it saw for a person and skipped the rest -- so a phantom arriving first
-        took the row, and the season they had actually watched was never looked at. Their
-        watch rate read 0%. The order here is the point of the test."""
+        """The board divides ``played_by_them`` by ``requests_made``. A request that scopes
+        to nothing can never increment the numerator, so it must never count toward the
+        denominator either.
+
+        The phantom request is listed first on purpose. Counting whichever request arrives
+        first, rather than the one that actually matched, would attribute this person's
+        watch to the wrong request and report their watch rate as 0%.
+        """
         report = roll_up(
             [
                 _req(plex_id=100, name="A", seasons=(5,), request_id=1),
@@ -167,8 +173,9 @@ class TestASeasonTheScanDoesNotHold:
         assert (row.played_by_them, row.requests_made) == (1, 1)
 
     def test_a_whole_show_request_still_binds_every_season(self) -> None:
-        """The guard is on an empty SCOPE, not on season-scoping itself: an unscoped request
-        binds the whole matched set exactly as before."""
+        """The guard checks for an empty scope, not for season-scoping itself. An
+        unscoped request still binds the whole matched set.
+        """
         report = roll_up(
             [_req(plex_id=100, name="A", seasons=())],
             [_season(cid=1, number=1, rating_key=555), _season(cid=2, number=2, rating_key=556)],
@@ -181,11 +188,12 @@ class TestASeasonTheScanDoesNotHold:
 
 
 class TestOneTitleReachedTwoWays:
-    """Requests group by a single content key (tmdb, else tvdb, else imdb), but candidates are
-    indexed under EVERY id they carry. So co-requests that carry different ids split into two
-    groups that resolve to the same candidates, and a person in both was counted in both
-    (B-14). The report totals already deduped by candidate set, so the board disagreed with
-    its own header."""
+    """Requests group by a single content key (tmdb, else tvdb, else imdb), but candidates
+    are indexed under every id they carry. Co-requests that carry different ids for the
+    same title can split into two groups that resolve to the same candidates, so a person
+    appearing in both groups must be charged only once. The report's totals dedupe by
+    candidate set already, so the per-row counts must agree with that total.
+    """
 
     def test_the_same_person_is_charged_once(self) -> None:
         cand = _season(cid=1, number=1, rating_key=555, tmdb=7, imdb="tt7")
@@ -204,8 +212,9 @@ class TestOneTitleReachedTwoWays:
         assert row.reclaimable_items == 1
 
     def test_the_row_still_agrees_with_the_report_total(self) -> None:
-        """The half that was always right, pinned so the fix converges on it rather than
-        breaking the other way."""
+        """The report-level total is correct on its own. This pins the per-row count
+        against it, so a fix for the row-level bug cannot break this side instead.
+        """
         cand = _season(cid=1, number=1, rating_key=555, tmdb=7, imdb="tt7")
         report = roll_up(
             [
@@ -220,8 +229,9 @@ class TestOneTitleReachedTwoWays:
         assert report.rows[0].reclaimable_items == report.total_reclaimable_items
 
     def test_two_different_people_are_still_two_rows(self) -> None:
-        """Deduped by (person, matched set), never by matched set alone: co-requesters of one
-        title are the ordinary case and both must be charged."""
+        """Deduping is by (person, matched set), never by matched set alone. Co-requesters
+        of one title are the ordinary case, and both of them must be charged.
+        """
         cand = _season(cid=1, number=1, rating_key=555, tmdb=7, imdb="tt7")
         report = roll_up(
             [
@@ -297,8 +307,9 @@ def _grace_report(keys: Sequence[int]) -> GraceReport:
 
 
 class _RecordingNotifier:
-    """Posts are recorded and the post AWAITS, so two passes genuinely overlap in the window
-    the announced set used to be read and written across."""
+    """Records each post, and the post itself awaits, so two passes can genuinely overlap
+    during the window where the announced set is read, then later written.
+    """
 
     def __init__(self, posts: list[tuple[str, ...]]) -> None:
         self._posts = posts
@@ -310,15 +321,16 @@ class _RecordingNotifier:
 
 
 class _Rendezvous:
-    """Holds the first pass at the announced-set READ until a second pass reaches it.
+    """Holds the first pass at the announced-set read until a second pass reaches it.
 
-    Without this the race is left to the scheduler, and the scheduler does not cooperate:
-    stubbed out, one pass reliably runs read-post-write to completion before the other gets
-    a turn, so a test written the obvious way passes with the lock removed and pins nothing.
+    Without this, the race is left to the scheduler, which does not cooperate. Stubbed
+    out, one pass reliably runs read-post-write to completion before the other gets a
+    turn, so a test written the obvious way would pass with the lock removed and pin
+    nothing.
 
-    Bounded, so it works both ways. With the lock in place the second pass CANNOT reach the
-    read, the wait simply expires, and the passes proceed serialized -- which is the property
-    under test -- at the cost of one short timeout.
+    It is bounded, so it works both ways. With the lock in place, the second pass cannot
+    reach the read, so the wait simply expires and the passes proceed serialized, which is
+    the property under test, at the cost of one short timeout.
     """
 
     def __init__(self, real: Any, *, wait: float = 0.3) -> None:
@@ -340,11 +352,14 @@ class _Rendezvous:
 
 
 class TestOverlappingPassesAnnounceOnce:
-    """Two entry points, nothing serializing them: "Update now" from the Reap page and the
-    after-scan hook, which fires at the end of every scan. Both read the same announced set,
-    both decide the same title is new, and your users are told twice -- then the later
-    writer persists a set built from ITS pre-I/O read and drops what the first recorded, so
-    the title is announced a third time next pass (B2-20)."""
+    """Two entry points can race with nothing serializing them: "Update now" from the Reap
+    page, and the after-scan hook that fires at the end of every scan.
+
+    Both read the same announced set, both decide the same title is new, and the
+    operator's users get told twice. Then the later writer persists a set built from its
+    own read from before either wrote, dropping what the first pass recorded, so the title
+    is announced a third time on the next pass.
+    """
 
     @pytest.fixture(autouse=True)
     def _stub_sources(self, monkeypatch: pytest.MonkeyPatch, posts: list[Any]) -> None:
@@ -382,9 +397,10 @@ class TestOverlappingPassesAnnounceOnce:
         posts: list[tuple[str, ...]],
         overlap: _Rendezvous,
     ) -> None:
-        """The shelf is off, so both passes fall through to the Discord-only path -- which is
-        not an edge case: for an operator running Leaving Soon without the shelf it is the
-        only path that ever announces."""
+        """The shelf is off, so both passes fall through to the Discord-only path. This is
+        not an edge case. For an operator running Leaving Soon without the shelf, it is the
+        only path that ever announces.
+        """
         await self._both(factory, tmp_path)
         assert posts == [("Title 11", "Title 22")]
 
@@ -395,11 +411,14 @@ class TestOverlappingPassesAnnounceOnce:
         posts: list[tuple[str, ...]],
         overlap: _Rendezvous,
     ) -> None:
-        """The durable half, and the reason the duplicate post above matters beyond the one
-        extra message: what is announced must end up recorded, or it is announced again next
-        pass, and the pass after that. A companion invariant rather than a second proof --
-        with both passes seeing the same grace set, whether the losing write drops anything
-        depends on which finishes last."""
+        """The durable half, and the reason the duplicate post above matters beyond one
+        extra message. What is announced must end up recorded, or it is announced again
+        next pass, and the pass after that.
+
+        This is a companion invariant, not a second proof of the same thing. With both
+        passes seeing the same grace set, whether the losing write drops anything depends
+        on which one finishes last.
+        """
         await self._both(factory, tmp_path)
         async with factory() as session:
             assert await overlap._real(session) == {11, 22}
@@ -410,9 +429,11 @@ class TestOverlappingPassesAnnounceOnce:
         tmp_path: Path,
         overlap: _Rendezvous,
     ) -> None:
-        """Not a behavior claim: a guard that the setup above is exercising what it says it
-        is. If a future change made the second pass bail out before the announced-set read,
-        the two assertions above would hold for the wrong reason."""
+        """A guard on the setup above, not a claim about the app's behavior. It proves the
+        setup actually exercises what it says it does. If a future change made the second
+        pass bail out before the announced-set read, the two assertions above would hold
+        for the wrong reason.
+        """
         await self._both(factory, tmp_path)
         assert overlap.arrivals == 2
 
@@ -422,7 +443,8 @@ class TestOverlappingPassesAnnounceOnce:
         tmp_path: Path,
         posts: list[tuple[str, ...]],
     ) -> None:
-        """Sequential, no rendezvous: the plain idempotence the durable set exists for."""
+        """Sequential, with no rendezvous. This is the plain idempotence the durable set
+        exists for."""
         box = SecretBox("test-key")
         settings = _settings(tmp_path)
         await leaving_soon.after_scan(factory, settings, box)
@@ -435,9 +457,9 @@ class TestTheLockBindsToTheRunningLoop:
         """Two callers on one loop meet one lock, which is what serializes a pass against
         every other one in the process.
 
-        That the lock is per-LOOP, and that a closed loop's lock is collected, are properties
-        of ``aio.per_loop_lock`` and are pinned in ``tests/test_aio.py``. This asserts only
-        that this module reads through it.
+        That the lock is per loop, and that a closed loop's lock is collected, are
+        properties of ``aio.per_loop_lock``, pinned in ``tests/test_aio.py``. This asserts
+        only that this module reads through it.
         """
         assert leaving_soon._pass_lock() is leaving_soon._pass_lock()
 
@@ -455,9 +477,10 @@ class _CountingClient:
 
 
 class TestNoPlexClientIsLeftOpen:
-    """``cleanup_sections`` built the client and returned on the very next line whenever
-    writing was not allowed -- the DEFAULT state -- so every library toggled off while
-    deletion was unarmed leaked a client and its pooled connections (PR-3)."""
+    """Every library toggled off, while deletion is unarmed, must never leak a Plex client
+    or its pooled connections. ``cleanup_sections`` must close any client it opens, on
+    every path through the function, including the ones that return early.
+    """
 
     @pytest.fixture
     def opened(self) -> list[_CountingClient]:
@@ -489,11 +512,11 @@ class TestNoPlexClientIsLeftOpen:
         opened: list[_CountingClient],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The other half: the guard must not become a reason the client is never closed."""
+        """The other half. The guard must not become a reason the client is never closed."""
 
         async def _safety(*_args: object, **_kwargs: object) -> RuntimeSafety:
-            # The read-only opt-in, which is what lets the shelf be written while deletion
-            # is off; ``leaving_soon_write_allowed`` is derived from it.
+            # The read-only opt-in that lets the shelf be written while deletion is off.
+            # ``leaving_soon_write_allowed`` is derived from it.
             return RuntimeSafety(allow_leaving_soon_unarmed=True)
 
         async def _sync(*_args: object, **_kwargs: object) -> list[Any]:
@@ -515,8 +538,9 @@ class TestNoPlexClientIsLeftOpen:
         opened: list[_CountingClient],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """``run_sync`` built the client first and only started its try/finally four awaited
-        reads later, so any one of them raising leaked it."""
+        """``run_sync`` builds the client first, and only wraps its try/finally around
+        four awaited reads that come later, so any one of those reads raising must still
+        not leak the client."""
 
         async def _boom(*_args: object, **_kwargs: object) -> GraceReport:
             raise RuntimeError("the grace read failed")
@@ -533,16 +557,16 @@ class TestNoPlexClientIsLeftOpen:
 
 
 class TestADegradedScanDoesNotReachTheShelf:
-    """A degraded snapshot is un-plannable, and its side effects are gated with its plan.
+    """A degraded snapshot cannot be planned, so its side effects are gated the same way
+    its plan is.
 
     The shelf and the Discord heads-up both read the same condemned set the planner
     refuses to touch. Labeling titles "leaving soon" in someone's library, or telling a
     room of people a title is about to go, on evidence Reaper has already declared
-    untrustworthy is the same mistake as deleting on it, minus the file (rule 116).
+    untrustworthy, is the same mistake as deleting on it, minus the file.
 
-    ``scan_runner`` already skipped the after-scan shelf on a degraded snapshot, but that
-    covered only the automatic path: ``POST /api/leaving-soon/sync`` still labeled and
-    announced. The guard now sits in ``_run_pass``, where both paths converge.
+    The guard sits in ``_run_pass``, where both the automatic after-scan path and
+    ``POST /api/leaving-soon/sync`` converge, so both paths get the same protection.
     """
 
     async def _snapshot(self, factory: async_sessionmaker[AsyncSession], *, degraded: bool) -> None:
@@ -569,24 +593,25 @@ class TestADegradedScanDoesNotReachTheShelf:
 
         with pytest.raises(leaving_soon.LeavingSoonDegradedError) as caught:
             await leaving_soon.run_sync(factory, _settings(tmp_path), SecretBox("test-key"))
-        # Plain language, and it says what to do about it (rule 21).
+        # Plain language that says what to do about it.
         assert "couldn't be trusted" in str(caught.value)
 
     async def test_a_clean_scan_after_a_degraded_one_is_not_blocked(
         self, factory: async_sessionmaker[AsyncSession], tmp_path: Path
     ) -> None:
-        """The LATEST scan decides. A degraded run the operator has since re-scanned past
-        must not keep the shelf shut forever."""
+        """The latest scan decides. A degraded run the operator has since re-scanned past
+        must not keep the shelf shut forever.
+        """
         async with factory() as session:
             await app_settings.set_leaving_soon_enabled(session, enabled=True)
             await session.commit()
         await self._snapshot(factory, degraded=True)
         await self._snapshot(factory, degraded=False)
 
-        # It gets past the degraded guard and fails later, on the missing Plex link. Named
-        # exactly, not caught as a bare Exception: the point is WHICH gate stopped it, and a
-        # test that accepts any failure would pass even if the degraded guard had fired
-        # (rule 119).
+        # It gets past the degraded guard and fails later, on the missing Plex link. This
+        # names the exact error rather than catching any exception, because the point is
+        # which gate stopped it. A test that accepted any failure would pass even if the
+        # degraded guard had fired instead.
         with pytest.raises(LeavingSoonUnlinkedError, match="needs a linked Plex server"):
             await leaving_soon.run_sync(factory, _settings(tmp_path), SecretBox("test-key"))
 
@@ -603,12 +628,12 @@ class TestADegradedScanDoesNotReachTheShelf:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """With the SHELF OFF, the hook falls through to a Discord-only heads-up that
+        """With the shelf off, the hook falls through to a Discord-only heads-up that
         never reaches ``_run_pass``'s guard. That fall-through reads the same condemned
         set, so it carries the check too.
 
-        A notifier is forced in on purpose: without one the fall-through returns before it
-        would ever announce, and the test would pass with the guard deleted.
+        A notifier is forced in on purpose. Without one, the fall-through would return
+        before it ever announces, and this test would pass even with the guard deleted.
         """
         announced: list[object] = []
 
@@ -634,8 +659,9 @@ class TestADegradedScanDoesNotReachTheShelf:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The control for the test above: same setup, clean snapshot, and the heads-up
-        goes out. Without this the one above would pass on a hook that never announces."""
+        """The control for the test above. Same setup, clean snapshot, and the heads-up
+        goes out. Without this, the test above would pass even on a hook that never
+        announces."""
         announced: list[object] = []
 
         async def _spy(*args: object, **kwargs: object) -> tuple[bool, list[str]]:
@@ -655,14 +681,15 @@ class TestADegradedScanDoesNotReachTheShelf:
 
 
 class TestAScanThatSkippedTheShelfSaysSo:
-    """Every skip in ``after_scan`` returns before ``_run_pass`` writes its record, so the
-    Jobs row re-read the last COMPLETED pass and answered for the scan with it: a green dot,
-    an old timestamp and counts, under a line reading "Runs after every scan".
+    """Every skip in ``after_scan`` returns before ``_run_pass`` writes its record. Without
+    its own record, the Jobs row would just re-read the last completed pass and answer for
+    the scan with it, showing a green dot, an old timestamp, and counts, under a line
+    reading "Runs after every scan."
 
     The skip is written to its own row and never cleared. The row prefers it only while it
     is newer than the completed pass, so a pass that later completes wins on its own
-    timestamp -- the arrangement ``ScanRow`` already uses for a scheduled scan that crashed
-    and wrote no snapshot.
+    timestamp. This is the same arrangement ``ScanRow`` already uses for a scheduled scan
+    that crashed and wrote no snapshot.
     """
 
     async def _snapshot(self, factory: async_sessionmaker[AsyncSession], *, degraded: bool) -> None:
@@ -695,8 +722,9 @@ class TestAScanThatSkippedTheShelfSaysSo:
 
         skip = await self._skip(factory)
         assert skip is not None, "a scan skipped the shelf and left no record of it"
-        # The exact code, because the row trails it after a timestamp and this is the whole
-        # of what the operator is told. Typed, not a transcribed phrase (phase 8a).
+        # The exact code, because the row trails it after a timestamp, and this is the
+        # whole of what the operator is told. This is a typed value, not a transcribed
+        # phrase.
         assert skip[1].id == "error.leaving_soon.skip_degraded"
         assert skip[0]
 
@@ -705,10 +733,10 @@ class TestAScanThatSkippedTheShelfSaysSo:
     ) -> None:
         """No Plex link at all, which ``_run_pass`` raises ``LeavingSoonUnlinkedError`` for.
 
-        A different clause from the degraded case above and from the unreachable case below,
-        and asserted as such: they are the operator's only signal for which happened, and the
-        fixes differ, so a change collapsing them would still satisfy a test that only
-        checked a record exists. All three shared two classes until #734.
+        This is a different clause from the degraded case above and the unreachable case
+        below, and it is asserted as such. The clause is the operator's only signal for
+        which one happened, and the fixes differ, so a change collapsing two clauses
+        together would still satisfy a test that only checked that some record exists.
         """
         async with factory() as session:
             await app_settings.set_leaving_soon_enabled(session, enabled=True)
@@ -727,8 +755,11 @@ class TestAScanThatSkippedTheShelfSaysSo:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The arm the route now answers 502 for, and the one this file could not reach
-        before: with no link, the pass never got as far as talking to a server (#734)."""
+        """The arm where a linked Plex server exists but does not answer.
+
+        The case above has no link at all, so the pass never gets as far as talking to a
+        server. This test reaches the arm where the server is contacted and stalls.
+        """
 
         async def _stalled(*args: object, **kwargs: object) -> object:
             raise PlexError("movie listing for section 3 stalled at 200 of 1000")
@@ -743,17 +774,19 @@ class TestAScanThatSkippedTheShelfSaysSo:
 
         skip = await self._skip(factory)
         assert skip is not None
-        # The row clause carries no client text at all: a Jobs row is scanned, and the
-        # diagnostic tail belongs on the route's response, where someone is reading it.
+        # The row clause carries no client text at all. A Jobs row is scanned, not read
+        # closely, so the diagnostic tail belongs on the route's response instead, where
+        # someone is actually reading it.
         assert skip[1].id == "error.leaving_soon.skip_unreachable"
 
     async def test_the_shelf_being_off_is_not_written_down(
         self, factory: async_sessionmaker[AsyncSession], tmp_path: Path
     ) -> None:
-        """The one skip with nothing on screen to correct: the row renders its "Off" branch
-        from the same setting and shows no last-run line at all. Recording here would put a
-        failure into a row that never draws one, and it would outlive the operator turning
-        the shelf back on."""
+        """The one skip with nothing on screen to correct. The row renders its "Off"
+        branch from the same setting and shows no last-run line at all. Recording a skip
+        here would put a failure into a row that never draws one, and it would outlive the
+        operator turning the shelf back on.
+        """
         await self._snapshot(factory, degraded=False)  # shelf off is the default
 
         await leaving_soon.after_scan(factory, _settings(tmp_path), SecretBox("test-key"))
@@ -764,19 +797,21 @@ class TestAScanThatSkippedTheShelfSaysSo:
         self, factory: async_sessionmaker[AsyncSession], tmp_path: Path
     ) -> None:
         """Nothing clears the skip row, so what makes a recovery visible is the completed
-        pass carrying a LATER timestamp. Pinned here rather than left to the reader, because
-        the reader's comparison is the only thing that retires a skip: were the two written
-        with the same instant, or out of order, a shelf that recovered would keep reporting
-        the old failure forever."""
+        pass carrying a later timestamp. This is pinned here rather than left to the
+        reader, because the reader's comparison is the only thing that retires a skip. If
+        the two were written with the same instant, or out of order, a shelf that
+        recovered would keep reporting the old failure forever.
+        """
         async with factory() as session:
             await app_settings.set_leaving_soon_enabled(session, enabled=True)
             await session.commit()
         await self._snapshot(factory, degraded=True)
         await leaving_soon.after_scan(factory, _settings(tmp_path), SecretBox("test-key"))
 
-        # A completed pass, written the way _run_pass writes one. Called directly: reaching
-        # it through after_scan needs a reachable Plex, and what is under test is the
-        # ordering of the two rows, not the pass that produces one of them.
+        # A completed pass, written the way _run_pass writes one, but called directly
+        # here. Reaching it through after_scan would need a reachable Plex, and what is
+        # under test is the ordering of the two rows, not the pass that produces one of
+        # them.
         async with factory() as session:
             await app_settings.set_leaving_soon_last(
                 session,
@@ -802,16 +837,15 @@ class TestAScanThatSkippedTheShelfSaysSo:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """The no-link path records its reason and then falls through to the Discord
-        heads-up, which sits inside the catch-all. A surprise down there must not overwrite
-        "no Plex server is linked" with the vague clause: the specific one is the only clause
-        that tells the operator what to go and fix. The unreachable arm beside it falls
-        through the same way, so this covers both (#734 split the two).
+        heads-up, which sits inside the catch-all. A surprise down there must not
+        overwrite "no Plex server is linked" with the vague clause, because the specific
+        one is the only clause that tells the operator what to fix. The unreachable arm
+        beside it falls through the same way, so this test covers both.
 
-        A notifier is forced in because the fall-through returns before announcing without
-        one, and the surprise is planted in ``announce_new`` rather than ``build_notifier``:
-        ``_run_pass`` builds a notifier too, so a raise from there never reaches the
-        fall-through and the test would prove the opposite branch (which is how it was
-        written first, and it passed).
+        A notifier is forced in because the fall-through would return before announcing
+        without one. The surprise is planted in ``announce_new`` rather than
+        ``build_notifier``, because ``_run_pass`` builds a notifier too, so a raise from
+        there would never reach the fall-through at all.
         """
         async with factory() as session:
             await app_settings.set_leaving_soon_enabled(session, enabled=True)
@@ -839,9 +873,11 @@ class TestAScanThatSkippedTheShelfSaysSo:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The catch-all's own clause, for a failure inside the pass that no branch above it
-        names. The row cannot say what to fix here, so it says the one thing it knows: the
-        shelf did not move. Silence is what it did before, and silence reads as success."""
+        """The catch-all's own clause, for a failure inside the pass that no branch above
+        it names. The row cannot say what to fix here, so it says the one thing it knows.
+        The shelf did not move. Without this clause, the row would stay silent, and
+        silence reads as success.
+        """
         async with factory() as session:
             await app_settings.set_leaving_soon_enabled(session, enabled=True)
             await session.commit()

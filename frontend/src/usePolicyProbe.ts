@@ -11,27 +11,27 @@ import { api, type PolicyProbe, type PolicyProbeResult } from "./api";
 
 /** What the surface asking has to render. All three states, because a probe that shows a
  *  stale number while a new one is in flight, or nothing at all when the read failed, is a
- *  confident answer to a question nobody answered (rule 17/36). */
+ *  confident answer to a question nobody answered. */
 export interface Probe {
   answer: PolicyProbeResult | null;
   pending: boolean;
   failed: boolean;
 }
 
-/** How long the policy editor's reads wait for a drag to stop, so one lands when the operator
- *  lets go rather than one per pixel. Shared with `PolicyEditor`'s simulate/validate timer, which
- *  used to spell the same number itself under a comment here saying the two agreed.
+/** How long the policy editor's reads wait for a drag to stop, so one lands when the
+ *  operator lets go rather than one per pixel. Shared with `PolicyEditor`'s simulate/validate
+ *  timer, which imports this constant rather than spelling the number again.
  *
- *  The review queue's search box debounces on its own 250 and says at its own site why it is not
- *  this one. */
+ *  The review queue's search box debounces on its own 250 and says at its own site why it is
+ *  not this one. */
 export const SETTLE_MS = 250;
 
 export function usePolicyProbe(probe: PolicyProbe | null): Probe {
   const [settled, setSettled] = useState<PolicyProbe | null>(null);
-  // A fresh object every render cannot be an effect dependency (rule 19), so the timer keys
-  // on the request's CONTENT. This is a cache key, not a dirty check -- rule 39's ban is on
-  // deciding "has this changed" across the wire by serialization, and nothing here decides
-  // that: an equal key that re-fired would cost one identical request.
+  // A fresh object every render cannot be an effect dependency, so the timer keys on the
+  // request's content instead. This is a cache key, not a dirty check: nothing here decides
+  // whether the request has changed by serializing it and comparing, so an equal key that
+  // re-fired would cost one identical request at worst.
   const key = probe === null ? null : JSON.stringify(probe);
 
   useEffect(() => {
@@ -45,7 +45,7 @@ export function usePolicyProbe(probe: PolicyProbe | null): Probe {
     queryFn: () => api.probePolicy(settled!),
     enabled: settled !== null,
     // No `placeholderData`: holding the last answer would contradict the top of this file.
-    // `pending` covers the debounce AND the request, and the caller drops `answer` for the
+    // `pending` covers the debounce and the request, and the caller drops `answer` for the
     // whole of it, so a held number could only ever reach the screen as an answer about a
     // value the operator has already moved past.
     retry: false,

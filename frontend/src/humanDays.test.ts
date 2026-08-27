@@ -1,16 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @vitest-environment node
 //
-// The browser's day wording against the server's.
+// `format.humanDays` (the frontend) must say a day count the same way `clock.humanize_days`
+// (the server) does, since both appear on the policy page for the same number.
 //
-// Both sit on the policy page at once: `clock.humanize_days` words the history warnings and
-// `format.humanDays` words the controls beside them. They disagreed -- "1 year, 1 month" and
-// "400 days" about the same number -- because this side only humanized exact multiples of a
-// year or a month, and a real watch history is never a round number (#410).
-//
-// The table below is the OUTPUT of `uv run python -c "from reaper.clock import humanize_days"`
-// for each input, transcribed. A test that asserted this side against itself would keep
-// agreeing while the pair drifted, which is rule 144's failure exactly.
+// The table below is the real output of running `clock.humanize_days` in Python for each input,
+// transcribed by hand. Comparing against that output, rather than a second implementation of
+// the same logic, is what catches the two functions drifting apart.
 import { describe, expect, it } from "vitest";
 import { humanDays } from "./format";
 
@@ -37,8 +33,8 @@ describe("a day count in words", () => {
   });
 
   it("never renders a length as a date", () => {
-    // Every caller drops this into a slot wanting a LENGTH ("untouched for ...", "goes back
-    // ..."), where "today" reads as broken English. The server's wording, for the same reason.
+    // Every caller uses this to describe a length of time ("untouched for ...", "goes back
+    // ..."), where "today" would read as broken English. The server picks the same wording.
     expect(humanDays(0)).toBe("less than a day");
     expect(humanDays(-3)).toBe("less than a day");
   });

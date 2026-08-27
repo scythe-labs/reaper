@@ -139,15 +139,15 @@ describe("DocsModal", () => {
   });
 
   it("nests its headings under the dialog's own title, and adds no second h1", () => {
-    // The pane used to open at `h1`. The app's masthead grew an `h1` of its own in this same
-    // issue, so opening Help put two on an authenticated page, and inside the dialog an `h2`
-    // (ModalShell's title) contained an `h1` -- an outline that runs backwards on the pages an
-    // operator reads to find out what Reaper will do before letting it delete anything.
+    // Opening Help must not add a second `h1`: the app's masthead already has one, so a dialog
+    // `h1` beside it would put two on an authenticated page. And inside the dialog, an `h2`
+    // (ModalShell's title) must not contain an `h1`, since that outline runs backwards on the
+    // pages an operator reads to find out what Reaper will do before letting it delete anything.
     //
-    // Neither half is reachable by the axe audit above, which is why this is spelled out
-    // (rule 118): `heading-order` flags a level SKIPPED going down and says nothing about one
-    // that climbs, and `page-has-heading-one` was already satisfied by the masthead. So the
-    // audit stayed green through both.
+    // Neither half is reachable by the axe audit above, which is why this is spelled out here:
+    // `heading-order` flags a level skipped going down and says nothing about one that climbs,
+    // and `page-has-heading-one` is already satisfied by the masthead. So the audit stays green
+    // through both.
     render(
       <DocsModal
         docId="understanding-policy"
@@ -226,8 +226,8 @@ describe("useDocs / DocsProvider", () => {
   }
 
   it("opens the requested doc from anywhere under the provider", async () => {
-    // `await`, because the documents are their own chunk now: nothing of them is fetched until
-    // the first Help press, so the modal arrives a tick after openDoc (P-4).
+    // `await`, because the documents are their own chunk: nothing of them is fetched until the
+    // first Help press, so the modal arrives a tick after openDoc.
     render(
       <DocsProvider>
         <Opener id="arming" />
@@ -251,18 +251,17 @@ describe("useDocs / DocsProvider", () => {
 });
 
 describe("the protections tables", () => {
-  // Rule 25: operator copy may only name a feature that is wired. These tables hand-list the
-  // protections and their defaults, so each is a second copy of gateMeta that nothing kept
-  // honest -- when the "unmanaged" gate was retired, its entry left gateMeta and the editor
-  // while this row stayed, telling operators a protection shipped On that no policy carried.
+  // Operator copy may only name a feature that is wired. These tables hand-list the
+  // protections and their defaults, so each is a second copy of gateMeta that nothing else
+  // keeps honest: a gate retired from gateMeta and the editor can leave a stale row here,
+  // telling operators a protection ships on that no policy carries.
   //
-  // This walks EVERY doc, not one. Guarding `understandingPolicy` alone is how the cheat
-  // sheet's identical table went unchecked and drifted to five of the seven gates, under a
-  // heading promising all of them (rule 144: the ungenerated sibling is the dangerous copy).
+  // This walks every doc, not one: guarding a single doc would let a second, identical table
+  // elsewhere drift unnoticed under a heading that still promises the full list.
   //
-  // And it checks BOTH directions. The one-way version could only catch a row naming a gate
-  // that no longer exists; a gate ADDED to the engine leaves every listed label still valid,
-  // so the list silently goes incomplete while the test stays green (rule 145).
+  // And it checks both directions. A one-way check could only catch a row naming a gate that
+  // no longer exists; a gate added to the engine leaves every listed label still valid, so the
+  // list would silently go incomplete while the test stays green.
   const tables = DOCS.flatMap((doc) =>
     doc.body
       .filter(
@@ -273,7 +272,7 @@ describe("the protections tables", () => {
   );
 
   // Pinned: the population the walk collects. A table that stops matching the header drops out
-  // of the walk, and every assertion below then passes over what is left (rule 145).
+  // of the walk, and every assertion below then passes over what is left.
   it("finds a protections table in each doc that claims to list them", () => {
     expect(tables.map((t) => t.docId).sort()).toEqual(["cheat-sheet", "understanding-policy"]);
   });
@@ -283,10 +282,9 @@ describe("the protections tables", () => {
     (docId, table) => {
       // A `retired` id keeps its copy so a stored explanation still reads in plain language,
       // but no switch a policy can carry sits behind it, so a table of the protections an
-      // operator sets must not list one: that would be rule 25's failure in the other
-      // direction. It does NOT mean the id is inert -- `season_progression` and `custom` both
-      // fire on ordinary scans and are excluded here because there is no switch to document,
-      // not because nothing reaches them.
+      // operator sets must not list one. A retired id is not necessarily inert: `season_progression`
+      // and `custom` both fire on ordinary scans and are excluded here only because there is no
+      // switch to document.
       const known = Object.values(gateMeta())
         .filter((m) => !m.retired)
         .map((m) => m.label);
@@ -306,8 +304,8 @@ describe("the protections tables", () => {
 
 // Picking a doc from the index swaps the whole article beside it while focus stays on the
 // index button that swapped it. The pane is named for the doc it holds, but a name changing on
-// an element the operator is not standing on is announced nowhere, so the reading pane changed
-// under them in silence (#177).
+// an element the operator is not standing on is announced nowhere, so the reading pane must
+// announce the change itself.
 const { announceSpy } = vi.hoisted(() => ({ announceSpy: vi.fn() }));
 vi.mock("../announce", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../announce")>()),
@@ -349,8 +347,8 @@ describe("switching docs in the reading pane", () => {
   });
 
   it("stays quiet on the doc it opened at, which the operator asked for by pressing", () => {
-    // `ModalShell` already moves focus into the dialog on open; announcing here would talk
-    // over it, and the operator knows which page they asked for.
+    // `ModalShell` already moves focus into the dialog on open. Announcing here would talk
+    // over it, and the operator already knows which page they asked for.
     renderAt("understanding-policy");
 
     expect(announceSpy).not.toHaveBeenCalled();

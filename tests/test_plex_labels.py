@@ -2,17 +2,15 @@
 """The Leaving Soon label writes batch their reads.
 
 A shelf reconcile after a list was changed from another tool applies hundreds of label
-edits, and the old path fetched every item individually (``add_label``) or fetched and
-``reload()``-ed every item and then saved one item at a time (``remove_label``) -- ~700
-serial Plex round-trips on a 341-change pass, the dominant cost of that pass. The reads
-now batch: ONE ``/library/metadata/<id,id,...>`` GET per chunk (``fetchItems`` and
-``fetchItem`` hit the same endpoint), and one edit per label spelling per chunk. A fake
-section here COUNTS every read and edit, so a regression back toward per-item fetches
-fails loudly.
+edits. Reading one item at a time for each edit would mean hundreds of serial Plex
+round-trips. Instead the reads batch: one ``/library/metadata/<id,id,...>`` GET per chunk
+(``fetchItems`` and ``fetchItem`` hit the same endpoint), and one edit per label spelling per
+chunk. A fake section here counts every read and edit, so a regression back toward per-item
+fetches fails loudly.
 
-The label-*preserve* property (adding "Leaving Soon" must not wipe an item's other labels)
-is server-side -- Plex's batch endpoint is additive -- and is unchanged by batching the
-read; it is verified against a live server, not here.
+The label-preserve property, that adding "Leaving Soon" must not wipe an item's other
+labels, is server-side: Plex's batch endpoint is additive, and batching the read does not
+change that. It is verified against a live server, not here.
 """
 
 from __future__ import annotations
@@ -70,9 +68,9 @@ class _FakeSection:
         self._server = server
 
     def fetchItems(self, keys: list[int]) -> list[_Item]:  # noqa: N802 - mirrors plexapi
-        # A list of ids resolves to ONE /library/metadata/<ids> read. Items missing from
-        # Plex (deleted since the scan) simply do not come back -- mirrored here by skipping
-        # keys the server does not hold.
+        # A list of ids resolves to one /library/metadata/<ids> read. Items missing from
+        # Plex, deleted since the scan, simply do not come back. This is mirrored here by
+        # skipping keys the server does not hold.
         self._server.fetches.append(list(keys))
         return [self._server.items[k] for k in keys if k in self._server.items]
 
@@ -88,7 +86,7 @@ class _FakeLibrary:
         return _FakeSection(self._server)
 
     def sectionByID(self, section_id: int) -> _FakeSection:  # noqa: N802 - mirrors plexapi
-        # Addressed by key, not title: two libraries can share a title, so the collection
+        # Addressed by key, not title. Two libraries can share a title, so the collection
         # detach resolves the section by its stable id.
         self._server.section_ids.append(section_id)
         return _FakeSection(self._server)
@@ -115,8 +113,8 @@ class TestAddLabelBatchesReads:
         server = _FakeLabelServer({k: _Item(k, ["Favorite"]) for k in keys})
         await _client(server).add_label(7, keys, "Leaving Soon")
 
-        # The section is resolved by key, never by title (rule 57): two libraries can share a
-        # title and the title lookup returns only the last match.
+        # The section is resolved by key, never by title. Two libraries can share a title,
+        # and a title lookup would return only the last match.
         assert server.section_ids == [7]
         # Reads are batched: three multi-id GETs (one per chunk), never one per item.
         assert [len(f) for f in server.fetches] == [BATCH_SIZE, BATCH_SIZE, 50]
@@ -125,12 +123,12 @@ class TestAddLabelBatchesReads:
         assert server.edits[0][2] == keys[:BATCH_SIZE]
 
     async def test_it_skips_items_the_read_no_longer_returns(self) -> None:
-        # 2 was deleted from Plex after the scan; the read returns 1 and 3 only.
+        # 2 was deleted from Plex after the scan. The read returns 1 and 3 only.
         server = _FakeLabelServer({1: _Item(1, []), 3: _Item(3, [])})
         await _client(server).add_label(7, [1, 2, 3], "Leaving Soon")
         assert server.fetches == [[1, 2, 3]]
-        # The edit covers only the items that came back -- a since-deleted item is skipped,
-        # never a failed reconcile.
+        # The edit covers only the items that came back. A since-deleted item is skipped
+        # rather than treated as a failed reconcile.
         assert server.edits == [("add", "Leaving Soon", [1, 3])]
 
     async def test_no_keys_touches_plex_at_all(self) -> None:
@@ -150,7 +148,7 @@ class TestRemoveLabelBatchesReads:
         )
         await _client(server).remove_label(7, [1, 2, 3], "Leaving Soon")
 
-        # The section is resolved by key, never by title (rule 57).
+        # The section is resolved by key, never by title.
         assert server.section_ids == [7]
         # One multi-id read for the chunk, never one fetch + reload per item.
         assert server.fetches == [[1, 2, 3]]
@@ -182,7 +180,7 @@ class TestRemoveCollectionMembersBatchesReads:
         # The section is resolved by key, never by title (once for the whole write).
         assert server.section_ids == [7]
         # One multi-id read per chunk, and one collection detach per chunk over that chunk's
-        # items -- never one DELETE per item.
+        # items, never one DELETE per item.
         assert [len(f) for f in server.fetches] == [BATCH_SIZE, 50]
         assert [(op, tag, len(k)) for op, tag, k in server.edits] == [
             ("remove_collection", "Leaving Soon", BATCH_SIZE),
@@ -192,10 +190,10 @@ class TestRemoveCollectionMembersBatchesReads:
     async def test_a_case_variant_collection_is_still_detached_under_its_stored_spelling(
         self,
     ) -> None:
-        """find_collection adopts a case-variant shelf, so the detach must too: an item on a
+        """find_collection adopts a case-variant shelf, so the detach must too. An item on a
         "leaving soon" collection is removed under that exact stored spelling, not the
-        constant. A case-sensitive removal of the constant would detach nothing and the item
-        would sit on the shelf forever (B-5)."""
+        constant. A case-sensitive removal of the constant would detach nothing, and the
+        item would sit on the shelf forever."""
         server = _FakeLabelServer(
             {
                 1: _Item(1, [], collections=["Leaving Soon"]),  # canonical case

@@ -5,16 +5,16 @@ source it could not read in full must degrade it.
 Three separate ways the scan pipeline used to fail quietly:
 
 * **The retire pass ran on configuration the scan could not vouch for.** The original
-  case was a repaired policy carrying the SHIPPED keep tags, which retired every keep
-  list the operator actually saved; the keep tags have since moved to the list registry,
-  so the policy no longer feeds the sync at all and that trigger is gone structurally.
-  The registry itself is the surviving trigger: a read failure handed to the sync as "no
+  case was a repaired policy carrying the *shipped* keep tags, which retired every keep
+  list the operator actually saved. The keep tags have since moved to the list registry,
+  so the policy no longer feeds the sync at all, and that trigger is gone structurally.
+  The registry itself is the surviving trigger. A read failure handed to the sync as "no
   lists" would retire every list on the install. Nothing could be deleted from that scan,
-  but the disabling write is durable and outlives it (rule 115).
+  but the disabling write is durable and outlives it.
 * **A short batched metadata read only logged.** Those ``Rating`` children are the one
   source of the per-provider scores, so a windowed response takes the keep bar off the
-  tail of every chunk: a protection WITHDRAWN, which rule 28 never lets pass as a log
-  line.
+  tail of every chunk. That is a protection *withdrawn*, and a log line must never be
+  the only record of it.
 * **A malformed row from Tautulli raised out of a read documented as never raising**,
   which costs the operator the whole scan rather than a plan.
 """
@@ -61,13 +61,14 @@ def _sonarr() -> SonarrSource:
 
 
 class TestAConfigurationTheScanCannotVouchForNeverRetiresAKeepList:
-    """Rule 115's durable half, from the degraded scan's side. A registry that could not
-    be READ arrives as ``definitions=None``, and the sweep must stand down whole: reading
-    it as "no lists" would disable every list on the install, and the disabling write
-    outlives the (already un-plannable) scan that made it. The keep-tags version of this
-    trigger -- a repaired policy carrying the SHIPPED tags -- is gone structurally, because
-    the policy no longer feeds the sync anything at all; ``services.list_rules`` carries
-    the repaired-policy skip now, pinned in ``tests/test_list_rules.py``."""
+    """The durable half of this protection, from the degraded scan's side. A registry
+    that could not be *read* arrives as ``definitions=None``, and the sweep must stand
+    down whole. Reading it as "no lists" would disable every list on the install, and the
+    disabling write outlives the (already un-plannable) scan that made it. The keep-tags
+    version of this trigger, a repaired policy carrying the *shipped* tags, is gone
+    structurally, because the policy no longer feeds the sync anything at all.
+    ``services.list_rules`` carries the repaired-policy skip now, pinned in
+    ``tests/test_list_rules.py``."""
 
     @staticmethod
     def _tag_list(match: str = "all") -> ListDefinition:
@@ -149,14 +150,15 @@ def _client_with(server: _FakeServer) -> PlexClient:
 class TestAShortRatingsReadDegradesTheScan:
     """The enrichment batch carries the per-provider scores, and for shows it is the only
     rating source there is. A server that windows the multi-id response drops the tail of
-    the chunk, and every title in that tail is judged with no rating: the rating bar cannot
-    keep what it cannot see. Silence there was a protection withdrawn without a word."""
+    the chunk, and every title in that tail is judged with no rating. The rating bar
+    cannot keep what it cannot see. Silence there was a protection withdrawn without a
+    word."""
 
     async def test_a_windowed_batch_reports_a_reason(self) -> None:
         server = _FakeServer(
             {
                 "/library/sections/1/all": _LISTING,
-                # Two keys asked for, one answered: the tail of the chunk is gone.
+                # Two keys asked for, one answered. The tail of the chunk is gone.
                 "/library/metadata/": '<MediaContainer size="1"><Video ratingKey="41"/>'
                 "</MediaContainer>",
             }
@@ -186,7 +188,7 @@ class TestAShortRatingsReadDegradesTheScan:
         assert reasons == []
 
     async def test_the_scan_degrades_on_it_end_to_end(self) -> None:
-        """The reason has to reach the snapshot, not just the collector: ``build_index``
+        """The reason has to reach the snapshot, not just the collector. ``build_index``
         opens the collector around its gather, so a windowed enrichment read leaves the
         scan viewable and un-executable rather than quietly under-protected."""
         server = _FakeServer(
@@ -217,15 +219,15 @@ class TestAShortRatingsReadDegradesTheScan:
 class _RawLibraries(TautulliClient):
     """Serves a library list exactly as written, malformed rows included.
 
-    Not `tests._fakes.FakeTautulli`: that one builds its `libraries()` from the keys of a
-    section map, so it can only ever emit a well-formed integer `section_id`. These cases
-    need the shapes it cannot produce, which is the whole subject here -- a section with a
-    string id, and a section carrying no id at all.
+    This is not `tests._fakes.FakeTautulli`. That one builds its `libraries()` from the
+    keys of a section map, so it can only ever emit a well-formed integer `section_id`.
+    These cases need the shapes it cannot produce, which is the whole subject here, a
+    section with a string id, and a section carrying no id at all.
 
     Two knobs cover the paging shapes. `page` caps how many rows one call serves whatever
-    `length` asked for, which is ordinary API behavior and the shape #559 turned on; `count`
-    is what the envelope reports, with `None` for a server that reports no count at all.
-    Neither defaults to the production page size, so no case can pass by accident (rule 141).
+    `length` asked for, which is ordinary API behavior. `count` is what the envelope
+    reports, with `None` for a server that reports no count at all. Neither defaults to
+    the production page size, so no case can pass by accident.
     """
 
     def __init__(
@@ -264,9 +266,9 @@ class _RawLibraries(TautulliClient):
 
 
 class TestAMalformedLibraryRowDegradesInsteadOfRaising:
-    """``services.library_index`` promises neither read raises: a failure costs the operator
-    a plan, never the whole scan. A library row with no section id, or an item row whose
-    rating key is not a number, used to raise straight out of the spine read."""
+    """``services.library_index`` promises neither read raises. A failure costs the
+    operator a plan, never the whole scan. A library row with no section id, or an item
+    row whose rating key is not a number, used to raise straight out of the spine read."""
 
     async def test_a_library_with_no_id_is_skipped_and_degrades(self) -> None:
         tautulli = _RawLibraries([{"section_type": "movie", "section_name": "Movies"}], [])
@@ -306,11 +308,12 @@ class TestAMalformedLibraryRowDegradesInsteadOfRaising:
 
 
 class TestAShortPageDoesNotEndTheLibraryWalk:
-    """The spine walk used to exit on ``len(rows) < 1000``. A server is free to clamp a page
-    below the length asked for, so that read part of a library as the whole of it and degraded
-    nothing: every item never listed resolves unmatched, which keeps the file but explains a
-    live one as something Plex has not matched (#559). Tautulli's own reported count is the
-    paging authority now, the way ``history_sync`` reads it off the same API."""
+    """The spine walk used to exit on ``len(rows) < 1000``. A server is free to clamp a
+    page below the length asked for, so that read part of a library as the whole of it
+    and degraded nothing. Every item never listed resolves unmatched, which keeps the
+    file but explains a live one as something Plex has not matched. Tautulli's own
+    reported count is the paging authority now, the way ``history_sync`` reads it off
+    the same API."""
 
     @staticmethod
     def _rows(n: int) -> list[dict[str, Any]]:
@@ -327,8 +330,8 @@ class TestAShortPageDoesNotEndTheLibraryWalk:
         )
 
     async def test_a_clamped_page_is_followed_to_the_end(self) -> None:
-        """Three rows a call against a count of seven: the walk keeps going, and it advances
-        by what each page held rather than by the length it asked for."""
+        """Three rows a call against a count of seven. The walk keeps going, and it
+        advances by what each page held rather than by the length it asked for."""
         tautulli = _RawLibraries(
             [{"section_id": "1", "section_type": "movie", "section_name": "Movies"}],
             self._rows(7),
@@ -344,8 +347,8 @@ class TestAShortPageDoesNotEndTheLibraryWalk:
         assert tautulli.starts == [0, 3, 6]
 
     async def test_a_walk_that_ends_before_the_count_degrades(self) -> None:
-        """Tautulli says nine and serves four. What was read is kept, and the operator is told
-        rather than shown a scan that quietly judged a fraction of a library (rule 28)."""
+        """Tautulli says nine and serves four. What was read is kept, and the operator is
+        told rather than shown a scan that quietly judged a fraction of a library."""
         tautulli = _RawLibraries(
             [{"section_id": "1", "section_type": "movie", "section_name": "Movies"}],
             self._rows(4),
@@ -363,7 +366,7 @@ class TestAShortPageDoesNotEndTheLibraryWalk:
     async def test_a_source_that_reports_no_count_is_still_paged_to_the_end(
         self, count: int | None
     ) -> None:
-        """ "We were not told how many" must never read as "none", in either spelling: an
+        """ "We were not told how many" must never read as "none", in either spelling. An
         omitted field and a reported zero both mean the count cannot end the walk. Folding
         them to zero ends it after page one and calls the truncation complete."""
         tautulli = _RawLibraries(
@@ -382,15 +385,15 @@ class TestAShortPageDoesNotEndTheLibraryWalk:
     async def test_a_server_that_never_advances_is_stopped_and_degrades(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The count bounds every walk that is given one. A server that reports no count AND
-        ignores ``start`` is bounded by nothing else once the short-page exit is gone, so the
-        page cap is what stops it, and stopping early is a partial read like any other
-        (rule 56)."""
+        """The count bounds every walk that is given one. A server that reports no count
+        and ignores ``start`` is bounded by nothing else once the short-page exit is gone,
+        so the page cap is what stops it, and stopping early is a partial read like any
+        other."""
         monkeypatch.setattr(library_index, "_SPINE_MAX_PAGES", 3)
 
         class _IgnoresStart(_RawLibraries):
-            """Serves page one forever, and refuses once asked past the cap so that deleting
-            the cap fails this test rather than hanging the suite (rule 118)."""
+            """Serves page one forever, and refuses once asked past the cap so that
+            deleting the cap fails this test rather than hanging the suite."""
 
             async def library_media_info(self, section_id: int, **kwargs: Any) -> dict[str, Any]:
                 if len(self.starts) >= 3:

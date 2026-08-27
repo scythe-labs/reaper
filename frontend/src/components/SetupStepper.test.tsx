@@ -4,9 +4,8 @@
 //
 // Moving between steps unmounts one card and mounts the next, so the button that was pressed
 // goes with it and focus falls to `<body>`: a keyboard operator restarts at the top of the
-// document and a screen reader is told nothing about where they now are. The wizard was the
-// only multi-screen flow in the app with no focus handling at all, while a dozen other sites
-// use the helpers in `focus.ts`.
+// document, and a screen reader is told nothing about where they now are. This card uses the
+// same focus helpers from `focus.ts` that other multi-screen flows in the app use.
 //
 // Both directions are driven, because the distinction is the whole design: focusing on a fresh
 // load would steal focus from a page nobody has read yet, and not focusing after a press is the

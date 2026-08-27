@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """``PolicyRepair`` is one declaration with four surfaces, and this walks all four.
 
-A stored body Reaper had to repair to load it degrades every scan, and the *only* thing that
+A stored body Reaper had to repair to load it degrades every scan, and the only thing that
 clears the degradation is an operator saving the policy. So each repair owes four things:
 
 1. it reaches ``PolicyOut.repairs``, or the browser never hears about it;
@@ -9,15 +9,14 @@ clears the degradation is an operator saving the policy. So each repair owes fou
 3. the editor says which repair happened, or the operator does not know what to check;
 4. the incomplete-scan notice names what to check, or the remedy points at nothing.
 
-``lists_migrated`` shipped with (1) missing and everything downstream of it therefore missing
-too: every scan degraded telling the operator to open the policy page and save, the policy
-page stayed clean, and there was no way out at all (#516). Four booleans made that possible,
-because each one is remembered separately and reads correct on its own line. This file is what
-replaces remembering: it walks the enum and fails naming the file that is short a member.
+A repair missing even one of these can degrade every scan with no way for the operator to
+clear it: the notice keeps telling them to open the policy page and save, but the editor
+never opens dirty, so there is nothing to save. This file walks the enum for all four
+surfaces at once, rather than trusting each one to be remembered separately.
 
-Rule 145: the walks are counted as well as checked, because a matcher can only break on a
-member it collected, and one that drops out of the walk is missing from the guard and from the
-proof at once.
+The walk is counted as well as checked, because a matcher can only break on a member it
+collected. A member that drops out of the walk is missing from both the guard and the proof
+at once.
 """
 
 from __future__ import annotations
@@ -37,8 +36,8 @@ EDITOR = REPO / "frontend/src/components/PolicyEditor.tsx"
 API_TS = REPO / "frontend/src/api.ts"
 
 #: Reconciled by hand against ``PolicyRepair``: rescaled, fell_back, rating_rules_restored,
-#: lists_migrated. Pinned so a member dropping out of every walk below cannot read as four
-#: green walks over three members (rule 145). The frontend pins the same number in
+#: lists_migrated. Pinned so a member dropping out of every walk below cannot pass as four
+#: green walks over three members. The frontend pins the same number in
 #: ``PolicyEditor.test.tsx``, which is the other half of this agreement.
 EXPECTED_REPAIRS = 4
 
@@ -47,9 +46,9 @@ def _editor_notice_ids() -> list[str]:
     """The keys of ``REPAIR_NOTICES`` in the editor.
 
     Read as the whole object literal and then scanned for keys, rather than anchored on a
-    delimiter one spelling happens to put there: rule 147, whose case was a matcher that read
-    a literal className and silently skipped a ternary. The braces are balanced by counting,
-    so a nested object inside an entry cannot end the literal early.
+    delimiter that only one spelling happens to put there. A matcher anchored that way could
+    read a literal className and silently skip a ternary. The braces are balanced by
+    counting, so a nested object inside an entry cannot end the literal early.
     """
     text = EDITOR.read_text()
     start = text.index("export const REPAIR_NOTICES")
@@ -82,8 +81,8 @@ class TestEveryRepairIsWiredEverywhere:
         assert len(list(PolicyRepair)) == EXPECTED_REPAIRS
 
     def test_the_scan_names_what_to_check_for_each(self) -> None:
-        """Rule 144: the degradation's remedy clause is generated per repair, so a member with
-        no entry sends the operator to check nothing in particular."""
+        """The degradation's remedy clause is generated per repair, so a member with no
+        entry sends the operator to check nothing in particular."""
         missing = sorted(r.value for r in PolicyRepair if r not in _REPAIR_CHECKS)
         assert not missing, (
             f"src/reaper/services/scan_runner.py:_REPAIR_CHECKS is missing {missing}. "
@@ -106,8 +105,8 @@ class TestEveryRepairIsWiredEverywhere:
 
     def test_the_typescript_union_carries_each(self) -> None:
         """`PolicyRepair` in `api.ts` is the type the editor's props are checked against. It
-        admits unknown ids on purpose, so a missing member is a lost autocomplete rather than
-        a broken build -- which is exactly why it needs a test."""
+        admits unknown ids on purpose, so a missing member costs a lost autocomplete rather
+        than a broken build, which is exactly why it needs a test."""
         text = API_TS.read_text()
         union = text[text.index("export type PolicyRepair") :].split(";", 1)[0]
         missing = sorted(r.value for r in PolicyRepair if f'"{r.value}"' not in union)
@@ -128,8 +127,8 @@ class TestTheRemedyClause:
 
     @pytest.mark.parametrize("repair", list(PolicyRepair))
     def test_reads_as_a_sentence_for_each(self, repair: PolicyRepair) -> None:
-        """Rule 21: it lands verbatim inside "open the policy page, ..., and save" on three
-        screens, so it must be a clause, not a field name."""
+        """It lands verbatim inside "open the policy page, ..., and save" on three screens,
+        so it must read as a clause, not a field name."""
         said = _what_to_check((repair,))
         assert said.startswith("check ")
         assert "_" not in said
@@ -140,7 +139,7 @@ class TestTheResponseCarriesThem:
     def test_policy_out_serializes_repairs_as_plain_strings(self) -> None:
         """The browser reads these as strings, so an enum that serialized as an object would
         make every id in `REPAIR_NOTICES` a miss and every notice the unknown fallback."""
-        # `model_construct` skips validation by design, which is the point here -- the plugin
+        # `model_construct` skips validation by design, which is the point here. The plugin
         # types it as needing every field anyway.
         out = PolicyOut.model_construct(repairs=[PolicyRepair.LISTS_MIGRATED])  # type: ignore[call-arg]
         assert json.loads(out.model_dump_json())["repairs"] == ["lists_migrated"]

@@ -1,37 +1,35 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Curated lists as protections.
 
-No competitor does this. Maintainerr, Janitorr and Reclaimerr all do exclusions via
-tags, collections or their own database -- none of them ingest a *curated list* as a
-protection source. "Never reap anything in the IMDb Top 250" is a rule you cannot
-write in any of them.
+A protection source can be a curated list, not just a tag or a collection: "never reap
+anything in the IMDb Top 250" is a rule an operator can write here.
 
 Three providers, in ascending order of how much configuration they cost you:
 
-**Plex collection** -- zero configuration, and the best of the three. You curate a
-"Never Reap" collection in the Plex app you already use daily; it is editable from
-your phone; there is no new screen to learn. Reaper just reads it.
+Plex collection: zero configuration, and the best of the three. You curate a "Never
+Reap" collection in the Plex app you already use daily. It is editable from your phone,
+and there is no new screen to learn. Reaper just reads it.
 
-***arr tag** -- also zero configuration. Tag a series `reaper-keep` in Sonarr.
+*arr tag: also zero configuration. Tag a series `reaper-keep` in Sonarr.
 
-**IMDb Top 250** -- one click. Served by Radarr's own list service at
-``https://api.radarr.video/v1/list/imdb/top250``: 250 items, `TmdbId` and `ImdbId`,
-**no auth**, verified live. (IMDb has no official API for the chart, and its
-non-commercial datasets do *not* contain the ranking -- it uses an unpublished
-weighted formula. Do not try to derive it, and do not scrape it. This mirror is the
-right answer.)
+IMDb Top 250: one click. Served by Radarr's own list service at
+``https://api.radarr.video/v1/list/imdb/top250``, 250 items with `TmdbId` and `ImdbId`,
+no auth required, verified live. IMDb has no official API for the chart, and its
+non-commercial datasets do not contain the ranking, since it uses an unpublished
+weighted formula. This mirror is the right answer; do not try to derive the ranking or
+scrape it.
 
 ## Rank, where a source actually has one
 
-A list may act as a **hard gate** (never delete) or as a **soft signal** (weighted
-negative pressure). Per list, not globally -- "IMDb Top 250" deserves a gate; "films I
-might like" deserves a nudge.
+A list can act as a hard gate that never deletes anything, or as a soft signal that
+lowers the deletion score by some weighted amount. This is set per list, not globally:
+"IMDb Top 250" deserves a gate, while "films I might like" deserves a nudge.
 
-``rank`` is stored *when the source provides one*, and left ``None`` otherwise. Note
-that the IMDb Top 250 mirror does **not** provide one: its payload has no rank field
-and comes back in roughly chronological order. Inferring rank from array position would
-have reported "The Kid is #1 on the IMDb Top 250", which is false -- so it does not.
-Being *on* the list is the signal.
+``rank`` is stored when the source provides one, and left ``None`` otherwise. The IMDb
+Top 250 mirror does not provide one: its payload has no rank field and comes back in
+roughly chronological order. Inferring rank from array position would report "The Kid
+is #1 on the IMDb Top 250," which is false, so this module does not do that. Being on
+the list is itself the signal.
 """
 
 from __future__ import annotations
@@ -73,9 +71,9 @@ IMDB_LIST_BASE = "https://api.radarr.video/v1/list/imdb/"
 IMDB_TOP_250_URL = IMDB_LIST_BASE + "top250"
 
 #: The shipped chart choices, keyed by the ``preset`` value a definition stores. The floor
-#: is the truncation guard: a chart of known size that comes back much smaller is a broken
-#: mirror, and installing it would silently stop protecting the titles that fell off. A
-#: custom list has no known size, so its floor is 1 -- the empty-payload refusal in
+#: is the truncation guard: a chart of known size that comes back much smaller means a
+#: broken mirror, and installing it would silently stop protecting the titles that fell
+#: off. A custom list has no known size, so its floor is 1; the empty-payload refusal in
 #: ``ImdbList.fetch`` is what stands between a flaky mirror and an emptied protection.
 IMDB_PRESETS: dict[str, tuple[str, int]] = {
     "top250": ("top250", 200),
@@ -86,11 +84,11 @@ IMDB_PRESETS: dict[str, tuple[str, int]] = {
 class ContainerMissingError(RuntimeError):
     """A configured keep container (an *arr tag, a Plex collection) does not exist upstream.
 
-    Distinct from "the container exists and is empty", and the distinction is what
-    ``sync`` keys on: a vanished container over a POPULATED stored list keeps the previous
+    Distinct from "the container exists and is empty," and the distinction is what
+    ``sync`` keys on: a vanished container over a populated stored list keeps the previous
     membership and records the failure, while a container the owner simply has not created
-    yet syncs as genuinely empty. A missing container must never read as [] -- that is how
-    a renamed keep tag silently unprotects everything it used to cover.
+    yet syncs as genuinely empty. A missing container must never read as ``[]``, since that
+    is how a renamed keep tag would silently unprotect everything it used to cover.
     """
 
 
@@ -106,23 +104,22 @@ class ListKind(enum.StrEnum):
     """Which protection a list feeds.
 
     The distinction matters in the why-panel. "Whitelisted" and "on the IMDb Top 250"
-    are both reasons to keep a file, but they are *different* reasons, and collapsing
-    them would tell the owner "whitelisted" about a film they never touched.
+    are both reasons to keep a file, but they are different reasons, and collapsing them
+    would tell the owner "whitelisted" about a film they never touched.
     """
 
     WHITELIST = "whitelist"
-    """The owner said so directly -- an *arr tag, or a Plex collection they curate."""
+    """The owner said so directly: an *arr tag, or a Plex collection they curate."""
 
     CURATED = "curated"
-    """Somebody else's list -- the IMDb Top 250."""
+    """Somebody else's list, such as the IMDb Top 250."""
 
 
 #: The two kinds a stored protection row may be filed under. ``media_type`` is half of
-#: every membership join key -- TMDb numbers movies and shows in separate spaces, so the
-#: lookup matches on (kind, id) and never on the id alone (rule 52). A row filed under
-#: anything else therefore matches nothing and protects nothing, while sitting in the
-#: table looking healthy, so an entry Reaper cannot place in one of these two is never
-#: stored at all.
+#: every membership join key, since TMDb numbers movies and shows in separate spaces, so
+#: the lookup matches on (kind, id) and never on the id alone. A row filed under anything
+#: else therefore matches nothing and protects nothing, while sitting in the table looking
+#: healthy, so an entry Reaper cannot place in one of these two is never stored at all.
 PROTECTABLE_MEDIA_TYPES = frozenset({"movie", "tv"})
 
 
@@ -130,36 +127,36 @@ PROTECTABLE_MEDIA_TYPES = frozenset({"movie", "tv"})
 class ListItem:
     """One entry. Identified by whatever external ids the source gives us."""
 
-    media_type: str  # "movie" | "tv", or whatever the source called it -- see is_protectable
+    media_type: str  # "movie" | "tv", or whatever the source called it; see is_protectable
     imdb_id: str | None = None
     tmdb_id: int | None = None
     tvdb_id: int | None = None
     plex_rating_key: int | None = None
-    """The Plex object's own key, where the source IS Plex. None everywhere else.
+    """The Plex object's own key, where the source is Plex. ``None`` everywhere else.
 
-    A "Never Reap" collection can hold a title no agent ever matched -- a home video, a
-    personal-media item, one whose guids stopped parsing -- and such an entry has no
-    external id to be stored under, so it was dropped and protected by nothing. Plex's
-    own key is the identity Plex is sure of, and it is the key the scan's Plex index is
-    built on, so it binds the entry to the item the operator put on the list.
+    A "Never Reap" collection can hold a title no agent ever matched, such as a home
+    video, a personal-media item, or one whose guids stopped parsing, and such an entry
+    has no external id to be stored under. Without this field it would be dropped and
+    protected by nothing. Plex's own key is the identity Plex is sure of, and it is the
+    key the scan's Plex index is built on, so it binds the entry to the item the operator
+    put on the list.
 
-    **This is not stable identity, and it is not used as any.** A rating key moves when a
+    This is not a stable identity, and it is never used as one: a rating key moves when a
     file leaves and comes back, and it is server-scoped, so the same integer names a
-    different title on a different server -- which is why `db.models` keys durable state
-    on ``media_key`` and says so. What makes it safe here is that this is an *additive*
-    join, rewritten from the live collection by every sync: it can only ever ADD a
-    membership hit, never withdraw one an id already made, so an entry that has ids is
-    unaffected either way. Both ways it can be wrong are survivable and both self-heal on
-    the next sync. A key that moved matches nothing, leaving the entry exactly as
-    unprotected as it was before this column existed, and :func:`_rows_to_store` keeps
-    carrying its row by title in the meantime. A key that collides with another server's
-    grants a keep nobody asked for, the direction this codebase fails in on purpose.
+    different title on a different server, which is why `db.models` keys durable state on
+    ``media_key`` instead. This field is safe here because the join is additive, rewritten
+    from the live collection by every sync: it can only ever add a membership hit, never
+    withdraw one an id already made, so an entry that has ids is unaffected either way.
+    A key that moved matches nothing, leaving the entry exactly as unprotected as it was
+    before this column existed, and :func:`_rows_to_store` keeps carrying its row by title
+    in the meantime. A key that collides with another server's grants a keep nobody asked
+    for, which is the direction this codebase fails in on purpose.
     """
     title: str = ""
     rank: int | None = None
-    """1 = top of the list, WHERE THE SOURCE PROVIDES ONE.
+    """1 is the top of the list, where the source provides one.
 
-    Left None otherwise. Never inferred from array position: the IMDb Top 250 mirror
+    Left ``None`` otherwise. Never inferred from array position: the IMDb Top 250 mirror
     returns its entries roughly chronologically, so position would be a fabrication.
     """
 
@@ -171,12 +168,12 @@ class ListItem:
     def is_protectable(self) -> bool:
         """Can this entry be stored as a row a membership lookup will actually find?
 
-        Two ways it cannot. With no key of any kind -- no external id and no Plex key --
+        Two ways it cannot. With no key of any kind, no external id and no Plex key,
         there is nothing to match on. With a kind outside
-        :data:`PROTECTABLE_MEDIA_TYPES` -- a Plex collection can hold objects that are
-        neither a movie nor a show -- the keys belong to a space no lookup asks for, and
+        :data:`PROTECTABLE_MEDIA_TYPES`, since a Plex collection can hold objects that are
+        neither a movie nor a show, the keys belong to a space no lookup asks for, and
         filing them under "movie" anyway would hand a film that happens to share the
-        number a keep the owner never asked for (rule 52).
+        number a keep the owner never asked for.
 
         An entry that fails this stays in the fetch rather than disappearing from it, so
         ``sync`` still sees a populated container and still holds whatever the last good
@@ -189,9 +186,9 @@ class ListItem:
 class ListProvider(Protocol):
     """A source of protected items.
 
-    ``slug`` and ``display_name`` are read-only *properties*, not attributes: a
-    provider like ``ArrTagRule`` derives them from its configuration, and a Protocol
-    declaring a mutable attribute would not accept that.
+    ``slug`` and ``display_name`` are read-only properties, not attributes: a provider
+    like ``ArrTagRule`` derives them from its configuration, and a Protocol declaring a
+    mutable attribute would not accept that.
     """
 
     @property
@@ -213,16 +210,16 @@ class ListProvider(Protocol):
 def rule_name(provider: ListProvider) -> str:
     """The name a policy keep rule matches this list by, which is not its display name.
 
-    ``ArrTagRule.display_name`` puts the server after the operator's name ("Keepers (4k)"),
-    because one list is one stored row per *arr and the row has to say which. A keep rule
-    stores the name the operator typed, once, and ``on_list`` matches per element and
-    exactly -- so a fact built from display names matched nothing, and every tag list
-    protected nothing while the Lists screen reported it healthy (#507).
+    ``ArrTagRule.display_name`` puts the server after the operator's name ("Keepers
+    (4k)"), because one list is one stored row per *arr and the row has to say which. A
+    keep rule stores the name the operator typed, once, and ``on_list`` matches it
+    exactly, so a fact built from display names would match nothing and every tag list
+    would protect nothing while the Lists screen reported it healthy.
 
-    So the matched name is STORED (``protection_list.rule_name``) rather than derived from
-    a display string, and derived here for both writers at once: :func:`sync` on success and
-    :func:`_record_sync_error` on a first failure, which must agree or a list's protection
-    would depend on whether its first check landed.
+    So the matched name is stored (``protection_list.rule_name``) rather than derived
+    from a display string, and derived here for both writers at once: :func:`sync` on
+    success and :func:`_record_sync_error` on a first failure, which must agree or a
+    list's protection would depend on whether its first check landed.
     """
     return provider.list_name or provider.display_name
 
@@ -237,16 +234,16 @@ class ImdbList:
     """An IMDb chart or public list, via Radarr's own list service. No auth, no key.
 
     ``variant`` is a preset key (:data:`IMDB_PRESETS`) or a public list id (``ls…``); the
-    definition on Settings -> Lists stores which. Movies only, because the mirror is
-    Radarr's own service and serves the movie halves of these lists.
+    definition on Settings -> Lists stores which. Movies only, since the mirror is
+    Radarr's own service and serves only the movie halves of these lists.
 
-    **Membership is binary. There is no rank.**
+    Membership is binary. There is no rank.
 
-    The payload carries no rank, position or order field, and the Top 250 comes back in
-    roughly *chronological* order -- the first entry is from 1921. Taking the array index
-    as a chart position would have told the owner "this film is #1", which is simply
-    false, and the why-panel would have been confidently lying. So ``rank`` is left None.
-    Being *on* the list is the signal.
+    The payload carries no rank, position, or order field, and the Top 250 comes back in
+    roughly chronological order (the first entry is from 1921). Taking the array index as
+    a chart position would tell the owner "this film is #1," which is false, and the
+    why-panel would be confidently wrong. So ``rank`` is left ``None``. Being on the list
+    is the signal.
     """
 
     variant: str = "top250"
@@ -265,8 +262,8 @@ class ImdbList:
 
     async def fetch(self) -> list[ListItem]:
         path, floor = IMDB_PRESETS.get(self.variant, (self.variant, 1))
-        # Through clients/ like every other fetch (rule 33): the shared retry, timeout,
-        # error-mapping and redirect policy, instead of a bespoke httpx use down here.
+        # Through clients/ like every other fetch: the shared retry, timeout, error-mapping
+        # and redirect policy, instead of a bespoke httpx use down here.
         parts = urlsplit(IMDB_LIST_BASE + path)
         async with PublicClient(f"{parts.scheme}://{parts.netloc}") as client:
             payload = await client.get_json(parts.path)
@@ -275,10 +272,10 @@ class ImdbList:
             raise IntegrationError(self.slug, "error.integration.unexpected_shape", path=parts.path)
 
         # Through identity.ExternalIds.of like every other id write: the mirror emits
-        # `tt0000000` for a title it has no IMDb id for, and stored raw that row would be
-        # matched by every other item carrying the same sentinel (#709). The entry still
-        # becomes a ListItem either way; `is_protectable` is what decides whether an entry
-        # with no usable key is stored.
+        # `tt0000000` for a title it has no IMDb id for, and a row storing that raw sentinel
+        # would be matched by every other item carrying it. The entry still becomes a
+        # ListItem either way; `is_protectable` is what decides whether an entry with no
+        # usable key is stored.
         items: list[ListItem] = []
         for entry in payload:
             ids = identity.ExternalIds.of(imdb=entry.get("ImdbId"), tmdb=entry.get("TmdbId"))
@@ -295,7 +292,7 @@ class ImdbList:
         if len(items) < floor:
             # A truncated or empty answer is worse than no answer: installing it would
             # silently stop protecting the titles that fell off. An IMDb chart is never
-            # genuinely empty, so even the floor of 1 refuses an empty custom list.
+            # genuinely empty, so even a floor of 1 refuses an empty custom list.
             raise IntegrationError(
                 self.slug, "error.integration.imdb_list_truncated", floor=floor, count=len(items)
             )
@@ -307,8 +304,8 @@ def _tag_key(tag: str) -> str:
 
     Sonarr and Radarr lower-case and trim every label on the way in, so the operator's
     configured spelling and the stored one routinely differ. Every comparison goes
-    through here, on BOTH sides, so a keep tag can never fail to match the label it
-    names -- the ``plex.normalize_label`` of the *arr side.
+    through here, on both sides, so a keep tag always matches the label it names. The
+    *arr-side equivalent of ``plex.normalize_label``.
     """
     return fold(tag)
 
@@ -316,29 +313,31 @@ def _tag_key(tag: str) -> str:
 def _name_key(name: str) -> str:
     """The comparison form for a Plex library or collection title.
 
-    Same rule as :func:`_tag_key` and ``plex.normalize_label`` (rule 88): both sides
-    case-folded, or a library the operator spells "movies" never matches the configured
-    "Movies" and their keep collection reads as a missing library.
+    Same rule as :func:`_tag_key` and ``plex.normalize_label``: both sides lower-cased,
+    or a library the operator spells "movies" would never match the configured "Movies"
+    and their keep collection would read as a missing library.
     """
     return fold(name)
 
 
 @dataclass(frozen=True, slots=True)
 class ArrTagRule:
-    """One or more *arr tags, combined -- the configurable "keep list".
+    """One or more *arr tags, combined into the configurable "keep list".
 
-    A title matches when it carries ANY of the tags (the usual case) or ALL of them, per
-    ``match``. The tag list and the library are each read ONCE for the whole rule -- the
-    library is the expensive call (every movie or series in the instance), and an earlier
-    version re-downloaded it once per configured tag, per scan. Protect-only, like every
-    list source -- the worst a mis-configured rule can do is fail to keep something.
+    A title matches when it carries any of the tags (the usual case) or all of them, per
+    ``match``. The tag list and the library are each read once for the whole rule: the
+    library is the expensive call, since it covers every movie or series in the
+    instance, so reading it per configured tag per scan would be wasteful. Protect-only,
+    like every list source: the worst a mis-configured rule can do is fail to keep
+    something.
 
     ``instance_id`` is part of the slug for a reason that is easy to miss: the slug is
-    the stored list's primary key, and each sync atomically REPLACES that slug's
-    membership. With two same-service instances and a service-only slug, each instance's
-    sync erased the other's keep-tagged titles -- whichever synced last won, and titles
-    tagged only on the losing instance silently lost their whitelist protection. A
-    per-instance slug makes each instance its own list, so both protect.
+    the stored list's primary key, and each sync atomically replaces that slug's
+    membership. With two same-service instances sharing a service-only slug, each
+    instance's sync would erase the other's keep-tagged titles, since whichever synced
+    last would win, silently dropping whitelist protection for titles tagged only on the
+    losing instance. A per-instance slug makes each instance its own list, so both
+    protect.
     """
 
     client: SonarrClient | RadarrClient
@@ -353,9 +352,9 @@ class ArrTagRule:
     list_name: str | None = None
     #: How many titles carried each configured tag, filled by :meth:`fetch` and stored by
     #: ``sync`` beside the row (see :attr:`sync_stats`). A mutable container on a frozen
-    #: dataclass, deliberately: the counts are a *result* of the fetch, not configuration,
-    #: and a per-tag count is independent of the ANY/ALL mode -- it answers "which tags are
-    #: doing the protecting here", which the Lists screen shows per server.
+    #: dataclass, deliberately: the counts are a result of the fetch, not configuration, and
+    #: a per-tag count is independent of the ANY/ALL mode. It answers "which tags are doing
+    #: the protecting here," which the Lists screen shows per server.
     tag_counts: dict[str, int] = field(default_factory=dict)
 
     @property
@@ -372,7 +371,7 @@ class ArrTagRule:
         where = f" ({self.instance_name})" if self.instance_name else ""
         if self.list_name:
             # The operator's own name leads, with the server after it: several of these rows
-            # are one list to them (one per *arr instance), and the name is what says so.
+            # are one list to the operator (one per *arr instance), and the name says so.
             return f"{self.list_name}{where}"
         return f"{self.client.service.title()}{where} tag: {joiner.join(self.tags)}"
 
@@ -380,8 +379,8 @@ class ArrTagRule:
         if not self.tags:
             return []
 
-        # First match wins when two tag labels collide after normalizing ('Keep' and
-        # 'keep' can both exist), and a malformed tag row is skipped rather than failing
+        # First match wins when two tag labels collide after normalizing ("Keep" and
+        # "keep" can both exist), and a malformed tag row is skipped rather than failing
         # the whole keep-list over a row that was never the owner's keep tag.
         by_label: dict[str, int] = {}
         for row in await self.client.tags():
@@ -392,46 +391,46 @@ class ArrTagRule:
         wanted: set[int] = set()
         missing: list[str] = []
         for tag in self.tags:
-            # BOTH sides normalized, or the lookup silently misses. Sonarr and Radarr
+            # Both sides normalized, or the lookup would silently miss. Sonarr and Radarr
             # lower-case every label at the source, so an operator who configures the
-            # natural capitalization of their own tag ("Reaper-Keep") would look up a
-            # spelling the map cannot hold: the tag reads as MISSING, and on a first sync
-            # that stores an empty membership and reports success -- a keep list that
-            # protects nothing, forever, while the settings screen shows it as healthy.
+            # natural capitalization of their own tag ("Reaper-Keep") would otherwise look
+            # up a spelling the map cannot hold: the tag would read as missing, and on a
+            # first sync that stores an empty membership and reports success, a keep list
+            # would protect nothing forever while the settings screen shows it as healthy.
             found = by_label.get(_tag_key(tag))
             if found is None:
                 log.info("lists.tag_absent", tag=tag, service=self.client.service)
                 missing.append(tag)
             else:
                 wanted.add(found)
-        # A missing tag is a missing CONTAINER, not an empty one: nothing can carry a
-        # tag that does not exist, so returning [] here would be indistinguishable from
-        # "the owner un-tagged everything" and sync() would wipe the stored membership.
-        # EVERY configured tag that will not resolve is a failure (rule 27), because the
-        # absence is indistinguishable from a tag the operator RENAMED upstream -- and a
+        # A missing tag is a missing container, not an empty one: nothing can carry a tag
+        # that does not exist, so returning [] here would be indistinguishable from "the
+        # owner un-tagged everything," and sync() would wipe the stored membership. Every
+        # configured tag that will not resolve is treated as a failure, because the
+        # absence is indistinguishable from a tag the operator renamed upstream, and a
         # rename withdraws the protection from every title still carrying it.
         #
         # Two failures, because the two land in different places in ``sync``:
         #
-        # * Nothing resolved at all, or ANY gone under ALL (one absent tag already rules
-        #   every title out): ContainerMissingError, which ``sync`` reads as genuinely
-        #   empty when nothing is stored yet. That is the first-run case -- the default
-        #   'reaper-keep' tag usually does not exist in a fresh *arr, and a brand-new
-        #   install must not be un-scannable because of it.
-        # * Some resolved and some did not, under ANY: a hard failure, whatever is
-        #   stored. Reading THIS as an empty first sync would store the surviving tags'
-        #   members as [] and report the keep-list healthy, so the tags that DO resolve
-        #   would protect nothing (rule 90's shape, one level up). The sync fails, the
-        #   stored membership survives untouched, and the scan degrades.
+        # * Nothing resolved at all, or any tag gone under match ALL (one absent tag
+        #   already rules every title out): ContainerMissingError, which ``sync`` reads as
+        #   genuinely empty when nothing is stored yet. That is the first-run case, since
+        #   the default "reaper-keep" tag usually does not exist in a fresh *arr, and a
+        #   brand-new install must not be un-scannable because of it.
+        # * Some resolved and some did not, under match ANY: a hard failure, whatever is
+        #   stored. Reading this as an empty first sync would store the surviving tags'
+        #   members as [] and report the keep-list healthy, so the tags that do resolve
+        #   would end up protecting nothing. The sync fails instead, the stored membership
+        #   survives untouched, and the scan degrades.
         if missing:
             names = ", ".join(repr(t) for t in missing)
             if not wanted or self.match == "all":
                 if not wanted:
                     # No tag exists, so no title carries one: every count is a true zero,
                     # and recording them is what lets the genuinely-empty first sync say
-                    # "0" instead of leaving the screen blank. Under ALL with a tag still
-                    # resolved this is skipped -- the resolved tags' counts were never
-                    # taken, and an untaken count is unknown, not zero (rule 96).
+                    # "0" instead of leaving the screen blank. Under match ALL with a tag
+                    # still resolved this is skipped, since the resolved tags' counts were
+                    # never taken, and an untaken count is unknown, not zero.
                     self.tag_counts.clear()
                     self.tag_counts.update(dict.fromkeys(self.tags, 0))
                 raise ContainerMissingError(
@@ -455,8 +454,8 @@ class ArrTagRule:
             return not wanted.isdisjoint(carried)
 
         # Through identity.ExternalIds.of, the same door the scan's own reads of these two
-        # payloads use: a raw `tt0000000` stored here is a row every other sentinel-bearing
-        # item matches, and a keep tag would report protecting titles it does not (#709).
+        # payloads use: a row storing a raw `tt0000000` sentinel would match every other item
+        # carrying it, and a keep tag would report protecting titles it does not.
         self.tag_counts.clear()
         out: list[ListItem] = []
         if isinstance(self.client, RadarrClient):
@@ -492,16 +491,17 @@ class ArrTagRule:
     def server_label(self) -> str:
         """The server, named for the operator: the service with the instance after it
         ("Radarr (4k)"), so two same-named instances of different services stay apart in
-        the per-server counts. The same shape :attr:`display_name` puts after a name."""
+        the per-server counts. The same shape :attr:`display_name` puts after a name.
+        """
         where = f" ({self.instance_name})" if self.instance_name else ""
         return f"{self.client.service.title()}{where}"
 
     @property
     def sync_stats(self) -> dict[str, Any] | None:
         """What ``sync`` stores beside this row: per-tag counts, and which server they are
-        from. The counts are ``None`` -- unknown, never zero -- unless a counting pass
-        actually ran (:meth:`fetch` fills them, on success and on the no-tag-exists first
-        sync alike)."""
+        from. The counts are ``None`` (unknown, never zero) unless a counting pass
+        actually ran; :meth:`fetch` fills them in, both on success and on the
+        no-tag-exists first sync."""
         return {
             "tags": dict(self.tag_counts) if self.tag_counts else None,
             "server": self.server_label,
@@ -510,17 +510,17 @@ class ArrTagRule:
 
 #: What Plex calls a thing -> the kind a protection row is filed under. A collection is
 #: typed by its library, so these two are what a keep collection holds. Anything else keeps
-#: Plex's own spelling, which :attr:`ListItem.is_protectable` refuses: the mapping this
-#: replaced read ``"tv" if item.type == "show" else "movie"``, filing every other Plex
-#: object -- an episode, a music artist -- as a MOVIE and carrying whatever ids it had into
-#: the movie id space (rule 52). Such a row protects nothing, or protects an unrelated film
-#: that happens to share the number.
+#: Plex's own spelling, which :attr:`ListItem.is_protectable` refuses: a naive mapping of
+#: ``"tv" if item.type == "show" else "movie"`` would file every other Plex object, such as
+#: an episode or a music artist, as a movie and carry whatever ids it had into the movie id
+#: space. Such a row protects nothing, or protects an unrelated film that happens to share
+#: the number.
 _PLEX_MEDIA_TYPES = {"movie": "movie", "show": "tv"}
 
 
 @dataclass(frozen=True, slots=True)
 class PlexCollection:
-    """A collection you curate in the Plex app itself -- "Never Reap" by convention.
+    """A collection you curate in the Plex app itself, "Never Reap" by convention.
 
     The best of the four providers, and the one with no configuration at all. You add
     a film to the collection from your phone, in the app you already use every day.
@@ -535,8 +535,8 @@ class PlexCollection:
     collection_name: str = "Never Reap"
     #: The definition this was built from. Two collections of the same name in two libraries
     #: are two lists, and without the id in the slug each sync would atomically replace the
-    #: other's membership -- the failure ``ArrTagRule`` documents for two same-service *arr
-    #: instances, reached by a different route.
+    #: other's membership, the same failure ``ArrTagRule`` documents for two same-service
+    #: *arr instances, reached by a different route.
     list_id: int | None = None
     list_name: str | None = None
 
@@ -557,28 +557,26 @@ class PlexCollection:
         return await asyncio.to_thread(self._fetch_sync)
 
     def _find_collection(self) -> Any:
-        """The keep collection, looked for in **every** library carrying this title.
+        """The keep collection, looked for in every library carrying this title.
 
         ``library.section(title)`` returns whichever of two same-titled libraries plexapi
-        saw first (rule 6/57), so on a server with an HD and a 4K library both called
-        "Movies" the collection could be read from a library that does not hold it. That
-        reads as "the container is gone", which over a populated stored list degrades the
-        scan and, on a first sync, stores an empty keep-list. Asking each matching library
-        in turn removes the ambiguity without asking the operator for a key.
+        saw first, so on a server with an HD and a 4K library both called "Movies" the
+        collection could be read from a library that does not hold it. That reads as "the
+        container is gone," which over a populated stored list degrades the scan and, on a
+        first sync, stores an empty keep-list. Asking each matching library in turn removes
+        the ambiguity without asking the operator for a key.
         """
         from plexapi.exceptions import NotFound
 
         library = self.server.library  # type: ignore[attr-defined]
-        # Case-folded on BOTH sides (rule 88). ``library.section(title)`` -- the call this
-        # replaced -- matched case-insensitively, so an exact-match filter here silently
-        # stopped finding the keep collection of an operator whose library is spelled
-        # "movies": the sync then failed the whole HARD keep-list and every scan with it.
+        # Lower-cased on both sides. Comparing titles case-sensitively would silently stop
+        # finding the keep collection of an operator whose library is spelled "movies,"
+        # failing the whole hard keep-list and every scan with it.
         wanted = _name_key(self.section_name)
         sections = [s for s in library.sections() if _name_key(str(s.title)) == wanted]
         if not sections:
-            # Not a missing container but a missing LIBRARY: a mistyped name, or one the
-            # operator removed. A hard failure, recorded against the slug, exactly as the
-            # raw plexapi NotFound this replaces was.
+            # Not a missing container but a missing library: a mistyped name, or one the
+            # operator removed. A hard failure, recorded against the slug.
             raise IntegrationError(
                 "plex", "error.integration.library_not_found", name=self.section_name
             )
@@ -587,10 +585,10 @@ class PlexCollection:
                 return section.collection(self.collection_name)
             except NotFound:
                 continue
-        # The container is not there to ask: deleted, renamed, or simply not yet
-        # created. Which of those it is depends on what is already stored, and
-        # sync() decides -- raising here (rather than returning []) is what lets a
-        # stored membership survive a deleted "Never Reap" collection.
+        # The container is not there to ask: deleted, renamed, or simply not yet created.
+        # Which of those it is depends on what is already stored, and sync() decides.
+        # Raising here, rather than returning [], is what lets a stored membership survive
+        # a deleted "Never Reap" collection.
         log.info("lists.plex_collection_absent", collection=self.collection_name)
         raise ContainerMissingError(
             f"Plex collection {self.collection_name!r} does not exist in section "
@@ -603,16 +601,16 @@ class PlexCollection:
         items: list[ListItem] = []
         for item in collection.items():
             # The new Plex agents expose external ids as Guid children; the legacy agents
-            # put a single id in `guid`. identity.parse_guids handles both (and the
-            # ``?lang=`` suffix, and sentinels), so a legacy-agent library is no longer
-            # silently unprotected -- the same one parser the scan's matcher uses.
+            # put a single id in `guid`. identity.parse_guids handles both, plus the
+            # ``?lang=`` suffix and sentinels, using the same parser the scan's matcher
+            # uses, so a legacy-agent library is not left unprotected.
             guid_ids = [str(getattr(guid, "id", "")) for guid in getattr(item, "guids", None) or []]
             legacy = getattr(item, "guid", None)
             ids = identity.parse_guids(guid_ids, str(legacy) if legacy else None)
             plex_type = str(getattr(item, "type", "") or "")
             # Plex's own key for the object, kept whether or not the guids parsed. It is
-            # what protects an entry no agent ever matched, and the ids above stay the
-            # join for everything else: a key means nothing on another server, and an
+            # what protects an entry no agent ever matched. The ids above stay the join
+            # for everything else, since a key means nothing on another server, and an
             # item re-added to the library comes back under a new one.
             raw_key = str(getattr(item, "ratingKey", "") or "")
             items.append(
@@ -635,12 +633,12 @@ class PlexWatchlist:
     The stored Plex token is the account credential itself (``services.plex_link``
     verifies the resource token matches the account's on link), so ``myPlexAccount()``
     needs no second sign-in. Watchlist entries live on plex.tv rather than the PMS, so
-    unlike a collection they carry no usable server rating key; the external ids are the
+    unlike a collection they carry no usable server rating key. The external ids are the
     whole join, and an entry without any is held by ``_rows_to_store`` like any other.
 
-    An **empty watchlist is genuinely empty** -- the operator cleared it from the Plex
-    app -- so it empties the stored membership. A watchlist has no missing-container
-    state: any failure to read it raises and leaves the stored copy protecting.
+    An empty watchlist is genuinely empty, since the operator cleared it from the Plex
+    app, so it empties the stored membership. A watchlist has no missing-container state:
+    any failure to read it raises and leaves the stored copy protecting.
 
     plexapi is synchronous, so the read runs off the event loop.
     """
@@ -666,8 +664,9 @@ class PlexWatchlist:
         account = self.server.myPlexAccount()  # type: ignore[attr-defined]
         items: list[ListItem] = []
         for item in account.watchlist():
-            # Discover metadata carries the external ids as Guid children, same shape as
-            # a PMS item; the legacy `guid` on these is a plex:// uri parse_guids ignores.
+            # Discover metadata carries the external ids as Guid children, the same shape
+            # as a PMS item. The legacy `guid` on these is a plex:// uri that parse_guids
+            # ignores.
             guid_ids = [str(getattr(g, "id", "")) for g in getattr(item, "guids", None) or []]
             legacy = getattr(item, "guid", None)
             ids = identity.parse_guids(guid_ids, str(legacy) if legacy else None)
@@ -714,8 +713,8 @@ CREATE TABLE IF NOT EXISTS protection_list_item (
 );
 """
 
-#: Created after :data:`SCHEMA`, and after the widening below, because an index over a
-#: column a stored database has not been given yet cannot be created.
+#: Created after :data:`SCHEMA`, and after the widening below, because an index cannot be
+#: created over a column a stored database has not been given yet.
 INDEXES = """
 CREATE INDEX IF NOT EXISTS ix_pli_imdb ON protection_list_item (imdb_id);
 CREATE INDEX IF NOT EXISTS ix_pli_tmdb ON protection_list_item (tmdb_id);
@@ -725,21 +724,21 @@ CREATE INDEX IF NOT EXISTS ix_pli_plex ON protection_list_item (plex_rating_key)
 
 #: Columns added to ``protection_list_item`` after it first shipped. ``CREATE TABLE IF NOT
 #: EXISTS`` leaves a table that already exists exactly as it is, so a stored ``cache.db``
-#: never sees a new column from :data:`SCHEMA` alone -- and this table is not Alembic's
-#: (it lives in ``cache.db``, which alembic is never pointed at), so nothing else would add
-#: it either. Additive only:
-#: every one is nullable, and the next sync fills it in.
+#: never sees a new column from :data:`SCHEMA` alone. This table is not Alembic's either
+#: (it lives in ``cache.db``, which Alembic never touches), so nothing else adds it. Every
+#: added column is nullable, and the next sync fills it in.
 _ADDED_COLUMNS = {"plex_rating_key": "INTEGER"}
 
 #: The same widening for ``protection_list``. ``stats_json`` holds what a provider knows
-#: about its own sync beyond the count -- per-tag totals and the server they came from --
-#: written on success only, so like the membership it is always from the last good check.
-#: ``rule_name`` is what a keep rule matches (:func:`rule_name`); a stored row that predates
-#: it reads as its display name, which is what it was matched by before the column existed.
+#: about its own sync beyond the count, such as per-tag totals and the server they came
+#: from, written on success only, so like the membership it is always from the last good
+#: check. ``rule_name`` is what a keep rule matches (:func:`rule_name`); a stored row that
+#: predates it reads as its display name, which is what it was matched by before the
+#: column existed.
 _ADDED_LIST_COLUMNS = {"stats_json": "TEXT", "rule_name": "TEXT"}
 
 #: Serializes the widening in :func:`ensure_schema`, which is a check-then-write that SQLite
-#: does not serialize for us. Whole-process, so it holds across the seven callers.
+#: does not serialize on its own. Whole-process, so it holds across the seven callers.
 _widen_lock = per_loop_lock()
 
 
@@ -755,13 +754,14 @@ class Membership:
     rule_name: str = ""
     """What a keep rule naming this list spells (:func:`rule_name`), which is not always
     what the operator is shown: a tag list's display name carries the server. Defaulted so
-    the fact builders' own fixtures need not restate it; every production read comes from
-    the stored column, and a row written before it falls back to the display name."""
+    the fact builders' own fixtures need not restate it. Every production read comes from
+    the stored column, and a row written before it existed falls back to the display
+    name."""
 
     def matched_by(self) -> str:
         """The name the ``on_list`` field compares against. Falls back to the display name
         for a row stored before ``rule_name`` existed, which is the spelling it was matched
-        by then, so a widened database keeps whatever it was already protecting."""
+        by then, so a widened database keeps protecting whatever it already protected."""
         return self.rule_name or self.display_name
 
     @property
@@ -777,22 +777,22 @@ def on_list_fact(memberships: Sequence[Membership]) -> Observation[str]:
     """The ``on_list`` field's input: every list holding an item, by the name its keep rule
     spells, deduplicated keeping order and comma-joined the way a multi-valued fact is read.
 
-    One derivation for both fact builders (rule 35: same fact, same shape, every builder).
-    They each carried their own copy, so the movie path and the season path could disagree
-    about what a keep rule sees -- and did, because each joined DISPLAY names, which for a
-    tag list carry the server and so matched no rule at all (#507).
+    One derivation, shared by both fact builders, so the movie path and the season path
+    cannot disagree about what a keep rule sees. Joining display names instead would break
+    this, since a tag list's display name carries the server and would match no rule at
+    all.
 
     ``Absent``, never ``Unknown``: an item on no list is one we looked up and found on
-    nothing, which is a checked miss. A membership we could not READ never reaches here --
-    a failed list sync degrades the snapshot instead (rule 2), and the stored copy from the
-    last good check is what these rows are.
+    nothing, which is a checked miss. A membership we could not read never reaches here.
+    A failed list sync degrades the snapshot instead, and the stored copy from the last
+    good check is what these rows are.
     """
     names = tuple(dict.fromkeys(m.matched_by() for m in memberships))
     return Known(value=", ".join(names), source="lists") if names else Absent(source="lists")
 
 
 async def ensure_schema(engine: AsyncEngine) -> None:
-    """Create the two tables, widen a stored one, then index it -- in that order.
+    """Create the two tables, widen a stored one, then index it, in that order.
 
     The widening is what lets a ``cache.db`` written by an older version keep its
     membership. Dropping and recreating the table instead would empty every keep list
@@ -803,12 +803,12 @@ async def ensure_schema(engine: AsyncEngine) -> None:
         for statement in SCHEMA.strip().split(";"):
             if statement.strip():
                 await conn.execute(text(statement))
-    # Each shape is re-read INSIDE the lock and its ALTERs decided from THAT, never from a
-    # read taken before it (rule 58). Nothing at the SQLite level serializes these: pysqlite
-    # autocommits DDL, so `engine.begin()` above and below opens no transaction around it,
-    # and there is no ADD COLUMN IF NOT EXISTS. Two callers reading the pre-widen shape both
-    # ALTER and the second raises `duplicate column name`, which aborts a scan -- and two
-    # callers is ordinary, since the Lists screen, a running scan and the nightly refresh all
+    # Each shape is re-read inside the lock and its ALTERs decided from that read, never from
+    # one taken before it. Nothing at the SQLite level serializes these on its own: pysqlite
+    # autocommits DDL, so `engine.begin()` above and below opens no transaction around it, and
+    # there is no ADD COLUMN IF NOT EXISTS. Two callers reading the pre-widen shape would both
+    # ALTER, and the second would raise `duplicate column name`, aborting a scan. Two callers
+    # is ordinary here, since the Lists screen, a running scan, and the nightly refresh all
     # reach here on three different job ids.
     async with _widen_lock(), engine.begin() as conn:
         for table, added in (
@@ -849,8 +849,8 @@ async def _record_sync_error(
                 "slug": provider.slug,
                 "name": provider.display_name,
                 # Written on the INSERT, so a list whose very first check failed still
-                # carries the name its keep rule matches. The conflict arm leaves it as a
-                # successful sync wrote it, like ``display_name`` beside it.
+                # carries the name its keep rule matches. The conflict branch leaves it as
+                # a successful sync wrote it, like ``display_name`` beside it.
                 "rule": rule_name(provider),
                 "mode": mode.value,
                 "kind": kind.value,
@@ -867,11 +867,11 @@ def _row_key(item: ListItem) -> tuple[object, ...]:
     key is built from and what every lookup joins on: one film listed twice under one
     TMDb id is one row, whichever Plex objects it came from. The Plex key alone where it
     has none, because then that key is the only thing telling two entries apart, and
-    folding them together would drop one of the operator's titles.
+    merging them would drop one of the operator's titles.
 
     Only ever asked about an entry that is :attr:`ListItem.is_protectable`, or a stored
-    row that was one when it was written, so "no ids and no Plex key" -- which would key
-    every such entry alike -- cannot reach here.
+    row that was one when it was written, so "no ids and no Plex key," which would key
+    every such entry alike, cannot reach here.
     """
     if item.has_any_id:
         return (item.media_type, item.imdb_id, item.tmdb_id, item.tvdb_id)
@@ -896,10 +896,10 @@ async def _stored_by_title(
 ) -> dict[tuple[str, str], list[ListItem]]:
     """This list's stored rows, grouped by the kind and title they were stored under.
 
-    Both sides of the title are case-folded (rule 88), or a title Plex re-cased on a
-    re-match matches nothing and the protection lapses on exactly the sync that renamed
-    it. A row with no title is left out: an empty title would match every other untitled
-    row, which is worse than matching none.
+    Both sides of the title are lower-cased, or a title Plex re-cased on a re-match would
+    match nothing and the protection would lapse on exactly the sync that renamed it. A
+    row with no title is left out: an empty title would match every other untitled row,
+    which is worse than matching none.
     """
     rows = (
         await conn.execute(
@@ -937,15 +937,16 @@ def _keep_keys(item: ListItem, stored: Sequence[ListItem]) -> ListItem:
     A fetch that comes back having lost the ids of an entry is the failure this exists
     for: the entry is still on the list, so the swap must not file it under fewer keys
     than before. Losing them is the ordinary shape of a Plex agent change, and the ids
-    matter beyond Plex -- the movie lane looks a keep list up by RADARR's imdb and tmdb
-    ids, which a Plex-side identity failure does not touch, so a row reduced to a Plex
-    key alone stops protecting the moment the scan cannot bind the item to Plex.
+    matter beyond Plex, since the movie lane looks a keep list up by Radarr's own imdb
+    and tmdb ids, which a Plex-side identity failure does not touch. Without this repair
+    a row reduced to a Plex key alone would stop protecting the moment the scan cannot
+    bind the item to Plex.
 
-    Bounded on purpose. Only an entry that came back with NO ids inherits any, because a
+    Bounded on purpose. Only an entry that came back with no ids inherits any, because a
     source that identified the entry at all is the better authority on which title it is:
     an operator who corrects a mis-match in Plex would otherwise have the old title's ids
     welded back on at every sync. And only from a single stored row, because two rows
-    under one title cannot say which ids are this entry's (rule 6).
+    under one title cannot say which ids belong to this entry.
     """
     if item.has_any_id or len(stored) != 1:
         return item
@@ -960,15 +961,15 @@ async def _rows_to_store(
 ) -> tuple[list[ListItem], int, int]:
     """Every row this sync should leave behind, with what it recovered and what it held.
 
-    ``sync`` refuses the swap outright when a populated container loses *every* entry.
-    When it loses only some of them, the ones that survive look like a complete fetch,
-    and the swap would drop the rest: the operator's keep tag is still on the title, the
-    sync reports a healthy count, and nothing protects the title any more. Same failure
-    as the all-or-nothing case, at a smaller scale (rule 27), and the one the read side
-    cannot recover from -- a lookup finds rows by key, so a row deleted for want of one
-    is simply gone.
+    ``sync`` refuses the swap outright when a populated container loses every entry. When
+    it loses only some of them, the ones that survive look like a complete fetch, and the
+    swap would drop the rest: the operator's keep tag is still on the title, the sync
+    reports a healthy count, and nothing protects the title any more. This is the same
+    failure as the all-or-nothing case, at a smaller scale, and one the read side cannot
+    recover from, since a lookup finds rows by key, and a row deleted for want of one is
+    simply gone.
 
-    Two repairs, both keyed on the entry still BEING on the list, so a title the operator
+    Two repairs, both keyed on the entry still being on the list, so a title the operator
     genuinely removed is still removed and a title that was never stored gains nothing:
 
     * an entry still identifiable, but no longer by id, is stored with the ids its row
@@ -979,8 +980,8 @@ async def _rows_to_store(
     ``snapshot.protection_sync_degradations`` reads, and past ``WHITELIST_STALE_AFTER``
     it makes every scan un-executable. One home video in a "Never Reap" collection, which
     no agent will ever give an id, would eventually stop the operator reaping anything at
-    all -- and it never protected a title in the first place, so refusing would trade a
-    real protection for an imaginary one.
+    all, and it never protected a title in the first place, so refusing would trade a real
+    protection for an imaginary one.
 
     A title that changed spelling in the same sync it lost its keys is recoverable by
     neither, and reads as a removal.
@@ -1010,16 +1011,16 @@ async def sync(
 ) -> int:
     """Refresh one list.
 
-    The swap is atomic per list: a failed fetch leaves the previous membership intact.
-    A protection that silently empties itself is worse than one that is out of date --
-    it would stop protecting without saying so. A missing CONTAINER (a renamed keep
-    tag, a deleted "Never Reap" collection) counts as a failure whenever members are
-    stored, for exactly that reason; it counts as genuinely empty only when there was
-    never anything to protect.
+    The swap is atomic per list: a failed fetch leaves the previous membership intact. A
+    protection that silently empties itself is worse than one that is out of date, since
+    it would stop protecting without saying so. A missing container (a renamed keep tag,
+    a deleted "Never Reap" collection) counts as a failure whenever members are stored,
+    for exactly that reason; it counts as genuinely empty only when there was never
+    anything to protect.
 
-    A **populated** container whose every entry became unusable is the same failure
-    wearing a different coat, and it is treated the same way (rule 27). Only a container
-    that genuinely came back empty may empty the list.
+    A populated container whose every entry became unusable is the same failure wearing a
+    different coat, and it is treated the same way. Only a container that genuinely came
+    back empty may empty the list.
 
     Short of that, the swap runs over what :func:`_rows_to_store` makes of the fetch,
     which never files a title the container still lists under fewer keys than the row it
@@ -1049,8 +1050,8 @@ async def sync(
             ).scalar_one()
         if stored:
             # The container vanished from under a populated list. Fail, so the atomic
-            # swap below never runs and the previous membership keeps protecting;
-            # succeeding-with-[] would unprotect every stored title on this very scan.
+            # swap below never runs and the previous membership keeps protecting.
+            # Succeeding with [] would unprotect every stored title on this very scan.
             await _record_sync_error(
                 engine, provider, mode=mode, kind=kind, weight=weight, error=str(exc)
             )
@@ -1067,18 +1068,19 @@ async def sync(
         raise
 
     async with engine.begin() as conn:
-        # Read the stored rows inside the write transaction (rule 58): what is carried
-        # over is decided from the very rows this DELETE is about to remove, not from an
-        # earlier snapshot of them.
+        # Read the stored rows inside the write transaction: what is carried over is
+        # decided from the very rows this DELETE is about to remove, not from an earlier
+        # snapshot of them.
         keeping, recovered, held = await _rows_to_store(conn, provider.slug, fetched)
         await conn.execute(
             text("DELETE FROM protection_list_item WHERE slug = :slug"),
             {"slug": provider.slug},
         )
-        # Deduplicated here, because SQLite will not do it: it counts NULLs in a primary
-        # key as distinct, and every one of these rows has a NULL somewhere in that key,
-        # so INSERT OR REPLACE leaves an entry the container lists twice sitting in the
-        # table twice and every lookup reports the same list protecting it twice.
+        # Deduplicated here, because SQLite will not do it on its own: it counts NULLs in
+        # a primary key as distinct, and every one of these rows has a NULL somewhere in
+        # that key, so INSERT OR REPLACE would leave an entry the container lists twice
+        # sitting in the table twice, and every lookup would report the same list
+        # protecting it twice.
         rows = {_row_key(i): _row_values(provider.slug, i) for i in keeping}
         if rows:
             await conn.execute(
@@ -1099,9 +1101,9 @@ async def sync(
                 "VALUES (:slug, :name, :rule, :mode, :kind, :weight, 1, :count, :now, NULL, "
                 "        :stats) "
                 # ``enabled = 1`` on the conflict too, not just on the insert: a slug
-                # ``retire_absent`` switched off is a live list again the moment this
-                # configuration produces it, and a keep-list that syncs while disabled
-                # protects nothing (``load_membership_index`` joins ``WHERE enabled = 1``).
+                # ``retire_absent`` switched off becomes a live list again the moment this
+                # configuration produces it. A keep-list that syncs while disabled would
+                # protect nothing, since ``load_membership_index`` joins ``WHERE enabled = 1``.
                 "ON CONFLICT(slug) DO UPDATE SET "
                 "  display_name = :name, rule_name = :rule, mode = :mode, kind = :kind, "
                 "  item_count = :count, enabled = 1, last_synced_at = :now, "
@@ -1123,8 +1125,8 @@ async def sync(
     if unusable:
         # Named, because a count alone leaves the operator nothing to go and look at, and
         # the titles are the operator's own (``scan.plex_unmatched`` logs them the same
-        # way). Capped: a whole list going unusable raises above instead of landing here,
-        # but a large one could still fill a line.
+        # way). Capped, since a whole list going unusable raises above instead of landing
+        # here, but a large one could still fill a line.
         log.warning(
             "lists.unidentified",
             slug=provider.slug,
@@ -1137,21 +1139,21 @@ async def sync(
 
 
 #: The infix and prefix the families below are matched on, as the SQL patterns' one source.
-#: The patterns are built from these rather than the other way round, so a family that is
-#: respelled moves the retire sweep and every reader of it together (rule 144).
+#: The patterns are built from these rather than the other way round, so respelling a family
+#: moves the retire sweep and every reader of it together.
 KEEP_TAG_INFIX = "-keeptags-"
 PLEX_COLLECTION_PREFIX = "plex-collection-"
 PLEX_WATCHLIST_PREFIX = "plex-watchlist-"
 IMDB_PREFIX = "imdb-"
 
-#: The slug families Reaper *derives* from configuration rather than being told, and so is
-#: responsible for retiring. Each changes spelling when the configuration behind it changes
-#: -- ``ArrTagRule.slug`` carries the any/all match and the instance id, ``PlexCollection.slug``
+#: The slug families Reaper derives from configuration rather than being told, and so is
+#: responsible for retiring. Each changes spelling when the configuration behind it changes:
+#: ``ArrTagRule.slug`` carries the any/all match and the instance id, ``PlexCollection.slug``
 #: carries the collection name, and every list the operator defined carries its definition's id
-#: (see :func:`list_suffix`) -- so the old row would otherwise sit there enabled, still
-#: protecting from a definition the operator has already replaced or removed. The IMDb family
-#: pattern also matches the retired ``imdb-top-250`` spelling an upgrade leaves behind, which
-#: is what re-homes it.
+#: (see :func:`list_suffix`). Without the retire sweep the old row would sit there enabled,
+#: still protecting from a definition the operator has already replaced or removed. The IMDb
+#: family pattern also matches the retired ``imdb-top-250`` spelling an upgrade leaves behind,
+#: which is what re-homes it.
 KEEP_TAG_SLUGS = f"%{KEEP_TAG_INFIX}%"
 PLEX_COLLECTION_SLUGS = f"{PLEX_COLLECTION_PREFIX}%"
 PLEX_WATCHLIST_SLUGS = f"{PLEX_WATCHLIST_PREFIX}%"
@@ -1163,7 +1165,7 @@ _LIST_SUFFIX = "-list"
 
 
 def list_slugs(list_id: int) -> str:
-    """The ``LIKE`` pattern matching every stored slug synced for ONE definition.
+    """The ``LIKE`` pattern matching every stored slug synced for one definition.
 
     A narrower ``family`` for :func:`retire_absent`, for the pass that checks a single row of
     the Lists screen: that pass produces one definition's slugs, so one definition is the most
@@ -1174,15 +1176,16 @@ def list_slugs(list_id: int) -> str:
 
 
 def list_suffix(list_id: int | None) -> str:
-    """The ``-list<id>`` tail every list the operator DEFINED carries.
+    """The ``-list<id>`` tail every list the operator defined carries.
 
-    The definition's id, not its name: the name is the operator's to change, and a slug that
-    moved when they renamed a list would write a second row and leave the first one enabled
-    and still protecting (the failure :func:`retire_absent` exists to prevent).
+    The definition's id, not its name: the name is the operator's to change, and a slug
+    that moved when they renamed a list would write a second row and leave the first one
+    enabled and still protecting, the failure :func:`retire_absent` exists to prevent.
 
-    Empty for the keep tags, which are configured on Policy and have no definition row. That
-    is what keeps their stored slugs spelled exactly as they were before the registry existed,
-    so an upgrade does not orphan the membership protecting an operator's tagged titles.
+    Empty for the keep tags, which are configured on Policy and have no definition row.
+    That is what keeps their stored slugs spelled exactly as they were before the
+    registry existed, so an upgrade does not orphan the membership protecting an
+    operator's tagged titles.
     """
     return f"{_LIST_SUFFIX}{list_id}" if list_id is not None else ""
 
@@ -1191,8 +1194,8 @@ def list_id_of(slug: str) -> int | None:
     """Which definition a stored slug was synced for, or ``None`` for the keep tags.
 
     The inverse of :func:`list_suffix`, and the join the Lists screen renders one row per
-    definition from. It lives here, beside the spellings, because a surface that parsed a slug
-    for itself would be a second copy of this to keep in step (:class:`ListSource` says the
+    definition from. It lives here, beside the spellings, so a surface never needs to parse
+    a slug for itself and keep a second copy of this in step (:class:`ListSource` says the
     same about grouping).
     """
     head, sep, tail = slug.rpartition(_LIST_SUFFIX)
@@ -1204,9 +1207,9 @@ class ListSource(enum.StrEnum):
     grouping key for stored membership rows (derived from the slug there, since no cache
     column records the provider).
 
-    A surface that groups MUST NOT parse the slug itself. One tag list exists per *arr
+    A surface that groups must not parse the slug itself. One tag list exists per *arr
     instance, so an operator with two Radarrs and two Sonarrs has four stored rows for the
-    single protection "titles I tagged reaper-keep". Grouping is how that stays readable,
+    single protection "titles I tagged reaper-keep." Grouping is how that stays readable,
     and the grouping key belongs wherever the slugs are spelled, not in the component.
     """
 
@@ -1227,27 +1230,27 @@ async def retire_absent(engine: AsyncEngine, *, family: str, current: Collection
     """Disable every enabled list in ``family`` that this configuration no longer produces.
 
     A stored list outlives the setting that created it. Flip "Keep tags: match ANY" to
-    "match ALL" and the slug changes, so the sync writes a NEW row while the old one stays
+    "match ALL" and the slug changes, so the sync writes a new row while the old one stays
     enabled: the tightening the operator saved never takes effect, because everything that
     matched ANY tag is still whitelisted by a list nothing updates. Clearing the keep tags
     entirely, renaming the "Never Reap" collection, and deleting an *arr instance all land
-    the same way. So each run declares the slugs it is responsible for and this retires the
-    rest of that family.
+    the same way. So each run declares the slugs it is responsible for, and this retires
+    the rest of that family.
 
     Disabled, never deleted: the membership is left in place so the row still explains
     itself on the settings screen, and ``sync`` re-enables a slug the moment it comes back
     (flip ALL back to ANY and the old list resumes protecting). Returns what it retired.
 
-    **Only call this for a family whose inputs were actually readable this run.** The
-    caller decides: a Plex that could not be reached produces no collection provider, and
+    Only call this for a family whose inputs were actually readable this run. The caller
+    decides: a Plex that could not be reached produces no collection provider, and
     retiring on that would unprotect every title on the operator's "Never Reap" collection
-    because of a network blip -- the fail-open this codebase exists to avoid.
+    because of a network blip, which this codebase exists to avoid.
     """
     await ensure_schema(engine)
     keep = set(current)
     async with engine.begin() as conn:
-        # Read and write inside ONE transaction (rule 58): the set being retired is
-        # decided from the rows this statement will update, not from an earlier snapshot.
+        # Read and write inside one transaction: the set being retired is decided from the
+        # rows this statement will update, not from an earlier snapshot.
         rows = (
             await conn.execute(
                 text("SELECT slug FROM protection_list WHERE enabled = 1 AND slug LIKE :family"),
@@ -1272,10 +1275,10 @@ async def sync_rule_names(engine: AsyncEngine, definitions: Sequence[ListDefinit
     A stored row learns the name its keep rule matches from the sync that wrote it
     (:func:`rule_name`), so between a rename and the next successful check the row still
     carries the old spelling while ``list_rules.rename_list`` has already re-spelled the
-    rules. That gap is a live protection switched off, silently, by an edit that reads as
-    cosmetic -- so the two surfaces are brought back into step the moment the rename lands,
-    and again whenever the Lists screen is read, which is also what gives an adopted legacy
-    row its name before anything has been checked.
+    rules. Without this, that gap would silently switch off a live protection through an
+    edit that reads as cosmetic. Calling this brings the two surfaces back into step the
+    moment the rename lands, and again whenever the Lists screen is read, which is also
+    what gives an adopted legacy row its name before anything has been checked.
 
     Rows are found by the definition id in their slug, never by the old name, so a row is
     re-homed however many renames it slept through.
@@ -1284,7 +1287,7 @@ async def sync_rule_names(engine: AsyncEngine, definitions: Sequence[ListDefinit
     by_id = {d.id: d.name for d in definitions}
     moved = 0
     async with engine.begin() as conn:
-        # Read inside the write transaction (rule 58).
+        # Read inside the write transaction.
         rows = (await conn.execute(text("SELECT slug, rule_name FROM protection_list"))).all()
         for row in rows:
             wanted = by_id.get(list_id_of(str(row.slug)) or -1)
@@ -1300,7 +1303,7 @@ async def sync_rule_names(engine: AsyncEngine, definitions: Sequence[ListDefinit
     return moved
 
 
-#: A keep-tag row as the policy era spelled it: service, optional instance id, match mode --
+#: A keep-tag row as the policy era spelled it: service, optional instance id, match mode,
 #: and no ``-list`` tail, which is what marks it as predating the registry.
 _LEGACY_KEEP_TAG = re.compile(rf"^(?:radarr|sonarr)(?:-\d+)?{re.escape(KEEP_TAG_INFIX)}(any|all)$")
 
@@ -1310,18 +1313,18 @@ async def adopt_legacy(
 ) -> list[tuple[str, str]]:
     """Re-home rows stored before their definition existed onto the definition's slug.
 
-    The upgrade migrations seed a definition for everything the old code derived -- the keep
-    tags, the keep collection, the shipped IMDb chart -- but the stored membership keeps its
-    legacy slug until a successful check rewrites it. Until then the screen shows one
-    protection twice: an editable definition protecting nothing, beside an uneditable row
+    The upgrade migrations seed a definition for everything the old code derived, such as the
+    keep tags, the keep collection, and the shipped IMDb chart, but the stored membership
+    keeps its legacy slug until a successful check rewrites it. Until then the screen shows
+    one protection twice: an editable definition protecting nothing, beside an uneditable row
     holding everything. Renaming the stored slug in place hands the definition the
-    membership, stats and timestamps the legacy row earned, so an upgrade's lists arrive
+    membership, stats, and timestamps the legacy row earned, so an upgrade's lists arrive
     rolled up and editable before anything has been checked.
 
     Conservative on every edge, because a wrong adoption files one list's membership under
-    another list's name. A legacy row moves only when exactly ONE enabled definition claims
-    its spelling; never onto a slug that already has a stored row (a check landed there
-    first, and the retire sweep stands the legacy row down on its own); and a disabled row,
+    another list's name. A legacy row moves only when exactly one enabled definition claims
+    its spelling; never onto a slug that already has a stored row, since a check landed there
+    first and the retire sweep stands the legacy row down on its own; and a disabled row,
     one a sweep already retired, stays where it is.
     """
     claims: dict[str, list[str]] = {}
@@ -1344,8 +1347,8 @@ async def adopt_legacy(
             collection = str(definition.config.get("collection", "")).strip()
             if not collection:
                 continue
-            # The providers spell their own slugs, so adoption cannot drift from the sync
-            # (rule 144). Only the slug is read; no server is needed to derive it.
+            # The providers spell their own slugs, so adoption cannot drift from the sync.
+            # Only the slug is read; no server is needed to derive it.
             claims.setdefault(
                 PlexCollection(server=None, section_name="", collection_name=collection).slug,
                 [],
@@ -1365,8 +1368,8 @@ async def adopt_legacy(
     await ensure_schema(engine)
     renames: list[tuple[str, str]] = []
     async with engine.begin() as conn:
-        # Read inside the write transaction (rule 58): the rows being renamed and the
-        # occupancy check on their targets are decided from what this transaction sees.
+        # Read inside the write transaction: the rows being renamed and the occupancy check
+        # on their targets are decided from what this transaction sees.
         rows = (await conn.execute(text("SELECT slug, enabled FROM protection_list"))).all()
         stored = {str(r.slug) for r in rows}
         for row in rows:
@@ -1403,21 +1406,21 @@ class MembershipIndex:
     """Every enabled protection-list row, loaded once and looked up in memory.
 
     A scan asks "which lists contain this item?" once per movie and once per show.
-    Answering each of those with its own SQLite round trip (plus the ensure-schema DDL
-    :func:`memberships` runs first) dominated the judge loop on large libraries, so the
+    Answering each of those with its own SQLite round trip, plus the ensure-schema DDL
+    :func:`memberships` runs first, dominated the judge loop on large libraries, so the
     scan loads this index once and every per-item lookup becomes a dict hit.
 
     Parity with :func:`memberships` is the contract: a lookup returns one
-    :class:`Membership` per matching *stored row* -- a row reachable through more than
-    one of its ids still counts once, and two distinct rows of the same list still count
-    twice -- so the two paths cannot disagree about what protects an item. Entries carry
-    their load order so results are deterministic.
+    :class:`Membership` per matching stored row. A row reachable through more than one of
+    its ids still counts once, and two distinct rows of the same list still count twice,
+    so the two paths always agree about what protects an item. Entries carry their load
+    order so results are deterministic.
 
-    Every entry also carries its row's ``media_type`` and a lookup only matches rows of
-    the *same* type. TMDb numbers movies and shows in separate id spaces (movie #1399 and
+    Every entry also carries its row's ``media_type``, and a lookup only matches rows of
+    the same type. TMDb numbers movies and shows in separate id spaces (movie #1399 and
     show #1399 are unrelated titles), so without this a show whose TMDb id coincides with
-    a Top 250 film would be reported "on the IMDb Top 250" -- a keep the owner never
-    asked for and a why-panel that lies. IMDb ids are globally unique, but the filter is
+    a Top 250 film would be reported "on the IMDb Top 250," a keep the owner never asked
+    for and a why-panel that lies. IMDb ids are globally unique, but the filter is
     applied to every key kind so the join key is always (media_type, key).
 
     Four maps, not three: a keep-collection entry Plex never matched to an agent is
@@ -1444,10 +1447,10 @@ class MembershipIndex:
         ``media_type`` ("movie" | "tv") is the item's own type; only rows of that type
         can match, so a movie id space and a show id space never cross.
 
-        Every key the item carries is passed together, never the first one that is set
-        (rule 29): a "Never Reap" entry no agent matched is stored under its Plex key
-        alone, and an item bound to a merged group of byte-identical twins carries one
-        key per listing, any of which the operator may have put on the list.
+        Every key the item carries is passed together, never just the first one that is
+        set: a "Never Reap" entry no agent matched is stored under its Plex key alone,
+        and an item bound to a merged group of byte-identical twins carries one key per
+        listing, any of which the operator may have put on the list.
         """
         if not (imdb_id or tmdb_id or tvdb_id or plex_rating_keys):
             return []
@@ -1464,12 +1467,12 @@ class MembershipIndex:
         out: list[Membership] = []
         for seq, row_media_type, membership in sorted(entries, key=lambda entry: entry[0]):
             # A row whose kind disagrees with the item is skipped, so it protects nothing.
-            # That is the right arm -- matching across kinds is how a show inherits a
-            # film's keep -- which puts the whole burden on the write side: every insert
-            # goes through ``sync``, which stores only ``ListItem.is_protectable`` entries,
-            # so no current path can file a row under a kind its ids do not belong to.
-            # This still fires for a row an older version wrote, when a Plex collection
-            # holding anything other than a movie or a show was filed as a movie.
+            # Matching across kinds would let a show inherit a film's keep, which is
+            # wrong, so this puts the whole burden on the write side: every insert goes
+            # through ``sync``, which stores only ``ListItem.is_protectable`` entries, so
+            # no current path files a row under a kind its ids do not belong to. This still
+            # fires for a row an older version wrote, when a Plex collection holding
+            # something other than a movie or a show was filed as a movie.
             if row_media_type != media_type:
                 continue
             if seq not in seen:
@@ -1539,16 +1542,16 @@ async def memberships(
     """Which protected lists contain this item?
 
     Matched on any external id we hold, within the item's own ``media_type``. A film on
-    the Top 250 is protected whether we know it by IMDb id or TMDb id -- requiring both
-    would silently drop the ones where only one is present -- but a show is never matched
+    the Top 250 is protected whether we know it by IMDb id or TMDb id, since requiring
+    both would silently drop the ones where only one is present. A show is never matched
     against a movie row, so a show whose TMDb id (a separate id space) coincides with a
     Top 250 film is not falsely protected.
 
-    Implemented AS a one-item view over :func:`load_membership_index`, so there is
-    exactly one place that decides what protects an item -- a second hand-written query
-    here could drift from the one the scan actually uses (rule 3). The scan never calls
-    this per item; it loads the index once. This form exists for one-off callers, where
-    loading the (small) list tables per call is fine.
+    Implemented as a one-item view over :func:`load_membership_index`, so there is
+    exactly one place that decides what protects an item, and a second hand-written query
+    here cannot drift from the one the scan actually uses. The scan never calls this per
+    item; it loads the index once. This form exists for one-off callers, where loading
+    the small list tables per call is fine.
     """
     index = await load_membership_index(engine)
     return index.lookup(
@@ -1563,11 +1566,12 @@ async def memberships(
 class ListHealth(enum.StrEnum):
     """What a stored row says about whether this list is protecting anything right now.
 
-    One derivation, because ``last_error`` and ``last_synced_at`` are two columns that mean
-    four different things together, and a surface deciding for itself gets a different answer
-    than the degradation check does (rule 144). ``snapshot.protection_sync_degradations`` is
-    the enforcement; this is what the operator is shown, and both read
-    ``snapshot.WHITELIST_STALE_AFTER`` rather than each carrying a bound.
+    One derivation, because ``last_error`` and ``last_synced_at`` are two columns that
+    mean four different things together, and a surface deciding for itself could reach a
+    different answer than the degradation check does.
+    ``snapshot.protection_sync_degradations`` is the enforcement; this is what the
+    operator is shown, and both read ``snapshot.WHITELIST_STALE_AFTER`` rather than each
+    carrying its own bound.
     """
 
     WORKING = "working"
@@ -1592,10 +1596,10 @@ class ListHealth(enum.StrEnum):
 class ConfiguredList:
     """One stored row, typed. What the Lists screen renders and nothing else reads.
 
-    Typed rather than the raw mapping it used to be, because every column arrives from
-    SQLite as ``object`` and each of the six readers would otherwise re-narrow it -- the
-    kind of per-caller coercion rule 104 exists to stop. ``health`` is on the row for the
-    same reason: the verdict is derived once, here, beside the columns it reads.
+    Typed rather than a raw mapping, because every column arrives from SQLite as
+    ``object``, and leaving it that way would make each of the six readers re-narrow it
+    separately. ``health`` is on the row for the same reason: the verdict is derived
+    once, here, beside the columns it reads.
     """
 
     slug: str
@@ -1608,13 +1612,13 @@ class ConfiguredList:
     last_error: str | None
     stats: dict[str, Any] | None = None
     """What the last good sync recorded beyond the count (``stats_json``): per-tag totals
-    and the server name for a tag list, ``None`` for every other source and for rows
-    written before the column existed, which read as "unknown", never as zero."""
+    and the server name for a tag list. ``None`` for every other source and for rows
+    written before the column existed, which read as "unknown," never as zero."""
 
     media_types: frozenset[str] = frozenset()
-    """The protectable media types this slug's stored members actually span -- ``movie``,
-    ``tv``, or both. Empty until a sync has run, which is what lets the Lists screen say a
-    keep rule covers one side of a mixed list and leaves the other still deletable (#533):
+    """The protectable media types this slug's stored members actually span: ``movie``,
+    ``tv``, or both. Empty until a sync has run. This is what lets the Lists screen say a
+    keep rule covers one side of a mixed list and leaves the other still deletable, since
     a rule protects a media type, and a list holds whichever types its members do. Filled
     from ``protection_list_item`` in :func:`configured`, not stored on the row."""
 
@@ -1634,7 +1638,7 @@ class ConfiguredList:
         """Which definition this membership was synced for. See :func:`list_id_of`.
 
         ``None`` for the keep tags, whose definition is the policy rather than a row on
-        Settings -> Lists -- and for a row stored before the registry existed, which is
+        Settings -> Lists, and for a row stored before the registry existed, which is
         retired the moment the definition that replaced it syncs.
         """
         return list_id_of(self.slug)
@@ -1649,10 +1653,10 @@ class ConfiguredList:
         """This row's state, in the order the states override each other.
 
         A failure outranks "never checked" even though a first sync that failed leaves
-        ``last_synced_at`` NULL: the list *was* checked, and saying it has not been hides the
-        error that is the whole reason to look. ``item_count`` is deliberately not folded in
-        -- a failing list with members and one without call for different action, and the
-        count is on the row beside this.
+        ``last_synced_at`` NULL: the list was checked, and saying it has not been would
+        hide the error that is the whole reason to look. ``item_count`` is deliberately
+        not merged into this state, since a failing list with members and one without
+        call for different action, and the count is on the row beside this.
         """
         if self.last_error:
             return ListHealth.FAILING
@@ -1678,9 +1682,9 @@ async def configured(engine: AsyncEngine) -> Sequence[ConfiguredList]:
             )
         ).all()
         # Which media types each slug's members span, in one grouped pass over the small
-        # membership table. A tag list is one slug per *arr instance -- a Radarr slug is all
-        # movies, a Sonarr slug all shows -- so a family that reaches the screen across
-        # several slugs carries each type on the slug that holds it (#533).
+        # membership table. A tag list is one slug per *arr instance (a Radarr slug is all
+        # movies, a Sonarr slug all shows), so a family that reaches the screen across
+        # several slugs carries each type on the slug that holds it.
         spans = (
             await conn.execute(
                 text("SELECT slug, media_type FROM protection_list_item GROUP BY slug, media_type")
@@ -1693,8 +1697,8 @@ async def configured(engine: AsyncEngine) -> Sequence[ConfiguredList]:
             types_by_slug.setdefault(str(span.slug), set()).add(media_type)
 
     def _stats(raw: object) -> dict[str, Any] | None:
-        """A stats body that will not parse reads as absent, never as a raised row
-        (rule 96's shape): the counts are decoration on a row whose count column stands."""
+        """A stats body that will not parse reads as absent, never as a raised error: the
+        counts are decoration on a row whose count column stands on its own."""
         if not raw:
             return None
         try:

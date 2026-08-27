@@ -1,23 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Reaper's app icon: the hooded figure dissolving into blocks, in a fixed ink shell. The shell
-// and the figure are fixed; the EYES follow the operator's accent, so the browser-tab favicon
+// and the figure are fixed. The eyes follow the operator's accent, so the browser-tab favicon
 // tracks the same --accent the rest of the UI derives from.
 //
-// This module is the single source of that drawing for every raster medium -- the runtime
+// This module is the single source of that drawing for every raster medium: the runtime
 // favicon data URI, and the committed favicon.svg / apple-touch / manifest PNGs. favicon.svg is
-// `appIconSvg(DEFAULT_ACCENT)`; the PNGs are rasterized from the two variants at the default
+// `appIconSvg(DEFAULT_ACCENT)`. The PNGs are rasterized from the two variants at the default
 // accent by `frontend/scripts/gen-icons.mjs` (`npm run icons`), which also writes the
 // icons.generated.json manifest. appIcon.test.ts is the enforcement: it fails if favicon.svg
-// drifts from `appIconSvg`, and -- via that manifest's source hashes -- if the PNGs were built
+// drifts from `appIconSvg`, and, via that manifest's source hashes, if the PNGs were built
 // from a drawing that has since changed. The in-app badge draws the same thing in JSX
-// (BrandBadge.tsx), following --accent live; keep the two in step. Geometry comes from
+// (BrandBadge.tsx), following --accent live. Keep the two in step. Geometry comes from
 // ./dissolve.
 //
-// The eyes are the accent VERBATIM, with no contrast correction against the shell. An operator
-// who picks a near-black accent gets near-invisible eyes; that is their color, shown honestly,
-// and lifting it would put a hue on the icon they never chose. The old platter icon behaved the
-// same way.
+// The eyes are the accent verbatim, with no contrast correction against the shell. An operator
+// who picks a near-black accent gets near-invisible eyes. That is their color, shown honestly,
+// and lifting it would put a hue on the icon they never chose.
 
 import {
   DISSOLVE_BONE,
@@ -29,7 +28,7 @@ import {
 import { DISSOLVE_FIGURE_D } from "./dissolve.generated";
 
 export interface AppIconOptions {
-  /** Corner radius on the 64 grid. 14 is the rounded badge (browser tab, in-app); 0 is a
+  /** Corner radius on the 64 grid. 14 is the rounded badge (browser tab, in-app). 0 is a
    *  full-bleed square for the iOS touch icon and maskable manifest icons, which apply their
    *  own mask over the square. */
   radius?: number;

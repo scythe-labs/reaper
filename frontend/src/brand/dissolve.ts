@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Reaper's brand mark, as raw geometry: a hooded figure whose head holds while the body breaks
-// into blocks and falls away -- a picture of files being removed. On a 64x64 grid.
+// into blocks and falls away: a picture of files being removed. On a 64x64 grid.
 //
 // Everything that draws the mark imports these constants, so the drawing is defined in exactly
 // one place: the app icon and favicon (./appIcon), the in-app badge (./BrandBadge), and the
 // header/setup mark (./BrandMark). Do not re-type a path string anywhere else.
 //
-// The mark is TWO fixed colors plus one variable: the shell is ink, the figure is bone, and the
-// EYES take the operator's accent, which is what ties the icon to the color chosen in Settings.
-// The scythe (./scythe) is no longer the brand mark; it survives as the review queue's "reaped"
-// glyph, where it means the action rather than the app.
+// The mark is two fixed colors plus one variable: the shell is ink, the figure is bone, and the
+// eyes take the operator's accent, which is what ties the icon to the color chosen in Settings.
+// The scythe (./scythe) is the review queue's "reaped" glyph, not the brand mark: it stands for
+// the action, not the app.
 //
 // Paint order matters and is not obvious. The hood is drawn whole, then an ink band erases the
 // body below the shoulders, then the upper blocks land on that band, then the face cavity is
@@ -22,8 +22,9 @@ export const DISSOLVE_VIEWBOX = "0 0 64 64";
 /** The fixed shell color. Dark in both themes: the mark carries its own ground. */
 export const DISSOLVE_INK = "#14161C";
 /** The fixed figure color. It matches `--text`'s dark value rather than being a cream of its
- *  own: at #EDE7DA the figure was hue 41 degrees and read visibly yellow beside the app's other
- *  near-whites, and it was a FOURTH one -- --text, --surface, white, and this. */
+ *  own: a dedicated cream at #EDE7DA (hue 41 degrees) read visibly yellow beside the app's
+ *  other near-whites, and added a fourth near-white to the three already in use: --text,
+ *  --surface, and white. */
 export const DISSOLVE_BONE = "#edeef1";
 
 /** The cowl: head and shoulders in one silhouette. */
@@ -42,25 +43,23 @@ export const DISSOLVE_CUT = { x: 0, y: 40, width: 64, height: 24 } as const;
 /** A falling block: `[x, y, size]` on the 64 grid. */
 export type DissolveBlock = readonly [number, number, number];
 
-/** Blocks painted over the cut band, before the face cavity -- so the cavity cuts them, and
- *  what each one contributes is its part OUTSIDE the cavity. Two consequences worth knowing
- *  before moving one: a block that sits wholly inside the cavity draws nothing at all, and the
- *  left column's right edge is the cavity's edge rather than any block's.
- *
- *  `[31, 40, 7]` used to sit here and was exactly that: wholly inside the cavity, contributing
- *  nothing. Removing it left the render byte-identical. */
+/** Blocks painted over the cut band, before the face cavity, so the cavity cuts them. What
+ *  each one contributes is its part outside the cavity. Two consequences worth knowing before
+ *  moving one: a block that sits wholly inside the cavity draws nothing at all, and the left
+ *  column's right edge is the cavity's edge rather than any block's. */
 export const DISSOLVE_BLOCKS_UPPER: readonly DissolveBlock[] = [
   [19, 40, 7],
   [25, 47, 7],
-  // Started at y=48 and left a one-unit hole across the left column, since the block above it
-  // ends at y=47. It starts at 46 now, so it OVERLAPS that block rather than sharing an edge,
-  // and is a unit bigger so the column still ends where it did. The extra width falls inside
-  // the face cavity and draws nothing. (Coordinates stay out of this prose deliberately: a
-  // bracketed triple in a comment reads as a block to anything scanning this file.)
+  // Starts one unit above where the block ends above it (y=46, not y=47), so the two overlap
+  // instead of just touching: sharing an edge exactly leaves a one-unit hole across the left
+  // column. It is a unit bigger too, so the column still ends where it did. The extra width
+  // falls inside the face cavity and draws nothing. (Coordinates stay out of this prose
+  // deliberately: a bracketed triple in a comment reads as a block to anything scanning this
+  // file.)
   [19, 46, 8],
   [45, 40, 6],
-  // Moved up two and left one so it overlaps the block above it. Before, it cleared that block
-  // by a unit in y and the one beside it by a unit in x, so it touched nothing at all.
+  // Positioned to overlap both the block above it and the one beside it by a unit each,
+  // rather than clearing them by a unit and touching nothing.
   [40, 45, 7],
 ];
 

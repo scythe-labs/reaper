@@ -1,13 +1,12 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The scoring receipt. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* ---- the scoring receipt ------------------------------------------------- */
+ * The scoring receipt. See `../index.css` for how this file fits into the stylesheet's load
+ * order. */
 
 /* Every row carries its share of the score, and the shares add up to the group total.
- * The bar is measured against the TOTAL weight, not the row's own: filling each row
- * against itself is what let a 55 render as three near-full bars with no total in sight.
- * A row's footprint is how much of the score it could ever have moved; the fill inside
+ * The bar is measured against the total weight, not the row's own: filling each row
+ * against itself would let a 55 render as three near-full bars with no total in sight.
+ * A row's footprint is how much of the score it could ever have moved. The fill inside
  * it is how much it did. */
 
 .sig-group + .sig-group,
@@ -29,7 +28,7 @@
   color: var(--muted); /* 5.33:1 light, 6.65:1 dark */
 }
 /* The group's own total, in the condemn ink the fills use. #c62630 on --surface is 5.64:1
- * in light and #ff8086 is 7.12:1 in dark; both forced-theme blocks reuse those same two
+ * in light and #ff8086 is 7.12:1 in dark. Both forced-theme blocks reuse those same two
  * values, so all four themes clear AA. */
 .sig-group-total {
   font-variant-numeric: tabular-nums;
@@ -37,8 +36,8 @@
   font-size: var(--text-base);
   color: var(--condemn);
 }
-/* One note for the whole group, never one per row: the old per-row sentence printed five
- * times under five unread reasons. Same --muted ink as the group heading, so no new
+/* One note for the whole group, never one per row, so five unread reasons don't each print
+ * their own copy of the same sentence. Same --muted ink as the group heading, so no new
  * pairing: 5.33:1 in light, 6.65:1 in dark, and both forced-theme blocks reuse those two
  * values. */
 .sig-group-note {
@@ -64,7 +63,7 @@
   color: var(--condemn);
 }
 .sig-detail {
-  /* A rule name can be one long unbroken token; never let it widen the panel. */
+  /* A rule name can be one long unbroken token. This keeps it from widening the panel. */
   overflow-wrap: anywhere;
   flex: 1;
 }
@@ -81,9 +80,10 @@
 }
 
 /* A row that can say what it was measured against opens from the row itself, so the row's
-   own boxes sit inside a <button> and have to be spans -- a button may only hold phrasing
-   content, and a <div> in there is invalid markup a browser silently reparents. The classes
-   below are unchanged; these four just restore the box each one used to get for free. */
+   own boxes sit inside a <button> and have to be spans. A button may only hold phrasing
+   content, and a <div> in there is invalid markup that a browser silently reparents. The
+   classes below are unchanged. These four restore the block-level box a span does not carry
+   on its own. */
 .sig-why {
   display: block;
   width: 100%;
@@ -107,8 +107,8 @@
 }
 
 /* What the row was measured against, in place rather than floating: inside a full-screen
-   sheet an anchored popover has no room to be pushed back into (rule 138), and a phone is
-   where this is read. --muted clears AA in every theme, the same ink the group notes use. */
+   sheet an anchored popover has no room to be pushed back into, and a phone is where this
+   is read. --muted clears AA in every theme, the same ink the group notes use. */
 .sig-why-said {
   margin: 0.35rem 0 0;
   font-size: var(--text-sm);
@@ -153,7 +153,7 @@
 .sig-not_applicable .sig-foot {
   background: var(--border-strong);
 }
-/* "We could not look" wears amber AND a dashed edge, the same pairing the unchecked
+/* "Could not check" wears amber and a dashed edge, the same pairing the unchecked
  * protections and .chip-unchecked use. Decorative: the row also says it in words. */
 .sig-unreadable .sig-foot {
   background: var(--unknown-soft);
@@ -205,8 +205,6 @@
   border: 1px dashed color-mix(in srgb, var(--unknown) 55%, transparent);
 }
 
-/* gates */
-
 .gates li {
   display: flex;
   gap: var(--space-md);
@@ -220,7 +218,7 @@
   font-weight: var(--weight-bold);
 }
 /* What a protection said, which on the "could not check" branch quotes an upstream error from
-   someone else's server and routinely carries a URL (rule 139). */
+   someone else's server and routinely carries a URL. */
 .gate-detail {
   overflow-wrap: anywhere;
 }
@@ -244,7 +242,7 @@
 /* The "cleared" list rests folded behind one disclosure: it is the quietest of the three
  * protection blocks (every check came back clear), so the operator opens it only to read the
  * full list. Same native-<details> grammar and muted summary values as `.sig-rest`, with a
- * caret that turns and a label that swaps Show/Hide -- a whole-section fold reads clearer with
+ * caret that turns and a label that swaps Show/Hide. A whole-section fold reads clearer with
  * an explicit affordance than the tail-fold's descriptive count. */
 .gates-fold > summary {
   cursor: pointer;
@@ -280,8 +278,8 @@
   transform: rotate(90deg);
 }
 /* Mirrored for a right-to-left page, both states spelled out, for the reason written against
-   its twin `.season-expander .chevron` in 25-select-mode.css (rule 72: same widget, same
-   rotate, so the same fix). */
+   its twin `.season-expander .chevron` in 25-select-mode.css: same widget, same rotate, so
+   the same fix. */
 [dir="rtl"] .fold-caret {
   transform: scaleX(-1);
 }
@@ -303,8 +301,8 @@
   }
 }
 
-/* The solid amber notice -- the same tone as `.notice-warn` / the "kept to be safe" notice, so
-   every "Reaper wasn't sure, so it's kept" state reads the same way. */
+/* The solid amber notice: the same tone as `.notice-warn` and the "kept to be safe" notice,
+   so every "Reaper wasn't sure, so it's kept" state reads the same way. */
 .gates-unknown li {
   display: block; /* the shared .gates li flex row would put the cause beside the list */
   background: var(--unknown-soft);

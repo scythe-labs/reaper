@@ -47,8 +47,8 @@ describe("itemBytes", () => {
   });
 
   it("renders a real zero honestly, now that null carries the unknown", () => {
-    // Regression on the heuristic this replaced: a `value > 0` test could not tell an
-    // empty thing from an unmeasured one, so it called both unknown.
+    // A `value > 0` test cannot tell an empty thing from an unmeasured one, so it would call
+    // both unknown. `itemBytes` must not make that mistake.
     expect(itemBytes(0)).toBe("0 B");
   });
 

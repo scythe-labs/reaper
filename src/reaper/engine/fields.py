@@ -1,28 +1,24 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The field registry -- what a user may say, and in which lane.
+"""The field registry: what an owner may write a rule about, and in which lane.
 
-Reaper has two lanes and they are not symmetrical.
+Reaper has two lanes for rules, and they work differently on purpose.
 
-**The condemn lane is a flat AND of typed conditions.** No OR, no nesting, no NOT,
-no operator dropdown on a field where the direction inverts the meaning. Every one
-of the owner's requirements fits inside that -- "keep the last 2 seasons" is not a
-logic problem, it is a *derived field* (season rank). Maintainerr's issue tracker is
-full of "why did my rule match", and the cause is never that boolean algebra is
-hard; it is that a user built an expression saying something subtly different from
-what they meant, and nothing caught it.
+**The CONDEMN lane (rules that can lead to removal) only allows a flat list of
+conditions, all of which must match.** There is no OR, no nesting, and no NOT.
+Every real removal rule fits that shape: "keep the last 2 seasons" is a separate
+field (season rank) the owner picks a number for. A tool
+that instead lets owners build free-form boolean expressions runs into people whose
+rule matched something they did not mean, because nothing caught the mistake.
 
-**The protect lane is composable and user-authored.** Because a protection cannot
-delete anything: the worst case of a badly written protect rule is that nothing gets
-deleted. That asymmetry is the same one already in the kill switch -- arming it is
-password-gated, disarming it is one ungated click, because making Reaper safer is
-never worth guarding -- and it is what lets us hand the owner real expressive power
-without handing them a loaded gun.
+**The PROTECT lane (rules that can only keep things) can be freely composed.** A
+badly written protect rule can at worst fail to keep something. It can never delete
+anything. That is why owners get real expressive power there.
 
-The registry enforces the asymmetry *structurally*. Each field declares which lanes
-it may appear in and which operators it accepts, and the API filters by lane before
-the vocabulary ever reaches the browser: ``GET /api/vocabulary?lane=condemn`` cannot
-return a protect-only field, so a condemn rule referencing one is not merely rejected
--- it is unconstructable.
+The registry enforces this by structure: each field declares
+which lane or lanes it may appear in and which operators it accepts. The API filters
+the vocabulary by lane before it ever reaches the browser, so a request for the
+CONDEMN vocabulary cannot return a protect-only field. A condemn rule referencing
+one cannot be built at all.
 """
 
 from __future__ import annotations
@@ -53,18 +49,19 @@ class Lane(enum.StrEnum):
     PROTECT = "protect"
 
 
-#: A policy governs one media type, and the two are tuned separately. A field may not
-#: apply to both: "the show has ended" is meaningless for a movie. Season scoring is
-#: derived from the TV policy, so the policy-level type is always "movie" or "tv".
+#: A policy governs one media type, movie or TV, tuned separately. A field may not
+#: apply to both: "the show has ended" means nothing for a movie. Season scoring
+#: always uses the TV policy.
 MediaType = Literal["movie", "tv"]
 ALL_MEDIA: tuple[MediaType, ...] = ("movie", "tv")
 
 
 class Op(enum.StrEnum):
-    """Operators. Deliberately few, and typed.
+    """The comparison operators a rule may use. Deliberately few.
 
-    Note what is absent: no ``NOT``, no ``!=`` on a numeric, no free-text
-    comparison. Each is a way to invert a meaning by accident.
+    There is no ``NOT``, no ``!=`` on a number, and no free-text comparison. Each of
+    those makes it easy to write a rule that means the opposite of what the owner
+    intended.
     """
 
     GTE = "gte"
@@ -89,31 +86,32 @@ TEXT_OPS = (Op.EQ, Op.IN, Op.CONTAINS)
 
 
 class ReachSpan(enum.StrEnum):
-    """How much watch history a field's value needs before it means what it says.
+    """How far back a field's value needs watch history to reach before it is trustworthy.
 
-    Watcher counts come from a mirror that begins somewhere
-    (``Facts.history_reach_days``). Under that span the count is a LOWER BOUND, not an
-    answer, and the plays it cannot see are exactly the ones that would have kept the
-    file. A spec carrying one of these is asking every lane that reads it to check the
-    reach first (rule 140); a spec carrying ``None`` reads a fact the mirror does not
-    bound -- a size, a rating, a genre.
+    A watcher count comes from a watch-history mirror that only goes back so far
+    (``Facts.history_reach_days``). Short of that span, the count is only a lower bound:
+    the plays it cannot see are exactly the ones that would argue
+    to keep the file. A field carrying one of these values asks every reader to check
+    the reach first. ``None`` marks a field the mirror does not bound at all, such as
+    a size, a rating, or a genre.
     """
 
     POPULARITY_WINDOW = "popularity_window"
-    """Counted over the policy's popularity window, so the mirror must span it."""
+    """Counted over the policy's popularity window, so the mirror must span that window."""
 
     ITEM_LIFETIME = "item_lifetime"
-    """Counted over all time, so the mirror must span the item's whole life here
-    (``Facts.days_since_added``)."""
+    """Counted over the item's whole life, so the mirror must reach back to when it
+    was added (``Facts.days_since_added``)."""
 
 
-#: Which bar-phrase family a numeric field's rule number reads in. The phrases
-#: themselves live in the catalog (``why.bar.<family>.<side>``), four per family: ``gte``
-#: fires *at* its number and ``lte`` stops *at* its number, so in each pair only one side
-#: may claim "over" or "under" outright. Families exist because a span of time is "past" or
-#: "within" a window, a size or rating takes the plain continuous word, a count lands on
-#: its number often enough that only the strict side may say "over" flatly, and a season
-#: rule phrases the number as the seasons the owner keeps.
+#: Which wording family a numeric field's rule number uses when explained to the
+#: owner. The phrases live in the catalog (``why.bar.<family>.<side>``), four per
+#: family: ``gte`` fires at its number and ``lte`` stops at its number, so only one
+#: side of each pair can say "over" or "under" plainly. Different fact types need
+#: different wording: a span of time reads as "past" or "within" a window, a size or
+#: rating reads as a plain number, a count usually lands exactly on its number so only
+#: the strict side can say "over", and a season rule states the number as the seasons
+#: the owner keeps.
 _TYPE_FAMILY: dict[FieldType, str] = {
     FieldType.DAYS: "days",
     FieldType.BYTES: "bytes",
@@ -121,14 +119,14 @@ _TYPE_FAMILY: dict[FieldType, str] = {
     FieldType.COUNT: "count",
 }
 
-#: Per-field family overrides, ahead of the type map.
+#: Per-field overrides of the family above, checked before it.
 _BAR_FAMILY: dict[str, str] = {"season_rank": "season"}
 
 
-#: How a lane reads to the person who chose it. The enum's own values ("condemn",
-#: "protect") are engine words and must never reach a saved-policy error, which is
-#: rendered verbatim in the policy editor. `policy.py` phrases the same refusal the
-#: same way; the two have to agree or one page shows two vocabularies.
+#: Plain words for a lane, shown in a saved-policy error the policy editor renders
+#: verbatim. The enum values themselves ("condemn", "protect") are internal names and
+#: must never reach the owner. `policy.py` phrases the same refusal with the same
+#: words, since a mismatch would show the owner two different vocabularies.
 _LANE_USE: dict[Lane, str] = {
     Lane.CONDEMN: "remove things",
     Lane.PROTECT: "keep things",
@@ -138,8 +136,8 @@ _LANE_HOME: dict[Lane, str] = {
     Lane.PROTECT: "a protection",
 }
 
-#: The operator keys spelled the way the rule sentences already spell them, so a
-#: rejection and the rule it was rejected from speak the same language.
+#: The operators spelled the way a rule sentence already spells them, so a rejection
+#: message uses the same words as the rule it rejects.
 _OP_NAME: dict[Op, str] = {
     Op.GTE: "at or above",
     Op.LTE: "at or below",
@@ -150,7 +148,8 @@ _OP_NAME: dict[Op, str] = {
 
 
 def _join_or(parts: list[str]) -> str:
-    """Join as `"a", "b" or "c"`: a list a person reads, not a comma-joined dump."""
+    """Join as `"a", "b" or "c"`, the way a person reads a list at a glance, unlike a
+    comma-joined dump."""
     if len(parts) <= 1:
         return parts[0] if parts else ""
     return f"{', '.join(parts[:-1])} or {parts[-1]}"
@@ -158,7 +157,7 @@ def _join_or(parts: list[str]) -> str:
 
 @dataclass(frozen=True, slots=True)
 class FieldSpec:
-    """One thing a user may write a condition about."""
+    """One thing an owner may write a rule about."""
 
     key: str
 
@@ -168,31 +167,31 @@ class FieldSpec:
     read: Callable[[Facts], Observation[object]]
 
     media_types: tuple[MediaType, ...] = ALL_MEDIA
-    """Which policy this field applies to. Both by default. A TV-only field
-    (``show_ended``, ``season_rank``) is not offered on a movie policy: a movie has no
-    show and no season, so the rule would silently never fire. The API filters on this
-    before serializing, the same as ``lanes`` -- a movie policy cannot even build the
-    rule. A stale rule saved before this filter still reads Absent and only ever leans
-    toward keeping, so scoring is unaffected."""
+    """Which policy (movie, TV, or both) offers this field. A TV-only field
+    (``show_ended``, ``season_rank``) is not offered on a movie policy, since a movie
+    has no show and no season and the rule would never fire. The API filters on this
+    the same way it filters on ``lanes``, so a movie policy cannot even build the
+    rule. A rule saved before this filter existed still reads Absent and only ever
+    leans toward keeping, so it does not affect scoring."""
 
     multi: bool = False
-    """The fact is a comma-joined list ("Horror, Comedy"), not one value. ``eq`` and
-    ``in`` evaluate per element -- a multi-genre title could otherwise never equal any
-    single genre, and a protection the owner wrote would silently never fire."""
+    """The fact is a comma-joined list ("Horror, Comedy") of every value that applies.
+    ``eq`` and ``in`` compare against each element, since otherwise a title with several
+    genres could never equal any one of them and a protection the owner wrote would
+    never fire."""
 
     # ---- How this field explains itself -----------------------------------
-    # A label is a form caption ("Whitelisted"), and a caption is not a sentence. The
-    # why-panel says what Reaper found in words the owner would use, so each field's
-    # phrasing lives in the catalog rather than the explanation gluing the label to a raw
-    # operator key: ``why.field.<key>`` (the sentence subject), ``why.check.<key>`` (the
-    # "could not check ..." noun phrase), ``why.cond_value.<key>`` per numeric field and
-    # ``why.cond_bool.<key>.true`` / ``.false`` per boolean one.
-    # ``test_review_chips.py`` fails on a registry key missing its entries.
+    # A label is a short form caption ("Whitelisted"). The why-panel
+    # states what Reaper found in the owner's own words, so each field's phrasing
+    # lives in the catalog: ``why.field.<key>`` (the sentence subject),
+    # ``why.check.<key>`` (the "could not check ..." phrase), ``why.cond_value.<key>``
+    # per numeric field, and ``why.cond_bool.<key>.true`` / ``.false`` per boolean
+    # one. A test fails when a registry key is missing its catalog entries.
 
     reach_span: ReachSpan | None = None
-    """Set where the value is drawn from the watch mirror and is only an answer while
-    the mirror reaches far enough. Declared here, on the field, so every lane that reads
-    it through this registry inherits the check rather than each remembering it."""
+    """Set when the value comes from the watch mirror and is only trustworthy once
+    the mirror reaches far enough back. Declared here so every reader of this field
+    automatically inherits the check."""
 
     def allows(self, lane: Lane, op: Op) -> bool:
         return lane in self.lanes and op in self.ops
@@ -228,9 +227,9 @@ REGISTRY: tuple[FieldSpec, ...] = (
     FieldSpec(
         key="watchers_all_time",
         type=FieldType.COUNT,
-        # Protect only. This is the registry doing its job: an all-time watcher count
-        # is a fine reason to KEEP something and a terrible reason to delete it, and
-        # the lane list is what makes the latter unconstructable.
+        # Protect only: an all-time watcher count is a good reason to keep something
+        # and a bad reason to delete it. Restricting the lane here makes the bad rule
+        # impossible to build.
         lanes=(Lane.PROTECT,),
         ops=NUMERIC_OPS,
         read=lambda f: f.distinct_watchers_all_time,
@@ -260,10 +259,10 @@ REGISTRY: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         key="on_list",
-        # Every list, whatever its source: the fact behind this is ``Facts.on_lists``, the
-        # operator's names for every list holding the item, so a rule here is how ANY list
-        # -- tag, collection, watchlist, IMDb -- comes to keep or lean. The stored rules
-        # that used to spell this ``on_curated_list`` are re-spelled by
+        # Every list, whatever its source. The fact behind this is ``Facts.on_lists``,
+        # the names of every list holding the item, so a rule here works for any list:
+        # tag, collection, watchlist, or IMDb. A rule stored under the old field name
+        # ``on_curated_list`` is rewritten to this one by
         # ``policy_migrations.convert_list_protections``.
         type=FieldType.TEXT,
         lanes=(Lane.PROTECT,),
@@ -304,11 +303,11 @@ REGISTRY: tuple[FieldSpec, ...] = (
         key="release_age",
         type=FieldType.DAYS,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
-        # Movie-only, because ``season_scan.build_season_facts`` has no clean per-season
-        # release date and writes Absent for every season. Offering it on a TV policy sold
-        # a protection that could never keep anything, and a TV *condemn* rule on it was
-        # worse than inert: removal weights total exactly 100 over a fixed denominator, so
-        # a rule that never fires permanently removes its points from every TV score.
+        # Movie-only: a season has no single release date, so ``season_scan.
+        # build_season_facts`` writes Absent for every season. Offering this on a TV
+        # policy would sell a protection that could never fire. A TV removal rule on
+        # it would be worse than useless: removal weights always total 100, so a rule
+        # that never fires would permanently take its points away from every TV score.
         media_types=("movie",),
         ops=NUMERIC_OPS,
         read=lambda f: f.release_age_days,
@@ -338,24 +337,27 @@ REGISTRY: tuple[FieldSpec, ...] = (
 BY_KEY: dict[str, FieldSpec] = {spec.key: spec for spec in REGISTRY}
 
 RECENT_WATCHERS: FieldSpec = BY_KEY["recent_watchers"]
-"""The windowed watcher count's spec, resolved once here rather than looked up by string.
+"""The windowed watcher count's spec. This must use direct subscripting, never
+``BY_KEY.get("recent_watchers")``: a renamed key then raises immediately, since
+subscripting has no silent fallback.
 
 ``signals.evaluate_signal``'s built-in ``FEW_WATCHERS`` branch reads the same fact this
-spec declares and has to consult the same reach bound (rule 140). Reaching it through
-``BY_KEY.get("recent_watchers")`` would hand back ``None`` the day that key is renamed, and
-``reach_shortfall(None, ...)`` means "no bound applies" -- the guard would switch itself off
-in silence, in the condemn direction. Subscripting here raises at import instead."""
+spec declares, so it must consult the same reach bound. A ``None`` spec would make
+``reach_shortfall(None, ...)`` read as "no bound applies": the check would
+switch itself off without anyone noticing, in the direction that lets a scan condemn on
+bad evidence."""
 
 
 def vocabulary(lane: Lane, media_type: MediaType | None = None) -> list[FieldSpec]:
     """The fields available in one lane, optionally narrowed to one media type.
 
-    The API calls this before serializing, so a protect-only field is never even
-    offered to the condemn editor. A condemn rule referencing ``watchers_all_time``
-    is not rejected -- it cannot be built. When ``media_type`` is given, a field that
-    does not apply to it (``show_ended`` on a movie policy) is dropped the same way, so
-    the editor only ever offers reasons that fit the policy being tuned. ``None`` keeps
-    every field, for callers that are not editing one media type in particular.
+    The API calls this before sending fields to the browser, so a protect-only field
+    is never even offered to the removal-rule editor. ``watchers_all_time`` can never be
+    built into a removal rule, since the field is simply never offered there. When
+    ``media_type`` is given, a field that does not apply to it (``show_ended`` on a
+    movie policy) is dropped the same way, so the editor only offers fields that fit
+    the policy being edited. ``None`` keeps every field, for a caller not editing one
+    particular media type.
     """
     return [
         spec
@@ -404,29 +406,29 @@ class Condition:
         self._validate_value_type(spec)
 
     def _validate_value_type(self, spec: FieldSpec) -> None:
-        """The typed value must match the field's type, checked at the save boundary.
+        """The typed value must match the field's type. Checked when the policy is saved.
 
-        JSON keeps ``"500"`` a string on a numeric field (the wire type is
-        ``int | str | bool`` and nothing coerces), so without this check the policy
-        saves and hashes cleanly and the NEXT SCAN crashes inside ``score()`` /
-        ``evaluate_all`` on every item. A 422 naming the field at save time is the
-        honest failure. It also closes the quieter half: ``in``/``contains`` with a
-        non-text value can never match, so a protection the owner believes exists
-        would silently do nothing.
+        JSON keeps ``"500"`` a string on a numeric field, since the wire type is
+        ``int | str | bool`` and nothing coerces it. Without this check, the policy
+        would save and hash cleanly, then crash inside ``score()`` or
+        ``evaluate_all`` on the next scan. Refusing it here, with a clear error naming
+        the field, is the honest failure. It also catches a quieter problem: ``in`` or
+        ``contains`` against a non-text value can never match, so a protection the
+        owner believes exists would silently do nothing.
 
-        An empty or whitespace-only text value is refused for the same reason, and it is
-        the more dangerous of the two. ``contains ""`` is ``"" in anything`` -- True for
-        every item whose text fact is Known -- so a removal rule written that way adds its
-        full weight to the ENTIRE library and renders as the unfinished sentence "Genre
-        contains ". A single space is the same rule wherever the text holds a space. The
-        mirror on the protect lane is quiet instead of loud: ``in ""`` splits to no
-        elements, so it can never match and the protection reads green forever. Both are
-        refused here, at the save boundary, so a stored policy cannot carry a rule that
-        matches everything or nothing.
+        An empty or whitespace-only text value is refused for the same reason, and it
+        is the more dangerous case. ``contains ""`` matches every item whose text fact
+        is known, so a removal rule written that way adds its full weight across the
+        entire library while rendering as the unfinished sentence "Genre contains ".
+        The same problem hits a value that is just a space. On the protect lane the
+        failure is quiet instead of loud: ``in ""`` splits into no elements, so it can
+        never match and the protection looks fine forever while doing nothing. Both
+        are refused here, so a stored policy cannot carry a rule that matches
+        everything or nothing.
 
-        An ``eq`` target carrying the separator its fact is joined on is the third of the
-        same shape, and the quietest: it reads as an ordinary single value everywhere it
-        renders. See the check itself below.
+        An ``eq`` target that contains the character the field's list is joined on is
+        the same problem in a third, quieter shape: it looks like an ordinary single
+        value everywhere it is shown. See the check below.
         """
         value = self.value
         if spec.type is FieldType.BOOL:
@@ -438,20 +440,20 @@ class Condition:
             if not value.strip():
                 raise Refusal("error.policy.field_needs_value", field=self.field)
             if self.op is Op.IN and not _split_csv(value):
-                # A comma-only list ("," / " , ") survives the strip above but splits to
-                # nothing, which is the same never-matches protection by another spelling.
+                # A comma-only list (",", " , ") survives the strip above but splits
+                # into nothing, so it is the same never-matches protection in disguise.
                 raise Refusal("error.policy.field_needs_list_value", field=self.field)
             if self.op is Op.EQ and spec.multi and "," in value:
-                # The separator half, reached from the rule end. A multi-valued fact is one
-                # comma-joined string and ``_compare`` splits it back to test membership, so
-                # an ``eq`` target carrying a comma is never an element of its own fact: the
-                # rule saves, hashes, and renders on Policy as a live protection covering
-                # nothing. ``list_config._clean_name`` refuses the separator where the name
-                # is TYPED, which is where an operator can act on it; this is the boundary a
-                # hand-written body or an imported policy comes through (rule 108).
+                # A multi-valued fact is one comma-joined string, and ``_compare``
+                # splits it back apart to test membership. So an ``eq`` target that
+                # contains a comma can never be one of its own fact's elements: the
+                # rule saves, hashes, and shows on the Policy page as a live
+                # protection that covers nothing. ``list_config._clean_name`` refuses
+                # a comma where a list name is typed by the owner. This check catches
+                # the same problem coming through a hand-written or imported policy.
                 raise Refusal("error.policy.field_value_has_comma", field=self.field)
-        # Numeric field types (days, bytes, count, rating tenths). bool is an int
-        # subclass in Python, so it must be rejected explicitly.
+        # Numeric field types (days, bytes, count, rating tenths). Python treats bool
+        # as a subclass of int, so it must be rejected explicitly.
         elif isinstance(value, bool) or not isinstance(value, int):
             raise Refusal("error.policy.field_expects_number", field=self.field, value=value)
 
@@ -469,57 +471,59 @@ def reach_shortfall(
 ) -> Reason | None:
     """Why the watch mirror cannot support this field's value, as a typed reason.
 
-    ``None`` when it can, and for every field the mirror does not bound. The one place
-    the two watcher counts are qualified, so the protect lane, the condemn lane, the
-    graded keeps and the built-in ``FEW_WATCHERS`` signal cannot drift apart (rule 140).
+    Returns ``None`` when the mirror can support it, and also for every field the
+    mirror does not bound at all. This is the one place that checks both watcher
+    counts against the mirror's reach, so the PROTECT lane, the CONDEMN lane, the
+    graded keeps, and the built-in ``FEW_WATCHERS`` signal all agree.
 
-    ``window_days`` is the policy's popularity window -- the span
-    ``distinct_watchers`` was counted over, and the one every production caller derives
-    from ``policy.PolicyBody.popularity_window_days``, the same call that built the count
-    (``snapshot._watch_stats``), so the two can never describe different spans. ``None``
-    means the caller did not state it, and that is deliberately not a license to assume
-    the shipped default: against an operator running a longer window, a truncated count
-    would be read as complete, which is the exact fail-open this guards. It resolves to
-    "cannot establish" instead.
+    ``window_days`` is the policy's popularity window, the span ``distinct_watchers``
+    was counted over. Every production caller derives it from
+    ``policy.PolicyBody.popularity_window_days``, the same call that built the count
+    in ``snapshot._watch_stats``, so the two always describe the same span. ``None``
+    means the caller did not state a window. This must never be read as license to
+    assume the shipped default: doing so could tell an operator running a longer window
+    that a truncated count is complete. So a missing window resolves to "cannot
+    establish" instead.
     """
     if spec is None or spec.reach_span is None:
         return None
-    # Matched member by member with no ``else``, so a third span cannot inherit an answer
-    # computed for a different one. It used to: ``ITEM_LIFETIME`` sat on the fallback arm,
-    # so a new member silently measured the mirror against the item's AGE. Driven on a
-    # local third member -- reach 90d, item age 30d, window 365d -- it answered ``None``,
-    # "no shortfall", because the mirror does span that item's life. That is the permissive
-    # direction on a helper whose whole job is withholding unsupported counts, and no test
-    # went red (issue #168). ``assert_never`` makes mypy the guard rule 103 asks for, and
-    # ``TestEveryReachSpanIsRoutedByName`` names both sites for an author who skips it.
+    # Matched member by member with no fallback, so a new span can never inherit the
+    # answer computed for a different one. A fallback arm here once let a new span
+    # silently measure the mirror against the wrong thing, which is the permissive
+    # direction for a helper whose whole job is withholding unsupported counts.
+    # ``assert_never`` makes mypy flag a missing case, and a test named
+    # ``TestEveryReachSpanIsRoutedByName`` catches an author who adds a span without
+    # updating every site that switches on it.
     match spec.reach_span:
         case ReachSpan.POPULARITY_WINDOW:
             if window_days is None:
                 return Reason("cause.window_not_recorded")
             return history_shortfall(facts.history_reach_days, float(window_days))
         case ReachSpan.ITEM_LIFETIME:
-            # Through the shared helper, which the season path's keep-rule conflict
-            # detector also asks -- it compares two all-time counts and reads no ``Facts``,
-            # so the span it needs must not be restated there (rules 104, 140).
+            # Through the same shared helper the season path's keep-rule conflict
+            # detector uses: it compares two all-time counts directly, without
+            # reading ``Facts``, so the span it needs has to come from one place.
             return lifetime_shortfall(facts.history_reach_days, facts.days_since_added)
         case _:
             assert_never(spec.reach_span)
 
 
 def _survives_more_history(op: Op, *, matched: bool) -> bool:
-    """Would this outcome still hold once the plays the mirror cannot see arrived?
+    """Would this outcome still hold once the plays the mirror cannot see are added?
 
-    A count drawn from a mirror that does not reach far enough is a LOWER BOUND, and the
-    history it is missing can only ever RAISE it. Two of the four outcomes are therefore
-    already earned and need no reach at all: "at least N" that the truncated count
-    *already* clears stays cleared however much more history arrives, and "at most N"
-    that it *already* exceeds stays exceeded. The other two are the ones a deeper mirror
-    could overturn, and they are exactly the dangerous pair -- an unmatched ``gte``
-    withdraws a protection ("nobody has ever watched it"), and a matched ``lte`` lands a
-    removal rule's full weight ("nobody watched it recently").
+    A count drawn from a mirror that does not reach far enough is a lower bound. Any
+    history it is missing can only raise it. So two of the four
+    possible outcomes are already settled and need no more reach: "at least N" that
+    the count already clears stays cleared however much more history arrives, and "at
+    most N" that it already exceeds stays exceeded. The other two outcomes are the
+    ones a deeper mirror could still overturn, and they are the dangerous pair: an
+    unmatched ``gte`` would withdraw a protection ("nobody has ever watched it"), and
+    a matched ``lte`` would add a removal rule's full weight ("nobody watched it
+    recently").
 
-    Only ``NUMERIC_OPS`` reach here, since only numeric specs carry a ``reach_span``;
-    anything else is treated as overturnable, which is the keep direction.
+    Only numeric operators reach here, since only numeric fields carry a
+    ``reach_span``. Anything else is treated as overturnable, which is the direction
+    that favors keeping the file.
     """
     match op:
         case Op.GTE:
@@ -531,18 +535,17 @@ def _survives_more_history(op: Op, *, matched: bool) -> bool:
 
 
 def can_add_pressure_under_a_shortfall(op: Op) -> bool:
-    """Whether a BOOLEAN rule under this operator can still land its weight on any item.
+    """Whether a boolean rule under this operator can still raise any item's score.
 
-    A boolean rule is unsigned and all-or-nothing: it adds its full weight when it matches
-    and nothing when it does not. So if a MATCH is the outcome :func:`evaluate` blocks, the
-    rule contributes zero pressure to every item at once for as long as the shortfall
-    stands -- blocked where it matched, and honestly zero where it did not.
+    A boolean rule is all-or-nothing: it adds its full weight when it matches and
+    nothing when it does not. If a match is the outcome :func:`evaluate` blocks, the
+    rule adds nothing to any item's score for as long as the shortfall lasts, whether
+    that item matched or not.
 
-    That is what makes the weight part of the score CEILING rather than a per-item
-    discount, and it is exactly the discrimination ``policy_warnings.inspect``'s condemn lane needs:
-    under ``gte`` a matched item still earns the weight, so the list is not empty, while
-    under ``lte`` no item can earn it at all. Asked here rather than restated at the caller,
-    so there is one derivation of what a short mirror does to an outcome (rule 104).
+    So under ``gte`` a matched item still earns the weight and the rule can still
+    raise scores, while under ``lte`` no item can earn it at all until the shortfall
+    clears. ``policy_warnings.inspect`` needs exactly this distinction for its removal-rule
+    warnings, so it must call this function, never work it out itself.
     """
     return _survives_more_history(op, matched=True)
 
@@ -552,22 +555,24 @@ def evaluate(
 ) -> ConditionResult:
     """Evaluate one condition against one item.
 
-    An ``Unknown`` never matches, and says so. In the protect lane that means the
-    protection does not fire but is reported as *blocked* -- amber, not green -- so
-    "we could not check" is visibly different from "we checked and it was fine".
+    An ``Unknown`` value never matches, and says so plainly. On the PROTECT lane that
+    means the protection does not fire, but it is reported as blocked, shown amber,
+    so "we could not check" reads differently from "we checked and
+    it was fine".
 
-    A ``Known`` value the evidence cannot actually support reads the same way. See
-    ``reach_shortfall``: a watcher count from a mirror that does not reach far enough is
-    a lower bound, so the outcomes it could still overturn are blocked rather than
-    reported as checked. ``window_days`` defaults to ``None`` -- "not stated" -- because
-    guessing it is the fail-open direction.
+    A ``Known`` value the evidence cannot actually support is treated the same way.
+    See ``reach_shortfall``: a watcher count from a mirror that does not reach far
+    enough back is a lower bound, so an outcome it could still overturn is reported as
+    blocked. ``window_days`` defaults to ``None``, meaning "not
+    stated", because guessing a window would risk trusting a count the mirror cannot
+    actually support.
     """
     spec = condition.spec()
     observation = spec.read(facts)
 
     if isinstance(observation, Unknown):
-        # We could not look. Never evidence -- reported as blocked so the UI can
-        # render it amber, distinct from "checked and it was fine".
+        # We could not look, so this is never evidence. Reported as blocked so the
+        # UI can render it amber, distinct from "checked and it was fine".
         return ConditionResult(
             matched=False,
             blocked=True,
@@ -589,26 +594,26 @@ def evaluate(
         matched = _compare(condition.op, value, target, multi=spec.multi)
         detail = _explain(spec, condition.op, value, target, matched=matched)
     except ValueError as exc:
-        # Belt and suspenders under validate_for's boundary check: a stored rule whose
-        # value cannot be compared against this field (saved before the type check
-        # existed, or edited by hand) degrades THIS item as blocked -- amber, "could not
-        # check" -- instead of raising out of score()/evaluate_all and aborting the
-        # whole scan. Blocked fails safe in both lanes: a protect condition blocks the
-        # verdict to abstain, a condemn rule adds no pressure and keeps its weight in
-        # the denominator.
+        # A backup check behind ``validate_for``'s check at save time: a stored rule
+        # whose value cannot be compared against this field (saved before the type
+        # check existed, or edited by hand) marks just this item as blocked, amber,
+        # "could not check". This must never raise out of ``score()``/``evaluate_all``
+        # and abort the whole scan. Blocked fails safe on both lanes: a protect
+        # condition blocked this way makes the verdict abstain, and a removal rule
+        # adds no pressure while its weight still counts toward the total.
         return ConditionResult(
             matched=False,
             blocked=True,
             detail=blocked_reason(spec.key, Reason("cause.error", {"text": str(exc)})),
         )
 
-    # A Known value the evidence cannot actually carry. Checked AFTER the comparison
-    # because only the outcome says whether the reach matters: the two earned outcomes
-    # above are true of any deeper mirror, and blocking them would withhold a protection
-    # the operator's own rule did fire (and, on the condemn lane, drop pressure that was
-    # honestly measured). The other two are reported as unchecked, in the same amber
-    # "could not check" shape as an Unknown input, prefix included -- ``api.review._chip``
-    # and ``WhyPanel`` both read it.
+    # A known value the evidence cannot actually support. Checked after the
+    # comparison, because only the outcome tells us whether the mirror's reach
+    # matters: two of the four outcomes hold true whatever a deeper mirror would add,
+    # and blocking those would withhold a protection that genuinely fired, or drop
+    # pressure that was honestly measured. The other two outcomes are reported as
+    # unchecked, in the same amber "could not check" shape as an Unknown input, which
+    # ``api.review._chip`` and ``WhyPanel`` both read.
     if not _survives_more_history(condition.op, matched=matched) and (
         (short := reach_shortfall(spec, facts, window_days=window_days)) is not None
     ):
@@ -622,14 +627,15 @@ def evaluate(
 
 
 def _split_csv(text: str) -> list[str]:
-    """Comma-separated elements, trimmed and casefolded -- how both sides of ``in``
-    (and the multi-valued side of ``eq``) are read."""
+    """Comma-separated elements, trimmed and lower-cased for comparison. How both
+    sides of ``in`` (and the multi-valued side of ``eq``) are read."""
     return [part.casefold() for part in _split_raw(text)]
 
 
 def _split_raw(text: str) -> list[str]:
-    """The same split, keeping the spelling. Explanations quote a genre back the way
-    the library spells it, not the way the comparison folded it."""
+    """The same split, keeping the original spelling. Explanations quote a genre back
+    in the library's original spelling, before the comparison lower-cased it for
+    matching."""
     return [part.strip() for part in text.split(",") if part.strip()]
 
 
@@ -643,28 +649,27 @@ def _compare(op: Op, value: object, target: object, *, multi: bool = False) -> b
             if isinstance(value, str) and isinstance(target, str):
                 # Case- and whitespace-insensitive for text: Plex title-cases what it
                 # stores, and the owner types the target by hand. A multi-valued fact
-                # matches when ANY of its elements equals the target.
+                # matches when any of its elements equals the target.
                 if multi:
                     return fold(target) in _split_csv(value)
                 return fold(value) == fold(target)
             return bool(value == target)
         case Op.IN:
             if not isinstance(target, str):
-                return False  # rejected at save by validate_for; a stored one cannot match
+                return False  # rejected when the rule is saved; a stored one cannot match
             targets = set(_split_csv(target))
-            # Trimmed and casefolded on BOTH sides, or the space after a comma in
-            # "Anime, Documentary" (and Plex's casing) makes the list silently match
-            # nothing. A multi-valued fact matches on any shared element.
+            # Trimmed and lower-cased on both sides, or a list like "Anime, Documentary"
+            # would silently match nothing because of the space after the comma. A
+            # multi-valued fact matches on any shared element.
             if multi and isinstance(value, str):
                 return not targets.isdisjoint(_split_csv(value))
             return fold(str(value)) in targets
         case Op.CONTAINS:
-            # Folded on both sides, the same as eq and in above. `.lower()` left the
-            # target's leading and trailing spaces in, and it lacks casefold's extra
-            # mappings, so `on_list contains "Kids "` stopped matching the list `Kids` and
-            # `contains "STRASSE"` stopped matching `Straße`. `on_list` is protect-only, so
-            # a rule that stops matching withdraws a protection and nothing announces it:
-            # Policy still renders the rule as live.
+            # Lower-cased on both sides, the same as eq and in above, using a
+            # comparison that also handles accented letters correctly (so
+            # "STRASSE" still matches "Straße"). ``on_list`` is protect-only, so a
+            # rule that silently stops matching would withdraw a protection while
+            # the Policy page keeps showing it as live.
             return isinstance(target, str) and fold(target) in fold(str(value))
 
 
@@ -682,8 +687,8 @@ def _num(value: object) -> float:
 #
 # Every explanation states what Reaper found first and what the rule asked for
 # second. The owner already knows what they asked for; what they opened the panel
-# for is what this title actually is. Both readings have to be true English: an
-# unmatched condition is quoted in the why-panel just as often as a matched one,
+# to see is what this title actually is. Both must read as plain English: an
+# unmatched condition appears in the why-panel just as often as a matched one,
 # under "Your rule didn't match: ...".
 
 
@@ -692,10 +697,11 @@ def _explain(
 ) -> Reason:
     match spec.type:
         case FieldType.BOOL:
-            # The fact, never the comparison. "eq false" that matched and "eq true"
-            # that missed describe the same world, and stating the fact is the only
-            # wording where a miss cannot be read as the opposite being true. One catalog
-            # entry per field and side (``why.cond_bool.<key>.true`` / ``.false``).
+            # States the fact, never the comparison. "eq false" that matched and "eq
+            # true" that missed describe the same world, so stating the fact plainly
+            # is the only wording where a miss cannot be misread as the opposite
+            # being true. One catalog entry per field and side
+            # (``why.cond_bool.<key>.true`` / ``.false``).
             return Reason(f"cond_bool.{spec.key}.{'true' if value else 'false'}")
         case FieldType.TEXT:
             return _explain_text(spec, op, value, target, matched=matched)
@@ -706,17 +712,20 @@ def _explain(
 def _explain_text(
     spec: FieldSpec, op: Op, value: object, target: int | str | bool, *, matched: bool
 ) -> Reason:
-    """The subject slot resolves to ``why.field.<key>`` in the catalog; the operator's own
-    values ride as verbatim params, since they are the operator's spelling, not copy."""
+    """Build the explanation for a text condition.
+
+    The subject resolves to ``why.field.<key>`` in the catalog. The owner's own typed
+    values ride along as raw params, since they are the owner's own spelling, not
+    catalog copy."""
     field_id = spec.key
     wanted = str(target).strip()
     match op:
         case Op.CONTAINS:
-            # A substring test, over the whole value even where it is a list.
+            # A substring test over the whole value, even where the value is a list.
             kind = "contains" if matched else "not_contains"
             return Reason(f"cond_text.{kind}", {"field": field_id, "wanted": wanted})
         case Op.EQ if spec.multi:
-            # eq on a list is per element, so it is an "includes", not an "is".
+            # ``eq`` on a list checks each element, so the wording says "includes", never "is".
             kind = "includes" if matched else "not_includes"
             return Reason(f"cond_text.{kind}", {"field": field_id, "wanted": wanted})
         case Op.EQ:
@@ -728,16 +737,16 @@ def _explain_text(
         case Op.IN if spec.multi:
             if not matched:
                 return Reason("cond_text.none_of", {"field": field_id, "list": _listed(wanted)})
-            # Name what actually matched. Printing the whole list the rule offered
-            # leaves the owner to work out which part of it fired.
+            # Name what actually matched, not the whole list the rule offered, so the
+            # owner does not have to work out which part fired.
             return Reason(
                 "cond_text.includes",
                 {"field": field_id, "wanted": _shared(str(value), wanted) or _listed(wanted)},
             )
         case _:
-            # Matched names what matched; missed names what the rule wanted. Repeating
-            # the whole list back on a match leaves the owner to spot which part fired,
-            # and the value is already the answer.
+            # A match names what matched. A miss names what the rule wanted. Repeating
+            # the whole list on a match would leave the owner to spot which part fired,
+            # when the value is already the answer.
             if matched:
                 return Reason("cond_text.is", {"field": field_id, "value": str(value)})
             return Reason(
@@ -749,17 +758,16 @@ def _explain_text(
 def _explain_number(
     spec: FieldSpec, op: Op, value: object, target: int | str | bool, *, matched: bool
 ) -> Reason:
-    """Value clause plus bar clause, each its own catalog entry.
+    """Build the explanation for a numeric condition: a value clause plus a bar clause.
 
-    The value clause is per field (``why.cond_value.<key>``), so each field keeps its own
-    phrasing and units. The bar clause is per family and operator side
-    (``why.bar.<family>.<gte_met|gte_missed|lte_met|lte_missed>``): four phrases, not two,
-    because the operators bracket their number differently -- ``gte`` fires *at* its number
-    and ``lte`` stops *at* its number, so in each pair only one side may claim "over" or
-    "under" outright. The catalog's day-family bar echoes the typed number back in days
-    rather than humanizing it: humanizing both sides rounds them into the same phrase, and
-    a rule at 400 days against a title at 396 would read as sitting under a number printed
-    equal to itself.
+    The value clause is per field (``why.cond_value.<key>``), so each field keeps its
+    own phrasing and units. The bar clause is per family and operator side
+    (``why.bar.<family>.<gte_met|gte_missed|lte_met|lte_missed>``), four phrases rather
+    than two, because ``gte`` fires at its number while ``lte`` stops at its number, so
+    only one side of each pair may say "over" or "under" outright. The day-family bar
+    must state the typed number back in exact days, never a rounded phrase: rounding
+    both sides could make a rule at 400 days and a title at 396 days read as
+    the same number.
     """
     value_clause = Reason(f"cond_value.{spec.key}", {"value": _num(value)})
     match op:
@@ -781,7 +789,7 @@ def _explain_number(
 
 
 def _listed(target: str) -> str:
-    """A rule's list, spaced evenly however the owner typed it."""
+    """A rule's list, with even spacing regardless of how the owner typed it."""
     return ", ".join(_split_raw(target))
 
 
@@ -794,13 +802,14 @@ def _shared(value: str, target: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class CustomProtectGate:
-    """A single user-authored protection, wearing the built-in Gate interface.
+    """A single owner-authored protection, built to match the built-in gate interface.
 
-    One gate per condition, so the why-panel lists each one exactly like a stock protection:
-    a matched condition fires ``PROTECT``, an unmatched one is a checked ``ABSTAIN`` (green),
-    and an ``Unknown`` input is ``blocked`` (amber) -- never assumed. Because it can only ever
-    return PROTECT or ABSTAIN -- there is no CONDEMN constructor to reach -- a mis-authored
-    condition can at worst fail to keep something. That is what makes these safe to author.
+    One gate per condition, so the why-panel lists each one exactly like a built-in
+    protection: a matched condition fires PROTECT, an unmatched one is a checked
+    ABSTAIN shown green, and an Unknown input is blocked and shown amber, never
+    assumed either way. This can only ever return PROTECT or ABSTAIN. There is no way
+    for it to condemn, so a badly written condition can at worst fail to keep
+    something. That is what makes these safe for an owner to author.
     """
 
     condition: Condition
@@ -809,8 +818,8 @@ class CustomProtectGate:
     window_days: int | None = None
     """The policy's popularity window, so a rule on a windowed watcher count can tell
     whether the mirror covered it (``reach_shortfall``). Built from the policy in
-    ``services.scan_runner.build_gates``; ``None`` reads as un-establishable, which
-    blocks rather than assumes."""
+    ``services.scan_runner.build_gates``. ``None`` reads as impossible to establish,
+    so it must block, never assume an answer."""
 
     def evaluate(self, facts: Facts) -> GateResult:
         result = evaluate(self.condition, facts, window_days=self.window_days)

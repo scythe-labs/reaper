@@ -1,31 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The control that opens a card, and the card's accessible name -- written once because four
-// cards need it and the fourth is how the bug below survived a review pass (rule 18/72).
+// The control that opens a card, and the card's accessible name, written once because four
+// cards need it: the review queue's card, the show card's head, each season list item, and the
+// Scales person card.
 //
-// Every card in the review queue used to BE its own control: `<article role="button"
-// aria-label="Why {title} scored {n}">`, plus the same shape on the show card's head, on each
-// `<li>` of the season list, and on the Scales person card. ARIA gives `role="button"`
-// **Children Presentational: True**, so every descendant is pruned from the accessibility tree
-// and replaced by that one label. A screen reader heard "Why Example Title scored 62, button"
-// and nothing else -- not the override chip saying a spare is keeping the file, not the
-// held-reap "kept for now", not the library, size, resolution or requester, not the reason
-// line, not the season strip. That pruned content IS the case for deleting the file, and it
-// is why the queue exists (#169).
+// The card itself is a plain container (`<article>`, `<li>`, `<div>`). Activation lives here, on
+// a real `<button>` wrapping the title, the same pattern `SeasonExpander` and `SeasonStrip` use
+// a few lines below. The whole-card click still opens it too, as a redundant mouse affordance.
 //
-// Two more things came off the same declaration. Real `<button>`s sat inside the `role="button"`
-// (Spare, Reap, the season expander, every strip square), which is invalid and which axe reports
-// as `nested-interactive`; and the season list's `<li role="button">` lost `listitem`, so the
-// list announced no item count.
+// A card cannot be its own `role="button"` container. ARIA gives `role="button"` Children
+// Presentational: True, which prunes every descendant from the accessibility tree and replaces
+// it with that one label. A screen reader would hear only "Why {title} scored {n}, button" and
+// miss the override chip, the held-reap note, the library, size, resolution, requester, reason
+// line, and season strip beneath it, which is the evidence the queue exists to show. A
+// `role="button"` container also cannot hold real `<button>`s inside it (Spare, Reap, the
+// season expander, every strip square) without axe reporting `nested-interactive`, and on an
+// `<li>` it removes the `listitem` role, so the list announces no item count.
 //
-// So the card is a plain container again -- `<article>`, `<li>`, `<div>` -- and the activation
-// lives here, on a real control wrapping the title. That is the pattern `SeasonExpander` and
-// `SeasonStrip` already used a few lines away in the same file. The whole-card click stays where
-// it was, as a redundant mouse affordance: nothing about pointing at a card changes.
-//
-// Rejected: `role="group"` on the container with `tabIndex={0}` left in place. That is a
-// focusable element with no role contract -- a Tab stop a screen reader has no word for -- and
-// it keeps the nested-interactive violation.
+// `role="group"` with `tabIndex={0}` on the container does not fix this either: it is a
+// focusable element with no role a screen reader can announce, and it still nests interactive
+// controls inside it.
 
 import type { ReactNode } from "react";
 
@@ -36,21 +30,24 @@ export function CardOpen({
   pressHandledByCard = false,
   children,
 }: {
-  /** What the control is called out loud. The card's title is rendered INSIDE (`children`), and
-   *  this name has to contain that visible text, which is WCAG 2.5.3 (Label in Name): "Why
-   *  {title} scored {n}" contains "{title}". Anything the title row shows that the name does not
-   *  repeat -- the year, a chip -- therefore stays outside this control, beside it in the
-   *  heading, where it is read as ordinary card content rather than as part of a button's name. */
+  /** What the control is called out loud. The card's title renders INSIDE it (`children`), and
+   *  this name must contain that visible text, per WCAG 2.5.3 (Label in Name). For example,
+   *  "Why {title} scored {n}" contains "{title}". The title row can show more than the name
+   *  repeats, such as the year or a chip. That extra text sits outside this control, beside it
+   *  in the heading, where it reads as ordinary card content instead of part of the button's
+   *  name. */
   name: string;
-  /** Select mode only: whether this card is picked. Left undefined elsewhere, so the control is
-   *  a plain button rather than a toggle claiming an off state it never leaves. */
+  /** Whether this card is picked, used only in Select mode. Left undefined elsewhere, so the
+   *  control renders as a plain button rather than a toggle claiming an off state it never
+   *  leaves. */
   pressed?: boolean | undefined;
   onActivate: () => void;
-  /** True where the CARD's own `onPointerDown` already acts on a press -- Select mode, where the
-   *  press both picks the card and arms the drag that paints a run of them. Then a click here
-   *  would toggle the same card straight back, so the click stands down and only the keyboard
-   *  path acts. Never set it where the card merely has an `onClick`: `onOpen` is idempotent, so
-   *  the redundant call is free, and stopping it would be one more thing to keep in step. */
+  /** True when the card's own `onPointerDown` already acts on a press. That happens in Select
+   *  mode, where the press both picks the card and arms the drag that paints a run of them. A
+   *  click here would then toggle the same card back off, so the click stands down and only the
+   *  keyboard path acts. Never set this where the card only has an `onClick`. `onOpen` is
+   *  idempotent, so the redundant call costs nothing, and stopping it would be one more thing to
+   *  keep in sync. */
   pressHandledByCard?: boolean;
   children: ReactNode;
 }) {
@@ -61,17 +58,17 @@ export function CardOpen({
       aria-label={name}
       aria-pressed={pressed}
       onClick={(e) => {
-        // The card behind this is a plain container now, but it still opens on a click, and a
-        // second `onOpen` for the same id would be harmless. Stopped anyway so that one press
-        // is one action wherever a future card handler is not idempotent.
+        // The card behind this is a plain container, but it still opens on a click, and a
+        // second `onOpen` call for the same id would be harmless. This stops the event anyway,
+        // so one press stays one action even if a future card handler is not idempotent.
         e.stopPropagation();
         if (!pressHandledByCard) onActivate();
       }}
       onKeyDown={(e) => {
         if (e.key !== "Enter" && e.key !== " ") return;
         // `preventDefault` cancels the button's own activation, so the click this keypress would
-        // otherwise synthesize never fires and `onActivate` runs exactly once -- including in
-        // Select mode, where the click path above is standing down. It also stops Space from
+        // otherwise create never fires, and `onActivate` runs exactly once. That holds in Select
+        // mode too, where the click handler above is disabled. This also stops Space from
         // scrolling the queue out from under the operator.
         e.preventDefault();
         e.stopPropagation();

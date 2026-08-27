@@ -2,10 +2,10 @@
 """The REST surface.
 
 Almost entirely read-only. The single exception is ``POST /runs/{id}/execute``, which is
-gated hard -- deletion must be enabled on the host and the caller must echo the plan's
-content-bound confirmation phrase -- and even then ``GuardedTransport`` refuses any call
-that was not journalled first. The tests below exercise those gates; the delete mechanics
-themselves live in ``test_reap_loop`` against fakes.
+gated hard. Deletion must be enabled on the host, and the caller must echo the plan's
+content-bound confirmation phrase. Even then, ``GuardedTransport`` refuses any call that was
+not journalled first. The tests below exercise those gates. The delete mechanics themselves
+live in ``test_reap_loop`` against fakes.
 """
 
 from __future__ import annotations
@@ -73,8 +73,8 @@ def _msg(warning: dict[str, Any]) -> str:
     return reason_text(from_wire(warning["reason"]), namespace="warning")
 
 
-# No "whitelisted" row: the gate is retired (list membership protects through ``on_list``
-# keep rules), and the save boundary refuses it -- test_simulate_hardening pins that.
+# No "whitelisted" row. The gate is retired (list membership protects through ``on_list``
+# keep rules), and the save boundary refuses it. test_simulate_hardening pins that.
 DEFAULT_GATES = [
     {"gate": "min_dormancy", "threshold": 1095},
     {"gate": "rating_floor", "threshold": 75},
@@ -96,10 +96,10 @@ def _policy(condemn_at: int = 70, **overrides: object) -> dict[str, Any]:
 def _fixture_scoring_hash() -> str:
     """The scoring hash of the policies the fixture snapshot was 'scored' with.
 
-    The simulator refuses to re-decide a snapshot whose scores came from a *different* set of
-    signals and gates, so the fixture has to be self-consistent -- exactly as a real snapshot
+    The simulator refuses to re-decide a snapshot whose scores came from a different set of
+    signals and gates, so the fixture has to be self-consistent, exactly as a real snapshot
     is. Movies and TV are scored under separate policies now, so the stored hash is the
-    combination of both (movie first, then the default TV policy, since none is saved here).
+    combination of both, movie first, then the default TV policy, since none is saved here.
     """
     movie = PolicyBody(
         condemn_at=70,
@@ -110,22 +110,21 @@ def _fixture_scoring_hash() -> str:
 
 
 def _fixture_policy_hash() -> str:
-    """The POLICY hash of the same pair, for the same reason the scoring hash exists.
+    """The policy hash of the same pair, for the same reason the scoring hash exists.
 
-    The executor refuses to run a plan whose policy hash is not the one in force -- an
-    operator who tightens their policy after approving a plan must not have it delete the
-    files they just protected -- so a fixture snapshot has to carry the hash of the policies
-    actually in force in that test app (no saved rows, so both defaults) or every dry run
-    against it is (correctly) refused as out of date.
+    The executor refuses to run a plan whose policy hash is not the one in force. An operator
+    who tightens their policy after approving a plan must not have it delete the files they
+    just protected, so a fixture snapshot has to carry the hash of the policies actually in
+    force in that test app (no saved rows, so both defaults). Otherwise every dry run against
+    it is, correctly, refused as out of date.
     """
     return combine_hashes(DEFAULT_MOVIE_POLICY.policy_hash(), DEFAULT_TV_POLICY.policy_hash())
 
 
 # ``MinDormancyGate``'s ABSTAIN branch, verbatim, kept on one line so the guard in
 # ``test_repo_hygiene.test_the_documented_checked_example_is_one_a_gate_emits`` can find it in
-# the source text. It used to be an invented "checked: <label> -- <numbers>" shape no gate has
-# ever emitted (#419), and asserting THAT survived the wire is what made the format read as
-# load-bearing.
+# the source text. That guard checks this string against the sentence the real gate emits, so
+# every other place documenting this example has to match it too.
 CHECKED_DETAIL = "Unwatched for 5 years, 7 months, past the 3 years Reaper waits."
 
 
@@ -152,10 +151,10 @@ def _explanation(score: float) -> str:
 
 
 def _boot(tmp_path: Path) -> tuple[Settings, Engine, str, datetime]:
-    """A fresh throwaway install, migrated, plus the list fingerprint a scan records --
-    without it the simulator refuses, which is right for a snapshot that cannot say and
-    useless here. The caller seeds its own rows on the returned engine and commits before
-    handing both to :func:`_client`."""
+    """A fresh throwaway install, migrated, plus the list fingerprint a scan records. Without
+    it the simulator refuses, which is right for a snapshot that cannot say and useless here.
+    The caller seeds its own rows on the returned engine and commits before handing both to
+    :func:`_client`."""
     settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
@@ -197,7 +196,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     base_url="https://radarr.example",
                     api_key_enc="enc",
                     # This Radarr blocks re-download, so the plan body below carries the
-                    # exclusion. The flag is per-instance and off by default; the plan
+                    # exclusion. The flag is per-instance and off by default. The plan
                     # mirrors whatever this row says (see planner.build_plan).
                     add_import_exclusion=True,
                     created_at=now,
@@ -279,9 +278,10 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                         {
                             **json.loads(_explanation(90)),
                             # ``RatingFloorGate``'s PROTECT branch, verbatim. A fired
-                            # protection is a lowercase fragment with no trailing period,
-                            # where a checked one is a whole sentence (``gates.py``, above
-                            # the PROTECT return); the invented string here had neither shape.
+                            # protection is a lowercase fragment with no trailing period, where
+                            # a checked one is a whole sentence (``gates.py``, above the
+                            # PROTECT return). This string must match one of those two real
+                            # shapes, not an invented one.
                             "protections_fired": [
                                 {
                                     "gate": "rating_floor",
@@ -351,11 +351,11 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     ),
                     created_at=now,
                 ),
-                # A cleanly-abstained item: every protection was checked (none blocked),
-                # full coverage, score simply below the threshold. This is the only kind
-                # of abstained row a draft threshold may pull in -- the simulator tests
-                # lean on the contrast with "Unmatched" above, whose protections could
-                # not be checked and which must stay abstained at ANY threshold.
+                # A cleanly-abstained item. Every protection was checked (none blocked), full
+                # coverage, score simply below the threshold. This is the only kind of
+                # abstained row a draft threshold may pull in. The simulator tests lean on
+                # the contrast with "Unmatched" above, whose protections could not be
+                # checked and which must stay abstained at any threshold.
                 Candidate(
                     snapshot_id=snapshot.id,
                     media_key="radarr:1:13",
@@ -382,16 +382,16 @@ class TestTheRunsApi:
 
     def test_an_unbounded_selection_is_refused_at_the_edge(self, client: TestClient) -> None:
         """``media_keys`` is the destructive path's list input, and it had no length bound at
-        all: an authenticated caller (or a leaked API key -- POST /api/runs is in the write
-        allow-list) could push an arbitrarily large list straight into a plan build and the
-        whitelist queries under it. Note the two are different requests: OMITTING the field
+        all. An authenticated caller, or a leaked API key (POST /api/runs is in the write
+        allow-list), could push an arbitrarily large list straight into a plan build and the
+        whitelist queries under it. Note the two are different requests. Omitting the field
         still means the whole condemned set, so the bound never truncates a real reap."""
         refused = client.post("/api/runs", json={"media_keys": ["radarr:1:1"] * 5001})
 
         assert refused.status_code == 422
 
     def test_an_oversized_media_key_is_refused_at_the_edge(self, client: TestClient) -> None:
-        """The key columns are 100 characters. A multi-megabyte one is not a key; it is a
+        """The key columns are 100 characters. A multi-megabyte one is not a key. It is a
         payload, and it should never reach a query."""
         long_key = "radarr:1:" + "9" * 200
 
@@ -402,16 +402,15 @@ class TestTheRunsApi:
     def test_an_unknown_key_is_refused_for_what_reaper_can_actually_know(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """``_resolve_title`` used to answer "No scanned item has that identity", which
-        ``services.retention`` made false: the sweep keeps only the newest
-        ``KEEP_SNAPSHOTS``, so a scan may well have held the item and Reaper discarded the
-        row. The refusal now claims only what survives -- no record -- and names the window
-        as the scan COUNT it is, since 30 scans is a month of nightly scanning and no fixed
-        time at all on an install scanned by hand (#326).
+        """The refusal can only claim what still survives, not what actually happened.
+        ``services.retention`` keeps only the newest ``KEEP_SNAPSHOTS`` scans, so a scan may
+        well have held this item before Reaper discarded the row. The message names the
+        window as a count of scans, not a fixed time span, since 30 scans is a month of
+        nightly scanning and no fixed time at all on an install scanned by hand.
 
         The count is patched off its default so an assertion cannot pass against a
-        transcribed 30: the copy has to read the constant the sweep itself honors, and a
-        hardcoded one fails here (rule 141).
+        transcribed number. The test has to read the constant the sweep itself honors, since
+        a hardcoded number would still pass here even if the real constant changed.
         """
         monkeypatch.setattr(retention, "KEEP_SNAPSHOTS", 7)
 
@@ -449,13 +448,14 @@ class TestTheRunsApi:
     def test_a_stored_reason_thaws_as_legacy_prose_or_as_its_code(
         self, client: TestClient, tmp_path: Path
     ) -> None:
-        """The journal's reason survives the process that wrote it (#260), decoded by
+        """The journal's reason survives the process that wrote it, decoded by
         `engine.reason.from_stored`. A step's `error` and a run's `aborted_reason` are the
-        same shape: a row written before #899 holds a bare English sentence and thaws as a
-        `legacy` reason (rule 96); one written since holds `to_stored`'s JSON and thaws its
-        code and params. This drives both shapes straight to the row -- the way a snapshot
-        frozen before #899, and every write since, actually reach it -- then reads them back
-        over HTTP through a response built from nothing but the database.
+        same shape. A row written before the typed reason format existed holds a bare
+        English sentence and thaws as a `legacy` reason. One written since holds
+        `to_stored`'s JSON and thaws its code and params. This drives both shapes straight
+        into the row, the way a snapshot frozen before that change and every write since
+        actually reach it, then reads them back over HTTP through a response built from
+        nothing but the database.
         """
         run = client.post("/api/runs").json()
         legacy_text = "Radarr accepted the delete, not confirmed. Reaper could not reach it again."
@@ -529,7 +529,7 @@ class TestTheRunsApi:
         assert any(r["id"] == created["id"] for r in listed)
 
     def test_the_run_list_limit_is_bounded_at_both_ends(self, client: TestClient) -> None:
-        """``?limit=-1`` rendered LIMIT -1, which SQLite reads as NO limit.
+        """``?limit=-1`` rendered as SQL `LIMIT -1`, which SQLite reads as no limit at all.
 
         One request then returned every run ever made. The rows are cheap now (see the
         test below), which lowers the cost of that but does not bound it, so the limit is
@@ -545,12 +545,12 @@ class TestTheRunsApi:
     def test_the_run_list_carries_only_what_is_stored(self, client: TestClient) -> None:
         """The history is stored rows, nothing derived.
 
-        Deriving a run's counts, totals and phrase means re-reading the whitelist, the
-        profile and the whole condemned set of that run's snapshot -- per run, so a list of
-        fifty read the same thousands of rows fifty times on every visit to the Reap page
-        (P-3). It was dishonest as well as slow: a finished run's phrase was recomputed
-        against TODAY's overrides, describing a plan nobody ever approved. Opening a run
-        goes to the detail route, which derives them for that one.
+        Deriving a run's counts, totals, and phrase means re-reading the whitelist, the
+        profile, and the whole condemned set of that run's snapshot, per run. A list of fifty
+        would read the same thousands of rows fifty times on every visit to the Reap page.
+        Deriving it live would also be dishonest: a finished run's phrase would be recomputed
+        against today's overrides, describing a plan nobody ever approved. Opening a run goes
+        to the detail route instead, which derives them for that one.
         """
         client.post("/api/runs")
         row = client.get("/api/runs").json()[0]
@@ -565,7 +565,7 @@ class TestTheRunsApi:
 
     def test_execute_is_refused_while_deletion_is_off(self, client: TestClient) -> None:
         """The default client is read-only. Even the correct confirmation phrase cannot
-        execute a real reap while deletion is disabled -- the arm gate comes first."""
+        execute a real reap while deletion is disabled. The arm gate comes first."""
         run = client.post("/api/runs").json()
         resp = client.post(
             f"/api/runs/{run['id']}/execute",
@@ -577,11 +577,11 @@ class TestTheRunsApi:
 
 @pytest.fixture
 def selection_client(tmp_path: Path) -> Iterator[TestClient]:
-    """A client whose snapshot holds THREE condemned movies and one protected one.
+    """A client whose snapshot holds three condemned movies and one protected one.
 
     The main ``client`` fixture has a single condemned item, which makes "planned just the
-    one I asked for" and "planned the whole set" the same number -- so the selection could
-    not be told from the fall-through. Three is the smallest count that distinguishes them.
+    one I asked for" and "planned the whole set" the same number. The selection could not be
+    told from the fall-through that way. Three is the smallest count that distinguishes them.
     """
     settings, engine, list_hash, now = _boot(tmp_path)
     with Session(engine) as session:
@@ -650,36 +650,36 @@ def selection_client(tmp_path: Path) -> Iterator[TestClient]:
 class TestTheRunSelectionIsExplicit:
     """``POST /api/runs`` is where "nothing selected" is translated for the planner.
 
-    Golden rule 1 lives on this one ternary: an OMITTED ``media_keys`` means the whole
-    condemned set, an explicit ``[]`` means nothing, and the two must never collapse into
-    each other. ``[]`` is falsy, so the obvious-looking ``if payload and payload.media_keys``
-    turns a select-nothing request into a plan over every condemned item in the library --
-    which is the deletion this codebase exists to prevent. The planner's own side of the
-    contract is covered directly (test_review_reap), but this route is the only place the
-    empty list is ever translated, so it is tested here at the edge.
+    This one ternary decides that: an omitted ``media_keys`` means the whole condemned set,
+    an explicit ``[]`` means nothing, and the two must never collapse into each other. ``[]``
+    is falsy, so the obvious-looking ``if payload and payload.media_keys`` turns a
+    select-nothing request into a plan over every condemned item in the library, which is the
+    deletion this codebase exists to prevent. The planner's own side of the contract is
+    covered directly (test_review_reap), but this route is the only place the empty list is
+    ever translated, so it is tested here at the edge.
     """
 
     def test_an_empty_selection_plans_nothing_rather_than_everything(
         self, selection_client: TestClient
     ) -> None:
-        """The one that catches the falsy-collapse rewrite: refused, not expanded."""
+        """The one that catches the falsy-collapse rewrite. It must refuse, not expand."""
         refused = selection_client.post("/api/runs", json={"media_keys": []})
 
         assert refused.status_code == 422
         body = refused.json()
-        # PlanError is now a Refusal subclass of its own (phase 8a's second wave): the code
-        # names the condition directly, with no params, rather than wrapping planner.py's
-        # English in a generic pass-through.
+        # ``PlanError`` is a ``Refusal`` subclass of its own. The code names the condition
+        # directly, with no params, rather than wrapping planner.py's English in a generic
+        # pass-through.
         assert body["code"] == "error.plan.selection_empty"
         assert "no items were selected" in body["detail"].lower()
-        # And nothing was journalled: a refused selection leaves no plan behind at all.
+        # Nothing was journalled. A refused selection leaves no plan behind at all.
         assert selection_client.get("/api/runs").json() == []
 
     def test_an_omitted_selection_plans_the_whole_condemned_set(
         self, selection_client: TestClient
     ) -> None:
-        """A body-less POST, and an explicit ``null``, both mean "reap everything condemned"
-        -- the distinction the empty list above must not be folded into."""
+        """A body-less POST, and an explicit ``null``, both mean "reap everything condemned."
+        This is the distinction the empty list above must not be folded into."""
         bare = selection_client.post("/api/runs").json()
         explicit_null = selection_client.post("/api/runs", json={"media_keys": None}).json()
 
@@ -726,8 +726,8 @@ def armed_client(tmp_path: Path) -> Iterator[TestClient]:
     to exercise the confirmation and client-presence gates without any live service."""
     settings = Settings(data_dir=tmp_path, secret_key="k", destructive_actions_enabled=True)
     # The box the app decrypts the Radarr key with at execute time. Built exactly as main.py
-    # builds it, off the same settings, so the api_key below opens under app.state.secret_box;
-    # resolve_kdf_salt mints the per-install salt here and create_app reads the same one.
+    # builds it, off the same settings, so the api_key below opens under app.state.secret_box.
+    # resolve_kdf_salt mints the per-install salt here, and create_app reads the same one.
     box = SecretBox(
         resolve_secret_key(settings),
         *resolve_old_keys(settings),
@@ -804,8 +804,8 @@ class TestExecuteGates:
     def test_the_right_phrase_but_no_plex_is_refused_before_any_delete(
         self, armed_client: TestClient
     ) -> None:
-        """Armed and the phrase matches -- but with no Plex configured the streaming veto
-        cannot run, so the executor refuses rather than deleting blind. Proves the happy
+        """Armed and the phrase matches, but with no Plex configured the streaming veto
+        cannot run, so the executor refuses rather than deleting blind. This proves the happy
         path reaches the executor and stops at the right interlock."""
         run = armed_client.post("/api/runs").json()
         resp = armed_client.post(
@@ -848,8 +848,8 @@ class TestExecuteGates:
         from reaper.api.runs import _reap_status
 
         run = armed_client.post("/api/runs").json()
-        # The production accessor, which creates the status lazily: a hand-built one would
-        # not be the object the route reads (rule 119).
+        # The production accessor, which creates the status lazily. A hand-built one would
+        # not be the object the route reads.
         status = _reap_status(armed_client.app)  # type: ignore[arg-type]
         status.running = True
         status.run_id = run["id"]
@@ -875,8 +875,8 @@ class TestExecuteGates:
     def test_a_stop_refused_because_the_run_ended_says_so_in_the_log(
         self, armed_client: TestClient
     ) -> None:
-        """The sibling of the refusal above (rule 72): the success path logged and the
-        refusal did not, so "I pressed Stop and it kept going" left the same nothing."""
+        """The sibling of the refusal above. The success path logged and the refusal did
+        not, so "I pressed Stop and it kept going" left the same nothing."""
         run = armed_client.post("/api/runs").json()
         before = logbuffer.RING.last_seq()
 
@@ -909,7 +909,7 @@ class TestExecuteGates:
         with pytest.raises(RuntimeError):
             armed_client.post(f"/api/runs/{run['id']}/execute", json=body)
 
-        # The slot is released, not wedged: the status reads idle, and a retry fails the SAME
+        # The slot is released, not wedged. The status reads idle, and a retry fails the same
         # way (a RuntimeError, having passed the slot guard), not a spurious 409 'already
         # running' that would prove the slot stayed claimed.
         assert armed_client.get("/api/runs/execute/status").json()["running"] is False
@@ -918,7 +918,7 @@ class TestExecuteGates:
 
 
 class TestTheProfileControlsTheCaps:
-    """The reap caps are the owner's decision, read from the profile -- not a hardcoded
+    """The reap caps are the owner's decision, read from the profile, not a hardcoded
     default. This is what lets a real condemned set be simulated at all."""
 
     def test_it_opens_on_cautious_defaults(self, client: TestClient) -> None:
@@ -935,14 +935,14 @@ class TestTheProfileControlsTheCaps:
         assert saved.status_code == 200
         assert saved.json()["max_items_per_run"] == 25
 
-        # Read back in a fresh request -- it was persisted, not just echoed.
+        # Read back in a fresh request. It was persisted, not just echoed.
         assert client.get("/api/profile").json()["grace_days"] == 21
 
     def test_the_dry_run_uses_the_saved_cap(self, client: TestClient) -> None:
-        """The executor's cap must come from the profile. With one condemned item and a
-        cap of 1, the dry run completes -- proving the saved cap is what it obeys (a
-        hardcoded larger default would also pass, so the abort case is covered by the
-        executor's own unit tests, where a multi-item plan can be built)."""
+        """The executor's cap must come from the profile. With one condemned item and a cap
+        of 1, the dry run completes, proving the saved cap is what it obeys. A hardcoded
+        larger default would also pass, so the abort case is covered by the executor's own
+        unit tests instead, where a multi-item plan can be built."""
         settings = client.get("/api/profile").json()
         settings["max_items_per_run"] = 1
         settings["max_items_per_30d"] = 1
@@ -953,8 +953,8 @@ class TestTheProfileControlsTheCaps:
         assert report["state"] == "completed"  # 1 item, cap 1
 
     def test_an_invalid_cap_combination_is_a_422(self, client: TestClient) -> None:
-        """A per-run cap above the rolling 30-day cap makes the rolling cap meaningless.
-        The domain refuses it, with the reason -- not a silent clamp."""
+        """A per-run cap above the rolling 30-day cap makes the rolling cap meaningless. The
+        domain must refuse it, with the reason, not a silent clamp."""
         settings = client.get("/api/profile").json()
         settings["max_items_per_run"] = 500
         settings["max_items_per_30d"] = 100  # smaller than per-run: nonsensical
@@ -968,12 +968,12 @@ class TestTheProfileControlsTheCaps:
         assert client.put("/api/profile", json=settings).status_code == 422
 
     def test_the_wire_and_the_domain_state_the_same_bounds(self) -> None:
-        """The caps are declared twice: ``ProfileSettingsIO`` on the wire and
-        ``ProfileSettings`` in the domain, every ``ge``/``le`` transcribed rather than
-        derived from the other (rule 131). The two do not collapse into one model, because
-        the wire requires the five fields the domain defaults -- that is what makes the
-        test below a 422 -- and ``settings_recovered`` is wire-only. So the bounds are held
-        to one answer here instead."""
+        """The caps are declared twice, ``ProfileSettingsIO`` on the wire and
+        ``ProfileSettings`` in the domain, with every ``ge``/``le`` transcribed rather than
+        derived from the other. The two do not collapse into one model, because the wire
+        requires the five fields the domain defaults. That is what makes the test below a
+        422, and ``settings_recovered`` is wire-only. So the bounds are held to one answer
+        here instead."""
         shared = [
             name for name in ProfileSettingsIO.model_fields if name in ProfileSettings.model_fields
         ]
@@ -1009,13 +1009,13 @@ class TestTheProfileControlsTheCaps:
 
 
 class TestLimitsNobodySavedDoNotBoundAReap:
-    """``active_profile`` never raises on purpose: the settings page an operator would use
-    to repair a broken blob reads the same function. It falls back to the SHIPPED DEFAULTS
-    and flags it, and those defaults can be LOOSER than what was saved (a run cap of 5
-    becomes 10, a grace of 30 becomes 14). Every route that acted on the numbers read them
-    through ``active_profile_settings``, which drops the flag, so a profile that stopped
-    validating left the deleting route bounded by numbers nobody chose and said nothing.
-    The scan path already refuses in this state (rules 65/91); these are the rest."""
+    """``active_profile`` never raises on purpose. The settings page an operator would use to
+    repair a broken blob reads the same function. It falls back to the shipped defaults and
+    flags it, and those defaults can be looser than what was saved (a run cap of 5 becomes
+    10, a grace of 30 becomes 14). Every route that acted on the numbers read them through
+    ``active_profile_settings``, which drops the flag, so a profile that stopped validating
+    left the deleting route bounded by numbers nobody chose and said nothing. The scan path
+    already refuses in this state. These are the rest."""
 
     @staticmethod
     def _break_the_saved_limits(tmp_path: Path) -> None:
@@ -1057,8 +1057,8 @@ class TestLimitsNobodySavedDoNotBoundAReap:
         assert reaped.json()["code"] == "error.runs.limits_unreadable"
 
     def test_the_refusal_says_what_to_fix(self, client: TestClient, tmp_path: Path) -> None:
-        """Rule 21. The operator has to be able to act on this without reading the code, so
-        it names the page and the section, not the field that failed to validate."""
+        """The operator has to be able to act on this without reading the code, so it names
+        the page and the section, not the field that failed to validate."""
         saved = client.get("/api/profile").json()
         client.put("/api/profile", json=saved)
         self._break_the_saved_limits(tmp_path)
@@ -1108,13 +1108,13 @@ class TestSnapshot:
         assert body["reclaimable_bytes"] == 5_900_000_000  # condemned only
 
     def test_collection_sizes_is_none_when_nothing_was_recorded(self, client: TestClient) -> None:
-        # The fixture snapshot carries no ``collection_sizes_json`` -- unrecorded, not empty
+        # The fixture snapshot carries no ``collection_sizes_json``. Unrecorded, not empty
         # (test_candidate_filters.TestCollectionSizesOnTheSnapshot pins the populated case).
         assert client.get("/api/snapshots/latest").json()["collection_sizes"] is None
 
     def test_the_horizon_is_exposed(self, client: TestClient) -> None:
-        """Media older than this has no watch evidence either way. The owner needs to
-        see it -- a fresh Tautulli install would make the whole library look abandoned."""
+        """Media older than this has no watch evidence either way. The owner needs to see
+        it. A fresh Tautulli install would make the whole library look abandoned."""
         assert client.get("/api/snapshots/latest").json()["horizon_at"]
 
 
@@ -1122,8 +1122,8 @@ class TestTheWhyPanel:
     def test_a_condemned_item_shows_the_protections_that_did_not_fire(
         self, client: TestClient
     ) -> None:
-        """The block no competitor shows. Every protection evaluated, with the ACTUAL
-        NUMBERS -- not just which rules matched."""
+        """The block no competitor shows. Every protection evaluated, with the actual
+        numbers, not just which rules matched."""
         candidates = client.get("/api/candidates?verdict=condemn").json()["items"]
         detail = client.get(f"/api/candidates/{candidates[0]['id']}").json()
 
@@ -1134,8 +1134,8 @@ class TestTheWhyPanel:
     def test_a_protected_item_explains_the_keep(self, client: TestClient) -> None:
         """A tool that only explains its deletions cannot be trusted about its keeps.
 
-        The protected fixture scores 90 -- it would be deleted on score alone -- and
-        the panel must say both: why it scored that, and why it is kept anyway."""
+        The protected fixture scores 90. On score alone, it would be deleted. The panel must
+        say both, why it scored that, and why it is kept anyway."""
         protected = client.get("/api/candidates?verdict=protect").json()["items"]
         detail = client.get(f"/api/candidates/{protected[0]['id']}").json()
 
@@ -1151,10 +1151,10 @@ class TestTheWhyPanel:
         assert candidates[0]["first_flagged_at"]
 
     def test_the_match_block_and_keeps_survive_the_wire(self, client: TestClient) -> None:
-        """Regression: the stored explanation always carried ``match`` and ``keeps``, but
-        the wire schema did not declare them, so pydantic silently DROPPED both -- and the
-        panel's "kept to be safe" notice could never render. Every key the UI reads must
-        be named in the schema."""
+        """This is a regression check. The stored explanation always carried ``match`` and
+        ``keeps``, but the wire schema did not declare them, so pydantic silently dropped
+        both, and the panel's "kept to be safe" notice could never render. Every key the UI
+        reads must be named in the schema."""
         abstained = client.get("/api/candidates?verdict=abstain").json()["items"]
         detail = client.get(f"/api/candidates/{abstained[0]['id']}").json()
 
@@ -1165,8 +1165,8 @@ class TestTheWhyPanel:
 
     def test_an_unmatched_item_leads_with_the_plain_cause(self, client: TestClient) -> None:
         """The card's one-liner. Three gates each report "could not check X: Plex has not
-        matched this item"; the owner should read the shared cause once, in plain words,
-        not the first gate's engineer-speak."""
+        matched this item." The owner should read the shared cause once, in plain words, not
+        the first gate's engineer-speak."""
         abstained = client.get("/api/candidates?verdict=abstain").json()["items"]
 
         assert abstained[0]["reason_key"] == {"k": "kept_safe.unmatched", "p": None}
@@ -1233,10 +1233,10 @@ class TestPanelHeadFields:
     def test_an_external_url_redirects_the_service_links_but_not_plex(
         self, client: TestClient
     ) -> None:
-        """A service's external URL, when set, is the address its jump link opens; a service
+        """A service's external URL, when set, is the address its jump link opens. A service
         left blank still uses its connect address, and Plex (its own web address) is
         untouched."""
-        # Radarr and Tautulli get a public address; Seerr is deliberately left blank.
+        # Radarr and Tautulli get a public address. Seerr is deliberately left blank.
         assert (
             client.put(
                 "/api/settings/instances/1",
@@ -1266,8 +1266,8 @@ class TestPanelHeadFields:
     def test_an_unmatched_pre_rescan_row_offers_no_links_and_no_ratings(
         self, client: TestClient
     ) -> None:
-        """No rating key -> no Plex/Tautulli link; no tmdb id -> no Radarr link. The
-        panel hides them all rather than rendering a broken jump."""
+        """No rating key -> no Plex/Tautulli link, no tmdb id -> no Radarr link. The panel
+        hides them all rather than rendering a broken jump."""
         abstained = client.get("/api/candidates?verdict=abstain").json()["items"]
         detail = client.get(f"/api/candidates/{abstained[0]['id']}").json()
 
@@ -1279,9 +1279,9 @@ class TestPanelHeadFields:
             "sonarr": None,
             "imdb": None,
             "tmdb": None,
-            # Empty here too, and for a different reason worth keeping apart: this row is
-            # UNMATCHED, so Reaper found nothing to offer. An ambiguous or conflicted row
-            # has candidates and does offer them (test_display_meta.TestBuildLinks).
+            # Empty here too, for a different reason worth keeping apart. This row is
+            # unmatched, so Reaper found nothing to offer. An ambiguous or conflicted row has
+            # candidates and does offer them (test_display_meta.TestBuildLinks).
             "match_candidates": [],
             # A title always exists, so the RT search still works for an unmatched row.
             "rotten_tomatoes": "https://www.rottentomatoes.com/search?search=Unmatched",
@@ -1309,9 +1309,8 @@ class TestPlexWebUrlSetting:
     def test_a_non_http_address_is_refused_in_plain_words(self, client: TestClient) -> None:
         refused = client.put("/api/settings/plex", json={"web_url": "plex.example"})
         assert refused.status_code == 422
-        # The sentence names the box and shows the shape. It said "must start with https:// or
-        # http://" while the check behind it was a `startswith` pair that let a bare scheme with
-        # no host through; both moved to the shared check together (#255, rule 84). The sibling
+        # The sentence names the box and shows the shape. The message and the validation both
+        # go through the same shared check now, so they can't drift apart again. The sibling
         # cases live in test_settings_api.py's TestPlexStatus.
         body = refused.json()
         assert body["code"] == "error.plex.web_url_invalid"
@@ -1324,8 +1323,8 @@ class TestPlexWebUrlSetting:
 
 
 class TestTheSimulator:
-    """Re-scores the last snapshot under a candidate policy with ZERO API calls, so the
-    knob and its blast radius sit in the same viewport."""
+    """Re-scores the last snapshot under a candidate policy with zero API calls, so the knob
+    and its blast radius sit in the same viewport."""
 
     def _simulate(self, client: TestClient, condemn_at: int) -> dict[str, Any]:
         body: dict[str, Any] = client.post(
@@ -1345,16 +1344,16 @@ class TestTheSimulator:
         assert loose["condemned"] > strict["condemned"]
 
     def test_it_reports_what_a_change_would_newly_condemn(self, client: TestClient) -> None:
-        """The number the owner actually needs before saving: not the total, but the
-        delta from what they have already reviewed."""
+        """The number the owner actually needs before saving is the delta from what they
+        have already reviewed, not the total."""
         result = self._simulate(client, 95)  # stricter than the stored 91
 
         assert result["no_longer_condemned"] == 1
         assert result["newly_condemned"] == 0
 
     def test_a_protection_wins_at_every_threshold(self, client: TestClient) -> None:
-        """The protected fixture scores 90. No threshold, however low, may condemn it
-        -- a protection always beats the score."""
+        """The protected fixture scores 90. No threshold, however low, may condemn it. A
+        protection always beats the score."""
         for threshold in (1, 50, 100):
             assert self._simulate(client, threshold)["protected"] == 1
 
@@ -1381,15 +1380,15 @@ class TestTheSimulator:
         assert sum(result["histogram"]) == 4
 
     def test_a_threshold_only_change_is_exact(self, client: TestClient) -> None:
-        """Moving condemn_at re-compares a STORED score against a new number, which
-        needs no API call and is not an approximation."""
+        """Moving condemn_at re-compares a stored score against a new number, which needs no
+        API call and is not an approximation."""
         assert self._simulate(client, 50)["exact"] is True
 
     def test_it_names_what_a_change_would_newly_condemn(self, client: TestClient) -> None:
-        """A count is abstract; a title the owner recognizes is what stops a bad
-        threshold. Dropping the threshold pulls in the cleanly-abstained item -- and the
-        example names it. The blocked "Unmatched" row scores higher, yet must not appear:
-        its protections could not be checked, so no threshold may condemn it."""
+        """A count is abstract. A title the owner recognizes is what stops a bad threshold.
+        Dropping the threshold pulls in the cleanly-abstained item, and the example names it.
+        The blocked "Unmatched" row scores higher, yet must not appear. Its protections could
+        not be checked, so no threshold may condemn it."""
         result = client.post(
             "/api/policy/simulate",
             json=_policy(condemn_at=40, coverage_floor_bp=0),
@@ -1411,11 +1410,11 @@ class TestTheSimulator:
         assert result["protected_by"] == [{"gate": "rating_floor", "count": 1}]
 
     def test_a_blocked_row_is_never_simulated_as_condemned(self, client: TestClient) -> None:
-        """The "Unmatched" fixture abstained because its protections could not be
-        checked -- not because of its score (50) or coverage. Even the loosest possible
-        draft (threshold 1, no coverage floor) must not count it as a deletion: the scan
-        would keep abstaining on it, and a simulator that counts it is telling the owner
-        a plausible wrong number at the very moment they pick a threshold."""
+        """The "Unmatched" fixture abstained because its protections could not be checked,
+        not because of its score (50) or coverage. Even the loosest possible draft (threshold
+        1, no coverage floor) must not count it as a deletion. The scan would keep abstaining
+        on it, and a simulator that counts it is telling the owner a plausible wrong number at
+        the very moment they pick a threshold."""
         result = client.post(
             "/api/policy/simulate",
             json=_policy(condemn_at=1, coverage_floor_bp=0),
@@ -1427,9 +1426,9 @@ class TestTheSimulator:
         assert "Unmatched" not in named
 
     def test_a_hand_reaped_row_keeps_its_stored_verdict(self, client: TestClient) -> None:
-        """The owner hand-reaped the condemned fixture. A draft threshold above its
-        score must NOT report it "no longer condemned": every scan will keep condemning
-        it while the override stands, and the simulator must agree with the scan."""
+        """The owner hand-reaped the condemned fixture. A draft threshold above its score
+        must not report it "no longer condemned." Every scan will keep condemning it while
+        the override stands, and the simulator must agree with the scan."""
         response = client.post(
             "/api/override", json={"media_key": "radarr:1:10", "decision": "reap"}
         )
@@ -1441,11 +1440,11 @@ class TestTheSimulator:
         assert result["no_longer_condemned"] == 0
 
     def test_a_hand_reap_on_a_protected_row_counts_as_condemned(self, client: TestClient) -> None:
-        """The rating floor is a cautious judgment the owner may overrule: once they
+        """The rating floor is a cautious judgment the owner may overrule. Once they
         hand-reap the protected fixture, the simulator must count it condemned at any
-        threshold, exactly as the plan and the counts now do (services.condemned). At a
-        draft of 95 the stored condemn (91) legitimately drops out, so the hand-reaped
-        row is the ONLY deletion left -- and the protected tally goes to zero."""
+        threshold, exactly as the plan and the counts now do (services.condemned). At a draft
+        of 95 the stored condemn (91) legitimately drops out, so the hand-reaped row is the
+        only deletion left, and the protected tally goes to zero."""
         response = client.post(
             "/api/override", json={"media_key": "radarr:1:11", "decision": "reap"}
         )
@@ -1458,25 +1457,24 @@ class TestTheSimulator:
         assert result["no_longer_condemned"] == 1  # the stored 91 still drops at 95
 
     def test_a_hand_reap_on_an_unmatched_row_is_still_refused(self, client: TestClient) -> None:
-        """The "Unmatched" fixture is a row Reaper could not tie to a Plex entry. A hand
-        reap does not beat "we do not know WHICH FILE this is": the engine keeps refusing,
-        so the simulator must not count it as a deletion either. At a draft of 91 the stored
-        condemn still counts, and it must stay the only one.
+        """The "Unmatched" fixture is a row Reaper could not tie to a Plex entry. A hand reap
+        does not beat "we do not know which file this is." The engine keeps refusing, so the
+        simulator must not count it as a deletion either. At a draft of 91 the stored condemn
+        still counts, and it must stay the only one.
 
-        Named for the match, because the match is the whole hold. The fixture also carries
-        three blocked gates -- an unmatched item has no rating key, so every Plex-dependent
-        gate blocks -- and this test used to be named for THOSE, which stopped refusing
-        anything when a blocked gate stopped holding a hand reap. Emptying
-        `protections_unknown` leaves it green, so under the old name it pinned nothing it
-        claimed to.
+        This is named for the match, because the match is the whole hold. The fixture also
+        carries three blocked gates, since an unmatched item has no rating key and every
+        Plex-dependent gate blocks on that. Naming the test for the blocked gates instead
+        would pin the wrong thing. Emptying `protections_unknown` alone would also leave this
+        test green, without the match hold actually being exercised.
 
-        **What this test cannot discriminate, said plainly (rule 118).** It passes whether or
-        not a blocked gate holds a reap, because its row is held by the match either way. The
-        opposite direction -- a row Reaper CAN identify whose protections merely could not be
-        checked is the operator's to remove -- needs a fixture with blocked gates and a clean
-        match, which this shared snapshot does not have and which cannot be added without
-        moving the counts every sibling here asserts. It is covered instead where it can be
-        driven directly, with mutation proofs -- in `test_override_truth.py`
+        This test cannot tell whether a blocked gate alone would hold a reap, because its row
+        is held by the match either way. The opposite case, a row Reaper can identify whose
+        protections merely could not be checked, is the operator's to remove. That needs a
+        fixture with blocked gates and a clean match, which this shared snapshot does not
+        have, and which cannot be added without moving the counts every sibling test here
+        asserts. That case is covered instead where it can be driven directly, with mutation
+        proofs, in `test_override_truth.py`
         (`test_an_unchecked_protection_no_longer_holds_the_reap`, four gates), in
         `test_verdict_agreement.py`
         (`test_a_reap_override_condemns_past_any_gate_that_could_not_be_checked`), and in
@@ -1490,12 +1488,12 @@ class TestTheSimulator:
 
         result = self._simulate(client, 91)
 
-        assert result["condemned"] == 1  # only the stored condemn; the unmatched row stays out
+        assert result["condemned"] == 1  # only the stored condemn, not the unmatched row
 
     def test_the_exact_threshold_boundary_condemns_at_and_above(self, client: TestClient) -> None:
-        """condemn_at is "at or above". The stored 91 must count as condemned at a
-        threshold of exactly 91 and drop out at 92 -- the route must decide through the
-        same shared function as the scan, so a `>` typo here can never pass."""
+        """condemn_at is "at or above." The stored 91 must count as condemned at a threshold
+        of exactly 91 and drop out at 92. The route must decide through the same shared
+        function as the scan, so a `>` typo here can never pass."""
         assert self._simulate(client, 91)["condemned"] == 1
         assert self._simulate(client, 92)["condemned"] == 0
 
@@ -1503,24 +1501,23 @@ class TestTheSimulator:
 class TestASnapshotWithNoFrozenFactsRefusesToGuess:
     """The trap this class exists to close, and the premise it actually rests on.
 
-    The simulator re-decides a snapshot by re-comparing **stored** scores and verdicts
-    against new thresholds. That is exact for ``condemn_at`` and ``coverage_floor_bp``.
-    It is simply wrong for anything else: change a signal weight or a gate, and every
-    stored score was produced by the *old* ones. A policy editor that let you drag a
-    weight and then showed a confident count would be the single most dangerous screen in
-    the product, because the number would look exactly as authoritative as the true one.
+    The simulator re-decides a snapshot by re-comparing stored scores and verdicts against
+    new thresholds. That is exact for ``condemn_at`` and ``coverage_floor_bp``. It is simply
+    wrong for anything else. Change a signal weight or a gate, and every stored score was
+    produced by the old ones. A policy editor that let you drag a weight and then showed a
+    confident count would be the single most dangerous screen in the product, because the
+    number would look exactly as authoritative as the true one.
 
-    **This fixture's snapshot froze no Facts**, which is what every case below is really
-    driven by: ``api.simulate.simulate``'s replay tier needs every governed row to carry a
+    This fixture's snapshot froze no Facts, which is what every case below is really driven
+    by. ``api.simulate.simulate``'s replay tier needs every governed row to carry a
     ``facts_json``, so a pre-facts-freeze snapshot falls to the refusal whatever the edit
-    was. That is a real state -- every snapshot taken before the freeze shipped is in it,
-    and it is exactly the state the refusal must survive -- but it is not the same claim as
-    "this edit is unanswerable", and the class used to be named and documented as though it
-    were. ``test_the_premise`` pins the premise so a fixture that later starts freezing
-    Facts fails here rather than quietly turning every case below into a tautology
-    (rules 118, 119).
+    was. That is a real state. Every snapshot taken before the freeze shipped is in it, and
+    it is exactly the state the refusal must survive. But it is not the same claim as "this
+    edit is unanswerable." ``test_the_premise`` pins the premise, so a fixture that later
+    starts freezing Facts fails here rather than quietly turning every case below into a
+    tautology.
 
-    Which edits are genuinely unanswerable over a snapshot that DID freeze its evidence is
+    Which edits are genuinely unanswerable over a snapshot that did freeze its evidence is
     ``tests/test_simulate_hardening.py``'s question, and a gate is no longer one of them.
     """
 
@@ -1562,15 +1559,16 @@ class TestASnapshotWithNoFrozenFactsRefusesToGuess:
         """The typed half, which is what lets the panel name the control at fault.
 
         Every test around this one asserts on ``exact`` alone, and ``exact: false`` is the
-        same for all three refusals -- so without this the discriminator could be dropped
-        from the response and nothing here would notice, while the panel silently fell back
-        to the general heading for every cause (#495).
+        same for all three refusals. Without this, the discriminator could be dropped from
+        the response and nothing here would notice, while the panel silently fell back to the
+        general heading for every cause.
 
-        Driven by the popularity WINDOW, which is the span ``distinct_watchers`` is counted
-        over and so the one gate field a scan reads before it freezes an item's facts. It
-        replaced a keep-tag edit, which stopped gathering differently when the keep tags left
-        the policy body for Settings -> Lists: a list now protects through an ``on_list`` rule
-        reading membership the scan gathered whether or not any rule named it.
+        Driven by the popularity window, which is the span ``distinct_watchers`` is counted
+        over, and so the one gate field a scan reads before it freezes an item's facts. This
+        case replaced an earlier one based on a keep-tag edit. Keep tags stopped gathering
+        differently once they left the policy body for Settings -> Lists, since a list now
+        protects through an ``on_list`` rule reading membership the scan gathers regardless of
+        whether any rule named it.
         """
         widened = [
             {**gate, "window_days": 180} if gate["gate"] == "server_popularity" else gate
@@ -1610,9 +1608,9 @@ class TestASnapshotWithNoFrozenFactsRefusesToGuess:
         assert result["stale_reason"]["k"] == "gathers_differently"
 
     def test_moving_a_gate_threshold_refuses_over_this_snapshot(self, client: TestClient) -> None:
-        """Not because a bar edit is unanswerable -- it is answerable, and
-        ``test_simulate_hardening.py`` proves it replays -- but because this snapshot has no
-        evidence to replay over. That is the state every install was in before the freeze."""
+        """Not because a bar edit is unanswerable. It is answerable, and
+        ``test_simulate_hardening.py`` proves it replays. But this snapshot has no evidence
+        to replay over. That is the state every install was in before the freeze."""
         loosened = [
             {"gate": "min_dormancy", "threshold": 1095},
             {"gate": "rating_floor", "threshold": 60},  # was 75
@@ -1632,8 +1630,8 @@ class TestASnapshotWithNoFrozenFactsRefusesToGuess:
 
 
 class TestVocabularyValues:
-    """Seen-value suggestions for the rule editors. Suggestions, never a gate: typing a
-    value that is not in the list stays valid, so this endpoint fails open to empty."""
+    """Seen-value suggestions for the rule editors. Suggestions, never a gate. Typing a value
+    that is not in the list stays valid, so this endpoint fails open to empty."""
 
     def test_genres_come_from_the_latest_scan_most_common_first(self, client: TestClient) -> None:
         body = client.get("/api/vocabulary/values", params={"field": "genre"}).json()
@@ -1650,12 +1648,12 @@ class TestVocabularyValues:
         body = client.get("/api/vocabulary/values", params={"field": "library"}).json()
 
         assert body["field"] == "library"
-        # Both matched movies' libraries; the unmatched row has no library and adds nothing.
+        # Both matched movies' libraries. The unmatched row has no library and adds nothing.
         assert set(body["values"]) == {"Movies", "Classics"}
 
     def test_an_unknown_field_is_empty_not_an_error(self, client: TestClient) -> None:
-        """A numeric or unheard-of field has nothing to suggest. That is not a fault --
-        the input keeps working with no suggestions at all."""
+        """A numeric or unheard-of field has nothing to suggest. That is not a fault. The
+        input keeps working with no suggestions at all."""
         response = client.get("/api/vocabulary/values", params={"field": "days_unwatched"})
 
         assert response.status_code == 200
@@ -1705,13 +1703,13 @@ class TestPolicyPersistence:
 
         assert response.status_code == 200
         out = response.json()
-        # Their own policy, rescaled -- not the shipped default, which would silently
-        # replace tuning they chose with numbers they never picked.
+        # Their own policy, rescaled, not the shipped default, which would silently replace
+        # tuning they chose with numbers they never picked.
         assert out["name"] == "stale"
         assert sum(s["weight"] for s in out["body"]["signals"]) == 100
-        # ...and handed over as an unsaved draft, so nothing is written until they look.
-        # The list is what the editor counts to open dirty, so an empty one here is the
-        # limbo #516 was: a degraded scan pointing at a page holding no Save.
+        # ...and handed over as an unsaved draft, so nothing is written until they look. The
+        # list is what the editor counts to open dirty, so an empty one here would leave a
+        # degraded scan pointing at a page holding no Save.
         assert out["repairs"] == ["rescaled"]
 
     def test_a_stored_policy_we_cannot_repair_falls_back_and_says_so(
@@ -1764,24 +1762,24 @@ class TestPolicyPersistence:
         keep_tags: list[str],
         lists: list[tuple[str, str, dict[str, Any]]],
     ) -> None:
-        """#627, and the pair of routes that reach it.
+        """This covers the pair of routes that reach a leftover list-protection gate.
 
-        ``convert_list_protections`` leaves an ENABLED ``whitelisted``/``curated_list`` row in
+        ``convert_list_protections`` leaves an enabled ``whitelisted``/``curated_list`` row in
         the body when its replacement keep rule cannot be named, so the cover stands and
-        ``build_gates`` refuses the scan out loud rather than the protection being withdrawn
-        in silence (rule 38). Both halves are reachable on a real upgrade: the tag list the
-        conversion looks for is the operator's to rename, retag or delete, and the shipped IMDb
-        list is skipped by the upgrade migration when a list of that name already exists under
-        any source, so either row can be missing on its own.
+        ``build_gates`` refuses the scan out loud rather than withdrawing the protection in
+        silence. Both halves are reachable on a real upgrade. The tag list the conversion
+        looks for is the operator's to rename, retag, or delete, and the shipped IMDb list is
+        skipped by the upgrade migration when a list of that name already exists under any
+        source. Either row can be missing on its own.
 
-        Seeded and flagged BEFORE the app boots, which is the state that migration leaves: the
-        seed is guarded by ``lists_seeded`` rather than by the rows, so an install that has
-        been through it never gains a second shipped copy.
+        This is seeded and flagged before the app boots, which is the state that migration
+        leaves. The seed is guarded by ``lists_seeded`` rather than by the rows, so an install
+        that has been through it never gains a second shipped copy.
 
-        The editor is the only place this state can be cleared, and it was rebuilding every
-        loaded row through the SAVE boundary, so it answered 500 for exactly the bodies it
-        exists to repair. Nothing here relaxes that boundary: the save below is still refused,
-        and the row leaves only when the operator takes it off.
+        The editor is the only place this state can be cleared. Rebuilding every loaded row
+        through the save boundary on read would answer 500 for exactly the bodies it exists to
+        repair, so loading must not do that. Nothing here relaxes the boundary on save. The
+        row is still refused there, and it leaves only when the operator takes it off.
         """
         self._seed_upgraded_install(settings, gate=gate, keep_tags=keep_tags, lists=lists)
 
@@ -1798,8 +1796,8 @@ class TestPolicyPersistence:
             # The savebar is up either way, so there is a Save to press once they have.
             assert out["repairs"] == ["lists_migrated"]
 
-            # Serving it did NOT make it savable. Handing the body straight back is refused,
-            # in the plain sentence the SPA renders verbatim (rule 21).
+            # Serving it did not make it savable. Handing the body straight back is refused,
+            # in the plain sentence the SPA renders verbatim.
             refused = client.post("/api/policy", json=out["body"])
 
             assert refused.status_code == 422
@@ -1807,8 +1805,8 @@ class TestPolicyPersistence:
             assert any(item.get("code") == "error.policy.retired_gate" for item in items)
             message = " ".join(d["msg"] for d in items)
             assert "left over from an older version" in message
-            # Not the gate id: this is the editor's "Can't save this" banner on arrival, and
-            # the row it names is labeled in the operator's words on the same screen (rule 21).
+            # Not the gate id. This is the editor's "Can't save this" banner on arrival, and
+            # the row it names is labeled in the operator's words on the same screen.
             assert gate not in message
             assert "Value error" not in message
 
@@ -1821,7 +1819,7 @@ class TestPolicyPersistence:
             reloaded = client.get("/api/policy").json()
             assert gate not in {g["gate"] for g in reloaded["body"]["gates"]}
             assert reloaded["repairs"] == []
-            # And it really is gone: no keep rule took its place, which is the cost the row's
+            # And it really is gone. No keep rule took its place, which is the cost the row's
             # notice and the scan's sentence both have to state rather than imply.
             assert not [
                 c for c in reloaded["body"]["protect_conditions"] if c["field"] == "on_list"
@@ -1837,8 +1835,8 @@ class TestPolicyPersistence:
     ) -> None:
         """A database an upgrade left carrying a leftover list protection.
 
-        Rows and the ``lists_seeded`` flag go in BEFORE the app boots, because that is the
-        state the migration leaves: the seed is guarded by the flag rather than by the rows,
+        Rows and the ``lists_seeded`` flag go in before the app boots, because that is the
+        state the migration leaves. The seed is guarded by the flag rather than by the rows,
         so an install that has been through it never gains a second shipped copy.
         """
         stored = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
@@ -1875,18 +1873,19 @@ class TestPolicyPersistence:
     def test_adding_the_list_back_first_is_what_keeps_the_protection(
         self, settings: Settings
     ) -> None:
-        """The order ``build_gates`` tells the operator to work in, driven.
+        """The order ``build_gates`` tells the operator to work in, driven end to end.
 
-        That sentence used to say to open Policy and save first, then add the list. Following
-        it loses the protection outright and the test above is the proof: the only way to
-        reach a save is to take the row off, and the saved body then carries neither the gate
-        nor ``keep_tags``, so the conversion can never fire again and a list added afterwards
+        Telling the operator to open Policy and save first, then add the list, would lose the
+        protection outright. The test above is the proof: the only way to reach a save is to
+        take the row off, and the saved body then carries neither the gate nor
+        ``keep_tags``, so the conversion can never fire again and a list added afterwards
         attaches no rule of its own (``api/lists.py``'s ``add_list``).
 
-        In the order the sentence names now, the same install keeps its cover: the registry
-        row resolves ``tag_list_name``, so the next load converts the gate into an outright
-        ``on_list`` keep rule naming that list, and the save that follows writes it (rules 25,
-        144 -- the copy and this are one fact).
+        In the order the sentence actually names, the same install keeps its cover. The
+        registry row resolves ``tag_list_name``, so the next load converts the gate into an
+        outright ``on_list`` keep rule naming that list, and the save that follows writes it.
+        This test and the sentence in ``build_gates`` state the same fact, so a change to one
+        must update the other.
         """
         self._seed_upgraded_install(
             settings,
@@ -1900,8 +1899,9 @@ class TestPolicyPersistence:
             blocked = client.get("/api/policy").json()
             assert "whitelisted" in {g["gate"] for g in blocked["body"]["gates"]}
 
-            # Step one of the sentence: the list goes back on Settings, Lists. Resolved by the
-            # TAGS it holds, never by its name or its age, so the operator may call it anything.
+            # Step one of the sentence: the list goes back on Settings, Lists. Resolved by
+            # the tags it holds, never by its name or its age, so the operator may call it
+            # anything.
             added = client.post(
                 "/api/lists/configured",
                 json={
@@ -1945,18 +1945,18 @@ class TestPolicyPersistence:
     def test_saving_a_gate_no_policy_can_build_is_refused_in_plain_language(
         self, client: TestClient
     ) -> None:
-        """``GateId`` is wider than what a policy row can build: it also carries retired ids
-        and ids the engine emits on its own. Storing one used to succeed and then break every
-        subsequent scan at ``build_gates``, with no self-heal and nothing naming the save that
-        did it. It is refused at the boundary now, and the refusal has to be readable: the SPA
-        renders ``detail[].msg`` verbatim, so pydantic's "Value error," prefix would land in
-        front of the sentence (rule 21).
+        """``GateId`` is wider than what a policy row can build. It also carries retired ids
+        and ids the engine emits on its own. Storing one here must fail immediately, not
+        succeed and then break every subsequent scan at ``build_gates`` with no self-heal and
+        nothing naming the save that did it. This is refused at the boundary instead, and the
+        refusal has to be readable. The SPA renders ``detail[].msg`` verbatim, so pydantic's
+        "Value error," prefix would land in front of the sentence.
 
-        **The gate id is the part that must NOT be in it.** The editor renders this message as
-        its "Can't save this" banner, and once the response stopped being validated through
-        this same model (#627) an upgraded install meets the banner on arrival, beside a row
-        labeled in the operator's own words. Which row it is still comes back in ``loc``,
-        asserted below, so nothing an API caller needs was traded for the plain sentence.
+        The gate id is the part that must not be in it. The editor renders this message as
+        its "Can't save this" banner, so an upgraded install whose response is validated
+        through this same model meets the banner on arrival, beside a row labeled in the
+        operator's own words. Which row it is still comes back in ``loc``, asserted below, so
+        nothing an API caller needs was traded for the plain sentence.
         """
         bad = [*DEFAULT_GATES, {"gate": "season_progression", "enabled": True}]
 
@@ -1984,20 +1984,22 @@ class TestPolicyPersistence:
         assert body["protect_incomplete_seasons"] is False
 
     def test_saving_is_append_only_and_idempotent(self, client: TestClient) -> None:
-        """The hash is the identity. Opening the editor and saving without changing
-        anything must not fork the audit trail -- snapshots and approvals point at
-        these rows and have to stay interpretable."""
+        """The hash is the identity. Opening the editor and saving without changing anything
+        must not fork the audit trail. Snapshots and approvals point at these rows and have
+        to stay interpretable."""
         first = client.post("/api/policy", json=_policy(condemn_at=55)).json()
         second = client.post("/api/policy", json=_policy(condemn_at=55)).json()
 
         assert first["policy_hash"] == second["policy_hash"]
 
     def test_reverting_to_an_earlier_policy_takes_effect(self, client: TestClient) -> None:
-        """Save A, then B, then A again: the last save must put A back in force.
+        """Save A, then B, then A again. The last save must put A back in force.
 
-        The duplicate-save check used to match A's *older* row anywhere in history and
-        skip the write -- 200, reverted body in the response, and B still active. Only
-        re-saving the policy currently in force may no-op; a revert is a real change."""
+        The duplicate-save check must only match against the policy currently in force,
+        never an older row found anywhere in history. Matching an older row would let the
+        save silently no-op: status 200, the reverted body in the response, but B still
+        active underneath. Only re-saving the policy currently in force may no-op. A revert
+        is a real change."""
         saved_a = client.post("/api/policy", json=_policy(condemn_at=55)).json()
         saved_b = client.post("/api/policy", json=_policy(condemn_at=80)).json()
         assert saved_b["policy_hash"] != saved_a["policy_hash"]
@@ -2013,7 +2015,7 @@ class TestPolicyPersistence:
 
     def test_an_invalid_policy_is_never_persisted(self, client: TestClient) -> None:
         """A dormancy floor under 5 days is refused by the domain, and the refusal must
-        happen before the row is written -- not after."""
+        happen before the row is written, not after."""
         response = client.post("/api/policy", json=_policy(gates=[{"gate": "min_dormancy"}]))
 
         assert response.status_code == 422
@@ -2029,7 +2031,7 @@ class TestPolicyPersistence:
         assert saved.json()["policy_hash"] != before  # it changes what Reaper decides
 
     def test_a_protect_condition_with_a_bad_operator_is_refused(self, client: TestClient) -> None:
-        # "whitelisted" is a yes/no field -- ">=" is not one of its operators, so this
+        # "whitelisted" is a yes/no field, and ">=" is not one of its operators, so this
         # condition is unconstructable, not merely wrong.
         body = _policy(protect_conditions=[{"field": "whitelisted", "op": "gte", "value": True}])
         assert client.post("/api/policy", json=body).status_code == 422
@@ -2037,9 +2039,9 @@ class TestPolicyPersistence:
     def test_a_condition_value_of_the_wrong_type_is_a_422_not_a_saved_landmine(
         self, client: TestClient
     ) -> None:
-        """A JSON string on a numeric field used to save and hash cleanly, then crash
-        every subsequent scan inside the judge. It must be refused at save time, naming
-        the field, and nothing may be persisted."""
+        """A JSON string on a numeric field must be refused at save time, naming the field,
+        with nothing persisted. Left unchecked, it would save and hash cleanly, then crash
+        every subsequent scan inside the judge."""
         body = _policy(protect_conditions=[{"field": "size_bytes", "op": "gte", "value": "500"}])
         response = client.post("/api/policy", json=body)
 
@@ -2110,10 +2112,10 @@ class TestRequestedOnlyScopeNeedsSeerr:
 class TestAPopularityWindowLongerThanTheWatchHistory:
     """The other end of the same window, and the wiring that carries it.
 
-    The engine's half is pinned in ``test_policy``. What this pins is that a route
-    actually READS the mirror and hands the reach to ``inspect`` -- the warning is dead
-    the moment a ``_policy_out`` call site forgets to pass it, and every assertion in
-    ``test_policy`` would stay green through that.
+    The engine's half is pinned in ``test_policy``. What this pins is that a route actually
+    reads the mirror and hands the reach to ``inspect``. The warning is dead the moment a
+    ``_policy_out`` call site forgets to pass it, and every assertion in ``test_policy``
+    would stay green through that.
     """
 
     def _seed_mirror(self, tmp_path: Path, days_back: int) -> None:
@@ -2129,7 +2131,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
             conn.commit()
         finally:
             # `with sqlite3.connect(...)` commits but never closes the connection, so the
-            # handle leaked to teardown as a ResourceWarning (#541).
+            # handle would leak into teardown as a ResourceWarning without this.
             conn.close()
 
     def _policy_body(self, **overrides: object) -> dict[str, Any]:
@@ -2137,8 +2139,8 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
         ``inspect`` stays silent while the floor alone empties the list, because there the
         popularity window decides nothing and lowering it is inert advice. So a fixture on
-        the shipped 1095-day floor would assert nothing about the wiring: it would read as
-        green with the reach never fetched at all (rule 141).
+        the shipped 1095-day floor would assert nothing about the wiring. It would read as
+        green with the reach never fetched at all.
         """
         gates = [
             {**g, "threshold": 30} if g["gate"] == "min_dormancy" else g for g in DEFAULT_GATES
@@ -2168,13 +2170,12 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
         ``min_dormancy`` holds every item at 1095 days and dormancy is clamped to the
         mirror, so on a 90-day history nothing can be condemned whatever the popularity
-        window says. Warning on the WINDOW would send the operator to shorten a keep
-        protection that changes nothing, so that anchor stays silent.
+        window says. Warning on the window would send the operator to shorten a keep
+        protection that changes nothing, so that anchor stays silent instead.
 
-        This used to say the detector said nothing at all, and that was the defect: the page
-        went quietest exactly where the list was emptiest (#217). The floor speaks for itself
-        now, on its own control, and it is the only thing on the page here -- which is also
-        what proves the two cannot stack, since one fires on the negation of the other.
+        The floor speaks for itself, on its own control, and it is the only warning on the
+        page here. That also proves the two warnings cannot stack, since one fires exactly
+        when the other does not.
         """
         self._seed_mirror(tmp_path, days_back=90)
 
@@ -2186,8 +2187,8 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         [floor] = [w for w in body["warnings"] if w["field"] == "gates.min_dormancy.threshold"]
         assert floor["severity"] == "warn"
         assert "Nothing will be flagged for removal" in _msg(floor)
-        # Through the route, so this pins the reach actually reaching `inspect` here too: with
-        # the mirror unread the branch cannot fire at all (rule 141).
+        # Through the route, so this pins the reach actually reaching `inspect` here too.
+        # With the mirror unread, the branch cannot fire at all.
         assert "3 years" in _msg(floor)
 
     def test_a_mirror_that_covers_the_window_is_quiet(
@@ -2210,8 +2211,8 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
         ``popularity_window_days`` falls back to 365 and ``build_gates`` hands that to the
         operator's own keep-outright rule either way, so the block survives the switch. The
-        ANCHOR is the half a route can break on its own: it decides where the SPA renders
-        this, and with the gate off the window picker it would otherwise point at is not on
+        anchor is the half a route can break on its own. It decides where the SPA renders
+        this, and with the gate off, the window picker it would otherwise point at is not on
         the page at all.
         """
         self._seed_mirror(tmp_path, days_back=90)
@@ -2247,10 +2248,10 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
     def test_saving_a_policy_that_is_already_in_force_answers_with_it_too(
         self, client: TestClient, tmp_path: Path
     ) -> None:
-        """``save_policy`` returns through TWO ``_policy_out`` calls, and the second one is
-        easy to miss: a body content-identical to the policy in force writes nothing and
-        returns early. Deleting ``history_reach_days=`` from that call site left the whole
-        suite green, because the test above only ever reaches the normal return (rule 118).
+        """``save_policy`` returns through two ``_policy_out`` calls, and the second one is
+        easy to miss. A body content-identical to the policy in force writes nothing and
+        returns early. Deleting ``history_reach_days=`` from that call site would leave the
+        whole suite green, because the test above only ever reaches the normal return.
         """
         self._seed_mirror(tmp_path, days_back=90)
         payload = self._policy_body(condemn_at=71)
@@ -2288,10 +2289,10 @@ def rewatch_odds_client(tmp_path: Path) -> Iterator[TestClient]:
     """A snapshot whose movie candidates carry every ``rewatch_odds`` state GET
     /api/policy/rewatch-odds aggregates: two "measured" rows sharing one block (so
     aggregation is provable, not just present), one "thin" row, one explicit "no_history"
-    row, and one row whose explanation JSON cannot be parsed at all. Two season rows carry
-    a second "measured" block with numbers distinguishable from the movie block (rule 141),
-    so a ``media_type=tv`` query can be told apart from the movie-only default rather than
-    merely returning a non-empty answer.
+    row, and one row whose explanation JSON cannot be parsed at all. Two season rows carry a
+    second "measured" block with numbers distinguishable from the movie block, so a
+    ``media_type=tv`` query can be told apart from the movie-only default rather than merely
+    returning a non-empty answer.
     """
     settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
@@ -2334,8 +2335,8 @@ def rewatch_odds_client(tmp_path: Path) -> Iterator[TestClient]:
                     created_at=now,
                 ),
                 Candidate(
-                    # Same fitted block as the row above -- one scan freezes one fit for
-                    # every candidate, so both real rows in a block always agree on n/k.
+                    # Same fitted block as the row above. One scan freezes one fit for every
+                    # candidate, so both real rows in a block always agree on n/k.
                     snapshot_id=snapshot.id,
                     media_key="radarr:1:31",
                     title="Measured Two",
@@ -2380,9 +2381,9 @@ def rewatch_odds_client(tmp_path: Path) -> Iterator[TestClient]:
                     verdict="abstain",
                     score=10,
                     coverage_bp=10_000,
-                    # Malformed JSON entirely, not merely a missing key: the "we could not
-                    # read this row at all" case rule 96 resolves toward the conservative
-                    # reading (api.policy.rewatch_odds_fit).
+                    # Malformed JSON entirely, not merely a missing key. This is the "we
+                    # could not read this row at all" case, which resolves toward the
+                    # conservative reading (api.policy.rewatch_odds_fit).
                     explanation_json="{not valid json",
                     created_at=now,
                 ),
@@ -2398,8 +2399,8 @@ def rewatch_odds_client(tmp_path: Path) -> Iterator[TestClient]:
                     created_at=now,
                 ),
                 Candidate(
-                    # Shares the season block above -- proves tv aggregation the same way
-                    # the two movie rows prove it.
+                    # Shares the season block above. This proves tv aggregation the same
+                    # way the two movie rows prove it.
                     snapshot_id=snapshot.id,
                     media_key="sonarr:1:31",
                     title="Season Measured Two",
@@ -2423,7 +2424,7 @@ def rewatch_odds_client(tmp_path: Path) -> Iterator[TestClient]:
 class TestTheRewatchOddsFitEndpoint:
     """GET /api/policy/rewatch-odds: the Policy page's fitted ladder and consequence echo
     (docs/history/REWATCH_PLAN.md, Stage 2). Aggregated from the newest snapshot's frozen
-    ``rewatch_odds`` explanation blocks, never refit here (rule 104)."""
+    ``rewatch_odds`` explanation blocks, never refit here."""
 
     def test_no_snapshot_returns_the_empty_shape(self, tmp_path: Path) -> None:
         settings = Settings(data_dir=tmp_path, secret_key="k")
@@ -2440,9 +2441,9 @@ class TestTheRewatchOddsFitEndpoint:
     def test_blocks_aggregate_by_identity_and_unusable_rows_reach_no_block(
         self, rewatch_odds_client: TestClient
     ) -> None:
-        # All five rows count toward total_items, including the thin one, the no_history one
-        # and the one whose explanation JSON cannot be read at all (rule 96). Only the two
-        # measured rows reach a block.
+        # All five rows count toward total_items, including the thin one, the no_history one,
+        # and the one whose explanation JSON cannot be read at all. Only the two measured
+        # rows reach a block.
         body = rewatch_odds_client.get("/api/policy/rewatch-odds").json()
 
         assert body["total_items"] == 5
@@ -2515,8 +2516,8 @@ class TestPolicyValidation:
         assert any("protect almost nothing" in _msg(w) for w in body["warnings"])
 
     def test_a_zero_vote_floor_is_refused_outright(self, client: TestClient) -> None:
-        """Provably wrong, so it is a 422 rather than a warning: an IMDb bar with no
-        vote floor protects an 8.3 drawn from 388 votes."""
+        """Provably wrong, so it is a 422 rather than a warning. An IMDb bar with no vote
+        floor protects an 8.3 drawn from 388 votes."""
         response = client.post(
             "/api/policy/validate",
             json={
@@ -2528,16 +2529,17 @@ class TestPolicyValidation:
         )
 
         assert response.status_code == 422
-        # ...and the owner is TOLD WHY, not handed an Internal Server Error.
+        # ...and the owner is told why, not handed an Internal Server Error.
         assert "vote floor of 0" in json.dumps(response.json())
 
 
 class TestUnknownSizeWarningTracksTheDraft:
-    """B-26: the unknown-size warning renders directly beneath the box that sets it, and that
-    box shows an UNSAVED value. Every other warning the editor renders describes the draft, so
-    this one read the saved profile while sitting under the changed one: raise it and no
-    warning appeared until after a save, lower it and the old warning kept naming the old
-    number. The editor sends the drafted value; omitting it keeps the stored reading."""
+    """The unknown-size warning renders directly beneath the box that sets it, and that box
+    shows an unsaved draft value. Every other warning the editor renders describes the draft,
+    so this one must too. Reading the saved profile instead, while sitting under the changed
+    box, would raise the allowance with no warning until after a save, or lower it while the
+    old warning kept naming the old number. The editor sends the drafted value. Omitting it
+    keeps the stored reading."""
 
     def _unmeasured(self, client: TestClient, **extra: object) -> list[str]:
         body = client.post(
@@ -2560,7 +2562,7 @@ class TestUnknownSizeWarningTracksTheDraft:
         assert "up to 5 items" in message
 
     def test_drafting_it_back_to_zero_clears_the_warning(self, client: TestClient) -> None:
-        """Explicit 0 is a value, not an omission: it must not fall back to the stored one."""
+        """Explicit 0 is a value, not an omission. It must not fall back to the stored one."""
         assert self._unmeasured(client, draft_max_unmeasured_per_run=0) == []
 
     def test_the_allowance_cannot_be_widened_past_what_a_save_accepts(
@@ -2581,8 +2583,8 @@ class TestUnknownSizeWarningTracksTheDraft:
 
 
 class TestVocabularyIsFilteredServerSide:
-    """A protect-only field is never even OFFERED to the condemn editor, so a dangerous
-    condition is not merely rejected -- it is unconstructable."""
+    """A protect-only field is never even offered to the condemn editor, so a dangerous
+    condition is not merely rejected. It is unconstructable."""
 
     def test_the_condemn_lane_hides_protect_only_fields(self, client: TestClient) -> None:
         keys = {f["key"] for f in client.get("/api/vocabulary?lane=condemn").json()["fields"]}
@@ -2598,8 +2600,8 @@ class TestVocabularyIsFilteredServerSide:
         assert condemn < protect
 
     def test_ships_no_english(self, client: TestClient) -> None:
-        """The browser says the words now (#868 phase 4): a field's label, help paragraph and
-        unit come from the catalog by its key (`why.field.*`, `policyRules.fieldHelp.*`,
+        """The browser says the words now. A field's label, help paragraph and unit come from
+        the catalog by its key (`why.field.*`, `policyRules.fieldHelp.*`,
         `policyRules.fieldUnit.*`), never off the wire."""
         for field in client.get("/api/vocabulary?lane=protect").json()["fields"]:
             assert "label" not in field
@@ -2607,7 +2609,7 @@ class TestVocabularyIsFilteredServerSide:
             assert "unit_suffix" not in field
 
     def test_a_movie_policy_is_not_offered_a_tv_only_field(self, client: TestClient) -> None:
-        """The editor asks with the policy's media type; a TV-only reason ("the show has
+        """The editor asks with the policy's media type. A TV-only reason ("the show has
         ended") is filtered server-side, so a movie policy cannot even build it."""
         movie = {
             f["key"]

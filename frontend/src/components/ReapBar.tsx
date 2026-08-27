@@ -12,28 +12,28 @@ import { Notice } from "./Notice";
 /** The app-wide reap bar: shown on every screen of the app while a reap runs, so its count and
  *  its Stop are reachable after you close or navigate away from the reap sheet. A reap runs
  *  detached from the request that started it, so this bar (and Stop) survive navigating away
- *  and a tab reload -- it re-attaches by polling the shared status. Not a safety surface (the
+ *  and a tab reload: it re-attaches by polling the shared status. Not a safety surface (the
  *  always-on one is SafetyBanner), so it shows nothing when idle. Stop is graceful: the run
  *  halts after the item in flight and still tidies Plex, and deletion stays armed.
  *
  *  "Every screen" means every screen of the app, and the setup wizard is not one:
  *  `App.tsx`'s `Authed` returns it *instead of* `Dashboard`, so nothing under `Dashboard`
- *  mounts while it is up, this bar included. That is
- *  reachable during a run -- removing the Tautulli or the last *arr invalidates `["setup"]`,
- *  `scan_ready` goes false, and the wizard takes the page with no reload -- and it lands on the
+ *  mounts while it is up, this bar included. This bar's Stop is still reachable during a run
+ *  that triggers the wizard: removing the Tautulli or the last *arr invalidates `["setup"]`,
+ *  `scan_ready` goes false, and the wizard takes the page with no reload, landing on the
  *  Connect step, which has Back and Skip, so Stop is two presses away rather than lost.
  *
- *  It mounts, runs and reaches its end -- "Reap failed." included -- and used to do all of it
- *  in silence, which on most screens made it the only sign of a deletion and the only Stop
- *  (#170). It now announces the run's end, and its fill carries `role="progressbar"` the way
- *  `ScanLine` (components/ScanLine.tsx) already did (rule 72). The RUNNING ticks are deliberately not announced
- *  here: the reap sheet throttles and speaks them, and a bar that spoke too would say
- *  everything twice for anyone with the sheet open.
+ *  It mounts, runs, and reaches its end, "Reap failed." included, and announces each of these
+ *  out loud. Its fill also carries `role="progressbar"`, the way `ScanLine`
+ *  (components/ScanLine.tsx) does. The running ticks are deliberately not announced here: the
+ *  reap sheet throttles and speaks them, and a bar that spoke too would say everything twice
+ *  for anyone with the sheet open.
  *
  *  Tested directly rather than through `App`, as `WhyPanelFallback` is: what it owes an
  *  operator is a property of this component, and reaching it through the whole authed `App`
- *  tree would test the login gate instead. It lived in `App.tsx` and carried an "exported for
- *  its tests" note; the export means nothing here, where every file exports its component. */
+ *  tree would test the login gate instead. This component is exported for its tests; the
+ *  export carries no other meaning here, since every file in this codebase exports its
+ *  component. */
 export function ReapBar({ onView }: { onView: (runId: number) => void }) {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
@@ -52,7 +52,7 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
     onSuccess: (s) => queryClient.setQueryData(["reapStatus"], s),
   });
 
-  // A finished reap invalidates half the app -- the queue lists titles that are gone, the
+  // A finished reap invalidates half the app: the queue lists titles that are gone, the
   // ledger promises to remove them, the snapshot's reclaimable figure counts them. That
   // refresh belongs HERE, on the component a reap does not unmount: the confirmation sheet
   // is explicitly designed to be closed mid-run, and everything it invalidated went with it.
@@ -70,10 +70,10 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
     settledRef.current = status.run_id;
     // Say how it ended. The same edge, for the same reason: a run that finished before this tab
     // opened must not be announced as news. The sentence carries the outcome first and the
-    // figures after, matching the bar's own text below (rule 144), and it is said HERE rather
-    // than in the reap sheet because closing the sheet does not take this bar with it -- the
-    // sheet is meant to be closed mid-run, and an operator who closed it would otherwise hear
-    // nothing at all about a deletion finishing.
+    // figures after, matching the bar's own text below, and it is said here rather than in the
+    // reap sheet because closing the sheet does not take this bar with it. The sheet is meant
+    // to be closed mid-run, and an operator who closed it would otherwise hear nothing at all
+    // about a deletion finishing.
     announce(
       t("reapConfirm.bar.announceEnded", {
         phase: status.phase,
@@ -98,7 +98,7 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
   if (!status || status.run_id == null) return null;
   const runId = status.run_id;
   const running = status.running;
-  // Every terminal phase counts as ended -- including "error", so a reap that crashed after
+  // Every terminal phase counts as ended, including "error", so a reap that crashed after
   // removing files still surfaces here (the one always-visible fallback) instead of vanishing.
   const ended =
     !running &&
@@ -139,14 +139,13 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
     <div className="reap-bar">
       <span className="banner-dot" aria-hidden="true" />
       {/* The role goes on the TEXT, never on the bar. `progressbar` carries ARIA's Children
-          Presentational: True, so a role on the container prunes everything inside it -- and
-          this container holds View, Stop, and the `role="alert"` that reports a Stop that
-          failed. A reader watching a live deletion heard the percentage and had no way to halt
-          it. That is the same pruning `CardOpen` exists to undo on the queue's four cards, so
-          the bar nearest deletion was the one sibling the sweep missed (rule 72); the three
-          sibling bars and `ScanLine` all carry the role on an element holding only a fill.
+          Presentational: True, so a role on the container would prune everything inside it,
+          including View, Stop, and the `role="alert"` that reports a failed Stop: a reader
+          watching a live deletion would hear the percentage with no way to halt it. `CardOpen`
+          undoes the same pruning on the queue's four cards. The three sibling bars and
+          `ScanLine` all carry the role the same way, on an element holding only a fill.
           The text is the right anchor here: it is the visible readout, it is never empty, and
-          it holds no control -- where the fill is 0px wide at 0% and can drop out of the tree.
+          it holds no control, where the fill is 0px wide at 0% and can drop out of the tree.
           `aria-valuetext` says what a person would say, so nobody is left reading out "62". */}
       <span
         className="reap-bar-text"
@@ -189,8 +188,8 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
           {status.stopping ? t("reapConfirm.stopping") : t("reapConfirm.stop")}
         </button>
       </span>
-      {/* A Stop that failed must say so. Swallowed, it reads as a run that is halting while
-          it keeps deleting -- and this is the only Stop on every screen but the sheet. */}
+      {/* A Stop that failed must say so. Swallowed, it reads as a run that is halting while it
+          keeps deleting, and this is the only Stop on every screen but the sheet. */}
       {stop.error && (
         <Notice tone="error" className="reap-bar-error">
           {t("reapConfirm.bar.stopError", { error: describeError(stop.error) })}

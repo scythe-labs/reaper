@@ -1,35 +1,36 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Port of `frontend/src/i18n-locales.test.ts` for the backend catalog (docs/history/
-I18N_PLAN.md, phase 10b): the review a translated `src/reaper/locales/<tag>/backend.json` gets
-before it is safe to ship, the same review Weblate's own pull request gets for a translated
-`ui.json` automatically.
+"""Port of `frontend/src/i18n-locales.test.ts` for the backend catalog (see
+docs/history/I18N_PLAN.md). This is the review a translated
+`src/reaper/locales/<tag>/backend.json` gets before it is safe to ship, the same review
+Weblate's own pull request gets for a translated `ui.json` automatically.
 
-Five things checked, for every shipped tag other than `en`:
+Five things are checked, for every shipped tag other than `en`:
 
-  * every key the translation carries is a real `en/backend.json` key (rule 145's "an orphan
-    catalog entry is exactly as much a bug as a typo'd call site", from the other side);
-  * every message renders through `reaper.i18n.format_icu` against the English entry's own
-    argument names, so a translation this project's ICU subset cannot parse is caught rather
-    than degrading silently in production (`say`'s own broad `except` would hide it there);
-  * no message references an argument the English original does not have -- a translation may
-    DROP an argument, never invent one (`format_icu` would render it as an empty string, which
-    reads as a translator's typo rather than a missing feature);
-  * the tag is a canonical BCP 47 spelling (`pt-BR`, never `pt_BR` or `pt-br`) -- the frontend
-    checks this against `Intl.getCanonicalLocales`, which has no Python equivalent in the
-    standard library (rule 15: no dependency added for it), so this is a small hand-written
-    checker, proven against the shapes it must accept and reject (rule 147);
-  * `reaper.i18n.PLURAL_RULES` has an entry for the tag. `test_backend_i18n.py`'s
-    `TestPluralRulesCoverEveryShippedUiTranslation` already proves this for every tag shipped
-    under `frontend/src/locales` -- a DIFFERENT directory that can drift from this one (a
-    language could ship a UI translation with no backend catalog, or the reverse), so this is
-    not a restatement of that test: it is the same obligation over this catalog's own
-    population, read through `reaper.i18n.shipped_tags()` rather than a second directory walk.
+* Every key the translation carries is a real `en/backend.json` key. An orphan catalog
+  entry is exactly as much a bug as a typo'd call site, just seen from the other side.
+* Every message renders through `reaper.i18n.format_icu` against the English entry's own
+  argument names, so a translation this project's ICU subset cannot parse is caught rather
+  than degrading silently in production (`say`'s own broad `except` would hide it there).
+* No message references an argument the English original does not have. A translation may
+  drop an argument, but never invent one. `format_icu` would render an invented one as an
+  empty string, which reads as a translator's typo rather than a missing feature.
+* The tag is a canonical BCP 47 spelling (`pt-BR`, never `pt_BR` or `pt-br`). The frontend
+  checks this against `Intl.getCanonicalLocales`, which has no Python equivalent in the
+  standard library, so this is a small hand-written checker, proven against the shapes it
+  must accept and reject.
+* `reaper.i18n.PLURAL_RULES` has an entry for the tag. `test_backend_i18n.py`'s
+  `TestPluralRulesCoverEveryShippedUiTranslation` already proves this for every tag
+  shipped under `frontend/src/locales`, a *different* directory that can drift from this
+  one (a language could ship a UI translation with no backend catalog, or the reverse).
+  This is not a restatement of that test. It is the same obligation over this catalog's
+  own population, read through `reaper.i18n.shipped_tags()` rather than a second directory
+  walk.
 
-No committed non-English `backend.json` exists yet -- Weblate has nowhere to open one from
-until `scripts/weblate_component.py` creates the `backend` component, which this same change
-ships but does not run (see that script's own docstring). So every check below is proven
-against a fixture written to `tmp_path`, with `reaper.i18n`'s locales root monkeypatched onto
-it, never a committed non-English file.
+No committed non-English `backend.json` exists yet. Weblate has nowhere to open one from
+until `scripts/weblate_component.py` creates the `backend` component, which this same
+change ships but does not run (see that script's own docstring). So every check below is
+proven against a fixture written to `tmp_path`, with `reaper.i18n`'s locales root
+monkeypatched onto it, never a committed non-English file.
 """
 
 from __future__ import annotations
@@ -63,19 +64,19 @@ def _leaves(node: object, prefix: str = "") -> dict[str, str]:
 
 
 def _referenced_names(message: str) -> set[str]:
-    """Every argument name `message` references, across EVERY branch of a nested plural,
-    selectordinal or select -- not just the one branch the data in hand would pick.
+    """Every argument name `message` references, across *every* branch of a nested plural,
+    selectordinal or select, not just the one branch the data in hand would pick.
 
     This is deliberately a second walk over the syntax rather than a byproduct of
-    `format_icu`'s own: `format_icu` renders ONE branch (whichever the params select), so a
-    translator's typo in a branch no fixture happens to exercise would render clean and ship
-    silent. Checking a translation's argument names has to see every branch before anything
-    picks one, which is a different traversal from rendering one message, so it earns its own
-    function rather than bolting a second output onto the render pass.
+    `format_icu`'s own. `format_icu` renders *one* branch, whichever the params select, so
+    a translator's typo in a branch no fixture happens to exercise would render clean and
+    ship silent. Checking a translation's argument names has to see every branch before
+    anything picks one, which is a different traversal from rendering one message, so it
+    earns its own function rather than bolting a second output onto the render pass.
 
-    Shares `format_icu`'s own quote and brace handling (`_ICU_QUOTE_STARTS`, `_split_options`)
-    so an escaped literal brace does not desync this walk the same way `format_icu`'s own
-    docstring warns it can desync that one.
+    This shares `format_icu`'s own quote and brace handling (`_ICU_QUOTE_STARTS`,
+    `_split_options`), so an escaped literal brace does not desync this walk the same way
+    `format_icu`'s own docstring warns it can desync that one.
     """
     names: set[str] = set()
     i = 0
@@ -115,9 +116,9 @@ def _referenced_names(message: str) -> set[str]:
 
 
 class TestTheNameExtractorReadsEveryFormTheCatalogWrites:
-    """Rule 147: written down and proven against every ICU shape `backend.json` uses today,
-    plus the shapes a translation must not be able to hide an argument inside, before this
-    walk is trusted to check either."""
+    """Written down and proven against every ICU shape `backend.json` uses today, plus the
+    shapes a translation must not be able to hide an argument inside, before this walk is
+    trusted to check either."""
 
     def test_a_bare_interpolation(self) -> None:
         assert _referenced_names("{name} is here") == {"name"}
@@ -151,9 +152,10 @@ class TestTheNameExtractorReadsEveryFormTheCatalogWrites:
 
 #: A canonical BCP 47 tag, reduced to the shapes this catalog can actually ship: a lowercase
 #: 2-3 letter primary subtag, an optional title-case 4-letter script, an optional region as
-#: two uppercase letters or three digits. `Intl.getCanonicalLocales` (the frontend's own check,
-#: `i18n-locales.test.ts`) covers the full BCP 47 grammar; nothing in the standard library does
-#: (rule 15 -- no dependency added for it), so this is the reduced, hand-written equivalent.
+#: two uppercase letters or three digits. `Intl.getCanonicalLocales` (the frontend's own
+#: check, `i18n-locales.test.ts`) covers the full BCP 47 grammar. Nothing in the standard
+#: library does, and this project adds no dependency just for it, so this is the reduced,
+#: hand-written equivalent.
 _CANONICAL_BCP47 = re.compile(r"^[a-z]{2,3}(-[A-Z][a-z]{3})?(-([A-Z]{2}|[0-9]{3}))?$")
 
 
@@ -162,7 +164,8 @@ def _is_canonical_bcp47(tag: str) -> bool:
 
 
 class TestTheCanonicalTagChecker:
-    """Rule 147, for the second hand-written matcher this file adds."""
+    """Proven against the shapes it must accept and reject, for the second hand-written
+    matcher this file adds."""
 
     def test_accepts_the_shapes_the_catalog_uses(self) -> None:
         assert _is_canonical_bcp47("en")
@@ -178,10 +181,10 @@ class TestTheCanonicalTagChecker:
 
 
 def _translation_problems(english: dict[str, str], translated: dict[str, str]) -> list[str]:
-    """What is wrong with `translated` standing in for `english`, one line per finding -- the
-    same review `frontend/src/i18n-locales.test.ts`'s `catalogProblems` gives a translated
-    `ui.json`, over this catalog's simpler ICU subset. An empty message is untranslated and
-    serves English (`reaper.i18n._merge`), so it is never a finding."""
+    """What is wrong with `translated` standing in for `english`, one line per finding. This
+    is the same review `frontend/src/i18n-locales.test.ts`'s `catalogProblems` gives a
+    translated `ui.json`, over this catalog's simpler ICU subset. An empty message is
+    untranslated and serves English (`reaper.i18n._merge`), so it is never a finding."""
     problems: list[str] = []
     for key, message in translated.items():
         original = english.get(key)
@@ -193,7 +196,7 @@ def _translation_problems(english: dict[str, str], translated: dict[str, str]) -
         known = _referenced_names(original)
         try:
             format_icu(message, dict.fromkeys(known, 2), tag="en")
-        except Exception as exc:  # `format_icu` supports no syntax that should reach here; a
+        except Exception as exc:  # `format_icu` supports no syntax that should reach here. A
             # translation that does used a shape past reaper.i18n's own documented boundary.
             problems.append(f"{key}: {exc!r}")
             continue
@@ -205,8 +208,8 @@ def _translation_problems(english: dict[str, str], translated: dict[str, str]) -
 
 
 class TestTranslationReviewFailsOnEachThingItClaimsToCatch:
-    """Rule 145: proven against a fixture for each finding it claims to make, not only against
-    a clean example."""
+    """Proven against a fixture for each finding it claims to make, not only against a
+    clean example."""
 
     def test_a_clean_translation_is_not_a_finding(self) -> None:
         english = {"a": "{n, plural, one {# file} other {# files}}", "b": "Plain"}
@@ -225,7 +228,7 @@ class TestTranslationReviewFailsOnEachThingItClaimsToCatch:
         ]
 
     def test_dropping_an_argument_is_allowed(self) -> None:
-        # A translation may drop a tag or an argument; it may not invent one.
+        # A translation may drop a tag or an argument. It may not invent one.
         assert _translation_problems({"a": "{n} files"}, {"a": "Dateien"}) == []
 
     def test_unparseable_icu_is_a_finding(self) -> None:
@@ -240,11 +243,11 @@ def _write_backend_locale(root: Path, tag: str, catalog: dict[str, Any]) -> None
 
 @pytest.fixture
 def locales_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """`reaper.i18n`'s locales root repointed at `tmp_path`, seeded with the REAL shipped
-    English catalog -- every check below runs against the actual sentences a translator sees,
+    """`reaper.i18n`'s locales root repointed at `tmp_path`, seeded with the *real* shipped
+    English catalog. Every check below runs against the actual sentences a translator sees,
     never a synthetic stand-in for them. Both caches this module keys on the locales root
-    (`catalog`, `shipped_tags`) are cleared on the way in and the way out, so a stale tmp_path
-    result can never leak into a test that runs after this one in the same worker (rule 133).
+    (`catalog`, `shipped_tags`) are cleared on the way in and the way out, so a stale
+    tmp_path result can never leak into a test that runs after this one in the same worker.
     """
     english = json.loads(EN_BACKEND.read_text(encoding="utf-8"))
     _write_backend_locale(tmp_path, "en", english)
@@ -258,9 +261,9 @@ def locales_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Pa
         reaper_i18n.shipped_tags.cache_clear()
 
 
-#: A well-formed German fixture covering a plural, a plain sentence and a bare interpolation --
-#: enough of `en/backend.json`'s own shapes to prove the whole review passes something real,
-#: without transcribing every one of its 12 keys.
+#: A well-formed German fixture covering a plural, a plain sentence and a bare
+#: interpolation, enough of `en/backend.json`'s own shapes to prove the whole review passes
+#: something real, without transcribing every key it has.
 _GOOD_DE_BACKEND: dict[str, Any] = {
     "discord": {
         "leaving_soon": {
@@ -322,9 +325,9 @@ class TestEveryShippedBackendLocale:
             )
 
     def test_a_noncanonical_or_unruled_tag_fails_its_own_checks(self, locales_root: Path) -> None:
-        """The other half of rule 145: these two checks are proven to FIRE, not only to pass,
-        against a directory Weblate could plausibly create (a bad sync, or a language this
-        table has not caught up with yet)."""
+        """These two checks are proven to *fire*, not only to pass, against a directory
+        Weblate could plausibly create (a bad sync, or a language this table has not caught
+        up with yet)."""
         _write_backend_locale(locales_root, "de_DE", {"launcher": {"tray": {"quit": ""}}})
         _write_backend_locale(locales_root, "xx", {"launcher": {"tray": {"quit": ""}}})
         shipped = self._shipped_non_english()

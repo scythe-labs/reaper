@@ -17,9 +17,9 @@ read the whole thing before you run it. Python 3.11 or newer.
 
 Every record is built by copying named fields onto a fresh dict. Nothing is copied by
 default, so a field a future Tautulli adds cannot leak by being forgotten. That matters
-more than it sounds: a ``get_history`` row carries ``ip_address``, ``user``,
-``friendly_name``, ``machine_id``, ``platform`` and ``player``; a ``get_users`` row carries
-``email`` and ``username``; and an episode's ``media_info`` carries the full file path.
+more than it sounds. A ``get_history`` row carries ``ip_address``, ``user``,
+``friendly_name``, ``machine_id``, ``platform``, and ``player``. A ``get_users`` row
+carries ``email`` and ``username``. An episode's ``media_info`` carries the full file path.
 
 Identifiers become an HMAC token under a salt that stays on your machine (``--salt-file``,
 default ``.tautulli_anon_salt.json`` beside the output). Nobody who receives the dump can
@@ -42,11 +42,11 @@ are, since none of them says anything about you.
 
 ## What this cannot carry, measured rather than assumed
 
-**No TV sizes.** A show section's sweep rows report no ``file_size`` at all (0 of 200
-populated on a real server, against 200 of 200 for movies), and an episode's size lives
-only in a per-episode ``get_metadata`` call. Totalling one library's seasons that way cost
-about 25,000 calls in testing. So a season carries a null size, which Reaper reads as
-"could not measure" rather than as zero.
+**No TV sizes.** A show section's sweep rows report no ``file_size`` at all. On a real
+server, 0 of 200 rows were populated, against 200 of 200 for movies. An episode's size
+lives only in a per-episode ``get_metadata`` call, and totaling one library's seasons that
+way cost about 25,000 calls in testing. So a season carries a null size, which Reaper
+reads as "could not measure" rather than as zero.
 
 **No show status.** Tautulli exposes no continuing-or-ended flag, so rules resting on a
 show having finished cannot be tested from this dump.
@@ -84,21 +84,21 @@ FORMAT_VERSION = 1
 IMDB_RATINGS_URL = "https://datasets.imdbws.com/title.ratings.tsv.gz"
 
 #: Rows per page for a library sweep. Only a handful of calls either way, since a sweep row
-#: is cheap and a library is thousands of items rather than hundreds of thousands.
+#: is cheap and a typical library holds on the order of thousands of items.
 PAGE = 1000
 
-#: Rows per page of history, which is a different question with a different answer. What a
-#: history page costs is almost entirely FIXED per request: measured against a live instance
-#: at 425,983 rows, one page of 1,000 took 14.7s and one of 50,000 took 20.7s. So the page
-#: size sets the whole runtime, and 1,000 spends 105 minutes where 25,000 spends 4.
+#: Rows per page of history, a different question with a different answer. What a history
+#: page costs is almost entirely fixed per request: measured against a live instance at
+#: 425,983 rows, one page of 1,000 took 14.7s and one of 50,000 took 20.7s. So the page
+#: size sets the whole runtime: 1,000 spends 105 minutes where 25,000 spends 4.
 #:
-#: Not larger, though the curve keeps improving, because a page that times out is retried at
-#: half the size (:meth:`Tautulli.paged`) and the reach that matters is the SMALLEST page
-#: the code can end up choosing on a slower server than this one.
+#: Not larger, though the curve keeps improving, because a page that times out is retried
+#: at half the size (:meth:`Tautulli.paged`), and what matters is the smallest page the
+#: code can end up choosing on a slower server than this one.
 #:
-#: Reaper's own sweep sits at 5,000 (``services.history_sync.PAGE_SIZE``) and that is not a
-#: disagreement to reconcile: it allows 30s a request where this allows 120, and a 25k page
-#: spent most of that smaller budget. The pair moves together or not at all.
+#: Reaper's own sweep sits at 5,000 (``services.history_sync.PAGE_SIZE``), and that is not
+#: a disagreement to reconcile: it allows 30s a request where this allows 120, and a 25k
+#: page spent most of that smaller budget. The pair moves together or not at all.
 HISTORY_PAGE = 25_000
 
 #: Seconds a single request may take. Generous because of the fixed cost above: a 25,000-row
@@ -108,7 +108,7 @@ TIMEOUT = 120
 
 #: Concurrent requests. The per-item metadata sweep is thousands of independent GETs and is
 #: otherwise the longest phase of a run. Eight is chosen to be unremarkable to a Tautulli
-#: sharing a box with Plex, not to be fast on a big server; ``--jobs`` moves it.
+#: sharing a box with Plex, not to be fast on a big server. ``--jobs`` moves it.
 JOBS = 8
 
 #: How many items a dry run pulls per section. Small enough to finish in seconds, so
@@ -116,8 +116,8 @@ JOBS = 8
 #: full run.
 DRY_RUN_ITEMS = 25
 
-#: Half a year either way. Whole days, so weekday and hour-of-day patterns move together
-#: rather than smearing into each other.
+#: Half a year either way, in whole days, so weekday and hour-of-day patterns move
+#: together instead of smearing into each other.
 MAX_SHIFT_DAYS = 180
 
 
@@ -169,14 +169,16 @@ class Tautulli:
         raise RuntimeError(f"{cmd} failed after 3 tries: {last}")
 
     def spread(self, work: Any, over: Any, *, jobs: int, note: Any = None) -> list[Any]:
-        """``work`` applied to each of ``over``, in order, several requests in flight.
+        """Return ``work`` applied to each of ``over``, in order, with several requests in flight.
 
-        Every call this fans out is an independent GET against a server that is normally on
-        the same machine, and the serial version of this was the longest phase of a run.
+        Every call this fans out is an independent GET against a server that is normally
+        on the same machine. Running them serially would make this the longest phase of
+        a run.
 
-        ``map`` returns in the order it was given, so the caller can zip the results back
-        against its own list. The counter is only for the progress line, and it is read
-        under the same lock it is written under because several workers reach it at once.
+        ``map`` returns results in the order they were given, so the caller can zip them
+        back against its own list. The counter is only for the progress line, and it is
+        read under the same lock it is written under, since several workers reach it at
+        once.
         """
         items = list(over)
         done = 0
@@ -204,16 +206,17 @@ class Tautulli:
         note: Any = None,
         **params: Any,
     ) -> list[dict[str, Any]]:
-        """Every row of a paginated table endpoint, or the first ``cap`` of them.
+        """Return every row of a paginated table endpoint, or the first ``cap`` of them.
 
-        ``start`` advances by what came back rather than by what was asked for. A server
-        answering with more rows than the page requested would otherwise leave the cursor
-        behind the data and re-read the overlap forever.
+        ``start`` advances by what came back, not by what was asked for. A server
+        answering with more rows than the page requested would otherwise leave the
+        cursor behind the data and re-read the overlap forever.
 
-        **A page that times out is retried at half the size, down to a floor**, so a server
-        slower than the one ``HISTORY_PAGE`` was measured on degrades to a longer run rather
-        than to no dump at all. The shrink is permanent for the rest of the walk: whatever
-        made one page too slow is a property of the instance, not of that offset.
+        A page that times out is retried at half the size, down to a floor, so a server
+        slower than the one ``HISTORY_PAGE`` was measured on degrades to a longer run
+        instead of no dump at all. The shrink stays for the rest of the walk, since
+        whatever made one page too slow is a property of the instance, not of that one
+        offset.
         """
         out: list[dict[str, Any]] = []
         start = 0
@@ -238,7 +241,7 @@ class Tautulli:
         return out
 
     def children(self, rating_key: int) -> list[dict[str, Any]]:
-        """A show's seasons, or a season's episodes. Empty for an item with neither."""
+        """Return a show's seasons, or a season's episodes. Empty for an item with neither."""
         data = self("get_children_metadata", rating_key=rating_key)
         children = (data or {}).get("children_list") if isinstance(data, dict) else None
         return children if isinstance(children, list) else []
@@ -279,7 +282,7 @@ class Mask:
 
 
 def as_int(value: Any) -> int | None:
-    """Tautulli returns numbers as strings about half the time, and "" for absent."""
+    """Return an int. Tautulli returns numbers as strings about half the time, and "" for absent."""
     if value is None or value == "":
         return None
     try:
@@ -298,12 +301,12 @@ def as_float(value: Any) -> float | None:
 
 
 def round_size(size: int | None) -> int | None:
-    """To the nearest 100 MB. A byte-exact size identifies one release."""
+    """Round to the nearest 100 MB. A byte-exact size would identify one release."""
     return None if size is None else round(size / 100_000_000) * 100_000_000
 
 
 def round_votes(votes: int) -> int:
-    """Two significant figures, matching scripts/policy_lab_extract.py."""
+    """Round to two significant figures, matching scripts/policy_lab_extract.py."""
     if votes < 100:
         return votes
     magnitude = 10 ** (len(str(votes)) - 2)
@@ -311,7 +314,7 @@ def round_votes(votes: int) -> int:
 
 
 def imdb_id(meta: dict[str, Any]) -> str | None:
-    """The IMDb id from the new-agent ``guids`` list, else out of the legacy ``guid``."""
+    """Return the IMDb id from the new-agent ``guids`` list, or from the legacy ``guid`` field."""
     for guid in meta.get("guids") or []:
         if isinstance(guid, str) and guid.startswith("imdb://tt"):
             return guid.removeprefix("imdb://").split("?")[0]
@@ -334,13 +337,13 @@ def collect_items(
     jobs: int,
     note,
 ) -> tuple[list[dict[str, Any]], dict[str, int], dict[str, str]]:
-    """One record per movie and per show, the show rating keys, and the ids to enrich with.
+    """Return one record per movie and per show, the show rating keys, and the ids to enrich with.
 
-    The sweep gives size, arrival and play counts in one paginated call. It gives neither
-    genres nor the external id, so those cost one ``get_metadata`` per item, and on a real
-    library that is thousands of requests and the longest phase of a run. They are
-    independent of each other, so they go out several at a time. ``quick`` skips them
-    entirely and gives up both fields.
+    The sweep gives size, arrival, and play counts in one paginated call. It gives
+    neither genres nor the external id, so those cost one ``get_metadata`` call per
+    item: on a real library that is thousands of requests, the longest phase of a run.
+    Those calls are independent of each other, so they run several at a time.
+    ``quick`` skips them entirely and gives up both fields.
     """
     items: list[dict[str, Any]] = []
     show_keys: dict[str, int] = {}
@@ -395,10 +398,10 @@ def collect_items(
 
 
 def _metadata(work: tuple[Tautulli, int]) -> dict[str, Any] | None:
-    """One item's metadata, or ``None`` where the instance would not answer for it.
+    """Return one item's metadata, or ``None`` when the instance would not answer for it.
 
-    Returning rather than raising keeps one unreadable item from ending the whole sweep,
-    and the record it belongs to is marked so the gap is visible in the dump.
+    Returning instead of raising keeps one unreadable item from ending the whole sweep.
+    The record it belongs to is marked, so the gap stays visible in the dump.
     """
     api, key = work
     try:
@@ -410,12 +413,12 @@ def _metadata(work: tuple[Tautulli, int]) -> dict[str, Any] | None:
 def collect_seasons(
     api: Tautulli, mask: Mask, show_keys: dict[str, int], *, jobs: int, note
 ) -> list[dict[str, Any]]:
-    """Season structure per show, with each season's episode count.
+    """Return season structure per show, with each season's episode count.
 
-    Season pruning ranks seasons and holds the one a viewer is part-way through, and
-    telling "part-way through season 2" from "finished it" needs the episode count. That
-    count costs one call per season on top of one per show. Sizes are not here: see the
-    module docstring for what that measurement cost.
+    Season pruning ranks seasons and protects the one a viewer is part-way through.
+    Telling "part-way through season 2" from "finished it" needs the episode count,
+    which costs one call per season on top of one per show. This does not collect
+    sizes. See the module docstring for what that measurement would cost.
     """
     note(f"  {len(show_keys)} shows, {jobs} at a time")
     walked = api.spread(
@@ -428,12 +431,12 @@ def collect_seasons(
 
 
 def _one_show(work: tuple[Tautulli, Mask, str, int]) -> dict[str, Any] | None:
-    """One show's seasons and their episode counts, or ``None`` if it would not answer.
+    """Return one show's seasons and their episode counts, or ``None`` if it would not answer.
 
-    A show is walked whole by one worker rather than fanning its seasons out separately.
-    Two levels of pool nest badly for no gain: there are hundreds of shows to spread over
-    already, and a per-season fan-out would multiply the requests in flight by whatever the
-    widest show happens to be.
+    One worker walks a whole show, instead of fanning its seasons out separately.
+    Nesting two levels of thread pool would gain nothing here: there are already
+    hundreds of shows to spread over, and a per-season fan-out would multiply the
+    requests in flight by however wide the widest show is.
     """
     api, mask, token, key = work
     try:
@@ -464,23 +467,25 @@ def _one_show(work: tuple[Tautulli, Mask, str, int]) -> dict[str, Any] | None:
 def collect_plays(
     api: Tautulli, mask: Mask, *, cap: int | None, note
 ) -> tuple[list[dict[str, Any]], int | None]:
-    """Every finished play, filtered and typed the way ``services.history_sync`` does it.
+    """Return every finished play, filtered and typed the way ``services.history_sync`` does it.
 
-    Matching that mapping field for field is the point. A dump that keeps rows Reaper's own
-    mirror drops, or types a missing value differently, replays into verdicts a real scan
-    would not produce, and the difference would be read as an engine finding.
+    Matching that mapping field for field is the point. A dump that keeps rows Reaper's
+    own mirror drops, or types a missing value differently, replays into verdicts a
+    real scan would not produce, and the difference would be read as an engine finding.
 
-    **``grouping=0`` is the whole reason a play is a play here.** Tautulli groups consecutive
-    plays of the same item by default, and the default is what a caller that says nothing
-    gets: asking without it returned 309,013 rows on an instance holding 425,983, a quarter
-    of the history folded away. Those are exactly the rows a rewatch is counted from
-    (``services.rewatch.viewing_count`` clusters plays into viewings itself), so a grouped
-    dump does not merely lose rows, it reports a habitual rewatcher as a single viewing.
+    ``grouping=0`` is why a play is a play here. Tautulli groups consecutive plays of
+    the same item by default, and a caller that says nothing gets that default: asking
+    without it returned 309,013 rows on an instance holding 425,983, a quarter of the
+    history folded away. Those are exactly the rows a rewatch is counted from
+    (``services.rewatch.viewing_count`` clusters plays into viewings itself), so a
+    grouped dump does not just lose rows, it reports a habitual rewatcher as a single
+    viewing.
     """
     # What the instance says it holds, asked for before the walk and compared with what the
-    # walk got. A silent shortfall is how the grouping default hid: the run looked entirely
-    # healthy and simply carried a quarter less history than the server had. Nothing here can
-    # know WHY a walk came up short, so it records the pair and lets the reader see it.
+    # walk actually got. A silent shortfall is exactly the kind of gap the grouping default
+    # can hide: the run looks entirely healthy while carrying less history than the server
+    # has. Nothing here can know why a walk came up short, so it records both numbers and
+    # lets the reader see it.
     reported = None
     if cap is None:
         first = api("get_history", length=1, start=0, grouping=0) or {}
@@ -492,9 +497,9 @@ def collect_plays(
     plays = []
     live = 0
     for row in rows:
-        # A null row_id is a session still playing, verified against a real instance. Not
-        # history yet, and history_sync skips it, so a dump that kept it would carry plays
-        # Reaper never stores.
+        # A null row_id means a session still playing, confirmed against a real instance.
+        # This is not history yet, and history_sync skips it, so a dump that kept it would
+        # carry plays Reaper never stores.
         if row.get("row_id") is None:
             live += 1
             continue
@@ -517,9 +522,10 @@ def collect_plays(
                 # null here would be more honest and would make the dump disagree with the
                 # mirror, which is worse.
                 "percent_complete": as_int(row.get("percent_complete")) or 0,
-                # Null means Tautulli did not say, which is NOT 0.0. Coercing it makes a
-                # viewer look further behind than they are, and costs a season the
-                # protection it should have had.
+                # This field is never coerced to 0.0, unlike percent_complete above, because
+                # null means Tautulli did not say. Coercing it would make a viewer look
+                # further behind than they are, and would cost a season the protection it
+                # should have had.
                 "watched_status": as_float(row.get("watched_status")),
                 "episode": as_int(row.get("media_index")),
                 "season_number": as_int(row.get("parent_media_index")),
@@ -543,10 +549,11 @@ def collect_users(api: Tautulli, mask: Mask) -> list[dict[str, Any]]:
 
 
 def add_ratings(items: list[dict[str, Any]], wanted: dict[str, str], *, note) -> int:
-    """Join the public IMDb ratings dataset locally, then drop the ids that did the join.
+    """Join the public IMDb ratings dataset locally, drop the ids that did the join, and
+    return how many items matched.
 
-    The ids are the one field that would make the dump reversible by anyone who receives
-    it, so the lookup happens here and only the two numbers survive it.
+    The ids are the one field that would make the dump reversible by anyone who
+    receives it, so the lookup happens here and only the two numbers survive it.
     """
     needed = set(wanted.values())
     if not needed:
@@ -570,12 +577,12 @@ def add_ratings(items: list[dict[str, Any]], wanted: dict[str, str], *, note) ->
 
 
 def orphans(items: list[dict[str, Any]], plays: list[dict[str, Any]]) -> dict[str, int]:
-    """Distinct things played that the library no longer holds, beside the ones it does.
+    """Return counts of distinct played items the library no longer holds, plus the ones it does.
 
-    A rating key in the history is not a promise the item still exists: Tautulli keeps a
-    play after the file is gone, and a re-added file gets a new key while its old plays stay
-    where they were (``services.watch_evidence``). Both read the same way from here, which
-    is why this counts rather than explains.
+    A rating key appearing in the history is not a promise the item still exists.
+    Tautulli keeps a play after the file is gone, and a re-added file gets a new key
+    while its old plays stay where they were (``services.watch_evidence``). Both cases
+    look the same from here, which is why this counts rather than tries to explain.
     """
     movies = {i["token"] for i in items if i["type"] == "movie"}
     shows = {i["token"] for i in items if i["type"] == "show"}
@@ -628,8 +635,9 @@ def build(
         "format": FORMAT_VERSION,
         "reference_now": int(time.time()) + mask.shift_seconds,
         "history_begins_at": min(starts) if starts else None,
-        # What the server said it held, beside what was collected. A reader can tell a dump
-        # that saw the whole history from one that came up short, without trusting this tool.
+        # What the server said it held, next to what this dump actually collected. A reader
+        # can tell a dump that saw the whole history from one that came up short, without
+        # trusting this tool.
         "history_rows_reported": reported_rows,
         "clock_shifted": True,
         "partial": cap is not None,
@@ -643,12 +651,11 @@ def build(
             "users": len(users),
             "rated": rated,
             "api_calls": api.calls,
-            # How much of this history is about media the library no longer holds. Measured
-            # at 39% of watched movies and 46% of watched shows on the first real library
-            # this ran against, which is what a history outliving its library looks like and
-            # not a fault. It belongs in the summary because it decides what the dump can be
-            # asked: a signal read off items still present is answering a question about the
-            # survivors, and the number here says how much of the past that leaves out.
+            # How much of this history is about media the library no longer holds. This is a
+            # normal effect of history outliving the library it came from, not a fault. It
+            # belongs in the summary because it decides what the dump can be asked: a signal
+            # read off items still present only answers a question about the survivors, and
+            # this number says how much of the past that leaves out.
             "played_but_gone": orphans(items, plays),
         },
         "genre_histogram": dict(
@@ -692,8 +699,8 @@ def main(argv: list[str] | None = None) -> int:
     def note(message: str) -> None:
         print(message, flush=True)
 
-    # Said before the run, not after it. This covers what everyone on the server watched,
-    # and the person typing the command is only one of them.
+    # This warning prints before the run starts, not after, since it covers what everyone
+    # on the server watched, and the person typing the command is only one of them.
     note("This covers what everyone on your server watched, with the names taken off.")
     note("Nobody else's name, address or viewing times can be read back out of it.")
     note("")

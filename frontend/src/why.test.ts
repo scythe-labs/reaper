@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The composer, proven against the real catalog. The backend suite asserts the same
-// sentences through its own test-side twin (`tests/_reasons.py`), so the expectations
-// here are what keep the two composers honest with each other: both must render these
-// exact strings from the same `ui.json`.
+// This tests the composer against the real catalog. The backend suite asserts the same
+// sentences through its own test-side twin (`tests/_reasons.py`). The expectations here keep
+// the two composers honest with each other, since both must render these exact strings from
+// the same `ui.json`.
 
 import { describe, expect, it } from "vitest";
 import i18next from "./i18n";
@@ -136,10 +136,10 @@ describe("the five media-typed why.cause pairs (movie/season merge)", () => {
   });
 
   it("an old bare movie-side reason (no params at all, frozen before the merge) still renders words", () => {
-    // Before this merge the movie side never carried a `mediaType` param -- ICU's `select`
-    // leaves the raw template unparsed rather than falling to `other` when the variable is
-    // entirely absent from params, so this pins the resolution-point default that keeps a
-    // pre-merge row from printing broken syntax at the operator.
+    // A stored row from before this merge has no `mediaType` param. ICU's `select` leaves the
+    // raw template unparsed rather than falling back to `other` when the variable is entirely
+    // absent from params, so this pins the resolution-point default that keeps such a row from
+    // printing broken syntax at the operator.
     expect(composeReason({ k: "cause.plex_unmatched" })).toBe(
       "This title couldn't be found in Plex.",
     );
@@ -149,9 +149,9 @@ describe("the five media-typed why.cause pairs (movie/season merge)", () => {
   });
 
   it("an old season-side id, retired by the merge, still renders the season wording", () => {
-    // Every scan made before this merge that carried one of the five retired season-only
-    // ids: the catalog has no entry for them any more, so why.ts's alias map is the only
-    // thing standing between one of these rows and its raw id on screen.
+    // A scan made before this merge could carry one of five retired season-only ids. The
+    // catalog no longer has an entry for them, so why.ts's alias map is the only thing standing
+    // between one of these rows and its raw id on screen.
     expect(composeReason({ k: "cause.plex_season_unmatched" })).toBe(
       "This season couldn't be found in Plex.",
     );
@@ -190,22 +190,22 @@ describe("rewatch_thin (#906: merged with the why-panel's own rewatch-odds thin 
   });
 
   it("an old bare reason (no params at all, frozen before the select shipped) still renders words", () => {
-    // RewatchOddsGate wrote this bare, on both the movie and season lanes, before #906 --
-    // proving the same missing-param behavior Task A's cause merge already guards against.
+    // RewatchOddsGate used to write this bare, on both the movie and season lanes. This proves
+    // the same missing-param behavior the cause merge above already guards against.
     expect(composeReason({ k: "rewatch_thin" })).toBe("Too few titles like this to say.");
   });
 });
 
 describe("the rewatch gate's three other cohort reasons (#908)", () => {
-  // #906 gave `rewatch_thin` its select and left these three saying "titles" on a TV lane.
-  // Each carries its own params, so the stored-row cases below drop `mediaType` alone rather
-  // than every param, which is exactly the shape a snapshot frozen before #908 holds.
+  // One earlier change gave `rewatch_thin` its select and left these three saying "titles" on
+  // a TV lane. Each carries its own params, so the stored-row cases below drop `mediaType`
+  // alone rather than every param, which is exactly the shape an older stored snapshot holds.
   it("selects the movie or season wording off a fresh mediaType param", () => {
     expect(composeReason({ k: "rewatch_no_history", p: { mediaType: "season" } })).toBe(
       "Not enough watch history to say how often shows like this get watched.",
     );
-    // bound_pct is the gate's own Wilson upper bound for k=20,n=50 (#936): the sentence
-    // quotes it, not the raw rate, with the raw counts kept alongside it.
+    // bound_pct is the gate's own Wilson upper bound for k=20,n=50. The sentence quotes this
+    // bound, not the raw rate, and keeps the raw counts alongside it.
     expect(
       composeReason({
         k: "rewatch_watched_again",
@@ -229,8 +229,8 @@ describe("the rewatch gate's three other cohort reasons (#908)", () => {
     expect(composeReason({ k: "rewatch_no_history" })).toBe(
       "Not enough watch history to say how often titles like this get watched.",
     );
-    // No mediaType AND no bound_pct: both predate this row, and both are backfilled --
-    // "movie" the fixed default, bound_pct recomputed from k/n (#936).
+    // This row has no mediaType and no bound_pct, since both predate it, and both are
+    // backfilled. "movie" is the fixed default, and bound_pct is recomputed from k/n.
     expect(composeReason({ k: "rewatch_watched_again", p: { k: 20, n: 50 } })).toBe(
       "as many as 54% of titles like this could get watched again within a year (20 of 50 measured)",
     );
@@ -266,8 +266,8 @@ describe("rewatch_watched_again/rewatch_under_floor quote the bound the gate com
   });
 
   it("clamps a backfilled under-floor bound below the floor the sentence orders it against", () => {
-    // 3 of 31 rounds to the 25% floor itself; the gate clamps its own bound_pct the same
-    // way (RewatchOddsGate.evaluate), and a legacy row must not read "25%, under the 25%".
+    // 3 of 31 rounds to the 25% floor itself. The gate clamps its own bound_pct the same way
+    // (RewatchOddsGate.evaluate), so a legacy row must not read "25%, under the 25%".
     expect(
       composeReason({ k: "rewatch_under_floor", p: { k: 3, n: 31, floor_pct: 25 } }),
     ).toContain("As many as 24%");
@@ -281,11 +281,11 @@ describe("rewatch_watched_again/rewatch_under_floor quote the bound the gate com
 });
 
 describe("composeIn", () => {
-  // Fixture entries, added to i18next at test time rather than reading real catalog
-  // content -- `warning` has no production keys yet (chip.text/chip.sentence do now, and
-  // the two cases below read them for real). tests/_reasons.py's twin test uses the same
-  // fixture message, so a passing pair here and there proves `namespace` walks the catalog
-  // the same way this one does (rule 119).
+  // These are fixture entries added to i18next at test time rather than read from real catalog
+  // content. `warning` has no production keys yet, though chip.text and chip.sentence do now,
+  // and the two cases below read them for real. tests/_reasons.py's twin test uses the same
+  // fixture message, so a passing pair here and there proves `namespace` walks the catalog the
+  // same way this one does.
   i18next.addResourceBundle(
     "en-US",
     "ui",
@@ -328,7 +328,7 @@ describe("composeIn", () => {
     expect(composeIn("why", key)).toBe(composeReason(key));
   });
 
-  // Phase 8b: the browser's half of a coded API refusal, off the real error.* catalog.
+  // This is the browser's half of a coded API refusal, off the real error.* catalog.
   it("pluralizes an error.* entry's count param", () => {
     expect(composeIn("error", { k: "password.too_short", p: { min_length: 1 } })).toBe(
       "Use at least 1 character.",
@@ -342,18 +342,18 @@ describe("composeIn", () => {
     expect(
       composeIn("error", { k: "policy.field_needs_value", p: { field: "recent_watchers" } }),
     ).toBe('"People who watched it recently" needs a value.');
-    // Unrecognized field: falls back to the raw key, same posture as why.ts.
+    // An unrecognized field falls back to the raw key, the same posture as why.ts.
     expect(
       composeIn("error", { k: "policy.field_needs_value", p: { field: "not_a_real_field" } }),
     ).toBe('"not_a_real_field" needs a value.');
   });
 
   it("composes a nested error.* param through the error namespace, not why", () => {
-    // services.modal.mapError's own `{error}` param is exactly this shape: a non-error
-    // outer key (ServiceModal.tsx's own namespace) carrying an IntegrationError/PlexError's
-    // own code as a nested reason. `why.error.instance.auth_refused` is not a catalog entry
-    // and never should be -- the sentence lives at `error.instance.auth_refused`, the same
-    // entry the backend's own `english()` reads for the identical nested Reason.
+    // services.modal.mapError's own `{error}` param is exactly this shape, a non-error outer
+    // key (ServiceModal.tsx's own namespace) carrying an IntegrationError or PlexError's own
+    // code as a nested reason. `why.error.instance.auth_refused` is not a catalog entry and
+    // never should be. The sentence lives at `error.instance.auth_refused`, the same entry the
+    // backend's own `english()` reads for the identical nested Reason.
     expect(
       composeIn("services.modal", {
         k: "mapError",

@@ -4,8 +4,8 @@
 //
 // The restore half is `RestoreCard`, a child that owns the staged upload and reports it upward
 // through this panel. A staged file is the one unsaved thing on this screen whose loss also
-// strands something on the SERVER, so the card cancels the upload on its way out and the
-// section switch asks first (rule 146).
+// strands something on the server, so the card cancels the upload on its way out, and the
+// section switch asks the operator to confirm first.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -38,7 +38,7 @@ export function BackupPanel({
     setBusy(true);
     try {
       await api.downloadBackup();
-      // The server stamps "last backup" as the file goes out; pick it up.
+      // The server stamps "last backup" as the file goes out. Refetch to pick it up.
       await qc.invalidateQueries({ queryKey: ["backup-info"] });
     } catch (err) {
       setError(err instanceof Error ? describeError(err) : t("backup.download.errorFallback"));
@@ -52,12 +52,12 @@ export function BackupPanel({
       <h2>{t("backup.heading")}</h2>
       <p className="blurb">{t("backup.blurb")}</p>
       {isPending && <p className="muted">{t("common.loading")}</p>}
-      {/* Backup became a draft-holding panel with #135, so it takes the same two-branch read the
-          other three carry: the never-loaded sentence only where nothing ever landed, and the
-          shared stale line beside a card that is still on screen. Saying "Couldn't load this page"
-          over a staged file and a typed password sends the operator to reload, and a reload does
-          not run the unmount cleanup -- so following this panel's own advice was the one exit that
-          orphaned the archive. */}
+      {/* This panel can hold a draft (a staged restore upload), so a failed read needs two
+          branches: the never-loaded sentence only where nothing ever landed, and the shared
+          stale line beside a card that is still on screen. Showing "Couldn't load this page"
+          over a staged file and a typed password would send the operator to reload, and a
+          reload skips the unmount cleanup, so the reload itself would orphan the staged
+          upload on the server. */}
       {isError && !data && <Notice tone="error">{t("common.pageLoadError")}</Notice>}
       {isError && data && <StaleReadNotice />}
       {data && (
@@ -82,9 +82,9 @@ export function BackupPanel({
             </div>
             {error && <Notice tone="error">{t("backup.download.failed", { error })}</Notice>}
             {!data.key_in_backup && (
-              // `standing`: where the key is set is a property of the deployment, read from
-              // `["backup-info"]`, so this is on the panel from its first paint. The download
-              // failure directly above answers a press and stays an alert.
+              // standing: whether the key is set is a fact about the deployment, read from
+              // `["backup-info"]`, so this notice is on the panel from its first paint. The
+              // download failure right above it is a reply to a press, and stays an alert.
               <Notice tone="warn" standing>
                 {t("backup.download.keyEnvWarning")}
               </Notice>
@@ -97,11 +97,11 @@ export function BackupPanel({
             </Notice>
           </section>
 
-          {/* Rule 146's second claim, for this panel: the card is what holds the staged backup and
-              it renders only inside this `data` branch, so the report and the surface arrive and
-              leave together. This panel has no early return to re-read -- a failed refetch adds a
-              line above without taking the card away, and React Query keeps `data` on the last
-              good row, so there is no state where the card is gone and the report survives it. */}
+          {/* The card holds the staged backup, and it renders only inside this `data` branch, so
+              the reported dirty state and the card that can act on it arrive and leave together.
+              This panel has no early return to re-check: a failed refetch adds a notice above
+              without taking the card away, and React Query keeps `data` on the last good row, so
+              there is no state where the card is gone but the dirty report survives it. */}
           <RestoreCard armed={data.restore_armed} onDirtyChange={onDirtyChange} />
         </>
       )}

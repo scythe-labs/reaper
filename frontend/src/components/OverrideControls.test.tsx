@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The Spare button's own copy. One rule carries all of it: undecided, the button says what a
 // press WILL do (the operator's default length); spared, it says what is in force on THIS item.
-// The bug that motivated it: a 90-day spare under a Forever default left the button reading
-// "∞ Spared" -- the wrong glyph, and no sign of when the spare ends.
+// A timed spare must always show its own end date, never the default's glyph: a 90-day spare
+// under a Forever default must never read "∞ Spared."
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect, useState } from "react";
@@ -12,8 +12,8 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import { OverrideControls, OverrideMark } from "./OverrideControls";
 import { QueueSettingsContext, type QueueSettings } from "./queueSettings";
 
-// Spreads the real module for ApiError (rule 135): describeError's `instanceof ApiError`
-// check throws against a mock that answers for `api` alone.
+// Spreads the real module for ApiError: describeError's `instanceof ApiError` check throws
+// against a mock that answers for `api` alone.
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   api: { general: vi.fn(), profile: vi.fn() },
@@ -48,8 +48,8 @@ const forever = (c: HTMLElement) => c.querySelector(".infinity") !== null;
 /** `draw` above passes a constant `pending`, which is the one thing no real caller does: every
  *  one of them threads it from the override mutation (`ReviewQueue`, `WhyPanel`, `ShowPanel`), so
  *  a press that sets a spare disables the control it came from IN THE SAME COMMIT, then settles a
- *  moment later. That is the whole shape of the bug the focus return has to survive, and a fixed
- *  `pending={false}` hides it -- the menu's exits all look like they restore focus. */
+ *  moment later. Focus return must survive that disable-then-settle sequence, which a fixed
+ *  `pending={false}` cannot exercise: every menu exit would look like it restores focus. */
 function DrawLive({ defaultSpareDays = 30, override = null }: DrawLiveProps) {
   const [pending, setPending] = useState(false);
   useEffect(() => {
@@ -79,8 +79,8 @@ const CARET = "Choose how long to keep it";
 
 describe("the control an operator decides with, audited", () => {
   // Every resting state, because each draws different markup: an undecided pair, a lit Spare, and
-  // a Reap the engine cannot honor yet, which is the dashed-red held reap of rule 49. The state a
-  // bare `draw()` hands you for free is the undecided one (rule 145).
+  // a Reap the app cannot honor yet, which draws as a dashed-red held reap. A bare `draw()` gives
+  // the undecided state for free, so the other two states are driven explicitly here too.
   it.each([
     ["undecided", null],
     ["spared", "spare"],
@@ -91,10 +91,10 @@ describe("the control an operator decides with, audited", () => {
   });
 
   it("has none with the spare-length menu open, which is not in the render container", async () => {
-    // `document.body`, and that is exactly what this case pins. The menu is the app's only
-    // `createPortal`, so it lands OUTSIDE the tree `render()` returns -- an audit scoped to
-    // `container` walks right past it and reports clean on a menu it never saw. It carries its
-    // own `role="group"` and its own Tab trap, which is exactly the markup worth auditing.
+    // Audited against `document.body`, not the render container. The menu is the app's only
+    // `createPortal`, so it lands OUTSIDE the tree `render()` returns, and an audit scoped to
+    // `container` would walk right past it and report clean on a menu it never saw. It carries
+    // its own `role="group"` and its own Tab trap, which is exactly the markup worth auditing.
     const user = userEvent.setup();
     draw({}, 30);
     await user.click(screen.getByRole("button", { name: CARET }));
@@ -130,8 +130,9 @@ describe("the Spare button, spared", () => {
   });
 
   it("shows the bare count on the fixed narrow tracks, named in full for a screen reader", () => {
-    // The visible label is just "87d" (rule 51 leaves no room for the word), so the accessible
-    // name carries the rest -- with the visible text still inside it (WCAG 2.5.3).
+    // The visible label is just "87d," since the fixed-width track leaves no room for the
+    // word, so the accessible name carries the rest, with the visible text still inside it
+    // (WCAG 2.5.3).
     const { container } = draw({ override: "spare", spareExpiresAt: inDays(87) });
     const btn = screen.getByRole("button", { name: "Spared 87d left" });
     expect(btn.textContent).toContain("87d");
@@ -140,8 +141,8 @@ describe("the Spare button, spared", () => {
   });
 
   it("describes the ITEM's spare, not the default a press would have applied", () => {
-    // The original bug: default Forever + a timed spare rendered "∞ Spared". The glyph must
-    // follow the spare in force, so a timed spare wears the clock whatever the default is.
+    // The glyph must follow the spare actually in force on this item, not the operator's
+    // default: a timed spare wears the clock whatever the default is, even a Forever default.
     const { container } = draw({ override: "spare", spareExpiresAt: inDays(87) }, 0);
     expect(forever(container)).toBe(false);
   });
@@ -158,8 +159,9 @@ describe("the Spare button, spared", () => {
 describe("a spare whose clock has passed", () => {
   // The one state where this control stops being a toggle. The other two answer "is this
   // spared" and press to undo themselves; a spent spare has nothing left to undo, and what the
-  // operator opened the row to do is keep the item again. So it offers a fresh spare, and
-  // clearing the spent row moves into the length menu, which has room to say what it does.
+  // operator wants when they open this row is to keep the item again. So it offers a fresh
+  // spare, and clearing the spent row moves into the length menu, which has room to say what
+  // that does.
   const SPENT = { override: "spare", spareExpiresAt: inDays(-3) } as const;
   const SPENT_NAME = "Spare again, the last one expired";
 
@@ -176,8 +178,8 @@ describe("a spare whose clock has passed", () => {
   });
 
   it("presses through to a new spare, never to clearing the spent one", async () => {
-    // The mis-affordance this replaced: the green button on a spent spare CLEARED it, so the
-    // one obvious press did the opposite of what the operator came for.
+    // A press on a spent spare must set a fresh one, never clear it: clearing would do the
+    // opposite of what the operator opened this row to do.
     const onSet = vi.fn();
     const onClear = vi.fn();
     draw({ ...SPENT, onSet, onClear }, 30);
@@ -187,11 +189,11 @@ describe("a spare whose clock has passed", () => {
   });
 
   it("shows the plain word, and names what a press does rather than a status", () => {
-    // "0d" is not a smaller amount of "27d" -- it is none of it, and in a pressed green button
-    // it read as an active decision with nothing left, a contradiction rather than a state.
-    // ("Expired" cannot go on the fixed track at all: rule 51 leaves about 47px, and a real
-    // browser renders it "Expir…".) The visible text stays inside the accessible name either
-    // way, which is what WCAG 2.5.3 asks for.
+    // "0d" is not a smaller amount than "27d," it is none of it, and in a pressed green button
+    // it would read as an active decision with nothing left, a contradiction rather than a
+    // real state. ("Expired" cannot fit the fixed-width track either: it is about 47px wide,
+    // and a real browser renders it "Expir….") The visible text stays inside the accessible
+    // name either way, which is what WCAG 2.5.3 asks for.
     const narrow = draw(SPENT);
     const short = screen.getByRole("button", { name: SPENT_NAME });
     expect(short.textContent).toContain("Spare");
@@ -203,10 +205,11 @@ describe("a spare whose clock has passed", () => {
   });
 
   it("never claims in a tooltip that a scan will hand the file back", () => {
-    // This control knows only THIS item's own spare, so it must not assert what still keeps the
-    // file: a season inside a longer show spare is kept regardless, and "still kept until the
-    // next scan judges it again" would be false there. It states the fact and the action; the
-    // row's chip and KeptByShowNote answer the fate question from the covering spare.
+    // This control knows only THIS item's own spare, so it must not assert what still keeps
+    // the file: a season inside a longer show spare stays kept regardless, and "still kept
+    // until the next scan judges it again" would be false there. It states only the fact and
+    // the action; the row's chip and `KeptByShowNote` answer the fate question from the
+    // covering spare.
     draw({ ...SPENT, roomy: true });
     const title = screen.getByRole("button", { name: SPENT_NAME }).getAttribute("title") ?? "";
     // Never a keep-until day already gone, either.
@@ -235,10 +238,10 @@ describe("a spare whose clock has passed", () => {
 
 describe("the resting mark", () => {
   it("draws nothing for a spent spare, so it cannot contradict the button", () => {
-    // The mark is what a row carrying a decision looks like at rest (rule 46). A spent spare is
-    // no longer a decision in force at this level -- the button it hands over to on hover
-    // offers a fresh one -- so resting as "0d" announced a decision the control no longer
-    // holds. A live spare and a forever one still rest as their own icon.
+    // The mark is what a row carrying a decision looks like at rest. A spent spare is no
+    // longer a decision in force at this level: the button it hands over to on hover offers a
+    // fresh one, so resting as "0d" would announce a decision the control no longer holds. A
+    // live spare and a forever one still rest as their own icon.
     const { container: spent } = render(
       <OverrideMark override="spare" spareExpiresAt={inDays(-3)} />,
     );
@@ -255,17 +258,19 @@ describe("the resting mark", () => {
 });
 
 // The spare-length menu is portaled to <body>, so it is the one popover in the app where the DOM
-// order and the visual anchor have nothing to do with each other. Opening it and pressing Tab used
-// to walk on to the next control INSIDE the card, leaving the menu's own rows reachable only by
-// tabbing through the remainder of the page -- on the control that decides how long a file is kept.
+// order and the visual anchor have nothing to do with each other. Tab must stay inside the menu
+// while it is open, or it walks on to the next control INSIDE the card, leaving the menu's own
+// rows reachable only by tabbing through the rest of the page, on the control that decides how
+// long a file is kept.
 describe("the spare-length menu's keyboard reach", () => {
   it("takes focus on its first row when it opens, since the portal puts it out of Tab's reach", async () => {
-    // The row, NOT the group that wraps it. On iOS a `role="group"` with children is never a
-    // `UIAccessibilityElement` (WebKit's `determineIsAccessibilityElement`), so focusing the
-    // container left the VoiceOver cursor with nowhere to be and a swipe-right from the caret
-    // walked the panel BEHIND this menu -- its own rows reachable only by swiping to the end of
-    // the page, since the portal renders them last (#206). A real control is the APG Menu Button
-    // pattern and costs the platforms that were already fine nothing.
+    // Focus must land on the row itself, NOT the group that wraps it. On iOS a `role="group"`
+    // with children is never a `UIAccessibilityElement` (WebKit's
+    // `determineIsAccessibilityElement`), so focusing the container would leave the VoiceOver
+    // cursor with nowhere to be, and a swipe-right from the caret would walk the panel BEHIND
+    // this menu instead, since the portal renders this menu's rows last in the DOM. Focusing
+    // the APG Menu Button pattern's own control fixes this without changing anything for
+    // platforms that were already fine.
     //
     // `dayRows` sorts low to high, so 30 leads for a default of 30 and for one of 90 alike; the
     // second case is what proves this tracks the first ROW rather than the default.
@@ -278,8 +283,8 @@ describe("the spare-length menu's keyboard reach", () => {
   });
 
   it("leads with the lowest row even when the operator's default is not it", async () => {
-    // Rule 145: the first row is a position, and a fixture whose default happens to BE the first
-    // row cannot tell that from a hook that focuses the default.
+    // The first row is a position in the list, and a fixture whose default happens to BE the
+    // first row cannot tell that apart from a hook that focuses the default instead.
     const user = userEvent.setup();
     draw({}, 90);
     await user.click(screen.getByRole("button", { name: "Choose how long to keep it" }));
@@ -287,10 +292,9 @@ describe("the spare-length menu's keyboard reach", () => {
     expect(screen.getByRole("button", { name: /^30 days/ })).toHaveFocus();
   });
 
-  // The custom-length box is the spare menu's own field, and it had no test at all while it was
-  // a hand-built copy of `FixedQuantity`'s markup -- so nothing would have noticed when it stopped
-  // matching the control it was copied from. It is the shared control now (rule 40), and these
-  // pin the two things the swap had to carry across: it opens focused, and Enter commits.
+  // The custom-length box is the spare menu's own field. It uses the shared `FixedQuantity`
+  // control, and these two tests check what that control must carry across from any hand-built
+  // version: it opens focused, and Enter commits.
   describe("the custom spare length", () => {
     /** Open the menu and reveal the custom box. */
     async function openCustom(user: ReturnType<typeof userEvent.setup>) {
@@ -317,9 +321,8 @@ describe("the spare-length menu's keyboard reach", () => {
     });
 
     // The unit is bound as the box's DESCRIPTION rather than folded into its name, which is why
-    // `FixedQuantity` exists in the shape it does. The hand-built copy had put `aria-hidden`
-    // back on the suffix and carried "in days" in the label instead -- the same outcome by the
-    // opposite route, and one that stutters the moment it uses the real control.
+    // `FixedQuantity` exists in the shape it does: a label carrying "in days" instead would read
+    // twice once combined with the real control's own suffix.
     it("speaks its unit once, after the value", async () => {
       const user = userEvent.setup();
       draw({}, 30);
@@ -340,11 +343,11 @@ describe("the spare-length menu's keyboard reach", () => {
   });
 
   // The exits above and below are NOT the same exit. Escape and Back leave the control untouched,
-  // so the hook's own restore lands. A pick and a Clear each start a mutation, and `pending`
-  // disables the caret in the same batched commit that closes the menu -- so the restore fires at
-  // a disabled button, `.focus()` silently does nothing, and the operator who just decided to KEEP
-  // a file is left on <body> with the next Tab restarting above the whole queue. This suite once
-  // covered only Escape, and was green while the two commonest exits were broken.
+  // so the hook's own restore lands normally. A pick and a Clear each start a mutation, and
+  // `pending` disables the caret in the same batched commit that closes the menu, so the restore
+  // must wait for that mutation to settle: firing it at a disabled button makes `.focus()`
+  // silently do nothing, leaving the operator who just decided to KEEP a file on <body> with the
+  // next Tab restarting above the whole queue.
   it("hands focus back to the caret after a pick, once the mutation settles", async () => {
     const user = userEvent.setup();
     renderWithProviders(<DrawLive />);
@@ -372,10 +375,10 @@ describe("the spare-length menu's keyboard reach", () => {
   });
 
   it("consumes Escape rather than letting the panel behind it close too", async () => {
-    // This menu is opened from inside a `.why` panel's own footer, and WhyShell's Escape sits on
-    // `window` -- which `document` bubbles on to. Without the menu consuming the key, one press
-    // closed the menu AND took away the reasoning the operator was reading (rule 72: the filter
-    // popovers in ReviewQueue stop the same key for the same reason).
+    // This menu is opened from inside a `.why` panel's own footer, and `WhyShell`'s Escape
+    // listener sits on `window`, which `document` bubbles on to. If the menu did not consume
+    // the key, one press would close the menu AND take away the reasoning the operator was
+    // reading. The filter popovers in `ReviewQueue` stop the same key for the same reason.
     const user = userEvent.setup();
     draw({}, 30);
     await user.click(screen.getByRole("button", { name: CARET }));
@@ -400,8 +403,8 @@ describe("the spare-length menu's keyboard reach", () => {
     expect(rows[0]!).toHaveFocus();
   });
 
-  // The roles it used to claim promised arrow-key navigation between items that was never
-  // implemented. Announcing a contract the widget does not keep is worse than announcing none.
+  // ARIA menu/menuitem roles promise arrow-key navigation between items, which this widget does
+  // not implement. Announcing a contract the widget does not keep is worse than announcing none.
   it("claims no ARIA menu contract it does not implement", async () => {
     const user = userEvent.setup();
     draw({}, 30);

@@ -1,16 +1,17 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The watch-history mirror: fast incremental sync, and a regression check that works.
+"""The watch-history mirror. Fast incremental sync, and a regression check that works.
 
-Two things this proves, both of which were wrong before:
+Two things this proves:
 
-* An incremental sync fetches only the delta via Tautulli's ``after`` filter -- it does
-  NOT re-walk the whole history every time. On a large library that was minutes per scan.
-* The regression check compares **Tautulli's own reported total** against last time, so a
-  reset/prune is actually detected. The old check compared our local mirror's row count,
-  which only ever grows (INSERT OR REPLACE, no deletes), so it could never fire.
+* An incremental sync fetches only the delta via Tautulli's ``after`` filter. It never
+  re-walks the whole history every time, which on a large library took minutes per scan.
+* The regression check compares Tautulli's own reported total against last time, so a
+  reset or prune is actually detected. An earlier check compared our local mirror's row
+  count instead, which only ever grows (INSERT OR REPLACE, no deletes), so it could never
+  fire.
 
-A fake Tautulli stands in for the real API and records how it was called, so the tests
-can assert the `after` filter was used rather than a full walk.
+A fake Tautulli stands in for the real API and records how it was called, so the tests can
+assert the `after` filter was used rather than a full walk.
 """
 
 from __future__ import annotations
@@ -80,7 +81,7 @@ class TestIncrementalSyncFetchesOnlyTheDelta:
         fake = PagingTautulli(history)
         await sync(engine, fake)
 
-        # A new play arrives; re-sync.
+        # A new play arrives, so re-sync.
         history.insert(0, _row(11, days_ago=0))
         fake.total = 11
         fake.after_calls.clear()
@@ -92,7 +93,7 @@ class TestIncrementalSyncFetchesOnlyTheDelta:
         assert fake.after_calls[0] is not None
 
     async def test_a_full_sync_re_walks_everything(self, engine: AsyncEngine) -> None:
-        """The nightly sweep that catches backfilled old events must NOT use `after`."""
+        """The nightly sweep that catches backfilled old events must not use `after`."""
         fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 6)])
         await sync(engine, fake)
         fake.after_calls.clear()
@@ -102,7 +103,7 @@ class TestIncrementalSyncFetchesOnlyTheDelta:
         assert fake.after_calls[0] is None
 
     async def test_a_live_session_with_no_row_id_is_skipped(self, engine: AsyncEngine) -> None:
-        """row_id is null only for in-progress sessions -- not history yet."""
+        """row_id is null only for in-progress sessions, not history yet."""
         fake = PagingTautulli([_row(None, days_ago=0), _row(1, days_ago=1), _row(2, days_ago=2)])
 
         await sync(engine, fake)
@@ -112,7 +113,7 @@ class TestIncrementalSyncFetchesOnlyTheDelta:
 
 class TestThePageLoopFetchesEveryRow:
     """The mirror's depth is what the horizon gate reads, and a shallow horizon is the
-    single largest mass-deletion vector this codebase has: every item older than the
+    single largest mass-deletion vector this codebase has. Every item older than the
     mirror looks never-played. So the paging loop must not truncate on a source that is
     merely less tidy than expected."""
 
@@ -186,7 +187,7 @@ class _TimingOutTautulli(PagingTautulli):
     larger, recording every length it was asked for.
 
     The failure is built by the production mapper (``clients.base.transport_failure``), so
-    what the walk sees here is what a real timeout arrives as (rule 119)."""
+    what the walk sees here is what a real timeout arrives as."""
 
     def __init__(
         self,
@@ -211,13 +212,13 @@ class _TimingOutTautulli(PagingTautulli):
 
 class TestASlowSourceShrinksThePageInsteadOfAbortingTheSweep:
     """The full sweep is the only thing that catches a row Tautulli backfills with an old
-    timestamp, so a sweep that stops running leaves a watched title reading never watched --
-    the condemn direction, three days at a time until someone notices.
+    timestamp, so a sweep that stops running leaves a watched title reading never watched,
+    in the condemn direction, three days at a time until someone notices.
 
-    It used to stop for good on a source that merely got slower. ``PAGE_SIZE`` was 25,000
-    against a 30s read budget each page already spent most of, and ``transient_retry``
-    re-sends the *identical* oversized page rather than a smaller one, so a persistently
-    slower Tautulli failed every sweep from then on (#780)."""
+    A source that merely gets slower must not stop the sweep for good. ``PAGE_SIZE`` asks
+    for a large page against a read budget each page already spends most of, and a naive
+    retry would re-send the identical oversized page rather than a smaller one, so a
+    persistently slower Tautulli would fail every sweep from then on."""
 
     async def test_a_read_timeout_on_the_first_page_shrinks_and_keeps_paging(
         self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
@@ -226,8 +227,8 @@ class TestASlowSourceShrinksThePageInsteadOfAbortingTheSweep:
         offset, rather than losing the whole sweep to the first oversized request.
 
         The page cap is set to exactly the number of pages the walk needs, so a shrink that
-        charged itself against it would run the mirror short: that is the claim the comment
-        on ``MAX_HISTORY_PAGES`` makes, and nothing else pins it."""
+        charged itself against that cap would run the mirror short. That is the claim the
+        comment on ``MAX_HISTORY_PAGES`` makes, and nothing else pins it."""
         monkeypatch.setattr(history_sync, "PAGE_SIZE", 8)
         monkeypatch.setattr(history_sync, "MIN_PAGE_SIZE", 2)
         monkeypatch.setattr(history_sync, "MAX_HISTORY_PAGES", 3)
@@ -278,7 +279,7 @@ class _RowsTautulliCannotServe(PagingTautulli):
     """A Tautulli that answers HTTP 500 for any page holding one of the ``bad`` offsets,
     which is what the live one does for a row its history formatter cannot render. Records
     every ``(start, length)`` it was asked, probe included. The failure is built by the
-    production mapper (``clients.base.http_failure``), so the walk sees a real 500 (rule 119).
+    production mapper (``clients.base.http_failure``), so the walk sees a real 500.
     """
 
     def __init__(self, rows: list[dict[str, Any]], *, bad: set[int], status: int = 500) -> None:
@@ -300,10 +301,10 @@ class _RowsTautulliCannotServe(PagingTautulli):
 
 class TestARowTheSourceCannotServeIsSteppedOverNotFatal:
     """Tautulli renders ``get_history`` rows in Python after the query, and a row it cannot
-    render fails the whole page it is on with a 500, at any page size. Two undated rows sat
-    on the last page of every full sweep for three runs, so the sweep failed each time, every
-    row on that page went unmirrored, and no page size or timeout could change that. The
-    walk now isolates the row, steps over it, and says so (``MAX_UNSERVABLE_ROWS``)."""
+    render fails the whole page it is on with a 500, at any page size. Without stepping over
+    it, every row sharing that page with a bad one would go unmirrored no matter what page
+    size or timeout is tried. The walk isolates the row, steps over it, and says so
+    (``MAX_UNSERVABLE_ROWS``)."""
 
     async def test_the_rows_beside_a_bad_one_still_land_and_the_count_is_reported(
         self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
@@ -327,7 +328,7 @@ class TestARowTheSourceCannotServeIsSteppedOverNotFatal:
             (8, 2),
             (10, 4),
             (10, 2),
-            (10, 1),  # stands alone and still fails: stepped over
+            (10, 1),  # stands alone and still fails, stepped over
             (11, 1),  # the second one, straight from a one-row page
             (12, 1),  # past the end, empty, done
         ]
@@ -390,7 +391,7 @@ class TestTheWalkAsksForHistoryWithoutActivity:
 
     async def test_every_page_and_the_probe_pass_zero(self, engine: AsyncEngine) -> None:
         """The client's default is ``None`` (Tautulli decides), so a call that omits the
-        argument is distinguishable from one that passes 0 (rule 141)."""
+        argument is distinguishable from one that passes 0."""
         fake = PagingTautulli([_row(n, days_ago=n) for n in range(1, 10)])
 
         await sync(engine, fake, full=True)
@@ -400,17 +401,17 @@ class TestTheWalkAsksForHistoryWithoutActivity:
 
 
 class TestTheSweepCarriesItsOwnReadBudget:
-    """A page of the sweep asks for tens of thousands of rows and the calls beside it on the
-    same client answer a browser, so the budget cannot be a property of the client. #780 is
-    what happens when it is: the page size was cut to 5,000 because that was the only place
-    the margin could be bought, and it cost 68 extra requests a sweep on a six-figure history.
+    """A page of the sweep asks for tens of thousands of rows, and the calls beside it on
+    the same client answer a browser, so the read budget cannot be a property of the client
+    itself. Sharing one budget forces a choice between a slow browser and a sweep that times
+    out early, so each page carries its own.
     """
 
     async def test_every_page_asks_with_the_sweeps_budget_and_the_probe_does_not(
         self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The value is patched away from the shipped one, so a hardcoded number or an
-        omitted argument fails here rather than reading the same either way (rule 141)."""
+        omitted argument fails here rather than reading the same either way."""
         monkeypatch.setattr(history_sync, "PAGE_SIZE", 4)
         monkeypatch.setattr(history_sync, "PAGE_READ_TIMEOUT", 7.5)
         fake = PagingTautulli([_row(n, days_ago=n) for n in range(1, 10)])
@@ -425,23 +426,24 @@ class TestTheSweepCarriesItsOwnReadBudget:
 
 
 class TestOnlyOneWalkOfTheHistoryRunsAtATime:
-    """The scan's incremental sync and the full sweep are on independent schedules and both
-    write ``watch_event``. Overlapping, they doubled the load on Tautulli and met on the cache
-    write lock, which one page now holds 1,876ms at 25,000 rows against a 5s busy timeout.
+    """The scan's incremental sync and the full sweep are on independent schedules, and both
+    write ``watch_event``. Running at once, they double the load on Tautulli and meet on the
+    cache write lock, where one page can hold it well past the database's own busy timeout.
 
-    The sweep is never the one that yields: a sweep that skips whenever something else is
-    running is a sweep that stops running (#780), and the scan cron is the operator's, so
-    "skip if busy" can quietly mean "never again". So the second caller waits.
+    The sweep must never be the one that yields. A sweep that skips whenever something else
+    is running is a sweep that stops running, and the scan cron is the operator's, so "skip
+    if busy" can quietly mean "never again". So the second caller waits.
     """
 
     async def test_a_second_sync_cannot_start_while_one_is_in_flight(
         self, engine: AsyncEngine
     ) -> None:
-        """**The control half is the whole test.** "The scan had not reached Tautulli" only
+        """The control half is the whole test. "The scan had not reached Tautulli" only
         means the lock held it if the scan would otherwise have got there, and every await
-        inside ``_sync`` before its first request goes out to a thread. So the same pump is
-        run first with nothing in flight, where it must arrive. Without that, this passed
-        with the lock deleted -- it was reading its own scheduling (rule 119)."""
+        inside ``_sync`` before its first request goes out to a thread. So the same pump
+        runs first with nothing in flight, where it must arrive. Without that control, this
+        test would still pass with the lock deleted, because it would only be reading its
+        own scheduling."""
         gate = asyncio.Event()
         holding = asyncio.Event()
         reached: list[str] = []
@@ -460,14 +462,14 @@ class TestOnlyOneWalkOfTheHistoryRunsAtATime:
                 return await super().history(**kwargs)
 
         async def pump() -> None:
-            # Real database round trips, not bare `sleep(0)`: the awaits a sync makes before
-            # its first request are executor hops, which a loop yielding only to itself does
-            # not advance.
+            # Real database round trips are used here, not a bare `sleep(0)`. The awaits a
+            # sync makes before its first request are executor hops, which a loop yielding
+            # only to itself does not advance.
             for _ in range(20):
                 await _count(engine)
 
-        # The pump reads `watch_event`, so the table has to exist before it runs: otherwise
-        # the pump races the first sync's own `ensure_schema` and the test fails on its own
+        # The pump reads `watch_event`, so the table has to exist before it runs. Otherwise
+        # the pump races the first sync's own `ensure_schema`, and the test fails on its own
         # harness rather than on the lock.
         await history_sync.ensure_schema(engine)
         rows = [_row(n, days_ago=n) for n in range(1, 6)]
@@ -483,7 +485,7 @@ class TestOnlyOneWalkOfTheHistoryRunsAtATime:
         scan = asyncio.create_task(sync(engine, _Gated(rows, "scan", blocks=False)))
         await pump()
 
-        # Same pump, and this time the scan has not reached Tautulli at all -- not even the
+        # Same pump, and this time the scan has not reached Tautulli at all, not even the
         # regression check's probe, which is inside the lock because it reads the stored
         # total and writes it back.
         assert set(reached) == {"sweep"}
@@ -492,8 +494,8 @@ class TestOnlyOneWalkOfTheHistoryRunsAtATime:
         gate.set()
         await sweep
         await scan
-        # Every one of the sweep's calls precedes every one of the scan's: the two walks did
-        # not interleave, which is the property the cache write lock needs.
+        # Every one of the sweep's calls precedes every one of the scan's. The two walks
+        # did not interleave, which is the property the cache write lock needs.
         assert reached == ["sweep"] * reached.count("sweep") + ["scan"] * reached.count("scan")
 
     async def test_the_waiting_caller_says_so(self, engine: AsyncEngine) -> None:
@@ -533,8 +535,8 @@ class TestRegressionDetection:
         assert await history_sync._last_tautulli_total(engine) == 5
 
     async def test_a_shrunk_history_raises(self, engine: AsyncEngine) -> None:
-        """Tautulli's total drops sharply -- reset, prune or restore. Every 'never
-        watched' verdict is now suspect, so the sync stops before writing."""
+        """Tautulli's total drops sharply, whether from a reset, a prune, or a restore.
+        Every 'never watched' verdict is now suspect, so the sync stops before writing."""
         fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 101)], total=100)
         await sync(engine, fake)
 
@@ -545,7 +547,7 @@ class TestRegressionDetection:
             await sync(engine, shrunk)
 
     async def test_a_small_wobble_does_not_raise(self, engine: AsyncEngine) -> None:
-        """Grouping can nudge the reported count by a row or two; that is not a reset."""
+        """Grouping can nudge the reported count by a row or two. That is not a reset."""
         fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 101)], total=100)
         await sync(engine, fake)
 
@@ -553,9 +555,10 @@ class TestRegressionDetection:
         await sync(engine, nudged)  # 98 >= 100*0.95, fine
 
     async def test_the_check_is_not_fooled_by_our_growing_mirror(self, engine: AsyncEngine) -> None:
-        """The old check compared our mirror's row count, which only grows -- so a real
-        Tautulli shrink was invisible. This asserts the check keys on Tautulli's total:
-        our mirror still has 100 rows, but Tautulli reporting 10 must still raise."""
+        """An earlier check compared our mirror's row count, which only grows, so a real
+        Tautulli shrink was invisible to it. This checks that the regression check keys on
+        Tautulli's total instead. Our mirror still has 100 rows, but Tautulli reporting 10
+        must still raise."""
         fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 101)], total=100)
         await sync(engine, fake)
         assert await _count(engine) == 100
@@ -564,7 +567,7 @@ class TestRegressionDetection:
         with pytest.raises(HistoryRegressionError):
             await sync(engine, shrunk)
 
-        # Our mirror is untouched -- we preserve what we hold.
+        # Our mirror is untouched. We keep what we hold even when the sync raises.
         assert await _count(engine) == 100
 
 
@@ -578,7 +581,7 @@ class TestOverlapNeverDropsARow:
         fake = PagingTautulli([newest])
         await sync(engine, fake)
 
-        # Another play the SAME day, a few hours later (higher row_id, same date bucket).
+        # Another play the same day, a few hours later (higher row_id, same date bucket).
         later_same_day = dict(newest, row_id=2, rating_key=999, date=newest["date"] + 3600)
         fake.rows.insert(0, later_same_day)
         fake.total = 2
@@ -612,7 +615,8 @@ class TestTheIngestClockIsSeparateFromTheWatchingClock:
 class TestAnUnreportedCompletionIsStoredAsUnknown:
     """``sync`` is the only place a NULL ``watched_status`` is ever written, so this is
     where the "we were not told" / "did not finish" distinction is won or lost. Tests that
-    insert NULLs with raw SQL prove the queries read one; only these prove one is produced.
+    insert NULLs with raw SQL prove the queries read one correctly. Only these prove one is
+    actually produced.
 
     Collapsing the two makes a viewer look further behind than they are, and the season
     they are part-way through loses its mid-binge protection.
@@ -642,7 +646,7 @@ class TestAnUnreportedCompletionIsStoredAsUnknown:
         assert await self._status(engine, 1) is None
 
     async def test_a_reported_zero_round_trips_as_zero(self, engine: AsyncEngine) -> None:
-        """The other direction: a real "started it, did not finish" must not become
+        """The other direction. A real "started it, did not finish" must not become
         unknown. Pinning only the NULL side would let `None` swallow both facts."""
         await sync(engine, PagingTautulli([dict(_row(1, days_ago=1), watched_status=0)]))
 
@@ -679,14 +683,14 @@ def test_float_or_none_keeps_unknown_apart_from_zero(value: object, expected: fl
 
 
 def test_overlap_is_at_least_a_day() -> None:
-    # A guard on the constant: any smaller overlap risks losing a same-day play.
+    # A guard on the constant. Any smaller overlap risks losing a same-day play.
     assert timedelta(days=1) <= history_sync.INCREMENTAL_OVERLAP
 
 
 class TestEnsureSchema:
-    """The rebuild path decides DROP/CREATE from the shape read INSIDE the write
-    transaction, not a pre-lock read (B-6). These pin the observable outcomes of that
-    decision: a stale table is rebuilt empty, a current one is untouched."""
+    """The rebuild path decides DROP/CREATE from the shape read inside the write
+    transaction, never from a read taken before the lock. These pin the observable outcomes
+    of that decision. A stale table is rebuilt empty, and a current one is left untouched."""
 
     async def _live_columns(self, engine: AsyncEngine) -> tuple[tuple[str, str, int], ...]:
         async with engine.connect() as conn:
@@ -743,8 +747,8 @@ class TestEnsureSchema:
     ) -> None:
         """An index added after an install synced must reach that install.
 
-        Indexes are not columns, so the shape check cannot see one missing -- an index
-        declared in the table DDL would have looked current forever and simply never been
+        Indexes are not columns, so the shape check cannot see one missing. An index
+        declared only in the table DDL would look current forever and never actually get
         created, leaving every fairness query full-scanning. The only way to force it
         through the shape check would be to bump the column tuple, which drops the whole
         mirror and costs a full re-sync from Tautulli just to add an index. So a missing
@@ -770,9 +774,9 @@ class TestEnsureSchema:
     async def test_the_parent_key_filter_uses_its_index(self, engine: AsyncEngine) -> None:
         """The Scales board and the person drawer both filter on ``parent_rating_key``.
 
-        Unindexed, each 500-key chunk was a full scan of a table holding every play the
-        server ever recorded. This asserts the planner picks the index rather than timing
-        the query, so it fails if the index is ever dropped from ``INDEXES``.
+        Unindexed, each 500-key chunk would be a full scan of a table holding every play
+        the server ever recorded. This asserts the planner picks the index rather than
+        timing the query, so it fails if the index is ever dropped from ``INDEXES``.
         """
         await history_sync.ensure_schema(engine)
         async with engine.connect() as conn:
@@ -796,6 +800,6 @@ class TestEnsureSchema:
                 )
             )
 
-        await history_sync.ensure_schema(engine)  # no-op: shape already current
+        await history_sync.ensure_schema(engine)  # no-op, shape already current
 
         assert await _count(engine) == 1  # the row survived, no rebuild

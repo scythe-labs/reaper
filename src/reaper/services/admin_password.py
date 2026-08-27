@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The admin password -- the key that turns deletion on.
+"""The admin password: the key that turns deletion on.
 
 Turning deletion on is the one destructive-action control the UI is allowed to flip, and
 it is gated on this password so that a stray click, a shared session, or a stale browser
-tab cannot arm the tool by accident. It is the local admin password: the same one that
+tab cannot arm the tool by accident. It is the local admin password, the same one that
 serves as the anti-lockout fallback (see ``auth.admins``), so an install always has one to
 verify against once it has been set.
 
-Turning deletion *off* is never gated -- making Reaper safer should always be one click.
+Turning deletion off is never gated. Making Reaper safer should always be one click.
 """
 
 from __future__ import annotations
@@ -23,10 +23,10 @@ from reaper.clock import utcnow
 from reaper.db.models import AppUser, AuthProvider
 from reaper.refusal import Refusal
 
-# The admin password arms deletion, so it earns a stronger floor than a throwaway login
-# would. Length is the single biggest factor in resistance to guessing; 12 is the modern
-# baseline. Only applied when a password is *set* -- existing shorter passwords still log
-# in, and the auto-generated one (GENERATED_PASSWORD_LENGTH = 24) clears it comfortably.
+# The admin password arms deletion, so it needs a stronger floor than a throwaway login
+# would. Length is the single biggest factor in resistance to guessing. This only applies
+# when a password is set: an existing shorter password still logs in, and the
+# auto-generated one (GENERATED_PASSWORD_LENGTH = 24) clears this floor comfortably.
 MIN_PASSWORD_LENGTH = 12
 
 #: A decoy hash to verify against when no local admin exists, so "wrong password" and "no
@@ -41,7 +41,7 @@ class PasswordError(Refusal):
 class PasswordVerificationBusyError(RuntimeError):
     """Too much password hashing is already in flight; try again in a moment.
 
-    A capacity refusal, never a credential one -- the caller answers 503 and must not
+    A capacity refusal, never a credential one. The caller answers 503 and must not
     count it against any lockout, or a busy server would lock out the real operator.
     """
 
@@ -74,12 +74,12 @@ async def verify(session: AsyncSession, password: str) -> bool:
     whether or not one matches, so timing does not leak whether a password is set.
 
     Takes one Argon2 gate slot per hash it is about to run, and raises
-    :class:`PasswordVerificationBusyError` if that many are not free. The gate is the cap on
-    concurrent Argon2 work (rule 11), and this is the one caller whose work is not a
-    single hash: an install with several local admins verifies against each, so charging
-    the gate one slot for the whole call left the real CPU cost unbounded (S-4). The gate
-    is taken here rather than at the route because only this function knows how many
-    hashes there will be.
+    :class:`PasswordVerificationBusyError` if that many are not free. The gate caps how
+    much Argon2 work can run at once, and this is the one caller whose work is not a
+    single hash: an install with several local admins verifies against each one, so the
+    gate must charge for every hash this call makes, not just one, or the real CPU cost
+    would be unbounded. The gate is taken here rather than at the route, because only
+    this function knows how many hashes there will be.
     """
     admins = await _local_admins(session)
     # At least one: with no admins we still hash the decoy, to keep the timing.
@@ -92,7 +92,7 @@ async def verify(session: AsyncSession, password: str) -> bool:
             ok, _ = verify_password(password, user.password_hash or _DECOY)
             matched = matched or ok
         if not admins:
-            verify_password(password, _DECOY)  # keep the timing even with no admins
+            verify_password(password, _DECOY)  # keeps the timing the same even with no admins
         return matched
     finally:
         argon2_gate.release(slots)
@@ -116,16 +116,17 @@ async def set_password(
     username_hint: str = "admin",
     keep_session_token: str | None = None,
 ) -> str:
-    """Set (or create) the admin password. Returns the local admin's username.
+    """Set or create the admin password. Returns the local admin's username.
 
-    Updates the first existing local admin if there is one, otherwise creates a local admin
-    -- so a Plex-only install can set a password without touching the CLI. Refuses a
-    password shorter than :data:`MIN_PASSWORD_LENGTH`.
+    Updates the first existing local admin if there is one, otherwise creates one, so a
+    Plex-only install can set a password without touching the CLI. Refuses a password
+    shorter than :data:`MIN_PASSWORD_LENGTH`.
 
-    Changing an existing password revokes that admin's other sessions: the intuitive
-    "reset my password" after a suspected cookie theft must actually lock the thief out,
-    and validating a cookie never touches ``password_hash``, so nothing else would. Pass
-    ``keep_session_token`` (the acting admin's own cookie) to spare the current tab.
+    Changing an existing password revokes that admin's other sessions. Resetting a
+    password after a suspected cookie theft must actually lock the thief out, and
+    validating a cookie never touches ``password_hash``, so nothing else would revoke
+    those sessions. Pass ``keep_session_token``, the acting admin's own cookie, to spare
+    the current tab.
     """
     if len(password) < MIN_PASSWORD_LENGTH:
         raise PasswordError("error.password.too_short", min_length=MIN_PASSWORD_LENGTH)
@@ -134,7 +135,7 @@ async def set_password(
     if admins:
         admins[0].password_hash = hash_password(password)
         # A password change must invalidate every session the old password could have
-        # authorized -- except, optionally, the one making the change.
+        # authorized, except, optionally, the one making the change.
         await close_all_for_user(
             session,
             admins[0].id,

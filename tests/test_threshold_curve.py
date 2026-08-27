@@ -1,18 +1,16 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""``GET /api/policy/threshold-curve``: the whole score-to-consequence curve behind the
-delete-threshold slider, from the newest scan's own fitted rewatch curve
+"""Tests ``GET /api/policy/threshold-curve``, the score-to-consequence curve behind the
+delete-threshold slider. It comes from the newest scan's own fitted rewatch curve
 (docs/LEARNINGS.md, "The delete threshold buys volume, not precision").
 
 The core is ``api.policy.threshold_curve_rows``, a pure function over already-decoded rows
-(``RatioCandidate``) -- covered directly here without a database. The route wiring (reading
-the newest snapshot, the active policy's coverage floor, the wire shapes) gets its own,
+(``RatioCandidate``), covered directly here without a database. The route wiring, reading
+the newest snapshot, the active policy's coverage floor, and the wire shapes, gets its own,
 smaller set of end-to-end cases below.
 
-Replaces ``test_ratio_resolve.py``: the ratio control it tested (one mistake per N cleared,
-resolved into a score) is gone, replaced by this flat curve, which the frontend reads once and
-re-decides locally for every slider position. ``_cohort``/``_measured_or_thin_rate``/
-``_mistake_probability`` are unchanged and untested again here; their own tests still cover
-them.
+The frontend reads this curve once and re-decides locally for every slider position.
+``_cohort``, ``_measured_or_thin_rate``, and ``_mistake_probability`` are unchanged and are
+not tested again here; their own tests still cover them.
 """
 
 from __future__ import annotations
@@ -92,9 +90,10 @@ def _rows_by_score(
 
 
 def _measured_rows_by_score(curve: ThresholdCurveMeasuredOut) -> dict[int, int]:
-    """A measured curve's ``expected_mistakes``, keyed by score. Its own helper rather than
-    widening ``_rows_by_score``'s return type, since ``expected_mistakes`` only exists on the
-    measured row -- the type the counts_only arm proves absent."""
+    """A measured curve's ``expected_mistakes``, keyed by score. This is a separate helper
+    rather than widening ``_rows_by_score``'s return type, since ``expected_mistakes`` only
+    exists on the measured row. The counts_only arm proves it absent.
+    """
     return {row.score: row.expected_mistakes for row in curve.rows}
 
 
@@ -104,8 +103,9 @@ def _measured_rows_by_score(curve: ThresholdCurveMeasuredOut) -> dict[int, int]:
 class TestThresholdCurveRows:
     """The curve's contract, over hand-built rows with cohorts large enough that the Wilson
     bound sits near the plain rate. Ten "cheap" titles score 60 with a 60-of-300 cohort
-    (bound ~0.249); ten "expensive" (safer) titles score 90 with 3-of-300 (bound ~0.029).
-    Below score 61 all twenty are flagged; at or above 61 only the ten scored-90 titles are.
+    (bound about 0.249). Ten "expensive" (safer) titles score 90 with a 3-of-300 cohort
+    (bound about 0.029). Below score 61, all twenty are flagged. At or above 61, only the
+    ten scored-90 titles are.
     """
 
     @staticmethod
@@ -120,9 +120,9 @@ class TestThresholdCurveRows:
         assert result.rows == []
 
     def test_no_measured_cohort_anywhere_is_counts_only(self) -> None:
-        # Every row is either no-history or has no block at all: the fit never found a
+        # Every row is either no-history or has no block at all. The fit never found a
         # trustworthy band anywhere in this scan, so the count stands without a comeback
-        # estimate rather than making one up.
+        # estimate, rather than making one up.
         rows = [
             _row(score=80, rewatch_odds=_NO_HISTORY),
             _row(score=90, rewatch_odds=None),
@@ -138,8 +138,8 @@ class TestThresholdCurveRows:
         result = threshold_curve_rows(self._library(), coverage_floor_bp=0)
         assert result.state == "measured"
         by_score = _rows_by_score(result)
-        # Below 61: all 20 flagged. At 61 through 90: only the 10 "expensive" ones. Above 90:
-        # nothing, so no row at all past the last one on the list.
+        # Below 61, all 20 are flagged. From 61 through 90, only the 10 "expensive" ones
+        # are. Above 90, nothing is flagged, so there is no row past the last one on the list.
         assert by_score[1].flagged == 20
         assert by_score[60].flagged == 20
         assert by_score[61].flagged == 10
@@ -153,13 +153,13 @@ class TestThresholdCurveRows:
         mistakes = _measured_rows_by_score(result)
         # At 61-90, only the 10 "expensive" (3-of-300) titles flag.
         assert mistakes[61] == math.ceil(10 * wilson_upper(3, 300))
-        # Below 61, all 20 flag: 10 cheap (60-of-300) + 10 expensive (3-of-300).
+        # Below 61, all 20 flag. That is 10 cheap (60-of-300) plus 10 expensive (3-of-300).
         assert mistakes[1] == math.ceil(10 * wilson_upper(60, 300) + 10 * wilson_upper(3, 300))
 
     def test_expected_mistakes_is_never_zero_while_flagged_is_positive(self) -> None:
-        # The review's demonstration on the unfixed resolver: one measured cohort with zero
-        # comebacks read as a plain 0.0 would zero the expected mistakes outright. The Wilson
-        # bound keeps every cohort's contribution above zero, so every row here pins > 0.
+        # A measured cohort with zero comebacks, read as a plain rate of 0.0, would zero
+        # the expected mistakes outright. The Wilson bound keeps every cohort's
+        # contribution above zero, so every row here pins a value greater than 0.
         rows = [_row(score=80, rewatch_odds=_measured(200, 0)) for _ in range(5)]
         result = threshold_curve_rows(rows, coverage_floor_bp=0)
         assert result.state == "measured"
@@ -170,9 +170,9 @@ class TestThresholdCurveRows:
 
     def test_a_missing_cohort_falls_back_to_the_worst_measured_rate_in_the_scan(self) -> None:
         # One row this server could never measure (no_history) sits beside two it could
-        # (bounds ~0.249 and ~0.029). Its contribution must be the WORST of those two
-        # (~0.249), never a bare zero -- the prime directive: missing data must not look
-        # safer than the worst thing this scan actually measured.
+        # (bounds about 0.249 and 0.029). Its contribution must be the worse of those two
+        # (about 0.249), never a bare zero. Missing data must never look safer than the
+        # worst thing this scan actually measured.
         rows = [
             _row(score=80, rewatch_odds=_measured(300, 60)),
             _row(score=80, rewatch_odds=_measured(300, 3)),
@@ -206,7 +206,7 @@ class TestThresholdCurveRows:
         ]
         result = threshold_curve_rows(rows, coverage_floor_bp=0)
         by_score = _rows_by_score(result)
-        # The protected row never flags: the top of the domain flags nothing at all.
+        # The protected row never flags, so the top of the domain has no row at all.
         assert 100 not in by_score
         assert by_score[50].flagged == 1
 
@@ -223,14 +223,14 @@ class TestThresholdCurveRows:
     def test_coverage_below_the_floor_abstains_regardless_of_score(self) -> None:
         rows = [_row(score=100, coverage_bp=1000, rewatch_odds=_measured(30, 1))]
         result = threshold_curve_rows(rows, coverage_floor_bp=5000)
-        # Nothing ever flags: no population, so counts_only with no rows -- same shape as
-        # no candidates at all, since neither has anything to ever put in front of the
+        # Nothing ever flags, so there is no population. This is the same shape as having
+        # no candidates at all, since neither case has anything to put in front of the
         # operator.
         assert result.state == "measured"
         assert result.rows == []
 
     def test_same_inputs_produce_the_same_curve_every_time(self) -> None:
-        # No clock, no randomness: determinism is part of the contract.
+        # No clock and no randomness. Determinism is part of the contract.
         library = TestThresholdCurveRows._library()
         first = threshold_curve_rows(library, coverage_floor_bp=0)
         second = threshold_curve_rows(library, coverage_floor_bp=0)
@@ -261,11 +261,12 @@ def _fixture_hash() -> str:
 
 @pytest.fixture
 def curve_client(tmp_path: Path) -> Iterator[TestClient]:
-    """A snapshot whose 40 movie candidates give the curve builder something real to chew on:
-    20 scored 60 with a 60-of-300 cohort (bound ~0.249), 20 scored 90 with 3-of-300 (~0.029) --
-    the same shape ``TestThresholdCurveRows._library`` proves by hand, but written through
-    ``Candidate.verdict``/``explanation_json`` the way a real scan would freeze them, so this
-    exercises ``_ratio_candidates``' decode path too."""
+    """A snapshot with 40 movie candidates for the curve builder to read. 20 are scored 60
+    with a 60-of-300 cohort (bound about 0.249), and 20 are scored 90 with a 3-of-300 cohort
+    (bound about 0.029). This is the same shape ``TestThresholdCurveRows._library`` builds by
+    hand, but written through ``Candidate.verdict`` and ``explanation_json`` the way a real
+    scan would freeze them, so this also exercises ``_ratio_candidates``' decode path.
+    """
     settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
@@ -349,7 +350,7 @@ class TestThresholdCurveRoute:
         assert 91 not in by_score
 
     def test_media_type_tv_reads_no_rows_here(self, curve_client: TestClient) -> None:
-        # This fixture wrote only movie rows; a TV policy scores seasons, so the same scan
+        # This fixture wrote only movie rows. A TV policy scores seasons, so the same scan
         # has no population on that lane at all.
         body = curve_client.get("/api/policy/threshold-curve?media_type=tv").json()
         assert body == {"state": "counts_only", "rows": []}

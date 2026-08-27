@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The art-then-poster ladder, driven through `WhyHero`, which is one of its two consumers.
-// `ReviewQueue`'s `Backdrop` is the other and reaches the same three behaviors through the
-// same `useArtFallback` call, which is the reason the hook exists: before it, this ladder was
-// written twice and neither copy had a test.
+// The art-then-poster fallback, driven through `WhyHero`, one of its two consumers.
+// `ReviewQueue`'s `Backdrop` is the other, and both reach the same behavior through the same
+// `useArtFallback` hook, so a fix here covers both.
 import { act, fireEvent, render, renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { expectNoA11yViolations } from "../test/a11y";
@@ -35,8 +34,8 @@ describe("the art-then-poster ladder", () => {
 
   it("tries the art again for the next item rather than latching", () => {
     // The panel is reused rather than remounted when the next item's detail is already
-    // cached. Without the reset the fallback flag stays set and the poster of the previous
-    // item is what one failed load leaves under every later title.
+    // cached. Without a reset, the fallback flag from a failed load on one item would stay
+    // set and show that item's poster under every title that follows it.
     const { container, rerender } = render(<WhyHero posterUrl="/api/poster/1" />);
     fireEvent.error(hero(container)!);
     expect(hero(container)?.getAttribute("src")).toBe("/api/poster/1");
@@ -50,9 +49,10 @@ describe("the art-then-poster ladder", () => {
   });
 
   it("says nothing to a screen reader, on every rung", async () => {
-    // The banner is decoration: an empty `alt` and `aria-hidden` on both rungs, so a reader
-    // hears the title once rather than twice. Audited at the fallback too, since that is the
-    // rung an author editing `WhyHero`'s <img> and leaving `Backdrop`'s alone would miss.
+    // The banner is decoration. An empty `alt` and `aria-hidden` sit on both the art and the
+    // poster step, so a reader hears the title once, not twice. This is audited at the
+    // fallback step too, since that is the one an author editing `WhyHero`'s <img> and leaving
+    // `Backdrop`'s alone would miss.
     const { container } = render(<WhyHero posterUrl="/api/poster/1" />);
     await expectNoA11yViolations(container);
 
@@ -61,10 +61,10 @@ describe("the art-then-poster ladder", () => {
   });
 
   it("asks for nothing when there is no poster to ask for", () => {
-    // The one branch the extraction moved, and no component can reach it: `Backdrop` takes a
-    // nullable url and `WhyHero` is mounted behind a `poster_url &&` guard, so the hook is
-    // where it is driven (rule 145). The old `WhyHero` spelling seeded the art unconditionally
-    // and would render `src="null?kind=art"` here, with the whole suite still green.
+    // No component can reach this branch directly. `Backdrop` takes a nullable url, and
+    // `WhyHero` only mounts behind a `poster_url &&` guard. The hook is driven directly here
+    // instead, to catch a null url that would otherwise silently render `src="null?kind=art"`
+    // with nothing in the component tree noticing.
     const { result } = renderHook(() => useArtFallback(null));
     expect(result.current.src).toBeNull();
 

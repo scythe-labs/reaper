@@ -1,24 +1,27 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The server's half of every refusal: a typed code, raw params, and its English template.
 
-Phases 1 to 7 (#870 to #880) typed the chip, the policy warnings, the rule vocabulary and
-the one-off sentences the engine composes -- see ``engine.reason.Reason``. This module is
-the same move for the *error* surface: every refusal the API returns (a raised
-``HTTPException``, a Pydantic validation failure, a middleware rejection) carries a dotted
-``code`` and raw ``params`` beside the formatted English, so the browser can translate it
-and an API client, a log line, or a reader with no catalog entry can still read the English.
+``engine.reason.Reason`` already types the chip, the policy warnings, and the
+rule vocabulary. This module does the same for the error surface: every
+refusal the API returns (a raised ``HTTPException``, a Pydantic validation
+failure, a middleware rejection) carries a dotted ``code`` and raw ``params``
+beside the formatted English, so the browser can translate it, and an API
+client, a log line, or a reader with no catalog entry can still read the
+English.
 
-``MESSAGES`` is the catalog: every code mapped to its ``str.format`` template. Codes are
-namespaced after the condition and the area they fire in, never the HTTP status
-(``error.policy.retired_gate``, not ``error.422.retired_gate``). Reuse one code across every
-call site that means the same condition; a call site whose English differs on purpose (the
-Plex-unreachable sentence reads differently in three different routes) earns its own code
-rather than being forced to share one.
+``MESSAGES`` is the catalog: every code mapped to its ``str.format`` template.
+Codes are namespaced after the condition and the area they fire in, never the
+HTTP status (``error.policy.retired_gate``, not ``error.422.retired_gate``).
+Reuse one code across every call site that means the same condition. A call
+site whose English differs on purpose (the Plex-unreachable sentence reads
+differently in three different routes) earns its own code instead of being
+forced to share one.
 
-:class:`Refusal` is what the engine and a service raise directly -- a plain ``ValueError``
-subclass, so every existing ``except ValueError`` keeps catching it. ``api.errors.refuse``
-is the API layer's twin: it raises the ``HTTPException`` subclass carrying the same code and
-params, formatted through this same catalog.
+:class:`Refusal` is what the engine and a service raise directly: a plain
+``ValueError`` subclass, so every existing ``except ValueError`` keeps
+catching it. ``api.errors.refuse`` is the API layer's twin. It raises the
+``HTTPException`` subclass carrying the same code and params, formatted
+through this same catalog.
 """
 
 from __future__ import annotations
@@ -27,12 +30,13 @@ from typing import Any
 
 from reaper.engine.reason import Reason, ReasonParam
 
-#: Every code an API response, a stored explanation, or the engine's own ``str()`` can
-#: surface, mapped to its ``str.format`` template. Plain language throughout (rule 21):
-#: outcome first, no ids, no jargon, no em dashes. A ``{field}`` placeholder carries the
-#: raw operator-authored key (``recent_watchers``), never its pretty label -- the browser
-#: composes that from ``why.field.<key>``, and an API client that sent the key is the
-#: right reader for it as-is.
+#: Every code an API response, a stored explanation, or the engine's own
+#: ``str()`` can surface, mapped to its ``str.format`` template. Plain language
+#: throughout: outcome first, no ids, no jargon, no em dashes. A ``{field}``
+#: placeholder carries the raw operator-authored key (``recent_watchers``),
+#: never its pretty label. The browser composes the pretty label from
+#: ``why.field.<key>``, and an API client that sent the key is the right
+#: reader for the raw form.
 MESSAGES: dict[str, str] = {
     # -----------------------------------------------------------------------------
     # Policy: the field registry's save-boundary checks (engine/fields.py, all raise
@@ -200,9 +204,9 @@ MESSAGES: dict[str, str] = {
         "This needs the web app, signed in. An API key writes only these: {permissions}."
     ),
     # -----------------------------------------------------------------------------
-    # Auth: signing in (services.login.LoginError, all raise sites -- 7 codes; a wrapped
-    # PlexLinkError forwards that error's own plex.* code rather than a new one, so it is
-    # not a new entry here).
+    # Auth: signing in (services.login.LoginError, all raise sites, 7 codes). A
+    # wrapped PlexLinkError forwards that error's own plex.* code rather than a
+    # new one, so it is not a new entry here.
     # -----------------------------------------------------------------------------
     "error.auth.login_request_invalid": "This sign-in is no longer valid. Please start again.",
     "error.auth.login_request_timed_out": "This sign-in timed out. Please start again.",
@@ -219,8 +223,9 @@ MESSAGES: dict[str, str] = {
     # -----------------------------------------------------------------------------
     "error.password.too_short": "Use at least {min_length} characters.",
     # -----------------------------------------------------------------------------
-    # Deletion-safety state, shared by the executor's own check and the execute route's
-    # earlier one (services.executor, api.runs) -- one fact, one pair of codes (rule 144).
+    # Deletion-safety state, shared by the executor's own check and the
+    # execute route's earlier one (services.executor, api.runs): one fact,
+    # one pair of codes.
     # -----------------------------------------------------------------------------
     "error.safety.recovery_mode_active": (
         "Recovery mode is on, so Reaper can look but can't remove anything. "
@@ -243,9 +248,10 @@ MESSAGES: dict[str, str] = {
     "error.plex.connection_address_invalid": (
         "The server address must be a full web address, like https://192.0.2.10:32400."
     ),
-    # services.plex_link.PlexLinkError and PlexLinkRetryableError, all raise sites -- 10
-    # codes (a 11th site reuses error.plex.not_linked above; switch_server links no new
-    # server, it repoints an existing link, so the same "no server" sentence fits).
+    # services.plex_link.PlexLinkError and PlexLinkRetryableError, all raise
+    # sites, 10 codes. An 11th site reuses error.plex.not_linked above:
+    # switch_server links no new server, it repoints an existing link, so the
+    # same "no server" sentence fits.
     "error.plex.link_unreachable": (
         'Found your server ("{name}") but could not reach it on any of its {count} '
         "advertised addresses. Reaper has to talk to the server directly; check that "
@@ -303,9 +309,10 @@ MESSAGES: dict[str, str] = {
     "error.leaving_soon.unlinked": (
         "Leaving Soon needs a linked Plex server. Link one in Settings first."
     ),
-    # The four phrases services.leaving_soon._record_skip used to write as free text into
-    # leaving_soon_last_skip.result. Their own codes because a stored skip is read back long
-    # after the pass that wrote it, by a reader that never saw the raising exception.
+    # These four phrases get their own codes because a stored skip is read
+    # back long after the pass that wrote it, by a reader that never saw the
+    # raising exception. `services.leaving_soon._record_skip` is where they
+    # are written.
     "error.leaving_soon.skip_degraded": "the scan didn't finish cleanly",
     "error.leaving_soon.skip_unlinked": "no Plex server is linked",
     "error.leaving_soon.skip_unreachable": "Reaper couldn't reach Plex",
@@ -332,9 +339,10 @@ MESSAGES: dict[str, str] = {
     "error.backup.reap_in_progress": (
         "A reap is running. Let it finish or stop it, then restart Reaper."
     ),
-    # services.restore.RestoreError, all raise sites -- 15 codes across 19 sites (two
-    # messages, "malformed" and "prepare_failed", each cover more than one site: rule 144's
-    # own shape, since every one of those sites means the same thing to the operator).
+    # services.restore.RestoreError, all raise sites, 15 codes across 19
+    # sites. Two messages, "malformed" and "prepare_failed", each cover more
+    # than one site, since every one of those sites means the same thing to
+    # the operator.
     "error.restore.schema_unverifiable": (
         "Reaper couldn't check this backup against its own version. Try again, or update Reaper."
     ),
@@ -374,8 +382,8 @@ MESSAGES: dict[str, str] = {
         "One of your lists is saved in a form Reaper can't read, so it didn't check "
         "any of them. Open that list, set it up again, and save it."
     ),
-    # services.list_config.ListConfigError, all raise sites -- 11 codes across 13 sites
-    # ("name_exists" covers three).
+    # services.list_config.ListConfigError, all raise sites, 11 codes across
+    # 13 sites ("name_exists" covers three).
     "error.lists.not_found": "That list no longer exists. Reload the page.",
     "error.lists.name_required": (
         "Give the list a name, so you can pick it out on the Policy screen."
@@ -489,8 +497,9 @@ MESSAGES: dict[str, str] = {
     ),
     "error.settings.no_api_key": "No API key exists yet. Generate one first.",
     # -----------------------------------------------------------------------------
-    # Services (services.instances.InstanceError and its two status-typed subclasses),
-    # all raise sites -- 6 codes across 7 sites ("name_exists" covers two).
+    # Services (services.instances.InstanceError and its two status-typed
+    # subclasses), all raise sites, 6 codes across 7 sites ("name_exists"
+    # covers two).
     # -----------------------------------------------------------------------------
     "error.instances.not_found": "No such instance.",
     "error.instances.required_fields": "A name, a URL and an API key are all required.",
@@ -507,11 +516,12 @@ MESSAGES: dict[str, str] = {
         "Only Seerr portals have request services to map to an instance."
     ),
     # -----------------------------------------------------------------------------
-    # A connection test's own verdict (services.instances.explain_failure), all return
-    # sites -- 16 codes. Branch order there is load-bearing (see the function's docstring);
-    # this catalog just holds the words. Reused as a nested `{error}` param inside
-    # `mapError` and inside `TestOut.detail_reason` (api.settings), never composed as a
-    # top-level refusal on its own.
+    # A connection test's own verdict (services.instances.explain_failure),
+    # all return sites, 16 codes. Branch order there is load-bearing (see the
+    # function's docstring). This catalog just holds the words. Reused as a
+    # nested `{error}` param inside `mapError` and inside
+    # `TestOut.detail_reason` (api.settings), never composed as a top-level
+    # refusal on its own.
     # -----------------------------------------------------------------------------
     "error.instance.cert_unknown_authority": (
         "The server's certificate is signed by an authority this machine doesn't know. "
@@ -556,14 +566,16 @@ MESSAGES: dict[str, str] = {
     ),
     "error.instance.unrecognized": "Couldn't connect. The full reason is in Reaper's log.",
     # -----------------------------------------------------------------------------
-    # Every integration client's own failures (clients/base.py's IntegrationError, and
-    # every other client that raises one -- seerr.py, tautulli.py, public.py, plextv.py,
-    # services/lists.py, services/update_check.py, services/history_sync.py). Reused
-    # across every service that speaks HTTP, so these stay generic rather than naming one
-    # service; a caller that wants a service-specific sentence nests this under one of its
-    # own (`explain_failure`'s `error.instance.*`, above, is the model). `SafetyViolationError`
-    # (the transport guard's own refusal, same file) shares this namespace too: it is the
-    # same layer's refusal, just for a write rather than a read.
+    # Every integration client's own failures (clients/base.py's
+    # IntegrationError, and every other client that raises one: seerr.py,
+    # tautulli.py, public.py, plextv.py, services/lists.py,
+    # services/update_check.py, services/history_sync.py). Reused across
+    # every service that speaks HTTP, so these stay generic rather than
+    # naming one service. A caller that wants a service-specific sentence
+    # nests this under one of its own (`explain_failure`'s
+    # `error.instance.*`, above, is the model). `SafetyViolationError` (the
+    # transport guard's own refusal, same file) shares this namespace too: it
+    # is the same layer's refusal, just for a write rather than a read.
     # -----------------------------------------------------------------------------
     "error.integration.timed_out": "Timed out waiting for an answer.",
     "error.integration.unreachable": "Couldn't reach it: {detail}",
@@ -613,8 +625,9 @@ MESSAGES: dict[str, str] = {
         "to Tautulli."
     ),
     # -----------------------------------------------------------------------------
-    # The Plex client's own failures (clients/plex.py's PlexError). Plex is always "the
-    # server" in these -- there is only ever one -- so no {service} param.
+    # The Plex client's own failures (clients/plex.py's PlexError). Plex is
+    # always "the server" in these, since there is only ever one, so no
+    # {service} param.
     # -----------------------------------------------------------------------------
     "error.plexclient.paging_failed": "Reaper couldn't read all of {what} from Plex.",
     "error.plexclient.connect_failed": "Could not reach Plex at {base_url}: {detail}",
@@ -625,7 +638,7 @@ MESSAGES: dict[str, str] = {
     ),
     "error.plexclient.trash_count_failed": "Couldn't count the trash in section {section}.",
     # -----------------------------------------------------------------------------
-    # Planning a run (services.planner.PlanError), all raise sites -- 15 codes.
+    # Planning a run (services.planner.PlanError), all raise sites, 15 codes.
     # -----------------------------------------------------------------------------
     "error.plan.media_key_unroutable": 'Cannot route media_key "{media_key}" to an instance.',
     "error.plan.media_key_malformed": 'Malformed media_key "{media_key}": {error}',
@@ -674,10 +687,11 @@ MESSAGES: dict[str, str] = {
         "the list."
     ),
     # -----------------------------------------------------------------------------
-    # Executing a run (services.executor.ExecutionError), all raise sites -- 21 codes
-    # across 27 sites ("journal_halt" covers two; two more reuse error.runs.preflight_no_plex
-    # and error.runs.preflight_no_tautulli below, and two reuse error.safety.* above --
-    # the executor's own backstop checks the same conditions the route already named).
+    # Executing a run (services.executor.ExecutionError), all raise sites, 21
+    # codes across 27 sites. "journal_halt" covers two. Two more reuse
+    # error.runs.preflight_no_plex and error.runs.preflight_no_tautulli
+    # below, and two reuse error.safety.* above, since the executor's own
+    # backstop checks the same conditions the route already named.
     # -----------------------------------------------------------------------------
     "error.reap.radarr_instance_missing": (
         "No Radarr instance {instance_id} is configured, but the plan targets it. "
@@ -772,13 +786,14 @@ MESSAGES: dict[str, str] = {
         "stopped here rather than risk deleting something you just kept. Anything "
         "already deleted stays deleted; nothing further was sent."
     ),
-    # api.runs.execute_run's own catch-all (phase 11a), not one of ExecutionError's raise
-    # sites: a background crash the executor itself never named. Anything already removed
-    # stays removed; the executor's own interlocks are what make that true, not this code.
+    # api.runs.execute_run's own catch-all, not one of ExecutionError's raise
+    # sites: a background crash the executor itself never named. Anything
+    # already removed stays removed. The executor's own interlocks are what
+    # make that true, not this code.
     "error.reap.unexpected": "The reap hit a problem it didn't expect: {error}",
     # -----------------------------------------------------------------------------
-    # Scanning (services.scan_runner.ScanConfigError), all raise sites -- 3 codes
-    # across 4 sites ("missing_sources" covers two).
+    # Scanning (services.scan_runner.ScanConfigError), all raise sites, 3
+    # codes across 4 sites ("missing_sources" covers two).
     # -----------------------------------------------------------------------------
     "error.scan.list_gate_missing_list": (
         "A protection you set up is pointing at a list that is no longer there, so "
@@ -796,10 +811,10 @@ MESSAGES: dict[str, str] = {
         "them in Settings first."
     ),
     # -----------------------------------------------------------------------------
-    # Scanning: the background job's own status poll (api.scan.ScanStatus.error_reason,
-    # phase 11a). Not raised through ScanConfigError -- these three cover the poller's
-    # other catch arms, so the browser has a typed reason for every way a background scan
-    # can stop.
+    # Scanning: the background job's own status poll
+    # (api.scan.ScanStatus.error_reason). Not raised through ScanConfigError.
+    # These three cover the poller's other catch arms, so the browser has a
+    # typed reason for every way a background scan can stop.
     # -----------------------------------------------------------------------------
     "error.scan.already_running": (
         "A scan is already running. Wait for it to finish, then start another."
@@ -807,14 +822,16 @@ MESSAGES: dict[str, str] = {
     "error.scan.source_unreachable": "Reaper couldn't reach one of your sources: {error}",
     "error.scan.unexpected": "The scan hit a problem it didn't expect: {error}",
     # -----------------------------------------------------------------------------
-    # Phase 11b (#885, #894): the run journal's per-item detail and checklist, and the
-    # run-level abort reason -- reaper.services.executor, every ``StepOutcome.detail``,
-    # ``StepCheck.label`` and ``RunReport.aborted_reason`` site. The prose column
-    # (``ActionStep.error``, ``ReapRun.aborted_reason``) and the report's own JSON field keep
-    # their English rendered from these same entries through ``english()`` below, so the two
-    # can never drift (rule 104). A ``{live}``/``{approved}`` param is raw bytes; the
-    # ``{name}_gb`` placeholder is the browser's own derivation (``why.ts``'s ``composeIn``)
-    # and ``english()`` mirrors it for the stored prose and the log line.
+    # The run journal's per-item detail and checklist, and the run-level
+    # abort reason: reaper.services.executor, every ``StepOutcome.detail``,
+    # ``StepCheck.label``, and ``RunReport.aborted_reason`` site. The prose
+    # column (``ActionStep.error``, ``ReapRun.aborted_reason``) and the
+    # report's own JSON field keep their English rendered from these same
+    # entries through ``english()`` below, so the two can never drift. A
+    # ``{live}``/``{approved}`` param is raw bytes. The ``{name}_gb``
+    # placeholder is the browser's own derivation (``why.ts``'s
+    # ``composeIn``), and ``english()`` mirrors it for the stored prose and
+    # the log line.
     # -----------------------------------------------------------------------------
     "error.reap.canceled": "The run was stopped before it finished.",
     "error.reap.step.route_failed": 'Could not route "{media_key}": {error}',
@@ -937,14 +954,16 @@ MESSAGES: dict[str, str] = {
 class Refusal(ValueError):  # noqa: N818 -- "Refusal" is the domain noun the plan names; not an -Error
     """A typed refusal the engine or a service raises: a catalog code plus raw params.
 
-    A ``ValueError`` subclass, so every existing ``except ValueError`` around a save-boundary
-    check keeps catching it unchanged. ``str(refusal)`` renders the English template so a log
-    line or an old caller that only ever read the message still gets one; ``code`` and
-    ``params`` are what a typed reader (the API layer, a translator) uses instead.
+    A ``ValueError`` subclass, so every existing ``except ValueError`` around a
+    save-boundary check keeps catching it unchanged. ``str(refusal)`` renders the
+    English template so a log line or an old caller that only ever read the
+    message still gets one. ``code`` and ``params`` are what a typed reader (the
+    API layer, a translator) uses instead.
 
-    ``status`` is the HTTP status the API answers with when this refusal reaches a route --
-    422 by default (a well-formed request whose content was refused), overridden by a
-    subclass or a call site that means something else (a 400, a 409).
+    ``status`` is the HTTP status the API answers with when this refusal reaches
+    a route: 422 by default (a well-formed request whose content was refused),
+    overridden by a subclass or a call site that means something else (a 400, a
+    409).
     """
 
     def __init__(self, code: str, /, *, status: int = 422, **params: ReasonParam) -> None:
@@ -954,41 +973,46 @@ class Refusal(ValueError):  # noqa: N818 -- "Refusal" is the domain noun the pla
         super().__init__(str(self))
 
     def __str__(self) -> str:
-        # Through `english()`, not a bare `str.format`, so a nested `Reason` param (an
-        # `IntegrationError`/`PlexError` carried in via `as_reason()`) composes into its own
-        # sentence instead of printing the dataclass (rule 104: one renderer).
+        # Through `english()`, not a bare `str.format`, so a nested `Reason`
+        # param (an `IntegrationError`/`PlexError` carried in via
+        # `as_reason()`) composes into its own sentence instead of printing
+        # the dataclass.
         return english(self.as_reason())
 
     def as_reason(self) -> Reason:
         """This refusal's code and params, as the typed container a wire field carries.
 
-        Lets a route hand a caught ``Refusal`` straight to a ``ReasonKey`` field (``ScanStatus
-        .error_reason``, ``ReapStatus.error_reason``) the same way ``api.errors.refuse`` builds
-        one for an HTTPException: one code, one params dict, read by both readers instead of a
-        second English rendering.
+        Lets a route hand a caught ``Refusal`` straight to a ``ReasonKey`` field
+        (``ScanStatus.error_reason``, ``ReapStatus.error_reason``) the same way
+        ``api.errors.refuse`` builds one for an HTTPException: one code, one
+        params dict, read by both readers instead of a second English rendering.
         """
         return Reason(self.code, dict(self.params))
 
 
 def english(reason: Reason) -> str:
-    """A stored :class:`Reason` rendered as English -- the one place that happens, so a
-    prose column, a log line and an API client with no catalog entry all read the same
-    sentence a translated build's catalog was written from (rule 104).
+    """A stored :class:`Reason` rendered as English. This is the one place that
+    happens, so a prose column, a log line, and an API client with no catalog
+    entry all read the same sentence a translated build's catalog was written
+    from.
 
-    A ``legacy`` reason (a sentence frozen before its condition got a code) renders its
-    stored text verbatim, never looked up. Anything else formats ``MESSAGES[reason.id]``
-    against ``reason.params`` -- with two additions ``str.format`` cannot do on its own.
-    A numeric param gets a ``{name}_gb`` companion, the same derivation the browser's
-    ``composeIn`` (``frontend/src/why.ts``) applies to every numeric param, so a template
-    can show a byte count in gigabytes without the raise site pre-rounding it. And a param
-    that is itself a :class:`Reason` (an ``IntegrationError``/``PlexError`` nested via
-    ``as_reason()``, the same shape a stored explanation's own params can carry) recurses
-    through this same function rather than printing the dataclass's ``repr`` -- a tuple of
-    them renders each and joins with ``"; "``, mirroring ``why.ts``'s ``composeIn`` exactly
-    so the two composers can never read a nested reason two different ways. An id with no
-    catalog entry, or params that do not match its placeholders, renders as the id itself
-    -- the same fallback :meth:`Refusal.__str__` uses, and for the same reason: never raise
-    out of a report or a log line over a formatting slip.
+    A ``legacy`` reason (a sentence frozen before its condition got a code)
+    renders its stored text verbatim, never looked up. Anything else formats
+    ``MESSAGES[reason.id]`` against ``reason.params``, with two additions
+    ``str.format`` cannot do on its own. A numeric param gets a ``{name}_gb``
+    companion, the same derivation the browser's ``composeIn``
+    (``frontend/src/why.ts``) applies to every numeric param, so a template
+    can show a byte count in gigabytes without the raise site pre-rounding it.
+    A param that is itself a :class:`Reason` (an ``IntegrationError`` or
+    ``PlexError`` nested via ``as_reason()``, the same shape a stored
+    explanation's own params can carry) recurses through this same function
+    instead of printing the dataclass's ``repr``. A tuple of them renders each
+    and joins with ``"; "``, mirroring ``why.ts``'s ``composeIn`` exactly, so
+    the two composers can never read a nested reason two different ways. An id
+    with no catalog entry, or params that do not match its placeholders,
+    renders as the id itself. That is the same fallback :meth:`Refusal.__str__`
+    uses, and for the same reason: never raise out of a report or a log line
+    over a formatting slip.
     """
     if reason.id == "legacy":
         return str(reason.params.get("text", ""))

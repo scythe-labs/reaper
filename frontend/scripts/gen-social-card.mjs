@@ -4,9 +4,9 @@
 //
 //   npm run social-card
 //
-// Run this after any change to that drawing or to the brand mark it embeds, then commit what it
-// writes and upload the PNG under Settings > General > Social preview. GitHub has no API for
-// that upload, so the last step is a human with a browser; committing the PNG is what lets the
+// Run this after any change to that drawing or to the brand mark it embeds, then commit what
+// it writes and upload the PNG under Settings > General > Social preview. GitHub has no API
+// for that upload, so the last step is a human with a browser. Committing the PNG lets the
 // next person see what is currently published without going and looking.
 //
 // socialCard.test.ts is the backstop: it re-derives the source SVG and compares it to the hash
@@ -20,7 +20,7 @@
 //
 // Separate from gen-icons.mjs on purpose. That script's manifest is cross-checked against the
 // icons index.html and site.webmanifest actually reference, and this card is referenced by
-// neither -- folding it in would mean weakening that check to admit an asset it was written to
+// neither. Folding it in would mean weakening that check to admit an asset it was written to
 // catch.
 
 import { createHash } from "node:crypto";
@@ -41,7 +41,7 @@ const MANIFEST = join(ROOT, "src", "brand", "socialCard.generated.json");
 const sha256 = (data) => createHash("sha256").update(data).digest("hex");
 
 async function loadBrand() {
-  // Middleware mode keeps this from binding a port; only the module runner is wanted, so the
+  // Middleware mode keeps this from binding a port. Only the module runner is wanted, so the
   // script resolves imports the way the app does and needs no second bundler.
   const server = await createServer({
     root: ROOT,
@@ -77,7 +77,7 @@ await writeFile(
   MANIFEST,
   JSON.stringify(
     {
-      // Read by socialCard.test.ts. Regenerate with `npm run social-card`; never hand-edit,
+      // Read by socialCard.test.ts. Regenerate with `npm run social-card`. Never hand-edit,
       // because the hashes are the only thing tying the PNG to the drawing it came from.
       generator: "frontend/scripts/gen-social-card.mjs",
       accent: DEFAULT_ACCENT,

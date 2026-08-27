@@ -55,9 +55,9 @@ class _RecordingLogger:
         self.events.append(("warning", event, kw))
 
     def error(self, event: str, **kw: object) -> None:
-        # Every level ``reaper.main`` uses, or the stand-in fails the boot it is standing
-        # in for: the schema gate's refusal is the one ``error`` (rule 135's shape, for a
-        # hand-written double rather than a module mock).
+        # This stand-in must answer every level `reaper.main` uses. The schema gate's
+        # refusal is the one call that logs at `error`, and a hand-written double that
+        # dropped this method would fail the boot it is standing in for.
         self.events.append(("error", event, kw))
 
     def names(self) -> list[str]:
@@ -71,11 +71,11 @@ def _make(
     stored_log_level: str | None = None,
     revision: str | None = None,
 ) -> Settings:
-    """A schema-initialized install; optionally with the deletion toggle already stored,
+    """A schema-initialized install, optionally with the deletion toggle already stored,
     the way a real install looks after someone armed it in the web UI.
 
-    ``revision`` writes the ``alembic_version`` row that ``create_all`` never makes, so the
-    banner's revision field can be pinned to a value that is not the default (rule 141)."""
+    ``revision`` writes the ``alembic_version`` row that ``create_all`` never makes, so
+    the banner's revision field can be pinned to a value other than the default."""
     settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
@@ -108,7 +108,7 @@ async def _noop(*_args: object, **_kwargs: object) -> None:
 
 @pytest.fixture
 def recorder(monkeypatch: pytest.MonkeyPatch) -> _RecordingLogger:
-    # Hermetic, matching the other app-startup tests: no .env seeding, no dataset
+    # Hermetic, matching the other app-startup tests. No .env seeding, and no dataset
     # download racing teardown.
     monkeypatch.setattr("reaper.main.load_raw_env", lambda _s: {})
     monkeypatch.setattr("reaper.main.catch_up_on_startup", _noop)
@@ -121,8 +121,8 @@ class TestStartupBanner:
     def test_an_install_armed_in_the_ui_boots_saying_so(
         self, tmp_path: Path, recorder: _RecordingLogger
     ) -> None:
-        """Env says disabled, the stored toggle says armed: the stored value is the
-        truth, and the old banner's "nothing can be deleted" would be a false claim."""
+        """The environment says disabled, but the stored toggle says armed. The stored
+        value must win, or the banner would falsely claim nothing can be deleted."""
         settings = _make(tmp_path, stored_destructive=True)
         assert settings.destructive_actions_enabled is False  # the env default
 
@@ -150,8 +150,8 @@ class TestStartupBanner:
     def test_disarming_in_the_ui_survives_a_restart_of_an_armed_env(
         self, tmp_path: Path, recorder: _RecordingLogger
     ) -> None:
-        """The mirror case: env ships armed, but someone turned deletion OFF in the UI.
-        The stored OFF must win, or a restart would silently re-arm the tool."""
+        """The mirror case. The environment ships armed, but someone turned deletion OFF
+        in the UI. The stored OFF must win, or a restart would silently re-arm the tool."""
         settings = _make(tmp_path, stored_destructive=False)
         settings.destructive_actions_enabled = True  # the env shipped armed
 
@@ -167,10 +167,9 @@ class TestTheInstallFingerprint:
 
     Support reads this before anything else, because the four keep their data in four
     places and take their configuration by four routes. Each branch is driven through
-    the signal only that shape sets, and the source-checkout case is driven with every
-    signal absent -- an unrecognized install must report the shape with the fewest
-    promises attached rather than guess at a fifth (rule 145: every branch, not only
-    the one the default state hands you).
+    only the signal that shape sets. The source-checkout case is driven with every
+    signal absent, since an unrecognized install must report the shape with the fewest
+    promises attached rather than guess at a fifth.
     """
 
     def test_a_frozen_bundle_is_a_desktop_build(
@@ -206,10 +205,11 @@ class TestTheBootBannerDescribesTheInstall:
     def test_it_names_the_shape_the_paths_and_where_the_level_came_from(
         self, tmp_path: Path, recorder: _RecordingLogger
     ) -> None:
-        """ "It doesn't work on my server" starts here. ``log_level_from`` is the field
-        that unblocks every other session: a stored level silently outranks
-        REAPER_LOG_LEVEL, so "I set DEBUG in compose and restarted" can do nothing at
-        all with no way to tell."""
+        """``log_level_from`` names where the running log level came from.
+
+        A stored level silently outranks REAPER_LOG_LEVEL, so an operator who sets DEBUG
+        in their compose file and restarts can see nothing change, with no way to tell
+        why unless the banner says so."""
         settings = _make(tmp_path, stored_destructive=None)
 
         with TestClient(create_app(settings)):
@@ -239,15 +239,14 @@ class TestTheBootBannerDescribesTheInstall:
     def test_the_database_reports_its_revision_and_journal_mode(
         self, tmp_path: Path, recorder: _RecordingLogger
     ) -> None:
-        """WAL is asked for and not always granted: a database on a network share stays
-        on the rollback journal, which is every "database is locked" report.
+        """WAL is asked for and not always granted. A database on a network share stays
+        on the rollback journal, which is behind every "database is locked" report.
 
         The revision is pinned to a stored value rather than to the ``None`` a
         ``create_all`` database returns anyway, so replacing the read with a constant
-        fails here instead of passing on the fixture's own default (rule 141). It has to
-        be a revision this build actually ships: the boot gate refuses anything else
-        before the banner is ever written (``reaper.db.schema_gate``, #565), and the
-        invented hash that used to sit here described a database no build could serve."""
+        fails here instead of passing on the fixture's own default. It has to be a
+        revision this build actually ships, since the boot gate (``reaper.db.schema_gate``)
+        refuses anything else before the banner is ever written."""
         settings = _make(tmp_path, stored_destructive=None, revision=SHIPPED_REVISION)
 
         with TestClient(create_app(settings)):
@@ -264,9 +263,9 @@ class TestTheBootBannerDescribesTheInstall:
         """The case the banner exists for, driven directly: a database that did not get WAL.
 
         It cannot be driven through the boot, because ``create_engine`` attaches
-        ``_configure_sqlite`` per engine and that listener re-asks for WAL on every pooled
-        connection. A plain engine has no listener, so the mode it was put in survives, and
-        a `journal_mode` reduced to ``return "wal"`` fails here (rule 145)."""
+        ``_configure_sqlite`` per engine, and that listener re-asks for WAL on every pooled
+        connection. A plain engine has no listener, so the mode it was put in survives.
+        A `journal_mode` reduced to always ``return "wal"`` fails here."""
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/plain.db")
         try:
             async with engine.begin() as conn:
@@ -280,9 +279,9 @@ class TestTheBootBannerDescribesTheInstall:
     ) -> None:
         """``cache.db`` is disposable by contract, so it must never gate startup.
 
-        The banner's read is the first thing in the boot to open it, and without the catch
-        a truncated file (an unclean shutdown) or one owned by another uid aborts `lifespan`
-        outright: uvicorn exits and the operator gets no UI to fix it from."""
+        The banner's read is the first thing in the boot to open it. Without the catch, a
+        truncated file (from an unclean shutdown) or one owned by another uid aborts
+        `lifespan` outright, uvicorn exits, and the operator gets no UI to fix it from."""
         settings = _make(tmp_path, stored_destructive=None)
         (tmp_path / "cache.db").write_bytes(b"this is not a database" * 64)
 
@@ -297,14 +296,15 @@ class TestTheBootBannerDescribesTheInstall:
     def test_every_registered_job_is_named_with_its_next_firing(
         self, tmp_path: Path, recorder: _RecordingLogger
     ) -> None:
-        """ "Why did my nightly scan stop" -- a job that was never scheduled and one whose
-        stored cron was skipped as malformed are otherwise indistinguishable.
+        """A job that was never scheduled and one whose stored cron was skipped as
+        malformed are otherwise indistinguishable to an operator asking why their
+        nightly scan stopped.
 
-        The population is pinned rather than walked for a flag, because a flag-shaped
-        assertion cannot tell a job that complies from one that dropped out of the walk
-        (rule 145). This fixture stores no schedules, so the set is exactly the built-in
-        upkeep jobs: a stored cron would add the scan job and a stored null would remove a
-        maintenance one."""
+        The population of jobs is pinned rather than walked for a flag, because a
+        flag-shaped assertion cannot tell a job that complies from one that dropped out
+        of the walk. This fixture stores no schedules, so the set is exactly the
+        built-in upkeep jobs. A stored cron would add the scan job, and a stored null
+        would remove a maintenance one."""
         settings = _make(tmp_path, stored_destructive=None)
 
         with TestClient(create_app(settings)):
@@ -318,6 +318,6 @@ class TestTheBootBannerDescribesTheInstall:
         }
         assert all(job["trigger"] for job in jobs)
         # `.get`, so a dropped field fails as a missing firing time rather than a KeyError
-        # raised somewhere else entirely (rule 141).
+        # raised somewhere else entirely.
         assert all(job.get("next_run") for job in jobs)
         assert "scheduler.no_scan_scheduled" in recorder.names()

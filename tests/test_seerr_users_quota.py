@@ -59,8 +59,9 @@ class TestQuota:
         assert q.movie.restricted is False
 
     async def test_per_type_windows_and_units_are_kept_apart(self) -> None:
-        """Movies "1 per 14 days" and series "1 per 60 days" are distinct limits with
-        distinct windows; both are carried, neither is assumed from the other."""
+        """Movies "1 per 14 days" and series "1 per 60 days" are separate limits with
+        separate windows. Both values are carried through, and neither is assumed from
+        the other."""
         client = _client()
 
         async def fake(path: str, **kwargs: Any) -> object:
@@ -126,8 +127,8 @@ class TestUsers:
         assert users[149].request_count == 149
 
     async def test_rows_without_a_total_refuse_rather_than_truncate(self) -> None:
-        """Same envelope guard as requests(): rows present but no pageInfo total would
-        stop after one page and undercount every account."""
+        """Uses the same envelope guard as requests(). Rows present with no pageInfo
+        total would stop after one page and undercount every account."""
         client = _client()
 
         async def fake(path: str, **kwargs: Any) -> object:

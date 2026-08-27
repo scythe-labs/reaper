@@ -2,14 +2,15 @@
 //
 // The `.why` panel shell. Six panels render it, and what it owes them changes with the screen:
 // above 1100px it is a side panel in its own grid column beside the list and both are usable,
-// below it styles/10-layout.css floats it over the cards, and below 900px `inset: 0; z-index: 50` puts it
-// over the entire application. The contract has to follow that, which is why every test here is
-// written twice -- once per side of the boundary.
+// below it styles/10-layout.css floats it over the cards, and below 900px `inset: 0; z-index: 50`
+// puts it over the entire application. The contract must follow that, so every test here is
+// written twice, once per side of the boundary.
 //
-// **The boundary is 1100, not 900**, and `stubOverlayBand` below is the test that says so: keyed
-// on 900 the shell left 200px of viewport width overlaying the cards with no dialog, no focus
-// move and no Tab trap (#184). A stub answering `true` to every query cannot catch that -- it
-// makes both numbers look alike -- so the band test answers per query.
+// **The boundary is 1100, not 900.** `stubOverlayBand` below checks the band between 900 and
+// 1100px on its own: at 200px of viewport width the shell must already behave as a dialog, with
+// focus moved in and Tab trapped, even though the narrow-screen query has not matched yet. A stub
+// answering `true` to every query cannot catch a bug at the wrong boundary, since it makes both
+// numbers look alike, so the band test answers per query instead.
 //
 // jsdom has no `matchMedia`, so `useMediaQuery` reports false and an unstubbed test sees the
 // wide screen. `stubMatchMedia(true)` is the phone.
@@ -38,8 +39,8 @@ function stubMatchMedia(matches: boolean) {
 /** A window between 901px and 1100px: the panel overlays the cards but does not cover them.
  *
  *  Answers each query on its own, so a shell reading the wrong constant reports the wrong thing
- *  rather than the same thing. Rule 141 in miniature -- a stub that answers alike whatever it is
- *  asked cannot prove which question was put to it. */
+ *  rather than the same thing. A stub that answers alike whatever it is asked cannot prove which
+ *  question was put to it. */
 function stubOverlayBand() {
   vi.stubGlobal("matchMedia", (query: string) => ({
     matches: query === PANEL_OVERLAY_QUERY,
@@ -76,7 +77,7 @@ function stubCrossableMatchMedia(initial: boolean): (next: boolean) => void {
   };
 }
 
-// Rule 133: a stub left standing is inherited by the next test in the file.
+// A stub left standing is inherited by the next test in the file.
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -105,9 +106,10 @@ function Harness() {
 }
 
 describe("the reasons panel shell, audited", () => {
-  // The shell renders a DIFFERENT thing in each band -- a `complementary` beside the queue on a
-  // desktop, a modal `dialog` over it on a phone -- so auditing one proves nothing about the
-  // other, and the band a bare `matchMedia` hands you for free is the desktop one (rule 145).
+  // The shell renders a DIFFERENT thing in each band: a `complementary` beside the queue on a
+  // desktop, a modal `dialog` over it on a phone. Auditing one proves nothing about the other,
+  // and a bare `matchMedia` gives the desktop band for free, so the other two are stubbed
+  // explicitly here.
   it.each([
     ["a wide desktop", () => stubMatchMedia(false)],
     ["the overlay band", stubOverlayBand],
@@ -118,14 +120,10 @@ describe("the reasons panel shell, audited", () => {
     render(<Harness />);
     await user.click(screen.getByRole("button", { name: "Open the panel" }));
     await screen.findByRole("heading", { name: NAME });
-    // `document.body`, not the render container: on a phone the shell is a modal over the page,
-    // and what a modal owes a screen reader is a claim about the whole document.
-    //
-    // Audited with nothing skipped. This call used to suppress `aria-allowed-role` for #232: the
-    // shell was an `<aside>` taking `role="dialog"` on the lower band, which is not a role a
-    // sectioning element may take. It is a div naming its own role in both bands now, and the
-    // `<header>` the <aside> used to scope is a plain div in all six panels, so neither half of
-    // that trade is still owed.
+    // Audited against `document.body`, not the render container: on a phone the shell is a
+    // modal over the page, and what a modal owes a screen reader is a claim about the whole
+    // document. Audited with nothing skipped: the shell is a div naming its own role in both
+    // bands, and the header it wraps is a plain div in all six panels.
     await expectNoA11yViolations(document.body);
   });
 });
@@ -165,8 +163,8 @@ describe("WhyShell on a wide desktop", () => {
 describe("WhyShell in the overlay band, between a phone and a desktop", () => {
   // 901px to 1100px: `main.split` has collapsed to one track and the panel is `position: fixed;
   // right: 0` over the right of the cards. It hides the side of every card the Spare and Reap
-  // buttons sit on, so the dialog contract starts HERE and not 200px further down (#184). Each
-  // of the three is the shell's whole answer to a keyboard operator, so each is asserted.
+  // buttons sit on, so the dialog contract must start HERE, not 200px further down. Each of the
+  // three checks below is the shell's whole answer to a keyboard operator.
 
   it("is a dialog even though the narrow-screen query does not match", async () => {
     stubOverlayBand();
@@ -275,9 +273,9 @@ describe("WhyShell on a phone", () => {
 
 describe("WhyShell Escape", () => {
   it("closes from inside one of the panel's own fields", async () => {
-    // App's review-view handler owned Escape and bailed whenever the press came from an
-    // INPUT/TEXTAREA/SELECT -- a bail `j`/`k` need and Escape does not -- so Escape from a box
-    // inside the panel did nothing at all.
+    // Escape from a box inside the panel must close it. A global key handler that bails
+    // whenever the press comes from an INPUT/TEXTAREA/SELECT (needed for `j`/`k`, which must
+    // not fire while typing) would otherwise swallow Escape here too.
     const user = userEvent.setup();
     render(<Harness />);
     await user.click(screen.getByRole("button", { name: "Open the panel" }));
@@ -291,11 +289,11 @@ describe("WhyShell Escape", () => {
   });
 
   it("leaves a field the panel does not own alone", async () => {
-    // The listener is on `window`, so it hears the whole page, and Escape already means something
-    // in a text box -- it clears a `type="search"` field natively. The queue's search box sits
-    // beside this panel in split view, so an unscoped handler shut the reasoning the operator was
-    // reading when they only meant to clear their search. That is why the bail above is scoped
-    // rather than dropped.
+    // The listener is on `window`, so it hears the whole page, and Escape already means
+    // something in a text box: it clears a `type="search"` field natively. The queue's search
+    // box sits beside this panel in split view, so an unscoped handler would close the panel
+    // when the operator only meant to clear their search. The bail above must be scoped to
+    // this panel's own fields, not dropped entirely.
     const user = userEvent.setup();
     render(<Harness />);
     await user.click(screen.getByRole("button", { name: "Open the panel" }));
@@ -323,9 +321,8 @@ describe("WhyShell Escape", () => {
 
 describe("WhyShell across the boundary", () => {
   it("does not treat a screen resize as a close", async () => {
-    // `active` was an effect dependency, so flipping it re-ran the effect -- and the cleanup of
-    // that effect is the CLOSE-restore. Crossing 900px with the panel open therefore handed focus
-    // back to the card behind a panel that was still on screen: a rotated phone, mid-read.
+    // Crossing 900px with the panel open must not hand focus back to the card behind it while
+    // the panel is still on screen, the way rotating a phone mid-read would.
     const cross = stubCrossableMatchMedia(true);
     const user = userEvent.setup();
     render(<Harness />);

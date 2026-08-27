@@ -36,16 +36,15 @@ function manualUri(host: string, port: string, ssl: boolean): string {
   return `${ssl ? "https" : "http"}://${trimmed}:${port.trim() || "32400"}`;
 }
 
-/** The three manual fields as a stored address seeds them: one parse, used both to FILL the row
- *  (`openManual`) and to say what "nothing typed" looks like (the dirty check below).
+/** Parses a stored address into the three manual fields, the same way for both readers:
+ *  `openManual` fills the row from it, and the dirty check below compares against it to see
+ *  what "nothing typed" looks like.
  *
- *  Both sides must go through this, because the stored string and the row's own composition of it
- *  are not the same text and comparing them directly reports edits nobody made (rule 39). Two
- *  ways that happens, each reachable by saving through this very box: `URL.hostname` lowercases,
- *  so a host typed with capitals comes back changed; and `URL.port` is empty for a scheme-default
- *  port, so the address has to be re-derived rather than guessed. Guessing 32400 for http was
- *  wrong twice over: it reported a phantom draft, and it showed :32400 for a server on :80 as
- *  though that were the current address. */
+ *  Both sides use this parser because the stored string and the row's own composition of it
+ *  are not the same text, so comparing them directly would report edits nobody made.
+ *  `URL.hostname` lowercases a host typed with capitals, and `URL.port` is empty for a scheme's
+ *  default port, so the port has to be read back from the parsed URL rather than assumed:
+ *  assuming 32400 for http would show a server running on port 80 as though it were on 32400. */
 function seedManual(uri: string): { host: string; port: string; ssl: boolean } {
   try {
     const parsed = new URL(uri);
@@ -59,22 +58,23 @@ function seedManual(uri: string): { host: string; port: string; ssl: boolean } {
 
 /** The watch-record status line: what Reaper holds, and what the last scan could not read.
  *
- *  `held_back === null` is "no scan has recorded it", which is NOT zero, so it says nothing at
- *  all rather than claiming none (rule 93). Zero is a real answer and is reported plainly,
- *  because "none" is exactly what tells an operator to leave this control alone.
+ *  `held_back === null` means no scan has recorded a value yet, which is different from zero, so
+ *  the line says nothing rather than claiming none. Zero is a real answer and is reported
+ *  plainly, because "none" is exactly what tells an operator to leave this control alone.
  *
- *  **It reports what was COUNTED, never what was decided.** The stored number is items whose
- *  plays stopped being readable; nothing consults the verdict. Saying they were "held back" or
- *  "kept" would assert a protection this figure is not computed from: the hold comes from three
- *  gates the operator can each switch off, and with all three off the item is condemned exactly
- *  as before while this line still counted it (rule 144).
+ *  This line reports what was counted, never what was decided. The stored number is items whose
+ *  plays stopped being readable; nothing here consults the deletion verdict. Calling them "held
+ *  back" or "kept" would claim a protection this figure does not track: three separate gates
+ *  decide whether an item is actually protected, and an operator can turn all three off while
+ *  this count keeps rising.
  *
- *  Nor "held back" as a phrase, whatever it claimed: this app has already bound that to an item
- *  with no readable size, in the planner and on four docs pages, where the repair is a policy
- *  allowance. Reusing it would send the operator there instead of to Tautulli.
+ *  The line avoids the words "held back" for a second reason: the app already uses that phrase
+ *  for an item with no readable size, on the planner and in several docs pages, where the fix is
+ *  a policy allowance. Reusing it here would send the operator to fix the wrong thing.
  *
  *  It names the LAST SCAN rather than "right now" because that is where the number comes from:
- *  it does not move until the next scan runs, which is also why the reset leaves it standing. */
+ *  it does not move until the next scan runs, which is also why resetting the record leaves
+ *  this line unchanged until then. */
 function watchEvidenceStatus(evidence: WatchEvidence): string {
   if (evidence.held_back === null) {
     return i18next.t("plex.watchEvidence.holding", { n: evidence.titles });
@@ -122,59 +122,57 @@ export function PlexPanel({
   // earns the password here.
   const [forgetting, setForgetting] = useState(false);
   const [forgotten, setForgotten] = useState<number | null>(null);
-  // Deliberately NOT part of `hasDrafts` below: a confirm credential is not work to lose, it is
-  // three seconds of retyping, and `DeletionToggle` treats its own the same way. `onDirtyChange`
-  // exists to stop the operator walking away from something they cannot get back.
+  // `forgetPassword` stays out of `hasDrafts` below: retyping a confirm credential costs three
+  // seconds, not real work, and `DeletionToggle` treats its own confirm the same way.
+  // `onDirtyChange` exists to stop the operator walking away from something they cannot get back.
   const [forgetPassword, setForgetPassword] = useState("");
-  // The web-address box mirrors the saved value and follows it when a save (or another
-  // tab) changes it; typing diverges the two until Save or a refetch reconciles them.
+  // The web-address box mirrors the saved value and follows it when a save, or another tab,
+  // changes it. Typing in the box diverges the two until Save or a refetch reconciles them.
   const [webUrl, setWebUrl] = useState("");
   const [webUrlError, setWebUrlError] = useState<string | null>(null);
-  // Both inline Saves on this panel exist only while their row is dirty, so pressing one destroys
-  // it -- and each is `disabled` while its write is in flight, so focus is at `<body>` before that
-  // (#173). Neither row has a heading of its own, so each hands focus to the control that outlives
-  // it, and they are different controls: the web address box survives its own save and still holds
-  // the value just committed, while the whole Manual address row collapses, leaving the Connection
-  // select above it -- which is where the operator opened the row from, and which now reads back
-  // the address they saved. Two hooks for the same reason they have two targets, plus two settle
-  // timings: the web address waits for the `["plex"]` refetch, the manual row collapses inside
-  // `onSuccess` and its select is `disabled` until the write clears.
+  // Both inline Saves on this panel exist only while their row is dirty, so pressing one removes
+  // the button itself, and each stays disabled while its write is in flight. That leaves focus at
+  // `<body>` once the button is gone, unless something claims it first. Neither row has a heading
+  // of its own, so each hands focus to the control that outlives it, and the two controls differ:
+  // the web address box survives its own save and still holds the value just committed, while the
+  // whole Manual address row collapses, leaving the Connection select above it, which is where
+  // the operator opened the row from and now reads back the saved address. Two hooks, because the
+  // two targets settle at different times: the web address waits for the `["plex"]` refetch, and
+  // the manual row collapses inside `onSuccess`, with its select staying disabled until the write
+  // clears.
   const afterWebUrlSave = useSuccessorFocus();
   const afterManualSave = useSuccessorFocus();
   const savedWebUrl = data?.web_url ?? "";
-  // Which stored value the box currently holds a copy of. The effect below runs after the
-  // commit, so the first pass where `data` exists paints an empty box against a stored
-  // address and the dirty check reads a draft nobody typed -- the same one-frame report
-  // `GeneralPanel` was making, and it reaches `Settings` through `onDirtyChange` the same way
-  // (#139, rules 72 and 146). This panel re-seeds on EVERY change of the stored value rather
-  // than once per load, so a bare "have we seeded" flag would not cover it: a save or another
-  // tab moving the address opens the same window again. Asking which value the box was seeded
-  // from closes both.
+  // Tracks which stored value the box was last seeded from. The seeding effect below runs after
+  // React commits, so on the render right after `data` first arrives, the box is still empty
+  // against a real stored address, and a naive dirty check would report a draft nobody typed.
+  // This panel re-seeds every time the stored value changes, not just once on load, since a save
+  // or another tab can move the address again, so a plain "have we seeded" flag would not be
+  // enough; comparing against the last-seeded value covers both cases.
   //
-  // `null`, never `savedWebUrl`: seeding the guard from the very value it has to DIFFER from
-  // leaves it inert exactly where the bug bites. `["plex"]` is cached and `Settings` remounts
-  // this panel on every section switch, so on a return visit `data` is already there on the
-  // FIRST render -- `savedWebUrl` holds the stored address while the box is still "", the two
-  // agree, and the panel reports a draft nobody typed. A sentinel no stored value can equal
-  // (the shape `PolicyEditor` uses for its own draft) fails closed on that frame and still
-  // re-seeds on every change after it.
+  // The initial value is `null`, never `savedWebUrl`. `["plex"]` stays cached and `Settings`
+  // remounts this panel on every section switch, so on a return visit `data` can already be
+  // present on the very first render: `savedWebUrl` would then equal the still-empty box, and
+  // the dirty check would report a draft nobody typed. `null` cannot equal any real stored
+  // value, so it fails closed on that first render and still re-seeds correctly on every later
+  // change.
   const [seededFrom, setSeededFrom] = useState<string | null>(null);
   useEffect(() => {
     setWebUrl(savedWebUrl);
     setSeededFrom(savedWebUrl);
   }, [savedWebUrl]);
 
-  // The certificate check. Before linking it rides along with the link polls (so a
-  // self-signed server can be reached at all); once linked it edits the stored server
-  // row directly. The ref keeps the in-flight poll reading the current choice.
+  // The certificate check. Before linking, it rides along with the link polls so a self-signed
+  // server can be reached at all. Once linked, it edits the stored server row directly. The ref
+  // keeps the in-flight poll reading the current choice.
   const [verifyCert, setVerifyCert] = useState(true);
   const verifyRef = useRef(true);
   const savedVerify = data?.verify_tls ?? true;
-  // The same sentinel as `seededFrom` above, and for the same reason (rule 72). Latent rather
-  // than live: the status read omits the certificate flag while unlinked and the schema default
-  // is on, so the stored value and this box's initial value are both `true` today and no warm
-  // mount can catch them apart. That is a property of one server route, not of this guard, so
-  // the guard is written to hold without it.
+  // The same sentinel pattern as `seededFrom` above. The bug it guards against is latent here:
+  // the status read omits the certificate flag while unlinked, and the schema default is also
+  // true, so the stored value and this box's initial value already agree and no warm mount can
+  // catch them apart. That is a property of one server route, not of this guard, so the guard
+  // still holds without relying on it.
   const [verifySeededFrom, setVerifySeededFrom] = useState<boolean | null>(null);
   useEffect(() => {
     setVerifyCert(savedVerify);
@@ -182,48 +180,43 @@ export function PlexPanel({
     setVerifySeededFrom(savedVerify);
   }, [savedVerify]);
 
-  // Three of the five paths that change which server is linked are on this panel; the setup
-  // wizard holds the other two. The key list and why it is that list live with the helper.
+  // Three of the five paths that change which server is linked are on this panel. The setup
+  // wizard holds the other two. The key list, and why it is that list, live with the helper.
   const invalidateAllPlex = () => invalidateAllPlexQueries(queryClient);
 
   const saveWebUrl = useMutation({
     mutationFn: () => api.setPlexSettings({ web_url: webUrl.trim() }),
-    // Re-seed from the response rather than leaving it to the effect above (rule 39). Clearing
-    // the box is how the help says to go back to the hosted default, and it saves the empty
-    // string: the route stores that as "unset" and reports back the SAME default string it was
-    // already returning, so `savedWebUrl` never changes identity and that effect never re-fires.
-    // The box would sit empty against a default it now matches -- a Save button that never goes
-    // away, and, since this panel started reporting drafts upward, a section-switch confirm that
-    // no button on this panel can satisfy, for a value that is already stored.
+    // Re-seeds from the response instead of waiting for the effect above. Clearing the box is
+    // how the help text says to restore the hosted default, and that saves an empty string: the
+    // route stores it as "unset" and reports back the same default string it was already
+    // returning, so `savedWebUrl` never changes and the effect above never re-fires. Without
+    // this, the box would sit empty against a default it already matches: the Save button would
+    // never go away, and the section-switch confirm would ask to discard a value that is already
+    // saved.
     onSuccess: (status) => {
       setWebUrl(status.web_url);
       setWebUrlError(null);
-      // Its whole success signal was the Save button going away, which is an absence: the manual
-      // address row beside it has said "Connection saved." all along, so this was the asymmetric
-      // half of a pair (#173, rule 72).
+      // The Save button disappearing is a silent success signal, but the manual address row
+      // next to it already says "Connection saved" out loud. This keeps the two rows consistent.
       announce(t("plex.webAddress.saved"));
       void queryClient.invalidateQueries({ queryKey: ["plex"] });
     },
     onError: (e) => setWebUrlError(describeError(e)),
   });
 
-  // Flip the stored certificate check on the linked server. It sends the certificate check and
-  // NOTHING else, which is the only way it cannot touch the address: it used to send
-  // `savedWebUrl` beside it, so that the box's half-typed draft could not be saved by mistake --
-  // but `savedWebUrl` is `["plex"]`'s cached row, and the route wrote whatever arrived. So a
-  // switch about certificates wrote an address it has nothing to do with, and a cached row that
-  // had gone out of date (a failed refetch this panel deliberately renders through, or another
-  // tab editing the address) reverted the operator's address without a word, pointing every
-  // "open in Plex" link in the app at plex.tv. The route keeps a field it was not sent (#204).
+  // Flips the stored certificate check on the linked server. It sends only that field, never
+  // the address: the server keeps any field this request omits, so sending a stale cached
+  // address here could silently revert an address the operator just changed elsewhere, pointing
+  // every "open in Plex" link in the app back at plex.tv.
   const saveVerify = useMutation({
     mutationFn: (next: boolean) => api.setPlexSettings({ verify_tls: next }),
     onSuccess: () => {
       setPlexError(null);
       void queryClient.invalidateQueries({ queryKey: ["plex"] });
     },
-    // The toggle flips optimiztically; a failed save must roll it back so the switch
-    // never claims the certificate check is on while the server still has it off. The
-    // switch is disabled while pending, so `!next` is the value before the flip.
+    // The toggle flips optimistically. A failed save has to roll it back, so the switch never
+    // claims the certificate check is on while the server still has it off. The switch is
+    // disabled while the save is pending, so `!next` is the value from before the flip.
     onError: (e, next: boolean) => {
       setVerifyCert(!next);
       verifyRef.current = !next;
@@ -231,12 +224,12 @@ export function PlexPanel({
     },
   });
 
-  // Ends a link attempt, however it ended. It refreshes the whole set rather than the status row
-  // alone: linking is one of the three ways the linked server changes, so the library grid, the
-  // server picker and the Leaving Soon settings all answer for a server that is no longer the one
-  // on screen. Unlinking then linking a DIFFERENT server used to paint the previous server's
-  // libraries and their enabled flags, and "Movies" and "TV Shows" collide across servers, so the
-  // wrong list looked like the right one (#205).
+  // Ends a link attempt, however it ended. It refreshes the whole set of Plex-derived data, not
+  // just the status row: linking is one of the three ways the linked server changes, and without
+  // a full refresh the library grid, server picker, and Leaving Soon settings would still answer
+  // for a server that is no longer the one on screen. Library names like "Movies" and "TV Shows"
+  // repeat across servers, so a stale library list can look correct while pointing at the wrong
+  // server's libraries.
   const done = () => {
     setLinking(false);
     invalidateAllPlex();
@@ -249,18 +242,18 @@ export function PlexPanel({
       const server = poll.server?.name ?? t("plex.linked.defaultServerName");
       const said = t("plex.linked.said", { server });
       setMessage(said);
-      // `message` renders as a plain `.muted` paragraph, which is not a live region, and the
-      // failure siblings below reach `Notice`'s `role="alert"` and so DO speak -- the same
-      // success-is-silent asymmetry as the web address save above (#173, rule 72).
+      // `message` renders as a plain `.muted` paragraph, not a live region, while the failure
+      // paths below use `Notice`'s `role="alert"` and so speak on their own. This announce call
+      // gives the success path the same spoken confirmation the failure path gets for free.
       announce(said);
       done();
     },
-    // The picker's announcement is `usePlexPinPoll`'s (`chooseServerSaid`), not this panel's.
-    // It was written here first and again on the login screen in that screen's own words (rule
-    // 144), and `PlexPin.test.tsx` fails by name if this file states it again.
+    // The picker's announcement lives in `usePlexPinPoll` (`chooseServerSaid`), not here. Do not
+    // restate that sentence in this file: `PlexPin.test.tsx` checks by name that only one copy
+    // exists, so a second copy here would fail that test.
     //
-    // A sign-in that never completed is a failure, not status: it goes to `plexError`
-    // so it renders as an error, not in the gray slot "Linked to ..." uses.
+    // A sign-in that never completed is a failure, not status, so it goes to `plexError` and
+    // renders as an error rather than in the gray slot "Linked to ..." uses.
     onTimedOut: () => {
       setPlexError(t("plex.signInTimedOut"));
       done();
@@ -279,9 +272,9 @@ export function PlexPanel({
     try {
       const start = await api.plexLinkStart();
       setAuthUrl(start.auth_url);
-      // noopener keeps plex.tv from reaching this page, and `auth_url` carries a
-      // forwardUrl to /plex-done.html so the window still closes itself. Same pair as
-      // Login.PlexButton, which explains the two halves (#372).
+      // noopener keeps plex.tv from reaching this page. `auth_url` carries a forwardUrl to
+      // /plex-done.html so the opened window still closes itself. `Login.PlexButton` uses the
+      // same pair.
       window.open(start.auth_url, "_blank", "noopener");
       pin.begin(start.pin_id);
     } catch (e) {
@@ -304,9 +297,9 @@ export function PlexPanel({
 
   const unlink = useMutation({
     mutationFn: api.plexUnlink,
-    // The same whole-set refresh `done` does, and for the same reason: after this there is no
-    // linked server, so every row that meant "of the linked server" is about a server Reaper can
-    // no longer reach (#205).
+    // The same whole-set refresh `done` does, and for the same reason: after an unlink there is
+    // no linked server, so every row that described "the linked server" would otherwise describe
+    // one Reaper can no longer reach.
     onSuccess: () => {
       setPlexError(null);
       invalidateAllPlex();
@@ -326,14 +319,14 @@ export function PlexPanel({
   });
 
   const switchServer = useMutation({
-    // Carry the operator's current certificate-check choice, so switching to a
-    // self-signed server they have already turned it off for probes correctly.
+    // Carries the operator's current certificate-check choice, so a switch to a self-signed
+    // server probes with the setting they already chose, not the default.
     mutationFn: (machineId: string) => api.plexSwitchServer(machineId, verifyRef.current),
     onSuccess: (_result, machineId) => {
-      // This one did not merely say nothing on success -- it CLEARED the only message slot on
-      // the panel (below), so switching which server Reaper will delete from was quieter than
-      // doing nothing. Named from the list rather than the id, falling back to a plain
-      // sentence if the picker's own label cannot be resolved.
+      // A silent success here would be worse than saying nothing: it would also clear the
+      // panel's one message slot (below), so switching which server Reaper deletes from would
+      // read as quieter than a no-op. Named from the server list rather than its id, falling
+      // back to a plain sentence if the picker's own label cannot be found.
       const picked = resources.data?.servers.find((s) => s.machine_identifier === machineId);
       announce(
         picked
@@ -358,31 +351,32 @@ export function PlexPanel({
     onSuccess: () => {
       announce(t("plex.connectionSaved"));
       setConnError(null);
-      // A successful connection save fixes reachability, so a prior "couldn't reach"
-      // from a failed switch is now stale: clear it, or a red notice lingers beside a
+      // A successful connection save fixes reachability, so a previous "couldn't reach" error
+      // from a failed switch is now stale. Clear it, or a red notice would linger beside a
       // healthy connection.
       setPlexError(null);
-      // Collapsing the editor was the only success signal, and it unmounts the focused button.
+      // Collapsing the editor is the only success signal, and it unmounts the currently focused
+      // button.
       setManualOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["plex"] });
     },
     onError: (e) => setConnError(describeError(e)),
   });
 
-  // Only the server plex.tv marks `current` is the one Reaper is linked to. This used to fall
-  // back to `servers[0]`, so a partial or filtered plex.tv response presented some OTHER server
-  // as the managed one and the Connection row listed that server's addresses: picking one saved
-  // it, and Reaper then wrote Leaving Soon collections and labels into, and read the Never-Reap
-  // collection from, a server it was never linked to (B-10). Unknown stays unknown -- the row
-  // says the list came back without it and both pickers go quiet until it is back.
+  // Only the server plex.tv marks `current` counts as the one Reaper is linked to. Falling back
+  // to `servers[0]` would let a partial or filtered plex.tv response present a different server
+  // as the managed one: the Connection row would list that server's addresses, and saving one
+  // would point Reaper's Leaving Soon writes and Never-Reap reads at a server it was never
+  // linked to. So an unresolved server stays unresolved: the row says the list came back
+  // without it, and both pickers go quiet until it is back.
   const currentServer = resources.data?.servers.find((s) => s.current);
   const linkedServerMissing = resources.data !== undefined && currentServer === undefined;
   const connections = currentServer?.connections ?? [];
   const savedUri = data?.connection_uri ?? "";
   const savedIsDiscovered = connections.some((c) => c.uri === savedUri);
-  // A typed-in address keeps its own option value, so "Manual address…" is always a
-  // different choice than the one already selected. Sharing one value meant picking it
-  // fired no change event, and the editor could never be reopened.
+  // A typed-in address keeps its own option value, so "Manual address…" is always a different
+  // choice than whichever address is already selected. If they shared one value, picking it
+  // again would fire no change event and the editor could never be reopened.
   const connectionValue = manualOpen ? MANUAL_CONNECTION : savedUri;
 
   const openManual = () => {
@@ -403,9 +397,9 @@ export function PlexPanel({
 
   // --- libraries ---------------------------------------------------------------
 
-  // The list, and the first-visit sync that fills one that has never been synced. Both come
-  // from the shared hook, which is also what the wizard's Plex step and the service editor's
-  // library pickers read -- three screens, one rule for what an empty list means (rule 144).
+  // The list, and the first-visit sync that fills one that has never been synced. Both come from
+  // the shared hook, which the wizard's Plex step and the service editor's library pickers also
+  // read, so all three screens treat an empty list the same way.
   const { libraries, sync: syncLibraries } = usePlexLibraries({ enabled: linked });
   const saveLibraries = useMutation({
     mutationFn: api.setPlexLibraries,
@@ -429,36 +423,36 @@ export function PlexPanel({
   });
   // Whether an admin password exists at all. Read from `useSafety` rather than added to
   // `/watch-evidence`, because the answer already ships on `/safety` and every surface that
-  // gates on it reads it there: a second copy of one fact is the copy that goes wrong (rule
-  // 144). It is the same flag `DeletionToggle` branches on for the same reason.
+  // gates on it reads it from there. `DeletionToggle` branches on the same flag for the same
+  // reason.
   const safety = useSafety();
-  // Both exits from the confirm form unmount it and take the focused button with them, so focus
-  // would fall to `<body>` and the next Tab would restart at the top of the page. The successor
-  // is the button that opened the form, which is back in that slot by the next commit -- the
-  // same handoff the two Saves above make, through the same hook (rule 72).
+  // Both exits from the confirm form unmount it and take the focused button with them, so
+  // without this, focus would fall to `<body>` and the next Tab would restart at the top of the
+  // page. The successor is the button that opened the form, which is back in that slot by the
+  // next commit. The two Saves above make the same handoff through the same hook.
   const afterForget = useSuccessorFocus();
   const forgetWatchEvidence = useMutation({
     mutationFn: api.resetWatchEvidence,
-    // The typed password is dropped on the way out on BOTH exits, success and refusal alike.
-    // Holding it would leave the admin password sitting in component state for as long as the
-    // panel stays mounted and refill the box on the next open, which is the shape S-5 was filed
-    // for; `RestoreCard` clears on a refusal for the same reason.
+    // The typed password is dropped on both exits, success and refusal alike. Holding it would
+    // leave the admin password sitting in component state for as long as the panel stays
+    // mounted, and refill the box the next time it opens. `RestoreCard` clears its own password
+    // box on a refusal for the same reason.
     //
-    // A refusal keeps the form, so it hands focus to nobody: the Confirm the operator pressed is
-    // still on screen, still holding focus, with the error beside it.
+    // A refusal keeps the form on screen, so it hands focus to nobody: the Confirm button the
+    // operator pressed is still there, still focused, with the error beside it.
     onError: () => setForgetPassword(""),
     onSuccess: (result) => {
       setForgetting(false);
       setForgetPassword("");
       setForgotten(result.forgotten);
       afterForget.arriving();
-      // The status line's own sentence, said out loud: it is the only thing that moves and it
-      // sits in an unfocused subtree (rule 144: the visible copy is a few lines down). From
-      // the settled mutation, never at issuance (rule 85).
+      // The status line's own sentence, said out loud: it is the only thing that changes, and it
+      // sits a few lines down in an unfocused part of the page. Announced from the settled
+      // mutation, never when the request is issued.
       announce(t("plex.watchEvidence.forgotten", { n: result.forgotten }));
-      // Refetch rather than patch: the reset moves `titles` to zero, but `held_back` is a
-      // property of the LAST SCAN and does not change until the next one runs. Writing the
-      // pair by hand here would have to restate that, and would be the place it drifts.
+      // Refetches rather than patching in the new numbers by hand: the reset moves `titles` to
+      // zero, but `held_back` describes the LAST SCAN and does not change until the next one
+      // runs. Writing both fields here would have to restate that rule and could drift from it.
       void queryClient.invalidateQueries({ queryKey: ["watch-evidence"] });
     },
   });
@@ -471,9 +465,9 @@ export function PlexPanel({
     enabled: linked,
   });
   // The shelf-name box, seeded from the stored name and following it the same way the web
-  // address above does -- same sentinel, same reason (rule 72). Its Save is inline for the
-  // same reason those two are: this panel has no save bar, and the row writes through the
-  // Leaving Soon route rather than `saveGeneral`.
+  // address box above does, with the same sentinel and for the same reason. Its Save is inline
+  // for the same reason those two are: this panel has no save bar, and this row writes through
+  // the Leaving Soon route instead of `saveGeneral`.
   const [shelfName, setShelfName] = useState("");
   const [shelfNameSeededFrom, setShelfNameSeededFrom] = useState<string | null>(null);
   const afterShelfNameSave = useSuccessorFocus();
@@ -487,17 +481,18 @@ export function PlexPanel({
     mutationFn: api.setLeavingSoonSettings,
     onSuccess: (s, sent) => {
       queryClient.setQueryData(["leaving-soon-settings"], s);
-      // Re-seed from the response, not from the effect above (rule 39). Clearing the box is
-      // how the help says to go back to the default, and it saves the empty string: the route
-      // stores that as unset and reports back the SAME default name it was already returning,
-      // so `savedShelfName` never changes identity and that effect never re-fires. The box
-      // would sit empty against a name it now matches -- a Save that never goes away, and a
-      // section-switch confirm no button on this panel can satisfy.
+      // Re-seeds from the response instead of waiting for the effect above. Clearing the box is
+      // how the help text says to restore the default, and that saves an empty string: the route
+      // stores it as unset and reports back the same default name it was already returning, so
+      // `savedShelfName` never changes and the effect above never re-fires. Without this, the box
+      // would sit empty against a name it already matches: the Save button would never go away,
+      // and the section-switch confirm would ask to discard a value that is already saved.
       if (sent.name !== undefined) {
         setShelfName(s.name);
         setShelfNameSeededFrom(s.name);
-        // The switches beside it flip visibly. This row's only success signal was the Save
-        // going away, which is an absence (rule 72, with the web address row above).
+        // The switches beside this row flip visibly on their own. This row's only success
+        // signal is the Save button disappearing, which is silent, so this announces it out
+        // loud, the same way the web address row above does.
         announce(t("plex.leavingSoon.nameSaved"));
       }
     },
@@ -505,26 +500,23 @@ export function PlexPanel({
 
   const lsStatus = (() => {
     if (!leavingSoon.data) return null;
-    // Nothing to say while the shelf is off, and the line was saying plenty: it ended "next
-    // update after the next scan" for a scan coded to skip the shelf, and named counts that a
-    // switch-off cleanup pass had already removed from Plex where writes were allowed (#624).
-    // The Jobs row draws "Off." because its switch is on another screen; here the switch is
-    // two rows up and says it, so this renders nothing rather than restating it (rule 53).
+    // Nothing to say while the shelf is off. With the shelf on, the switch that turns it off
+    // sits two rows up and already says so, so this line renders nothing here rather than
+    // restating it. The Jobs row draws "Off." instead, because that switch lives on a different
+    // screen.
     if (!leavingSoon.data.enabled) return null;
     const last = leavingSoon.data.last;
-    // A scan that skipped the shelf writes no pass, so reading `last` alone reported a shelf
-    // that had stopped updating as a current verdict -- here, of all screens (rule 72: the
-    // Jobs row got this in #522 and this one did not). The reason itself stays on that row,
-    // whose grammar the skip clauses are written for; this line says the state and points at
-    // it.
+    // A scan that skips the shelf writes no pass, so reading `last` alone would report a shelf
+    // that stopped updating as a current verdict, on the one screen where that matters most. The
+    // reason for the skip stays on the Jobs row, which is written for it; this line only says
+    // that a skip happened and points at where the reason lives.
     const skipped = shelfSkipIsCurrent(leavingSoon.data);
-    // A saved rename that no pass has carried across yet. First, because it is the one fact
-    // here that contradicts what the operator is looking at: the box two rows up says one
-    // name and their library still shows another, and the counts after it are about the shelf
-    // under the OLD name.
-    // Joined with a space and nothing else, as the skipped clause below is: each half is a
-    // whole composed sentence carrying its own punctuation, and neither is edited after it
-    // is composed.
+    // A saved rename that no pass has carried across yet. Shown first, because it is the one
+    // fact here that contradicts what the operator is looking at: the box two rows up already
+    // shows the new name, but their library still shows the old one, and the counts that follow
+    // describe the shelf under that old name.
+    // Joined with a plain space, the same as the skipped clause below: each half is a complete
+    // sentence with its own punctuation, and neither is edited after it is put together.
     const renaming = shelfRenamePending(leavingSoon.data)
       ? t("plex.leavingSoon.status.renaming", { was: leavingSoon.data.applied_name })
       : "";
@@ -536,9 +528,10 @@ export function PlexPanel({
           : t("plex.leavingSoon.status.neverRan"),
       );
     }
-    // Not `count` -- `resultText` below is the service's own sentence and already carries
-    // comma-grouped numbers, so a browser-locale count beside it puts two thousands
-    // separators in one line. `countBesideServerText` is that rule; its docstring holds why.
+    // Not `count`: `resultText` below is the service's own sentence and already carries
+    // comma-grouped numbers, so a browser-locale count beside it would put two different
+    // thousands separators in one line. `countBesideServerText` avoids that; its docstring
+    // explains why.
     const movies = t("plex.leavingSoon.status.moviesCount", {
       count: countBesideServerText(last.movies),
       n: last.movies,
@@ -547,16 +540,14 @@ export function PlexPanel({
       count: countBesideServerText(last.seasons),
       n: last.seasons,
     });
-    // How the pass went is the pass's own reason, composed under `jobs.result.*` (rule 104),
-    // never worded here. This line used to read `applied` and word the caveat itself, which
-    // called a pass with no libraries turned on a preview, on the very screen those libraries
-    // are turned on (#555). The period between the outcome and the line belongs to the
-    // `passLine` frame in the catalog, never appended here: a translated sentence is not
-    // edited after it is composed. A row stored before that field existed composes to "" and
-    // takes the bare line, so the frame never opens on an empty outcome.
+    // How the pass went is the pass's own reason, composed under `jobs.result.*`, never worded
+    // here. The period between the outcome and the line belongs to the `passLine` catalog
+    // entry, never appended here: a translated sentence must not be edited after it is
+    // composed. A row stored before this field existed composes to "" and falls back to the
+    // bare line, so the catalog entry never wraps an empty outcome.
     const resultText = jobResultText(last.result_reason);
-    // The counts survive a skip -- nothing was written, so the shelves still hold them -- and
-    // past tense is the whole correction, exactly as the Jobs row's counts line puts it.
+    // The counts survive a skip. Nothing was written, so the shelves still hold them, and past
+    // tense is the whole correction needed, the same way the Jobs row's counts line handles it.
     const held = skipped
       ? t("plex.leavingSoon.status.heldSkipped")
       : t("plex.leavingSoon.status.held");
@@ -572,41 +563,40 @@ export function PlexPanel({
     );
   })();
 
-  // What this panel would LOSE, reported up to `Settings` so leaving the section can stop and ask
-  // first. Declared above the early returns below because the effect carrying it is a hook, and
-  // because rule 146 asks what the parent is told in each of those states as well as in the form.
+  // What this panel would lose, reported up to `Settings` so leaving the section can stop and ask
+  // first. Declared above the early returns below because the hook that reports it must run on
+  // every render, including the loading and error states those returns produce.
   //
-  // Each draft is tested against the exact condition that RENDERS the row holding it, because the
-  // report makes two claims at once -- there is something to lose, AND the operator can still get
-  // to it. A guard that keeps the first claim after the second has gone false is a trap: it
-  // demands a discard for a box that is no longer on screen, and the only exit it leaves is the
-  // destructive button.
+  // Each draft is tested against the exact condition that renders the row holding it, because
+  // the report makes two claims at once: there is something to lose, and the operator can still
+  // reach it. A guard that keeps the first claim after the second has gone false becomes a trap:
+  // it asks for a discard on a box that is no longer on screen, with the destructive button as
+  // the only way out.
   const webUrlDirty = seededFrom === savedWebUrl && webUrl.trim() !== savedWebUrl;
-  // This exact value renders the row's Save (below), so the report and the button agree by
-  // sharing one const rather than by two copies of one expression staying in step. They were
-  // two copies, and adding the seed guard to this one alone made this comment false the same
-  // day it was written: the button appeared beside an unseeded empty box while the panel
-  // reported nothing to lose (rule 7/24).
+  // This exact value renders the row's Save button below, so the report and the button always
+  // agree: they read one shared value instead of two separate copies of the same comparison
+  // that could drift apart.
   //
-  // The manual row is behind `linked && manualOpen`, so both belong in its claim: unlinking
-  // leaves `manualOpen` set while the row is gone. An empty host is not a draft to lose -- Save
-  // is disabled without one -- and neither is an address that already matches the stored one.
-  // Both sides of that last test go through `seedManual` + `manualUri`, so "I only opened the
-  // row" is non-dirty by construction rather than by luck with the URI's spelling (rule 39).
+  // The manual row is behind `linked && manualOpen`, so both conditions belong in this claim:
+  // unlinking leaves `manualOpen` set while the row itself is gone. An empty host is not a draft
+  // to lose, since Save is disabled without one, and neither is an address that already matches
+  // the stored one. Both sides of that last comparison go through `seedManual` and `manualUri`,
+  // so opening the row without typing anything is non-dirty by construction.
   const manualDraft = manualUri(manualHost, manualPort, manualSsl);
   const savedSeed = seedManual(savedUri);
   const savedManual = manualUri(savedSeed.host, savedSeed.port, savedSeed.ssl);
   const manualDirty = linked && manualOpen && manualDraft !== "" && manualDraft !== savedManual;
-  // The certificate switch writes on the spot ONLY once a server is linked -- its onChange below
-  // is `if (linked) saveVerify.mutate(next)`. Before that the choice lives here and rides along
-  // with the link poll through `verifyRef`, so leaving the section silently drops it and the next
-  // sign-in probes a self-signed server with checking back on, failing with nothing on screen to
-  // explain it. Its row renders unconditionally, so the reachability half of the claim holds
-  // wherever this form does. Once linked the switch is not a draft at all: it is already saved.
+  // The certificate switch writes immediately only once a server is linked, through its
+  // onChange below (`if (linked) saveVerify.mutate(next)`). Before that, the choice lives only
+  // in this component's state and rides along with the link poll through `verifyRef`, so
+  // leaving the section here would silently drop it, and the next sign-in would probe a
+  // self-signed server with checking back on and fail with nothing on screen to explain it. Its
+  // row renders unconditionally, so the reachability half of the claim holds wherever this form
+  // does. Once linked, the switch is not a draft at all: it is already saved.
   const certDirty = !linked && verifySeededFrom === savedVerify && verifyCert !== savedVerify;
-  // Its row renders behind `linked && leavingSoon.data`, so both belong in the claim: the row
-  // is the only way to save this box, and reporting a draft the operator cannot reach leaves
-  // them the discard button and nothing else (rule 146).
+  // Its row renders behind `linked && leavingSoon.data`, so both conditions belong in the
+  // claim: the row is the only way to save this box, and reporting a draft the operator cannot
+  // reach would leave them only the discard button.
   const shelfNameDirty =
     linked &&
     !!leavingSoon.data &&
@@ -618,10 +608,10 @@ export function PlexPanel({
   }, [hasDrafts, onDirtyChange]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
-  // Until the status has actually been read, nothing here may claim a state: an unread
-  // query looks exactly like "not linked", and that would invite a needless re-link
-  // through the whole Plex sign-in over a momentary hiccup. Nothing is dirty here either:
-  // `data` is undefined, so the web-address box and its saved value are both "".
+  // Until the status has actually loaded, nothing here may claim a state: an unread query looks
+  // exactly like "not linked", which would invite a needless re-link through the whole Plex
+  // sign-in over a momentary hiccup. Nothing is dirty here either, since `data` is undefined and
+  // the web-address box and its saved value are both "".
   if (plex.isPending) {
     return (
       <div className="panel">
@@ -630,13 +620,14 @@ export function PlexPanel({
       </div>
     );
   }
-  // Only when there is nothing to render, the same test the General panel settled on (rule 72).
-  // This used to fire on `plex.isError` too, which meant a refetch that failed AFTER a good load
-  // traded the whole form for this paragraph while React Query still held the last good row --
-  // taking the web-address box and its Save with it while the typed value stayed in state, still
-  // reported unsaved to `Settings`, which then asked to discard an edit the operator could no
-  // longer see or put back. Saving the certificate switch is enough to reach it, because that
-  // invalidates this very query. So a failed refetch keeps the form on the last good values.
+  // Only when there is nothing to render at all, the same test the General panel uses.
+  // Branching on `plex.isError` too would trade the whole form for this paragraph the moment a
+  // refetch failed after a good load, even though React Query still holds the last good row: the
+  // web-address box and its Save would disappear while the typed value stayed in component
+  // state, still reported as unsaved to `Settings`, which would then ask to discard an edit the
+  // operator could no longer see or undo. Saving the certificate switch alone is enough to
+  // trigger a refetch of this query, so a failed refetch has to keep the form on the last good
+  // values.
   if (!data) {
     return (
       <div className="panel">
@@ -647,10 +638,9 @@ export function PlexPanel({
   }
 
   // All four of these are refetched by one `invalidateAllPlex`, so they reach the stale state
-  // together and used to say so four times (#198). Only a failed REFETCH is listed: each group
-  // below shows its own never-loaded notice when nothing ever landed, which is a different claim
-  // and must not pull the panel into a collapse. `plex` needs no `data` test -- the guard above
-  // already returned when it has none.
+  // together. Only a failed REFETCH is listed here: each group below shows its own never-loaded
+  // notice when nothing ever landed, which is a different claim and must not collapse the whole
+  // panel. `plex` needs no `data` test, since the guard above already returned when it has none.
   const stale = collapseStaleReads(t("plex.stale.panel"), [
     { what: t("plex.stale.connection"), stale: plex.isError },
     { what: t("plex.stale.libraries"), stale: libraries.isError && !!libraries.data },
@@ -669,13 +659,14 @@ export function PlexPanel({
       <h2>{t("common.brand.plex")}</h2>
       <p className="blurb">{t("plex.blurb")}</p>
 
-      {/* The failed refetch the `!data` branch above deliberately no longer swallows the form
-          for. Keeping the form is right; keeping it SILENTLY is not, because everything below
-          then reads as current when it is known to be stale (rule 17/36).
+      {/* A failed refetch no longer collapses the whole form: keeping the form is right, but
+          keeping it silent is not, since everything below would read as current when it is
+          known to be stale.
 
-          This slot carries the collapsed line too, because it is the only one above all four
-          groups (#198): `invalidateAllPlex` refetches every read below, so one server switch
-          against an unreachable Plex used to draw four of these down the page. */}
+          This slot also carries the collapsed line, because it is the only one that sits above
+          all four groups below: `invalidateAllPlex` refetches every read on this panel, so one
+          failed switch against an unreachable Plex would otherwise draw the same notice four
+          times down the page. */}
       <StaleReadSlot plan={stale} slot={t("plex.stale.connection")} />
 
       <div className="set-group">
@@ -686,12 +677,12 @@ export function PlexPanel({
                (`.set-row-plain`). */
             <SetRow
               variant="plain"
-              /* Lead with the person signed in, not the server name (that lives one row down in
-                 the Server picker). The account name is live from plex.tv, which always resolves
-                 after the fast, local-only status query above, so show a neutral placeholder
-                 while it's in flight rather than flashing the server name; only fall back to the
-                 server name once resources has actually settled without a username (plex.tv
-                 unreachable). */
+              /* Lead with the person signed in, not the server name, which lives one row down in
+                 the Server picker. The account name comes from plex.tv, which always resolves
+                 after the fast, local-only status query above, so this shows a neutral
+                 placeholder while it is in flight rather than flashing the server name. It falls
+                 back to the server name only once resources has actually settled without
+                 finding a username, meaning plex.tv could not be reached. */
               label={
                 resources.isPending
                   ? t("common.loading")
@@ -725,9 +716,9 @@ export function PlexPanel({
                   <div>
                     <strong>{t("plex.waitingForPlex")}</strong>
                     {/* Once the sign-in is approved, the wait can continue for a second
-                          reason: the server itself isn't answering yet. Say which one it
-                          is, so a longer wait doesn't read as a hang. Reaper keeps
-                          polling either way; the sign-in stays good. */}
+                          reason: the server itself isn't answering yet. Say which one it is,
+                          so a longer wait doesn't read as a hang. Reaper keeps polling either
+                          way, and the sign-in stays good. */}
                     <p className="muted">
                       {pin.retrying ??
                         (authUrl !== "" ? (
@@ -775,11 +766,11 @@ export function PlexPanel({
                 </>
               ) : (
                 <>
-                  {/* `standing`: a plex.tv response that came back without the linked server
-                        makes this true on the panel's first successful read, so it is what this
-                        row looks like until the server is back rather than a reply to anything.
-                        The action failures further down answer their own presses and stay
-                        alerts. */}
+                  {/* `standing`, because a plex.tv response missing the linked server makes
+                        this true on the panel's first successful read, so it describes what
+                        this row looks like until the server is back rather than a reply to a
+                        specific action. The action failures further down answer their own
+                        button presses and stay ordinary alerts. */}
                   {linkedServerMissing && (
                     <Notice tone="warn" standing>
                       {data?.name
@@ -799,10 +790,10 @@ export function PlexPanel({
                     }}
                   >
                     {linkedServerMissing ? (
-                      // A select whose value matches no option displays its FIRST option, so
-                      // listing the others here would still show one of them as the current
-                      // server -- the exact misreading this fix exists to stop, merely no
-                      // longer savable. The box names what Reaper actually uses instead.
+                      // A select whose value matches no option displays its first option, so
+                      // listing every server here would still show one of them as the current
+                      // server, which is the misreading this branch avoids. The box instead
+                      // names what Reaper actually uses.
                       <option value="">{data?.name ?? t("plex.server.fallbackOptionLabel")}</option>
                     ) : (
                       (resources.data?.servers ?? []).map((s) => (
@@ -831,8 +822,8 @@ export function PlexPanel({
                 ref={afterManualSave.ref as RefObject<HTMLSelectElement>}
                 value={connectionValue}
                 aria-label={t("plex.connectionField.label")}
-                // Without the linked server there is nothing to list but the saved address,
-                // and every choice here would point at another server's addresses (B-10).
+                // Without the linked server there is nothing to list but the saved address: any
+                // other choice here would point at a different server's addresses.
                 disabled={setConnection.isPending || resources.isPending || linkedServerMissing}
                 onChange={(e) => {
                   const next = e.target.value;
@@ -868,10 +859,10 @@ export function PlexPanel({
               label={t("plex.manualAddress.label")}
               help={t("plex.manualAddress.help")}
             >
-              {/* Two boxes under one `.set-label`, named the way the accent row names its
+              {/* Two boxes under one `.set-label`, named the way the accent row names its own
                     pair: the row's label, then which half this is. A placeholder is a name of
-                    last resort, so without these the host box announced itself as the example
-                    address in it. */}
+                    last resort, so without these labels the host box would announce itself
+                    using the example address inside it. */}
               <input
                 type="text"
                 className="input-host"
@@ -930,16 +921,15 @@ export function PlexPanel({
             />
           </SetRow>
 
-          {/* This row and Manual address above keep their own inline Save, where the General
-                panel now has one save bar for the whole panel (rule 43). Deferred on purpose,
-                not missed: these two save through different routes than `saveGeneral`, so
-                collecting them costs a shared draft model this change does not need. What DID
-                have to land on them is the reflow behind it (rule 72), and it has: the box
-                grows into the track and gives the width back from the right, so its left edge
-                and its text hold still as this button appears. The section-switch confirm has
-                landed on them too, through `onDirtyChange` above -- a panel need not have a save
-                bar to be asked about before it is unmounted. Whoever gives Plex a save bar takes
-                both rows together. */}
+          {/* This row and Manual address above keep their own inline Save, unlike the General
+                panel's single save bar for the whole panel. That is deliberate: these two save
+                through different routes than `saveGeneral`, so combining them would need a
+                shared draft model this panel does not otherwise need. The layout does account
+                for it: the box grows into its track and gives width back from the right, so its
+                left edge and its text hold still as this button appears. The section-switch
+                confirm also covers these two rows, through `onDirtyChange` above: a panel does
+                not need a save bar to be asked about before it unmounts. A future save bar for
+                Plex should take both rows together. */}
           <SetRow label={t("plex.webAddress.label")} help={t("plex.webAddress.help")}>
             <input
               type="url"
@@ -953,9 +943,8 @@ export function PlexPanel({
               placeholder={t("plex.webAddress.placeholder")}
               autoComplete="off"
             />
-            {/* `webUrlDirty` above, not a second copy of its comparison: the report and this
-                  button are one claim, and they were two expressions until one of them grew a
-                  seed guard. */}
+            {/* Reads `webUrlDirty` above rather than repeating its comparison, so the dirty
+                  report and this button always agree. */}
             {webUrlDirty && (
               <button
                 type="button"
@@ -982,37 +971,32 @@ export function PlexPanel({
         <div className="set-group">
           <h3>{t("plex.librariesGroup.heading")}</h3>
           <p className="group-blurb">{t("plex.librariesGroup.blurb")}</p>
-          {/* Only when there is nothing to render, the same divided test the panel's own status
-              read settled on above (rule 72). An undivided `isError` traded the whole grid, every
-              per-library Switch and the Refresh button for one paragraph while React Query still
-              held the last good list (#166).
+          {/* Only when there is nothing to render at all, the same divided test the panel's own
+              status read uses above. Branching on `isError` alone would trade the whole grid,
+              every per-library Switch, and the Refresh button for one paragraph even while React
+              Query still holds the last good list.
 
-              Ordinary things reach it. `invalidateAllPlex` invalidates this key, and all three
-              paths that change which server is linked now call it: `switchServer.onSuccess`,
-              `done` (the link path) and `unlink.onSuccess`. For most of this comment's life it
-              had exactly one caller and the other two invalidated the status row alone, so the
-              grid answered for the previous server (#205); an earlier comment named all three
-              anyway, which #196 corrected down to the one that was true at the time. `SetupWizard`
-              reaches it by a second route: it fires a bare `invalidateQueries()` when the first
-              scan ends, and it renders this panel on that same screen, so every key refetches
-              with the last good list in hand.
+              `invalidateAllPlex` refetches this key, and all three paths that change which
+              server is linked call it: `switchServer.onSuccess`, `done` (the link path), and
+              `unlink.onSuccess`. `SetupWizard` also refetches it by firing a bare
+              `invalidateQueries()` when the first scan ends and then rendering this panel on
+              the same screen.
 
-              Which arm a LINK lands on depends on whether this key has ever been read. On a
-              fresh install it has not -- the query is `enabled: linked`, so linking mounts it
-              for the first time and a failure there is the never-loaded arm above. After an
-              unlink it has: invalidating marks the entry stale but keeps it, and this observer
-              stays mounted, so linking a different server refetches with the PREVIOUS server's
-              list still in hand and a failure lands here, on the stale arm, with the notice up.
-              Shorter and quieter: between the link landing and the refetch resolving, neither
-              `isPending` nor `isError` is set, so that list renders unmarked for a moment. Both
-              are bounded -- `set_plex_libraries` walks the server's own stored list and ignores
-              keys it does not contain (#194), so a press cannot mis-target -- and the earlier
-              draft of this paragraph denied the state exists at all, which is the part that
-              would have stopped the next reader looking.
+              Which failure arm a link lands on depends on whether this key has ever been read.
+              On a fresh install it has not: the query is `enabled: linked`, so linking mounts it
+              for the first time, and a failure there is the never-loaded arm above. After an
+              unlink it has: invalidating marks the entry stale but keeps it mounted, so linking
+              a different server refetches with the PREVIOUS server's list still in hand, and a
+              failure lands on the stale arm instead, with the notice showing. There is also a
+              brief window, between the link landing and the refetch resolving, where neither
+              `isPending` nor `isError` is set, so the list renders unmarked for a moment. Both
+              arms are bounded: `set_plex_libraries` walks the server's own stored list and
+              ignores keys it does not contain, so a press during that window cannot mis-target a
+              library.
 
-              The list is a read, not a draft, so what is lost is smaller than the General panel's
-              typed value -- but a switch the operator cannot see is a library they cannot turn
-              off. */}
+              The list is a read, not a draft, so what is lost here is smaller than the General
+              panel's typed value, but a switch the operator cannot see is still a library they
+              cannot turn off. */}
           {libraries.isPending || syncLibraries.isPending ? (
             <p className="muted">{t("plex.libraries.loading")}</p>
           ) : libraries.isError && !libraries.data ? (
@@ -1066,9 +1050,8 @@ export function PlexPanel({
         <div className="set-group">
           <h3>{t("plex.watchHistoryGroup.heading")}</h3>
           <p className="group-blurb">{t("plex.watchHistoryGroup.blurb")}</p>
-          {/* Same shape as the two groups around it: a failed read keeps the last good answer
-              on screen and says so, rather than blanking a control the operator came here for
-              (rule 17/36, and rule 72 with the library grid and the shelf switches). */}
+          {/* Same shape as the two groups around it: a failed read keeps the last good answer on
+              screen and says so, rather than blanking a control the operator came here for. */}
           {watchEvidence.isPending ? (
             <p className="muted">{t("common.loading")}</p>
           ) : !watchEvidence.data ? (
@@ -1082,13 +1065,13 @@ export function PlexPanel({
                   label={t("plex.watchHistory.label")}
                   help={t("plex.watchHistory.help")}
                 >
-                  {/* Five states, all explicit (rule 17/36). The three that are not the form
-                      all fail closed: this control withdraws a protection, so a safety read
-                      Reaper could not complete offers nothing to press rather than assuming a
-                      password is there to check against. `DeletionToggle` splits the same way,
-                      and keeps its OFF direction live on an unreadable state because that
-                      direction can only make Reaper safer -- this one has no such direction,
-                      which is why unknown ends the branch here. */}
+                  {/* Five explicit states. The three that are not the form all fail closed:
+                      this control withdraws a protection, so a safety read Reaper could not
+                      complete offers nothing to press, rather than assuming a password exists
+                      to check against. `DeletionToggle` splits the same way and keeps its OFF
+                      direction live on an unreadable state, because that direction can only
+                      make Reaper safer. This control has no such safe direction, which is why
+                      an unreadable safety state ends the branch here instead. */}
                   {safety.isLoading ? (
                     <span className="muted">{t("common.checking")}</span>
                   ) : !safety.data ? (
@@ -1096,12 +1079,12 @@ export function PlexPanel({
                   ) : !safety.data.has_password ? (
                     <span className="muted">{t("common.noAdminPassword")}</span>
                   ) : forgetting ? (
-                    /* The same form as arming deletion: one password box, Confirm, Cancel.
-                         The placeholder is a hint that disappears on the first keystroke, so
-                         the field is named by its label either way.
-                         `pw-inline` because this one sits in a settings ROW, not the Security
-                         panel's field pane: `.pw-form` alone is a column, which put the box and
-                         BOTH buttons at full width on a phone. */
+                    /* The same form as arming deletion: one password box, Confirm, Cancel. The
+                         placeholder is a hint that disappears on the first keystroke, so the
+                         field is still named by its label either way. `pw-inline` applies
+                         because this form sits in a settings row, not the Security panel's
+                         field pane: `.pw-form` alone lays out as a column, which would stretch
+                         the box and both buttons to full width on a phone. */
                     <form
                       className="pw-form pw-inline"
                       onSubmit={(e) => {
@@ -1119,11 +1102,11 @@ export function PlexPanel({
                         autoComplete="current-password"
                         autoFocus
                       />
-                      {/* `danger` and a plain button, the pair this row already had before the
-                            password box joined them. Not `sm`, which the arming form spells but
-                            no stylesheet defines: an inert class reads as a size that was chosen
-                            (rule 18). Left in place there rather than swept, since removing a
-                            no-op moves no pixel. */}
+                      {/* `danger` and a plain button, the same pair this row had before the
+                            password box joined them. Not `sm`, which the arming form uses even
+                            though no stylesheet defines it there: an inert class name still
+                            reads as a deliberate size choice, so it is left alone rather than
+                            removed, since removing a no-op class moves no pixel. */}
                       <button
                         type="submit"
                         className="danger"
@@ -1131,8 +1114,8 @@ export function PlexPanel({
                       >
                         {t("plex.watchHistory.confirmButton")}
                       </button>
-                      {/* Cancel drops the typed password with the form, same as the arming
-                            form's own Cancel (S-5). */}
+                      {/* Cancel drops the typed password along with the form, the same as the
+                            arming form's own Cancel. */}
                       <button
                         type="button"
                         disabled={forgetWatchEvidence.isPending}
@@ -1160,24 +1143,24 @@ export function PlexPanel({
                   )}
                 </SetRow>
                 <div className="set-row set-status">
-                  {/* Says when it takes effect, because nothing on any surface moves until the
-                      next scan: the record is gone, but the stored candidates and their facts
-                      are frozen snapshot data. Without the second sentence an operator reads
-                      the unchanged queue as "that did not work" and reaches for the policy
-                      next, which does cost files. Same clause as the restore notice and the
-                      shelf hint (rule 72). */}
+                  {/* Says when the reset takes effect, because nothing on any surface moves
+                      until the next scan: the record is gone, but the stored candidates and
+                      their facts are frozen snapshot data. Without that second sentence, an
+                      operator reading the unchanged queue could conclude the reset did not
+                      work and reach for the policy instead, which does cost files. The restore
+                      notice and the shelf hint use the same wording for the same reason. */}
                   {forgotten !== null
                     ? t("plex.watchEvidence.forgotten", { n: forgotten })
                     : watchEvidenceStatus(watchEvidence.data)}
                 </div>
               </div>
-              {/* The server's own sentence, not a fixed one. Every refusal this can now meet
-                  says something the operator has to act on differently -- a password that did
-                  not match, one not set yet, too many tries -- and one sentence covering all
-                  of them would name none of them. Each already reads as plain language and
-                  already states that the record was kept, so there is no lead-in either: that
-                  would print the reassurance twice. `DeletionToggle` renders its arming
-                  failures the same way (rule 72). */}
+              {/* The server's own sentence, not a fixed one. Every refusal here needs a
+                  different response from the operator: a password that did not match, one
+                  never set, too many tries, and one fixed sentence covering all of them would
+                  name none of them clearly. Each server sentence already states plainly that
+                  the record was kept, so no lead-in is added here either, or the reassurance
+                  would print twice. `DeletionToggle` renders its own arming failures the same
+                  way. */}
               {forgetWatchEvidence.error && (
                 <Notice tone="error">
                   {describeError(forgetWatchEvidence.error) ||
@@ -1199,12 +1182,12 @@ export function PlexPanel({
         <div className="set-group">
           <h3>{t("plex.leavingSoonGroup.heading")}</h3>
           <p className="group-blurb">{t("plex.leavingSoonGroup.blurb")}</p>
-          {/* `!leavingSoon.data` alone: a read that never landed leaves it undefined and still
-              reaches the sentence below, so dropping the `isError ||` in front of it costs nothing
-              there and stops a failed REFETCH taking both switches off screen while the last good
-              answer is still held (#166, rule 72 with the library grid above). These two are the
-              shelf's on/off and its read-only override -- the switch that decides whether Reaper
-              writes to Plex before deletion is armed -- so blanking them hides a control the
+          {/* Checks `!leavingSoon.data` alone. A read that never landed leaves it undefined and
+              still reaches the sentence below, so dropping an `isError ||` in front of it costs
+              nothing there, while it also stops a failed refetch from taking both switches off
+              screen while the last good answer is still held. These two switches control the
+              shelf's on/off state and its read-only override, which decides whether Reaper
+              writes to Plex before deletion is armed, so blanking them would hide a control the
               operator came here to set. */}
           {leavingSoon.isPending ? (
             <p className="muted">{t("common.loading")}</p>
@@ -1214,10 +1197,10 @@ export function PlexPanel({
             <>
               <StaleReadSlot plan={stale} slot={t("plex.stale.leavingSoon")} />
               <div className="set-rows">
-                {/* The name the two rows below talk about, so it comes first. Its own inline
-                  Save, like the web address row above and for the same reason. `maxLength` is
-                  the route's own bound (`app_settings.LEAVING_SOON_NAME_MAX`), so a long name
-                  is stopped in the box rather than coming back a 422. */}
+                {/* The name the two rows below refer to, so it comes first. Its own inline Save,
+                  like the web address row above and for the same reason. `maxLength` matches
+                  the route's own bound (`app_settings.LEAVING_SOON_NAME_MAX`), so a name that
+                  is too long is stopped in the box instead of coming back as a 422. */}
                 <SetRow
                   label={t("plex.leavingSoon.nameLabel")}
                   help={t("plex.leavingSoon.nameHelp")}
@@ -1245,10 +1228,10 @@ export function PlexPanel({
                     </button>
                   )}
                 </SetRow>
-                {/* Both rows here carry a Switch and nothing else, so they release the control
-                  track (`.set-row-plain`). Each names the shelf, so each takes the STORED name
+                {/* Both rows here carry a Switch and nothing else, so they use the plain control
+                  track (`.set-row-plain`). Each names the shelf, so each reads the STORED name
                   rather than the box above: until Save lands, the name in the box is not what
-                  either switch would do anything to. */}
+                  either switch actually affects. */}
                 <SetRow
                   variant="plain"
                   label={t("plex.leavingSoon.enableLabel", { shelf: savedShelfName })}

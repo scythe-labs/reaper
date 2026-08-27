@@ -3,25 +3,25 @@
 
 Reaper's logs are an audit trail ("why did this get deleted" must be answerable), and
 the operator should not need shell access to a container to read them. This module
-holds the newest lines in memory -- a bounded ring -- with a monotonic sequence number
-so the UI can poll incrementally ("everything after seq N") without re-sending the
-window on every tick.
+holds the newest lines in memory, a bounded ring, with a monotonic sequence number so
+the UI can poll incrementally ("everything after seq N") without re-sending the window
+on every tick.
 
 The same lines are also mirrored to rotating files under ``<data_dir>/logs`` (see
 :func:`configure_file_logging`), so the trail survives a restart and can be downloaded
-whole from the Logs tab -- a fuller history than the in-memory window keeps. The mirror
-is fed from the one place every line already converges, :meth:`LogRing.append`, so the
+whole from the Logs tab, a fuller history than the in-memory window keeps. The mirror is
+fed from the one place every line already converges, :meth:`LogRing.append`, so the
 files carry exactly what the UI shows: there is no second, unredacted path to disk.
 
-It also owns the *dynamic* log level. The stored setting (Settings -> Logs) wins over
-the ``REAPER_LOG_LEVEL`` environment value after first boot, exactly like every other
+It also owns the dynamic log level. The stored setting (Settings -> Logs) wins over the
+``REAPER_LOG_LEVEL`` environment value after first boot, exactly like every other
 env-seeded switch, and changing it takes effect immediately: the structlog pipeline
 consults :func:`level_no` per event (see ``reaper.logging``), and the stdlib root logger
 is re-leveled in :func:`set_level`.
 
-Everything appended here has already passed the redaction layer -- the structlog
+Everything appended here has already passed the redaction layer: the structlog
 processor sits after ``redact_secrets``, and the stdlib handler scrubs query-string
-credentials itself -- so neither the ring nor the files hold a secret the console would
+credentials itself, so neither the ring nor the files hold a secret the console would
 not.
 """
 
@@ -40,15 +40,15 @@ from pathlib import Path
 from typing import Any
 
 #: The levels the Settings -> Logs picker offers. ERROR is deliberately absent from the
-#: PICKER: hiding warnings from a tool that deletes files serves nobody, so it is not a
+#: picker: hiding warnings from a tool that deletes files serves nobody, so it is not a
 #: choice the UI sells. ``api/logs.put_log_level`` is what enforces that.
 UI_LEVELS = ("DEBUG", "INFO", "WARNING")
 
 #: Every level Reaper will actually run at, and the set ``normalize_level`` accepts.
 #: ``config.Settings.log_level`` accepts exactly these four, so an operator who sets
-#: ``REAPER_LOG_LEVEL=ERROR`` gets ERROR. It used to fall off the end of this tuple and land
-#: on :func:`set_level`'s INFO fallback, which quietly handed back every INFO line the
-#: operator had asked to be rid of (#700).
+#: ``REAPER_LOG_LEVEL=ERROR`` gets ERROR. Leaving ERROR off this tuple would make it fall
+#: through to :func:`set_level`'s INFO fallback, quietly handing back every INFO line the
+#: operator asked to be rid of.
 LEVELS = (*UI_LEVELS, "ERROR")
 
 #: How many lines the ring keeps. Enough to cover a full scan with room around it,
@@ -61,7 +61,7 @@ RING_SIZE = 2000
 #: the older one to ``reaper.log.2``, and the oldest is discarded. These mirror the ring.
 #: The Logs tab tells the operator how many files are kept; it reads that count from the
 #: ``/api/logs`` response (:func:`files_retained`), never a hardcoded copy, so this constant
-#: is the one source of truth for it (LogsPanel.tsx; rules 66/67).
+#: is the one source of truth for it (LogsPanel.tsx).
 LOG_DIRNAME = "logs"
 LOG_FILENAME = "reaper.log"
 LOG_MAX_BYTES = 20 * 1024 * 1024
@@ -71,8 +71,7 @@ LOG_BACKUP_COUNT = 2
 def files_retained() -> int:
     """How many log files survive on disk at once: the live ``reaper.log`` plus its
     ``LOG_BACKUP_COUNT`` rotations. Returned in the ``/api/logs`` payload and rendered by
-    the Logs tab so its "newest N files" copy can never drift from the real retention
-    (rules 66/67)."""
+    the Logs tab so its "newest N files" copy can never drift from the real retention."""
     return LOG_BACKUP_COUNT + 1
 
 
@@ -113,8 +112,8 @@ class LogRing:
         """The lines newer than ``after``, oldest first, capped at ``limit``.
 
         ``after=0`` is the UI's first poll: it gets the newest ``limit`` lines the ring
-        still holds. A cursor older than the ring's tail simply yields what remains --
-        dropped lines are gone, and pretending otherwise would be inventing evidence.
+        still holds. A cursor older than the ring's tail simply yields what remains.
+        Dropped lines are gone, and pretending otherwise would be inventing evidence.
         """
         with self._lock:
             fresh = [line for line in self._lines if line.seq > after]
@@ -135,15 +134,15 @@ _OWNER_ONLY_DIR = 0o700
 
 
 class _OwnerOnlyRotatingFileHandler(RotatingFileHandler):
-    """A rotating handler whose files are owner-only *from creation*.
+    """A rotating handler whose files are owner-only from creation.
 
     ``RotatingFileHandler`` takes no file mode, so under a typical 0022 umask both the
-    first file and every rotation are born world-readable -- and the DEBUG trail carries
+    first file and every rotation are born world-readable, and the DEBUG trail carries
     the per-item reasoning behind each deletion. Clamping the umask around ``_open`` (the
     one place the stdlib creates these files, for the live file and each rollover alike)
-    means the file exists at 0600 the instant it appears, with no widen-then-narrow window
-    (rules 14/83; S-6). The umask is process-global, so it is restored immediately; the
-    handler's own lock serializes ``_open`` against this handler's other writers.
+    means the file exists at 0600 the instant it appears, with no widen-then-narrow
+    window. The umask is process-global, so it is restored immediately; the handler's
+    own lock serializes ``_open`` against this handler's other writers.
 
     A file left world-readable by an earlier version is tightened on open too, since the
     umask alone only governs files being created.
@@ -167,17 +166,17 @@ class _FileSink:
     """A rotating file the ring mirrors each line into.
 
     Written through the stdlib :class:`RotatingFileHandler`, which owns the rollover and
-    the lock -- so it is thread-safe and caps the on-disk footprint on its own. It is fed
+    the lock, so it is thread-safe and caps the on-disk footprint on its own. It is fed
     pre-rendered, already-redacted lines (see :meth:`LogRing.append`), so it never touches
     the redaction path itself. ``delay=True`` means the file is not created until the
     first line, so an install that never logs leaves no empty file behind.
 
     A steady-state write failure (the data volume remounts read-only, the disk fills)
-    passes setup cleanly because ``delay=True`` never touches disk at construction. Rather
-    than swallow those failures forever -- which would leave the download serving a trail
-    that silently ends at the remount -- the sink flips a one-shot degraded flag and
-    announces it once through the ring, so both the Logs tab and the download can tell the
-    operator the on-disk trail went stale (rule 82).
+    passes setup cleanly because ``delay=True`` never touches disk at construction.
+    Rather than swallow those failures forever, which would leave the download serving a
+    trail that silently ends at the remount, the sink flips a one-shot degraded flag and
+    announces it once through the ring, so both the Logs tab and the download can tell
+    the operator the on-disk trail went stale.
     """
 
     def __init__(self, path: Path) -> None:
@@ -205,7 +204,7 @@ class _FileSink:
         # A logging sink must never raise into its caller: a full or vanished disk cannot
         # be allowed to crash the very tool used to debug it. handle() takes the handler
         # lock and rolls over as needed. But a silent forever-swallow hides a stale trail,
-        # so on the first failure flip the degraded flag and announce it once (rule 82).
+        # so the first failure flips the degraded flag and announces it once.
         try:
             self._handler.handle(record)
         except Exception:
@@ -221,7 +220,7 @@ _file_sink: _FileSink | None = None
 _log_path: Path | None = None
 #: True until a steady-state file write fails; then False until a fresh sink is configured.
 #: Read by :func:`file_sink_healthy` so the download can append the in-memory ring when the
-#: on-disk trail can no longer be trusted (rule 82). Guarded by ``_file_lock``.
+#: on-disk trail can no longer be trusted. Guarded by ``_file_lock``.
 _file_sink_healthy = True
 
 
@@ -229,7 +228,7 @@ def _mark_file_sink_degraded() -> None:
     """Flip the sink to degraded on the first write failure and announce it once.
 
     Idempotent: the announcement is emitted through the ring, which re-enters the sink's
-    write and fails again -- but the flag is already down by then, so the retry returns
+    write and fails again, but the flag is already down by then, so the retry returns
     here and does nothing. No recursion beyond that single bounce, and no re-spam.
     """
     global _file_sink_healthy
@@ -271,12 +270,12 @@ def configure_file_logging(data_dir: Path) -> None:
     path = log_dir / LOG_FILENAME
     try:
         # Owner-only from creation: the trail carries the operator's per-item reasoning at
-        # DEBUG, so it should be no more readable than the databases beside it (rules 14/83).
-        # mkdir's mode only applies to a dir it creates (and is masked by umask); chmod
-        # unconditionally so a dir left world-readable by an earlier version is tightened too.
-        # The FILES get the same treatment in _OwnerOnlyRotatingFileHandler -- the directory
-        # alone used to be all this claim rested on, which left the files themselves 0644
-        # under a normal umask (S-6).
+        # DEBUG, so it should be no more readable than the databases beside it. mkdir's
+        # mode only applies to a dir it creates (and is masked by umask), so chmod runs
+        # unconditionally, tightening a dir left world-readable by an earlier version too.
+        # The files get the same treatment in _OwnerOnlyRotatingFileHandler: the directory
+        # mode alone does not protect them, since a normal umask still leaves the files
+        # themselves at 0644.
         log_dir.mkdir(parents=True, exist_ok=True, mode=_OWNER_ONLY_DIR)
         log_dir.chmod(_OWNER_ONLY_DIR)
         sink = _FileSink(path)
@@ -350,8 +349,8 @@ def set_level(name: str) -> str:
     Unknown names fall back to INFO rather than raising: the logging system must never
     be crashable by a stored setting (the API validates before storing; this is the
     second net). It is only the second net, so ``LEVELS`` has to hold every level config
-    blesses. While ERROR was missing from it, an operator's ``REAPER_LOG_LEVEL=ERROR``
-    arrived here and was overridden by a fallback meant for corrupt values (#700).
+    blesses. If ERROR were missing from it, an operator's ``REAPER_LOG_LEVEL=ERROR``
+    would arrive here and be overridden by a fallback meant for corrupt values.
     """
     global _level_no
     canonical = normalize_level(name) or "INFO"

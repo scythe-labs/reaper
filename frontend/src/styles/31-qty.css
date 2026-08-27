@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The quantity control. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* THE quantity control: one bordered box holding the number and its unit, whether the
+ * The quantity control. See `../index.css` for how this file fits into the stylesheet's
+ * load order. */
+/* The quantity control: one bordered box holding the number and its unit, whether the
    unit is a dropdown (caps, dormancy) or a fixed word ("days", "people", "seasons").
    It follows the app's one control standard (--radius-sm, the settings-form padding,
    --bg fill, accent focus ring) and is the only shape a number-with-a-unit takes. */

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The one thing a modal owes a phone: freeze the page behind it while it is up, so a touch
 // drag scrolls the panel's own overflow instead of the page underneath (which iOS scrolls
-// otherwise, leaving a tall modal impossible to reach the bottom of). These pin that the
-// shell locks the body on open with position:fixed -- the only thing iOS honors, not
-// overflow:hidden -- restores it (offset and all) on close, and only releases on the last
-// of two stacked modals.
+// otherwise, leaving a tall modal impossible to reach the bottom of). These tests pin that the
+// shell locks the body on open with position:fixed, the only thing iOS honors and not
+// overflow:hidden, restores it (offset and all) on close, and only releases on the last of two
+// stacked modals.
 import { render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ModalShell } from "./ModalShell";

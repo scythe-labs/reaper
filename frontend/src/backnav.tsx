@@ -1,30 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Make the browser Back button step *back through the UI* instead of leaving Reaper.
+// Make the browser Back button step back through the app's own UI instead of leaving Reaper.
 //
 // The app has no router: where you are (which tab, which open panel, which menu) is plain
-// React state, so a Back press used to navigate away from the whole page. This controller maps
-// "somewhere to go back to" onto browser history -- closing the topmost open thing first, and
-// only leaving the app once nothing is left open.
+// React state, so a Back press would otherwise navigate away from the whole page. This
+// controller maps "somewhere to go back to" onto browser history, closing the topmost open
+// thing first, and only leaving the app once nothing is left open.
 //
-// The model is ONE parked history entry per open layer. N open layers cost N browser entries
+// The model is one parked history entry per open layer. N open layers cost N browser entries
 // and take N Back presses to unwind, newest-first.
 //
-// It was one shared entry for all layers, which unwound identically and cost the browser less --
-// but iOS keeps a back-forward SNAPSHOT per history entry, captured when the page navigates away
-// from that entry, and paints it during an edge-swipe back. One shared entry meant the picture
-// came from whenever the FIRST layer opened: open a tab, then scroll deep and open a card, and
-// the swipe back painted the list as it looked at the tab change -- scrolled to the top -- and
-// froze there for the seconds WebKit takes to drop a snapshot. The page underneath was correct
-// the whole time, which is why closing with the panel's own X always looked right. Parking an
-// entry per layer gives each layer a snapshot of the page as it looked when that layer opened,
-// which is exactly what Back reveals.
+// One shared entry for all layers would unwind the same way and cost the browser less, but
+// iOS keeps a back-forward snapshot per history entry, captured when the page navigates away
+// from that entry, and paints it during an edge-swipe back. A shared entry would take its
+// picture from whenever the first layer opened: open a tab, then scroll deep and open a card,
+// and the swipe back would paint the list as it looked at the tab change, scrolled to the top,
+// and freeze there for the seconds WebKit takes to build a snapshot. The page underneath is
+// correct the whole time, which is why closing with the panel's own X always looks right.
+// Parking an entry per layer instead gives each layer a snapshot of the page as it looked when
+// that layer opened, which is exactly what Back should reveal.
 //
-// Entries are interchangeable, not owned. A layer that closes gives an entry back off the top of
-// the stack -- not the one it pushed, if it was not the newest -- and a layer that opens in the
-// same tick takes over an entry already on its way back instead of pushing a second one. What is
-// preserved is the COUNT, one per layer, which is what makes the newest entry's picture the page
-// the newest layer covers.
+// Entries are interchangeable, not owned. A layer that closes gives an entry back off the top
+// of the stack, not necessarily the one it pushed, and a layer that opens in the same tick
+// takes over an entry already on its way back instead of pushing a second one. What is
+// preserved is the count, one per layer, which is what makes the newest entry's picture match
+// the page the newest layer covers.
 //
 // Two kinds of "layer", unwound newest-first:
 //   - overlays (menus, modals, side panels): registered via `useBackGuard(open, close)` while
@@ -61,7 +61,7 @@ type BackNavApi = {
 const BackNavContext = createContext<BackNavApi | null>(null);
 
 /** How many modals are open. Separate from the layer stack above, which also holds menus,
- *  side panels and tab changes -- none of which take the keyboard away from the list. */
+ *  side panels and tab changes, none of which take the keyboard away from the list. */
 const ModalDepthContext = createContext(0);
 
 // The history entry we park. Marked so a stray popstate from elsewhere is still safe to handle,
@@ -77,14 +77,14 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
   // list synchronously. Newest layer last.
   const layersRef = useRef<Layer[]>([]);
   const seqRef = useRef(0);
-  // Entries we owe the browser back -- one per layer that closed by something other than a Back
-  // press, counted only while the step is still unissued. Paid one settled step at a time, and
-  // never inline: see `unpark`.
+  // Entries we owe the browser back, one per layer that closed by something other than a
+  // Back press, counted only while the step is still unissued. Paid one settled step at a
+  // time, and never inline: see `unpark`.
   const owedRef = useRef(0);
   const flushScheduledRef = useRef(false);
-  // How many popstates WE caused (a step back to give an entry up) and must swallow rather than
-  // treat as a user Back. A count, not a flag: two layers can close in one tick, and a flag would
-  // let the second popstate through as a real Back.
+  // How many popstates we caused (a step back to give an entry up) and must swallow rather
+  // than treat as a user Back. A count, not a flag: two layers can close in one tick, and a
+  // flag would let the second popstate through as a real Back.
   const selfPopRef = useRef(0);
   // Sentinel entries survive a page reload (their pushState state persists) while our counters
   // reset, so on reload we sit on stale sentinels with no layers behind them and each one is a
@@ -94,9 +94,9 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
   const reconcilingRef = useRef(false);
   const reconcileStepsRef = useRef(0);
 
-  // State, not a ref, because things RENDER off it (see useModalOpen). It costs no re-render of
-  // the app: `children` arrives as an already-built element, so React skips that subtree when
-  // this component re-renders, and only the hook's consumers update.
+  // State, not a ref, because things render off it (see useModalOpen). It costs no re-render
+  // of the app: `children` arrives as an already-built element, so React skips that subtree
+  // when this component re-renders, and only the hook's consumers update.
   const [modalDepth, setModalDepth] = useState(0);
 
   // Built once (lazily), not per render: every method touches only refs and globals, so a single
@@ -104,17 +104,19 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
   const apiRef = useRef<BackNavApi | null>(null);
   const stepRef = useRef<{ payOne: () => void; reconcile: () => void } | null>(null);
   if (apiRef.current === null) {
-    // Whether the entry we are sitting on is one WE parked. The browser is the authority here,
-    // never our own count: a long-press on Back jumps several entries and reports a single
-    // popstate, and a reload leaves the two disagreeing outright. Stepping off an entry we did
-    // not park walks the operator out of Reaper with a panel still open, so every step below asks
-    // this first and does nothing rather than guess -- the same marker the walk at mount reads.
+    // Whether the entry we are sitting on is one we parked. The browser is the authority
+    // here, never our own count: a long-press on Back jumps several entries and reports a
+    // single popstate, and a reload leaves the two disagreeing outright. Stepping off an entry
+    // we did not park walks the operator out of Reaper with a panel still open, so every step
+    // below asks this first and does nothing rather than guess. The walk at mount reads the
+    // same marker.
     const onOwnEntry = () =>
       (history.state as { __reaperBack?: boolean } | null)?.__reaperBack === true;
 
     // One step back, if the entry we are on is ours to give up. The popstate it triggers is
-    // swallowed (selfPopRef) and drives the NEXT step, so every step reads `history.state` after
-    // the previous one has landed rather than off a value the browser has not updated yet.
+    // swallowed (selfPopRef) and drives the next step, so every step reads `history.state`
+    // after the previous one has landed rather than off a value the browser has not updated
+    // yet.
     const stepBack = () => {
       if (!onOwnEntry() || history.length <= 1) return false;
       selfPopRef.current += 1;
@@ -129,12 +131,13 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
       owedRef.current = stepBack() ? owedRef.current - 1 : 0;
     };
 
-    // Walk off the sentinels a reload left parked, one settled step at a time, stopping at the
-    // first entry we did not park (the app's own first entry, whose state is null) or as soon as
-    // a layer opens and claims the entry we are standing on. Measured in a real browser: these
-    // are SAME-document traversals -- a popstate, no page load -- so walking all of them is a
-    // handful of popstates, while stopping after one leaves every sentinel past the first as a
-    // dead Back press (B-12). Bounded anyway, so no history stack can turn this into a spin.
+    // Walk off the sentinels a reload left parked, one settled step at a time, stopping at
+    // the first entry we did not park (the app's own first entry, whose state is null) or as
+    // soon as a layer opens and claims the entry we are standing on. These are same-document
+    // traversals, a popstate with no page load, so walking all of them costs only a handful of
+    // popstates in a real browser, while stopping after one would leave every sentinel past
+    // the first as a dead Back press. Bounded anyway, so no history stack can turn this into a
+    // spin.
     const reconcileStep = () => {
       if (layersRef.current.length > 0 || reconcileStepsRef.current >= RECONCILE_MAX_STEPS) {
         reconcilingRef.current = false;
@@ -147,15 +150,17 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
         return;
       }
       reconcileStepsRef.current += 1;
-      // Marked as in flight BEFORE the step, never from its result: the popstate that carries the
-      // walk to its next step can arrive during `stepBack` itself, and would find this false.
+      // Marked as in flight before the step, never from its result: the popstate that
+      // carries the walk to its next step can arrive during `stepBack` itself, and would find
+      // this false.
       reconcilingRef.current = true;
       if (!stepBack()) reconcilingRef.current = false;
     };
     stepRef.current = { payOne, reconcile: reconcileStep };
 
-    // One entry per layer, pushed as the layer opens -- which is also when the browser takes the
-    // snapshot it will paint during an edge-swipe back (see the note at the top of this file).
+    // One entry per layer, pushed as the layer opens. That is also when the browser takes the
+    // snapshot it will paint during an edge-swipe back (see the note at the top of this
+    // file).
     const park = () => {
       if (owedRef.current > 0 && onOwnEntry()) {
         // A layer closed earlier in this same tick and its entry has not gone back yet. Take it
@@ -167,13 +172,13 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
       }
       history.pushState(SENTINEL, "");
     };
-    // Give this layer's entry back -- at the END of the tick, never from here. React runs every
-    // layout-effect cleanup before any setup, so a layer closing while another opens calls this
-    // first and `park` second; and a history.back() issued BEFORE a pushState in one tick
-    // resolves against the entry that was current when it was called, discarding the entry just
-    // pushed and leaving us a step lower than we think. Measured in a real browser, in both
-    // orders. Deferring lets the opening layer take the entry over instead of racing it, and
-    // turns several closes in one tick into one settled step at a time.
+    // Give this layer's entry back at the end of the tick, never from here. React runs every
+    // layout-effect cleanup before any setup, so a layer closing while another opens calls
+    // this first and `park` second. A history.back() issued before a pushState in the same
+    // tick resolves against the entry that was current when it was called, discarding the
+    // entry just pushed and leaving us a step lower than we think, confirmed in a real browser
+    // in both orders. Deferring lets the opening layer take the entry over instead of racing
+    // it, and turns several closes in one tick into one settled step at a time.
     const unpark = () => {
       owedRef.current += 1;
       if (flushScheduledRef.current) return;
@@ -193,8 +198,9 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
       remove(id) {
         const before = layersRef.current.length;
         layersRef.current = layersRef.current.filter((l) => l.id !== id);
-        // Only the layer's own non-Back close reaches here for a still-present id. A Back press
-        // slices the layer off first (below), so this is a no-op then -- no double-unpark.
+        // Only the layer's own non-Back close reaches here for a still-present id. A Back
+        // press slices the layer off first (below), so this is a no-op then, with no
+        // double-unpark.
         if (layersRef.current.length === before) return;
         // Give an entry back, whether or not others remain open: the count is one per layer.
         unpark();
@@ -217,12 +223,12 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Own scroll restoration. This app has no router, so it parks and un-parks a history
     // sentinel itself (pushState when a panel opens, history.back() when it closes). Under the
-    // browser default `auto`, the engine tries to manage scroll across those history writes and,
-    // with the card list's CSS containment (`container-type` on `.card-list`), lands the page at
-    // the top on both the open and the close -- desktop and phone alike. `manual` hands the app
-    // the scroll: parking and un-parking the sentinel no longer moves the reviewer, so they stay
-    // exactly where they tapped. Restored on unmount so a test or an embedding host is left as it
-    // was found.
+    // browser default `auto`, the engine tries to manage scroll across those history writes,
+    // and with the card list's CSS containment (`container-type` on `.card-list`), that lands
+    // the page at the top on both the open and the close, desktop and phone alike. `manual`
+    // hands the scroll to the app instead: parking and un-parking the sentinel no longer moves
+    // the reviewer, so they stay exactly where they tapped. Restored on unmount so a test or an
+    // embedding host is left as it was found.
     const priorScrollRestoration =
       "scrollRestoration" in history ? history.scrollRestoration : null;
     if (priorScrollRestoration !== null) history.scrollRestoration = "manual";
@@ -232,11 +238,12 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
       // wrote onto the entry we just left, so what we land on is whatever URL that older entry
       // was parked with. Put the app's own back before anything else runs.
       //
-      // On EVERY pop, not only our self-issued ones. A step that merely closes a layer is
-      // followed by no state change at all, so no effect ever runs to correct it -- that is the
-      // case this exists for. A step that genuinely moves the app (a nav frame's undo, below)
-      // does change state, and the render it causes writes the real URL straight over this one,
-      // so re-asserting first costs a `replaceState` and can never win against a real move.
+      // This runs on every pop, not only our self-issued ones. A step that merely closes a
+      // layer is followed by no state change at all, so no effect would otherwise run to
+      // correct it, which is the case this exists for. A step that genuinely moves the app (a
+      // nav frame's undo, below) does change state, and the render it causes writes the real
+      // URL straight over this one, so re-asserting first costs a `replaceState` and can never
+      // win against a real move.
       reassertUrl();
       if (selfPopRef.current > 0) {
         // Our own step; that entry is gone, nothing to unwind. Whatever we are working through
@@ -289,11 +296,10 @@ export function useModalLayer(): void {
 /** Whether a modal is up. Read by the keyboard handlers that let ↑/↓/j/k walk a list: while a
  *  modal owns the keyboard, the list behind it must not move underneath.
  *
- *  This replaced `document.querySelector('[role="dialog"]')` in three of them -- a live DOM
- *  probe, run on every keypress, standing in for state React already owned. It answered by
- *  markup rather than by intent, so any future overlay that was modal without that attribute
- *  (or carried it without being modal, like a popover) would silently gain or lose the
- *  keyboard (H-2). */
+ *  Read from state rather than probed from the DOM (`document.querySelector('[role="dialog"]')`),
+ *  because a DOM probe answers by markup rather than by intent: any future overlay that is
+ *  modal without that attribute, or that carries it without being modal (like a popover),
+ *  would silently gain or lose the keyboard. */
 export function useModalOpen(): boolean {
   return useContext(ModalDepthContext) > 0;
 }
@@ -311,9 +317,9 @@ export function useBackNav(): { pushNav: (undo: () => void) => void } {
  * any other way (Escape, an X, an outside click) auto-removes it. `close` is read fresh on each
  * Back, so a changing closure is fine.
  *
- * `canClose`, if given, is the same guard the modal's scrim / Escape / ✕ consult: while it
- * returns false a Back press is refused and the sentinel re-parked, so Back can never tear down
- * a modal that declared itself un-closable (a save in flight, say) -- rule 80.
+ * `canClose`, if given, is the same guard the modal's scrim, Escape and ✕ consult. While it
+ * returns false, a Back press is refused and the sentinel re-parked, so Back can never tear
+ * down a modal that declared itself unclosable, such as one with a save in flight.
  */
 export function useBackGuard(
   open: boolean,
@@ -325,19 +331,19 @@ export function useBackGuard(
   closeRef.current = close;
   const canCloseRef = useRef(canClose);
   canCloseRef.current = canClose;
-  // A LAYOUT effect, so the entry is parked before the browser paints the overlay. The picture a
-  // browser files against the entry beneath is taken around the navigation that leaves it, and on
-  // iOS that picture is what an edge-swipe back paints; parking first gives it the page the
-  // reviewer is actually returning to rather than the overlay about to cover it. Driven in a real
-  // browser at phone width to confirm the earlier timing still holds: the phone sheet's scroll
-  // lock (App.tsx's usePageScrollLock, a passive effect) still captures the reviewer's offset,
+  // A layout effect, so the entry is parked before the browser paints the overlay. The
+  // picture a browser files against the entry beneath is taken around the navigation that
+  // leaves it, and on iOS that picture is what an edge-swipe back paints. Parking first gives
+  // it the page the reviewer is actually returning to, rather than the overlay about to cover
+  // it. Confirmed in a real browser at phone width: the phone sheet's scroll lock
+  // (`App.tsx`'s `usePageScrollLock`, a passive effect) still captures the reviewer's offset,
   // and a Back still lands them on it.
   useLayoutEffect(() => {
     if (!ctx || !open) return;
-    // `id` tracks the live registration. A refused Back -- the modal says it can't close yet,
-    // the same guard the scrim/Escape/✕ honor -- re-registers, which re-parks the sentinel, so
-    // Back stays armed instead of being spent on a close that never happened (rule 80). The
-    // cleanup removes whichever id is current.
+    // `id` tracks the live registration. A refused Back, when the modal says it can't close
+    // yet, the same guard the scrim, Escape and ✕ honor, re-registers, which re-parks the
+    // sentinel. That keeps Back armed instead of spending it on a close that never happened.
+    // The cleanup removes whichever id is current.
     let id = ctx.register(function onBack() {
       if (canCloseRef.current()) closeRef.current();
       else id = ctx.register(onBack);
@@ -347,15 +353,15 @@ export function useBackGuard(
 }
 
 /**
- * The child half of `useBackGuard`. The modal owns its reasons to stay open, the parent owns the
- * Back registration, and this ref is the only thing between them. Back then refuses exactly what
- * the scrim, Escape and the ✕ refuse (rule 80). Cleared on unmount, so a stale refusal never
- * outlives the modal.
+ * The child half of `useBackGuard`. The modal owns its reasons to stay open, the parent owns
+ * the Back registration, and this ref is the only thing between them. Back then refuses
+ * exactly what the scrim, Escape and the ✕ refuse. Cleared on unmount, so a stale refusal
+ * never outlives the modal.
  *
- * It takes the WHOLE predicate, never one term of it. `ScheduleModal` mirrored `save.isPending`
- * against a shell handed `!save.isPending`. Those agree, and agree only while `canClose` has one
- * term. A second reason to stay open leaves Back the one dismissal that ignores it, and
- * `ServiceModal` already has two.
+ * Pass the whole predicate, never just one term of it. `ScheduleModal` mirrors
+ * `save.isPending` against a shell handed `!save.isPending`, and those only agree because
+ * `canClose` there has exactly one term. A second reason to stay open would leave Back the
+ * one dismissal that ignores it, and `ServiceModal` already has two.
  */
 export function useBackCloseMirror(
   blockCloseRef: RefObject<boolean> | undefined,

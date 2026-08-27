@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Scales (fairness). One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* ---- Scales (fairness) --------------------------------------------------- */
+ * Scales (fairness). See `../index.css` for how this file fits into the stylesheet's load
+ * order. */
 /* One card per requester: the balance bar weighs granted disk that is still earning its
    keep (green) against what nobody watched (red). The watched % is a separate behavioral
    signal, kept on the side so the two never blur. */
@@ -28,9 +27,9 @@
   height: 14px;
 }
 /* The glyph spins only while a refresh is in flight, echoing the loading spinner's motion.
-   Stopped for reduced motion directly below: `spin` is declared in 06-spinner.css and stopping
-   it there does nothing for this rule, which is exactly how this one came to be the single
-   animation in the app that ran regardless of the preference. */
+   Reduced motion turns it off directly below. `spin` is declared once in 06-spinner.css, but
+   stopping it there does not stop it here: each rule that uses the animation needs its own
+   reduced-motion override, or it keeps running regardless of the preference. */
 .fair-refresh.busy .ico {
   animation: spin 0.7s linear infinite;
 }
@@ -40,7 +39,8 @@
   }
 }
 
-/* Summary strip: SPACE leads (the reclaimable tile shows bytes, the count is its caption). */
+/* Summary strip: freed space leads. The reclaimable tile shows bytes, and the count is its
+   caption. */
 .fair-stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -103,11 +103,10 @@
     border-color 0.15s var(--ease),
     background 0.15s var(--ease);
 }
-/* Its hover, focus ring, selection bar and additive selected+hover are NOT declared here:
-   they are byte-for-byte the card grammar, so this tile joins the four grouped selectors that
-   own it (search ".card:hover"). They used to be copied out in full, directly under the
-   comment on .card claiming that grammar "is declared once here ... so a card-hover tweak
-   lands in one place" -- the exact drift the comment said was impossible (R-5). */
+/* This tile's hover, focus ring, selection bar, and selected+hover state are not declared
+   here. They live in the grouped .card selectors in 21-queue-cards.css (search
+   ".card:hover"), since they must stay byte-for-byte identical to the card grammar. A
+   duplicate copy here has drifted out of sync with that shared rule before. */
 /* The "open me" affordance, so the tile doesn't rely on hover alone to read as a control. */
 .fair-stat-more {
   margin-top: var(--space-sm);
@@ -158,10 +157,10 @@
   gap: 0.55rem;
 }
 
-/* The requester card. Its OWN layout (padding, gap, the background transition its hover
-   wash needs); the interaction grammar itself -- accent hover, focus ring, the accent
-   selection bar when open, and the additive open+hover -- is shared with .card, declared on
-   the grouped .card rules below so a tweak lands once (R-4). */
+/* The requester card. This rule holds its own layout: padding, gap, the background
+   transition its hover wash needs. The interaction grammar (accent hover, focus ring, the
+   accent selection bar when open, and the additive open+hover) is shared with .card, declared
+   on the grouped .card rules in 21-queue-cards.css, so a tweak lands once. */
 .fair-card {
   position: relative;
   display: flex;
@@ -297,23 +296,20 @@
   margin-top: var(--space-2xs);
 }
 
-/* On a phone the card's three flex columns leave the middle one -- which is all the balance
-   bar can ever be as wide as -- about half the card, so the bar stops dead under the watched
-   %, reading as a bar that ran out rather than a full one. The whole card becomes one grid
-   instead: avatar, name and % share the top line, and the bar and its legend span to the
-   right edge, where the eye already expects a 100% bar to end. .fair-body and .fair-side are
-   plain unlabeled wrappers, so display: contents dissolves them and their children place
-   themselves -- no second markup for the same card.
+/* On a phone the card's three flex columns leave the middle one, which is the balance bar's
+   full available width, at about half the card's width. The bar then stops dead under the
+   watched %, reading as a bar that ran out rather than a full one. Below this width the whole
+   card becomes one grid instead: avatar, name, and % share the top line, and the bar and its
+   legend span to the right edge, where a 100% bar is expected to end. .fair-body and
+   .fair-side are plain unlabeled wrappers, so `display: contents` dissolves them and their
+   children place themselves, with no second markup for the same card.
 
-   The chip drops out here, and the two branches are NOT symmetric about that. With something
-   to reclaim it is pure repetition: the legend line directly above says the same thing in the
-   same red ("48 GiB to reclaim" over "48 GiB to reclaim · 6 titles"). On a clean card it is
-   not -- the pill is green (.status-kept, --protect) while its legend counterpart reads
-   "nothing reclaimable" in gray (--muted) -- so below 640px that card states its good news in
-   the full green bar and a gray line, and wears no pill at all. Reviewed against rendered
-   alternatives and left this way on purpose. Height is not the reason and was never the
-   argument: the reflow makes the card SHORTER (390px: 199px flex -> 180px grid) and the pill
-   would only cost about 29px of that back. */
+   The status chip drops out at this width, and the two cases are not treated the same. With
+   something to reclaim, the chip repeats the legend line above it in the same red, so
+   dropping it loses nothing. On a clean card, the chip is green while the legend reads
+   "nothing reclaimable" in gray, so dropping the chip there would also drop the only strongly
+   colored good-news signal. Below 640px, a clean card states its good news in the full green
+   bar and a gray line instead, and shows no chip at all. */
 @media (max-width: 640px) {
   .fair-card {
     display: grid;

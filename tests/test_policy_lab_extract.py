@@ -1,28 +1,26 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The baseline fixture's regeneration steps, and the refusal they carry.
+"""The baseline fixture's regeneration steps, and the refusal built into them.
 
-``TestPinnedBaseline`` goes red when the engine's output moves for real library shapes, and
-its failure text asks for a ``SCORER_VERSION`` bump. Asking was the whole safeguard, and
-asking is not a gate: regenerate the fixture, the suite goes green, the constant stays put,
-and every pending approval stays bound to a ``policy_hash`` this build still computes -- so
-the plan on the Reap page executes on scores this build would not produce (rule 113).
+``TestPinnedBaseline`` fails when the engine's output changes for real library shapes, and
+its failure message asks for a ``SCORER_VERSION`` bump. That message alone is not a gate:
+someone can regenerate the fixture, watch the suite go green, and leave the constant
+unchanged. Every pending approval stays bound to a ``policy_hash`` this build still computes,
+so the plan on the Reap page would then execute on scores this build no longer produces.
 
-Only a regeneration step can enforce it, because only it holds the old baseline and the new
-one at the same time. A test comparing them knows they disagree and nothing more.
+Only the regeneration step itself can catch that, because it is the one place that holds the
+old baseline and the new one at the same time. A test that only compares the two knows they
+disagree and nothing more.
 
-**There are two regeneration paths and both are gated.** ``--rebaseline`` re-pins the
-committed shapes; the full extract re-samples from a real library. The full extract was
-exempt at first, on the reasoning that re-sampling makes "did the baseline move?" unanswerable
--- which is false, and was measured: the old fixture and its baselines are still on disk, so
-re-judging *those* vectors answers it exactly, with no database. With a ramp change,
-``--rebaseline`` refused 338 moved baselines while the full extract wrote all 338 and
-re-stamped the scorer.
+There are two regeneration paths, and both are gated. ``--rebaseline`` re-pins the committed
+shapes. The full extract re-samples from a real library instead, and re-judging the vectors
+already on disk against the OLD baseline, before the new sample overwrites them, answers "did
+the baseline move" without needing a database.
 
-The escape hatch is load-bearing rather than decorative, so it is tested as carefully as the
-refusal. A change to a shipped DEFAULT policy moves every baseline here and voids nothing,
-because no operator's stored body changed; so does an edit to the harness that judges these
-vectors, where the engine did not move at all. Refusing those unconditionally would teach
-people to route around the refusal, which costs more than it buys.
+The escape hatch is load-bearing, not decorative, so it is tested as carefully as the
+refusal. A change to a shipped default policy moves every baseline here and voids nothing,
+because no operator's stored body changed. The same is true for an edit to the harness that
+judges these vectors, where the engine itself did not move. Refusing those unconditionally
+would teach people to route around the refusal, which costs more than it buys.
 
 Companion to ``test_scorer_surface``, which pins the other half: declarations that move
 without the scorer moving.
@@ -57,8 +55,8 @@ _REASON = "shipped default moved, no stored body changed"
 def fixture_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A short copy of the real fixture, with ``OUT`` pointed at it.
 
-    Real vectors rather than hand-built ones: ``judge`` reads the whole fact block, and a
-    stand-in that scores differently would exercise a shape the harness never sees.
+    These are real vectors, not hand-built ones. ``judge`` reads the whole fact block, and
+    a stand-in that scores differently would exercise a shape the harness never sees.
     """
     real = json.loads(extract.OUT.read_text())
     small = {**real, "vectors": copy.deepcopy(real["vectors"][:3])}
@@ -86,8 +84,8 @@ def _move_one_baseline(path: Path, **overrides: Any) -> None:
 
 class TestARebaselineThatMovesNumbersNeedsTheScorerToMove:
     def test_a_moved_baseline_under_the_same_scorer_is_refused(self, fixture_path: Path) -> None:
-        """Rule 118: the interlock's own test. Delete the refusal and this goes green while
-        the fixture quietly re-pins under a scorer that never moved."""
+        """The interlock's own test. Delete the refusal and this test goes green while the
+        fixture quietly re-pins under a scorer that never moved."""
         _move_one_baseline(fixture_path)
 
         with pytest.raises(SystemExit) as caught:
@@ -99,9 +97,9 @@ class TestARebaselineThatMovesNumbersNeedsTheScorerToMove:
     def test_the_refusal_leaves_the_fixture_exactly_as_it_found_it(
         self, fixture_path: Path
     ) -> None:
-        """A refusal that exits after writing is not a refusal. ``rebaseline`` mutates the
-        loaded dict as it walks the vectors, so the thing that keeps the file honest is the
-        order of the exit and the write, which nothing else here would catch."""
+        """The exit must come before any write. ``rebaseline`` mutates the loaded dict as
+        it walks the vectors, so only the order of the exit and the write keeps the file
+        honest, and nothing else here would catch a regression in that order."""
         _move_one_baseline(fixture_path)
         before = fixture_path.read_text()
 
@@ -111,8 +109,8 @@ class TestARebaselineThatMovesNumbersNeedsTheScorerToMove:
         assert fixture_path.read_text() == before
 
     def test_a_bumped_scorer_lets_the_moved_baseline_through(self, fixture_path: Path) -> None:
-        """The honest path. The author bumps first, so the stamp is behind the running
-        constant, and the re-pin writes and re-stamps."""
+        """The author bumps the version first, so the stamp sits behind the running
+        constant, and the re-pin writes and re-stamps cleanly."""
         _move_one_baseline(fixture_path, scorer_version=SCORER_VERSION - 1)
 
         extract.rebaseline()
@@ -143,28 +141,33 @@ class TestARebaselineThatMovesNumbersNeedsTheScorerToMove:
 
 class TestTheStampIsAVersionOrItIsNothing:
     """The refusal reads one number to decide whether the scorer moved, so every value that
-    number can hold is a branch. ``!=`` accepted all of them as "moved" -- the fail-open
-    direction -- and the first version of this class swept four types that already worked."""
+    number can hold is a branch to check. Using ``!=`` alone would accept all of them as
+    "moved," which is the fail-open direction.
+    """
 
     @pytest.mark.parametrize("value", [None, "2", 2.0, {}, [], True, False, 0, -5, float("nan")])
     def test_a_stamp_that_is_not_a_version_number_reads_as_no_stamp(self, value: object) -> None:
-        """``True`` is the one that mattered: ``isinstance(True, int)`` is ``True`` in
-        Python, so a stamp of ``true`` compared unequal to the running constant and read as
-        a bump. ``0`` and negatives fail production's own ``ge=1`` on the same field."""
+        """``True`` is the value that matters most here. ``isinstance(True, int)`` is
+        ``True`` in Python, so a stamp of ``true`` compares unequal to the running constant
+        and reads as a bump. ``0`` and negative numbers fail production's own ``ge=1``
+        constraint on the same field.
+        """
         assert extract.stamped_scorer({"scorer_version": value}) is None
 
     @pytest.mark.parametrize("value", [1, SCORER_VERSION, SCORER_VERSION + 7, 10**30])
     def test_a_stamp_that_is_a_version_number_is_returned_as_read(self, value: int) -> None:
-        """Including one ahead of the running constant. Reading it is not accepting it --
-        the refusal is what rejects that, and it can only do so if this hands it back."""
+        """Includes a value ahead of the running constant. Reading a stamp back is separate
+        from accepting it. The refusal step is what rejects a too-new stamp, and it can
+        only do that if this function hands the value back unchanged."""
         assert extract.stamped_scorer({"scorer_version": value}) == value
 
     @pytest.mark.parametrize("stamp", [True, False, 0, -5, "2", 2.0])
     def test_an_unusable_stamp_refuses_a_moved_baseline(
         self, fixture_path: Path, stamp: object
     ) -> None:
-        """Fail closed on "cannot tell". Reading any of these as "the scorer must have
-        moved" lets exactly the commit this refusal exists for straight through."""
+        """Fails closed when the stamp cannot be read. Treating any of these values as
+        proof the scorer moved would let through exactly the change this refusal exists to
+        catch."""
         _move_one_baseline(fixture_path, scorer_version=stamp)
 
         with pytest.raises(SystemExit) as caught:
@@ -188,9 +191,10 @@ class TestTheStampIsAVersionOrItIsNothing:
         self, fixture_path: Path, moved: bool
     ) -> None:
         """A fixture from a newer Reaper, which production refuses on the same value
-        (``PolicyBody.scorer_version`` is ``le=SCORER_VERSION``). Writing would re-stamp it
-        downward and destroy the only record of where it came from -- so the no-move case is
-        the one that matters, and it is the one a moved-only guard would miss.
+        (``PolicyBody.scorer_version`` is ``le=SCORER_VERSION``). Writing here would
+        re-stamp the version downward and destroy the only record of where it came from.
+        The no-move case is the one that matters. A guard that only checks for movement
+        would miss it.
         """
         data = _read(fixture_path)
         data["scorer_version"] = SCORER_VERSION + 1
@@ -210,9 +214,10 @@ class TestTheEscapeHatchIsStatedRatherThanAssumed:
     def test_a_stated_reason_lets_the_moved_baseline_through_and_is_recorded(
         self, fixture_path: Path
     ) -> None:
-        """A shipped default moving is the ordinary case: every baseline here moves and no
-        operator's stored body changed, so no approval is owed a void. The reason lands in
-        the fixture so the diff carries it to the reviewer."""
+        """A shipped default moving is the ordinary case. Every baseline here moves and no
+        operator's stored body changed, so no approval needs to be voided. The reason lands
+        in the fixture so the diff carries it to the reviewer.
+        """
         _move_one_baseline(fixture_path)
 
         extract.rebaseline(unbumped=_REASON)
@@ -225,8 +230,8 @@ class TestTheEscapeHatchIsStatedRatherThanAssumed:
     def test_a_bump_clears_the_reason_the_last_cut_went_unbumped_on(
         self, fixture_path: Path
     ) -> None:
-        """The note explains one decision. Left behind after a bump it would explain the
-        wrong one, and it is the kind of stale sentence a reviewer trusts."""
+        """The note explains one decision. Left behind after a bump, it would explain the
+        wrong one, and reviewers tend to trust a stale note like that."""
         _move_one_baseline(
             fixture_path,
             scorer_version=SCORER_VERSION - 1,
@@ -238,9 +243,9 @@ class TestTheEscapeHatchIsStatedRatherThanAssumed:
         assert "scorer_note" not in _read(fixture_path)
 
     def test_a_run_that_moves_nothing_records_no_reason(self, fixture_path: Path) -> None:
-        """A justification for a change that did not happen. The note is only meaningful
-        about baselines that moved, so a clean re-stamp neither writes one nor drops the one
-        already explaining the baselines still in the file."""
+        """The note only makes sense next to baselines that actually moved. A clean
+        re-stamp writes no new note, and it leaves an existing one in place, since that one
+        still explains the baselines already in the file."""
         _write(fixture_path, {**_read(fixture_path), "scorer_note": "an earlier cut"})
 
         extract.rebaseline(unbumped=_REASON)
@@ -272,10 +277,12 @@ class TestTheEscapeHatchIsStatedRatherThanAssumed:
         ],
     )
     def test_a_reason_carrying_anything_identifying_is_refused(self, raw: str) -> None:
-        """The fixture is committed, and the golden rule binds it as it binds code: never a
-        real title, host, path, username or stat. This is the first free-text field a human
-        types straight into that file, and ``TestFixtureStaysDeidentified`` inspects keys
-        rather than values, so the charset is caught here at the boundary."""
+        """The fixture is committed, so it is bound by the same rule as code: no real
+        title, host, path, username, or measured statistic. This is the first free-text
+        field a human types directly into that file. ``TestFixtureStaysDeidentified``
+        inspects keys rather than values, so this test is what catches identifying text at
+        the boundary.
+        """
         with pytest.raises(SystemExit) as caught:
             extract.check_reason(raw)
 
@@ -295,18 +302,21 @@ class TestTheCommandLineCannotBeMissedByOneCharacter:
     def test_a_near_miss_is_refused_rather_than_run_as_the_full_extract(
         self, argv: list[str]
     ) -> None:
-        """Dispatch was an exact-string membership test with no unknown-flag rejection, so
-        every near miss fell through to the path that re-extracts from a live library. The
-        refusal's own message asks the author to retype this command line, which is exactly
-        when a typo happens."""
+        """A dispatch built as an exact-string membership test, with no rejection for
+        unknown flags, would let every near miss fall through to the path that re-extracts
+        from a live library. The refusal message asks the author to retype the command
+        line, which is exactly when a typo would happen again.
+        """
         with pytest.raises(SystemExit) as caught:
             extract.parse_argv(argv)
 
         assert "unrecognized argument" in str(caught.value)
 
     def test_both_spellings_of_the_reason_flag_are_read(self) -> None:
-        """The space form is how most CLIs work. Dropping it silently left the author
-        believing they had recorded a justification when none was written."""
+        """The space form (`--unbumped VALUE`) is how most CLIs work, alongside the `=`
+        form. Dropping support for it would leave the author believing they had recorded a
+        reason when none was written.
+        """
         assert extract.parse_argv(["--rebaseline", f"--unbumped={_REASON}"]) == (True, _REASON)
         assert extract.parse_argv(["--rebaseline", "--unbumped", _REASON]) == (True, _REASON)
 
@@ -321,9 +331,11 @@ class TestTheCommandLineCannotBeMissedByOneCharacter:
 
 
 class TestMainWiresTheFlagsToTheInterlock:
-    """The seam no test crossed. Three mutations of ``main`` -- dropping the parsed reason,
-    replacing the branch with a bare return, and pinning the hatch open with
-    ``unbumped_reason(...) or "auto"`` -- all left the file green."""
+    """Checks that ``main`` actually wires the parsed flags into the interlock, not just
+    that the flags parse. Dropping the parsed reason, replacing the branch with a bare
+    return, or pinning the hatch open with ``unbumped_reason(...) or "auto"`` would each
+    leave every other test in this file green.
+    """
 
     def test_the_parsed_reason_reaches_rebaseline(self, monkeypatch: pytest.MonkeyPatch) -> None:
         seen: list[str | None] = []
@@ -337,8 +349,10 @@ class TestMainWiresTheFlagsToTheInterlock:
     def test_a_rebaseline_with_no_flag_passes_no_reason(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The mutation that pinned the hatch permanently open produced a reason here where
-        none was given, and nothing noticed."""
+        """Guards against a caller inventing a reason where none was given. A version of
+        ``main`` that pins the escape hatch permanently open would produce a reason here
+        that the operator never typed, and nothing else in this file would notice.
+        """
         seen: list[str | None] = []
         monkeypatch.setattr(extract, "rebaseline", lambda unbumped=None: seen.append(unbumped))
         monkeypatch.setattr(sys, "argv", ["prog", "--rebaseline"])
@@ -350,8 +364,8 @@ class TestMainWiresTheFlagsToTheInterlock:
     def test_the_full_extract_is_guarded_before_it_touches_a_library(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Ordering, not just presence: the guard has to run before the database is opened,
-        or a machine without one never reaches it."""
+        """Checks ordering, not just presence. The guard has to run before the database
+        opens, or a machine with no database never reaches it."""
         order: list[str] = []
         monkeypatch.setattr(
             extract, "guard_the_full_extract", lambda unbumped: order.append("guarded")
@@ -374,9 +388,10 @@ class TestTheFullExtractIsHeldToTheSameBar:
     def test_an_engine_change_is_refused_before_a_re_sample_can_bury_it(
         self, fixture_path: Path
     ) -> None:
-        """The path that laundered 338 moved baselines. It re-samples the vectors, so the
-        evidence disappears into the new sample -- which is why the check has to happen
-        against the OLD fixture, before the write."""
+        """This is the path that can hide a real engine change inside a re-sample: it
+        rebuilds the vectors from a live library, so the old evidence disappears into the
+        new sample. The check has to run against the OLD fixture, before that write happens.
+        """
         _move_one_baseline(fixture_path)
 
         with pytest.raises(SystemExit) as caught:
@@ -392,16 +407,18 @@ class TestTheFullExtractIsHeldToTheSameBar:
     def test_a_first_extract_with_no_fixture_yet_is_not_blocked(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Nothing to compare against, and refusing would make the fixture unbootstrappable."""
+        """Nothing to compare against yet. Refusing here would make it impossible to
+        create the fixture in the first place."""
         monkeypatch.setattr(extract, "OUT", tmp_path / "absent.json")
 
         extract.guard_the_full_extract(None)
 
 
 class TestOneWriterSetsTheStamp:
-    """Rule 72's sibling here cannot be reached by a test: the full extract needs a real
-    ``data/reaper.db``. So the stamp is set by the single writer both paths call, and what is
-    pinned is that the single writer is still single."""
+    """The full extract path needs a real ``data/reaper.db``, so a test cannot reach it
+    directly. Instead, both regeneration paths call one writer that sets the stamp, and
+    what this class pins is that the writer stays the only one.
+    """
 
     def test_the_writer_stamps_whatever_it_is_handed(self, tmp_path: Path) -> None:
         path = tmp_path / "f.json"
@@ -416,8 +433,10 @@ class TestOneWriterSetsTheStamp:
 
     def test_the_writer_overwrites_a_stamp_from_an_older_cut(self, tmp_path: Path) -> None:
         """Handed a fixture still claiming the version it was read at, the writer must
-        re-stamp rather than preserve -- otherwise the bump path writes new baselines under
-        the old version and the next refusal reads the wrong answer."""
+        re-stamp it rather than leave the old value in place. Otherwise the bump path
+        writes new baselines under the old version, and the next refusal reads the wrong
+        answer.
+        """
         path = tmp_path / "f.json"
         monkey = pytest.MonkeyPatch()
         monkey.setattr(extract, "OUT", path)
@@ -429,9 +448,10 @@ class TestOneWriterSetsTheStamp:
         assert json.loads(path.read_text())["scorer_version"] == SCORER_VERSION
 
     def test_the_fixture_has_exactly_one_writer(self) -> None:
-        """The design rests on there being one write, and a second one added later would
-        take the stamp with it on that path alone -- the very split that made the sibling
-        untestable."""
+        """This design depends on there being exactly one writer. A second one added later
+        would set the stamp on its own path only, the same kind of split that makes the
+        full-extract path untestable directly.
+        """
         assert functions_that_can_write(_SCRIPT.read_text()) == {"write_fixture"}
 
     @pytest.mark.parametrize(
@@ -446,10 +466,12 @@ class TestOneWriterSetsTheStamp:
         ],
     )
     def test_the_matcher_sees_the_forms_a_second_writer_would_use(self, snippet: str) -> None:
-        """Rule 147: the guard scans source, so it is proven against every form the tree
-        could spell the thing in, not only the one already there. The first version counted
-        the string ``OUT.write_text`` and read two, because ``write_fixture``'s own docstring
-        says it; the second parsed calls only, and the alias form walked straight past."""
+        """This guard scans source text, so it must be proven against every way the tree
+        could spell a write call, not only the one already there. Matching on the substring
+        ``OUT.write_text`` would also fire on ``write_fixture``'s own docstring, which names
+        it. Parsing calls without following aliases would miss ``writer = OUT.write_text``
+        followed by ``writer(x)``.
+        """
         assert functions_that_can_write(snippet) == {"sneak"}
 
     def test_the_matcher_does_not_fire_on_serialization_alone(self) -> None:
@@ -460,25 +482,28 @@ class TestOneWriterSetsTheStamp:
 
 class TestTheCommittedFixtureAgreesWithTheGenerator:
     def test_the_stamp_helper_reads_what_the_writer_wrote(self) -> None:
-        """Rule 131: the producer and the consumer of this stamp read one declaration. The
-        writer sets ``scorer_version``; ``stamped_scorer`` is what the refusal reads it back
-        with, and a rename on one side alone would make every refusal see an unstamped
-        fixture -- which fails closed, and so would never announce itself."""
+        """The producer and the consumer of this stamp read from one declaration. The
+        writer sets ``scorer_version``, and ``stamped_scorer`` is what the refusal reads it
+        back with. A rename on one side alone would make every refusal see an unstamped
+        fixture. That fails closed, so it would never announce itself.
+        """
         assert extract.stamped_scorer(json.loads(extract.OUT.read_text())) == SCORER_VERSION
 
     def test_the_committed_fixture_carries_no_free_text_the_charset_would_reject(self) -> None:
-        """``scorer_note`` is the only human-typed prose in a committed fixture, and
-        ``TestFixtureStaysDeidentified`` inspects keys and genre values rather than values at
-        arbitrary keys -- so a note naming a host or carrying a count would commit clean past
-        it. Rule 131: this reads the same declaration ``check_reason`` enforces at the
-        boundary, so a note that arrived by hand is held to what the flag would have allowed.
+        """``scorer_note`` is the only human-typed prose in a committed fixture.
+        ``TestFixtureStaysDeidentified`` inspects keys and a fixed set of values rather than
+        every value at every key, so a note naming a host or carrying a count would commit
+        clean past it. This test reads the same declaration ``check_reason`` enforces at
+        the boundary, so a note written by hand is held to the same standard the flag
+        enforces.
         """
         note = json.loads(extract.OUT.read_text()).get("scorer_note")
 
         assert note is None or extract.check_reason(note) == note
 
     def test_the_committed_fixture_still_has_vectors_to_compare(self) -> None:
-        """The refusal is only worth anything over a populated fixture: an emptied vector
-        list re-pins clean and reads as a scorer that was checked (rule 145 -- a walk that
-        collects nothing looks exactly like a walk that found nothing wrong)."""
+        """The refusal only means something over a populated fixture. An emptied vector
+        list would re-pin clean and read as a scorer that was checked, when really nothing
+        was compared at all.
+        """
         assert len(json.loads(extract.OUT.read_text())["vectors"]) > 0

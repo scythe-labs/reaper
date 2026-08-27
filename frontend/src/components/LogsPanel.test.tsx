@@ -34,8 +34,8 @@ function renderPanel() {
   renderWithProviders(
     <>
       {/* The app mounts this above every route (`App.tsx`), and `announce()` returns early when
-          no region is listening -- so without it here Try again's sentence is dropped and a test
-          about it passes against silence. */}
+          no region is listening. Without it here, Try again's sentence would be dropped and a
+          test about it would pass against silence. */}
       <Announcer />
       <LogsPanel />
     </>,
@@ -92,9 +92,10 @@ describe("LogsPanel", () => {
     expect(screen.queryByRole("button", { name: /try again/i })).not.toBeInTheDocument();
   });
 
-  // #376: the pair was wrong in both directions at once -- it spoke when nobody did anything,
-  // and stayed silent when someone did. Both halves are pinned, because fixing either alone
-  // leaves the other exactly as broken and neither is visible from the diff.
+  // The pair must be right in both directions at once: it must not speak when nobody did
+  // anything, and must not stay silent when someone did. Both halves are pinned, because
+  // fixing either alone would leave the other exactly as broken, and neither is visible from
+  // the diff.
   it("does not announce a failure the poll found, in either notice", async () => {
     const { queryClient } = renderPanel();
     expect(await screen.findByText("a line")).toBeInTheDocument();
@@ -103,8 +104,8 @@ describe("LogsPanel", () => {
     await act(() => queryClient.refetchQueries({ queryKey: ["logs"] }));
 
     // `["logs"]` refetches every 2s, so a flapping connection remounts this notice on a cycle
-    // no operator drove. As an alert it re-read byte-identical text over whoever was reading
-    // the pane or typing in the search box.
+    // no operator drove. As an alert, it would re-read byte-identical text over whoever was
+    // reading the pane or typing in the search box.
     const notice = await screen.findByText(/reaper is trying again/i);
     expect(notice.closest(".notice")).not.toHaveAttribute("role", "alert");
   });
@@ -118,9 +119,10 @@ describe("LogsPanel", () => {
     await act(() => queryClient.refetchQueries({ queryKey: ["logs"] }));
     expect(await screen.findByText(/updates are paused/i)).toBeInTheDocument();
 
-    // Failing again is the case that used to say nothing at all: `isError` stays true across
-    // the retry, so the notice never unmounts and its text never changes. Nothing about the
-    // rendered page distinguishes a retry that failed from a button that does nothing.
+    // Failing again is the case that would otherwise say nothing at all: `isError` stays true
+    // across the retry, so the notice never unmounts and its text never changes on its own.
+    // Nothing about the rendered page would distinguish a retry that failed from a button that
+    // does nothing.
     await person.click(screen.getByRole("button", { name: /try again/i }));
     await screen.findByText(/the log still didn't load\./i);
 
@@ -150,8 +152,8 @@ describe("LogsPanel", () => {
 
   async function levelPicker() {
     const picker = await screen.findByLabelText<HTMLSelectElement>("Logging level");
-    // It is disabled until the first read lands, so this is also the wait for the level
-    // the server reported (rule 137).
+    // It is disabled until the first read lands, so this also waits for the level the server
+    // reported.
     await waitFor(() => expect(picker).toBeEnabled());
     return picker;
   }
@@ -160,11 +162,11 @@ describe("LogsPanel", () => {
     return Array.from(picker.querySelectorAll("option")).map((o) => o.textContent);
   }
 
-  // #700: REAPER_LOG_LEVEL may carry ERROR, which this picker does not offer on purpose --
-  // hiding warnings from a tool that deletes files serves nobody. A <select> whose value
-  // matches no option renders blank, so without the extra option the one surface that says
-  // what Reaper is recording goes silent for exactly the operator who chose it. Both
-  // directions, since an option rendered unconditionally would put the choice on sale.
+  // REAPER_LOG_LEVEL may carry ERROR, which this picker does not offer on purpose. Hiding
+  // warnings from a tool that deletes files serves nobody. A <select> whose value matches no
+  // option renders blank, so without the extra option, the one surface that says what Reaper is
+  // recording would go silent for exactly the operator who chose that level. Both directions are
+  // driven, since an option rendered unconditionally would offer ERROR to everyone.
   it("offers three levels while Reaper is recording at one of them", async () => {
     renderPanel();
 

@@ -27,10 +27,10 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import { CSS } from "../test/stylesheet";
 import { Synopsis, WhyPanel, allocateShares } from "./WhyPanel";
 
-// Real exports preserved (`...actual`), not just `api` stubbed out: WhyPanel.tsx reads the
-// real `REWATCH_KEEP` constant from this same module, and a bare `{ api: {...} }` factory
-// would hand it `undefined` -- which compares unequal to every keep name, so the row this
-// suite exists to single out would never be singled out.
+// This preserves the real exports (`...actual`) instead of just stubbing out `api`.
+// WhyPanel.tsx reads the real `REWATCH_KEEP` constant from this same module, and a bare
+// `{ api: {...} }` factory would hand it `undefined`, which compares unequal to every keep
+// name. The row this suite exists to single out would then never be singled out.
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
@@ -47,15 +47,15 @@ vi.mock("../api", async (importOriginal) => {
 
 // The panel reads two settings on its own, through hooks no test here names: the unmeasured
 // allowance (["profile"], via useHoldsBackUnmeasured) and the default spare length
-// (["general-settings"], via the Spare control). Rule 135.
+// (["general-settings"], via the Spare control). Both are seeded so the mock answers them.
 beforeEach(() => {
   vi.mocked(api.profile).mockResolvedValue(DEFAULT_PROFILE);
   vi.mocked(api.general).mockResolvedValue(DEFAULT_GENERAL);
   vi.mocked(api.forgetWatchEvidenceFor).mockResolvedValue({ removed: true });
 });
 
-/** A row frozen before details were typed: the stored sentence wrapped as the one legacy
- *  reason, composed verbatim (docs/history/I18N_PLAN.md §5, #899). */
+/** A row frozen before details were typed. The stored sentence is wrapped as the one legacy
+ *  reason and composed verbatim (docs/history/I18N_PLAN.md §5). */
 function legacy(text: string): ReasonKey {
   return { k: "legacy", p: { text } };
 }
@@ -65,7 +65,7 @@ function signal(over: Partial<SignalContribution> & { id: string }): SignalContr
 }
 
 /** The six rows the operator was looking at: 75/75, 30/80, 20/20, 20/20, 10/60, 0/25.
- *  Total weight 280, total pressure 155, so the score is 55. */
+ *  Total weight 280, total points added 155, so the score is 55. */
 const WORKED_ROWS: SignalContribution[] = [
   signal({
     id: "unwatched",
@@ -193,23 +193,23 @@ function groupOf(title: string): HTMLElement {
   return box as HTMLElement;
 }
 
-/** The sum sentence, which must be its OWN element to be its own flex item: as a bare text
- *  node it merges with the label before it into one anonymous item, the row's gap never
- *  lands between them, and the operator reads "Couldn't checkPoints add up to the score."
- *  An element-scoped query is what catches that; a contains-check over the line's
- *  textContent cannot, because the concatenated string is identical either way. */
+/** The sum sentence must be its own element to be its own flex item. As a bare text node it
+ *  would merge with the label before it into one anonymous item, the row's gap would never
+ *  land between them, and the operator would read "Couldn't checkPoints add up to the score."
+ *  An element-scoped query catches that. A contains-check over the line's textContent cannot,
+ *  because the concatenated string is identical either way. */
 function legendSum(text: string): HTMLElement {
   const el = screen.getByText(text);
   expect(el.closest(".sig-legend")).not.toBeNull();
   return el;
 }
 
-/** The rows a group shows without opening anything: its own list, not the disclosure's. */
+/** The rows a group shows without opening anything, from its own list, not the disclosure's. */
 function visibleRows(group: HTMLElement): number {
   return group.querySelectorAll(":scope > ul.signals > li").length;
 }
 
-/** N rows that all push, so a group runs past the six-row limit. */
+/** N rows that all add points toward deletion, so a group runs past the six-row limit. */
 function pushRows(n: number, weight = 10): SignalContribution[] {
   return Array.from({ length: n }, (_, i) =>
     signal({
@@ -232,7 +232,7 @@ describe("allocateShares", () => {
 
   it("gives every row nothing when nothing pushed", () => {
     expect(allocateShares([0, 0, 0], 0)).toEqual([0, 0, 0]);
-    // A target with no pressure behind it cannot be split, so no row claims it.
+    // A target with no points behind it cannot be split, so no row claims it.
     expect(allocateShares([0, 0], 12)).toEqual([0, 0]);
   });
 
@@ -241,8 +241,8 @@ describe("allocateShares", () => {
   });
 
   it("breaks a tie the same way on every render", () => {
-    // Three equal rows over a target that does not divide by three: the leftover point
-    // goes to the earliest row, and it goes there every single time.
+    // Three equal rows sit over a target that does not divide by three. The leftover point
+    // goes to the earliest row, every single time.
     const once = allocateShares([10, 10, 10], 10);
     expect(once).toEqual([4, 3, 3]);
     expect(allocateShares([10, 10, 10], 10)).toEqual(once);
@@ -276,7 +276,7 @@ describe("the scoring receipt", () => {
     show(detail(WORKED_ROWS));
 
     expect(screen.getByText("1 didn't apply here").closest("details")).not.toBeNull();
-    // Tucked away, never dropped: the row is still in the document.
+    // The row is tucked away, never dropped. It is still in the document.
     expect(screen.getByText("not on the shelf")).toBeTruthy();
   });
 
@@ -436,7 +436,7 @@ describe("the scoring receipt", () => {
       }),
     );
 
-    // Three unread rows, one sentence. The old per-row paragraph printed it three times.
+    // Three unread rows produce one sentence, not one printed per row.
     expect(screen.getAllByText("These pull the score down, never up.")).toHaveLength(1);
     expect(screen.queryByText(/so it added nothing/)).toBeNull();
   });
@@ -447,7 +447,7 @@ describe("the scoring receipt", () => {
 
     const pushed = groupOf("Pushed to remove");
     // Twelve equal rows over a 55 give seven 5s and five 4s. The six shown are the six
-    // biggest; the six folded away are the six that mattered least, and add to 25.
+    // biggest. The six folded away are the six that mattered least, and add to 25.
     expect(visibleRows(pushed)).toBe(6);
     expect(within(pushed).getByText("+55")).toBeTruthy();
 
@@ -578,9 +578,9 @@ describe("the built-in rewatch keep", () => {
 });
 
 describe("the rewatch-probability block (#554 stage 2)", () => {
-  // Placed after "Leaning toward keeping" and before the protections: display only, no
-  // verdict input, so its own heading has to sit between those two sections rather than
-  // inside either.
+  // This sits after "Leaning toward keeping" and before the protections. It is display only,
+  // with no verdict input, so its own heading has to sit between those two sections rather
+  // than inside either.
   function withOdds(
     rewatch_odds: NonNullable<CandidateDetail["explanation"]["rewatch_odds"]> | null,
   ) {
@@ -589,8 +589,8 @@ describe("the rewatch-probability block (#554 stage 2)", () => {
   }
 
   it("states the cohort, the count and the bound the protection itself compares when measured", () => {
-    // bound_pct (38) is the gate's own Wilson upper bound for k=207,n=599 (#936): the
-    // sentence quotes it, never the raw 35% rate, with the raw counts kept beside it.
+    // bound_pct (38) is the gate's own Wilson upper bound for k=207, n=599. The sentence
+    // quotes that bound, never the raw 35% rate, with the raw counts kept beside it.
     show(
       withOdds({ n: 599, k: 207, lo_days: 730, hi_days: 1095, state: "measured", bound_pct: 38 }),
     );
@@ -605,7 +605,7 @@ describe("the rewatch-probability block (#554 stage 2)", () => {
 
   it("backfills the bound from k/n when a row predates bound_pct", () => {
     // A season row, and any row predating this field, arrive with `bound_pct: null` rather
-    // than the key missing -- the shape the browser actually reads over the wire.
+    // than the key missing. That is the shape the browser actually reads over the wire.
     show(
       withOdds({ n: 30, k: 0, lo_days: 730, hi_days: 1095, state: "measured", bound_pct: null }),
     );
@@ -635,7 +635,7 @@ describe("the rewatch-probability block (#554 stage 2)", () => {
   it("renders nothing at all for a row stored before the field existed", () => {
     // A season row, and any row predating this field, both arrive with the key present and
     // `null` rather than the key missing (`Explanation` defaults it and nothing excludes
-    // `None`) -- this is the shape the browser actually reads over the wire.
+    // `None`). This is the shape the browser actually reads over the wire.
     show(withOdds(null));
 
     expect(screen.queryByRole("heading", { name: "Rewatch probability" })).not.toBeInTheDocument();
@@ -680,8 +680,7 @@ describe("the rewatch-probability block (#554 stage 2)", () => {
 // block, so they rest folded behind one disclosure the operator opens only to read the list.
 describe("the protection blocks", () => {
   // Real gate ids, and the sentences those gates really return from their ABSTAIN
-  // branches (src/reaper/engine/gates.py). The third row used to be a "Managed by Sonarr
-  // or Radarr." line on a gate id ("arr") that has never existed.
+  // branches (src/reaper/engine/gates.py). None of these three is invented.
   const CHECKED = [
     { gate: "whitelisted", detail_key: legacy("Not on your keep list.") },
     { gate: "streaming_now", detail_key: legacy("Nobody is watching it right now.") },
@@ -702,7 +701,7 @@ describe("the protection blocks", () => {
     expect(disclosure.open).toBe(false);
 
     await user.click(summary);
-    // Opening reveals the checks; it never renames the section.
+    // Opening reveals the checks. It never renames the section.
     expect(disclosure.open).toBe(true);
     expect(screen.getByText("Nobody is watching it right now.")).toBeTruthy();
   });
@@ -721,21 +720,21 @@ describe("the protection blocks", () => {
     );
 
     const spared = screen.getByRole("heading", { name: "What spared it" });
-    // A fired protection is the reason the file lives: its block is always open, never a fold.
+    // A fired protection is the reason the file lives, so its block is always open, never
+    // folded.
     expect(spared.closest("section")?.querySelector("details")).toBeNull();
     expect(screen.getByText("on your keep list, never reaped")).toBeTruthy();
   });
 });
 
-// The Spare/Reap footer decides the SEASON, never the show above it. It must read the season's
-// OWN decision (so a click always reverses something you can see) and, when a whole-show
-// decision is what really keeps or reaps the season, say so -- clearing a season key cannot
-// clear a show-level choice, and a dead "Spared" toggle was the bug this fixes.
-// The headline reads the EFFECTIVE decision, not the frozen scan verdict (rule 61): a hand
-// reap the engine honors reads as a removal, a reap it can't honor yet reads as held (never
-// "Sanctuary"), a spare says the owner kept it, and "Sanctuary" is claimed only when a
-// protection actually fired. This is the exact confusion the change fixes: a reaped item that
-// the old panel labeled a protected Sanctuary.
+// The Spare/Reap footer decides the season, never the show above it. It must read the
+// season's own decision, so a click always reverses something you can see, and when a
+// whole-show decision is what really keeps or reaps the season, it must say so. Clearing a
+// season key cannot clear a show-level choice.
+// The headline reads the effective decision, not the frozen scan verdict: a hand reap the
+// engine honors reads as a removal, a reap it can't honor yet reads as held, never
+// "Sanctuary," a spare says the owner kept it, and "Sanctuary" is claimed only when a
+// protection actually fired.
 describe("the verdict headline", () => {
   const fired = (gate: string, d = "a reason") => ({ gate, detail_key: legacy(d) });
 
@@ -760,14 +759,14 @@ describe("the verdict headline", () => {
       }),
     );
     expect(screen.getByText("Kept for now")).toBeInTheDocument();
-    // Dashed red, never the solid "Sanctuary" green and never amber (rule 49).
+    // This uses dashed red, never the solid "Sanctuary" green and never amber.
     const held = container.querySelector(".verdict-held");
     expect(held).not.toBeNull();
-    // Scoped to that banner, because the sentence appears twice on the page: the fixture
-    // now carries the words `StreamingNowGate` really returns, so the "What spared it"
-    // block below renders the same string the banner quotes. Unscoped, this matched both
-    // and threw. Scoping also makes it the banner's own copy under test, which is what
-    // the test claims to be about.
+    // This is scoped to that banner, because the sentence appears twice on the page. The
+    // fixture carries the words `StreamingNowGate` really returns, so the "What spared it"
+    // block below renders the same string the banner quotes. An unscoped query would match
+    // both and throw. Scoping also makes this the banner's own copy under test, which is
+    // what the test claims to be about.
     expect(within(held as HTMLElement).getByText(/someone is watching it right now/i)).toBeTruthy();
     expect(container.querySelector(".verdict-protect")).toBeNull();
     expect(screen.queryByText("Sanctuary")).not.toBeInTheDocument();
@@ -786,10 +785,9 @@ describe("the verdict headline", () => {
     );
     expect(screen.getByText(/no app manages the file/i)).toBeInTheDocument();
 
-    // Was a blocked `rating_floor`, which the engine no longer holds anything for -- so the
-    // fixture pinned a held-reap state the backend cannot produce, and green-lit the wrong
-    // sentence (rule 132: the fixture is the claim). The hold this row really has is the
-    // Plex match.
+    // A blocked `rating_floor` is not something the engine holds anything for any more, so a
+    // fixture using it would pin a held-reap state the backend cannot produce, and pass the
+    // wrong sentence. The hold this row really has is the Plex match.
     show(
       detail(WORKED_ROWS, {
         override: "reap",
@@ -811,12 +809,12 @@ describe("the verdict headline", () => {
   });
 
   it("blames the Plex match, not a blocked check, when both are present on a held reap", () => {
-    // The ordering bug, pinned. An item Plex could not match has no rating key, so every
-    // Plex-dependent gate blocks: `protections_unknown` is never empty for exactly the rows
-    // the match is holding. `heldReapNote` used to test the blocked list first, so it was
-    // wrong every single time it fired -- and it sent the operator after their watch-history
-    // depth when the fix is a re-match. The card chip beside it has always said "couldn't be
-    // found in Plex", so the panel contradicted the chip on one screen.
+    // An item Plex could not match has no rating key, so every Plex-dependent gate blocks.
+    // `protections_unknown` is never empty for exactly the rows the match is holding.
+    // `heldReapNote` must check the match before the blocked list, or it would send the
+    // operator after their watch-history depth when the fix is really a re-match. The card
+    // chip beside it always says "couldn't be found in Plex," so the panel must not
+    // contradict the chip on the same screen.
     show(
       detail(WORKED_ROWS, {
         override: "reap",
@@ -869,17 +867,18 @@ describe("the verdict headline", () => {
         },
       }),
     );
-    // `KeptNotice` says "more than one thing in your Plex" too, which is right -- both
-    // surfaces should speak. Assert the held-reap sentence specifically, by its own clause.
+    // `KeptNotice` says "more than one thing in your Plex" too, which is right. Both
+    // surfaces should speak. This asserts the held-reap sentence specifically, by its own
+    // clause.
     expect(
       screen.getByText(/You asked to remove this, but it looks like more than one/i),
     ).toBeInTheDocument();
   });
 
   it("tells a disagreement apart from a duplicate, and names the app to go fix", () => {
-    // The two used to share one status and one sentence, so an operator whose Plex holds
-    // exactly one copy was sent hunting for a second. `media_type` picks the app: this
-    // fixture is a season, so Sonarr.
+    // A duplicate and a disagreement must not share one status and one sentence, or an
+    // operator whose Plex holds exactly one copy would be sent hunting for a second.
+    // `media_type` picks the app named. This fixture is a season, so Sonarr.
     show(
       detail(WORKED_ROWS, {
         override: "reap",
@@ -904,18 +903,19 @@ describe("the verdict headline", () => {
       }),
     );
     // Both surfaces say it, so each is asserted by its own distinguishing tail rather than
-    // the shared clause -- the ambiguous test above has the same shape.
+    // the shared clause. The ambiguous test above has the same shape.
     expect(screen.getByText(/so Reaper can't tell which one it is/i)).toBeInTheDocument();
     expect(
       screen.getByText(/You asked to remove this, but Plex and Sonarr describe this show/i),
     ).toBeInTheDocument();
-    // The claim that was false: no surface may say this library holds several copies.
+    // No surface may say this library holds several copies.
     expect(screen.queryByText(/more than one thing/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/two different things/i)).not.toBeInTheDocument();
   });
 
   it("names Radarr on a movie, since the app to go fix differs by media type", () => {
-    // rule 141: the season fixture above would pass against a hardcoded "Sonarr".
+    // The season fixture above would pass against a hardcoded "Sonarr", so this uses a
+    // movie instead.
     show(
       detail(WORKED_ROWS, {
         media_type: "movie",
@@ -939,9 +939,9 @@ describe("the verdict headline", () => {
 
   it("offers a way into each Plex row it could not choose between", () => {
     // Every other jump link on the panel is built from the item's own rating key, which is
-    // null on exactly these rows -- so before this the panel named a problem in Plex and
-    // gave no way to open it. Numbered, because Reaper knows nothing about these rows but
-    // their keys, and each number must pair the same row's two apps.
+    // null on exactly these rows, so the panel must offer another way to open them. The links
+    // are numbered, because Reaper knows nothing about these rows but their keys, and each
+    // number must pair the same row's two apps.
     show(
       detail(WORKED_ROWS, {
         links: {
@@ -976,11 +976,11 @@ describe("the verdict headline", () => {
   });
 
   // The next two are branches of `MatchCandidates` itself, so they are driven here, where it
-  // lives. `ShowPanel`'s pair above and below cover the other thing -- that the show panel
-  // wires the same component to the same links -- which is a different claim (rule 72).
+  // lives. `ShowPanel`'s pair above and below cover the other claim, that the show panel
+  // wires the same component to the same links.
   it("says match, not matches, when there was only one row to choose between", () => {
-    // The component already asserts this case exists: `numbered` drops the "1" from the pill
-    // labels for it, while the lead sentence beside it read "1 possible matches" (#209).
+    // `numbered` already drops the "1" from the pill labels for this case, so the lead
+    // sentence beside it must not read "1 possible matches" either.
     show(
       detail(WORKED_ROWS, {
         links: {
@@ -1002,7 +1002,7 @@ describe("the verdict headline", () => {
     );
     expect(screen.getByText(/Reaper saw 1 possible match:/i)).toBeInTheDocument();
     expect(screen.queryByText(/possible matches/i)).not.toBeInTheDocument();
-    // One candidate, so the pill is "Plex" -- "Plex 1" alone reads as a label for a row.
+    // One candidate, so the pill reads "Plex". "Plex 1" alone would read as a label for a row.
     expect(screen.getByRole("link", { name: /^Plex/ })).toHaveAttribute(
       "href",
       "https://plex.example/555",
@@ -1010,10 +1010,10 @@ describe("the verdict headline", () => {
   });
 
   it("says nothing at all when it has no row it could offer to open", () => {
-    // Neither app reachable at render time: no Plex server row (or no plex_web_url) and no
-    // enabled Tautulli, for an item scanned when at least one was configured. `JumpPill`
-    // renders null for a null href, so the lead used to stand over an empty row, ending on a
-    // colon -- the dead end this component exists to close, reached one step later (#209).
+    // Neither app is reachable at render time. There is no Plex server row (or no
+    // plex_web_url) and no enabled Tautulli, for an item scanned when at least one was
+    // configured. `JumpPill` renders null for a null href, so the lead must not stand over an
+    // empty row ending on a colon with nothing after it.
     show(
       detail(WORKED_ROWS, {
         links: {
@@ -1036,7 +1036,7 @@ describe("the verdict headline", () => {
         },
       }),
     );
-    // The "kept to be safe" notice still explains why the file was kept; what goes is the
+    // The "kept to be safe" notice still explains why the file was kept. What goes is the
     // sentence promising rows to open.
     expect(
       screen.getByText(/This looks like more than one thing in your Plex/i),
@@ -1057,10 +1057,10 @@ describe("the verdict headline", () => {
   });
 
   it("never promises a re-judgment a longer show spare makes moot", () => {
-    // A season spared 10 days inside a show spared forever. Reading the season's own clock,
-    // the panel said "10 days left, then Reaper judges it again" -- and Reaper does no such
-    // thing: that spare lapses and the show's goes on keeping the file. The sentence leads
-    // with the outcome and still accounts for the operator's own decision.
+    // A season spared 10 days inside a show spared forever. Reading only the season's own
+    // clock would say "10 days left, then Reaper judges it again," but that is not true.
+    // That spare lapses and the show's spare goes on keeping the file regardless. The sentence
+    // leads with the outcome and still accounts for the operator's own decision.
     show(
       detail(WORKED_ROWS, {
         verdict: "condemn",
@@ -1077,9 +1077,10 @@ describe("the verdict headline", () => {
   });
 
   it("still says a spent spare hands the item back when nothing else covers it", () => {
-    // The other side of the same branch: with no show spare, the two fields agree and the
-    // plain expired sentence stands. Losing this would make every expired spare read as
-    // covered, which is the fail-open direction for the sentence (though not for the file).
+    // This is the other side of the same branch. With no show spare, the two fields agree
+    // and the plain expired sentence stands. Losing this test would let every expired spare
+    // read as still covered, which is wrong in the direction that reassures the operator too
+    // much, though it would not affect whether the file is actually kept.
     const spent = new Date(Date.now() - 3 * 86_400_000).toISOString();
     show(
       detail(WORKED_ROWS, {
@@ -1111,8 +1112,8 @@ describe("the verdict headline", () => {
   // A Sanctuary is only as absolute as the gate holding it, and this panel renders a working
   // Reap button below the sentence either way (`reapIsNoop` is false on a protect row). A hand
   // reap condemns past every cautious protection and is refused only by a FIRED member of
-  // `verdict.STRUCTURAL_GATES` -- so "nothing can change that" was true of one of these two
-  // rows and false of the other, and the panel said it about both.
+  // `verdict.STRUCTURAL_GATES`. So "nothing can change that" is true for a structural stop and
+  // false for a cautious one, and the panel must say which is which.
   it("says a cautious protection can be overruled by hand", () => {
     show(
       detail(WORKED_ROWS, {
@@ -1142,18 +1143,17 @@ describe("the verdict headline", () => {
   });
 
   it("reads a stale protect-with-nothing-fired row as left-for-you, not protected", () => {
-    // A held-reap row frozen as "protect" before this shipped, its override since cleared: no
-    // protection fired, so it must not claim Sanctuary. A rescan resolves it to abstain.
+    // A held-reap row frozen as "protect" before this shipped, with its override since
+    // cleared, has no protection fired, so it must not claim Sanctuary. A rescan resolves it
+    // to abstain.
     show(detail(WORKED_ROWS, { verdict: "protect", override: null }));
     expect(screen.queryByText("Sanctuary")).not.toBeInTheDocument();
     expect(screen.queryByText(/the score doesn't matter/i)).not.toBeInTheDocument();
   });
 
-  // Verbatim from `services.season_pruning.PruneConflict.message`. The fixture here used to
-  // be an invented sentence ("5 people watched this, more than a season your keep rule
-  // protects") that the producer has never emitted, so the predicate under test could not be
-  // discriminated by it: any wording rule at all passed. Copy real messages, or pin nothing
-  // (rule 119).
+  // Verbatim from `services.season_pruning.PruneConflict.message`. An invented sentence the
+  // producer never emits would let any wording rule at all pass, proving nothing. These
+  // fixtures copy the real messages instead.
   const SETTLEABLE_CONFLICT =
     "9 people watched Season 1, more than watched Season 3, which Reaper is keeping " +
     "because it is one of the newest seasons your rule keeps.";
@@ -1163,22 +1163,22 @@ describe("the verdict headline", () => {
     "seasons your rule keeps.";
 
   // The message and the flag come from the same conflict, exactly as the producer emits them
-  // (`season_evidence.guard_result`): a settleable conflict carries `defers_to_owner: true`, a
-  // refused one `false`. Passing them independently would let a test pin a pairing the backend
-  // cannot produce.
+  // (`season_evidence.guard_result`). A settleable conflict carries `defers_to_owner: true`,
+  // and a refused one carries `false`. Passing them independently would let a test pin a
+  // pairing the backend cannot produce.
   //
-  // The third shape -- a row frozen before the field shipped -- reaches the panel as `null`,
-  // NOT as an absent key. The STORED row carries no key; the RESPONSE always carries one,
-  // because `GateOutcomeOut` declares `defers_to_owner: bool | None = None` and nothing on the
-  // model or the route sets `exclude_none`, so `_explanation_out` serializes the missing key as
-  // `"defers_to_owner": null`. Pass that, and pass it explicitly (rule 119): an omitted key is
-  // the payload nothing produces, and a fixture built on one leaves the only pre-flag shape the
-  // panel can ever be sent untested. `api.ts`'s `?` is defense against a shape the server does
-  // not emit, so a test resting on it pins nothing.
+  // The third shape, a row frozen before the field shipped, reaches the panel as `null`, not
+  // as an absent key. The stored row carries no key. The response always carries one, because
+  // `GateOutcomeOut` declares `defers_to_owner: bool | None = None` and nothing on the model or
+  // the route sets `exclude_none`, so `_explanation_out` serializes the missing key as
+  // `"defers_to_owner": null`. This fixture passes that explicitly, since an omitted key is a
+  // payload nothing produces, and a fixture built on one would leave the only pre-flag shape
+  // the panel can ever be sent untested. `api.ts`'s `?` is defense against a shape the server
+  // does not emit, so a test resting on it pins nothing.
   //
-  // Required rather than defaulted, so every call site names the generation it means. Reading
-  // an absent key as a *guess* in either direction is the whole defect (#86), and a defaulted
-  // parameter is how a fixture stops saying which one it tests.
+  // `defersToOwner` is required here rather than defaulted, so every call site names the shape
+  // it means. Reading an absent key as a guess in either direction is a real defect, and a
+  // defaulted parameter is how a fixture stops saying which shape it tests.
   const conflictDetail = (
     message: string,
     defersToOwner: boolean | null,
@@ -1207,20 +1207,19 @@ describe("the verdict headline", () => {
   });
 
   it("offers a reap on a conflict Reaper could not settle, and the engine now honors it", () => {
-    // The reap half of #86 is fixed, from the backend side: no blocked gate holds a hand
-    // reap any more, so this promise is kept for every conflict shape. Pinned here because
-    // it is the half that used to be a safety divergence, and a future change that makes a
-    // block hold the reap again must fail a test rather than quietly re-break the panel.
+    // No blocked gate holds a hand reap any more, so this promise is kept for every conflict
+    // shape. This is pinned here so a future change that makes a block hold the reap again
+    // fails a test, rather than quietly re-breaking the panel.
     show(conflictDetail(REFUSED_CONFLICT, false));
     expect(screen.getByText(/left the call to you/i)).toBeInTheDocument();
   });
 
   it("never asserts a comparison its own reason block denies (#86)", () => {
-    // The copy half of #86, and what the retired wording test could not do: `REFUSED_CONFLICT`
-    // is a non-"could not check" season_progression row, so any wording rule at all read it as
-    // a made comparison and the headline asserted one -- while `LeftForYou` printed the
-    // producer's "Reaper cannot tell whether ..." two blocks below, about a season that may
-    // have no recorded plays at all. Only the typed flag separates them.
+    // `REFUSED_CONFLICT` is a non-"could not check" season_progression row, so a wording rule
+    // alone would read it as a made comparison and assert the headline for one, while
+    // `LeftForYou` prints the producer's "Reaper cannot tell whether ..." two blocks below,
+    // about a season that may have no recorded plays at all. Only the typed flag tells them
+    // apart.
     show(conflictDetail(REFUSED_CONFLICT, false));
     expect(screen.getByText("Needs a look")).toBeInTheDocument();
     expect(screen.getByText(/Reaper couldn't check who watched these seasons/i)).toBeVisible();
@@ -1231,13 +1230,13 @@ describe("the verdict headline", () => {
 
   it("claims neither shape for a row frozen before the flag shipped", () => {
     // Nothing in such a row can tell a made comparison from a refused one, so the panel says
-    // neither (rule 142's three-state). Reading it as `false` would be a guess in the other
-    // direction; reading it as `true` is the bug this issue is.
+    // neither. Reading it as `false` would be a guess in one direction. Reading it as `true`
+    // would be a guess in the other.
     //
-    // `null` is what the server actually sends for this row -- see `conflictDetail` above. A
+    // `null` is what the server actually sends for this row, see `conflictDetail` above. A
     // fixture omitting the key instead would leave the branch every real pre-flag row takes
-    // untested, and the natural refactor to `defersToOwner === undefined` would then pass green
-    // while telling every one of them "Reaper couldn't check who watched these seasons".
+    // untested, and a refactor to `defersToOwner === undefined` would then pass while telling
+    // every one of them "Reaper couldn't check who watched these seasons".
     show(conflictDetail(SETTLEABLE_CONFLICT, null));
     expect(screen.getByText("Needs a look")).toBeInTheDocument();
     expect(screen.getByText(/Reaper couldn't settle this one/i)).toBeVisible();
@@ -1246,13 +1245,12 @@ describe("the verdict headline", () => {
   });
 
   it("reads the conflict's own flag, not whatever else could not be checked", () => {
-    // A season on a short mirror routinely blocks several gates at once, so the conflict is
-    // rarely alone in the list. The old predicate scanned it with `.some()` and could be
-    // satisfied by any entry; the note must come from the season row itself.
-    // Verbatim from `engine.gates.ServerPopularityGate`, whose blocked detail is
-    // f"could not check who watched it in the last {window}: {shortfall}" -- the same rule 119
-    // the conflict messages above are copied for. A short mirror blocks this gate on nearly
-    // every row, which is exactly why the conflict is rarely alone in the list.
+    // A season on a short watch-history copy routinely blocks several gates at once, so the
+    // conflict is rarely alone in the list. The note must come from the season row itself, not
+    // from scanning the whole list for any entry that matches.
+    // Verbatim from `engine.gates.ServerPopularityGate`, whose blocked detail reads
+    // f"could not check who watched it in the last {window}: {shortfall}", the same real
+    // message the conflict fixtures above copy.
     show(
       conflictDetail(SETTLEABLE_CONFLICT, true, [
         fired(
@@ -1272,16 +1270,15 @@ describe("the verdict headline", () => {
   });
 
   it("does not read a mid-binge check that never ran as a conflict (#486)", () => {
-    // A show Plex never resolved: no season carries a rating key, so the guard answered
-    // "is anyone part-way through this" having asked nobody. Both rows carry the SAME
-    // composed cause on purpose, which is what makes them one box (rule 119): verbatim
-    // producer output -- `season_evidence.guard_result`'s unestablishable arm and
-    // `engine.gates._blocked` -- each wrapped as the typed `blocked` shape a fresh scan
-    // writes today.
+    // A show Plex never resolved has no season carrying a rating key, so the guard answers
+    // "is anyone part-way through this" having asked nobody. Both rows carry the same composed
+    // cause on purpose, which is what makes them one box: verbatim producer output, from
+    // `season_evidence.guard_result`'s unestablishable arm and `engine.gates._blocked`, each
+    // wrapped as the typed `blocked` shape a fresh scan writes today.
     //
-    // Without the typed flag this row satisfied `keepRuleConflict`, and the headline offered
-    // to settle a comparison nobody attempted: "Reaper couldn't check who watched these
-    // seasons, so it left the call to you."
+    // Without the typed flag, this row would satisfy `keepRuleConflict`, and the headline
+    // would offer to settle a comparison nobody attempted: "Reaper couldn't check who watched
+    // these seasons, so it left the call to you."
     const blocked = (check: string) => ({
       k: "blocked",
       p: {
@@ -1326,7 +1323,8 @@ describe("the verdict headline", () => {
 describe("the season footer's own-vs-show decision", () => {
   it("rests un-lit for a season kept only because the whole show is spared, and says why", () => {
     show(detail(WORKED_ROWS, { override: "spare", override_own: null, show_override: "spare" }));
-    // Effective spare, but nothing of the season's own to undo: the button is not pressed.
+    // The spare is effective, but there is nothing of the season's own to undo, so the
+    // button is not pressed.
     expect(screen.getByRole("button", { name: /Spare/ })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByText(/this season is kept/i)).toBeInTheDocument();
     expect(screen.getByText(/Undo it on the show/i)).toBeInTheDocument();
@@ -1334,7 +1332,8 @@ describe("the season footer's own-vs-show decision", () => {
 
   it("clears the season's OWN key when its lit button is pressed, even under a show spare", async () => {
     const user = userEvent.setup();
-    // Own reap against a whole-show spare: the season's own decision wins and it will go.
+    // This is an own reap against a whole-show spare. The season's own decision wins, and
+    // it will go.
     show(
       detail(WORKED_ROWS, {
         verdict: "abstain",
@@ -1345,19 +1344,20 @@ describe("the season footer's own-vs-show decision", () => {
     );
     expect(screen.getByText(/will be removed/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Reaping/ }));
-    // The season key, never the show key -- the whole-show spare is untouched.
+    // This clears the season key, never the show key. The whole-show spare is untouched.
     expect(api.clearOverride).toHaveBeenCalledWith("sonarr:1:2:3");
   });
 });
 
-// One file listed several times in Plex (#260). `merged_rating_keys` was populated, crossed the
-// wire, and the TS `Match` type never declared it, so no component could read it -- while the
-// executor re-reads the same list, meaning every listing really is protected together and the
-// operator was told none of it.
+// One file can be listed several times in Plex. `merged_rating_keys` crosses the wire from the
+// backend, and the TS `Match` type declares it so the frontend can read it. The executor
+// re-reads the same list, so every listing is really protected together, and the panel must
+// say so.
 //
-// The count is deliberately absent below two, and the two silent cases are different: the server
-// sends `null` on an ordinary single-listing bind, and a record stored before the field shipped
-// has no key at all. Both must draw nothing, because "Listed 1 time" on every item in the library
+// The count is deliberately absent below two, and the two silent cases are different: the
+// server sends `null` on an ordinary single-listing bind, and a record stored before the field
+// shipped has no key at all. Both must draw nothing, because "Listed 1 time" on every item in
+// the library
 // is noise on a line that is scanned rather than read.
 describe("the merged-listing count", () => {
   const withMatch = (match: Partial<Match>) =>
@@ -1380,7 +1380,7 @@ describe("the merged-listing count", () => {
     show(withMatch({ merged_rating_keys: [900, 901, 902] }));
     const chip = screen.getByText(/Listed 3/);
     expect(chip).toBeInTheDocument();
-    // The consequence rides on the title, the way `LibraryChip` carries its library name: the
+    // The consequence rides on the title, the way `LibraryChip` carries its library name. The
     // number alone does not say that a watch on any listing counts for the file.
     expect(chip).toHaveAttribute("title", expect.stringMatching(/go together/i));
   });
@@ -1391,8 +1391,8 @@ describe("the merged-listing count", () => {
   });
 
   it("stays quiet on a record stored before the field shipped", () => {
-    // The key is absent entirely, not null -- which is the shape an older row really has, and
-    // a different code path from the one above (rule 142's three-state).
+    // The key is absent entirely, not null. That is the shape an older row really has, and a
+    // different code path from the one above.
     show(withMatch({}));
     expect(screen.queryByText(/^Listed /)).not.toBeInTheDocument();
   });
@@ -1403,12 +1403,11 @@ describe("the merged-listing count", () => {
   });
 
   it("renders a row whose whole match block is null", () => {
-    // The third shape, and the one no fixture in this file carried: `ExplanationOut.match`
-    // defaults to `None` and nothing sets `exclude_none`, so a row that was never matched
-    // arrives with an explicit `null` rather than with the key missing. `api.ts` typed it
-    // `Match | undefined` until W4.2, so the compiler would have accepted a reader dropping
-    // the guard here, and the panel this feeds is the one an operator reads while deciding
-    // what to delete.
+    // This is the third shape, the one no other fixture in this file carries.
+    // `ExplanationOut.match` defaults to `None` and nothing sets `exclude_none`, so a row that
+    // was never matched arrives with an explicit `null` rather than with the key missing.
+    // `api.ts` types this field so a reader that drops the null guard here is a compile error,
+    // since the panel this feeds is the one an operator reads while deciding what to delete.
     show(
       detail(WORKED_ROWS, {
         explanation: { ...detail(WORKED_ROWS).explanation, match: null },
@@ -1419,9 +1418,9 @@ describe("the merged-listing count", () => {
   });
 });
 
-// The collection chip's own line (#816 phase 4): its own paragraph beside cert/runtime/genres,
-// since that one is plain joined text a chip cannot join into. Navigation only, so these tests
-// are about the line showing up (or not) and staying reachable, never about fate.
+// The collection chip gets its own paragraph, beside cert/runtime/genres, since that one is
+// plain joined text a chip cannot join into. This is navigation only, so these tests are about
+// the line showing up (or not) and staying reachable, never about fate.
 describe("the collection chip", () => {
   it("renders no line when the scan recorded no collections", () => {
     show(detail(WORKED_ROWS, { collections: null }));
@@ -1440,8 +1439,9 @@ describe("the collection chip", () => {
       }),
     );
     const chip = screen.getByRole("button", { name: "Example Franchise" });
-    // The head's chip row, with the library, not the plain cert/runtime/genre text below it:
-    // both chips answer "where does this file live in Plex", so they read as one group.
+    // This is the head's chip row, with the library, not the plain cert/runtime/genre text
+    // below it. Both chips answer "where does this file live in Plex", so they read as one
+    // group.
     const head = chip.closest(".why-sub");
     expect(head).not.toBeNull();
     expect(head?.textContent).toMatch(/Movies/);
@@ -1449,9 +1449,9 @@ describe("the collection chip", () => {
     expect(screen.getByRole("button", { name: "Show the other 1 collection" })).toBeInTheDocument();
   });
 
-  // One component, four call sites, so a picker fix lands on all of them (rule 18). The cards'
-  // pickers show each collection's size, so this one does too -- and a size the scan never
-  // recorded renders nothing rather than a "0", which would assert an empty shelf.
+  // One component, four call sites, so a picker fix lands on all of them. The cards' pickers
+  // show each collection's size, so this one does too. A size the scan never recorded renders
+  // nothing rather than a "0", which would claim an empty shelf.
   it("shows a known size in the picker and no number at all for an unrecorded one", async () => {
     const user = userEvent.setup();
     renderWithProviders(
@@ -1469,17 +1469,17 @@ describe("the collection chip", () => {
   });
 });
 
-// The per-title escape from a hold nothing else on this screen can lift (#275). Reaper keeps the
-// most watch evidence it has ever measured for a title, so plays that stop being readable hold it
-// back on every scan -- and until this the only way out was Settings' whole-library Forget, which
-// discards the record for every title at once.
+// This is the per-title escape from a hold nothing else on this screen can lift. Reaper keeps
+// the most watch evidence it has ever measured for a title, so plays that stop being readable
+// hold it back on every scan. Without this control, the only way out is Settings' whole-library
+// Forget, which discards the record for every title at once.
 //
-// It renders on ONE of the field's three states. `true` is the positive claim that this row's
-// recorded plays went unreadable. `false` is a reading the scan took and trusted. `null` is a row
-// that cannot say either way -- a scan older than the field -- and it is what the server actually
-// sends for one, since `Explanation` defaults it to `None` and nothing sets `exclude_none`. Both
-// of the last two must show nothing: discarding a watch record on a guess is a guess in the
-// direction that lets a file be deleted.
+// It renders on one of the field's three states. `true` is the positive claim that this row's
+// recorded plays went unreadable. `false` is a reading the scan took and trusted. `null` is a
+// row that cannot say either way, a scan older than the field, and it is what the server
+// actually sends for one, since `Explanation` defaults it to `None` and nothing sets
+// `exclude_none`. Both of the last two must show nothing. Discarding a watch record on a guess
+// is a guess in the direction that lets a file be deleted.
 describe("the watch-record escape", () => {
   const BODY = /Plays Reaper recorded earlier are no longer readable/i;
   const PRESS = "Use what Reaper sees now";
@@ -1496,7 +1496,7 @@ describe("the watch-record escape", () => {
 
     expect(screen.getByText(BODY)).toBeVisible();
     expect(screen.getByRole("button", { name: PRESS })).toBeInTheDocument();
-    // The help binds to that one button and says what pressing it uses (rule 45).
+    // The help text binds to that one button and says what pressing it uses.
     expect(screen.getByText("Use the plays visible today for this title only.")).toBeVisible();
   });
 
@@ -1508,9 +1508,8 @@ describe("the watch-record escape", () => {
   });
 
   it("offers nothing on a row that cannot say either way", () => {
-    // The case that matters, and the one a truthy test passes on by accident in the other
-    // direction: every row frozen before the field shipped arrives here as an explicit `null`.
-    // Offering to discard the record for one of them would act on nothing anybody measured.
+    // Every row frozen before the field shipped arrives here as an explicit `null`. Offering
+    // to discard the record for one of them would act on nothing anybody measured.
     show(blindDetail(null));
 
     expect(screen.queryByText(BODY)).not.toBeInTheDocument();
@@ -1531,17 +1530,17 @@ describe("the watch-record escape", () => {
     show(blindDetail(true));
 
     const press = screen.getByRole("button", { name: PRESS });
-    // Rule 137: user-event reports a press on a disabled control as a success, so a test that
-    // acts one turn early dispatches nothing and then fails on the state it never produced.
+    // user-event reports a press on a disabled control as a success, so this waits for the
+    // button to become enabled first. Acting one turn early would dispatch nothing and then
+    // fail on the state it never produced.
     await waitFor(() => expect(press).toBeEnabled());
     await user.click(press);
 
     await waitFor(() => expect(api.forgetWatchEvidenceFor).toHaveBeenCalledWith("sonarr:1:2:3"));
-    // Rule 85: the confirmation appears only once the write has settled, and it REPLACES the
-    // control. The panel reads the scan's frozen explanation, so the warning above it still
-    // says "held" until a rescan re-judges the row -- leaving the button at its resting label
-    // there would read as "nothing happened" and invite a second press on a record that is
-    // already gone.
+    // The confirmation appears only once the write has settled, and it replaces the control.
+    // The panel reads the scan's frozen explanation, so the warning above it still says "held"
+    // until a rescan re-judges the row. Leaving the button at its resting label there would
+    // read as "nothing happened" and invite a second press on a record that is already gone.
     expect(
       await screen.findByText("Reaper will judge this title on what it can see now."),
     ).toBeVisible();
@@ -1550,10 +1549,10 @@ describe("the watch-record escape", () => {
 
   /** The same panel with the app's live regions above it, as `App.tsx` mounts them.
    *
-   *  Not folded into `show()`: the announced sentence is deliberately the SAME string as the
-   *  visible replacement (rule 144, one fact one wording), so mounting the regions for every
-   *  test would make `findByText` ambiguous in the one above that reads it off the page. Here
-   *  the region is read as a region, which is the idiom the other announcement tests use. */
+   *  This is not folded into `show()`. The announced sentence is deliberately the same string
+   *  as the visible replacement, so mounting the regions for every test would make
+   *  `findByText` ambiguous in the one test above that reads it off the page. Here the region
+   *  is read as a region, the idiom the other announcement tests use. */
   function showSpeaking(item: CandidateDetail) {
     return renderWithProviders(
       <>
@@ -1568,9 +1567,9 @@ describe("the watch-record escape", () => {
     [...document.querySelectorAll('[aria-live="polite"]')].map((n) => n.textContent).join("");
 
   it("says out loud that the record is gone, since the only sign on screen is a button leaving", async () => {
-    // #377. Success here is signalled by something DISAPPEARING, and it happens inside the
-    // `standing` notice above -- correctly not a live region -- so nothing was said at all.
-    // The button also carries `disabled={isPending}`, so the browser drops focus at the press
+    // Success here is signalled by something disappearing, inside the always-present notice
+    // above, which correctly is not a live region, so nothing there gets announced on its own.
+    // The button also carries `disabled={isPending}`, so the browser drops focus at the press,
     // and the sentence that replaces it is ordinary page text nobody is pointed at.
     const user = userEvent.setup();
     showSpeaking(blindDetail(true));
@@ -1587,10 +1586,10 @@ describe("the watch-record escape", () => {
   });
 
   it("leaves the operator standing on the sentence, not on the document root (#393)", async () => {
-    // The press removes the control it is on, so without a handoff focus falls to `<body>` and
-    // the next Tab restarts above the whole application: above 900px `WhyShell` is not modal and
-    // traps nothing, so there is no panel boundary to catch it. The replacement paragraph is the
-    // only successor there is, which is why it carries `tabIndex={-1}`.
+    // The press removes the control it is on, so without a handoff focus falls to `<body>`
+    // and the next Tab restarts above the whole application. Above 900px `WhyShell` is not
+    // modal and traps nothing, so there is no panel boundary to catch it. The replacement
+    // paragraph is the only successor there is, which is why it carries `tabIndex={-1}`.
     const user = userEvent.setup();
     show(blindDetail(true));
 
@@ -1613,16 +1612,16 @@ describe("the watch-record escape", () => {
     await user.click(press);
 
     expect(await screen.findByText("Couldn't save that. Try again.")).toBeVisible();
-    // The warning and its control stay put: the record is still there to discard.
+    // The warning and its control stay put. The record is still there to discard.
     expect(screen.getByRole("button", { name: PRESS })).toBeEnabled();
   });
 });
 
-// The panel is a full-screen dialog under 900px, so it has to say what it is. Its name comes from
-// its own <h2> rather than a second copy of the title in an aria-label (rule 144). One of these
-// per panel: six surfaces render WhyShell, and the name is the one part of the contract the shell
-// cannot supply for them. The fallbacks are included because they are two of the six -- and the
-// loading branch has no heading at all, so its lead line carries the name instead.
+// The panel is a full-screen dialog under 900px, so it has to say what it is. Its name comes
+// from its own <h2>, rather than a second copy of the title in an aria-label. Six surfaces
+// render WhyShell, and this is the one part of the contract the shell cannot supply for each of
+// them. The fallbacks are included because they are two of the six, and the loading branch has
+// no heading at all, so its lead line carries the name instead.
 describe("the why panel's accessible name", () => {
   it("names itself from the title it is explaining", () => {
     show(detail([]));
@@ -1630,11 +1629,9 @@ describe("the why panel's accessible name", () => {
   });
 });
 
-// Only one thing can lower coverage -- a reason Reaper could not read -- and those get their own
-// group with their own note. So at full coverage the old clause announced the absence of a group
-// that was already absent, which is what made an owner ask "100% of WHAT evidence" (#410). Neither
-// branch had a test, and every fixture in the suite sits at 10,000, so the whole clause was
-// unexercised in both directions.
+// Only one thing can lower coverage, a reason Reaper could not read, and that gets its own
+// group with its own note. At full coverage there is no such group, so the clause naming it
+// must say nothing rather than announce the absence of a group that was never there.
 describe("the coverage clause", () => {
   it("says nothing when every reason was readable", () => {
     show(detail(WORKED_ROWS, { coverage_bp: 10_000 }));
@@ -1645,8 +1642,8 @@ describe("the coverage clause", () => {
   });
 
   it("says how much it could read when something was missed", () => {
-    // 76%, not a round number: a fixture equal to the full-coverage constant could not tell
-    // a working branch from a missing one (rule 141).
+    // This uses 76%, not a round number. A fixture equal to the full-coverage constant could
+    // not tell a working branch from a missing one.
     show(detail(WORKED_ROWS, { coverage_bp: 7_550 }));
 
     expect(screen.getByText(/Reaper could read 76% of what it scores on/)).toBeVisible();
@@ -1667,8 +1664,8 @@ describe("the coverage clause", () => {
   });
 
   it("does not name the floor when coverage cleared it", () => {
-    // 76% of the weight read, above a 50% floor: the coverage is reduced but it was enough, so
-    // the sentence states it without claiming the floor held anything.
+    // 76% of the weight was read, above a 50% floor. The coverage is reduced but it was
+    // enough, so the sentence states it without claiming the floor held anything.
     const d = detail(WORKED_ROWS, { coverage_bp: 7_550 });
     d.explanation.coverage_floor_bp = 5_000;
     show(d);
@@ -1678,8 +1675,9 @@ describe("the coverage clause", () => {
   });
 
   it("drops the floor clause when the row predates the field", () => {
-    // No floor on the stored row (an older scan), so there is no line to name: the panel omits
-    // the clause exactly as it omits a null threshold, never inventing one from the live policy.
+    // No floor on the stored row (an older scan), so there is no line to name. The panel omits
+    // the clause exactly as it omits a null threshold, never inventing one from the live
+    // policy.
     const d = detail(WORKED_ROWS, { coverage_bp: 4_000 });
     d.explanation.coverage_floor_bp = null;
     show(d);
@@ -1689,7 +1687,7 @@ describe("the coverage clause", () => {
   });
 
   it("drops the floor clause when it rounds to the same percent as coverage", () => {
-    // 49.9% under a 50% floor: both render "50%", so "50%, under the 50% it needs" would read
+    // 49.9% under a 50% floor both render "50%", so "50%, under the 50% it needs" would read
     // as a bug. Silence is the right call, and the plain coverage sentence still renders.
     const d = detail(WORKED_ROWS, { coverage_bp: 4_990 });
     d.explanation.coverage_floor_bp = 5_000;
@@ -1700,9 +1698,9 @@ describe("the coverage clause", () => {
   });
 });
 
-// A row states the line it was measured against, from the ramp the SCAN froze onto it. The
-// panel must never fill this in from the live policy: the item was scored under the policy as
-// it stood at scan time, and rule 113 refuses a reap across exactly that gap.
+// A row states the line it was measured against, from the value the scan froze onto it. The
+// panel must never fill this in from the live policy, since the item was scored under the
+// policy as it stood at scan time, and a reap is refused across exactly that gap.
 describe("what a signal row was measured against", () => {
   const RATED = signal({
     id: "low_rating",
@@ -1740,9 +1738,9 @@ describe("what a signal row was measured against", () => {
   });
 
   it("says nothing for a row whose line the scan never recorded", () => {
-    // A row frozen before the ramp shipped, and a yes/no rule of your own, both arrive as
-    // null and both mean the same thing: there is no line to state. Inventing one would put
-    // a ramp on a rule that provably has none.
+    // A row frozen before the scoring curve shipped, and a yes/no rule of your own, both
+    // arrive as null and both mean the same thing. There is no line to state, so inventing one
+    // would put a curve on a rule that provably has none.
     show(
       detail([signal({ id: "low_rating", detail_key: legacy("IMDb 6.4"), state: "argues_keep" })]),
     );
@@ -1771,21 +1769,20 @@ describe("what a signal row was measured against", () => {
   });
 });
 
-// Whether the synopsis needs a "more" is a question about how wide the panel is, and it used to
-// be answered by counting characters -- right at the width that number was picked for, and wrong
-// everywhere else. On a phone two lines hold about 120 characters against a test asking for 150,
-// so a synopsis in between was cut with nothing on screen to open it (#407).
+// Whether the synopsis needs a "more" control is a question about how wide the panel is, not
+// how many characters the text has. On a phone, two lines hold about 120 characters, so a
+// synopsis between 120 and 150 characters could be cut with nothing on screen able to open it.
 describe("the synopsis disclosure", () => {
   /** The panel's 0.88rem text at line-height 1.5, rounded to the integer the DOM reports. */
   const LINE = 21;
   const originals = new Map<string, PropertyDescriptor | undefined>();
 
-  /** jsdom computes no layout, so every element answers 0 to both heights and a disclosure
-   *  decided by measurement could never appear -- a test written against that would pass having
-   *  proven nothing. Model what a clamp does instead: an element reports every line it holds,
-   *  and a clamped one reports the two it shows. That difference is the whole of what `Synopsis`
-   *  reads, so it is the boundary to stub rather than to inherit from the environment
-   *  (rule 119). Restored after every test (rule 133). */
+  /** jsdom computes no layout, so every element answers 0 to both heights, and a disclosure
+   *  decided by measurement could never appear. A test written against that would pass having
+   *  proven nothing. This models what a clamp does instead. An element reports every line it
+   *  holds, and a clamped one reports the two it shows. That difference is the whole of what
+   *  `Synopsis` reads, so it is the boundary to stub rather than to inherit from the
+   *  environment. Restored after every test. */
   function reportLines(lines: number) {
     for (const prop of ["scrollHeight", "clientHeight"] as const) {
       if (!originals.has(prop)) {
@@ -1811,7 +1808,7 @@ describe("the synopsis disclosure", () => {
 
   it("offers the control for a synopsis the panel cut, however short the string", () => {
     const text = "a plain sentence. ".repeat(6).trim();
-    // Under the 150 the old rule asked for, and over what two lines hold on a phone.
+    // Under 150 characters, and over what two lines hold on a phone.
     expect(text.length).toBeLessThan(150);
     reportLines(3);
 
@@ -1822,8 +1819,8 @@ describe("the synopsis disclosure", () => {
 
   it("offers no control for a long synopsis the panel is showing whole", () => {
     const text = "a plain sentence. ".repeat(12).trim();
-    // Past the 150 the old rule asked for, and inside the two lines. A control here opens
-    // nothing, which reads as a broken control rather than as a full synopsis.
+    // Past 150 characters, and still inside the two lines. A control here opens nothing,
+    // which reads as a broken control rather than as a full synopsis.
     expect(text.length).toBeGreaterThan(150);
     reportLines(2);
 
@@ -1863,17 +1860,17 @@ describe("the synopsis disclosure", () => {
 
   it("carries the declaration that class stands for", () => {
     // jsdom computes no layout, so the class above is one half of a contract spanning the
-    // component and the stylesheet (rule 67). This is the other half, and it is the whole of
-    // what the operator sees: without it the open state is an inline span and the control
-    // lands after the last word, hundreds of pixels from where it had just been.
+    // component and the stylesheet. This is the other half, and it is the whole of what the
+    // operator sees. Without it, the open state is an inline span, and the control lands
+    // after the last word, hundreds of pixels from where it had just been.
     expect(CSS).toMatch(/\.why-synopsis:not\(\.clamp-2\)\s*\{[^}]*display:\s*block/);
   });
 });
 
 describe("a fresh explanation composes from the catalog", () => {
   // Rows written since the typed-reason conversion (docs/history/I18N_PLAN.md §5) carry
-  // `detail_key` and no prose; the panel composes each sentence via `why.ts`. The legacy
-  // fixtures across the rest of this file are the other half of the contract: a stored
+  // `detail_key` and no prose. The panel composes each sentence via `why.ts`. The legacy
+  // fixtures across the rest of this file are the other half of the contract. A stored
   // pre-conversion snapshot still renders its prose verbatim.
   it("composes gate, custom-rule and signal rows from their keys", () => {
     show(

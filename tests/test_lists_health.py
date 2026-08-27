@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""What the Lists screen says about a protection list, and when it says it (#475).
+"""What the Lists screen says about a protection list, and when it says it.
 
-The columns this reads were written on every sync since lists shipped, and nothing ever
-showed them. The states are pinned here because each one asks the operator for something
-different: a failing list with members still covers them and can wait, a failing list with
-none is protecting nothing right now, and a keep list that merely went stale is the early
-warning the degraded-scan notice does not give until ``WHITELIST_STALE_AFTER`` has passed.
+The columns this test reads were written on every sync since lists shipped, but nothing
+displayed them until this screen. The states matter because each one asks the operator for
+something different. A failing list with members stored still covers them and can wait. A
+failing list with none is protecting nothing right now. A keep list that merely went stale is
+an early warning. The degraded-scan notice does not fire until ``WHITELIST_STALE_AFTER`` has
+passed.
 
-The staleness bound is not restated here. It is imported from the module that *enforces*
-it, so a change to the bound moves the screen and the degradation check together and
-cannot leave this test asserting a number the scan no longer uses (rule 144).
+The staleness bound is not restated here. It is imported from the module that enforces it, so
+a change to the bound moves the screen and the degradation check together, and this test can
+never assert a number the scan no longer uses.
 """
 
 from __future__ import annotations
@@ -61,9 +62,9 @@ class TestHealth:
 
     def test_an_error_reads_as_failing_even_with_members_stored(self) -> None:
         """``sync`` swaps membership atomically, so a failed refresh leaves the previous
-        copy in place and those titles are still protected. The row still has to say the
-        check failed: coasting is a reprieve, not a healthy list, and the only thing that
-        ever told the operator was a degraded scan two days later."""
+        copy in place and those titles stay protected. The row must still report the check
+        as failed. Coasting on old membership is not a healthy list, and without this state,
+        the only thing that would ever tell the operator is a later degraded-scan notice."""
         assert _health(_row(last_error="Sonarr refused the request")) is ListHealth.FAILING
 
     def test_an_error_outranks_never_checked(self) -> None:
@@ -90,9 +91,9 @@ class TestHealth:
 
     def test_a_curated_list_does_not_go_stale(self) -> None:
         """A curated external list churns slowly and keeps protecting from its stored copy,
-        so the staleness bound is a keep-list concern. Applying it here would mark the IMDb
-        Top 250 stale on any install whose scheduler paused for two days, over a list whose
-        membership had not moved."""
+        so the staleness bound is a keep-list concern only. Applying it here would mark a
+        list like the IMDb Top 250 stale after any ordinary scheduler pause, even though its
+        membership never moved."""
         old = int((NOW - WHITELIST_STALE_AFTER - timedelta(days=30)).timestamp())
         assert _health(_row(kind=ListKind.CURATED.value, last_synced_at=old)) is ListHealth.WORKING
 
@@ -105,20 +106,22 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     engine.dispose()
     with TestClient(create_app(settings)) as c:
         login(c, settings)
-        # The cache tables are created by ``lists.ensure_schema`` on first read, not at boot,
-        # so this is the request a fresh install makes before anything has ever synced. It is
-        # also what lets ``_store`` below write to a table that now exists.
+        # The cache tables are created by ``lists.ensure_schema`` on first read, so this is
+        # the request a fresh install makes before anything has ever synced. It is also what
+        # lets ``_store`` below write to a table that now exists.
         assert c.get("/api/lists").status_code == 200
         yield c
 
 
 @pytest.fixture
 def store(tmp_path: Path) -> Iterator[object]:
-    """Write rows into ``protection_list`` the way a sync would, over a SEPARATE sync engine.
+    """Write rows into ``protection_list`` the way a sync would, over a second, separate sync
+    engine.
 
-    Not the app's own ``cache_engine``: that one is async, and driving it from a synchronous
-    test body raises ``MissingGreenlet`` rather than doing anything. A second connection to
-    the same file is what the sync itself is, from the scan's perspective.
+    This must not be the app's own ``cache_engine``, which is async. Driving it from a
+    synchronous test body raises ``MissingGreenlet`` instead of doing anything. A second
+    connection to the same file is exactly what the sync itself is, from the scan's
+    perspective.
     """
     engine = sa_create_engine(f"sqlite:///{tmp_path / 'cache.db'}")
 
@@ -134,10 +137,10 @@ def store(tmp_path: Path) -> Iterator[object]:
         last_error: str | None = None,
         stats_json: str | None = None,
     ) -> None:
-        # Every column spelled out rather than assembled from whatever the caller passed. The
-        # dynamic version read as a SQL-injection vector to ruff (S608) and it was right to:
-        # the column names were interpolated. Naming them also means a column added to the
-        # table has to be considered here rather than silently defaulting.
+        # Every column is spelled out instead of assembled from whatever the caller passed.
+        # Building the query dynamically would interpolate column names, which is a SQL
+        # injection risk. Naming them here also means a column added to the table must be
+        # considered here instead of silently defaulting.
         with engine.begin() as conn:
             conn.execute(
                 text(
@@ -191,9 +194,8 @@ class TestRoute:
         assert row["last_checked_at"] is not None
 
     def test_the_error_reaches_the_operator_verbatim(self, client: TestClient, store: Any) -> None:
-        """The whole issue. The message names the thing to go and fix -- a library that is
-        not called what Reaper asked for -- and until this route existed it lived only in a
-        column nothing read."""
+        """The message tells the operator exactly what to fix, a library whose name does not
+        match what Reaper asked for, so they can act without digging further."""
         store(
             slug="plex-collection-never-reap",
             display_name='Plex collection: "Never Reap"',
@@ -211,9 +213,9 @@ class TestRoute:
     def test_a_retired_list_is_not_offered_as_one_that_protects(
         self, client: TestClient, store: Any
     ) -> None:
-        """``retire_absent`` disables a slug the configuration no longer produces and KEEPS
+        """``retire_absent`` disables a slug the configuration no longer produces and keeps
         its members, so a disabled row still reads as populated. Listing it would show a
-        healthy-looking keep list protecting nothing -- and a slug carries the match mode, so
+        healthy-looking keep list protecting nothing. A slug also carries the match mode, so
         flipping keep tags from ANY to ALL and back leaves both spellings behind."""
         for slug, enabled in (("sonarr-1-keeptags-any", 0), ("sonarr-1-keeptags-all", 1)):
             store(
@@ -271,8 +273,9 @@ class TestRoute:
     def test_missing_or_malformed_stats_read_as_unknown_not_zero(
         self, client: TestClient, store: Any, stored: str | None
     ) -> None:
-        """A row from before the counts were recorded, or one whose body will not parse,
-        answers null: unknown, never a zero that reads as "these tags protect nothing"."""
+        """A row from before the counts were recorded, or one whose body will not parse, must
+        answer null for unknown. It must never answer zero, which would read as these tags
+        protecting nothing."""
         store(
             slug="sonarr-1-keeptags-any-list3",
             display_name="Tagged titles",
@@ -289,9 +292,9 @@ class TestRoute:
 
 
 class TestAuthorableMedia:
-    """The media types the Policy picker offers each list on (``authorable_media``, #549). The
-    scope function is unit-tested in ``test_policy``; these pin the endpoint WIRING -- the join by
-    ``list_id``, the synced flag off ``last_synced_at``, and the Plex library read."""
+    """The media types the Policy picker offers each list on (``authorable_media``). The scope
+    function is unit-tested in ``test_policy``. These tests pin the endpoint wiring: the join
+    by ``list_id``, the synced flag read off ``last_synced_at``, and the Plex library read."""
 
     @staticmethod
     def _tag(client: TestClient) -> dict[str, Any]:
@@ -300,16 +303,18 @@ class TestAuthorableMedia:
         )
 
     def test_an_unsynced_tag_is_offered_on_neither(self, client: TestClient) -> None:
-        """A fresh install's keep-tag list has no membership yet: no sync has read what media it
-        holds, so a rule on it could keep nothing. Offered on neither, not silently on both."""
+        """A fresh install's keep-tag list has no membership yet. No sync has read what media
+        it holds, so a rule on it could keep nothing. It must be offered on neither media
+        type, never silently on both."""
         assert self._tag(client)["authorable_media"] == []
 
     def test_a_synced_but_empty_tag_is_offered_on_both(
         self, client: TestClient, store: Any
     ) -> None:
-        """A sync landed and found nothing protectable: verified but empty, offered on both so a
-        list the operator means to fill is protectable now. Exercises the list_id join and the
-        synced flag through the real endpoint."""
+        """A sync landed and found nothing protectable. Verified but empty must still be
+        offered on both media types, so a list the operator means to fill is protectable
+        right away. This exercises the ``list_id`` join and the synced flag through the real
+        endpoint."""
         tag_id = self._tag(client)["id"]
         store(
             slug=f"sonarr-1-keeptags-any-list{tag_id}",

@@ -1,18 +1,19 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The keep rules that make a list act, maintained beside the registry.
 
-A list is defined on Settings -> Lists; what it does is an ``on_list`` keep rule on
-Policy naming it. These pin the two maintenance moves and the fail-safe around them:
+A list is defined on Settings -> Lists. What it does is an ``on_list`` keep rule on Policy
+naming it. These pin the two maintenance moves and the fail-safe around them:
 
-* adding a list writes NO rule -- the operator sets what it does on Policy, so a hand-added
-  list reads "Not used by your policy yet" until they do and is never a silent protection;
-* renaming a list re-spells every rule naming it, both strengths, so a rename never turns
-  a live protection into a rule naming nothing (rule 25);
-* deleting a list deletes its rules, and the API route pairs the two so neither can
-  happen alone;
-* a policy Reaper had to REPAIR to load is never written back from here -- persisting a
-  shim's output plus one rule would silently adopt the whole repair without the
-  operator's review (rule 65).
+* Adding a list writes no rule. The operator sets what it does on Policy, so a hand-added
+  list reads "Not used by your policy yet" until they do, and is never a silent
+  protection.
+* Renaming a list re-spells every rule naming it, both strengths, so a rename never turns
+  a live protection into a rule naming nothing.
+* Deleting a list deletes its rules, and the API route pairs the two so neither can happen
+  alone.
+* A policy Reaper had to repair to load is never written back from here. Persisting a
+  shim's output plus one rule would silently adopt the whole repair without the operator's
+  review.
 """
 
 from __future__ import annotations
@@ -216,8 +217,8 @@ class TestUsage:
     async def test_usage_reports_each_rule_keyed_by_the_casefolded_name(
         self, session: AsyncSession
     ) -> None:
-        """The shape ``api.schemas.ListPolicyUseOut`` serializes: hard rules carry no
-        points, a lean carries its discount."""
+        """The shape ``api.schemas.ListPolicyUseOut`` serializes. Hard rules carry no
+        points, and a lean carries its discount."""
         await _save_policy(
             session, TestRename._body_with_both_strengths(DEFAULT_MOVIE_POLICY, "My List")
         )
@@ -239,8 +240,8 @@ class TestUsage:
 
 class TestTheRoutesPairTheTwoSurfaces:
     """The API is what keeps the registry and the policies telling one story: create writes
-    no rule, rename follows the rule the operator set, delete detaches -- each in the same
-    request."""
+    no rule, rename follows the rule the operator set, and delete detaches, each in the
+    same request."""
 
     @staticmethod
     def _use_for(client: TestClient, name: str) -> list[dict[str, object]]:
@@ -259,9 +260,9 @@ class TestTheRoutesPairTheTwoSurfaces:
 
     @staticmethod
     def _keep_on_policy(client: TestClient, name: str) -> None:
-        """What the operator does on Policy after adding the list: an outright keep rule
-        naming it, in both policies. Seeded through the real save route so rename and delete
-        act on a rule the policy actually carries, the way they do in the app."""
+        """What the operator does on Policy after adding the list. An outright keep rule
+        naming it, in both policies. Seeded through the real save route so rename and
+        delete act on a rule the policy actually carries, the way they do in the app."""
         for media_type in ("movie", "tv"):
             body = client.get("/api/policy", params={"media_type": media_type}).json()["body"]
             body["protect_conditions"] = [
@@ -272,8 +273,8 @@ class TestTheRoutesPairTheTwoSurfaces:
             assert r.status_code == 200, r.text
 
     def test_create_writes_no_rule_and_reads_unused(self, client: TestClient) -> None:
-        """Adding a list is not a protection the operator did not ask for: it carries no
-        policy use and no policy body names it until they set one."""
+        """Adding a list stays inert until the operator turns it into a protection. It
+        carries no policy use, and no policy body names it until they set one."""
         made = self._make(client)
 
         assert made["policy_use"] == []
@@ -291,7 +292,7 @@ class TestTheRoutesPairTheTwoSurfaces:
 
         assert r.status_code == 200
         assert len(self._use_for(client, "Keep forever")) == 2
-        # The policy itself names the new spelling; nothing still says "Keep".
+        # The policy itself names the new spelling. Nothing still says "Keep".
         for media_type in ("movie", "tv"):
             body = client.get("/api/policy", params={"media_type": media_type}).json()["body"]
             values = [c["value"] for c in body["protect_conditions"] if c["field"] == "on_list"]

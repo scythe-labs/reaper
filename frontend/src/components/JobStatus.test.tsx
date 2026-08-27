@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The one status line every job wears. These pin the resting states (a success, a failure,
-// a job that has never run), the running spinner, and -- the point of the row -- that a
-// manual run flashes a short confirmation on the running->done transition and then settles
-// back to the resting line, all inside one fixed slot so nothing below it moves.
+// a job that has never run), the running spinner, and the point of the row: that a manual run
+// flashes a short confirmation on the running->done transition and then settles back to the
+// resting line, all inside one fixed slot so nothing below it moves.
 import { act, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -14,7 +14,7 @@ const AT = "2026-07-24T03:30:00Z";
 
 describe("JobStatus resting states", () => {
   // Both resting states, not just the happy one: the failed row is the one that adds a red dot
-  // and a reason, so it carries markup the succeeded row never renders (rule 145).
+  // and a reason, so it carries markup the succeeded row never renders.
   it("has no accessibility violations, whichever way the last run went", async () => {
     for (const lastOk of [true, false]) {
       const { container, unmount } = render(
@@ -165,7 +165,7 @@ describe("useJobFlash", () => {
     const second = { ok: true, text: "Ratings refreshed" };
     rerender(<Harness running={true} result={second} />);
 
-    // The spinner shows now -- the previous run's chip is not left covering it.
+    // The spinner shows now. The previous run's chip is not left covering it.
     expect(container.querySelector(".flash-chip")).toBeNull();
     expect(container.querySelector(".spin")).not.toBeNull();
 
@@ -178,9 +178,9 @@ describe("useJobFlash", () => {
 });
 
 describe("what a screen reader hears when a job finishes", () => {
-  // The chip was a 4.2-second window in no live region, so pressing "Run now" on an upkeep job
-  // reported its outcome to an operator only if they happened to navigate onto the chip inside
-  // that window -- which, for a job they just started, is nobody (#192).
+  // Without a live region, the chip is only a 4.2-second window of visual text, so pressing
+  // "Run now" on an upkeep job would report its outcome only to an operator who happened to
+  // navigate onto the chip inside that window, which for a job they just started is nobody.
   function Harness({ running, result }: { running: boolean; result: JobFlash | null }) {
     const flash = useJobFlash(running, result);
     return (
@@ -219,8 +219,8 @@ describe("what a screen reader hears when a job finishes", () => {
       rerender(<Harness running={false} result={{ ok: false, text: "Couldn't reach Sonarr" }} />),
     );
 
-    // One wording, two surfaces (rule 144): what is spoken and what the chip renders for a
-    // reader are the same string, so neither can be reworded out from under the other.
+    // One wording, two surfaces: what is spoken and what the chip renders are the same string,
+    // so neither can be reworded out from under the other.
     expect(spoken(container)).toBe("Failed: Couldn't reach Sonarr");
     expect(container.querySelector(".flash-chip")?.textContent).toContain(
       "Failed: ✕ Couldn't reach Sonarr",
@@ -228,7 +228,7 @@ describe("what a screen reader hears when a job finishes", () => {
   });
 
   it("says nothing for a page loaded onto a job that already finished", () => {
-    // News, not a recap -- the same edge the flash itself keys on.
+    // This is news, not a recap. It is the same edge the flash itself keys on.
     const { container } = render(
       <Harness running={false} result={{ ok: true, text: "Ratings refreshed" }} />,
     );

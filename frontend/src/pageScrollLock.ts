@@ -42,7 +42,7 @@ export function unlockPageScroll() {
   }
 }
 
-/** Hold the page still while `active` -- for the modal shell (always) and the review side
+/** Hold the page still while `active`, for the modal shell (always) and the review side
  *  sheet (only when it covers the whole screen on a phone). Toggling `active` locks and
  *  unlocks through the shared ref count above. */
 export function usePageScrollLock(active: boolean) {

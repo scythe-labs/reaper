@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The whole ``scan()`` pipeline, end to end with fakes.
+"""Checks the whole ``scan()`` pipeline end to end, with fakes standing in for the real
+services.
 
-The gather fans out across services concurrently -- the movie index, each Radarr's
-movie list, and the TV season gather all overlap -- so this file proves the pipeline
-still produces the snapshot a sequential gather would have:
+The gather fans out across services concurrently. The movie index, each Radarr's movie
+list, and the TV season gather all overlap, so this file proves the pipeline still
+produces the snapshot a sequential gather would have.
 
-* every source lands in the freeze (movies from Radarr, seasons from Sonarr);
-* verdicts come out whole -- a dormant movie condemns, a whitelisted one protects with
-  the protection named in its why-panel, an unmatched one abstains;
-* the grace clock is recorded for exactly the condemned keys (the batched path);
-* one unreachable Radarr degrades the snapshot loudly while the others' items survive.
+* Every source lands in the freeze, movies from Radarr and seasons from Sonarr.
+* Verdicts come out whole. A dormant movie condemns, a whitelisted one protects with the
+  protection named in its why-panel, and an unmatched one abstains.
+* The grace clock is recorded for exactly the condemned keys, through the batched path.
+* One unreachable Radarr degrades the snapshot loudly while the other's items survive.
 """
 
 from __future__ import annotations
@@ -76,10 +77,10 @@ async def candidates(
 ) -> list[Candidate]:
     """A snapshot's judged rows, ranked the way the review queue ranks them.
 
-    A test-local read, not a production one: nothing in ``src/`` needs it, so it lived in
-    ``services/snapshot`` for twelve callers that are all in this file (#320). It defends
-    nothing -- it is a plain SELECT -- and a plain SELECT sitting in a deletion-path service
-    reads as production reach it never had.
+    This is a test-local read, not a production one. Nothing in ``src/`` needs it, so it
+    moved here from ``services/snapshot``, out of the twelve callers that are all in this
+    file. It is a plain SELECT with no protection to defend, and a plain SELECT sitting in
+    a deletion-path service would read as production reach it never had.
     """
     stmt = select(Candidate).where(Candidate.snapshot_id == snapshot_id)
     if verdict:
@@ -94,18 +95,18 @@ LONG_AGO = NOW - timedelta(days=2000)
 #: When the fixture's show and its seasons landed in Plex.
 #:
 #: Inside the ~2000-day mirror ``_seed_play`` anchors, so an all-time watcher count taken
-#: over that mirror is an answer for these seasons rather than a lower bound. It has to be:
-#: the keep-rule conflict detector holds every prunable season whose count the reach cannot
-#: support (``season_pruning._detect_conflicts``), and the placeholder epoch this replaced
-#: dated the seasons to 1970 -- fifty years outside a mirror the same fixture makes 2000 days
-#: deep -- so every season here was correctly un-establishable and these pipeline tests were
-#: measuring that hold instead of the pipeline. Still well past the 1095-day dormancy floor,
-#: so the seasons condemn on score exactly as before.
+#: over that mirror is an answer for these seasons rather than a lower bound. This has to
+#: be true, because the keep-rule conflict detector
+#: (``season_pruning._detect_conflicts``) holds every prunable season whose count the
+#: reach cannot support. A date outside the mirror's 2000-day depth would make every
+#: season here un-establishable, and these pipeline tests would measure that hold instead
+#: of the pipeline. This date is still well past the 1095-day dormancy floor, so the
+#: seasons condemn on score as expected.
 SEASONS_ADDED = NOW - timedelta(days=1500)
 
 
 # ---------------------------------------------------------------------------
-# Fakes -- just the surface the scan touches, all stateless and concurrency-safe.
+# Fakes: just the surface the scan touches, all stateless and concurrency-safe.
 # ---------------------------------------------------------------------------
 
 
@@ -113,7 +114,7 @@ class _GriddedSonarr(FakeSonarr):
     """Five seasons of five episodes for every series, whatever it was asked about.
 
     The scan spine wants a season map for series it was never handed rows for, which a
-    payload-driven fake cannot answer -- so the grid lives here rather than widening the
+    payload-driven fake cannot answer. So the grid lives here instead of widening the
     shared fake with a mode only this suite drives.
     """
 
@@ -141,12 +142,12 @@ class _StaticList:
     """A protection-list provider with fixed members, for seeding the keep list.
 
     Named as the seeded default tag list, because that is the name the shipped policies'
-    ``on_list`` keep rules match: membership protects through the rule naming the list
-    now, not through a gate that read a boolean.
+    ``on_list`` keep rules match. Membership protects through the rule naming the list,
+    not through a gate that read a boolean.
 
-    **The two names differ, as a tag list's really do.** This double used to spell them
-    alike, so the scan it drives could not tell the matched name from the displayed one and
-    stayed green while every real tag list protected nothing (#507, rule 141)."""
+    The two names differ, as a real tag list's really do. Spelling them alike here would
+    let the scan it drives pass while unable to tell the matched name from the displayed
+    one, hiding a case where every real tag list protects nothing."""
 
     slug = "keep-list"
     display_name = "Titles you've tagged (4k)"
@@ -160,12 +161,13 @@ class _StaticList:
 
 
 class _FakeCollectionsPlex(PlexClient):
-    """A movie-only Plex stand-in for #816 phase 2.
+    """A movie-only Plex stand-in that covers the Plex collections read.
 
-    Inherits the real client rather than duck-typing it (``_fakes.py``'s convention), so a
-    signature drift on any of the four methods scan touches fails the mypy gate instead of
-    passing silently. Never calls ``super().__init__``: every method scan can reach while
-    ``plex`` is set is overridden below, so nothing here can open a socket.
+    It inherits the real client rather than duck-typing it (``_fakes.py``'s convention),
+    so a signature drift on any of the four methods scan touches fails the mypy gate
+    instead of passing silently. It never calls ``super().__init__``. Every method scan
+    can reach while ``plex`` is set is overridden below, so nothing here can open a
+    socket.
     """
 
     def __init__(
@@ -184,28 +186,30 @@ class _FakeCollectionsPlex(PlexClient):
         self._sections = sections
         self._collections = collections or {}
         self._children = children or {}
-        # Collections whose members carry no `collection` tag -- what a smart collection, or
-        # one holding seasons rather than shows, looks like to the item-tag read.
+        # Collections whose members carry no `collection` tag. This is what a smart
+        # collection, or one holding seasons rather than shows, looks like to the
+        # item-tag read.
         self._untagged = untagged or set()
-        # Tags an item carries for no collection this section lists -- what Plex leaves
-        # behind when a collection is deleted.
+        # Tags an item carries for no collection this section lists. This is what Plex
+        # leaves behind when a collection is deleted.
         self._extra_tags = extra_tags or {}
         self._tag_spelling = tag_spelling or (lambda title: title)
         self._fail_section = fail_section
         self._fail_tags_section = fail_tags_section
         self._movie_spine = movie_spine if movie_spine is not None else _movie_spine()
         #: Every ``collection_children`` call this fake answered, in order. The point of the
-        #: tag read is that this stays empty for an ordinary library (#820).
+        #: tag read is that this stays empty for an ordinary library.
         self.children_reads: list[int] = []
 
     async def library_guid_index(
         self, *, section_type: str, allowed_sections: set[int] | None = None
     ) -> dict[int, PlexItem]:
-        # Mirrors the Tautulli spine exactly -- same rating key, title, year, added-at, no
-        # extra enrichment -- so a real (if uninteresting) sweep does not RETIRE the very
-        # rows the spine already lists. `library_index.build_index` drops any spine row a
-        # sweep that answered (`swept=True`) does not also list, so an empty `{}` here would
-        # silently unmatch every movie: a fixture bug, not the behavior this suite tests.
+        # Mirrors the Tautulli spine exactly: same rating key, title, year, added-at, and
+        # no extra enrichment. This keeps a real (if uninteresting) sweep from RETIRING the
+        # very rows the spine already lists. `library_index.build_index` drops any spine
+        # row a sweep that answered (`swept=True`) does not also list, so an empty `{}`
+        # here would silently unmatch every movie. That would be a fixture bug, not the
+        # behavior this suite tests.
         if section_type != "movie":
             return {}
         return {
@@ -335,8 +339,8 @@ async def _seed_sync(engine: AsyncEngine, *, ago: timedelta, source_total: int =
     """Record when the watch-history ingest last ran, the way a real sync does.
 
     This clock, not the newest play, is what the scan checks for a stalled ingest
-    (``snapshot.MIRROR_STALE_AFTER``); with no row at all the scan has no evidence the
-    ingest ever ran and degrades.
+    (``snapshot.MIRROR_STALE_AFTER``). With no row at all the scan has no evidence the
+    ingest ever ran, and it degrades.
 
     ``source_total`` is what Tautulli said IT holds, which the completeness guard compares
     the mirror against (``snapshot.MIRROR_SHORTFALL_FRACTION``). The default of 1 matches
@@ -361,11 +365,11 @@ async def _seed_play(
     synced_ago: timedelta = timedelta(hours=1),
     recent_play: bool = False,
 ) -> None:
-    """One long-ago play: it anchors the data horizon ~2000 days back.
+    """One long-ago play. It anchors the data horizon ~2000 days back.
 
     Plus a successful sync ``synced_ago`` back, because a scan whose ingest has not run
     recently degrades and can judge nothing. Pass ``recent_play=True`` to add a fresh play
-    on an unrelated item; it uses a rating key no candidate here carries, so no item's
+    on an unrelated item. It uses a rating key no candidate here carries, so no item's
     watcher counts move.
     """
     async with engine.begin() as conn:
@@ -563,18 +567,18 @@ class TestScanPipelineEndToEnd:
         rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
         assert len(rows) == 8
 
-        # The dormant movie condemns; the keep-listed one protects AND the explanation
+        # The dormant movie condemns. The keep-listed one protects AND the explanation
         # names the list, which is the only thing separating this hold from any other
-        # rule's in the why-panel; the unmatched one abstains.
+        # rule's in the why-panel. The unmatched one abstains.
         assert rows["radarr:1:1"].verdict == "condemn"
         assert rows["radarr:1:2"].verdict == "protect"
         assert "Titles you've tagged" in (rows["radarr:1:2"].explanation_json or "")
         assert rows["radarr:1:3"].verdict == "abstain"
 
-        # Seasons rode the same judge: the keep-last/keep-first guards protected
-        # seasons 1, 4 and 5; the prunable middle seasons were scored (and, dormant
+        # Seasons rode the same judge. The keep-last/keep-first guards protected
+        # seasons 1, 4 and 5. The prunable middle seasons were scored (and, dormant
         # since they arrived 1500 days ago with nobody watching, condemned). That the
-        # mirror covers those 1500 days is load-bearing -- see ``SEASONS_ADDED``.
+        # mirror covers those 1500 days matters, see ``SEASONS_ADDED``.
         assert rows["sonarr:1:42:1"].verdict == "protect"
         assert rows["sonarr:1:42:4"].verdict == "protect"
         assert rows["sonarr:1:42:5"].verdict == "protect"
@@ -599,9 +603,9 @@ class TestScanPipelineEndToEnd:
 
         # THE freeze-replay invariant: every candidate froze its Facts, and replaying the
         # real engine over those frozen Facts under the SAME policy reproduces the stored
-        # verdict, score and coverage EXACTLY. If the codec dropped or flipped any field --
-        # or the replay diverged from _judge_item -- this fails, which is the guard against
-        # the simulator ever showing a wrong preview (a fail-open the moment a weight moves).
+        # verdict, score and coverage EXACTLY. If the codec dropped or flipped any field,
+        # or the replay diverged from _judge_item, this fails. That is the guard against
+        # the simulator ever showing a wrong preview, a fail-open the moment a weight moves.
         import json as _json
 
         from reaper.engine.facts_codec import facts_from_dict
@@ -655,7 +659,7 @@ class TestScanPipelineEndToEnd:
         """The scan never bakes a hand override into the stored verdict. A spared condemnation is
         still stored ``condemn`` (so undoing the spare falls back to the real policy result), a
         reaped protection is still stored ``protect``, and the grace clock tracks the EFFECTIVE
-        set: the spared item loses its clock, an engine-honored reap earns one (rules 4/48-51)."""
+        set. The spared item loses its clock, and an engine-honored reap earns one."""
         await _seed_play(cache_engine, row_id=1, rating_key=99)
         await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
         await lists.sync(
@@ -705,8 +709,8 @@ class TestScanPipelineEndToEnd:
 
         rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
 
-        # The stored verdict is PURE POLICY -- the override never reached it. This is the whole
-        # point: an un-spare / un-reap now falls back to the real policy result, after a rescan too.
+        # The stored verdict is PURE POLICY. The override never reached it, so an un-spare
+        # or un-reap falls back to the real policy result, even after a rescan.
         assert rows["radarr:1:1"].verdict == "condemn"  # spared, yet policy still condemns it
         assert rows["radarr:1:2"].verdict == "protect"  # reaped, yet policy still protects it
         # And the spare stayed OUT of the explanation: no baked "whitelisted" protection.
@@ -755,9 +759,11 @@ class TestScanPipelineEndToEnd:
 
 
 class TestCollectionsRideTheSnapshot:
-    """#816 phase 2: the Plex collections read lands on the Candidate and Snapshot rows,
-    and a failed read costs a missing chip alone -- never a degraded scan
-    (docs/history/COLLECTIONS_PLAN.md's fence: collections are navigation, never protection)."""
+    """The Plex collections read lands on the Candidate and Snapshot rows.
+
+    A failed collections read costs a missing chip alone, never a degraded scan.
+    Collections are navigation, never protection.
+    """
 
     async def test_a_candidates_collections_are_sorted_smallest_first_then_alphabetical(
         self, session: AsyncSession, cache_engine: AsyncEngine
@@ -775,7 +781,7 @@ class TestCollectionsRideTheSnapshot:
                     PlexCollectionRow(rating_key=503, title="Big Collection", child_count=10),
                 ]
             },
-            # Dust (rating key 11, "radarr:1:1") sits in all three; Beloved (22) in none.
+            # Dust (rating key 11, "radarr:1:1") sits in all three. Beloved (22) is in none.
             children={501: {11}, 502: {11}, 503: {11}},
         )
         snapshot = await scan(
@@ -798,8 +804,8 @@ class TestCollectionsRideTheSnapshot:
         assert snapshot.degraded is False, snapshot.degraded_reason
         rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
 
-        # Two size-1 collections tie, so the alphabetically-first leads; the size-10
-        # collection sorts last despite "Big" alphabetizing ahead of "Zeta" -- proving size
+        # Two size-1 collections tie, so the alphabetically-first leads. The size-10
+        # collection sorts last despite "Big" alphabetizing ahead of "Zeta", proving size
         # is the primary key, not the alphabet.
         assert json.loads(rows["radarr:1:1"].collections_json or "[]") == [
             "Alpha Collection",
@@ -830,9 +836,9 @@ class TestCollectionsRideTheSnapshot:
             "tv_gates": build_gates(DEFAULT_TV_POLICY),
         }
         # Every run carries the SAME Plex client shape (id enrichment included), differing
-        # only in whether the one section's collections read raises -- isolating the
+        # only in whether the one section's collections read raises. That isolates the
         # comparison to that one read. Diffing against `plex=None` instead would also move
-        # unrelated fields (#553's "seen in Plex" ledger only writes when `plex` is set),
+        # unrelated fields, since the "seen in Plex" ledger only writes when `plex` is set,
         # which is not what this test means to prove.
         sections = [PlexSection(key=1, title="Movies", kind="movie")]
         succeeding = _FakeCollectionsPlex(
@@ -843,10 +849,10 @@ class TestCollectionsRideTheSnapshot:
             children={501: {11}},
         )
         # A warm-up scan, discarded, so both compared runs see the SAME "seen in Plex before"
-        # ledger (#553): the very first scan of a session always reads that ledger as unknown
-        # ("never seen before"), which the ledger's own write during that scan then resolves
-        # for every scan after it -- an artifact of running two real scans in one test, not
-        # anything a failed collection read moves.
+        # ledger. The very first scan of a session always reads that ledger as unknown
+        # ("never seen before"), and the ledger's own write during that scan resolves it
+        # for every scan after. That is an artifact of running two real scans in one test,
+        # not anything a failed collection read moves.
         await scan(
             cache_engine,
             session,
@@ -884,8 +890,8 @@ class TestCollectionsRideTheSnapshot:
         assert set(before) == set(after)
         for key, was in before.items():
             now_ = after[key]
-            # Everything a failed collection read must never touch -- the fence's whole
-            # point, proven field by field rather than by eye.
+            # Everything a failed collection read must never touch, proven field by field
+            # rather than by eye.
             assert now_.verdict == was.verdict
             assert now_.score == was.score
             assert now_.coverage_bp == was.coverage_bp
@@ -898,11 +904,13 @@ class TestCollectionsRideTheSnapshot:
 
 
 class TestCollectionSizesAreIdentifiedByName:
-    """#816 review: two sections each holding a same-named collection used to
-    silently last-write-wins the later section's count into ``sizes[title]`` (rule 6).
-    The collection NAME is the identity: Reaper's own Leaving Soon shelf creates a
+    """Two sections each holding a same-named collection must merge into one entry, not
+    have the later section's count silently overwrite ``sizes[title]``.
+
+    The collection NAME is the identity. Reaper's own Leaving Soon shelf creates a
     same-named collection in every section, so an operator with two libraries hits this
-    case by default, and one merged chip covering both is what they mean."""
+    case by default, and one merged chip covering both is what they mean.
+    """
 
     async def test_same_named_collections_in_two_sections_merge_and_sum(self) -> None:
         plex = _FakeCollectionsPlex(
@@ -929,8 +937,8 @@ class TestCollectionSizesAreIdentifiedByName:
 
 class TestAnUnknownCollectionSizeIsNotZero:
     """A collection Plex never reported a childCount for is a different fact from one
-    Plex reported as empty. Folding the unknown to 0 handed it the sort's element-0
-    slot -- the exact slot the chip renders -- ahead of a collection that is genuinely
+    Plex reported as empty. Folding the unknown to 0 would hand it the sort's element-0
+    slot, the exact slot the chip renders, ahead of a collection that is genuinely
     small."""
 
     async def test_an_unknown_size_sorts_last_and_is_absent_from_sizes(self) -> None:
@@ -956,10 +964,12 @@ class TestAnUnknownCollectionSizeIsNotZero:
 
 
 class TestMembershipIsReadFromTheItems:
-    """#820: a scan asked every collection for its children, one read each, which on a
-    library holding hundreds of them starved the GUID sweep running beside it. The
-    membership is on the items instead, one read per ~400 of them, and only a collection
-    Plex counts more members for than the tags showed is still read its own way."""
+    """A scan must not ask every collection for its children, one read each. On a library
+    holding hundreds of them, that would starve the GUID sweep running beside it.
+
+    The membership is read off the items instead, one read per ~400 of them, and only a
+    collection Plex counts more members for than the tags showed is still read its own way.
+    """
 
     @staticmethod
     def _plex(**kwargs: Any) -> _FakeCollectionsPlex:
@@ -1046,9 +1056,9 @@ class TestMembershipIsReadFromTheItems:
         assert sizes == {"Cult Classics": 1}
 
     async def test_a_tag_spelled_differently_stores_the_listings_spelling(self) -> None:
-        """Rule 88: the tag and the listing are folded on both sides, and the name a chip
-        shows is the one the size map is keyed by -- otherwise the sort reads no size at
-        all and the chip renders a collection whose size Reaper knows as unknown."""
+        """The tag and the listing are lower-cased for comparison on both sides, and the
+        name a chip shows is the one the size map is keyed by. Otherwise the sort reads no
+        size at all, and the chip renders a collection whose size Reaper knows as unknown."""
         plex = self._plex(
             collections={
                 1: [PlexCollectionRow(rating_key=501, title="Cult Classics", child_count=1)]
@@ -1085,11 +1095,11 @@ class TestMembershipIsReadFromTheItems:
 
 class _ConcurrencyTrackingPlex(PlexClient):
     """A one-section Plex stand-in that counts overlapping ``collection_children`` reads,
-    to prove the fan-out is bounded rather than either fully sequential or unbounded.
-    Never calls ``super().__init__`` (``_FakeCollectionsPlex``'s convention).
+    to prove the fan-out is bounded rather than either fully sequential or unbounded. It
+    never calls ``super().__init__`` (``_FakeCollectionsPlex``'s convention).
 
-    Its item tags are empty, so every collection is one the tags could not account for and
-    every one falls back to its own read -- which is the population the bound now governs.
+    Its item tags are empty, so every collection is one the tags could not account for,
+    and every one falls back to its own read. That is the population the bound governs.
     """
 
     def __init__(self, *, rows: list[PlexCollectionRow], bound: int) -> None:
@@ -1117,9 +1127,9 @@ class _ConcurrencyTrackingPlex(PlexClient):
 
 
 class TestTheChildrenFanOutIsBounded:
-    """#816 review: N collections in one section each ran their ``collection_children``
-    read sequentially. Bounded concurrency now runs them in waves, the same pattern
-    ``leaving_soon.sync_shelves`` already uses for its own fan-out."""
+    """N collections in one section must not run their ``collection_children`` read
+    sequentially. Bounded concurrency runs them in waves instead, the same pattern
+    ``leaving_soon.sync_shelves`` uses for its own fan-out."""
 
     async def test_more_collections_than_the_bound_still_peaks_at_the_bound(self) -> None:
         bound = snapshot_service._COLLECTION_CHILDREN_CONCURRENCY
@@ -1154,7 +1164,7 @@ class TestAStoredSizeSaysWhereItCameFrom:
     ) -> None:
         await _seed_play(cache_engine, row_id=1, rating_key=99)
         payloads = _movie_payloads()
-        # hasFile true, no sizeOnDisk: a partial payload, which is the whole case.
+        # hasFile true, no sizeOnDisk. A partial payload, which is the whole case.
         del payloads[0]["sizeOnDisk"]
 
         snapshot = await scan(
@@ -1220,13 +1230,13 @@ class TestAStoredSizeSaysWhereItCameFrom:
 
         The same show as the full-pipeline test above, moved so it arrived 500 days before
         the mirror starts. Every play its seasons ever had is behind the horizon, so their
-        all-time counts read 0 and can out-rank nothing: the detector cannot establish that
-        a prunable season is watched no more than one the rule keeps, and holds it.
+        all-time counts read 0 and can out-rank nothing. The detector cannot establish that
+        a prunable season is watched no more than one the rule keeps, so it holds it.
 
-        Driven end to end rather than against ``plan_series_prune``, because the argument has
-        a default and a unit test cannot tell a correctly-passed bound from an omitted one
-        (rule 141). Seasons 2 and 3 condemn in that test on evidence identical but for the
-        arrival date, so this fails if ``_judge_series`` stops passing ``shortfall_by_season``.
+        Driven end to end rather than against ``plan_series_prune``, because the argument
+        has a default and a unit test cannot tell a correctly-passed bound from an omitted
+        one. Seasons 2 and 3 condemn in that test on evidence identical but for the arrival
+        date, so this fails if ``_judge_series`` stops passing ``shortfall_by_season``.
         """
         await _seed_play(cache_engine, row_id=1, rating_key=99)
         await _seed_imdb(cache_engine, {"tt0000042": (5.0, 5000)})
@@ -1260,7 +1270,7 @@ class TestAStoredSizeSaysWhereItCameFrom:
         assert rows["sonarr:1:42:2"].verdict == "abstain"
         assert rows["sonarr:1:42:3"].verdict == "abstain"
         # And it says so in the operator's words rather than reporting a count it never
-        # established: the stored row carries the shortfall conflict, whose catalog entry
+        # established. The stored row carries the shortfall conflict, whose catalog entry
         # opens "Reaper cannot tell whether Season {pruned} is watched more than ...".
         held_exp = json.loads(rows["sonarr:1:42:2"].explanation_json or "{}")
         assert any(
@@ -1277,17 +1287,17 @@ class TestAStoredSizeSaysWhereItCameFrom:
 
 class TestTheScanCountsHowOftenItCouldNotMeasure:
     """``scan.size_source_tally`` is the only place Reaper reports how often it could not
-    measure an item, and it is a log line rather than a column, so nothing downstream goes
-    red when a refactor drops it (#321).
+    measure an item, and it is a log line rather than a column, so this test is what
+    would notice a refactor dropping it silently.
 
     Two facts hold it up here. It fires exactly once per scan, and its buckets partition
-    the items the scan judged -- the same set the candidate rows come from -- so a rung
-    that quietly stops being counted lands as a sum that no longer reconciles. The class
-    above pins the stored ``size_source`` column; this pins the measurement taken over it.
+    the items the scan judged, the same set the candidate rows come from, so a rung that
+    quietly stops being counted lands as a sum that no longer reconciles. The class above
+    pins the stored ``size_source`` column. This pins the measurement taken over it.
 
-    The miss bucket is reported at zero rather than omitted, which is the half that is a
-    behavior change: a ``Counter`` drops an absent key, so an operator grepping the line
-    for ``unmeasured`` could not tell "none" from "never emitted."
+    The miss bucket is reported at zero rather than omitted. A ``Counter`` drops an absent
+    key, so an operator grepping the line for ``unmeasured`` could not otherwise tell
+    "none" from "never emitted."
     """
 
     @staticmethod
@@ -1346,8 +1356,8 @@ class TestTheScanCountsHowOftenItCouldNotMeasure:
 
         # Every fixture item carries a size, so both rungs are full and nothing missed.
         assert tally["sources"] == {"radarr": 3, "sonarr": 5, "unmeasured": 0}
-        # Stated twice on purpose: the dict above would still read as correct with the key
-        # gone, and this is the assertion whose failure names the ambiguity (#321).
+        # Stated twice on purpose. The dict above would still read as correct with the key
+        # gone, and this is the assertion whose failure names the ambiguity.
         assert "unmeasured" in tally["sources"], "a scan that missed nothing must say so as 0"
 
     async def test_the_miss_bucket_counts_an_unmeasured_item_in_either_lane(
@@ -1356,7 +1366,7 @@ class TestTheScanCountsHowOftenItCouldNotMeasure:
         """One movie and one season nobody sized, so a lane that stopped counting its own
         misses cannot hide behind the other lane still counting them."""
         movies = _movie_payloads()
-        del movies[0]["sizeOnDisk"]  # hasFile, no size: the partial payload
+        del movies[0]["sizeOnDisk"]  # hasFile, no size, the partial payload
         series = _series_payloads()
         for season in series[0]["seasons"]:
             if season["seasonNumber"] == 2:
@@ -1444,13 +1454,11 @@ class TestAStaleMirrorDegradesTheSnapshot:
     async def test_a_mirror_still_catching_up_degrades(
         self, session: AsyncSession, cache_engine: AsyncEngine
     ) -> None:
-        """The state between the two guards above: populated, freshly synced, and short.
+        """The state between the two guards above. Populated, freshly synced, and short.
 
         This is what a restore leaves behind. Backups exclude the mirror deliberately, and
         every sync until the first full sweep is incremental, so each completes correctly
-        against its own increment while the mirror holds a fraction of the source. Measured
-        on a real library at 65%: 245 titles came off the condemned list, 2.17 TB, under an
-        identical policy and scorer, and the snapshot read `degraded = 0` (rule 2).
+        against its own increment while the mirror holds a fraction of the source.
         """
         await _seed_play(cache_engine, row_id=1, rating_key=99, recent_play=True)
         await _seed_sync(cache_engine, ago=timedelta(hours=1), source_total=100_000)
@@ -1464,7 +1472,7 @@ class TestAStaleMirrorDegradesTheSnapshot:
         self, session: AsyncSession, cache_engine: AsyncEngine
     ) -> None:
         """A play in progress is counted by the source and skipped by the ingest, so the
-        mirror can never equal the total. Measured at 8 rows on a 425,604-row history.
+        mirror can never equal the total.
 
         Both bounds have to bite, so a handful of live plays cannot degrade a scan however
         small the library is. This mirror is short by 400, under ``MIRROR_SHORTFALL_FLOOR``,
@@ -1483,10 +1491,10 @@ class TestAStaleMirrorDegradesTheSnapshot:
         """The total is read once per sync and the mirror never deletes, so a source pruned
         since we asked leaves us holding more than it reports.
 
-        Asserted on ``shortfall`` rather than through a scan, because a scan cannot tell the
-        two apart: a negative shortfall and a clamped zero both fail the floor test, so the
-        guard degrades on neither and a scan-level assertion here would pass with the clamp
-        deleted (rule 118). The clamp is a property of the value, so it is pinned as one.
+        Asserted on ``shortfall`` rather than through a scan, because a scan cannot tell
+        the two apart. A negative shortfall and a clamped zero both fail the floor test, so
+        the guard degrades on neither, and a scan-level assertion here would pass even with
+        the clamp deleted. The clamp is a property of the value, so it is pinned as one.
         """
         await _seed_play(cache_engine, row_id=1, rating_key=99, recent_play=True)
         await _seed_sync(cache_engine, ago=timedelta(hours=1), source_total=0)
@@ -1499,7 +1507,7 @@ class TestAStaleMirrorDegradesTheSnapshot:
     async def test_a_mirror_nobody_ever_synced_cannot_report_a_shortfall(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """No stored total is "we were not told", which is Unknown and not zero (rule 93).
+        """No stored total is "we were not told", which is Unknown and not zero.
 
         The staleness guard is what fails such a mirror, and it already does. What must not
         happen is this reading as a complete mirror on the strength of a total nobody wrote.
@@ -1548,7 +1556,7 @@ class TestADegradedSnapshotDoesNotActOnItsOwnCondemnSet:
             RadarrSource(client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd")
         ]
         if degrade:
-            # A second, unreachable Radarr: one failed source, snapshot degraded, and the
+            # A second, unreachable Radarr. One failed source, snapshot degraded, and the
             # first instance's items still judged. The same shape as the loud-failure test.
             radarrs.append(
                 RadarrSource(client=FakeRadarr(fail_movies=True), instance_id=2, name="uhd")
@@ -1584,8 +1592,8 @@ class TestADegradedSnapshotDoesNotActOnItsOwnCondemnSet:
         snapshot = await self._scan_with(session, cache_engine, degrade=True)
 
         assert snapshot.degraded is True
-        # The same item is still condemned and still viewable -- it just does not start
-        # a countdown on evidence this run already called untrustworthy.
+        # The same item is still condemned and still viewable. It just does not start a
+        # countdown on evidence this run already called untrustworthy.
         rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
         assert rows["radarr:1:1"].verdict == "condemn"
         assert await self._flagged(session) == set()
@@ -1620,12 +1628,13 @@ class TestADegradedSnapshotDoesNotActOnItsOwnCondemnSet:
 
 
 class TestALibraryWideIdentityChangeDegradesTheSnapshot:
-    """A slow rebuild: Plex hands the whole library new rating keys while Reaper keeps scanning.
+    """A slow rebuild happens when Plex hands the whole library new rating keys while Reaper
+    keeps scanning.
 
-    ``tests/test_identity_churn.py`` pins what the share counts. This drives it through a real
-    scan, which is the half that can go missing: the measurement is only worth anything if the
-    call site degrades the snapshot, and it has to do so ABOVE the grace clocks (rule 116), or a
-    countdown starts on the run that just called itself untrustworthy.
+    ``tests/test_identity_churn.py`` pins what the share counts. This drives it through a
+    real scan, which is the half that can go missing. The measurement is only worth
+    anything if the call site degrades the snapshot, and it has to do so ABOVE the grace
+    clocks, or a countdown starts on the run that just called itself untrustworthy.
 
     The two scans differ in one thing, the ledger the fillers are already recorded under.
     """
@@ -1726,7 +1735,7 @@ class TestALibraryWideIdentityChangeDegradesTheSnapshot:
         # The help page the notice offers. Stored beside the reason, because by the time the
         # notice renders the cause is prose.
         assert snapshot.degraded_doc == "plex-rebuild"
-        # Above the grace clocks, so no countdown started (rule 116).
+        # Above the grace clocks, so no countdown started.
         assert await self._flagged(session) == set()
 
     async def test_the_ledger_is_still_written_so_the_next_scan_is_clean(
@@ -1753,9 +1762,9 @@ class TestTheStreamingVetoNeedsAReadableAnswer:
     """ "Nobody is watching" and "we could not tell" look identical from an empty set.
 
     Which one it is decides whether a file somebody is streaming right now can be
-    condemned, so the flag is typed and set where the read fails -- never inferred from
-    the wording of a degradation reason, which is how it used to be detected: rewording
-    the message would have silently turned the veto off.
+    condemned, so the flag is typed and set where the read fails. It must never be
+    inferred from the wording of a degradation reason, since a reworded message would
+    then silently turn the veto off.
     """
 
     async def _scan_with(
@@ -1793,9 +1802,9 @@ class TestTheStreamingVetoNeedsAReadableAnswer:
     ) -> None:
         """A 200 carrying `{"sessions": null}` is a successful call that answered nothing.
 
-        Coercing it to an empty list reads as "nothing is streaming" on every item at
-        once, which is the veto silently defeated -- and the executor's live re-check is
-        the only thing left between that and deleting a file mid-stream.
+        Coercing it to an empty list would read as "nothing is streaming" on every item at
+        once, silently defeating the veto. The executor's live re-check would be the only
+        thing left between that and deleting a file mid-stream.
         """
 
         class _NullSessions(FakeTautulli):
@@ -1825,7 +1834,7 @@ class TestTheStreamingVetoNeedsAReadableAnswer:
 
 
 class TestAnUnreadableRatingsDatasetKeepsInsteadOfCondemning:
-    """A stale IMDb dataset is the inverted failure: the missing evidence REMOVES a
+    """A stale IMDb dataset is the inverted failure. The missing evidence REMOVES a
     protection rather than adding one.
 
     With the dataset unreadable the lookup map is empty, which is indistinguishable from
@@ -1873,7 +1882,7 @@ class TestAnUnreadableRatingsDatasetKeepsInsteadOfCondemning:
         assert snapshot.degraded is True
 
         rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
-        # One movie and one season, so the fix is pinned on both fact builders -- a field
+        # One movie and one season, so this is pinned on both fact builders. A field
         # populated on one path and not the other silently moves scores on the other.
         for key in ("radarr:1:1", "sonarr:1:42:2"):
             stored = rows[key].facts_json
@@ -1969,7 +1978,7 @@ async def _run_scan_under_stubs(
             settings=settings,
             session_factory=factory,
             cache_engine=cache_engine,
-            box=None,  # type: ignore[arg-type]  # build_sources is stubbed; never read
+            box=None,  # type: ignore[arg-type]  # build_sources is stubbed, never read
         )
     finally:
         await engine.dispose()
@@ -1980,11 +1989,11 @@ async def _run_scan_under_stubs(
 class TestRunScanHistorySync:
     """The orchestrator's handling of the watch-history mirror sync.
 
-    The mirror is the primary condemning evidence -- dormancy and watcher counts are
-    read from it -- so a failed sync must degrade the snapshot (loud, viewable,
-    un-executable), never let the scan score quietly on a stale mirror. A play that
-    landed after the last successful sync is invisible to scoring; only degradation
-    keeps that item deletable-looking snapshot from being executed.
+    Dormancy and watcher counts are read from the mirror, so a failed sync must degrade
+    the snapshot (loud, viewable, un-executable) instead of letting the scan score
+    quietly on a stale mirror. A play that landed after the last successful sync is
+    invisible to scoring. Only degradation keeps a snapshot that looks safe to execute
+    from actually being executed.
     """
 
     async def test_a_failed_history_sync_degrades_the_snapshot(
@@ -2006,7 +2015,7 @@ class TestRunScanHistorySync:
         """A row Tautulli could not return is stepped over so the rest of the walk lands
         (``history_sync.MAX_UNSERVABLE_ROWS``), and the sync returns rather than raises. The
         missing play is still evidence the scan does not hold, in the condemn direction, so
-        the snapshot degrades on the count exactly as it does on a raise (rule 28)."""
+        the snapshot degrades on the count exactly as it does on a raise."""
 
         async def sync_with_gaps(engine: Any, tautulli: Any) -> history_sync.HistoryState:
             return history_sync.HistoryState(rows=10, earliest=None, latest=None, unservable=3)
@@ -2022,10 +2031,10 @@ class TestARepairedPolicyCannotBeReapedFrom:
     """A policy Reaper had to repair to load it is safe to SCAN on and unsafe to DELETE on.
 
     The rescale cannot move a score, so the numbers this scan produces are right. But the
-    body it ran was never saved by anyone: it is Reaper's repair of a stored row, and an
+    body it ran was never saved by anyone. It is Reaper's repair of a stored row, and an
     approval names a policy hash. So the scan degrades (``scan_runner._run_scan_locked``
-    appends the reason to ``pre_scan_degradations``), and ``planner.build_plan`` -- the one
-    call ``POST /api/runs`` makes before anything can be executed -- refuses a degraded
+    appends the reason to ``pre_scan_degradations``), and ``planner.build_plan`` (the one
+    call ``POST /api/runs`` makes before anything can be executed) refuses a degraded
     snapshot outright, so no run ever exists to execute.
 
     Driven through the real ``snapshot_service.scan`` and the real planner, so the chain
@@ -2108,7 +2117,7 @@ class TestARepairedPolicyCannotBeReapedFrom:
             await conn.run_sync(Base.metadata.create_all)
         factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
         # The Radarr the stubbed scan sourced its one movie from. build_sources is faked, so
-        # nothing wrote the row a real scan reads it from; the planner resolves every
+        # nothing wrote the row a real scan reads it from. The planner resolves every
         # candidate against it and refuses a movie whose Radarr is gone, so seed it here.
         async with factory() as s:
             s.add(
@@ -2126,7 +2135,7 @@ class TestARepairedPolicyCannotBeReapedFrom:
             settings=settings,
             session_factory=factory,
             cache_engine=cache_engine,
-            box=None,  # type: ignore[arg-type]  # build_sources is stubbed; never read
+            box=None,  # type: ignore[arg-type]  # build_sources is stubbed, never read
         )
         return snapshot, factory, engine
 
@@ -2142,14 +2151,13 @@ class TestARepairedPolicyCannotBeReapedFrom:
             assert snapshot.degraded is True
             reason = snapshot.degraded_reason or ""
             assert "movie policy needs saving again" in reason, reason
-            # The lane is named the way the app spells it, not by its raw media-type id: this
-            # sentence goes verbatim into the incomplete-scan notice, and "tv policy" read as
-            # a typo in the middle of it (rule 21).
+            # The lane is named the way the app spells it, not by its raw media-type id. This
+            # sentence goes verbatim into the incomplete-scan notice, and "tv policy" would
+            # read as a typo in the middle of it.
             assert "tv policy" not in reason, reason
-            # The remedy names the control that actually moved. This clause was an if/else
-            # over one flag, so a converted list policy was told to "check the points" -- and
-            # no points had moved, so nothing on the page it sent them to matched the
-            # instruction (#516).
+            # The remedy names the control that actually moved. An if/else over one flag
+            # would tell a converted list policy to "check the points" when no points had
+            # moved, so nothing on the page it sent them to would match the instruction.
             assert "check your keep rules" in reason, reason
             assert "check the points" not in reason, reason
 
@@ -2170,13 +2178,13 @@ class TestARepairedPolicyCannotBeReapedFrom:
         """The registry was unreadable while the shipped default was assembled, so this scan
         is judging with no keep rule naming the operator's own Plex lists.
 
-        It carries no ``PolicyRepair`` on purpose -- nothing was repaired and no save clears
-        it -- so the degradation loop keying on ``repairs`` alone let the scan through, and
-        the scan's own registry read is a separate query that can succeed on the same
-        transient error (rules 65/91).
+        It carries no ``PolicyRepair`` on purpose. Nothing was repaired, and no save clears
+        it. So a degradation loop keying on ``repairs`` alone would let the scan through,
+        since the scan's own registry read is a separate query that can succeed even after
+        the same transient error.
 
-        Both halves are asserted: that it degrades, and that it does NOT send the operator to
-        press a Save that would fix nothing.
+        Both halves are asserted. The scan degrades, and the scan does NOT send the
+        operator to press a Save that would fix nothing.
         """
         snapshot, _factory, engine = await self._run(
             tmp_path, cache_engine, monkeypatch, repairs=(), lists_unreadable=True
@@ -2193,7 +2201,7 @@ class TestARepairedPolicyCannotBeReapedFrom:
     async def test_the_same_scan_on_a_saved_policy_can_be_planned(
         self, tmp_path: Path, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The control. Identical evidence, identical condemned item; only the repair flag
+        """The control. Identical evidence, identical condemned item. Only the repair flag
         differs. Without this the test above would still pass if planning were broken for
         some unrelated reason."""
         from reaper.services.planner import build_plan
@@ -2214,15 +2222,15 @@ class TestARepairedPolicyCannotBeReapedFrom:
 
 
 class TestReleaseAgeRoundsTowardKeeping:
-    """Only the release YEAR is known, so the derived age must take the bound that
-    produces LESS deletion pressure: the end of the year, not the start.
+    """Only the release YEAR is known, so the derived age must take the bound that lowers
+    the deletion score the most. That is the end of the year, not the start.
 
-    The clock is frozen for both of these. They used to re-read the wall clock in the
-    assertion while production read it again inside ``_release_age_days``, so the two
-    sampled different instants: straddling UTC midnight between them is an off-by-one-day
-    failure, microseconds wide but real under xdist on a slow runner, arriving once at
-    00:00 UTC with no obvious cause. A frozen instant also lets the expected day count be
-    a literal rather than the same subtraction production does.
+    The clock is frozen for both of these tests. Reading the wall clock separately in the
+    assertion and in production (``_release_age_days``) would let the two sample different
+    instants. Straddling UTC midnight between them is an off-by-one-day failure,
+    microseconds wide but real under xdist on a slow runner, arriving once at 00:00 UTC
+    with no obvious cause. A frozen instant also lets the expected day count be a literal
+    rather than the same subtraction production does.
     """
 
     #: An arbitrary fixed instant. Nothing depends on the date itself, only on both sides
@@ -2231,7 +2239,7 @@ class TestReleaseAgeRoundsTowardKeeping:
 
     @pytest.fixture(autouse=True)
     def _frozen_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Patched on the module under test, not on reaper.clock: snapshot.py imported the
+        # Patched on the module under test, not on reaper.clock. snapshot.py imported the
         # name, so rebinding the source module would leave production reading the real one.
         monkeypatch.setattr("reaper.services.snapshot.utcnow", lambda: self.FROZEN)
 
@@ -2242,9 +2250,9 @@ class TestReleaseAgeRoundsTowardKeeping:
         assert obs.value == 9336.0  # 2000-12-31 -> 2026-07-24
 
     def test_january_first_would_overstate_the_age_by_almost_a_year(self) -> None:
-        """The rule 31 property, stated as the comparison it exists to prevent. A Jan-1
-        reading adds 365 days of age to a title nobody can date more precisely, which
-        over-matches every "older than N" rule the owner writes."""
+        """The rounding-favors-keeping property, stated as the comparison it exists to
+        prevent. A Jan-1 reading adds 365 days of age to a title nobody can date more
+        precisely, which over-matches every "older than N" rule the owner writes."""
         obs = _release_age_days(2000)
 
         assert isinstance(obs, Known)
@@ -2260,27 +2268,26 @@ class TestReleaseAgeRoundsTowardKeeping:
 class TestTheWindowScoredAgainstIsThePolicysOwn:
     """The span a watcher count was taken over is the span its reach is checked against.
 
-    ``_watch_stats`` COUNTS ``distinct_watchers`` over the policy's popularity window, and
-    since rule 140 every reader of that count checks ``Facts.history_reach_days`` against the
-    span the count claims to cover. Hand one span to the counter and a different one to
-    ``score`` and you compare a count to a reach it was never taken over, which fails OPEN:
-    measured, a 730-day window over a 400-day mirror scored against the 365-day default takes
-    the full 20 points of ``FEW_WATCHERS`` pressure at coverage 1.00, where production
-    withholds them at coverage 0.00 (``engine/signals.py``, above ``_branch_signal``).
+    ``_watch_stats`` counts ``distinct_watchers`` over the policy's popularity window, and
+    every reader of that count checks ``Facts.history_reach_days`` against the same span
+    the count claims to cover. Handing one span to the counter and a different one to
+    ``score`` compares a count to a reach it was never taken over, and that fails open. For
+    example, a 730-day window over a 400-day mirror, scored against a 365-day default,
+    takes the full 20 points of ``FEW_WATCHERS`` deletion score at coverage 1.00, where
+    production would withhold those points at coverage 0.00 (``engine/signals.py``, above
+    ``_branch_signal``).
 
-    **Both consumers are pinned, not just one.** "One span, two readers" is the invariant, and
-    either drifting to its own 365 default reopens the hole. Spying on ``score`` alone proves
-    the line it watches and nothing about the count built four hundred lines above it.
+    Both consumers are pinned, not just one. "One span, two readers" is the invariant, and
+    either one drifting to its own 365 default reopens the hole. Spying on ``score`` alone
+    would prove only the line it watches, nothing about the count built earlier.
 
-    **365 is deliberately excluded from the sweep** (rule 141). It is the default of both
-    callees *and* of both shipped policies, so it is the one value that cannot tell a window
-    that was passed from one that was omitted. This test replaces a sweep that lived on the
-    retired replay engine, where every other fixture pinned 365 and hid exactly this for a
-    release; the live lane had no equivalent, which is the gap deleting that engine exposed.
+    365 is deliberately excluded from the sweep. It is the default of both callees and of
+    both shipped policies, so it is the one value that cannot tell a window that was passed
+    from one that was omitted.
 
     Each spy reads its kwarg with ``.get`` rather than subscripting, so an omission fails on
-    the VALUE that was used. Subscripting raises ``KeyError`` and passes for the wrong reason:
-    it pins that an argument arrived, never which one.
+    the VALUE that was used. Subscripting raises ``KeyError`` and would pass for the wrong
+    reason, pinning only that an argument arrived, never which one.
     """
 
     @pytest.mark.parametrize("window", [30, 90, 730])
@@ -2294,7 +2301,7 @@ class TestTheWindowScoredAgainstIsThePolicysOwn:
         counted: list[int | None] = []
         scored: list[int | None] = []
         real_watch_stats = snapshot_service._watch_stats
-        # Captured through the module deliberately: the spy below rebinds this name IN
+        # Captured through the module deliberately. The spy below rebinds this name IN
         # `snapshot`, so taking it from `engine.signals` would restore a different binding
         # and production would keep calling the spy. `score` is imported there rather than
         # defined, which is what mypy is objecting to.
@@ -2313,7 +2320,7 @@ class TestTheWindowScoredAgainstIsThePolicysOwn:
 
         movie_policy = DEFAULT_MOVIE_POLICY.model_copy(
             update={
-                # A tuple, not a list: `gates` is declared `tuple[GateSetting, ...]`, and a
+                # A tuple, not a list. `gates` is declared `tuple[GateSetting, ...]`, and a
                 # list round-trips with a pydantic serializer warning on every model_dump.
                 "gates": tuple(
                     g.model_copy(update={"window_days": window, "enabled": True})
@@ -2323,7 +2330,7 @@ class TestTheWindowScoredAgainstIsThePolicysOwn:
                 )
             }
         )
-        # The premise, asserted rather than assumed: the sweep is worthless if the policy
+        # The premise, asserted rather than assumed. The sweep is worthless if the policy
         # copy silently kept 365.
         assert movie_policy.popularity_window_days() == window
 
@@ -2351,13 +2358,13 @@ class TestTheWindowScoredAgainstIsThePolicysOwn:
 
 
 # ---------------------------------------------------------------------------
-# One scan at a time -- the claim lives inside run_scan, shared by every caller.
+# One scan at a time: the claim lives inside run_scan, shared by every caller.
 # ---------------------------------------------------------------------------
 
 
 class TestOneScanAtATime:
     """The browser's scan button and the scheduler's cron job both come through
-    ``run_scan``, and the one-at-a-time claim lives inside it -- so the two can never
+    ``run_scan``, and the one-at-a-time claim lives inside it. So the two can never
     overlap and race each other's grace-clock writes, whoever started first."""
 
     def _stub_pipeline(self, monkeypatch: pytest.MonkeyPatch, parked_scan: Any) -> None:
@@ -2433,7 +2440,7 @@ class TestOneScanAtATime:
                 "settings": settings,
                 "session_factory": factory,
                 "cache_engine": cache_engine,
-                "box": None,  # build_sources is stubbed; never read
+                "box": None,  # build_sources is stubbed, never read
             }
             task = asyncio.create_task(scan_runner.run_scan(**kwargs))
             await asyncio.wait_for(started.wait(), timeout=5)
@@ -2453,6 +2460,7 @@ class TestOneScanAtATime:
     ) -> None:
         """A scan that dies must not leave the claim held, or no scan could ever run
         again without a restart."""
+
         from types import SimpleNamespace
 
         from reaper.services import scan_runner
@@ -2496,7 +2504,7 @@ class TestOneScanAtATime:
         factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
         assert scan_runner._claim_scan()  # a scan is "running"
         try:
-            # Must return without raising -- the refusal is caught and logged.
+            # Must return without raising. The refusal is caught and logged.
             await scheduler.scheduled_scan(settings, factory, cache_engine, None)  # type: ignore[arg-type]
         finally:
             scan_runner._release_scan()
@@ -2504,19 +2512,20 @@ class TestOneScanAtATime:
 
 
 # ---------------------------------------------------------------------------
-# Keep History coverage -- a user Tautulli is not recording makes "nobody watched
+# Keep History coverage: a user Tautulli is not recording makes "nobody watched
 # it" untrustworthy, so the scan degrades.
 # ---------------------------------------------------------------------------
 
 
 class TestATautulliSpineFailureDegradesRatherThanKillingTheScan:
-    """The library listing is the scan's spine, and it had no handler at all.
+    """The library listing is the scan's spine, and it must degrade like every other
+    evidence source, not abort the run.
 
-    Every other evidence source degrades: an unreachable Radarr, a failed Plex sweep, a
-    stalled mirror. A Tautulli library-list timeout raised straight through the gather
-    and aborted the run with no snapshot to look at -- so a transient hiccup cost the
-    operator their scan instead of costing them a plan. With no spine rows, nothing
-    matches, which abstains and keeps.
+    An unreachable Radarr, a failed Plex sweep, and a stalled mirror all degrade. A
+    Tautulli library-list timeout must not raise straight through the gather and abort
+    the run with no snapshot to look at, or a transient hiccup would cost the operator
+    their scan instead of costing them a plan. With no spine rows, nothing matches, which
+    abstains and keeps.
     """
 
     async def test_a_failed_library_list_degrades_and_still_produces_a_snapshot(
@@ -2551,14 +2560,15 @@ class TestATautulliSpineFailureDegradesRatherThanKillingTheScan:
     async def test_one_outage_reads_as_one_failure_per_lane_in_whole_sentences(
         self, session: AsyncSession, cache_engine: AsyncEngine
     ) -> None:
-        """The notice the operator reads is prose, and it was neither of those things.
+        """The notice the operator reads is prose, made of whole sentences with no
+        duplicates.
 
         ``build_index`` runs once per media lane against ONE reasons list, so a single
-        spine timeout reached its ``degrade`` twice. Undifferentiated, that appended the
-        same sentence verbatim twice and one outage read as two (#513). And every reason
-        was an unterminated fragment joined on ``"; "``, so the last one fused into the
-        sentence each notice writes after it (#514). Both are proven here against the
-        assembled string, because that string is the whole of what is rendered.
+        spine timeout reaches its ``degrade`` twice. Left undifferentiated, that would
+        append the same sentence verbatim twice, making one outage read as two. And each
+        reason must not be an unterminated fragment joined on ``"; "``, or the last one
+        would fuse into the sentence each notice writes after it. Both are proven here
+        against the assembled string, because that string is the whole of what is rendered.
         """
         await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
         await _seed_play(cache_engine, row_id=1, rating_key=99)
@@ -2585,23 +2595,23 @@ class TestATautulliSpineFailureDegradesRatherThanKillingTheScan:
         )
         reason = snapshot.degraded_reason or ""
 
-        # #513: the same failure in the two lanes is told apart by the lane, so neither
+        # The same failure in the two lanes is told apart by the lane, so neither
         # sentence is a verbatim repeat of the other.
         assert "Movies: the Plex library listing could not be read" in reason, reason
         assert "TV shows: the Plex library listing could not be read" in reason, reason
         sentences = [s.strip() for s in reason.split(". ") if s.strip()]
         assert len(sentences) == len(set(sentences)), reason
 
-        # #514: whole sentences. No fragment joiner survives, and the string terminates --
-        # every notice rendering it writes more prose immediately after.
+        # Whole sentences only. No fragment joiner survives, and the string terminates
+        # cleanly, since every notice rendering it writes more prose immediately after.
         assert "; " not in reason, reason
         assert reason.endswith("."), reason
 
 
 class TestKeepHistoryCoverage:
     """A user with Tautulli's per-user Keep History off is invisible in the
-    history table: everything only they watch looks never-played. The scan must degrade
-    while that is true -- and while it cannot even check."""
+    history table, so everything only they watch looks never-played. The scan must
+    degrade while that is true, and while it cannot even check."""
 
     async def test_an_active_user_with_recording_off_degrades(self) -> None:
         from reaper.services.scan_runner import _keep_history_degradations
@@ -2649,14 +2659,14 @@ class TestKeepHistoryCoverage:
         assert reasons == []
 
     async def test_an_unparseable_flag_is_unreadable_not_true(self) -> None:
-        """`bool("false")` is True, and that was the whole bug.
+        """`bool("false")` is True, which is exactly the trap this function must avoid.
 
         The docstring on `_flag` promises None for anything unreadable, and
-        `_keep_history_degradations` is built on that promise -- an unreadable value goes
-        in the cannot-confirm bucket and degrades. Falling back to plain truthiness read
+        `_keep_history_degradations` is built on that promise. An unreadable value goes in
+        the cannot-confirm bucket and degrades. Falling back to plain truthiness would read
         every non-empty string as "yes, recording": no degradation, the scan stays
-        executable, and every title only that user watches scores as never-played. Which
-        is the one case this whole function exists to catch.
+        executable, and every title only that user watches scores as never-played. That is
+        the one case this whole function exists to catch.
         """
         from reaper.services.scan_runner import _flag
 
@@ -2678,10 +2688,10 @@ class TestKeepHistoryCoverage:
         assert _flag("not a row", "f") is None
 
     async def test_a_truthy_unparseable_flag_degrades_end_to_end(self) -> None:
-        """The contract, through the caller: an unreadable value degrades the scan.
+        """The contract, through the caller. An unreadable value degrades the scan.
 
-        It used to pass straight through as "recording", because the value is a non-empty
-        string and every non-empty string is truthy.
+        A plain truthiness check would pass it straight through as "recording", because
+        the value is a non-empty string and every non-empty string is truthy.
         """
         from reaper.services.scan_runner import _keep_history_degradations
 
@@ -2698,7 +2708,7 @@ class TestKeepHistoryCoverage:
 
     async def test_a_spelled_out_false_is_read_as_off_not_as_unreadable(self) -> None:
         """ "false" is a value we DO understand, so it names the user rather than landing
-        in the vaguer cannot-confirm bucket. Both degrade; only the wording differs."""
+        in the vaguer cannot-confirm bucket. Both degrade. Only the wording differs."""
         from reaper.services.scan_runner import _keep_history_degradations
 
         reasons = await _keep_history_degradations(
@@ -2761,12 +2771,13 @@ class TestKeepHistoryCoverage:
 class TestTheWatchBlindnessGuardThroughAWholeScan:
     """The guard end to end, because every other test for it calls a function directly.
 
-    Deleting all four of the scan's handoffs -- ``watch_marks`` into ``season_scan.gather``,
-    ``watch_blind_reason`` into ``build_facts``, the ``watch_evidence.record`` call and the
-    ``watch_blind_items`` assignment -- once left the whole suite green, so the guard was
-    proven as a function and unproven as a feature (rule 118). ``mypy`` now refuses the first
-    one; these pin the rest, on both lanes, by the only thing an operator would notice: an item
-    that condemned on a false zero stops condemning.
+    Deleting any of the scan's four handoffs (``watch_marks`` into
+    ``season_scan.gather``, ``watch_blind_reason`` into ``build_facts``, the
+    ``watch_evidence.record`` call, and the ``watch_blind_items`` assignment) must not
+    leave the whole suite green, or the guard would be proven as a function and unproven
+    as a feature. ``mypy`` refuses the first one to be deleted outright. These tests pin
+    the rest, on both lanes, by the only thing an operator would notice: an item that
+    condemned on a false zero stops condemning.
 
     The two items are the ones ``TestScanPipelineEndToEnd`` asserts condemn, so the flip is
     against a verdict this suite already pins in the other direction.
@@ -2810,8 +2821,8 @@ class TestTheWatchBlindnessGuardThroughAWholeScan:
         self, session: AsyncSession, cache_engine: AsyncEngine
     ) -> None:
         # An earlier scan measured three watchers for the dormant movie and two for the
-        # dormant season. The mirror holds no plays under either item's current Plex key, so
-        # both read zero now -- a fall no library can perform.
+        # dormant season. The mirror holds no plays under either item's current Plex key,
+        # so both read zero now, a fall no library can actually perform.
         await self._prepare(cache_engine)
         session.add_all(
             [
@@ -2832,8 +2843,8 @@ class TestTheWatchBlindnessGuardThroughAWholeScan:
         assert watch_evidence.BLIND_REASON in (rows["radarr:1:1"].explanation_json or "")
         assert watch_evidence.BLIND_REASON in (rows["sonarr:1:42:2"].explanation_json or "")
         # And the count Settings reads is the count of what actually happened. Two items
-        # went blind; the third season held below is collateral and is NOT counted, because
-        # its own plays read fine.
+        # went blind. The third season held below is collateral and is NOT counted,
+        # because its own plays read fine.
         assert snapshot.watch_blind_items == 2
 
     async def test_a_blind_season_holds_the_sibling_a_viewer_is_about_to_watch(
@@ -2841,12 +2852,12 @@ class TestTheWatchBlindnessGuardThroughAWholeScan:
     ) -> None:
         """The sharp end, and the reason the blind reason is decided before the roll-up.
 
-        Season 3's own plays are perfectly readable, so it takes no ``Unknown`` of its own and
-        scores and condemns at full confidence. What it loses when season 2 goes blind is the
-        mid-binge guard: the viewer's place in the show is read from the same mirror, so a
-        viewer who finished season 2 leaves no trace, ``active_progress`` expires them, and the
-        season they were about to watch becomes prunable. A protection that fires and does not
-        protect (rule 140).
+        Season 3's own plays are perfectly readable, so it takes no ``Unknown`` of its own
+        and scores and condemns at full confidence. What it loses when season 2 goes blind
+        is the mid-binge guard. The viewer's place in the show is read from the same
+        mirror, so a viewer who finished season 2 leaves no trace, ``active_progress``
+        expires them, and the season they were about to watch becomes prunable. A
+        protection that fires without protecting anything.
         """
         await self._prepare(cache_engine)
         session.add(
@@ -2861,7 +2872,7 @@ class TestTheWatchBlindnessGuardThroughAWholeScan:
         # Season 3 condemns in TestScanPipelineEndToEnd on these same fixtures.
         assert rows["sonarr:1:42:3"].verdict != "condemn"
         # Held for the honest reason, which names neither a short mirror nor a cause it did
-        # not establish: the two unanswerable reasons are separate strings for that reason.
+        # not establish. The two unanswerable reasons are separate strings for that reason.
         explanation = rows["sonarr:1:42:3"].explanation_json or ""
         assert season_pruning.PROGRESS_UNREADABLE_REASON in explanation
         assert season_pruning.PROGRESS_UNESTABLISHABLE_REASON not in explanation
@@ -2872,8 +2883,8 @@ class TestTheWatchBlindnessGuardThroughAWholeScan:
         self, session: AsyncSession, cache_engine: AsyncEngine
     ) -> None:
         # The property that makes the guard survive its own first firing. If this scan wrote
-        # its zero over the mark, the NEXT scan would see 0 -> 0, call it honest, and condemn
-        # on the same false evidence -- with nothing left anywhere to notice.
+        # its zero over the mark, the NEXT scan would see 0 -> 0, call it honest, and
+        # condemn on the same false evidence, with nothing left anywhere to notice.
         await self._prepare(cache_engine)
         session.add(
             WatchHighWater(media_key="radarr:1:1", watchers_all_time=3, updated_at=utcnow())
@@ -2889,22 +2900,24 @@ class TestTheWatchBlindnessGuardThroughAWholeScan:
     async def test_a_degraded_scan_still_records_what_it_measured(
         self, session: AsyncSession, cache_engine: AsyncEngine
     ) -> None:
-        """The mark write is deliberately NOT gated on ``degraded``, and this pins it (#276).
+        """The mark write is deliberately NOT gated on ``degraded``, and this pins it.
 
-        Rule 116 gates a degraded scan's side effects because they act on the condemned set:
-        a grace clock, the shelf and a Discord post each push an item toward deletion, so
-        skipping them is the keep direction. This write is the opposite kind. The mark is what
-        a LATER scan reads to WITHHOLD pressure, so skipping it removes a reason to keep, and
-        ``degraded`` is snapshot-global -- it fires on one *arr being unreachable, on sessions
-        or ratings being unreadable, none of which say anything about this item's plays.
+        A degraded scan's side effects are gated elsewhere because they act on the
+        condemned set. A grace clock, the shelf, and a Discord post each push an item
+        toward deletion, so skipping them is the keep direction. This write is the
+        opposite kind. The mark is what a LATER scan reads to lower the deletion score, so
+        skipping it removes a reason to keep. ``degraded`` is snapshot-global. It fires on
+        one *arr being unreachable, or on sessions or ratings being unreadable, none of
+        which say anything about this item's plays.
 
-        So: a title watched by one person, on a scan degraded for an unrelated reason. Gate the
-        write and no mark is stored; when this item's Plex key later churns, the fall has
-        nothing to fall from and it reads Known(0) with maximum dormancy -- the exact defect
-        ``watch_evidence`` exists to prevent, arriving through the guard meant to be careful.
+        Consider a title watched by one person, on a scan degraded for an unrelated
+        reason. Gating the write would store no mark. When this item's Plex key later
+        churns, the fall would have nothing to fall from and would read Known(0) with
+        maximum dormancy, the exact defect ``watch_evidence`` exists to prevent, arriving
+        through the guard meant to be careful.
         """
         await self._prepare(cache_engine)
-        # radarr:1:1 carries Plex rating key 11, so this play is ITS play -- unlike the
+        # radarr:1:1 carries Plex rating key 11, so this play is ITS play, unlike the
         # anchor play in `_prepare`, whose key no candidate here holds.
         await _seed_play(cache_engine, row_id=2, rating_key=11)
 
@@ -2938,8 +2951,8 @@ class TestAProtectionSwitchDoesNotMoveTheEvidence:
 
     ``PolicyBody.evidence_hash`` lets a gate edit replay off the frozen Facts instead of
     demanding a scan, and that is only honest if a scan under the edited policy would have
-    frozen the same bytes. Argued from the code it is nearly obvious -- no fact builder
-    branches on the gate list, and ``evaluate_all`` reads nothing but ``Facts`` -- but the
+    frozen the same bytes. Argued from the code it is nearly obvious: no fact builder
+    branches on the gate list, and ``evaluate_all`` reads nothing but ``Facts``. But the
     hash is what stands between an operator and a confident wrong preview, so it is
     measured here rather than reasoned about. A gather-phase read of a gate setting added
     later fails this without anyone having to remember why it matters.
@@ -3002,8 +3015,8 @@ class TestAProtectionSwitchDoesNotMoveTheEvidence:
         assert on.scoring_hash() != off.scoring_hash()
 
         # A warm-up under the SAME policy, because one piece of frozen evidence is stateful
-        # across scans: the came-back ledger (#553) has no row for a title the first scan
-        # ever sees, so that scan freezes `Unknown` where every later one freezes `Absent`.
+        # across scans. The came-back ledger has no row for a title the first scan ever
+        # sees, so that scan freezes `Unknown` where every later one freezes `Absent`.
         # That is the ledger filling in, not the policy moving, and comparing scan one
         # against scan two would read it as the latter.
         await self._scan_under(session, cache_engine, on)
@@ -3101,23 +3114,25 @@ class TestAProtectionSwitchDoesNotMoveTheEvidence:
 
 
 class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
-    """The claim #491 asks for, driven through two real scans rather than argued.
+    """Checks the season-rule replay against two real scans rather than an argument from
+    the code.
 
-    A season's guard result is decided per SHOW, from inputs that never reached ``Facts``,
-    so freezing the guard's *output* explained a scan and could not re-decide one, and every
-    season rule blanked the simulator. The scan now freezes the plan's inputs
-    (``db.models.SeasonPruneEvidence``) and the replay re-derives the guard from them.
+    A season's guard result is decided per SHOW, from inputs that never reached ``Facts``.
+    Freezing only the guard's output would explain a scan without letting it re-decide
+    one, blanking the simulator for every season rule. The scan freezes the plan's inputs
+    instead (``db.models.SeasonPruneEvidence``), and the replay re-derives the guard from
+    them.
 
-    The bar is exactness, not plausibility (``docs/LEARNINGS.md`` §8): a replayed answer must
-    equal what a real scan under that policy would produce. So every test here compares
-    against a **second real scan**, never against an expectation typed by hand.
+    The bar is exactness, not plausibility (``docs/LEARNINGS.md`` §8): a replayed answer
+    must equal what a real scan under that policy would produce. So every test here
+    compares against a second real scan, never against an expectation typed by hand.
 
-    **It compares the guard per season, not the verdict tally.** The tally was the first
-    draft and it was too coarse to see four of the nine settings: a season already held by
-    keep-last is held whatever ``protect_incomplete_seasons`` says, so the headline sits
-    still while the reason under it changes. Reason-level, every setting is visible, which
-    is what lets the sweep below cover all nine rather than the three a tally could
-    discriminate (rule 145: prove the guard against the population it claims).
+    It compares the guard per season, not the verdict tally. The tally alone is too coarse
+    to see four of the nine settings: a season already held by keep-last is held whatever
+    ``protect_incomplete_seasons`` says, so the headline sits still while the reason under
+    it changes. Reason-level, every setting is visible, which is what lets the sweep below
+    cover all nine settings rather than the three a tally could discriminate. A guard has
+    to be proven against the whole population it claims to cover.
     """
 
     #: Both scans and the replay share one instant. The frozen bundle carries ages in days
@@ -3142,12 +3157,13 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
     def _series(cls) -> list[dict[str, Any]]:
         """Seasons 0 to 6, with one special and one Sonarr is still filling.
 
-        Shaped so each of the nine settings can *change a reason*. On the file-wide fixture
-        -- five ordinary seasons, all complete, no specials -- ``keep_specials`` and
-        ``protect_incomplete_seasons`` change nothing whatever they are set to, so a replay
-        that ignored either matched the scan exactly and this class reported a proof it did
-        not have. Season 4 wants ten episodes and holds five (``is_incomplete``); it sits
-        outside the default keep-last-2 window so the switch is the only thing holding it.
+        Shaped so each of the nine settings can *change a reason*. On the file-wide
+        fixture, five ordinary seasons, all complete, with no specials, ``keep_specials``
+        and ``protect_incomplete_seasons`` change nothing whatever they are set to, so a
+        replay that ignored either would match the scan exactly and this class would
+        report a proof it did not have. Season 4 wants ten episodes and holds five
+        (``is_incomplete``). It sits outside the default keep-last-2 window, so the switch
+        is the only thing holding it.
         """
         series = dict(_series_payloads()[0])
         series["tvdbId"] = cls.TVDB
@@ -3284,8 +3300,9 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         """The production replay's guard for each season, through the route's own helper."""
         from reaper.engine.facts_codec import facts_from_dict
 
-        # The same per-show memo the production loop keeps -- one thaw and one plan per show,
-        # so a plan cached for one season is the plan its siblings are judged against here too.
+        # The same per-show memo the production loop keeps: one thaw and one plan per
+        # show, so a plan cached for one season is the plan its siblings are judged
+        # against here too.
         seasons = simulate._SeasonReplay(
             await simulate._season_payloads(session, snapshot_id=snapshot.id),
             policy=season_evidence.SeasonPolicy.from_body(tv_policy),
@@ -3319,9 +3336,9 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
 
     #: One edit per season setting, each away from its shipped default and each shaped to
     #: change a guard reason on the fixture above. Swept individually rather than all at
-    #: once because the settings MASK each other: with keep-last raised to 4 the incomplete
-    #: season is held by rank anyway, so a combined edit hides whichever setting the others
-    #: already cover (rule 145).
+    #: once because the settings MASK each other. With keep-last raised to 4 the incomplete
+    #: season is held by rank anyway, so a combined edit would hide whichever setting the
+    #: others already cover.
     SETTINGS: ClassVar[list[dict[str, Any]]] = [
         {"keep_last_seasons": 4},
         {"keep_first_season": False},
@@ -3345,15 +3362,15 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
 
         One road carries a ``PolicyBody`` to the planner, ``SeasonPolicy.from_body``, and
         the scan and the simulator both take it. A value that reaches the carrier and not
-        the planner is invisible until it is compared under a body where it differs from the
-        default (rule 141, rule 144), and invisible per-setting until each is swept alone.
+        the planner is invisible until it is compared under a body where it differs from
+        the default, and invisible per-setting until each is swept alone.
 
-        **The first assertion is the discriminating one**, and it became so when the scan's
-        second road was removed. While the scan unpacked the body itself, a value dropped in
-        ``from_body`` moved the replay alone and the second assertion caught it. Now both
-        sides read the same carrier, so such a value is dropped on both and they still agree;
-        what reds instead is the two scans agreeing when the edit should have moved them.
-        Neither assertion is a sanity check. Only this docstring changed when the road went.
+        Both the scan and the replay read the value through the same carrier, so a value
+        silently dropped in ``from_body`` would be dropped on both sides and they would
+        still agree with each other. That is what makes the first assertion below the
+        discriminating one: it fails when the edit reaches neither side, catching the case
+        the second assertion alone could pass by comparing two identical, wrong answers.
+        Neither assertion is a sanity check on its own.
         """
         await self._seed(cache_engine)
         edited = self._tv(**edit)
@@ -3380,7 +3397,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
     async def test_the_replay_is_not_answering_the_old_policy(
         self, session: AsyncSession, cache_engine: AsyncEngine
     ) -> None:
-        """The control, and the shape #490's own control was added for.
+        """The negative control for the sweep above.
 
         A replay that ignored the draft and re-derived under the scan's policy would return
         the first scan's guards, which the sweep above cannot distinguish from a correct
@@ -3403,7 +3420,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
     ) -> None:
         """The same claim at the granularity the operator actually reads.
 
-        The sweep above compares guards, which is sharper; this compares the four numbers on
+        The sweep above compares guards, which is sharper. This compares the four numbers on
         the panel, through the real ``_replay_simulation``, so the thing being promised to
         the operator is the thing that was measured.
         """
@@ -3471,14 +3488,15 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
     ) -> None:
         """The one direction that cannot be answered, and why the bundle is three-state.
 
-        With the guard off the scan skips the Sonarr episode fan-out entirely, so the map the
-        sequential guard reads was never gathered. Replaying anyway would fall back to
-        whole-season protection and show a preview no scan will produce, which is worse than
-        a blank. Turning it OFF is the answerable direction and is covered by the sweep.
+        With the guard off the scan skips the Sonarr episode fan-out entirely, so the map
+        the sequential guard reads was never gathered. Replaying anyway would fall back to
+        whole-season protection and show a preview no scan will produce, which is worse
+        than a blank. Turning it OFF is the answerable direction and is covered by the
+        sweep.
 
         The state below is the only producer of this refusal. A scan that asked and got no
-        answer looks the same in ``finals`` and is not the same state, which is what the flag
-        asserted here separates (#500).
+        answer looks the same in ``finals`` as one that never asked, but the two are not
+        the same state, which is what the flag asserted here separates.
         """
         await self._seed(cache_engine)
         first, before = await self._scan_under(
@@ -3499,16 +3517,16 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
     async def test_a_sonarr_that_will_not_answer_replays_off_what_the_scan_planned_from(
         self, session: AsyncSession, cache_engine: AsyncEngine
     ) -> None:
-        """One flaky show used to cost the operator the whole TV preview (#500).
+        """One flaky show must not cost the operator the whole TV preview.
 
-        ``season_scan._episodes_for`` logs and returns when Sonarr will not answer, so a scan
-        that ran with the hold ON stores no episode map for that show -- and the scan itself
-        then planned from the empty one, which only ever keeps more (rule 28's sanctioned
-        exception). Refusing over it withheld every TV-lane preview, including edits that
-        touch no season at all, until a scan in which every show's read succeeded.
+        ``season_scan._episodes_for`` logs and returns when Sonarr will not answer, so a
+        scan that ran with the hold ON stores no episode map for that show, and the scan
+        itself then plans from the empty one, which only ever keeps more. Refusing to
+        replay over it would withhold every TV-lane preview, including edits that touch no
+        season at all, until a scan in which every show's read succeeded.
 
         The claim replacing that refusal is the class's own bar, so it is measured the same
-        way: against a second real scan, with Sonarr just as mute, under the edited policy.
+        way, against a second real scan, with Sonarr just as mute, under the edited policy.
         """
         await self._seed(cache_engine)
         first, before = await self._scan_under(
@@ -3547,11 +3565,11 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
     async def test_a_show_whose_every_season_is_kept_is_still_recorded(
         self, session: AsyncSession, cache_engine: AsyncEngine
     ) -> None:
-        """The skip this change removed, as a property rather than as a diff.
+        """The episodes read must run even for a show with no prunable season.
 
-        The episodes read used to be spared for a show with no prunable season, which is
-        exactly the show a lowered keep-last makes prunable. Its bundle would then carry no
-        episode map and the whole lane would refuse, on the edit the season card exists for.
+        That is exactly the show a lowered keep-last makes prunable. Skipping the read for
+        it would leave its bundle carrying no episode map, and the whole lane would refuse
+        on the edit the season card exists for.
         """
         await self._seed(cache_engine)
         held, rows = await self._scan_under(session, cache_engine, self._tv(keep_last_seasons=6))
@@ -3574,11 +3592,11 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         this evidence, so nothing in ``PolicyBody`` can tell the simulator to stand down and
         the stored evidence has to be asked directly.
 
-        **Constructed with a DELETE, and deliberately not claimed to be the upgrade case.**
+        Constructed with a DELETE, and deliberately not claimed to be the upgrade case.
         A snapshot written before this table existed also predates the ``evidence_hash``
-        re-scoping that made the season fields replayable, so it refuses one tier earlier and
-        never reaches here. This pins the mechanism; the population it covers is a bundle lost
-        or never written for some other reason.
+        re-scoping that made the season fields replayable, so it refuses one tier earlier
+        and never reaches here. This pins the mechanism. The population it covers is a
+        bundle lost or never written for some other reason.
         """
         await self._seed(cache_engine)
         first, before = await self._scan_under(session, cache_engine, self._tv())
@@ -3597,10 +3615,10 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
     ) -> None:
         """Driven against the interlock directly, because nothing can reach it from outside.
 
-        Every season row a scan writes carries exactly one ``SEASON_PROGRESSION`` result, so
-        a row without one is corruption rather than a state the pipeline produces -- and an
-        unreachable tripwire with no test is one refactor away from silently gone (rule 118).
-        What it stops is the replay returning the row's other gates unchanged, which drops the
+        Every season row a scan writes carries exactly one ``SEASON_PROGRESSION`` result,
+        so a row without one is corruption rather than a state the pipeline produces. An
+        unreachable tripwire with no test is one refactor away from silently gone. What it
+        stops is the replay returning the row's other gates unchanged, which drops the
         season lane while reporting an exact answer.
         """
         await self._seed(cache_engine)
@@ -3620,12 +3638,13 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
     async def test_a_bundle_that_does_not_describe_the_season_refuses(
         self, session: AsyncSession, cache_engine: AsyncEngine
     ) -> None:
-        """Parsing is not describing, and this is the one fail-open the review found.
+        """Parsing is not describing, so a bundle that decodes must still be checked for
+        what it actually lists.
 
-        ``guard_result`` answers a season the plan never saw with its terminal arm -- a clean
-        ABSTAIN reading "checked: prunable by the keep-last / keep-first season rules" -- so a
-        bundle that decodes but lists no seasons would replay every row of that show with the
-        season-protection lane silently absent, condemnable on score alone, under
+        ``guard_result`` answers a season the plan never saw with its terminal arm, a clean
+        ABSTAIN reading "checked: prunable by the keep-last / keep-first season rules". A
+        bundle that decodes but lists no seasons would replay every row of that show with
+        the season-protection lane silently absent, condemnable on score alone, under
         ``exact: true``. Missing evidence has to produce a refusal, never a preview.
         """
         await self._seed(cache_engine)
@@ -3693,13 +3712,14 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
     async def test_a_season_the_plan_dropped_refuses_rather_than_answering_clean(
         self, session: AsyncSession, cache_engine: AsyncEngine
     ) -> None:
-        """Membership belongs to the plan, not to the payload's season list (#501).
+        """Membership belongs to the plan, not to the payload's season list.
 
-        ``plan_series_prune`` keeps only content-bearing seasons, so a bundle listing a season
-        with no episode file passed a check against ``bundle.seasons`` and still reached
-        ``guard_result``'s terminal arm -- a clean ABSTAIN reading "checked: prunable by the
-        keep-last / keep-first season rules" over a row whose whole season-protection lane was
-        absent, condemnable on score alone, under ``exact: true``.
+        ``plan_series_prune`` keeps only content-bearing seasons, so a bundle listing a
+        season with no episode file would pass a check against ``bundle.seasons`` and
+        still reach ``guard_result``'s terminal arm, a clean ABSTAIN reading "checked:
+        prunable by the keep-last / keep-first season rules" over a row whose whole
+        season-protection lane was absent, condemnable on score alone, under
+        ``exact: true``.
 
         The two sets agree only while ``_judge_series`` writes no Candidate row for a fileless
         season, which is an invariant held in another module and not by this guard. Driven by
@@ -3732,12 +3752,12 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
 
 
 class TestTheScanRecordsTheListsItGatheredUnder:
-    """The write side of ``Snapshot.list_config_hash`` (#512).
+    """The write side of ``Snapshot.list_config_hash``.
 
-    ``api.simulate.simulate`` refuses whenever the recorded value does not match the registry,
-    so a scan that stopped recording it would not fail loudly: it would leave the panel
-    permanently refusing, which reads as "run a scan" forever. The read side is pinned in
-    ``test_simulate_hardening``; this is the half that fills it in.
+    ``api.simulate.simulate`` refuses whenever the recorded value does not match the
+    registry, so a scan that stopped recording it would not fail loudly. It would leave
+    the panel permanently refusing, which reads as "run a scan" forever. The read side is
+    pinned in ``test_simulate_hardening``. This is the half that fills it in.
     """
 
     async def test_it_records_the_fingerprint_of_the_lists_it_synced(
@@ -3757,8 +3777,8 @@ class TestTheScanRecordsTheListsItGatheredUnder:
         )
 
         # Read back through the same helper the route compares with, off a fresh engine on
-        # the same install: the scan already committed it, so the assertion is that the two
-        # agree rather than that some hash was passed (rule 141).
+        # the same install. The scan already committed it, so the assertion is that the two
+        # agree, not merely that some hash was passed.
         settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         try:

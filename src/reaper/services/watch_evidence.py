@@ -1,63 +1,63 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Has this item's watch history gone unreadable since we last looked?
 
-A Plex rating key is not stable. Let a file go away and come back and Plex issues a NEW
-one, while Tautulli keeps every earlier play filed under the OLD one. That is established
+A Plex rating key is not stable. Let a file go away and come back, and Plex issues a new
+one, while Tautulli keeps every earlier play filed under the old one. That is established
 from Tautulli's source, not assumed: the only code that rewrites a historical rating key is
 ``datafactory.update_metadata_details``, reached from the "Fix Metadata" button or the API
 command of the same name, and no scheduled task, websocket handler or library refresh calls
 it. Tautulli's own maintainer ships a standalone script for the same repair. So a re-added
-file's earlier plays stay where they are, indefinitely.
+file's earlier plays stay filed under the old key, indefinitely.
 
-Reaper reads the mirror by the key the item carries *now*. It finds nothing and reports
-``Known(0)`` watchers with maximum dormancy: an affirmative "nobody ever watched this"
-about a title somebody watched, which is pressure in the condemn direction on exactly the
-item that deserves it least. The read path cannot tell the two apart, because a churned key
-and a never-watched item produce the identical answer -- no rows.
+Reaper reads the mirror by the key the item carries now. Finding nothing there, it would
+report ``Known(0)`` watchers with maximum dormancy: an affirmative "nobody ever watched
+this" about a title somebody watched, adding deletion pressure to exactly the item that
+deserves it least. The read path cannot tell the two apart on its own, because a churned
+key and a never-watched item produce the identical answer: no rows.
 
-**The invariant that can tell them apart.** All-time watch evidence only ever grows. The
+**The invariant that tells them apart.** All-time watch evidence only ever grows. The
 mirror is written ``INSERT OR REPLACE`` and never deletes, and a Tautulli reset or prune is
 caught separately by ``history_sync._check_regression``, which degrades the whole scan. So
-an item whose all-time watcher count *falls to zero*, or whose last play moves *earlier in
-time*, has undergone a transition no library can perform. Something changed underneath the
-read, and the honest answer is ``Unknown`` -- which blocks the gate and takes the full keep
-discount (rule 93) -- not a measured zero.
+an item whose all-time watcher count falls to zero, or whose last play moves earlier in
+time, has gone through a transition no library can produce on its own. Something changed
+underneath the read, and the honest answer is ``Unknown``, which blocks the gate and takes
+the full keep discount, rather than a measured zero.
 
-**One fall a library CAN perform, so the invariant above is not quite unconditional.**
-``snapshot._fold_merged_watch_stats`` overwrites a canonical item's counts with the union over
-every Plex listing merged into it, so a title held twice (a 1080p and a 4K copy sharing a tmdb
-id) carries both listings' watchers. Remove the duplicate listing, or let Plex re-match so the
-bind is no longer ``MERGED_LISTINGS``, and the next scan reads the canonical key alone: a
-genuine fall, with no key churn behind it. It reads as blind and the mark cannot be lowered, so
-that title stays held. Keep direction, so no file is at risk, and it is stated here rather than
-worked around because the fix -- recording under the union of ``merged_rating_keys`` -- would
-key the mark on a group whose membership is exactly what changed.
+**One fall a library can produce on its own, so the invariant above has one exception.**
+``snapshot._fold_merged_watch_stats`` overwrites a canonical item's counts with the union
+over every Plex listing merged into it, so a title held twice (a 1080p and a 4K copy
+sharing a tmdb id) carries both listings' watchers. Remove the duplicate listing, or let
+Plex re-match so the bind is no longer ``MERGED_LISTINGS``, and the next scan reads the
+canonical key alone: a genuine fall, with no key churn behind it. It reads as blind, and
+the mark cannot be lowered, so that title stays held. This is the keep direction, so no
+file is at risk, and it is stated here rather than fixed, because the fix, recording under
+the union of ``merged_rating_keys``, would key the mark on a group whose membership is
+exactly what changed.
 
-The operator's way out of it is :func:`forget_one`, offered on the title's own why panel, which
-is why this is a stated limit rather than an open defect: a person can tell this from a real
-churn, and nothing on the read side can (#275).
+The operator's way out of it is :func:`forget_one`, offered on the title's own why panel.
+A person can tell this apart from a real churn, and nothing on the read side can.
 
 **Why the mark outlives the snapshots.** Comparing against the previous snapshot alone
-would let the first blind scan write zero as the new baseline; after that 0 -> 0 is not a
-fall and nothing ever notices again. ``WatchHighWater`` is therefore keyed on the durable
-``media_key`` and only ever raised.
+would let the first blind scan write zero as the new baseline. After that, 0 to 0 is not
+a fall, and nothing ever notices again. ``WatchHighWater`` is keyed on the durable
+``media_key`` instead, and only ever raised.
 
-**What this deliberately does NOT flag.** A never-watched item reads zero on every scan,
-and 0 -> 0 is not a fall, so it never fires and stays condemnable -- which is the entire
-point of the feature and the reason this check is safe to run library-wide. A count that
-merely *drops* (five watchers to three) is not flagged either: it does not cross the
-never-watched boundary that drives the condemn lane, and the last-played check below
-catches the case where such a drop also inflates dormancy.
+**What this check does not flag.** A never-watched item reads zero on every scan, and 0
+to 0 is not a fall, so it never fires and stays condemnable. That is the whole point of
+the feature and the reason this check is safe to run library-wide. A count that merely
+drops (five watchers to three) is not flagged either: it does not cross the never-watched
+boundary that drives the condemn path, and the last-played check below catches the case
+where such a drop also inflates dormancy.
 
-**And one thing it CANNOT flag, which is not the same as a choice.** An item whose plays
-were already unreachable the first time Reaper measured it has no mark to fall from, so it
-reads zero forever and this check never fires for it. That is a measured population, not a
-corner: 1.5% to 4.5% of mid-history titles on a live library (``docs/LEARNINGS.md``).
-Nothing here narrows it, and the mark deliberately records no zero so that at least no row
-*asserts* those titles were measured and found unwatched. Telling them apart needs the
-play's guid, which neither the watch mirror nor the Plex index carries today. What holds
-such an item back meanwhile is only its own arrival date -- a re-added file carries a fresh
-one, which delays the condemn rather than preventing it.
+**One case this check cannot flag, which is a measured limit rather than a choice.** An
+item whose plays were already unreachable the first time Reaper measured it has no mark
+to fall from, so it reads zero forever and this check never fires for it. That is a
+measured population: 1.5% to 4.5% of mid-history titles on a live library
+(``docs/LEARNINGS.md``). Nothing here narrows it, and the mark deliberately records no
+zero, so at least no row asserts that those titles were measured and found unwatched.
+Telling them apart needs the play's guid, which neither the watch mirror nor the Plex
+index carries today. What holds such an item back meanwhile is only its own arrival date:
+a re-added file carries a fresh one, which delays the condemn rather than preventing it.
 """
 
 from __future__ import annotations
@@ -76,27 +76,26 @@ from reaper.db.models import WatchHighWater
 log = structlog.get_logger(__name__)
 
 #: Rows per upsert in :func:`record`. A library-sized write in one statement overflows
-#: SQLite's variable ceiling and aborts the scan, after every item has been judged (rule 94).
+#: SQLite's variable ceiling and aborts the scan, after every item has already been judged.
 #:
 #: The sibling to match is ``snapshot._insert_first_flags``, the other multi-row INSERT, which
 #: chunks at 300 rows of three bound values "to stay under SQLite's historical 999-variable
-#: limit". Four values a row puts this at 800, under the same bound. It is deliberately NOT
-#: ``db.KEY_CHUNK``: that one bounds a ``WHERE ... IN`` at one variable per key, so the same
-#: number here would bind four times as many. The read side needs no companion constant at
-#: all: :func:`recall_all` takes the whole table and binds nothing.
+#: limit". Four values a row puts this at 800, under the same bound. This is deliberately not
+#: ``db.KEY_CHUNK``, which bounds a ``WHERE ... IN`` clause at one variable per key, so the
+#: same number here would bind four times as many values. The read side needs no companion
+#: constant at all: :func:`recall_all` takes the whole table and binds nothing.
 _CHUNK = 200
 
 #: What the operator is told when the check fires. One string for both branches, because
 #: they mean one thing: we measured plays for this title before and cannot see them now.
-#: Says the outcome, names no internal machinery (rule 21). Being a constant is not what
-#: makes it safe: it reaches the panel through the dormancy and popularity gates and needs
-#: its own catalog ``why.cause.*`` entry too, so the drift test walks it with the rest
-#: (rule 144).
+#: It says the outcome and names no internal machinery. Being a constant is not what makes
+#: it safe: it reaches the panel through the dormancy and popularity gates and needs its
+#: own catalog ``why.cause.*`` entry too, so a drift test walks it along with the rest.
 BLIND_REASON = "plays_unreadable"
 
 #: What the operator is told when the activity read failed, so nobody knows what is playing
 #: right now. Both lanes report it in the same words, so it is named once here beside its
-#: sibling rather than typed on each side of the tree (rule 144).
+#: sibling rather than typed separately on each side of the tree.
 NO_SESSIONS_REASON = "sessions_unreadable"
 
 
@@ -124,10 +123,10 @@ def went_blind(mark: Mark | None, reading: Reading) -> str | None:
     """
     if mark is None:
         # No watch evidence has ever been measured for this item, so there is nothing this
-        # could have fallen from. Three different items land here and this check cannot tell
-        # them apart: a brand new one, every item on the first scan after this ships, and one
-        # whose plays were ALREADY unreachable when Reaper first looked. The third is not
-        # protected -- see the module docstring, which says what closing it would take.
+        # could have fallen from. Three different items land here and this check cannot
+        # tell them apart: a brand new one, every item on the first scan after this ships,
+        # and one whose plays were already unreachable when Reaper first looked. The third
+        # is not protected. See the module docstring for what closing that gap would take.
         return None
     if mark.watchers_all_time > 0 and reading.watchers_all_time <= 0:
         return BLIND_REASON
@@ -144,12 +143,12 @@ def went_blind(mark: Mark | None, reading: Reading) -> str | None:
 async def recall_all(session: AsyncSession) -> dict[str, Mark]:
     """Every stored mark, keyed by ``media_key``. Keys with no mark are simply absent.
 
-    The whole table rather than a filtered read, for one reason: the TV lane needs its
-    marks *before* it has computed a single season ``media_key`` (they are derived from
-    Sonarr coordinates inside ``season_scan.gather``, which runs as a concurrent task and
-    holds no session), so there is nothing to filter on yet. One row per item ever seen
+    This reads the whole table rather than a filtered set, for one reason: the TV lane
+    needs its marks before it has computed a single season ``media_key`` (they are derived
+    from Sonarr coordinates inside ``season_scan.gather``, which runs as a concurrent task
+    and holds no session), so there is nothing to filter on yet. One row per item ever seen
     makes this library-sized, and unlike a filtered read it binds no variables at all, so
-    it cannot meet SQLite's ceiling (rule 94).
+    it cannot meet SQLite's variable ceiling.
     """
     rows = (await session.execute(select(WatchHighWater))).scalars()
     return {
@@ -176,20 +175,20 @@ async def record(session: AsyncSession, readings: Mapping[str, Reading], *, now:
 
     The raise is expressed in SQL rather than computed here and written back, so two
     writers cannot read the same mark and have the lower one win: ``ON CONFLICT`` re-reads
-    the stored row inside the write (rule 58).
+    the stored row inside the write.
 
-    A reading the check just flagged as blind is passed in like any other. That is
-    deliberate -- it cannot lower the mark, so a blind scan leaves the mark standing and
-    the next scan asks the same question against the same evidence.
+    A reading the check just flagged as blind is passed in like any other, deliberately: it
+    cannot lower the mark, so a blind scan leaves the mark standing and the next scan asks
+    the same question against the same evidence.
 
     **A reading carrying no evidence is not recorded at all** (:func:`carries_evidence`). It
-    could not raise a mark, so nothing this scan or any later one decides changes -- a stored
-    zero and an absent row both return ``None`` from :func:`went_blind`. What changes is what
-    is on record: a row of zero asserts that Reaper measured this title and found nothing
-    watched, and for a title whose plays were already unreachable the first time it was looked
-    at, that is the one claim the read path is not entitled to make. It also keeps the table
-    the size of the *watched* library rather than the whole one, which matters because
-    :func:`recall_all` loads all of it.
+    could not raise a mark, so nothing this scan or any later one decides changes: a stored
+    zero and an absent row both return ``None`` from :func:`went_blind`. What changes is
+    what is on record. A row of zero asserts that Reaper measured this title and found
+    nothing watched, and for a title whose plays were already unreachable the first time it
+    was looked at, that is the one claim the read path is not entitled to make. It also
+    keeps the table the size of the watched library rather than the whole one, which
+    matters because :func:`recall_all` loads all of it.
     """
     rows = [
         {
@@ -242,7 +241,7 @@ async def forget_all(session: AsyncSession) -> int:
     reapable and no amount of re-scanning clears it. Forgetting the marks accepts the new
     library as the baseline.
     """
-    # CursorResult carries rowcount; the Result the stubs infer for execute() does not.
+    # CursorResult carries rowcount. The Result the stubs infer for execute() does not.
     result = await session.execute(delete(WatchHighWater))
     gone = int(getattr(result, "rowcount", 0) or 0)
     log.info("watch_evidence.forgotten", marks=gone)
@@ -252,35 +251,36 @@ async def forget_all(session: AsyncSession) -> int:
 async def forget_one(session: AsyncSession, media_key: str) -> bool:
     """Drop one title's mark, and report whether there was one. The per-title "start fresh".
 
-    The narrow twin of :func:`forget_all`, and the reason both exist (#275). A mark is only
-    ever raised, so one that stops describing its item holds that item back on every later
-    scan, and until this existed the only exit was :func:`forget_all` -- which discards every
-    real mark in the library to clear one stale one. That is a protection loss reached by an
-    operator doing the one thing the UI offered.
+    The narrow twin of :func:`forget_all`. A mark is only ever raised, so one that stops
+    describing its item holds that item back on every later scan. Before this existed, the
+    only way out was :func:`forget_all`, which discards every real mark in the library to
+    clear one stale one, a protection loss reached by an operator doing the one thing the
+    UI offered.
 
-    Two ordinary events leave a mark describing something its item no longer is, and neither
-    is a Plex key churn, so the check cannot see past either one:
+    Two ordinary events leave a mark describing something its item no longer is, and
+    neither is a Plex key churn, so the check cannot see past either one:
 
     * a title held twice (1080p and 4K on one tmdb id) carries both listings' watchers via
-      ``snapshot._fold_merged_watch_stats``; remove the duplicate and the canonical key alone
-      reads lower, a genuine fall with nothing behind it;
-    * ``media_key`` is ``<source>:<instance>:<arr id>`` and an *arr id is a row id, so
+      ``snapshot._fold_merged_watch_stats``. Remove the duplicate, and the canonical key
+      alone reads lower, a genuine fall with nothing behind it.
+    * ``media_key`` is ``<source>:<instance>:<arr id>``, and an *arr id is a row id, so
       rebuilding a Radarr or Sonarr database restarts them from 1 and a different title
       inherits the mark, reading unreadable from its first scan.
 
-    **Why this is the operator's decision and not a rule.** Both of the above present exactly
-    as a real churn does: a fall with no key change to explain it. Nothing on the read side can
-    tell them apart -- an identity recorded beside the mark cannot either, because an operator
-    correcting a wrong match in Radarr changes the identity under a live mark, and discarding
-    it there would withdraw the protection at the moment it was working. A person knows which
-    happened; the scan does not. So the escape is a control, not an inference.
+    **This is the operator's decision, not a rule, because both cases above look exactly
+    like a real churn:** a fall with no key change to explain it. Nothing on the read side
+    can tell them apart. An identity recorded beside the mark cannot either, because an
+    operator correcting a wrong match in Radarr changes the identity under a live mark, and
+    discarding it there would withdraw the protection at the moment it was working. A
+    person knows which happened. The scan does not. So the escape is a control, not an
+    inference.
 
-    Deliberately NOT "delete marks not seen this scan": that erases the protection during an
-    *arr outage, which is the failure this whole guard exists to prevent.
+    This never deletes marks not seen this scan: that would erase the protection during an
+    *arr outage, exactly the failure this whole guard exists to prevent.
 
     The next scan takes whatever it reads as the new baseline. If that reading carries no
-    evidence, :func:`record` writes no row at all and the item is judged on what is visible,
-    which is exactly what the operator asked for.
+    evidence, :func:`record` writes no row at all, and the item is judged on what is
+    visible, which is exactly what the operator asked for.
     """
     result = await session.execute(
         delete(WatchHighWater).where(WatchHighWater.media_key == media_key)
@@ -299,9 +299,9 @@ def reading_for(
     """This scan's reading for one item, or ``None`` if it was never looked up.
 
     An unmatched item has no rating key, so it has no reading and must not be recorded as
-    zero: that would write a mark of zero which the moment the item DOES match and its real
-    plays appear reads as a rise, and -- worse -- an item whose match is merely flaky would
-    have its true mark held down to zero and never fire the check at all.
+    zero. Writing a mark of zero would read as a rise the moment the item does match and
+    its real plays appear. Worse, an item whose match is merely flaky would have its true
+    mark held down to zero and never fire the check at all.
     """
     if rating_key is None:
         return None

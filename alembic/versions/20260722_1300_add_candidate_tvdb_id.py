@@ -1,18 +1,17 @@
 """add candidate.tvdb_id
 
-Scales rebuilds "not in the last scan" by re-joining Seerr requests to the last scan's
-candidates. That join only ever used tmdb and imdb ids, so a TV show Sonarr knows only by
-its TVDb id (no tmdb on the candidate, and a Seerr request that carries no imdb) could not
-be lined up with its own candidate and read as "set aside" despite having been scanned.
+Scales rebuilds "not in the last scan" by matching Seerr requests back to the last scan's
+candidates. That match used only tmdb and imdb ids, so a TV show Sonarr knows only by its
+TVDb id, with no tmdb id on the candidate and no imdb id on the Seerr request, could not be
+matched to its own candidate. It then read as set aside even though the scan covered it.
 
-Persisting the show's TVDb id onto each season candidate lets the join bind on it too
-(rule 29: pass every id an item carries). The value is already in hand at scan time; only
-storage was missing.
+Storing the show's TVDb id on each season candidate lets the match use it too. The value
+is already available at scan time; only the storage was missing.
 
-Non-breaking by construction: a single nullable column. Existing rows keep NULL (they were
-never given a tvdb id, so the join behaves exactly as before for them), and the next scan
-backfills every candidate it writes, so testers never rebuild their database. A movie
-candidate stays NULL: Radarr is tmdb-native and a movie has no TVDb id.
+The new column is nullable. Existing rows keep NULL, since they were never given a tvdb
+id, so the match behaves exactly as before for them. The next scan backfills every
+candidate it writes, so no tester database needs to be rebuilt. A movie candidate stays
+NULL, because Radarr is tmdb-native and a movie has no TVDb id.
 
 Revision ID: 5e6f70819203
 Revises: 4d5e6f708192
@@ -33,8 +32,8 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # batch_alter_table for SQLite parity with the baseline: adding a nullable column is a
-    # plain ADD COLUMN, no table copy, so existing data is untouched.
+    # batch_alter_table matches the baseline's SQLite style. Adding a nullable column is a
+    # plain ADD COLUMN with no table rebuild, so existing data is untouched.
     with op.batch_alter_table("candidate", schema=None) as batch_op:
         batch_op.add_column(sa.Column("tvdb_id", sa.Integer(), nullable=True))
 

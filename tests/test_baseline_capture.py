@@ -4,16 +4,16 @@
 ``scripts/baseline_capture.py`` needs a real library, so almost none of it runs here. Two
 things do, and they are the two that decide whether the committed file is safe to commit:
 
-* **the de-identification guard**, which refuses every string that is not an item id, a
+* **The de-identification guard**, which refuses every string that is not an item id, a
   digest, or a term this capture is allowed to use. Three of ``build_plan``'s refusals name
   the media keys they refused on, so a message written into the file rather than printed
-  would leak exactly what the golden rule forbids;
-* **the two hand-written sets** the guard allows through. Rule 103: a hardcoded list
-  mirroring a declaration carries a drift guard, and neither of these has a declaration to
-  derive from yet, so the guard is a test that fails when the source set moves.
+  would leak exactly what the golden rule forbids.
+* **The two hand-written sets** the guard allows through. A hardcoded list mirroring a
+  declaration usually carries a drift guard, and neither of these has a declaration to
+  derive from yet, so the guard itself is the test that fails when the source set moves.
 
-The capture itself is not replayed by anything (rule 132: this file must not read as coverage
-of a run nobody performs). It is diffed by hand at phase boundaries, which
+The capture itself is not replayed by anything, and this file must not read as coverage of
+a run nobody performs. It is diffed by hand at phase boundaries, which
 ``docs/history/SIMPLIFICATION_PLAN.md``'s S8 governs.
 """
 
@@ -43,7 +43,7 @@ def _committed() -> dict[str, Any]:
 
 class TestTheCommittedCaptureCarriesNothingIdentifying:
     """The golden rule binds a committed artifact exactly as it binds code. This is the file
-    on disk, checked with the same guard that let it be written -- so a capture edited by hand
+    on disk, checked with the same guard that let it be written, so a capture edited by hand
     after the fact is held to the same bar as one the script produced."""
 
     def test_the_guard_finds_nothing_to_object_to(self) -> None:
@@ -76,8 +76,8 @@ class TestTheCommittedCaptureCarriesNothingIdentifying:
         assert [item["id"] for item in items] == [f"i{index:04d}" for index in range(len(items))]
 
     def test_the_plan_names_only_items_the_capture_carries(self) -> None:
-        """A planned id with no item is a dangling reference; it would read as a plan covering
-        something the snapshot does not hold."""
+        """A planned id with no item is a dangling reference. It would read as a plan
+        covering something the snapshot does not hold."""
         data = _committed()
         known = {item["id"] for item in data["items"]}
         planned = data["plan"].get("items_in_ordinal_order", [])
@@ -86,9 +86,9 @@ class TestTheCommittedCaptureCarriesNothingIdentifying:
 
 
 class TestTheGuardRefusesWhatItMustRefuse:
-    """Rule 147: the guard scans values, so it is proven against the forms a leak arrives in,
-    not only against the file that already passes. Every case here is a real shape -- a media
-    key, a title, a filesystem path, a host -- rather than an invented one."""
+    """The guard scans values, so it is proven against the forms a leak arrives in, not
+    only against the file that already passes. Every case here is a real shape, a media
+    key, a title, a filesystem path, a host, rather than an invented one."""
 
     @pytest.mark.parametrize(
         "leaked",
@@ -129,7 +129,7 @@ class TestTheGuardRefusesWhatItMustRefuse:
 
     def test_a_short_hex_string_is_not_taken_for_a_digest(self) -> None:
         """The digest shape is what lets an arbitrary-looking string through, so it is bounded
-        at both ends. ``abc`` is hex and is not a digest; a title that happens to be all
+        at both ends. ``abc`` is hex and is not a digest. A title that happens to be all
         hex characters and long enough would pass, which is the residual hole and is named
         here rather than left for someone to discover."""
         assert capture.offending_strings({"k": "abc"}) == ["k: 'abc'"]
@@ -137,8 +137,8 @@ class TestTheGuardRefusesWhatItMustRefuse:
     def test_the_writer_refuses_rather_than_writing_and_warning(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Rule 118: the interlock's own test. A guard that printed and wrote anyway would
-        put the leak on disk and in the commit, which is the only place it matters."""
+        """The interlock's own test. A guard that printed and wrote anyway would put the
+        leak on disk and in the commit, which is the only place it matters."""
         out = tmp_path / "capture.json"
         monkeypatch.setattr(capture, "OUT", out)
 
@@ -156,8 +156,8 @@ class TestTheGuardRefusesWhatItMustRefuse:
 
 class TestOneWriterRunsTheGuard:
     """The guard lives inside the writer, so a second writer would be a second path where it
-    is not -- and that path is the one needing a real library, so no test could reach it. The
-    sibling script rests on the same argument (rule 72)."""
+    is not. That path is also the one needing a real library, so no test could reach it. The
+    sibling script rests on the same argument."""
 
     def test_the_capture_has_exactly_one_writer(self) -> None:
         assert functions_that_can_write(_SCRIPT.read_text()) == {"write_capture"}
@@ -171,20 +171,21 @@ class TestOneWriterRunsTheGuard:
 
 
 class TestTheHandWrittenSetsAgreeWithTheirSource:
-    """Rule 103. The step kinds have no declaration to derive from, so they are reconciled
-    against the source that produces them, count as well as membership, because a matcher that
-    silently collected nothing would agree with an emptied set (rule 145).
+    """The step kinds have no declaration to derive from, so they are reconciled against
+    the source that produces them, count as well as membership, because a matcher that
+    silently collected nothing would agree with an emptied set.
 
-    The verdicts used to be reconciled here the same way. They are not any more: ``Verdict`` is
-    a ``Literal`` in ``engine.verdict`` and the capture reads it, so mypy fails the engine if a
-    ``return`` in ``decide_verdict`` leaves the set. That is the declaration rule 103 asks for
-    first, and a test walking the AST beside it would be a second answer to a settled question.
+    The verdicts used to be reconciled here the same way. They are not any more.
+    ``Verdict`` is a ``Literal`` in ``engine.verdict`` and the capture reads it, so mypy
+    fails the engine if a ``return`` in ``decide_verdict`` leaves the set. That declaration
+    is the real source of truth, and a test walking the AST beside it would be a second
+    answer to a settled question.
     """
 
     def test_the_step_kinds_are_the_ones_the_planner_writes(self) -> None:
         """The capture publishes the kinds a plan produced. A kind added to the planner and
         not here refuses the next capture outright, which is the guard working but is a
-        confusing way to find out; a kind removed leaves a term the file may carry and the
+        confusing way to find out. A kind removed leaves a term the file may carry that the
         planner never writes."""
         from_planner = keyword_string_values(_PLANNER.read_text(), "kind")
 
@@ -192,19 +193,19 @@ class TestTheHandWrittenSetsAgreeWithTheirSource:
         assert len(from_planner) == 4
 
     def test_the_committed_capture_uses_only_terms_the_sets_allow(self) -> None:
-        """The population the guard scans, not the population the sets describe -- rule 147's
-        distinction. The two agree today; a capture carrying a verdict the engine no longer
-        returns would show up here and nowhere else."""
+        """The population the guard scans, not the population the sets describe. The two
+        agree today. A capture carrying a verdict the engine no longer returns would show
+        up here and nowhere else."""
         data = _committed()
         assert {item["verdict"] for item in data["items"]} <= capture._VERDICTS
         assert set(data["plan"].get("step_kinds", [])) <= capture._STEP_KINDS
 
 
 class TestTheSnapshotChoiceRefusesAMeaninglessDiff:
-    """Item ids are positional, so a capture of a different snapshot moves every line at once
-    -- and S8 reads unexplained movement as a stop. Defaulting to the committed snapshot is
-    what keeps a re-capture comparable; the refusal is what keeps a silent re-base from
-    looking like one."""
+    """Item ids are positional, so a capture of a different snapshot moves every line at
+    once, and S8 reads unexplained movement as a stop. Defaulting to the committed
+    snapshot is what keeps a re-capture comparable. The refusal is what keeps a silent
+    re-base from looking like one."""
 
     @pytest.fixture
     def db(self) -> Iterator[sqlite3.Connection]:
@@ -213,7 +214,7 @@ class TestTheSnapshotChoiceRefusesAMeaninglessDiff:
         conn.executemany("INSERT INTO snapshot VALUES (?, ?)", [(41, 0), (42, 1), (43, 0)])
         yield conn
         # Closed here rather than left to the garbage collector, which reports an unclosed
-        # database during whichever test it happens to run in (rule 133).
+        # database during whichever test it happens to run in.
         conn.close()
 
     def test_the_committed_snapshot_is_the_default(
@@ -249,7 +250,7 @@ class TestTheSnapshotChoiceRefusesAMeaninglessDiff:
         self, db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """43 rather than 42: a degraded snapshot missed a source, so what it concluded is
-        not a baseline anything should be judged against (rule 2)."""
+        not a baseline anything should be judged against."""
         monkeypatch.setattr(capture, "committed_snapshot_id", lambda: None)
 
         assert capture.choose_snapshot(db, None) == 43

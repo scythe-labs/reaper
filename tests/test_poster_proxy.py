@@ -1,14 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The artwork proxy's one shared Tautulli client.
 
-A cold review queue asks for a few hundred posters at once. Each request used to build a
-whole client -- new connection pool, new TLS handshake -- and tear it down again, so the
-page paid a full connection setup per image. One client is kept on the app instead.
+A cold review queue asks for a few hundred posters at once, and building a new client per
+request would pay for a new connection pool and a new TLS handshake on every image. One
+client is kept on the app instead.
 
-Two properties matter and neither is about speed: the client must be RETIRED when the
-instance it talks to changes (otherwise a rotated key or an edited URL keeps serving
-through the old connection), and it must be CLOSED at shutdown rather than leaked
-(rule 34: every constructed client has an owner that closes it).
+Two properties matter, and neither is about speed. The client must be retired when the
+instance it talks to changes, otherwise a rotated key or an edited URL keeps serving
+through the old connection. It must be closed at shutdown, so it does not leak.
 """
 
 from __future__ import annotations
@@ -101,8 +100,8 @@ class TestItIsRetiredWhenTheInstanceChanges:
     def test_a_rotated_key_builds_a_new_client_and_closes_the_old(
         self, client: TestClient, settings: Settings
     ) -> None:
-        """A cached client holds the OLD credential in its headers. If it outlived a key
-        rotation it would keep authenticating with a key the operator replaced."""
+        """A cached client holds the old credential in its headers. If it outlived a key
+        rotation, it would keep authenticating with a key the operator already replaced."""
         assert client.get("/api/poster/1").status_code == 200
         old = _built(client)
         assert old is not None

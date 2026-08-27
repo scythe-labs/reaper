@@ -1,14 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Alembic environment.
 
-``render_as_batch=True`` is required and effectively unretrofittable: SQLite
-cannot ALTER or DROP a constraint in place, so Alembic has to rebuild the table.
-Together with the naming convention in ``reaper.db.base`` this is what makes any
-future schema change possible at all.
+SQLite cannot ALTER or DROP a constraint in place, so every migration rebuilds
+the table instead. ``render_as_batch=True`` turns on that rebuild, and the naming
+convention in ``reaper.db.base`` is required for it to work.
 
-``keep_ddl_in_the_transaction`` is what makes a schema change that goes WRONG
-survivable, and it is required for the same reason: the rebuild is what strands a
-``_alembic_tmp_<table>`` behind a failed migration, and that wedges every later boot.
+``keep_ddl_in_the_transaction`` makes a failed rebuild roll back cleanly instead
+of leaving a stray ``_alembic_tmp_<table>`` behind, which would block every later
+migration from running.
 """
 
 from __future__ import annotations
@@ -38,42 +37,25 @@ config.set_main_option("sqlalchemy.url", _settings.sync_database_url)
 
 target_metadata = Base.metadata
 
-#: Columns whose ORM attribute has been removed but whose column has not been dropped yet:
-#: rule 148's one-release bridge, NOT a permanent registry. Without this filter autogenerate
-#: sees a column with no attribute and proposes to DROP it, so ``alembic check`` -- a CI gate
-#: -- fails on every commit until someone either drops it or silences it here (#271).
+#: Columns whose ORM attribute is gone but whose column is not dropped yet. Without this
+#: filter, autogenerate sees a column with no matching attribute and proposes to drop it,
+#: which fails the ``alembic check`` CI gate on every commit.
 #:
-#: **Every entry here is a debt with a due date.** The M+1 sweep drops them in one revision
-#: under rule 148's three obligations, and this set empties with it. An entry that outlives its
-#: sweep is how a dead column becomes permanent behind a growing exclusion list, which is the
-#: failure rule 148 exists to prevent -- so add to this only alongside the release that removes
-#: the attribute, and never to make a red ``alembic check`` go green.
+#: Add an entry only in the same release that removes the attribute, and delete the entry
+#: once the follow-up release drops the column.
 #:
-#: **Empty, and that is the resting state.** It held six columns from release M
-#: (``e6f7a8b9c0d1``, v2026.8.4) until ``e2f3a4b5c6d7`` dropped them. Empty is what the rule
-#: looks like when it is being followed; a set that stays populated across a release is the
-#: debt going unpaid. ``test_repo_hygiene`` pins that both sets are empty, so the next
-#: population arrives with a reader who has to delete an assertion to add one.
+#: Empty is the normal state between releases. ``test_repo_hygiene.py`` checks that this
+#: set and ``RETIRED_CONSTRAINTS`` below are both empty.
 RETIRED_COLUMNS: set[tuple[str, str]] = set()
 
-#: A retired column that carried a FOREIGN KEY leaves the constraint behind too, and hiding
-#: the column does not hide it: ``alembic check`` reports ``remove_fk`` on the next commit and
-#: the CI gate stays red. Found by running the check rather than by reading the docs, which is
-#: the only reason it is here -- nothing about ``include_name``'s column arm suggests a second
-#: one is needed. Empties with ``RETIRED_COLUMNS``, as it just did: ``profile``'s
-#: ``fk_profile_active_policy_id_policy`` went ahead of its column in the same sweep.
+#: A retired column that carried a foreign key needs its constraint listed here too, or
+#: ``alembic check`` reports ``remove_fk`` and the CI gate fails. Add and remove entries on
+#: the same schedule as ``RETIRED_COLUMNS`` above.
 RETIRED_CONSTRAINTS: set[tuple[str, str]] = set()
 
 
 def include_name(name: str | None, type_: str, parent_names: dict[str, str | None]) -> bool:
-    """Hide the retired columns from autogenerate, and nothing else.
-
-    This used to filter six cache TABLES as well, and it could never have been doing
-    anything: all six are raw DDL on ``cache.db`` (``services/{imdb_dataset,history_sync,
-    lists}.py``), none is on ``Base.metadata``, and Alembic is pointed at ``reaper.db``
-    (``config.sync_database_url``). The proof it was inert is that ``history_sync_state``
-    was missing from the set and never once mattered.
-    """
+    """Hide the retired columns and constraints from autogenerate."""
     if type_ == "column":
         return (parent_names.get("table_name"), name) not in RETIRED_COLUMNS
     if type_ == "foreign_key_constraint":
@@ -82,32 +64,23 @@ def include_name(name: str | None, type_: str, parent_names: dict[str, str | Non
 
 
 def keep_ddl_in_the_transaction(engine: Engine) -> None:
-    """Make DDL roll back with the rest of a failed migration (#564).
+    """Make DDL roll back with the rest of a failed migration.
 
-    pysqlite does not open a transaction for DDL. A ``CREATE TABLE`` with nothing
-    started already is autocommitted on the spot, and only the first statement
-    after it opens the implicit transaction. A batch recreate is ``CREATE TABLE
-    _alembic_tmp_X`` followed by ``INSERT INTO ... SELECT``, so the CREATE commits,
-    the INSERT opens the transaction, and a migration that raises any time later
-    rolls back everything except the temp table. No data is lost -- the rollback
-    restores the real table and its rows -- but every subsequent boot re-runs the
-    same migration and dies on ``table _alembic_tmp_candidate already exists``.
-    Migrations run at container start, so that is an install which never comes up
-    again until someone opens the database by hand.
+    pysqlite does not open a transaction for DDL. A batch table rebuild runs
+    ``CREATE TABLE _alembic_tmp_X`` followed by ``INSERT INTO ... SELECT``: with
+    no transaction open yet, the CREATE commits on its own and only the INSERT
+    runs inside one. If the migration raises after that, the rollback restores
+    the real table but leaves the temp table behind, and every later boot fails
+    with ``table _alembic_tmp_candidate already exists`` until someone opens the
+    database by hand.
 
-    It needs no crash and no power loss: any exception in the migration does it,
-    including the ordinary authoring mistake of dropping a column before the index
-    that sits on it, which is invisible against a fresh database.
-
-    This is SQLAlchemy's documented recipe for the pysqlite dialect: take its
-    implicit transaction handling away, and emit the BEGIN ourselves, so DDL joins
-    the transaction like every other statement.
-
-    Only the FIRST recreate in a migration was exposed, since after it a transaction
-    is already open. But a migration does not have to LOOK like it recreates: an
-    ``add_column`` carrying ``server_default=sa.false()`` rebuilds the table too,
-    because the default is a ClauseElement rather than a string, and Alembic recreates
-    for that. Two of the three recreates a fresh install performs are that shape.
+    This function takes pysqlite's implicit transaction handling away and issues
+    ``BEGIN`` explicitly, so DDL joins the same transaction as the rest of the
+    migration. Only the first table rebuild in a migration is at risk this way,
+    because a transaction is already open by the time a second one runs. A
+    migration rebuilds the table for any ``batch_alter_table`` call, and also
+    for an ``add_column`` whose ``server_default`` is a Python value rather
+    than a plain string.
     """
 
     @event.listens_for(engine, "connect")
@@ -140,9 +113,7 @@ def run_migrations_online() -> None:
             context.run_migrations()
 
 
-# No offline (``--sql``) branch. There was one, with no invoker in the tree, and it could
-# not have worked: 10 revisions call ``op.get_bind()`` -- rule 81's reflection guards, and
-# the shape every heal migration takes -- so ``alembic upgrade head --sql`` exits 1 at
-# revision 3. Restoring the capability means giving those guards up, which is the wrong
-# trade for a mode nothing runs.
+# No offline ("--sql") mode: 10 revisions call ``op.get_bind()`` to inspect the live
+# database, which an offline run has no connection for. Supporting "--sql" would mean
+# removing those checks. ``tests/test_migrations.py`` keeps that count current.
 run_migrations_online()

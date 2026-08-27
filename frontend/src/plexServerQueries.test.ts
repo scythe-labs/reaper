@@ -3,10 +3,9 @@
 //
 // One declaration of "of the linked server", and nothing open-coding a subset of it.
 //
-// The helper used to live inside `PlexPanel`, out of the setup wizard's reach, so the wizard
-// wrote its own three-key version of a six-key list. Both were "complete" to whoever read one
-// of them. This pins the shape that stops it recurring: the keys are declared once, and no
-// component may invalidate two or more of them by hand.
+// The keys that mean "of the linked server" are declared once, in `OF_THE_LINKED_SERVER`, and
+// no component may invalidate two or more of them by hand. A component that wrote its own
+// partial copy of that list could look complete while actually being out of date.
 
 import { readFileSync } from "node:fs";
 
@@ -35,9 +34,9 @@ describe("invalidateAllPlex", () => {
 
   it("names six keys, reconciled by hand against the SPA's readers", () => {
     // Pinned rather than derived, because every assertion here is a comparison against this
-    // same list -- so a key silently dropped from the module would move both sides at once
-    // and prove nothing (rule 145). Six: plex, plex-resources, plex-libraries,
-    // leaving-soon-settings, plexTrash, watch-evidence.
+    // same list, so a key silently dropped from the module would move both sides at once and
+    // prove nothing. Six: plex, plex-resources, plex-libraries, leaving-soon-settings,
+    // plexTrash, watch-evidence.
     expect(OF_THE_LINKED_SERVER).toHaveLength(6);
     expect(new Set(OF_THE_LINKED_SERVER.map((k) => k.join("/"))).size).toBe(6);
   });
@@ -47,8 +46,9 @@ describe("no component open-codes a subset of it", () => {
   /** The key of every hand-written `invalidateQueries({ queryKey: ["thing"] })`, with its line.
    *
    *  Anchored on `invalidateQueries` rather than on `queryKey:`, which also spells every
-   *  `useQuery` READ in the file -- matching those reported `PlexPanel` as open-coding eight
-   *  keys when it invalidates one. A read of `["plex"]` is what the panel is for. */
+   *  `useQuery` READ in the file. Anchoring on `queryKey:` instead would falsely report
+   *  `PlexPanel` as open-coding eight keys when it invalidates only one; a read of `["plex"]`
+   *  is what the panel is for. */
   function handWrittenKeys(source: string): { key: string; line: number }[] {
     const call = /invalidateQueries\(\{\s*queryKey:\s*\[\s*"([a-zA-Z-]+)"\s*\]/g;
     return [...source.matchAll(call)].flatMap((m) =>
@@ -58,13 +58,13 @@ describe("no component open-codes a subset of it", () => {
 
   /** Owned keys dropped together by one handler, as runs of adjacent invalidation calls.
    *
-   *  **A run, not a file.** Per-file was the first shape and it is wrong: `PlexPanel` holds
-   *  four unrelated one-key invalidations -- saving the web address, saving the certificate
-   *  check, saving a connection, forgetting watch evidence -- in four different mutations, and
-   *  counting them together called the panel an offender for doing nothing. What "open-codes a
-   *  subset" describes is ONE handler naming several of the set, which is consecutive
-   *  statements. Three lines of tolerance, since an `await` line and a comment sit between the
-   *  wizard's calls in the shape this was written against. */
+   *  **A run, not a file.** Per-file would be wrong: `PlexPanel` holds four unrelated one-key
+   *  invalidations (saving the web address, saving the certificate check, saving a connection,
+   *  forgetting watch evidence) in four different mutations, and counting a whole file together
+   *  would flag the panel for doing nothing wrong. What "open-codes a subset" means is ONE
+   *  handler naming several of the set in consecutive statements. Three lines of tolerance,
+   *  since an `await` line or a comment can sit between calls that belong to the same
+   *  handler. */
   function subsetRuns(source: string, owned: Set<string>): string[][] {
     const runs: string[][] = [];
     let current: string[] = [];
@@ -105,8 +105,8 @@ describe("no component open-codes a subset of it", () => {
   it("catches a subset when one is written, so the check above is not vacuous", () => {
     const owned = new Set(OF_THE_LINKED_SERVER.map((key) => key[0]));
 
-    // The wizard's exact former shape, proving the matcher reads the spelling components use
-    // rather than only the absence of one (rule 147).
+    // A shape that really open-codes a subset, proving the matcher reads the actual spelling
+    // components use, rather than just the absence of a match.
     expect(
       subsetRuns(
         `const refreshPlex = async () => {

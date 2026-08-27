@@ -12,11 +12,10 @@
 // business reproducing that.
 //
 // The second is specific to this asset. The card quotes gate output as evidence, and it is the
-// furthest thing in the tree from the code it quotes -- nobody editing gates.py opens a
-// marketing image. README.md carries an example of exactly this copy that no gate has ever
-// produced (#419), which is the failure this file exists to keep off the card: every row
-// declares the literal it came from, and the walk below reads gates.py and fails naming any row
-// that is no longer there. Rule 144.
+// furthest thing in the tree from the code it quotes: nobody editing the English catalog opens
+// a marketing image. Every row on the card must declare the literal sentence it came from, and
+// the walk below reads that catalog and fails by naming any row whose sentence is no longer
+// there.
 
 import { type BinaryLike, createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -73,14 +72,14 @@ describe("social preview card", () => {
   });
 
   it("every evidence row on the card is copy a gate actually produces", () => {
-    // The gates' sentences live in the catalog now (docs/history/I18N_PLAN.md §5), so the card is
-    // pinned against the English catalog rather than engine/gates.py.
+    // The gates' sentences live in the English catalog, so the card is pinned against that
+    // catalog rather than engine/gates.py.
     const catalog = readFileSync(
       join(repoDir, "frontend", "src", "locales", "en", "ui.json"),
       "utf8",
     );
     // Pin the population the walk covers, not just that each member it found passes: a row
-    // dropped from CLEARED_ROWS leaves both the card and this check at once (rule 145).
+    // dropped from CLEARED_ROWS leaves both the card and this check silently agreeing on less.
     expect(CLEARED_ROWS.length).toBe(3);
     for (const row of CLEARED_ROWS) {
       expect(
@@ -94,10 +93,9 @@ describe("social preview card", () => {
   });
 
   it("writes the name the way the app writes it", () => {
-    // The card carried its own lockup until #426 -- caps, tracked out -- and was the last
-    // surface spelling the name a third way. These are literals in `socialCard.ts` because a
-    // module the rasterizer loads has no `node:fs`, so the agreement is checked here instead,
-    // against the app itself (rule 144, the same arrangement CLEARED_ROWS has with gates.py).
+    // The name and its lockup are literals in `socialCard.ts`, because the module the
+    // rasterizer loads has no `node:fs`. So the agreement with the app's own spelling is
+    // checked here instead, the same arrangement `CLEARED_ROWS` has with the catalog.
     expect(WORDMARK.word, "the masthead's brand word moved; the card copies it").toBe(BRAND_WORD);
     expect(WORDMARK.weight, "the weight scale moved under the card").toBe(BRAND_WEIGHT);
     // SVG letter-spacing is a length, so the app's em value is resolved at the card's size.

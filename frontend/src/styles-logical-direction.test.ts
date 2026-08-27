@@ -6,13 +6,11 @@
 // A browser mirrors a page for Arabic, Hebrew or Persian on its own once `dir="rtl"` is set,
 // but only for the properties written in the reading-order form. A page mixing the two comes
 // out half-mirrored, which is worse than not mirroring at all: the sidebar moves and the
-// padding holding its text off the edge does not, so the text sits under the edge. #861 is
-// the change that converted the 125 declarations this app had, and this is what keeps the
-// next one from arriving.
+// padding holding its text off the edge does not, so the text sits under the edge. This test
+// keeps a screen-named declaration from arriving again.
 //
 // Writing `margin-inline-start` costs nothing in a left-to-right page: the browser resolves it
-// to `margin-left` and the pixels are identical. That was measured, not assumed, when the
-// conversion landed.
+// to `margin-left`, and the rendered pixels are identical.
 import { describe, expect, it } from "vitest";
 
 import { blocksOf, siteOf } from "./test/stylesheet";
@@ -70,10 +68,9 @@ describe("the stylesheet names sides by reading order", () => {
   });
 
   it("writes no four-value box shorthand whose right and left differ", () => {
-    // The property scan's other blind spot, and the one that cost the most: `padding: a b c d`
-    // sets right to `b` and left to `d`, so an asymmetric one is a `padding-left` written where
-    // no search for `padding-left` will find it. `.season-list` had 2.4rem on the left against
-    // 0.7rem on the right, and every row in an expanded show sat 27px off its mirror.
+    // The property scan's other blind spot, and the costliest one: `padding: a b c d` sets
+    // right to `b` and left to `d`, so an asymmetric value is a `padding-left` written where no
+    // search for `padding-left` will find it.
     //
     // Only the four-value form can be asymmetric: one, two and three values all give right and
     // left the same thing. The fix is `padding-block` plus `padding-inline: <start> <end>`.
@@ -113,15 +110,15 @@ describe("the stylesheet names sides by reading order", () => {
   });
 
   it("fades no gradient sideways on a fixed angle", () => {
-    // The blind spot the property scan has, and it cost a real bug: `.card-scrim` faded the
-    // card opaque-to-clear at a flat 90deg, so under `dir="rtl"` the title crossed to the
-    // other side and sat on the see-through half. A sideways gradient carries its direction
-    // in a variable an `[dir="rtl"]` rule flips, the way `--scrim-angle` does.
+    // The blind spot the property scan has: a fixed-angle gradient like `.card-scrim`'s
+    // opaque-to-clear fade at 90deg does not flip under `dir="rtl"`, so the title can cross to
+    // the wrong side and sit on the see-through half. A sideways gradient must carry its
+    // direction in a variable an `[dir="rtl"]` rule flips, the way `--scrim-angle` does.
     //
-    // Only the horizontal angles: `180deg` fades downward and reads the same either way, and
-    // a symmetric stop list (transparent, color, transparent) is its own mirror.
-    // Two are symmetric and stay: the scanline shimmer fades transparent at both ends, and
-    // the budget bar's dashes repeat identically whichever way they are read.
+    // Only the horizontal angles matter: `180deg` fades downward and reads the same either way,
+    // and a symmetric stop list (transparent, color, transparent) is its own mirror. Two
+    // selectors are symmetric and stay exempt: the scanline shimmer fades transparent at both
+    // ends, and the budget bar's dashes repeat identically whichever way they are read.
     const SYMMETRIC = new Set([".scanline-fill::after", ".budget-free"]);
     const found: string[] = [];
     for (const block of blocksOf()) {

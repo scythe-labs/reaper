@@ -15,7 +15,7 @@ import { manualFor } from "./localized";
 import { getDoc, groupedDocs } from "./registry";
 
 /** The index heading for a group. The group is a key, and the switch is exhaustive over
- *  `DocGroup`, so a fifth group fails to compile here rather than rendering its key (rule 66). */
+ *  `DocGroup`, so a fifth group fails to compile here rather than rendering its key. */
 function groupLabel(t: TFunction, group: DocGroup): string {
   switch (group) {
     case "Getting started":
@@ -68,7 +68,7 @@ export function DocsModal({
     const pane = contentRef.current;
     if (!pane) return;
     // Attribute selector (not CSS.escape) and scrollIntoView (not scrollTo) so this is safe
-    // in the test DOM as well as the browser; the anchors are simple kebab-case ids.
+    // in the test DOM as well as the browser. The anchors are simple kebab-case ids.
     if (anchor) {
       const target = pane.querySelector<HTMLElement>(`[id="${anchor}"]`);
       if (target) {
@@ -81,13 +81,13 @@ export function DocsModal({
 
   // Picking a different doc swaps the whole article while focus stays on the index button that
   // swapped it, so nothing moved and nothing spoke. The pane carries the doc's title as its
-  // accessible name (below), but a name that changes on an element the operator is not standing
-  // on is announced nowhere -- the index and the pane are siblings, and only one of them had
-  // the news (#177). So say which doc is in the pane now.
+  // accessible name (below), but a name that changes on an element the operator is not
+  // focused on is announced nowhere: the index and the pane are siblings, and only one of
+  // them got the update. So this announces which doc is in the pane now.
   //
   // Edge-triggered on the doc, and seeded with the one it opened on: opening the modal is the
-  // operator's own press and `ModalShell` already moves focus into the dialog, so announcing
-  // there would talk over it. An anchor jump inside one doc is deliberately silent too -- the
+  // operator's own press, and `ModalShell` already moves focus into the dialog, so announcing
+  // here too would talk over it. An anchor jump inside one doc stays silent as well, since the
   // article is the same article, and the scroll is the answer to the press.
   const saidDocRef = useRef(docId);
   useEffect(() => {
@@ -142,10 +142,10 @@ export function DocsModal({
         </nav>
 
         {/* `overflow-y: auto` with nothing focusable inside it is a pane a keyboard operator
-            cannot scroll at all -- a doc is prose, so there is no link or button to tab onto
-            and carry the scroll with (WCAG 2.1.1, #177). `tabIndex={0}` makes the pane itself
-            a stop, and it carries a role and a name to be worth stopping on: naming it for the
-            doc on screen is also what tells the operator the pane changed when they pick a
+            cannot scroll at all: a doc is prose, so there is no link or button to tab onto
+            and carry the scroll with (WCAG 2.1.1). `tabIndex={0}` makes the pane itself
+            a stop, and it carries a role and a name to be worth stopping on. Naming it for the
+            doc on screen also tells the operator the pane changed when they pick a
             different one from the index beside it. */}
         <div
           className="docs-content"
@@ -160,13 +160,13 @@ export function DocsModal({
             <p className="doc-kicker" lang={uiLng}>
               {groupLabel(t, doc.group)}
             </p>
-            {/* `h3`, under the `h2` `ModalShell` gives every dialog its title. This was an `h1`,
-                which made the docs the second `h1` on an authenticated page -- the masthead
-                grew the first one in this same issue -- and inverted the outline inside the
-                dialog, an `h2` containing an `h1`. axe catches neither: `heading-order` only
-                flags skips going DOWN, and `page-has-heading-one` was already satisfied by the
-                masthead. `DocBody`'s sections follow at `h4`/`h5` so the article nests under
-                this rather than climbing back over the dialog's own title (#177). */}
+            {/* `h3`, under the `h2` `ModalShell` gives every dialog its title. Using `h1` here
+                instead would make the docs a second `h1` on an authenticated page (the
+                masthead already carries one), and would invert the outline inside the dialog:
+                an `h2` containing an `h1`. axe catches neither problem: `heading-order` only
+                flags skips going down, and `page-has-heading-one` is already satisfied by the
+                masthead. `DocBody`'s sections follow at `h4`/`h5`, so the article nests under
+                this heading instead of climbing back over the dialog's own title. */}
             <h3>{doc.title}</h3>
             <p className="doc-summary">{doc.summary}</p>
             <DocBody blocks={doc.body} onNavigate={onNavigate} />

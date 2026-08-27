@@ -1,14 +1,13 @@
 """add instance.add_import_exclusion
 
-The per-instance "Block re-download after delete" switch (Radarr movie deletes ask the *arr
-to add an import/list exclusion so a list cannot re-add and re-download the title). Off by
-default; the operator opts in per instance.
+Adds the per-instance "Block re-download after delete" switch. When it is on, a Radarr
+movie delete also asks Radarr to add an import/list exclusion, so a list cannot re-add
+and re-download the title. It defaults to off, and the operator turns it on per instance.
 
-Split out of the frozen baseline into its own additive revision so an existing tester
-database gets the column instead of silently missing it: the baseline already ran on those
-databases, so a column added *inside* the baseline is never created, and every query that
-loads an Instance row then fails. Non-breaking by construction -- a single NOT NULL column
-with a server default of false, so existing rows backfill to "off" and no database is rebuilt.
+This revision is separate from the frozen baseline because an existing tester database
+already ran the baseline: a column added inside it would never reach that database, and
+every query loading an Instance row would fail. The new column is NOT NULL with a server
+default of false, so existing rows backfill to "off" and no database needs a rebuild.
 
 Revision ID: 2b3c4d5e6f70
 Revises: 1f2a3b4c5d6e
@@ -30,23 +29,20 @@ depends_on: str | Sequence[str] | None = None
 
 
 def _has_column(inspector: sa.Inspector, table: str, name: str) -> bool:
-    """Whether ``table`` already carries ``name`` in the live database."""
+    """Check whether ``table`` already has a column named ``name``."""
     return any(col["name"] == name for col in inspector.get_columns(table))
 
 
 def upgrade() -> None:
-    # For a brief window this column lived in the frozen baseline's CREATE TABLE in place
-    # (later reverted), so a database created fresh during that ~30 minutes already carries
-    # it. A plain add_column then raises "duplicate column name" and boot-loops the container
-    # -- exactly the rebuild the frozen-baseline rule forbids. Reflect first and skip the add
-    # when it is already present, the same reflection guard the sibling heal migration
-    # (20260723_1000) uses (rule 81). A database that never had the column still gets it, and
-    # one that already ran this migration never re-runs it, so editing the shipped file is safe.
+    # A database that already has this column fails a plain add_column with "duplicate
+    # column name", and the container does not start. Check first, and skip the add when
+    # the column is already present. The heal migration in
+    # 20260723_1000_heal_candidate_size_nullable.py uses the same guard.
     if _has_column(sa.inspect(op.get_bind()), "instance", "add_import_exclusion"):
         return
-    # batch_alter_table for SQLite parity with the baseline. The server default lets SQLite
-    # add a NOT NULL column to a populated table (it cannot otherwise) and backfills every
-    # existing instance to "off"; new rows still take the model's default.
+    # batch_alter_table matches the baseline's SQLite style. The server default lets SQLite
+    # add a NOT NULL column to a populated table, and it backfills every existing instance
+    # to "off". New rows still take the model's own default.
     with op.batch_alter_table("instance", schema=None) as batch_op:
         batch_op.add_column(
             sa.Column(

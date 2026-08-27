@@ -1,26 +1,19 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Linking a Plex server, choosing its address, and what Reaper reads from it.
 
-Fourteen routes lifted out of ``api/settings.py`` whole: the link flow, the server and
-connection choice, the library shelf, and the watch-evidence mirror the shelf is read
-against. They keep the ``/api/settings`` prefix and their own ``PLEX`` tag, so the served
-document is equivalent by construction -- tags are per-route here, never router-level. The
-*sorted* document is byte-identical either side; the one thing that does move is `paths`
-insertion order, which nothing reads (Scalar renders by tag section, ``test_openapi_tags.py``
-sorts, and no snapshot is committed).
+This router holds the link flow, the server and connection choice, the library
+shelf, and the watch-evidence mirror the shelf is read against. It keeps the
+``/api/settings`` prefix and its own ``PLEX`` tag, matching how
+``api/plex_trash.py`` and ``api/leaving_soon.py`` already sit beside
+``api/settings.py`` as sibling routers under the same tag.
 
-**The seam is the tag, and it was already drawn.** Every route below was `PLEX`-tagged
-inside a 2,000-line file whose other routes are services, jobs, security and
-notifications; ``api/plex_trash.py`` and ``api/leaving_soon.py`` already sit beside it as
-sibling routers.
+The request accessors come from ``api.deps``, the same source every router that
+needs them reads from.
 
-The request accessors come from ``api.deps``, which is where every router that declared
-its own reads them.
-
-Two things are true of this router, as they are of ``api/settings.py`` it came from: **it
-requires a session** (these routes sit behind the auth gate, see ``api.middleware``), and
-**the Plex token is write-only** -- encrypted the instant it arrives and never read back to
-the browser.
+Two things are true of this router, as they are of ``api/settings.py``. It
+requires a session, since these routes sit behind the auth gate (see
+``api.middleware``). And the Plex token is write-only: encrypted the instant it
+arrives and never read back to the browser.
 """
 
 from __future__ import annotations
@@ -85,29 +78,27 @@ class PlexStatusOut(BaseModel):
     """Whether the server's TLS certificate is checked (mirrors the per-instance
     setting). True when unlinked, since on is the only default."""
     web_url: str = ""
-    """Where "open in Plex" links point. Always present, linked or not -- the hosted
-    Plex Web default until the operator overrides it."""
+    """Where "open in Plex" links point. Always present, linked or not. This is
+    the hosted Plex Web default until the operator overrides it."""
 
 
-# A comment, not the docstring: this class's docstring is the schema description in the API
-# reference an operator can browse, so the incident lives here and the plain sentence lives there.
+# A comment, not the docstring. This class's docstring is the schema description
+# the API reference shows an operator, so it must stay a plain sentence, and this
+# comment explains the contract in more detail.
 #
-# Both fields need three states, and `web_url` had two. `str = ""` could not tell "I am not
-# changing the address" from "reset it to the hosted default", so every caller wrote the address
-# whether it meant to or not (rule 1). The browser's certificate switch was such a caller and
-# filled the field from its CACHED status row, so flipping a setting about certificates wrote back
-# an address that may have moved since -- silently reverting it, and pointing every "open in Plex"
-# link in the app at plex.tv (#204). `None` means keep; `""` still means reset.
+# `web_url` needs three states. `None` keeps the stored address, `""` resets it
+# to the hosted default, and any other string sets it. A plain `str = ""` cannot
+# tell "not changing it" from "reset it", so every caller would write the
+# address whether it meant to or not.
 #
-# Both sentences of the contract are in the CLASS docstring because that is the only part of this
-# model an operator can read: Pydantic harvests the per-field docstrings below only under
-# `use_attribute_docstrings`, which this tree does not set (`schemas.py` says so as well). So the
-# empty-string reset -- the one way back to the hosted default -- was written beside the field it
-# describes and published nowhere, leaving the browsable schema naming neither field's semantics
-# while every test stayed green (rule 144).
+# Both sentences of the contract belong in the class docstring, not the field
+# docstrings, because Pydantic only publishes per-field docstrings under
+# `use_attribute_docstrings`, which this tree does not set (`schemas.py` says so
+# too). A note written on the field alone is invisible in the browsable schema.
 class PlexUpdateIn(BaseModel):
-    """The editable Plex settings. Send only what you are changing: a field you leave out
-    keeps its stored value, and an empty web address puts it back to the hosted default."""
+    """The editable Plex settings. Send only what you are changing. A field you
+    leave out keeps its stored value, and an empty web address puts it back to
+    the hosted default."""
 
     web_url: str | None = None
     """Where "open in Plex" links point."""
@@ -122,22 +113,24 @@ class PlexLinkStartOut(BaseModel):
 
 class PlexLinkPollIn(BaseModel):
     pin_id: int
-    # Multi-server accounts only: the machine identifier of the owned server the admin
-    # picked, echoed back from a "choose_server" response.
+    # Multi-server accounts only. The machine identifier of the owned server the
+    # admin picked, echoed back from a "choose_server" response.
     machine_identifier: str | None = None
-    # The certificate-check choice made in the link form. Off lets a self-signed HTTPS
-    # server be reached at all; it is stored on the server row when the link completes.
+    # The certificate-check choice made in the link form. Off lets a self-signed
+    # HTTPS server be reached at all. It is stored on the server row when the
+    # link completes.
     verify_tls: bool = True
 
 
 class PlexLinkPollOut(BaseModel):
     status: str  # "pending" | "retrying" | "ok" | "choose_server"
     server: PlexStatusOut | None = None
-    # Present only with status "choose_server": the owned servers to pick from.
+    # Present only with status "choose_server". Lists the owned servers to pick from.
     servers: list[PlexServerChoiceOut] | None = None
-    # Present only with status "retrying": why this poll could not finish yet -- the typed
-    # id plus raw params (rule 92), same posture as every other reason field on the wire.
-    # The sign-in is still good and the browser keeps polling.
+    # Present only with status "retrying". Says why this poll could not finish
+    # yet, as the typed id plus raw params, the same shape every other reason
+    # field on the wire takes. The sign-in is still good, and the browser keeps
+    # polling.
     reason: ReasonKey | None = None
 
 
@@ -165,21 +158,22 @@ class PlexResourcesOut(BaseModel):
     about staleness rather than pretending a cache is live."""
     servers: list[PlexResourceOut]
     owner_username: str | None = None
-    """The signed-in Plex account's name -- the person, not the server. Known only on the
-    live path (it comes from plex.tv); ``None`` on the stored fallback, where the UI shows
-    the server name instead."""
+    """The signed-in Plex account's name, not the server's. Known only on the
+    live path, since it comes from plex.tv. ``None`` on the stored fallback,
+    where the UI shows the server name instead."""
 
 
 class PlexServerSwitchIn(BaseModel):
     machine_identifier: str
     verify_tls: bool | None = (
-        None  # omitted keeps the stored setting; a self-signed target needs False
+        None  # omitted keeps the stored setting. A self-signed target needs False
     )
 
 
 class PlexConnectionIn(BaseModel):
-    """A connection choice: one of the discovered addresses, or a manually typed one.
-    The address is probed before anything is saved -- a typo changes nothing."""
+    """A connection choice. One of the discovered addresses, or a manually typed
+    one. The address is probed before anything is saved, so a typo changes
+    nothing."""
 
     uri: str
     verify_tls: bool | None = None
@@ -196,18 +190,21 @@ class PlexLibraryOut(BaseModel):
 class WatchEvidenceOut(BaseModel):
     """How much watching Reaper has recorded, and what the last scan could not read.
 
-    ``titles`` is how many titles hold a record. ``held_back`` is how many items the last scan
-    found had plays it could no longer read, and it is **null when no scan has counted** --
-    either none has run, or the newest one predates the count. Null is not zero and must not be
-    rendered as zero: a scan that did not count is not a scan that counted none (rule 93).
+    ``titles`` is how many titles hold a record. ``held_back`` is how many items
+    the last scan found had plays it could no longer read. It is null when no
+    scan has counted, either because none has run, or because the newest one
+    predates the count. Null is not zero, and must never be rendered as zero: a
+    scan that did not count is not the same as a scan that counted none.
 
-    It counts what was measured, never what was decided. Such an item is normally held, but by
-    three gates the operator can each switch off, and nothing here consults the verdict, so copy
-    calling this figure items held back or kept asserts a protection it is not computed from.
+    It counts what was measured, never what was decided. Such an item is
+    normally held back, but by three gates the operator can each switch off,
+    and nothing here consults the verdict. Copy that calls this figure items
+    held back or kept asserts a protection this number is not computed from.
 
-    The contract lives in this class docstring, not on the fields: attribute docstrings are
-    not published in the schema here (see ``PlexUpdateIn`` above), so a field-level note is
-    invisible to anyone reading the API reference.
+    The contract lives in this class docstring, not on the fields. Attribute
+    docstrings are not published in the schema here (see ``PlexUpdateIn``
+    above), so a field-level note is invisible to anyone reading the API
+    reference.
     """
 
     titles: int
@@ -217,9 +214,10 @@ class WatchEvidenceOut(BaseModel):
 class WatchEvidenceResetIn(BaseModel):
     """The admin password, which is what confirms forgetting the record.
 
-    Optional on the wire rather than required, so an omitted password comes back as the same
-    plain "that password didn't match" the wrong one gets, instead of a validator's sentence
-    (rule 21). Its siblings ``SafetyIn`` and ``RestoreConfirmIn`` are typed the same way.
+    Optional on the wire rather than required, so an omitted password comes back
+    as the same plain "that password didn't match" the wrong one gets, instead
+    of a validator's sentence. Its siblings ``SafetyIn`` and ``RestoreConfirmIn``
+    are typed the same way.
     """
 
     password: str | None = Field(default=None, max_length=128)
@@ -232,9 +230,9 @@ class WatchEvidenceResetOut(BaseModel):
 
 
 class PlexLibrariesIn(BaseModel):
-    """The full set of enabled section keys. Keys not in the stored list are ignored;
-    an empty list turns every library off, which just means no shelf is managed
-    anywhere -- this scopes a warning feature, never a deletion."""
+    """The full set of enabled section keys. Keys not in the stored list are
+    ignored. An empty list turns every library off, which just means no shelf
+    is managed anywhere. This scopes a warning feature, never a deletion."""
 
     enabled_keys: list[int]
 
@@ -267,14 +265,15 @@ async def plex_status(request: Request) -> PlexStatusOut:
 
 @router.put("/plex", tags=[api_tags.PLEX])
 async def update_plex_settings(request: Request, payload: PlexUpdateIn) -> PlexStatusOut:
-    """Save the Plex settings: the "open in Plex" web address (empty resets to the
-    hosted default) and, once a server is linked, the certificate check. Each field is
-    independent, and one left out is left alone."""
+    """Save the Plex settings. This covers the "open in Plex" web address (empty
+    resets to the hosted default) and, once a server is linked, the certificate
+    check. Each field is independent, and one left out is left alone."""
     cleaned = payload.web_url.strip() if payload.web_url is not None else None
     _require_web_url(cleaned, code="error.plex.web_url_invalid")
     async with session_factory(request)() as session:
-        # Only when the caller sent the field. `cleaned` is `None` for "not sent" and `""` for
-        # "reset to the hosted default", and those are different requests (rule 1).
+        # Only when the caller sent the field. `cleaned` is `None` for "not sent"
+        # and `""` for "reset to the hosted default", and those are different
+        # requests.
         if cleaned is not None:
             await app_settings.set_plex_web_url(session, cleaned or None)
         if payload.verify_tls is not None:
@@ -317,8 +316,8 @@ async def plex_link_poll(request: Request, payload: PlexLinkPollIn) -> PlexLinkP
             verify_tls=payload.verify_tls,
         )
     except PlexServerChoiceNeededError as exc:
-        # The account owns several servers. The PIN stays valid; the browser shows the
-        # candidates and re-polls with the admin's pick.
+        # The account owns several servers. The PIN stays valid. The browser
+        # shows the candidates and re-polls with the admin's pick.
         return PlexLinkPollOut(
             status="choose_server",
             servers=[
@@ -327,12 +326,13 @@ async def plex_link_poll(request: Request, payload: PlexLinkPollIn) -> PlexLinkP
             ],
         )
     except PlexLinkRetryableError as exc:
-        # The sign-in was approved but the server could not be reached this instant -- it
-        # may just be restarting. ``poll_link`` deliberately KEEPS the pending login for
-        # exactly this case, so the answer must not be an error: the browser aborts its
-        # poll loop on any thrown status, which would strand the still-valid sign-in and
-        # send the operator back through the whole approval round trip (B2-14). Answered
-        # as a non-final status instead, so the loop keeps polling until it works or the
+        # The sign-in was approved but the server could not be reached this
+        # instant. It may just be restarting. ``poll_link`` deliberately keeps
+        # the pending login for exactly this case, so the answer must not be an
+        # error. The browser aborts its poll loop on any thrown status, which
+        # would strand the still-valid sign-in and send the operator back
+        # through the whole approval round trip. This answers with a non-final
+        # status instead, so the loop keeps polling until it works or the
         # deadline passes.
         return PlexLinkPollOut(
             status="retrying",
@@ -351,9 +351,9 @@ async def plex_link_poll(request: Request, payload: PlexLinkPollIn) -> PlexLinkP
 
 @router.delete("/plex", tags=[api_tags.PLEX])
 async def plex_unlink(request: Request) -> RemovedOut:
-    """Forget the linked Plex server. Deletes nothing in Plex -- it just drops the stored
-    connection and token, so Leaving Soon and the collection whitelist go quiet until a
-    server is linked again."""
+    """Forget the linked Plex server. This deletes nothing in Plex. It drops the
+    stored connection and token, so Leaving Soon and the collection whitelist go
+    quiet until a server is linked again."""
     async with session_factory(request)() as session:
         server = (await session.execute(select(PlexServer))).scalars().first()
         if server is None:
@@ -373,13 +373,13 @@ async def _linked_server(session: AsyncSession) -> PlexServer:
 
 @router.get("/plex/resources", tags=[api_tags.PLEX])
 async def plex_resources(request: Request) -> PlexResourcesOut:
-    """The servers this Plex account owns and every address each can be reached at,
-    for the server and connection pickers.
+    """List the servers this Plex account owns, and every address each can be
+    reached at, for the server and connection pickers.
 
-    Asks plex.tv live using the stored token. When plex.tv cannot be reached, falls
-    back to the linked server's addresses as remembered at link time -- marked
-    ``source: "stored"`` so the UI can say the list may be stale rather than imply it
-    is fresh.
+    Asks plex.tv live using the stored token. When plex.tv cannot be reached,
+    this falls back to the linked server's addresses as remembered at link
+    time, marked ``source: "stored"`` so the UI can say the list may be stale
+    instead of implying it is fresh.
     """
     async with session_factory(request)() as session:
         server = await _linked_server(session)
@@ -394,8 +394,9 @@ async def plex_resources(request: Request) -> PlexResourcesOut:
     try:
         async with PlexTvClient(cid, safety=safety) as plextv:
             owned = await plextv.owned_servers(token)
-            # The signed-in person's name, for the "who you're linked as" line. Same token,
-            # same live call as the server list; a failure here degrades to stored below.
+            # The signed-in person's name, for the "who you're linked as" line.
+            # Same token, same live call as the server list. A failure here
+            # degrades to stored below.
             account = await plextv.account(token)
     except IntegrationError as exc:
         log.warning("plex.resources_unreachable", error=str(exc))
@@ -444,11 +445,12 @@ async def plex_resources(request: Request) -> PlexResourcesOut:
 async def plex_switch_server(request: Request, payload: PlexServerSwitchIn) -> PlexStatusOut:
     """Point Reaper at a different server the same account owns.
 
-    Resolved against the live OWNED list from plex.tv and probed before anything is
-    saved. Switching clears the library choices and the announced set -- they were keyed
-    to the old server and would silently mis-target the new one. The certificate check
-    rides along when given, so switching to a self-signed server can turn it off in the
-    same step rather than being stuck on the old server's setting.
+    Resolved against the live owned list from plex.tv and probed before
+    anything is saved. Switching clears the library choices and the announced
+    set, since they were keyed to the old server and would silently mis-target
+    the new one. The certificate check rides along when given, so switching to
+    a self-signed server can turn it off in the same step, instead of being
+    stuck on the old server's setting.
     """
     async with session_factory(request)() as session:
         safety = await app_settings.runtime_safety(session, runtime_settings(request))
@@ -465,9 +467,10 @@ async def plex_switch_server(request: Request, payload: PlexServerSwitchIn) -> P
     except PlexLinkError as exc:
         refuse_from(exc)
 
-    # Switching cleared the library choices, which were keyed to the old server. Refill them
-    # from the new one here, for the same reason the link path does (rule 72): the stored list
-    # is otherwise empty until something presses Sync, and the library pickers read that list.
+    # Switching cleared the library choices, which were keyed to the old server.
+    # This refills them from the new one here, for the same reason the link
+    # path does. The stored list is otherwise empty until something presses
+    # Sync, and the library pickers read that list.
     await _sync_libraries_after_link(request)
     async with session_factory(request)() as session:
         status = await _plex_status(session)
@@ -477,21 +480,25 @@ async def plex_switch_server(request: Request, payload: PlexServerSwitchIn) -> P
 
 @router.put("/plex/connection", tags=[api_tags.PLEX])
 async def plex_set_connection(request: Request, payload: PlexConnectionIn) -> PlexStatusOut:
-    """Save how Reaper reaches the linked server: a discovered address or a manual one.
+    """Save how Reaper reaches the linked server. This can be a discovered
+    address or a manual one.
 
-    The address is probed with the stored token before anything is written, so a typo
-    or a dead address changes nothing. The certificate check rides along when given
-    (a self-signed HTTPS server needs it off to be probed at all).
+    The address is probed with the stored token before anything is written, so
+    a typo or a dead address changes nothing. The certificate check rides
+    along when given, since a self-signed HTTPS server needs it off to be
+    probed at all.
 
-    The probe also asks the server who it is and refuses anything but the linked one.
-    This address is typed by hand, so it can be any Plex on the network; saving one
-    that belongs to a different server would point Reaper's Leaving Soon writes and its
-    Never-Reap read at a library nobody asked it to touch (B-10). A server that will
-    not say who it is is refused for the same reason: unconfirmed is not confirmed.
+    The probe also asks the server who it is and refuses anything but the
+    linked one. This address is typed by hand, so it can be any Plex on the
+    network. Saving one that belongs to a different server would point
+    Reaper's Leaving Soon writes and its Never-Reap read at a library nobody
+    asked it to touch. A server that will not say who it is is refused for the
+    same reason. Unconfirmed is not confirmed.
     """
     uri = payload.uri.strip().rstrip("/")
-    # The required form: this address is dialed, not stored for display, so a blank one is refused
-    # here rather than carried into the probe. `host` is the validated host the probe needs.
+    # The required form. This address is dialed, not stored for display, so a
+    # blank one is refused here instead of being carried into the probe.
+    # `host` is the validated host the probe needs.
     parts, host = _required_web_url(uri, code="error.plex.connection_address_invalid")
 
     async with session_factory(request)() as session:
@@ -556,25 +563,25 @@ async def plex_libraries(request: Request) -> list[PlexLibraryOut]:
 async def _sync_libraries_after_link(request: Request) -> None:
     """Refresh the library list because the linked server just changed. Never raises.
 
-    The library list is a property of the server that was just linked, so this is where it
-    becomes knowable -- and reading it here is what stops every later screen from having to
-    remember. Nothing did: ``GET /plex/libraries`` answers "as last synced", the setup wizard
-    only ever called that, and an operator who signs in with Plex at the login screen is past
-    ``plex_linked`` before the wizard's Plex step would have run, so the step never renders and
-    nothing ever syncs. The service editor's library pickers were then empty on a fresh install
-    while its folder suggestions -- which come from a LIVE Plex read, not the stored list --
-    were right, so the two disagreed about libraries that plainly existed (#384).
+    The library list is a property of the server that was just linked, so this
+    is where it becomes knowable. Reading it here means no later screen has to
+    remember to sync it itself. ``GET /plex/libraries`` only answers "as last
+    synced", so without a sync call somewhere in the link path, an operator
+    whose sign-in flow skips the wizard's Plex step would see empty library
+    pickers even though Plex has real libraries.
 
-    Best-effort by design: a sync failure must not fail the sign-in the operator just approved.
-    Both callers have a manual Sync button behind them and ``PlexPanel`` re-syncs an empty list
-    on sight, so the recovery path is the one that already existed.
+    Best-effort by design. A sync failure must not fail the sign-in the
+    operator just approved. Both callers have a manual Sync button behind
+    them, and ``PlexPanel`` re-syncs an empty list on sight, so the recovery
+    path is the one that already existed.
     """
-    # Deliberately every exception, because the promise above is unconditional and the two named
-    # families were not the whole surface: `_sync_libraries` also decrypts the stored token, writes
-    # and commits, and closes the client in a `finally`. An `InvalidToken` or a locked database
-    # would have come out of `plex_link_poll` as a 500 -- after the pin was already consumed and
-    # the server already linked, which is precisely the stranded sign-in the poll route's own
-    # comment is written to avoid. A docstring saying "never raises" has to be true (rule 7/24).
+    # This deliberately catches every exception. `_sync_libraries` also
+    # decrypts the stored token, writes and commits, and closes the client in
+    # a `finally`, so `PlexError` and network failures are not the whole
+    # surface. An `InvalidToken` or a locked database would otherwise come out
+    # of `plex_link_poll` as a 500, after the pin was already consumed and the
+    # server already linked, stranding the sign-in this function exists to
+    # protect. The docstring's "never raises" claim has to be true.
     try:
         await _sync_libraries(request)
     except Exception as exc:
@@ -591,12 +598,12 @@ async def sync_plex_libraries(request: Request) -> list[PlexLibraryOut]:
 
 
 async def _sync_libraries(request: Request) -> list[PlexLibraryOut]:
-    """The refresh itself, raising ``PlexError`` for an unreachable server.
+    """Do the refresh itself, raising ``PlexError`` for an unreachable server.
 
-    Merge, not replace: a library the operator already turned off stays off across a
-    re-sync; a newly discovered library starts ON, so the default install marks every
-    movie and TV library without further setup. Libraries that no longer exist on the
-    server are dropped.
+    This merges instead of replacing. A library the operator already turned
+    off stays off across a re-sync. A newly discovered library starts on, so
+    the default install marks every movie and TV library without further
+    setup. Libraries that no longer exist on the server are dropped.
     """
     async with session_factory(request)() as session:
         server = await _linked_server(session)
@@ -636,11 +643,13 @@ async def _sync_libraries(request: Request) -> list[PlexLibraryOut]:
 
 @router.get("/watch-evidence", tags=[api_tags.PLEX])
 async def get_watch_evidence(request: Request) -> WatchEvidenceOut:
-    """How many titles hold a watch record, and how many the last scan could not read.
+    """Return how many titles hold a watch record, and how many the last scan
+    could not read.
 
-    The second number is the one that answers "do I need to press this": a nonzero count is
-    items whose recorded plays Reaper can no longer see. It is what was measured, not what was
-    decided -- see ``WatchEvidenceOut``, which says why the difference matters here.
+    The second number is the one that answers whether the operator needs to
+    press this reset. A nonzero count is items whose recorded plays Reaper can
+    no longer see. It is what was measured, not what was decided. See
+    ``WatchEvidenceOut``, which says why the difference matters here.
     """
     async with session_factory(request)() as session:
         titles = int(
@@ -660,37 +669,43 @@ async def reset_watch_evidence(
 ) -> WatchEvidenceResetOut:
     """Forget how much watching Reaper has measured for each title, and start over.
 
-    Reaper records the most watch history it has ever seen per title, so that a title whose
-    plays suddenly read as zero can be told apart from one nobody ever watched. Plays go
-    unreadable when Plex reissues an item's id, which happens when a file leaves the library
-    and comes back: the plays stay filed under the old id.
+    Reaper records the most watch history it has ever seen per title, so that
+    a title whose plays suddenly read as zero can be told apart from one
+    nobody ever watched. Plays go unreadable when Plex reissues an item's id,
+    which happens when a file leaves the library and comes back. The plays
+    stay filed under the old id.
 
-    Rebuild a whole library without repairing that history and EVERY watched title reads zero
-    at once, so every one of them is held back and nothing is reapable. That is the honest
-    answer, and no amount of re-scanning changes it. This discards the record so the next scan
-    accepts the library as it is now.
+    Rebuilding a whole library without repairing that history makes every
+    watched title read zero at once, so every one of them is held back and
+    nothing is reapable. That is the honest answer, and no amount of
+    re-scanning changes it. This discards the record, so the next scan accepts
+    the library as it is now.
 
-    Deliberately not paired with a cache rebuild: the watch mirror is a faithful copy of the
-    source, so re-syncing it fetches the same rows back. The repair that restores the real
-    numbers is on the source side, in Tautulli.
+    This is deliberately not paired with a cache rebuild. The watch mirror is
+    a faithful copy of the source, so re-syncing it fetches the same rows
+    back. The repair that restores the real numbers happens on the source
+    side, in Tautulli.
 
-    **Gated on the admin password, exactly like arming deletion
+    Gated on the admin password, exactly like arming deletion
     (:func:`reaper.api.settings.set_safety`) and confirming a restore
-    (:func:`reaper.api.backup.restore_confirm`)** -- literally the same gate, since all three
-    call :func:`reaper.api.deps.require_admin_password`, plus the same refusal when no
-    password has been set at all. It earns that gate on blast radius: the record is the only
-    thing that can tell a title whose plays went unreadable apart from one nobody ever
-    watched, so discarding it withdraws that protection from every title at once, and the
-    three gates that were holding those titles (``MIN_DORMANCY``, ``SERVER_POPULARITY``,
-    ``DATA_HORIZON``) stop holding on the next scan. A stray click or a stale tab must not be
-    able to do that, which is the same sentence ``set_safety`` is written on.
+    (:func:`reaper.api.backup.restore_confirm`). It is literally the same
+    gate, since all three call :func:`reaper.api.deps.require_admin_password`,
+    plus the same refusal when no password has been set at all. It earns that
+    gate on blast radius. The record is the only thing that can tell a title
+    whose plays went unreadable apart from one nobody ever watched, so
+    discarding it withdraws that protection from every title at once, and the
+    three gates that were holding those titles (``MIN_DORMANCY``,
+    ``SERVER_POPULARITY``, ``DATA_HORIZON``) stop holding on the next scan. A
+    stray click or a stale tab must not be able to do that, the same property
+    ``set_safety`` is written to hold.
 
-    No content-binding token (rule 73), and that is a decision rather than an omission: there
-    is nothing staged for the operator to review. They are not approving a list, and the
-    action discards the whole record whatever the count beside it says, so a token bound to
-    that count could only refuse a press over a change that cannot alter what the press does.
-    ``set_safety`` is the shape this follows; ``restore_confirm`` binds a token because it has
-    a staged artifact to bind one to.
+    This carries no content-binding token, and that is a decision rather than
+    an omission. There is nothing staged for the operator to review. They are
+    not approving a list, and the action discards the whole record whatever
+    the count beside it says, so a token bound to that count could only
+    refuse a press over a change that cannot alter what the press does.
+    ``set_safety`` is the shape this follows. ``restore_confirm`` binds a
+    token because it has a staged artifact to bind one to.
     """
     keys = (f"ip:{client_ip(request)}", "account:watch-evidence-reset")
     async with session_factory(request)() as session:
@@ -710,21 +725,24 @@ async def reset_watch_evidence(
 
 @router.delete("/watch-evidence/{media_key}", tags=[api_tags.PLEX])
 async def forget_watch_evidence_for(request: Request, media_key: str) -> RemovedOut:
-    """Accept what Reaper can see now for ONE title, and judge it on that from the next scan.
+    """Accept what Reaper can see now for one title, and judge it on that from
+    the next scan.
 
-    The narrow twin of the reset above. Reaper holds a title back when the plays it recorded
-    earlier stop being readable, because it cannot tell that from a title nobody watched. The
-    usual cause is a file that left the library and came back: Plex gives it a new id and the
-    earlier plays stay filed under the old one.
+    This is the narrow twin of the reset above. Reaper holds a title back when
+    the plays it recorded earlier stop being readable, because it cannot tell
+    that from a title nobody watched. The usual cause is a file that left the
+    library and came back. Plex gives it a new id, and the earlier plays stay
+    filed under the old one.
 
-    Two other events read the same way and are not that -- removing a duplicate copy of a
-    title held twice, and rebuilding a Radarr or Sonarr database so a different title inherits
-    the record. Nothing in the scan can tell the three apart, which is why this is a control
-    the operator presses rather than something Reaper decides.
+    Two other events read the same way but are not that: removing a duplicate
+    copy of a title held twice, and rebuilding a Radarr or Sonarr database so
+    a different title inherits the record. Nothing in the scan can tell the
+    three apart, which is why this is a control the operator presses rather
+    than something Reaper decides.
 
-    Returns whether a record existed. Removing one does NOT delete anything and does not
-    approve a removal: the title goes back to being judged by the policy on its current plays,
-    like any other.
+    This never deletes anything and never approves a removal. It returns
+    whether a record existed. The title goes back to being judged by the
+    policy on its current plays, like any other.
     """
     async with session_factory(request)() as session:
         removed = await watch_evidence.forget_one(session, media_key)
@@ -734,12 +752,13 @@ async def forget_watch_evidence_for(request: Request, media_key: str) -> Removed
 
 @router.put("/plex/libraries", tags=[api_tags.PLEX])
 async def set_plex_libraries(request: Request, payload: PlexLibrariesIn) -> list[PlexLibraryOut]:
-    """Turn libraries on or off. The keys name the enabled set; everything else stored
-    turns off. Unknown keys are ignored rather than invented.
+    """Turn libraries on or off. The keys name the enabled set. Everything else
+    stored turns off. Unknown keys are ignored rather than invented.
 
-    A library that just turned OFF gets one last empty-reconcile (when Reaper is allowed
-    to write), so its "Leaving Soon" shelf does not linger unmanaged -- the reconcile
-    never visits a disabled library again, and a stale warning shelf is a lie.
+    A library that just turned off gets one last empty-reconcile, when Reaper
+    is allowed to write, so its "Leaving Soon" shelf does not linger
+    unmanaged. The reconcile never visits a disabled library again, and a
+    stale warning shelf would be a lie.
     """
     enabled = {int(k) for k in payload.enabled_keys}
     async with session_factory(request)() as session:
@@ -754,8 +773,8 @@ async def set_plex_libraries(request: Request, payload: PlexLibrariesIn) -> list
         await session.commit()
 
     if turned_off:
-        # Best-effort, after the choice is committed: failure is logged inside, never
-        # raised, and never blocks the settings change itself.
+        # Best-effort, after the choice is committed. Failure is logged
+        # inside, never raised, and never blocks the settings change itself.
         await leaving_soon.cleanup_sections(
             session_factory(request),
             runtime_settings(request),

@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The wizard's Plex step, and the two paths on it that change which server is linked.
 //
-// This file exists because the wizard had no test of its own while `PlexPanel.test.tsx` carefully
-// pinned the same behavior for the panel. Three of the five server-changing paths were covered
-// and two were not, so the wizard's three-key copy of a six-key invalidation set was invisible to
-// the suite for as long as it existed (W10-7).
+// The wizard's copy of the invalidation set can drift from the one `plexServerQueries.ts`
+// declares without the suite noticing, since `PlexPanel.test.tsx` only pins the panel's copy.
 //
-// Like the panel's, these pin the INVALIDATION rather than a stale grid: `testQueryClient` leaves
-// `staleTime` at 0 where the app sets 30s, so under the suite every re-enable refetches anyway and
-// the symptom cannot be reproduced without pinning a fixture as hard as the component (rule 118).
+// Like the panel's, these pin the invalidation rather than a stale grid: `testQueryClient`
+// leaves `staleTime` at 0 where the app sets 30s, so under the suite every re-enable refetches
+// anyway, and the symptom cannot be reproduced without pinning a fixture as hard as the
+// component.
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,10 +30,9 @@ vi.mock("../api", async (importOriginal) => ({
 }));
 
 // Answered file-wide, because every mount here renders the linked step and reads both. Left
-// unanswered they resolved to `undefined`, which React Query files as a failed read, so six of
-// the suite's twenty undefined-reads came from this file and every assertion below was made
-// against the step's could-not-read branch (#704). A describe that varies either one sets its
-// own value after the reset, the way `plexResources` already does.
+// unanswered, they resolve to `undefined`, which React Query treats as a failed read, so every
+// assertion below would run against the step's could-not-read branch instead. A describe that
+// varies either one sets its own value after the reset, the way `plexResources` already does.
 beforeEach(() => {
   apiMock.plexStatus.mockResolvedValue(DEFAULT_PLEX_STATUS);
   apiMock.plexLibraries.mockResolvedValue([]);
@@ -51,7 +49,7 @@ function setup(overrides: Partial<SetupStatus> = {}): SetupStatus {
   } as SetupStatus;
 }
 
-/** A mount whose invalidations the test can read back. The spy calls THROUGH, so the step still
+/** A mount whose invalidations the test can read back. The spy calls through, so the step still
  *  refetches and reaches its linked render. */
 function renderRecordingInvalidations(status: SetupStatus): string[] {
   const client = testQueryClient();
@@ -67,9 +65,9 @@ function renderRecordingInvalidations(status: SetupStatus): string[] {
 
 function expectWholeSetDropped(invalidated: string[]) {
   // Read from the shared declaration here, unlike `PlexPanel.test.tsx`, which writes the list out
-  // to catch a key silently dropped from it (rule 119). One transcription of the set is the point
-  // of hoisting it; a second would be the same duplication this finding is about, and the panel's
-  // copy is the one positioned to notice.
+  // to catch a key silently dropped from it. One transcription of the set is the point of
+  // hoisting it. A second transcription here would be the same duplication this guard exists to
+  // avoid, and the panel's copy is the one positioned to notice a dropped key.
   for (const key of OF_THE_LINKED_SERVER) {
     expect(invalidated, `${JSON.stringify(key)} is not "of the linked server" any more`).toContain(
       JSON.stringify([...key]),
@@ -90,9 +88,9 @@ describe("changing which server is linked, from the wizard", () => {
     apiMock.plexSwitchServer.mockResolvedValue(undefined);
     const invalidated = renderRecordingInvalidations(setup());
 
-    // A `<select>`, whose accessible name holds still while the resources query loads -- so it
-    // gates nothing on its own and this waits for the control, not the page. user-event reports
-    // a disabled target as success, so acting one turn early would do nothing at all (rule 137).
+    // A `<select>`, whose accessible name holds still while the resources query loads, so it
+    // gates nothing on its own, and this waits for the control instead of the page. user-event
+    // reports a disabled target as success, so acting one turn early would do nothing at all.
     const picker = await screen.findByLabelText("Server");
     await waitFor(() => expect(picker).toBeEnabled());
     await user.selectOptions(picker, "machine-2");
@@ -104,8 +102,9 @@ describe("changing which server is linked, from the wizard", () => {
   });
 
   it("has no accessibility violations in its linked state", async () => {
-    // Two servers, because the Server picker only renders when there is a choice to make -- with
-    // one it is absent, and the audit would read a tree missing the control it is here for.
+    // Two servers, because the Server picker only renders when there is a choice to make. With
+    // one server, it is absent, and the audit would read a tree missing the control it is here
+    // for.
     apiMock.plexResources.mockResolvedValue({
       source: "plex.tv",
       servers: [
@@ -141,7 +140,8 @@ describe("changing which server is linked, from the wizard", () => {
     const start = await screen.findByRole("button", { name: "Sign in with Plex" });
     // `fireEvent`, not user-event: the poll runs on a two-second interval, so this needs fake
     // timers, and user-event schedules its own on the real clock. The advances are awaited inside
-    // `act`, or the poll settles after the assertions and the run fails on rule 136.
+    // `act`, or the poll would settle after the assertions run and fail as a state update outside
+    // `act`.
     vi.useFakeTimers();
     try {
       fireEvent.click(start);

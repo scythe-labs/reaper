@@ -1,20 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The two editors for the operator's OWN rules: reasons to remove (which add score pressure)
-// and reasons to keep (which either protect outright or lean toward keeping).
+// The two editors for the operator's OWN rules: reasons to remove, which add to the deletion
+// score, and reasons to keep, which either protect outright or lean toward keeping.
 //
-// Both are one form -- a field, a comparison, a value, a weight -- over a vocabulary the server
-// publishes, so most of this file is the shared plumbing that turns a stored rule back into a
-// sentence and a typed value back into the field's own units. Lifted whole out of
-// PolicyEditor.tsx, which held these alongside the presets, five more editors and a 1,000-line
-// component (R-2).
+// Both are one form: a field, a comparison, a value, a weight, over a vocabulary the server
+// publishes. Most of this file is the shared plumbing that turns a stored rule back into a
+// sentence and a typed value back into the field's own units. Split out of PolicyEditor.tsx
+// into its own module.
 //
-// The one safety rule in here: a rule can add pressure or take it away, but missing data always
-// leans toward keeping, and a ramp is refused rather than silently rewritten when its bounds run
-// backwards (B-32).
+// The one safety rule in here: a rule can add to the score or take away from it, but missing
+// data always leans toward keeping, and a ramp is refused rather than silently rewritten when
+// its bounds run backwards.
 
-// The ramp phrasing per field, offered as an extra choice in the condition dropdown.
-// Curated: a phrase exists only where more-of-the-number honestly means more reason to
+// The ramp phrasing per field, offered as an extra choice in the condition dropdown. A phrase
+// exists only where more of the number honestly means more reason to remove the title.
 import { type CSSProperties, type RefObject, useEffect, useId, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Trans, useTranslation } from "react-i18next";
@@ -42,12 +41,12 @@ import {
 import { Segmented } from "./Segmented";
 import { Notice } from "./Notice";
 
-// remove. (Most of these fields are filtered out of the remove vocabulary today because a
-// built-in signal covers them; the map stays complete so a future field just works.)
+// Most of these fields are filtered out of the remove vocabulary today because a built-in
+// signal already covers them. The map stays complete so a future field just works.
 //
-// A switch, not a Record<string,string>: `t()` needs a literal key (docs/history/I18N_PLAN.md §4),
-// and `field.key` is server data, so each field gets its own literal `t()` call rather than
-// one computed from the key (same shape as `ReapBreakdown.tsx`'s `reasonLabel`).
+// A switch, not a Record<string, string>: `t()` needs a literal key, and `field.key` is
+// server data, so each field gets its own literal `t()` call rather than one computed from
+// the key, the same shape as `ReapBreakdown.tsx`'s `reasonLabel`.
 function rampPhrase(fieldKey: string): string | undefined {
   switch (fieldKey) {
     case "days_unwatched":
@@ -65,12 +64,12 @@ function rampPhrase(fieldKey: string): string | undefined {
 
 /** A field's label, read from the catalog by its server key (`why.field.<key>`, the same
  *  subject the why-panel's condition sentences compose), never from the wire: the vocabulary
- *  endpoint stopped shipping one (#868 phase 4). Falls back to the raw key for a stored rule
- *  naming a field this build's catalog has no entry for.
+ *  endpoint does not ship one. Falls back to the raw key for a stored rule naming a field
+ *  this build's catalog has no entry for.
  *
- *  Three call sites below bake this into a generated rule NAME, which is then stored: a rule
+ *  Three call sites below bake this into a generated rule name, which is then stored. A rule
  *  name is operator data, not UI chrome, so it is written once, in the UI language active at
- *  that moment, and never re-translated when the operator's language changes later -- the same
+ *  that moment, and never re-translated when the operator's language changes later, the same
  *  way a list name or a policy name is never retranslated. */
 function fieldLabel(key: string): string {
   const catalogKey = `why.field.${key}`;
@@ -86,7 +85,7 @@ function fieldHelp(key: string): string | undefined {
 }
 
 /** A field's unit suffix, from the catalog (`policyRules.fieldUnit.<key>`). Most fields have
- *  none (a rank, a count, a yes/no) -- those read as `""`, same as the wire's old default. */
+ *  none (a rank, a count, a yes/no), which read as `""`, same as the wire's old default. */
 function fieldUnit(key: string): string {
   const catalogKey = `policyRules.fieldUnit.${key}`;
   return i18next.exists(catalogKey) ? i18next.t(catalogKey) : "";
@@ -114,21 +113,22 @@ function opLabel(op: string): string | undefined {
   }
 }
 
-// A vocabulary field already handled by a built-in protection -> not offered as a custom rule,
-// so the two never say the same thing twice. Only fields with no built-in gate (size, all-time
-// watchers, vote count, season rank) remain to be authored here.
+// Maps a vocabulary field to the built-in protection (gate) already covering it. The keep
+// editor filters out a field here whenever that gate is turned on, so a custom rule never
+// duplicates a switch the operator already has. Only fields with no built-in gate (size,
+// all-time watchers, vote count, season rank) remain to be authored here.
 const FIELD_TO_GATE: Record<string, string> = {
   days_unwatched: "min_dormancy",
   recent_watchers: "server_popularity",
   imdb_rating: "rating_floor",
   streaming_now: "streaming_now",
-  // `whitelisted` and `on_curated_list` were here, mapped to the two list gates. Both gates
-  // are retired -- every list now protects through an `on_list` keep rule the operator
-  // authors -- so their fields stay authorable and nothing filters them.
+  // `whitelisted` and `on_curated_list` are not mapped here. Both gates are retired: every
+  // list now protects through an `on_list` keep rule the operator authors, so their fields
+  // stay authorable and nothing filters them.
 };
 
 // The built-in signals already cover these fields, so they are not offered as custom
-// "remove" rules -- the two never say the same thing twice. That leaves the new metadata
+// "remove" rules: the two never say the same thing twice. That leaves the new metadata
 // fields (genre, requested, quality, release age, show ended) to be authored here.
 const FIELD_TO_SIGNAL: Record<string, string> = {
   days_unwatched: "unwatched",
@@ -139,15 +139,15 @@ const FIELD_TO_SIGNAL: Record<string, string> = {
 };
 
 /** The backwards-ramp complaint, named once so the six boxes that can be wrong and the one
- *  sentence explaining it are the same string rather than seven that can drift (rule 67). */
+ *  sentence explaining it are the same string rather than seven that can drift. */
 const RAMP_ERROR_ID = "ramp-bounds-error";
 
 /** Why an Add button is off, one id per editor so the three can be on screen together.
  *
  *  A `disabled` button is out of the Tab order, so a description hung on the BUTTON is
- *  unreachable by the operator it is for: the sentence binds to the empty box instead, which is
- *  both focusable and the thing that fixes it (rule 42). Same shape as `RAMP_ERROR_ID` above and
- *  the password row's `errorOwner` (#188). */
+ *  unreachable by the operator it is for. The sentence binds to the empty box instead, which
+ *  is both focusable and the thing that fixes it. Same shape as `RAMP_ERROR_ID` above and the
+ *  password row's `errorOwner`. */
 const CONDEMN_EMPTY_ID = "condemn-value-empty";
 const HARD_EMPTY_ID = "keep-hard-value-empty";
 const LEAN_EMPTY_ID = "keep-lean-at-empty";
@@ -172,11 +172,11 @@ function rampValue(field: VocabField | undefined, value: number): string {
 /**
  * A value and its unit, in a sentence.
  *
- * A unit that is a word takes a space ("30 days", "2 GB"); one that is punctuation does not
- * ("7.5/10"). Both callers joined with an unconditional space, so a saved rating keep rule
- * read back as "at least 7.5 /10" (#726). Deciding it from the suffix rather than per branch
- * is what keeps the next punctuation unit from arriving with the same space: `/10` is the
- * only one in `engine/fields.py` today, and nothing stops a second.
+ * A unit that is a word takes a space ("30 days", "2 GB"). One that is punctuation does not
+ * ("7.5/10"), or a saved rating keep rule would read back as "at least 7.5 /10". Deciding it
+ * from the suffix rather than per branch is what keeps the next punctuation unit from
+ * arriving with the same space: `/10` is the only one in `engine/fields.py` today, and
+ * nothing stops a second.
  */
 function withUnit(value: string, suffix: string | null | undefined): string {
   if (!suffix) return value;
@@ -204,7 +204,7 @@ function uniqueName(existing: { name: string }[], base: string): string {
 }
 
 /** "yes" / "no", shared by every bool value in this file: the two Segmented toggles and the
- *  sentence composers below, so the word is written once (rule 144). */
+ *  sentence composers below, so the word is written once. */
 function boolWord(value: boolean): string {
   return value ? i18next.t("policyRules.yesValue") : i18next.t("policyRules.noValue");
 }
@@ -215,12 +215,12 @@ function describeCondition(c: Condition, fields: VocabField[]): string {
   // value is the operator's own name for it. A stored rule whose list no longer exists still
   // renders, by that stored name.
   //
-  // The op is still read, because `on_list` carries TEXT_OPS and this branch used to
-  // short-circuit past it: the composer only ever writes `eq`, but
-  // `policy_migrations.convert_list_protections` re-spells a legacy `on_curated_list` rule keeping
-  // whatever op it had, and an imported body can hold one. A stored `contains "Top"` then
-  // rendered as an exact match on a list named "Top" -- a rule described as narrower than it
-  // is, on the screen where its strength is judged.
+  // The op is still read, because `on_list` carries TEXT_OPS and a stored rule can hold one
+  // other than `eq`: the composer here only ever writes `eq`, but
+  // `policy_migrations.convert_list_protections` re-spells a legacy `on_curated_list` rule
+  // keeping whatever op it had, and an imported body can carry one too. Ignoring the op would
+  // render a stored `contains "Top"` as an exact match on a list named "Top", describing the
+  // rule as narrower than it actually is, on the screen where its strength is judged.
   if (c.field === "on_list") {
     const listValue = String(c.value);
     return c.op === "eq"
@@ -265,7 +265,7 @@ function describeCondemn(rule: CustomCondemn, fields: VocabField[]): string {
   return i18next.t("policyRules.condemn.simple", { label, op, value });
 }
 
-/** A value input that suggests what the library already contains -- and still takes
+/** A value input that suggests what the library already contains, and still takes
  *  anything typed. The suggestions are an ordinary in-app popover, NOT a native
  *  <datalist>: Safari only reveals a datalist after you type a matching prefix (an empty
  *  click shows nothing), and embedded panes can draw the native popup in the wrong place
@@ -281,7 +281,7 @@ function SuggestInput({
   onChange: (v: string) => void;
   /** A sentence about this box, when there is one. Threaded to all three branches below: the
    *  branch a field takes is not the caller's business, and a prop honored by one of them is a
-   *  message that vanishes on the other two (rule 72). */
+   *  message that vanishes on the other two. */
   describedBy?: string | undefined;
 }) {
   const { t } = useTranslation();
@@ -302,28 +302,28 @@ function SuggestInput({
   const optionId = (i: number) => `${listboxId}-option-${i}`;
   // The list is left-aligned to the input, which on a phone can be the last box on a wrapped row
   // and so flush with the right edge; this slides it back on screen (popoverFit.ts). Called above
-  // the early return so the hook order holds for both branches -- a number field renders no list,
+  // the early return so the hook order holds for both branches. A number field renders no list,
   // and the ref it reads is simply null.
   const popRef = useRef<HTMLUListElement>(null);
   const popShift = usePopoverShift(popRef, "suggest");
   // The arrow keys move the active option without moving DOM focus, so the browser scrolls
   // nothing on their behalf: past the seventh option of a 14rem window the operator is marking
-  // a value they cannot see, and ArrowUp from the top wraps straight to the last one (#333).
-  // Only a KEYBOARD step scrolls -- `onMouseEnter` sets `highlight` too, and scrolling there
-  // would drag the list out from under the pointer that is aiming at it.
+  // a value they cannot see, and ArrowUp from the top wraps straight to the last one. Only a
+  // keyboard step scrolls: `onMouseEnter` sets `highlight` too, and scrolling there would drag
+  // the list out from under the pointer that is aiming at it.
   const steppedRef = useRef(false);
   useEffect(() => {
     if (!steppedRef.current) return;
     steppedRef.current = false;
-    // "nearest" leaves an already-visible option where it is; the pane only moves when the
+    // "nearest" leaves an already-visible option where it is. The pane only moves when the
     // step left the window. Instant, like every other scroll here: smooth silently no-ops in
     // some environments, and a jump that always lands beats an animation that sometimes does
-    // not (the reasoning DocsModal.tsx carries).
+    // not, the same reasoning `DocsModal.tsx` carries.
     popRef.current?.querySelector(".suggest-opt.active")?.scrollIntoView({ block: "nearest" });
   }, [highlight]);
 
-  // The one composed sentence in this component: a catalog field label plus a static
-  // suffix (rule 144), shared by all three branches below rather than composed three times.
+  // The one composed sentence in this component: a catalog field label plus a static suffix,
+  // shared by all three branches below rather than composed three times.
   const valueAriaLabel = t("policyRules.suggestInput.valueAriaLabel", {
     field: fieldLabel(field.key),
   });
@@ -442,7 +442,7 @@ function SuggestInput({
 
 /** The owner's own "reasons to remove" (custom condemn rules). One form: the condition
  *  dropdown carries plain comparisons AND, for numeric fields where it honestly applies,
- *  a ramp phrase like "the older it is" -- picking the phrase swaps the value box for a
+ *  a ramp phrase like "the older it is". Picking the phrase swaps the value box for a
  *  from/to pair and the rule scales up between them, like the built-in signals. */
 export function RemoveRulesEditor({
   condemn,
@@ -471,15 +471,16 @@ export function RemoveRulesEditor({
   const [rFrom, setRFrom] = useState(0);
   const [rTo, setRTo] = useState(1);
   const field = condemnFields.find((f) => f.key === rField);
-  // The unitless ramp bounds are plain boxes (rule 40), but a number being typed lives in
-  // the same one place it does everywhere else: clearing one to retype must not read as a
-  // zero the next digits land after.
+  // The unitless ramp bounds are plain boxes, but a number being typed lives in the same one
+  // place it does everywhere else: clearing one to retype must not read as a zero the next
+  // digits land after.
   //
   // Their precision is the chosen field's, decided by the same tenths test the `FixedQuantity`
-  // siblings in this file make when they pick a `step` -- declared once here and read for both
-  // the attribute and the bound, so the spinner and the value cannot disagree (rule 67). A
-  // rating bound is in tenths; every other rampable field is whole, and a count ramp that could
-  // start at 1.5 is #296's defect at a box that is not a `FixedQuantity` (rule 72).
+  // siblings in this file make when they pick a `step`. Declared once here and read for both
+  // the attribute and the bound, so the spinner and the value cannot disagree. A rating bound
+  // is in tenths; every other rampable field is whole, and a plain number box that allowed a
+  // count ramp to start at a fraction like 1.5 would have the same defect a `FixedQuantity`
+  // box avoids.
   const rampStep = field?.type === "rating_tenths" ? 0.1 : 1;
   const rampBounds = { min: 0, decimals: decimalsOfStep(rampStep) };
   const rampFrom = useTypedNumber(String(rFrom), setRFrom, rampBounds);
@@ -488,26 +489,23 @@ export function RemoveRulesEditor({
     field && rampPhrase(field.key) && field.type !== "bool" && field.type !== "text",
   );
   const isRamp = rOp === RAMP_OP;
-  // A ramp builds pressure from its low bound UP to its high one, so the high one has to be
-  // higher (engine/policy.py refuses floor >= saturate_at outright). This used to be clamped
-  // away at add time with `Math.max(rFrom + 1, rTo)`, which silently rewrote the operator's
-  // own bound: "from 5 years to 1 year" became 1826 days, and the saved row read back "(from
-  // 5 years to 1826 days)" -- a rule nobody asked for, on the lane that removes files (B-32).
-  // Refuse it beside the boxes instead, and add exactly what was typed.
+  // A ramp builds score from its low bound up to its high one, so the high one has to be
+  // higher (engine/policy.py refuses floor >= saturate_at outright). This box refuses a
+  // backwards ramp instead of silently correcting it: rewriting "from 5 years to 1 year" into
+  // "from 5 years to 1826 days" would save a rule nobody asked for, on the lane that removes
+  // files. Refuse it beside the boxes instead, and add exactly what was typed.
   const rampBackwards = isRamp && rTo <= rFrom;
   // The other reason Add is off. A ramp reads its bounds and a yes/no always has an answer, so
-  // only a typed value can be missing. It said nothing before: the button simply did not
-  // respond, on a form whose next step is invisible (#188).
+  // only a typed value can be missing.
   const condemnEmpty =
     !isRamp && field !== undefined && field.type !== "bool" && rValue.trim() === "";
   const helpText = field ? fieldHelp(field.key) : undefined;
 
-  // Re-seed the half-built rule when the operator picks a DIFFERENT field: its comparison,
-  // its value and its ramp bounds all belong to the old field and would otherwise be carried
-  // over. `rField` alone on purpose -- `condemnFields` is a fresh array on every render of
+  // Re-seeds the half-built rule when the operator picks a different field: its comparison,
+  // its value, and its ramp bounds all belong to the old field and would otherwise carry over.
+  // Depends on `rField` alone on purpose: `condemnFields` is a fresh array on every render of
   // the vocabulary query, so including it would re-run this on every keystroke and wipe the
-  // value being typed. The lint rule cannot see that, hence the suppression; every other one
-  // in this codebase carries its reason too (H-3).
+  // value being typed. The lint rule cannot see that, hence the suppression below.
   useEffect(() => {
     const f = condemnFields.find((x) => x.key === rField);
     if (!f) return;
@@ -547,19 +545,19 @@ export function RemoveRulesEditor({
       ]);
     }
     // The new row appears in a list far above, the composer's boxes empty, and the Add button
-    // disables itself -- three ways of saying nothing. Announced only on the branch that
-    // actually added one: the guard above returns silently, so a no-op press and a successful
-    // one were the same event to a reader.
+    // disables itself: three ways of saying nothing. This announces only when a rule was
+    // actually added, since the guard above returns silently on a no-op press, and without an
+    // announcement a no-op press and a successful one would sound the same to a reader.
     announce(t("policyRules.ruleAddedAnnounce"));
-    // Picking the field again is where the operator continues, and clearing it below is what
-    // unmounts the Add button they just pressed -- so without this the press that ADDS a rule
-    // also drops focus to `<body>` (#173).
+    // Picking the field again is where the operator continues, and clearing it below unmounts
+    // the Add button they just pressed, so without this focus call, the press that adds a rule
+    // would also drop focus to `<body>`.
     fieldRef.current?.focus();
     setRField("");
     setRValue("");
   };
   // Removing a rule destroys the button holding focus. Focus goes to the next rule's Remove,
-  // or to the field picker once the list is empty (#173).
+  // or to the field picker once the list is empty.
   const fieldRef = useRef<HTMLSelectElement>(null);
   const rules = useRemovalFocus(fieldRef);
 
@@ -582,9 +580,9 @@ export function RemoveRulesEditor({
                   : t("policyRules.removeEditor.weightFlat", { n: r.weight })}
               </span>
               {/* Named for the rule it deletes. These lists stack one "Remove" per authored
-                  rule across three tables on one page, and the sentence saying which rule is
-                  in the sibling `.rules-rule` that no control referenced -- so pressing the
-                  wrong one silently deletes a different rule. */}
+                  rule across three tables on one page. The sentence naming which rule this is
+                  sits in the sibling `.rules-rule`, which no control referenced before this
+                  label, so pressing the wrong button could silently delete a different rule. */}
               <button
                 {...REMOVES_ITS_ROW}
                 className="ghost sm"
@@ -607,17 +605,16 @@ export function RemoveRulesEditor({
           which is the wrong lesson to take from a failed fetch: say what happened instead, and
           drop the form rather than offer a dropdown with nothing in it.
 
-          Only when the picker would BE empty, though. React Query keeps the last good vocabulary
-          through a failed refetch, and `SetupWizard` fires a bare `invalidateQueries()` that
-          refetches every key, so an undivided error took the whole add-rule form away while the
-          list behind it was still in hand (#190). The vocabulary is a fixed server-defined list,
-          not the operator's own data, so a held copy needs no staleness line: what a rule can
-          look at does not change under them mid-session.
+          Only when the picker would actually be empty, though. React Query keeps the last good
+          vocabulary through a failed refetch, and `SetupWizard` fires a bare
+          `invalidateQueries()` that refetches every key, so branching on the error alone would
+          take the whole add-rule form away while the list behind it is still in hand. The
+          vocabulary is a fixed server-defined list, not the operator's own data, so a held copy
+          needs no staleness line: what a rule can look at does not change under it mid-session.
 
-          It no longer says to reload either (#195), because it said so in the sentence before
-          promising the rules already added were unaffected: those rules are unsaved draft state
-          (`PolicyEditor` binds `onCondemn` to its own `update`), so the advice destroyed exactly
-          what the next clause called safe. "Still here" is the honest half. */}
+          This message does not tell the operator to reload: the rules already added are unsaved
+          draft state (`PolicyEditor` binds `onCondemn` to its own `update`), and a reload would
+          destroy them. "Still here" is the honest half. */}
       {condemnVocabError && !condemnVocab ? (
         <Notice tone="error">{t("policyRules.vocabLoadError")}</Notice>
       ) : (
@@ -654,10 +651,10 @@ export function RemoveRulesEditor({
                   <span className="ramp-bounds">
                     <span className="muted">{t("policyRules.removeEditor.rampFrom")}</span>
                     {/* All six boxes below carry the same pair, because the complaint is about
-                        the PAIR: either number can be the one that is wrong, and the operator
-                        may be standing on whichever they typed second (rule 72 -- three
-                        branches per bound, and only fixing the branch in front of you leaves
-                        the other two silent for a different `field.type`). */}
+                        the pair: either number can be the one that is wrong, and the operator
+                        may be standing on whichever they typed second. There are three
+                        branches per bound below, one per `field.type`, and fixing only the
+                        branch in front of you would leave the other two silent. */}
                     {field.type === "days" ? (
                       <QuantityInput
                         value={rFrom}
@@ -756,7 +753,7 @@ export function RemoveRulesEditor({
               </>
             )}
           </div>
-          {/* Beside the boxes that fix it (rule 42), and only while it is true. */}
+          {/* Beside the boxes that fix it, and only while it is true. */}
           {rampBackwards && (
             <p className="help help-warn" id={RAMP_ERROR_ID}>
               {t("policyRules.removeEditor.rampBackwardsHelp")}
@@ -775,9 +772,9 @@ export function RemoveRulesEditor({
   );
 }
 
-/** The lists a membership rule can name, by the operator's own names for them. One select
- *  for both strengths (rule 72): the hard composer and the lean composer offer the same
- *  choice, so they render the same control. */
+/** The lists a membership rule can name, by the operator's own names for them. One select for
+ *  both strengths: the hard composer and the lean composer offer the same choice, so they
+ *  render the same control. */
 function ListNameSelect({
   value,
   names,
@@ -809,7 +806,7 @@ function ListNameSelect({
 
 /** The owner's own keep rules, both strengths in one card: a rule can keep a title
  *  outright (a protection), or just lean toward keeping by lowering its score. Neither
- *  can ever flag anything -- the protect vocabulary is filtered server-side. */
+ *  can ever flag anything: the protect vocabulary is filtered server-side. */
 export function KeepRulesEditor({
   conditions,
   keeps,
@@ -838,7 +835,7 @@ export function KeepRulesEditor({
     const gate = FIELD_TO_GATE[f.key];
     return !gate || !gateIds.includes(gate);
   });
-  // A lean ramps a number, so only numeric fields (those that accept >=) can drive one --
+  // A lean ramps a number, so only numeric fields (those that accept >=) can drive one,
   // plus the membership field, whose lean is FLAT: on the list takes the full discount, off
   // it takes none. Offered first, since a list is what most leans are about.
   const onListField = allFields.find((f) => f.key === "on_list");
@@ -847,48 +844,47 @@ export function KeepRulesEditor({
     ...allFields.filter((f) => f.ops.includes("gte")),
   ];
 
-  // The names a membership rule can pick from. Read only while the vocabulary actually
-  // offers the field (rule 66: the server decides what is authorable), which also keeps the
-  // query out of every test tree that never composes one.
+  // The names a membership rule can pick from. Read only while the vocabulary actually offers
+  // the field, since the server decides what is authorable, which also keeps the query out of
+  // every test tree that never composes one.
   const lists = useQuery({
     queryKey: ["lists-configured"],
     queryFn: api.listConfigs,
     enabled: onListField !== undefined,
   });
   const configured = lists.data ?? [];
-  // Which policy each list may protect is the server's call, not the picker's: `authorable_media`
-  // is the authoritative scope (`policy_migrations.authorable_media_scope`, #549), so a Plex collection is
-  // scoped by its library kind before any sync, and an unsynced tag whose type nothing can
-  // establish is offered on neither. Offering a list a rule there could never match reads as a
-  // protection the operator set (rule 38).
+  // Which policy each list may protect is the server's call, not the picker's:
+  // `authorable_media` is the authoritative scope (`policy_migrations.authorable_media_scope`),
+  // so a Plex collection is scoped by its library kind before any sync, and an unsynced tag
+  // whose type nothing can establish is offered on neither. Offering a rule on a list it could
+  // never match would read as a protection the operator actually set.
   const coversThisMedia = (l: ListConfig) => l.authorable_media.includes(mediaType);
   const eligible = configured.filter(coversThisMedia);
   const allListNames = eligible.map((l) => l.name);
-  // One list, one rule. A list already named by a rule is not offered again at EITHER
-  // strength: the two rules do not combine, the outright one wins and the lean beside it can
-  // never change an outcome, so the operator was tuning points that could not matter (#510).
-  // Softening a rule is Remove, then add it at the other strength. Case-folded, because that
-  // is how the scan matches a rule's value against a list name (rule 88).
+  // One list, one rule. A list already named by a rule is not offered again at either
+  // strength: the two rules do not combine, the outright one wins, and the lean beside it can
+  // never change an outcome, so the operator would be tuning points that could not matter.
+  // Softening a rule means removing it, then adding it back at the other strength.
+  // Case-folded, because that is how the scan matches a rule's value against a list name.
   const named = new Set(
     [
       ...conditions.filter((c) => c.field === "on_list").map((c) => String(c.value)),
       ...keeps.filter((k) => k.field === "on_list" && k.value != null).map((k) => String(k.value)),
     ].map((v) => v.trim().toLowerCase()),
   );
-  // The same rule, reached by the blanket field instead of by name. `whitelisted` is a yes/no
-  // over EVERY hand-curated list at once, so an outright rule on it keeps all of them and any
-  // per-list rule beside it can never change an outcome -- #510 again, through the one field
-  // `named` cannot see, and it became authorable on every install when the retired gate stopped
-  // filtering it out of the composer. Treated as what it is: every list already ruled.
+  // The same effect, reached by the blanket field instead of by name. `whitelisted` is a
+  // yes/no over every hand-curated list at once, so an outright rule on it keeps all of them,
+  // and any per-list rule beside it can never change an outcome. `named` above cannot see this
+  // field, since `whitelisted` became authorable on every install once the retired gate
+  // stopped filtering it out of the composer. Treated as what it is: every list already ruled.
   const keptByBlanketRule = conditions.some((c) => c.field === "whitelisted" && c.value === true);
   const listNames = keptByBlanketRule
     ? []
     : allListNames.filter((n) => !named.has(n.trim().toLowerCase()));
-  // Two reasons hide a list from the picker, each with its own note (rule 144, #549), and
-  // neither is that a rule already names it. A list holding only the other type can never keep
-  // here; a list no sync has read yet has an unknown type and is withheld until it is checked.
-  // Counted apart because the fix differs: nothing to do about the first, "check it" about the
-  // second.
+  // Two reasons hide a list from the picker, each with its own note, and neither is that a
+  // rule already names it. A list holding only the other type can never keep here. A list no
+  // sync has read yet has an unknown type and is withheld until it is checked. Counted apart
+  // because the fix differs: nothing to do about the first, "check it" about the second.
   const notNamed = (l: ListConfig) => !named.has(l.name.trim().toLowerCase());
   const hiddenWrongType = keptByBlanketRule
     ? 0
@@ -897,11 +893,11 @@ export function KeepRulesEditor({
   const hiddenUnverified = keptByBlanketRule
     ? 0
     : configured.filter((l) => notNamed(l) && l.authorable_media.length === 0).length;
-  // Why the list select is empty, said once for both composers (rule 72). A failed read is named
-  // as one, never shown as "you have no lists" (rules 17/36); a set that all already have a rule
-  // is a third thing; and a set none of which this policy can keep is a fourth, which is either
-  // the wrong type or not synced yet (#549). Nothing is wrong in the last two, and adding another
-  // list is not the move.
+  // Why the list select is empty, said once for both composers. A failed read is named as one,
+  // never shown as "you have no lists". A set that all already have a rule is a third thing.
+  // A set none of which this policy can keep is a fourth, which is either the wrong type or
+  // not synced yet. Nothing is wrong in the last two cases, and adding another list is not the
+  // fix.
   const noListsMessage =
     !lists.isPending && listNames.length === 0
       ? lists.isError
@@ -912,7 +908,7 @@ export function KeepRulesEditor({
             ? t("policyRules.keepEditor.noListsNone")
             : eligible.length > 0
               ? // "this policy can keep" so it stays true when an unnamed wrong-type or unsynced
-                // list is also hidden: those are not lists this policy can keep (#549).
+                // list is also hidden: those are not lists this policy can keep.
                 t("policyRules.keepEditor.noListsAllTaken")
               : hiddenUnverified > 0 && hiddenWrongType === 0
                 ? t("policyRules.keepEditor.noListsUnsynced")
@@ -929,12 +925,12 @@ export function KeepRulesEditor({
   const [hValue, setHValue] = useState("");
   const hardField = hardFields.find((f) => f.key === hField);
   const hardIsList = hardField?.key === "on_list";
-  // Why Add is off here, the condemn composer's twin (rule 72). A yes/no always has an answer,
-  // so only a typed value -- or an unpicked list -- can be missing.
+  // Why Add is off here, the condemn composer's twin. A yes/no always has an answer, so only a
+  // typed value, or an unpicked list, can be missing.
   const hardEmpty = hardField !== undefined && hardField.type !== "bool" && hValue.trim() === "";
   const hardHelpText = hardField ? fieldHelp(hardField.key) : undefined;
   // The keep-rule twin of the re-seed above, and suppressed for the same reason: a new field
-  // needs its own comparison and value, and `hardFields` is reallocated every render (H-3).
+  // needs its own comparison and value, and `hardFields` is reallocated every render.
   useEffect(() => {
     const f = hardFields.find((x) => x.key === hField);
     if (!f) return;
@@ -951,7 +947,7 @@ export function KeepRulesEditor({
           { field: hardField.key, op: "eq", value: hValue }
         : { field: hardField.key, op: hOp, value: coerceValue(hardField, hValue) },
     ]);
-    // Same silence as the condemn composer's Add, on the same guard (rule 72).
+    // Same silence as the condemn composer's Add, on the same guard.
     announce(t("policyRules.ruleAddedAnnounce"));
     // And the same focus drop: clearing the field below unmounts the Add button.
     hardFieldRef.current?.focus();
@@ -969,16 +965,17 @@ export function KeepRulesEditor({
   const [lList, setLList] = useState("");
   const leanField = leanFields.find((f) => f.key === lField);
   const leanIsList = leanField?.key === "on_list";
-  // And the third (rule 72). A numeric lean waits on its number; a membership lean on its list.
+  // A third variant of the same disabled-Add pattern. A numeric lean waits on its number, and
+  // a membership lean waits on its list.
   const leanEmpty = leanField !== undefined && (leanIsList ? lList === "" : lAt === "");
   const leanHelpText = leanField ? fieldHelp(leanField.key) : undefined;
   const addLean = () => {
     if (!leanField || leanEmpty) return;
     if (leanIsList) {
       // Flat, not a ramp: on the list takes the full discount, off it takes none, and a
-      // membership that could not be read takes the full one, fail-closed like every keep.
-      // The ramp fields are inert; floor 0 / saturate 1 is the shape the server expects.
-      // The name clamps to the server's 60-character bound before `uniqueName` suffixes it.
+      // membership that could not be read takes the full one, fail-closed like every keep. The
+      // ramp fields are inert, and floor 0 / saturate 1 is the shape the server expects. The
+      // name clamps to the server's 60-character bound before `uniqueName` suffixes it.
       onKeeps([
         ...keeps,
         {
@@ -1005,7 +1002,7 @@ export function KeepRulesEditor({
         },
       ]);
     }
-    // And the third (rule 72).
+    // Same silence as the other two composers' Add.
     announce(t("policyRules.ruleAddedAnnounce"));
     leanFieldRef.current?.focus();
     setLField("");
@@ -1059,9 +1056,9 @@ export function KeepRulesEditor({
           ))}
           {keeps.map((k, i) => {
             const f = allFields.find((x) => x.key === k.field);
-            // A membership lean is a sentence about the list, by its stored name -- which
-            // still renders after the list itself is gone, so the rule can be found and
-            // removed rather than orphaned invisibly.
+            // A membership lean is a sentence about the list, by its stored name, which still
+            // renders after the list itself is gone, so the rule can be found and removed
+            // rather than orphaned invisibly.
             const sentence =
               k.value != null
                 ? t("policyRules.keepEditor.onListSentence", { list: k.value })
@@ -1071,9 +1068,8 @@ export function KeepRulesEditor({
                     value: rampValue(f, k.saturate_at),
                   });
             // Membership is not a number, so this rule pays its whole discount or none of it.
-            // "up to" is this file's own word for a RAMP -- `describeCondemn`'s row says the
-            // number flat for a yes/no rule for exactly this reason -- and it was printed here
-            // on both branches, describing an all-or-nothing rule as a sliding one (rule 72).
+            // "up to" is this file's own word for a ramp: `describeCondemn`'s row says the
+            // number flat for a yes/no rule for exactly this reason, and this line matches it.
             const isRampLean = k.value == null;
             return (
               <div className="rules-row rules-row-simple" key={`k-${k.name}-${i}`}>
@@ -1094,10 +1090,11 @@ export function KeepRulesEditor({
                   {...REMOVES_ITS_ROW}
                   className="ghost sm"
                   // The whole visible sentence, not just the field. Two lean rules on one
-                  // field are a supported setup -- `addLean` runs the name through
-                  // `uniqueName` precisely because they collide -- and the field alone gives
-                  // both Remove buttons the same name. What gets removed by mistake is a keep
-                  // rule, so the next scan condemns titles the operator believed were held.
+                  // field are a supported setup: `addLean` runs the name through `uniqueName`
+                  // precisely because they collide, and the field alone would give both Remove
+                  // buttons the same name. Removing the wrong one by mistake removes a keep
+                  // rule, so the next scan then condemns titles the operator believed were
+                  // held.
                   aria-label={t("policyRules.keepEditor.removeLeanAriaLabel", {
                     sentence,
                     isRamp: isRampLean ? "true" : "false",
@@ -1116,9 +1113,9 @@ export function KeepRulesEditor({
         </div>
       )}
 
-      {/* Same reason as the remove editor, divided the same way (rule 72): a form with an empty
-          dropdown looks like a feature with nothing behind it, so name the failure and drop the
-          form -- but only when the dropdown really would be empty. */}
+      {/* Same reason as the remove editor, divided the same way: a form with an empty dropdown
+          looks like a feature with nothing behind it, so name the failure and drop the form,
+          but only when the dropdown really would be empty. */}
       {vocabError && !vocab ? (
         <Notice tone="error">{t("policyRules.vocabLoadError")}</Notice>
       ) : (
@@ -1197,15 +1194,14 @@ export function KeepRulesEditor({
                     </button>
                   </>
                 )}
-                {/* Beside the box that fixes it (rule 42), and bound to it: a disabled button
-                    is out of the Tab order, so the sentence has to live on the box.
+                {/* Beside the box that fixes it, and bound to it: a disabled button is out of
+                    the Tab order, so the sentence has to live on the box.
 
-                    ONE of these two, never both. They stacked, so an operator with no lists
-                    read "Pick a list to add this rule." directly above "You have no lists yet"
-                    -- the first instructing the exact action the second says is impossible --
-                    and the second was bound to no control at all. When there is nothing to
-                    pick, why there is nothing to pick is the whole message, and it takes the
-                    id the select points at (rule 45). */}
+                    Shows noListsMessage only when the field is a list AND there are no lists
+                    to offer; otherwise it shows the field's own prompt, "Pick a list" for a
+                    list field or "Enter a value" for any other. Showing both at once would
+                    read "Pick a list to add this rule." directly above "You have no lists
+                    yet", instructing an action the second message says is impossible. */}
                 {hardEmpty &&
                   (hardIsList && noListsMessage ? (
                     <p className="help help-warn" id={HARD_EMPTY_ID}>
@@ -1237,7 +1233,7 @@ export function KeepRulesEditor({
                   <>
                     {leanIsList ? (
                       // Flat: on the list takes the full discount, so there is no direction
-                      // and no ramp end to set -- membership isn't a number.
+                      // and no ramp end to set, since membership isn't a number.
                       <ListNameSelect
                         value={lList}
                         names={listNames}
@@ -1246,8 +1242,8 @@ export function KeepRulesEditor({
                       />
                     ) : (
                       <>
-                        {/* Both directions stay on screen: a dropdown let the default save
-                            without the operator ever seeing there was a choice. */}
+                        {/* Both directions stay on screen: a dropdown would let the default
+                            save without the operator ever seeing there was a choice. */}
                         <Segmented
                           value={lDir}
                           onChange={setLDir}
@@ -1281,7 +1277,7 @@ export function KeepRulesEditor({
                     {/* One control standard: a number with a fixed unit is a FixedQuantity,
                         never a bare number box beside loose text. "up to" only for a ramp:
                         membership is not a number, so a list lean pays its whole discount or
-                        none of it, matching `RemoveRulesEditor`'s own split (rule 72). */}
+                        none of it, matching `RemoveRulesEditor`'s own split. */}
                     <label className="inline-weight">
                       {leanIsList ? "" : t("policyRules.upToLabel")}
                       <FixedQuantity
@@ -1299,7 +1295,8 @@ export function KeepRulesEditor({
                     </button>
                   </>
                 )}
-                {/* And the third (rule 72). One of the two, never both, same as the hard
+                {/* Shows noListsMessage only when the field is a list AND there are no lists
+                    to offer; otherwise the field's own prompt, the same split as the hard
                     composer above and for the same reason. */}
                 {leanEmpty &&
                   (leanIsList && noListsMessage ? (
@@ -1317,11 +1314,11 @@ export function KeepRulesEditor({
               </div>
             )}
           </div>
-          {/* Rule 144: this paragraph is the operator-facing copy of what the two composers
-              filter out, or a filter left unsaid reads as a list that went missing. Two filters
-              are always in force and stated here. Two more, media type and not-yet-synced, hide a
+          {/* This paragraph is the operator-facing copy of what the two composers filter out,
+              or a filter left unsaid would read as a list that went missing. Two filters are
+              always in force and stated here. Two more, media type and not-yet-synced, hide a
               list only in some states, so their copy is the conditional notes below and the
-              empty-state message above, said only when they actually bite (#549). */}
+              empty-state message above, said only when they actually apply. */}
           <p className="help">{t("policyRules.keepEditor.helpBlurb")}</p>
           {!keptByBlanketRule && listNames.length > 0 && hiddenWrongType > 0 && (
             <p className="help">

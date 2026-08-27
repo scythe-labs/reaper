@@ -6,19 +6,18 @@
 // and so it can be redrawn when either moves.
 //
 // GitHub stores the uploaded image on its own servers and exposes no API for it, so shipping
-// the PNG is not the delivery -- a maintainer uploads it by hand under Settings > General >
+// the PNG is not the delivery. A maintainer uploads it by hand, under Settings > General >
 // Social preview. What is committed here is the source, which is the part that goes stale.
 //
-// `npm run social-card` rasterizes this through @resvg/resvg-js; socialCard.test.ts compares
+// `npm run social-card` rasterizes this through @resvg/resvg-js. socialCard.test.ts compares
 // the committed PNG's recorded source hash to what this module returns now, so a mark or a
 // string that changed without a regeneration fails the suite. Text is laid out by hand,
 // because SVG does not wrap: every line break below is a decision, and changing a string
 // usually means re-checking the line it sits on.
 //
 // The evidence rows are real gate output, quoted from engine/gates.py. Inventing plausible
-// copy here is the failure this card is most exposed to -- a marketing image is written far
-// from the code it describes, and README.md carries an example no gate has ever produced
-// (#419). Anything shown here has to be greppable in gates.py.
+// copy here is the failure this card is most exposed to, since a marketing image is written
+// far from the code it describes. Anything shown here has to be greppable in gates.py.
 
 import { appIconSvg } from "./appIcon";
 
@@ -40,18 +39,14 @@ const PROTECT = "#5fce97";
  *  real families. resvg takes the first one installed. */
 const SANS = "Helvetica Neue, Helvetica, Arial, sans-serif";
 
-/** The wordmark, spelled and weighted the way the app spells and weights it.
- *
- *  This card used to carry a lockup of its own -- `REAPER`, tracked out to 8.5 -- which is an
- *  ordinary treatment for a share card and was a deliberate choice. It stopped being tenable
- *  once the README banner was taken off its own typed word (#425): the app said "Reaper", the
- *  banner had said "reaper", and this said "REAPER", so whichever one you looked at, the other
- *  two were wrong. Three spellings of a name is not a secondary lockup, it is drift with a
- *  rationale attached (#426).
+/** The wordmark, spelled and weighted the way the app spells and weights it. A card-specific
+ *  lockup (a different case or tracking than the app uses) would give the name a third
+ *  spelling alongside the app and the README, and a mismatch between them reads as an error,
+ *  not a style choice.
  *
  *  Literals, because this module is rasterized outside the browser and has no `node:fs`.
  *  `socialCard.test.ts` reads them back out of the app and fails naming the file, the same
- *  arrangement `CLEARED_ROWS` has with the en catalog (rule 144). */
+ *  arrangement `CLEARED_ROWS` has with the en catalog. */
 export const WORDMARK = {
   word: "Reaper",
   size: 47,
@@ -60,22 +55,21 @@ export const WORDMARK = {
   tracking: -1.41,
 } as const;
 
-/** Protections that were evaluated and did NOT hold the file, which is the block the app is
+/** Protections that were evaluated and did not hold the file, which is the block the app is
  *  built around and the one no comparable tool shows. Rows 1 and 2 are the active-session and
- *  popularity gates, row 3 the dormancy floor. (Row 2 quoted the protected-list gate until
- *  that gate retired: lists protect through the operator's own keep rules now, whose copy is
- *  per-rule and not a gate sentence this card can quote.)
+ *  popularity gates, row 3 the dormancy floor. It cannot quote the protected-list gate: lists
+ *  protect through the operator's own keep rules now, whose copy is per-rule, not a gate
+ *  sentence this card can quote.
  *
  *  `source` is the literal each row is quoted from in the English catalog's `why` entries
- *  (locales/en/ui.json, where the gates' sentences live since the typed-reason conversion),
- *  and socialCard.test.ts reads that file and fails naming any row it can no longer find.
- *  Rule 144: a claim about what the app says, written this far from the copy that says it,
- *  drifts silently and in the flattering direction. `lines` is where it wraps, since SVG
- *  will not wrap it. */
+ *  (locales/en/ui.json, where the gates' sentences live), and socialCard.test.ts reads that
+ *  file and fails, naming any row it can no longer find. A claim about what the app says,
+ *  written this far from the copy that says it, drifts silently and in the flattering
+ *  direction. `lines` is where it wraps, since SVG will not wrap it. */
 export const CLEARED_ROWS: readonly { lines: readonly string[]; source: string }[] = [
   { lines: ["Nobody is watching it right now."], source: "Nobody is watching it right now." },
   {
-    // "year" is the shipped window, filled into the catalog message's slot; the head is
+    // "year" is the shipped window, filled into the catalog message's slot. The head is
     // the literal.
     lines: ["Nobody here watched it in the last year."],
     source: "Nobody here watched it in the last",
@@ -89,7 +83,7 @@ export const CLEARED_ROWS: readonly { lines: readonly string[]; source: string }
 
 const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-/** The mark, positioned. `appIconSvg` returns a whole document, which nests as-is; the fixed
+/** The mark, positioned. `appIconSvg` returns a whole document, which nests as-is. The fixed
  *  `clipPath` id it carries stays unique because the card embeds exactly one. A changed opening
  *  tag would otherwise drop the mark into the corner at full size, so this throws instead. */
 function positionedMark(accent: string, x: number, y: number, size: number): string {
@@ -161,8 +155,8 @@ export function socialCardSvg(accent: string): string {
 
   // Placed one by one because SVG collapses runs of whitespace, so a padded string renders as
   // single spaces. Both columns are measured off the rendered card rather than computed: there
-  // is no text metric here to compute them from. The dots are decoration between chips, never a
-  // separator carrying a fact, which is the one use of a middot rule 21 still allows.
+  // is no text metric here to compute them from. The dots are decoration between chips only,
+  // never a separator carrying a fact.
   const services: readonly [string, number][] = [
     ["Plex", 72],
     ["Sonarr", 141],

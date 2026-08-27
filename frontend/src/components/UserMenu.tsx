@@ -10,19 +10,19 @@ import { Notice } from "./Notice";
 /** The signed-in identity, with a panel to sign out.
  *
  *  A disclosure, not an ARIA menu: it is a button that shows and hides a small panel, and
- *  it behaves like one (click or Tab away to dismiss, Escape to close). It used to claim
- *  role="menu", which promises arrow-key navigation between menu items that was never
- *  implemented, on a panel whose first child is a heading rather than an item. The honest
- *  simpler role is the one whose keyboard contract this actually keeps. */
+ *  it behaves like one (click or Tab away to dismiss, Escape to close). `role="menu"` would
+ *  promise arrow-key navigation between menu items, which this does not implement, on a
+ *  panel whose first child is a heading rather than an item. The honest, simpler role is
+ *  the one whose keyboard contract this actually keeps. */
 export function UserMenu({ user, onGoToAbout }: { user: AuthUser; onGoToAbout: () => void }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  // The light and the menu item render only while an update actually exists; every
-  // could-not-answer state renders neither, so the chip never nags on a guess. The
-  // words ride the chip's accessible name -- the light itself is decoration.
+  // The light and the menu item render only while an update actually exists. Every
+  // could-not-answer state renders neither, so the chip never nags on a guess. The words
+  // ride the chip's accessible name. The light itself is decoration.
   const update = useUpdateStatus();
   const updateAvailable = update.data?.update_available === true;
 
@@ -31,12 +31,13 @@ export function UserMenu({ user, onGoToAbout }: { user: AuthUser; onGoToAbout: (
   // user still signed in and nothing to explain why.
   const signOut = useMutation({
     mutationFn: () => api.logout(),
-    // A sign-out that WORKED is written, not asked about -- the same call `main.tsx` makes for
-    // every other 401, for the same reason. `noteAuthFailure` (api.ts) exempts the whole
-    // `/api/auth/` PREFIX, which is seven routes and this key's own read among them, so refetching
-    // it here answers a dead session with a query ERROR while React Query still holds the last
-    // good user beside it, and `App.tsx`'s login gate reads that as still signed in. Asking left
-    // operator on their own dashboard until an unrelated poll happened to 401.
+    // A sign-out that worked is written, not asked about: the same call `main.tsx` makes
+    // for every other 401, for the same reason. `noteAuthFailure` (api.ts) exempts the
+    // whole `/api/auth/` prefix, which is seven routes and this key's own read among them,
+    // so refetching it here would answer a dead session with a query error while React
+    // Query still holds the last good user beside it, and `App.tsx`'s login gate would read
+    // that as still signed in. Asking would leave the operator on their own dashboard until
+    // an unrelated poll happened to 401.
     onSuccess: () => queryClient.setQueryData(["me"], null),
     // A failure is the opposite question, and the refetch is the right way to ask it: the session
     // may well still be live, and the answer is whatever `/api/auth/me` says.
@@ -45,8 +46,8 @@ export function UserMenu({ user, onGoToAbout }: { user: AuthUser; onGoToAbout: (
 
   // While the sign-out is running or has failed, the panel stays put. Disabling the focused
   // Sign out button moves focus off it, which some browsers report as focus leaving the
-  // whole menu -- closing the panel would then throw away the only place the failure is
-  // ever shown, and it would come back stale the next time the menu opened.
+  // whole menu. Closing the panel would then throw away the only place the failure is ever
+  // shown, and it would come back stale the next time the menu opened.
   const keepOpen = signOut.isPending || signOut.isError;
 
   useEffect(() => {
@@ -59,8 +60,9 @@ export function UserMenu({ user, onGoToAbout }: { user: AuthUser; onGoToAbout: (
     return () => window.removeEventListener("mousedown", onClick);
   }, [open, keepOpen]);
 
-  // Clicking away closed it; tabbing away did not, which left the panel hanging open over
-  // a page the keyboard had already moved on from.
+  // The click listener above handles clicking away. This handles tabbing away, which needs
+  // its own check, or the panel would hang open over a page the keyboard has already moved
+  // on from.
   const onBlur = (e: React.FocusEvent<HTMLDivElement>) => {
     if (keepOpen) return;
     if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false);

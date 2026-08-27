@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // What the client does with a reply it cannot use: a body that is not JSON, and a session the
-// server no longer recognizes. Both used to leak past every surface's error handling -- the
-// first as parser jargon, the second as a Dashboard full of "Not authenticated." with no way
-// back to the login screen.
+// server no longer recognizes. Both must be caught before they leak past a surface's error
+// handling: the first as parser jargon, the second as a Dashboard full of "Not authenticated."
+// with no way back to the login screen.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api, setUnauthorizedHandler } from "./api";
 
-/** One canned response, whatever is asked for. Built fresh per call: a body can only be
+/** One canned response, whatever is asked for. Built fresh per call, since a body can only be
  *  read once, so a shared Response would make the second call look like an empty one. */
 const reply = (body: string | null, init: ResponseInit = {}) =>
   vi.fn(() => Promise.resolve(new Response(body, { status: 200, ...init })));
@@ -29,9 +29,9 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("a reply the client cannot parse", () => {
   it("is an ApiError, in plain language", async () => {
-    // A forward-auth proxy whose sign-in expired answers 200 with an HTML login page: the
+    // A forward-auth proxy whose sign-in expired answers 200 with an HTML login page. The
     // response is "ok", and JSON.parse throws a SyntaxError that is not an ApiError, so it
-    // falls past every `instanceof ApiError` branch in the app.
+    // would fall past every `instanceof ApiError` branch in the app.
     vi.stubGlobal("fetch", reply("<!doctype html><title>Sign in</title>"));
 
     await expect(api.safety()).rejects.toBeInstanceOf(ApiError);
@@ -51,9 +51,9 @@ describe("a reply the client cannot parse", () => {
   });
 
   it("names an empty page as a failed read, not as a TypeError downstream", async () => {
-    // 200 with no body: `parseBody` reads that as `undefined` for every call, which is right
-    // where nothing is expected back. Here the queue indexes into each page it holds, so it
-    // would reach `undefined.items` and throw past every `instanceof ApiError` branch.
+    // 200 with no body means `parseBody` reads that as `undefined` for every call, which is
+    // right where nothing is expected back. Here the queue indexes into each page it holds, so
+    // it would reach `undefined.items` and throw past every `instanceof ApiError` branch.
     vi.stubGlobal("fetch", reply(null));
     await expect(api.candidates("condemn", {}, 1, 0)).rejects.toBeInstanceOf(ApiError);
   });
@@ -93,17 +93,17 @@ describe("a session the server no longer recognizes", () => {
 
 describe("a failure with nothing of Reaper's in it", () => {
   it("says something a person can read, not the HTTP status", async () => {
-    // A reverse proxy during a container restart answers with its own HTML and no
-    // `detail`. Every component renders error.message verbatim, so the old fallback put a
-    // bare "Request failed (502)." across the queue, the reap sheet and every settings
-    // panel (U-14, rule 21).
+    // A reverse proxy during a container restart answers with its own HTML and no `detail`.
+    // Every component renders `error.message` verbatim, so the fallback here must be plain
+    // language, or a bare "Request failed (502)." would show across the queue, the reap sheet,
+    // and every settings panel.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.stubGlobal("fetch", reply("<html>502 Bad Gateway</html>", { status: 502 }));
 
     const err = await caught(() => api.safety());
     expect(err.message).toBe("Reaper couldn't reach the server. Try again.");
-    // Coded too (phase 8b), so a translated build reads this fallback like any other
-    // refusal instead of only ever seeing it in English.
+    // Coded too, so a translated build reads this fallback like any other refusal instead of
+    // only ever seeing it in English.
     expect(err.code).toBe("error.transport.server_unreachable");
     // The status is not lost, it just stops being the operator's problem.
     expect(String(warn.mock.calls[0]?.[0])).toContain("HTTP 502");
@@ -166,9 +166,9 @@ describe("a coded refusal (phase 8b)", () => {
       ),
     );
     const err = await caught(() => api.safety());
-    // The joined English still matches what every component rendered before phase 8b.
+    // The joined English still matches what every component renders for this case.
     expect(err.message).toBe("Use at least 8 characters. field required");
-    // No single top-level code speaks for a list of several; the per-item codes ride on
+    // No single top-level code speaks for a list of several. The per-item codes ride on
     // `items` instead, which `describeError` composes each of and joins the same way.
     expect(err.code).toBeNull();
     expect(err.items).toEqual([
@@ -183,11 +183,11 @@ describe("a coded refusal (phase 8b)", () => {
 });
 
 describe("every call goes through the one wrapper", () => {
-  // Four call sites -- the paged queue, the two binary downloads and the raw-body upload --
-  // used to hand-roll their own fetch, so `request()` only looked like a choke point and a
-  // cross-cutting change reached three quarters of the surface. They now share `fetchApi`,
-  // and these are the assertions that say so: each of them is asked for a dead session and a
-  // server failure, the two things every call has to report the same way (R-3).
+  // Four call sites, the paged queue, the two binary downloads, and the raw-body upload, must
+  // not hand-roll their own fetch, or `request()` only looks like a choke point and a
+  // cross-cutting change misses part of the surface. They all share `fetchApi`, and these are
+  // the assertions that say so: each of them is asked for a dead session and a server failure,
+  // the two things every call has to report the same way.
   const paths: Array<[string, () => Promise<unknown>]> = [
     ["the paged queue", () => api.candidates("condemn", {}, 1, 0)],
     ["the log download", () => api.downloadLogs()],
@@ -233,8 +233,8 @@ describe("every call goes through the one wrapper", () => {
 
 describe("starting a Plex sign-in", () => {
   // The window plex.tv opens is closed by a page plex.tv forwards it to, and the address of
-  // that page can only come from the browser: every proxy in front of Reaper rewrites Host,
-  // so a URL the server builds points somewhere the operator is not (#372).
+  // that page can only come from the browser. Every proxy in front of Reaper rewrites Host, so
+  // a URL the server builds would point somewhere the operator is not.
   const sent = (fetchMock: ReturnType<typeof vi.fn>) =>
     JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
 

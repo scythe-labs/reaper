@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The active-filter chips, the filter bar, and the two popovers they open. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* Active review-queue filters, one removable chip each -- the .tag-chip shape (34-lists.css) in
+ * The active-filter chips, the filter bar, and the two popovers they open. See `../index.css`
+ * for how this file fits into the stylesheet's load order. */
+/* Active review-queue filters, one removable chip each: the .tag-chip shape (34-lists.css) in
    the accent tone, so a stacked combination reads at a glance above the list. */
 .active-filters {
   display: flex;
@@ -23,19 +23,19 @@
   font-size: var(--text-sm);
   font-weight: var(--weight-semi);
 }
-/* The ✕ itself is the shared chip-dismiss shape in 04-buttons.css; only its hover is local. */
+/* The ✕ itself is the shared chip-dismiss shape in 04-buttons.css. Only its hover is local. */
 .filter-chip button:hover {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 /* The unified filter bar: one ＋ Filter control adds any dimension, and each active filter is
    an editable, removable chip. A new filter is a registry entry (ReviewQueue.tsx), never a new
-   toolbar control -- so the toolbar shape never grows. */
+   toolbar control, so the toolbar shape never grows. */
 
 /* Positions a menu directly under its chip or the ＋ Filter button: the wrapper is the
    containing block, so the menu follows the control on scroll instead of floating off (a
-   viewport-anchored popover's failure). Also the outside-click boundary -- a click inside any
-   .filter-anchor is "inside". */
+   viewport-anchored popover's failure). It is also the outside-click boundary: a click
+   inside any .filter-anchor counts as "inside". */
 .filter-anchor {
   position: relative;
   display: inline-flex;
@@ -68,9 +68,9 @@
   outline-offset: 1px;
 }
 
-/* An editable filter chip: the value is a button that opens the value picker; the × clears the
-   filter. Same accent-soft family as the search chip beside it. The field name rides the
-   button's title (and the picker's heading), so the chip stays as compact as the old ones. */
+/* An editable filter chip: the value is a button that opens the value picker. The × clears
+   the filter. Same accent-soft family as the search chip beside it. The field name rides the
+   button's title (and the picker's heading), so the chip itself stays compact. */
 .fchip {
   display: inline-flex;
   align-items: center;
@@ -89,16 +89,16 @@
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
-/* The body EDITS the filter and the x CLEARS it: two different outcomes, flush against each
+/* The body edits the filter and the × clears it: two different outcomes, flush against each
    other, so both have to reach --tap-min or a thumb aimed at one lands on the other. */
 .fchip-body {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
   min-height: var(--tap-min);
-  /* A genre or library value used to come from the server's vocabulary or this device's own
-     storage. A link can now put arbitrary text here, so it wraps and it is bounded, rather than
-     painting through the toolbar (rule 139). */
+  /* A genre or library value usually comes from the server's vocabulary or this device's own
+     storage, but a link can put arbitrary text here too. So it wraps and is bounded, instead
+     of painting through the toolbar. */
   max-width: 100%;
   overflow-wrap: anywhere;
   background: none;
@@ -130,24 +130,25 @@
 .fchip-x {
   opacity: 0.75;
 }
-/* Qualified by `.fchip`, which is what makes the tint paint at all (#740). Bare, this was
-   (0,2,0) against `04-buttons.css`'s `button:hover:not(:disabled)` at (0,2,1), so the generic
-   gray won on specificity whatever the load order and the accent line was dead. The two chips
-   beside it, `.filter-chip button:hover` above and `.tag-chip button:hover` in 34-lists, tie
-   the generic at (0,2,1) and win on order alone; this one wins on specificity, which is what
-   `.inst-chip .chip-x:hover` already does. Each chip's tint is its own tone -- accent here,
-   protect on the tag chip, condemn on the instance chip -- so there is no shared hover to fold
-   them into (rule 72: all four were read before this one moved). */
+/* Qualified by `.fchip`, which is what makes the tint paint at all. Without it, this
+   selector's specificity is (0,2,0) against `04-buttons.css`'s
+   `button:hover:not(:disabled)` at (0,2,1), so the generic gray would win regardless of load
+   order and the accent tint would never show. The two chips beside it, `.filter-chip
+   button:hover` above and `.tag-chip button:hover` in 34-lists, tie the generic rule at
+   (0,2,1) and win on load order alone. This one wins on specificity instead, the same way
+   `.inst-chip .chip-x:hover` already does. Each chip's tint is its own tone (accent here,
+   protect on the tag chip, condemn on the instance chip), so there is no shared hover rule to
+   fold them into. */
 .fchip .fchip-x:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 /* The add-filter and value popovers: one look for both. Absolutely placed under the anchor.
-   --pop-shift is how far `usePopoverShift` (popoverFit.ts) had to pull the menu left to keep it on
-   a narrow screen; 0 whenever it already fits, which is every desktop width. The max-width is the
-   same promise made in CSS alone: the menu is never wider than the screen it has to fit on. Both
-   halves are rule 138. */
+   --pop-shift is how far `usePopoverShift` (popoverFit.ts) had to pull the menu left to keep
+   it on a narrow screen. It is 0 whenever the menu already fits, which is every desktop
+   width. The max-width makes the same promise in CSS alone: the menu is never wider than the
+   screen it has to fit on. Both halves keep the popover on screen. */
 .filter-menu {
   position: absolute;
   top: calc(100% + 6px);

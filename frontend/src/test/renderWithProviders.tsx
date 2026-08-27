@@ -2,25 +2,23 @@
 // The one way a test mounts a tree that reads the query cache.
 //
 // Every component under test sits below `<QueryClientProvider>` in the app, so every test that
-// mounts one had to build that tree by hand: a `testQueryClient()`, a provider, the component,
-// and a closing tag. It was written 87 times across 35 files, inside 55 file-local `render*`
-// helpers that differ only in which component they mount and which props they pass.
+// mounts one needs that same tree: a `testQueryClient()`, a provider, the component, and a
+// closing tag.
 //
-// The duplication is not the whole cost. Two things a test needs are easy to get subtly wrong
-// when the provider is hand-written, and both are handled here:
+// Building that tree by hand is easy to get subtly wrong in two ways, both handled here:
 //
 //   * **`rerender` keeps its providers.** `render(<Provider>{ui}</Provider>)` returns a
-//     `rerender` that replaces the WHOLE tree, so `rerender(<X prop={next} />)` drops the
+//     `rerender` that replaces the whole tree, so `rerender(<X prop={next} />)` drops the
 //     provider and every hook below it starts reading from no cache. Passing the provider as
 //     testing-library's `wrapper` instead makes `rerender` re-wrap, so it takes the component
 //     alone and the cache survives the re-render, which is what a test comparing two prop
 //     values means.
 //   * **The client comes back.** A test that seeds the cache or spies on `invalidateQueries`
-//     needs the client the tree is actually reading, and hand-rolled trees got it by declaring
-//     a local `const queryClient` above the render. It is returned here instead.
+//     needs the client the tree is actually reading. It is returned here instead of declaring
+//     a local `const queryClient` above the render.
 //
-// Rule 136 is why the client is `testQueryClient()` rather than `new QueryClient` -- read its
-// note in `queryClient.ts` before reaching for a different one.
+// The client is `testQueryClient()` rather than `new QueryClient`; read its note in
+// `queryClient.ts` before reaching for a different one.
 //
 // Seeding stays at the call site, deliberately: `{ client: seedSettings(testQueryClient()) }`
 // rather than a `seed: true` option. `seedSettings`' own contract is "never seed a key the test

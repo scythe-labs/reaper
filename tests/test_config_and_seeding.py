@@ -50,7 +50,7 @@ class TestSeedParsing:
         assert {s.name for s in sonarr} == {"HD", "4K"}
 
     def test_trailing_slash_is_stripped(self) -> None:
-        """Every client joins paths onto base_url; a trailing slash yields '//api/v3'."""
+        """Every client joins paths onto base_url. A trailing slash yields '//api/v3'."""
         seed = next(s for s in parse_instance_seeds(ENV) if s.name == "HD")
         assert seed.base_url == "https://sonarr.example.net"
 
@@ -61,7 +61,7 @@ class TestSeedParsing:
     def test_a_missing_url_says_which_variable_to_set(self) -> None:
         """A slot with no URL is the one case where the operator has clearly tried to set
         something up and Reaper never asked for the gap. The skip used to say nothing at
-        all, so they got no instance and no reason (#658)."""
+        all, so they got no instance and no reason."""
         with capture_logs() as logs:
             parse_instance_seeds({"REAPER_RADARR_HD_API_KEY": "key-hd"})
 
@@ -79,7 +79,7 @@ class TestSeedParsing:
         assert logs == []
 
     def test_a_complete_group_says_nothing(self) -> None:
-        """The other arm, so the warning above cannot pass by always firing (rule 118)."""
+        """The other arm, so the warning above cannot pass by always firing."""
         with capture_logs() as logs:
             assert parse_instance_seeds(ENV)
 
@@ -88,7 +88,7 @@ class TestSeedParsing:
     def test_two_spellings_of_one_slot_are_one_instance(self) -> None:
         """``_SEED_PATTERN`` is IGNORECASE, so the grouping key has to absorb case the way
         ``kind`` and ``field`` already do. Grouped as typed, these are two half-configured
-        instances and both are skipped silently: the operator gets nothing (#658)."""
+        instances and both are skipped silently. The operator gets nothing."""
         seeds = parse_instance_seeds(
             {
                 "REAPER_SONARR_Main_URL": "https://sonarr.example.net",
@@ -100,7 +100,7 @@ class TestSeedParsing:
         assert seeds[0].api_key.get_secret_value() == "key-main"
 
     def test_the_later_spelling_of_a_field_supplies_its_value(self) -> None:
-        """How an environment variable reaches this function after the dotenv file:
+        """How an environment variable reaches this function after the dotenv file.
         ``configured_env`` merges the files first, so the environment's key is the later
         one. Pinned as the ordering rule it is, because this function is handed one mapping
         and cannot see where a key came from."""
@@ -116,7 +116,7 @@ class TestSeedParsing:
 
     def test_the_display_name_keeps_the_spelling_as_typed(self) -> None:
         """Folding the grouping key must not rename an instance an earlier boot already
-        seeded: ``seed_instances`` matches ``Instance.name`` exactly, so a slot stored as
+        seeded. ``seed_instances`` matches ``Instance.name`` exactly, so a slot stored as
         ``main`` and re-read as ``MAIN`` imports a second row for one server."""
         seeds = parse_instance_seeds(
             {
@@ -234,7 +234,7 @@ class TestSeeding:
 
         The duplicate check is a query, and nothing is flushed until the batch ends, so
         both reads used to answer "not there yet" and both rows got added. The singleton
-        path has always had an in-batch set; this is the same guard everywhere else.
+        path has always had an in-batch set. This is the same guard everywhere else.
         """
         box = SecretBox("test-key")
         env = {
@@ -242,7 +242,7 @@ class TestSeeding:
             "REAPER_SONARR_HD_API_KEY": "key-1",
         }
         seeds = parse_instance_seeds(env)
-        # The same instance declared twice inside ONE batch, before anything is flushed.
+        # The same instance declared twice inside *one* batch, before anything is flushed.
         imported, skipped = await seed_instances(session, [*seeds, *seeds], box)
 
         assert (imported, skipped) == (1, 1)
@@ -283,7 +283,7 @@ class TestRuntimeSafety:
         assert RuntimeSafety(destructive_enabled=False).destructive_allowed is False
 
     def test_it_ships_read_only_by_default(self) -> None:
-        """The default must be safe: an unconfigured RuntimeSafety cannot delete."""
+        """The default must be safe. An unconfigured RuntimeSafety cannot delete."""
         assert RuntimeSafety().destructive_allowed is False
         assert RuntimeSafety().why_blocked() == Reason("error.safety.deletion_off")
 
@@ -292,7 +292,7 @@ class TestRuntimeSafety:
 
     def test_recovery_mode_names_the_switch_that_cannot_clear_it(self) -> None:
         """Recovery holds deletion off however the stored switch reads, so it takes the
-        reason ahead of the plain "deletion is off" one -- naming the other switch would
-        send the operator to a control the arm route also refuses."""
+        reason ahead of the plain "deletion is off" one. Naming the other switch would send
+        the operator to a control the arm route also refuses."""
         blocked = RuntimeSafety(destructive_enabled=True, recovery_mode=True)
         assert blocked.why_blocked() == Reason("error.safety.recovery_mode_active")

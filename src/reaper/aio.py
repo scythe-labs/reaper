@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Small asyncio helpers: the scan's concurrent fan-outs, per-loop mutual exclusion, and
-the done-callback that logs a detached task nobody is awaiting.
+"""Asyncio helpers: run concurrent tasks safely, share one lock per event loop, and log
+a background task's exception instead of losing it.
 
-Bare ``asyncio.gather`` is the wrong tool where this codebase fans out against an
-operator's live services: on the first failure it re-raises immediately but leaves
-every sibling task *running* and unobserved -- reads that keep hammering Plex,
-Tautulli and the *arrs after the scan is already dead, plus late failures that
-surface as "exception was never retrieved" noise at teardown. These helpers keep
-gather's shape but reap the survivors: cancel, drain, log, then re-raise the
-original failure. Every concurrent fan-out in the scan pipeline goes through here,
-so there is exactly one cancellation discipline to reason about.
+Plain ``asyncio.gather`` is unsafe here because this code fans out against an
+operator's live services. On the first failure, ``gather`` re-raises right away but
+leaves every other task running and unobserved: those tasks keep hitting Plex,
+Tautulli, and the *arr apps after the scan has already failed, and their later
+failures show up only as "exception was never retrieved" noise. :func:`gather_reaped`
+keeps ``gather``'s interface but cancels and awaits the survivors first, then
+re-raises the original failure. Every concurrent fan-out in the scan goes through it,
+so there is one cancellation rule to remember instead of many.
 """
 
 from __future__ import annotations
@@ -25,12 +25,12 @@ log = structlog.get_logger(__name__)
 
 
 async def reap(tasks: Sequence[asyncio.Task[Any]]) -> None:
-    """Cancel and drain every task, keeping any late failure observed.
+    """Cancel every task, wait for each to finish, and log any error it raises.
 
-    Called only while unwinding from a primary failure, so a reaped task's own
-    error is logged rather than raised -- the first failure is the one the caller
-    is already propagating, and losing the others silently would hide a
-    misconfiguration the operator should see in the log.
+    Runs only while unwinding from an earlier failure. That failure is what the
+    caller re-raises, so a reaped task's own error is logged instead of raised:
+    losing it silently could hide a misconfiguration the operator needs to see in
+    the log.
     """
     for task in tasks:
         if not task.done():
@@ -40,17 +40,18 @@ async def reap(tasks: Sequence[asyncio.Task[Any]]) -> None:
             await task
         except asyncio.CancelledError:
             pass
-        except BaseException as exc:  # observed and logged
+        except BaseException as exc:  # awaiting retrieves it, so asyncio won't warn later
             log.warning("aio.reaped_failure", error=str(exc))
 
 
 async def gather_reaped(*aws: Awaitable[Any]) -> list[Any]:
-    """Run awaitables concurrently; on the first failure reap the rest, then re-raise.
+    """Run awaitables concurrently. On the first failure, cancel and await the rest,
+    then re-raise it.
 
-    The results list is in argument order, exactly like ``asyncio.gather``. Unlike
-    gather, a failure cannot leave siblings running detached: they are canceled and
-    awaited before the failure propagates, so a caller that catches it knows no
-    stray read is still in flight.
+    Returns results in argument order, like ``asyncio.gather``. Unlike ``gather``, a
+    failure here never leaves a sibling task running: :func:`reap` cancels and awaits
+    every task first, so a caller that catches the failure knows no other read is
+    still in flight.
     """
     tasks = [asyncio.ensure_future(a) for a in aws]
     try:
@@ -61,15 +62,18 @@ async def gather_reaped(*aws: Awaitable[Any]) -> list[Any]:
 
 
 def report_background_failure(task: asyncio.Task[Any]) -> None:
-    """Log why a detached task died, instead of letting asyncio mumble at GC time (rule 102).
+    """Log why a detached task died, instead of letting asyncio report it only at
+    garbage-collection time.
 
-    A task nobody awaits keeps its exception until it is garbage collected, and then all
-    the operator gets is a bare "Task exception was never retrieved" with no name attached
-    (PR-12). Cancellation is the normal shutdown path and says nothing.
+    A task nobody awaits keeps its exception until Python garbage-collects it. At
+    that point the operator sees only a bare "Task exception was never retrieved"
+    with no task name attached. A canceled task is a normal shutdown and logs
+    nothing.
 
-    Lives here rather than in ``main``, which imports the api routers: two of the three
-    callers are routers, so importing it from ``main`` would close a cycle. Pass ``name=``
-    to ``create_task``, or the log names the task ``Task-7``.
+    Lives here instead of in ``main``, which imports the API routers: two of the
+    three callers are routers, and importing this from ``main`` would create a
+    circular import. Pass ``name=`` to ``create_task``, or the log names the task
+    ``Task-7``.
     """
     if task.cancelled():
         return
@@ -79,31 +83,35 @@ def report_background_failure(task: asyncio.Task[Any]) -> None:
 
 
 def per_loop_lock() -> Callable[[], asyncio.Lock]:
-    """A getter returning this event loop's lock, created on first use.
+    """Return a getter for this event loop's lock, creating the lock on first use.
 
-    A module-level ``asyncio.Lock`` binds to a loop and then raises on every other, and the
-    suite runs a fresh loop per test (rule 37). In production there is one loop, hence one
-    lock, which is what serializes a section across every concurrent caller in the process.
+    A module-level ``asyncio.Lock`` binds to whichever loop first acquires it and
+    then raises on every other loop, and the test suite runs a fresh loop per test.
+    In production there is one loop, so this holds one lock, and that lock
+    serializes a section across every concurrent caller in the process.
 
-    **The binding happens on a CONTENDED acquire, not on any acquire**, measured rather than
-    assumed: ``Lock.acquire`` returns on a fast path that never reads the running loop, so a
-    shared lock survives any number of uncontended ones and raises the first time two callers
-    actually meet on a second loop. That is why the shared version fails intermittently
-    instead of on the second test, and why the test for this drives the contended case.
+    The lock binds to a loop on its first CONTENDED acquire, not on any acquire:
+    ``Lock.acquire`` has a fast path that never reads the running loop, so an
+    uncontended lock never binds. A shared lock only raises the first time two
+    callers actually contend for it on a second loop, which is why a stale shared
+    lock fails intermittently rather than on first use, and why the test for this
+    drives the contended case.
 
-    **Weak-keyed with one bound, stated because it is not the obvious one**: a loop whose lock
-    was never contended is collected with its entry, and a contended one is not, since
-    ``asyncio.Lock`` stores the loop on itself and the value then keeps the key alive. That
-    costs one lock per loop that contended, which is nothing in a process with one loop and
-    bounded by the suite otherwise.
+    Keys the dictionary weakly, with one exception: a loop whose lock was never
+    contended is garbage-collected along with its dictionary entry, but a
+    contended one is not, because ``asyncio.Lock`` stores the loop on itself and
+    that reference keeps the dictionary key alive. That holds one lock per loop
+    that ever contended, which costs nothing in a process with one loop.
 
-    **It carries mutual exclusion and no schema policy**, deliberately. Three callers:
-    ``history_sync._rebuild_lock``, ``lists._widen_lock`` and ``leaving_soon._pass_lock``,
-    and only the first two guard schema at all. ``history_sync`` DROPS a stale ``watch_event``
-    under its lock and ``lists.ensure_schema`` must never do that, since dropping unprotects
-    every keep list until the next sync refills it. ``imdb_dataset`` takes no lock here and
-    needs none: it never drops a live table, it builds a staging copy and renames it in, and
-    a missing table degrades on the read side rather than reading as an empty one.
+    This function only provides mutual exclusion. It enforces no policy about what
+    a caller does under the lock. Three callers use it: ``history_sync._rebuild_lock``,
+    ``lists._widen_lock``, and ``leaving_soon._pass_lock``, and only the first two
+    guard schema changes. ``history_sync`` drops a stale ``watch_event`` row under
+    its lock, but ``lists.ensure_schema`` must never drop a row that way: dropping it
+    would stop every keep list from protecting anything until the next sync refills
+    it. ``imdb_dataset`` takes no lock here and needs none. It never drops a live
+    table, it builds a new copy and renames it into place, and a missing table
+    degrades gracefully on the read side instead of reading as empty.
     """
     locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
         weakref.WeakKeyDictionary()

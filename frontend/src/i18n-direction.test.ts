@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// `dir` follows the language being served (#861), so a right-to-left catalog mirrors the
-// layout the browser already knows how to mirror.
+// `dir` follows the language being served, so a right-to-left catalog mirrors the layout the
+// browser already knows how to mirror.
 //
 // The reading order comes from the browser's own locale data, never from a list kept in the
-// repo (rule 66, the same call `languageName` makes two functions up in `i18n.ts`). So what is
-// worth pinning is not "Arabic is rtl" -- that is the browser's fact, and asserting it here
-// would only test the browser -- but the three things `i18n.ts` decides on top of it: that a
-// right-to-left tag reaches the attribute, that a regional tag resolves the same as its bare
-// language, and that anything unreadable falls to `ltr` rather than throwing on a screen the
-// operator is trying to use.
+// repo, the same call `languageName` makes two functions up in `i18n.ts`. So what is worth
+// pinning is not "Arabic is rtl": that is the browser's own fact, and asserting it here would
+// only test the browser. What is worth pinning is the three things `i18n.ts` decides on top of
+// it: that a right-to-left tag reaches the attribute, that a regional tag resolves the same as
+// its bare language, and that anything unreadable falls to `ltr` rather than throwing on a
+// screen the operator is trying to use.
 import { describe, expect, it } from "vitest";
 
 import i18next, { textDirection } from "./i18n";
 
 describe("textDirection", () => {
   it("reads the right-to-left languages the issue names as right to left", () => {
-    // Arabic, Hebrew and Persian: the three #861 was opened for.
+    // Arabic, Hebrew, and Persian: the three right-to-left languages this covers.
     expect(textDirection("ar")).toBe("rtl");
     expect(textDirection("he")).toBe("rtl");
     expect(textDirection("fa")).toBe("rtl");
@@ -52,10 +52,11 @@ describe("the document", () => {
   });
 
   it("moves dir with the language, not just lang", () => {
-    // The pair has to move together: `lang` alone would tell a screen reader the language
-    // while leaving the layout unmirrored, which is the half-mirrored page #861 is about.
-    // A bundle with something in it: i18next resolves an EMPTY one straight back to the
-    // fallback, so an empty bundle here would test the fallback rather than the switch.
+    // The pair has to move together: `lang` alone would tell a screen reader the language while
+    // leaving the layout unmirrored, which is the half-mirrored page this test guards against.
+    // This uses a bundle with something in it, since i18next resolves an empty one straight
+    // back to the fallback, so an empty bundle here would test the fallback rather than the
+    // switch.
     i18next.addResourceBundle("ar", "ui", { "test.direction": "rtl" });
     return i18next.changeLanguage("ar").then(async () => {
       expect(document.documentElement.lang).toBe("ar");

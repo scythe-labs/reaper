@@ -1,42 +1,42 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @vitest-environment node
 //
-// Rule 40's one control standard, held over the whole stylesheet.
+// One control standard, held over the whole stylesheet.
 //
 // The standard is written out in `styles/00-tokens.css` beside `--control-pad`. Ten blocks
-// re-type its six declarations, and nothing checked they agree. Two had already stopped.
+// re-type its six declarations, and nothing checks that they agree. Two of them already do not:
 // `.set-row .set-control input, .set-row .set-control select` and `.log-search` set `font-size`
-// and no `font`. A form control does not inherit its family, so those boxes rendered in the
-// browser's default form font while their labels rendered in the app's. The block declares five
+// and no `font`. A form control does not inherit its font family, so those boxes render in the
+// browser's default form font while their labels render in the app's. The block declares five
 // of the six fields correctly, and the symptom is a typeface, which is not what a reader
-// checking a block against a list is looking for.
+// checking a block against a list would notice.
 //
-// `font` is a shorthand, so putting it back moves the inherited line height with the family, and
-// those boxes grow about 6px. That is the standard arriving rather than a side effect: in a
-// cluster row the box sat 8.25px shorter than the button beside it and now sits 1.92px off.
-// Two controls keep a font detail of their own and re-state it above (0,2,1), because a
-// CSS-wide keyword sets every longhand: `.keyfield`'s monospace and `.hexfield`'s tabular
-// figures.
+// `font` is a shorthand, so declaring it also sets the inherited line height along with the
+// family, changing the box's height. That is the standard arriving as intended, not a side
+// effect. Two controls keep a font detail of their own and re-state it after the shorthand,
+// because a CSS-wide keyword sets every longhand: `.keyfield`'s monospace and `.hexfield`'s
+// tabular figures.
 //
-// A block is ON the standard when it pads with `--control-pad`. That is the token's own
-// definition ("a control that wants different padding is not on the standard") and it needs no
+// A block is on the standard when it pads with `--control-pad`. That is the token's own
+// definition (a control that wants different padding is not on the standard), and it needs no
 // exemption list: `.qty` and `.hex-join` declare no padding, and `.tag-chips` pads with
 // `--space-sm`, so all three joined wrappers fall out of the walk on their own.
 //
-// WHAT THIS WALK CANNOT SEE (rule 147):
+// What this walk cannot see:
 //   - A control written entirely in literals, which never mentions `--control-pad` and so is
 //     never collected. The literal ban below covers the one spelling that has happened, the
 //     padding pair typed out. No other spelling is matched.
 //   - `.qty`, `.hex-join` and `.tag-chips`, which put the border and fill on a wrapper and the
-//     padding on its children. Deliberate. `.qty`'s reason is in `00-tokens.css`,
+//     padding on its children. This is deliberate. `.qty`'s reason is in `00-tokens.css`,
 //     `.hex-join`'s at `27-settings-rows.css:233`.
 //   - A block reaching the same padding through `padding-block` / `padding-inline`. Those cannot
-//     carry the token, and their two values are `0.42rem` and `0.6rem` separately, which the ban
-//     does not match either.
-//   - The focus ring. It is not gated here because a missing one falls back to `01-base.css`'s
-//     `:focus-visible` and is visible; the font falls back silently, which is why it drifted.
+//     carry the token, and their two values are declared separately, which the ban does not
+//     match either.
+//   - The focus ring. This is not checked here because a missing one falls back to
+//     `01-base.css`'s `:focus-visible` and is still visible, while a missing font falls back
+//     silently, which is why the font drifted unnoticed.
 //   - A `@keyframes` step is a block like any other, so `from` and `0%` are collected too. None
-//     of the nine sets pads with the token.
+//     of them pads with the token.
 
 import { readFileSync } from "node:fs";
 
@@ -55,7 +55,7 @@ const STANDARD: readonly (readonly [string, string])[] = [
   ["font", "inherit"],
 ];
 
-// Reconciled by hand at this tip, one line per block (rule 145):
+// Reconciled by hand at this tip, one line per block:
 //   08-sheet.css        .local-form input
 //   14-policy-editor    .rule-control input[type="number"]
 //   14-policy-editor    .rule-control select, .bar-foot select
@@ -117,16 +117,15 @@ describe("rule 40's control standard", () => {
   });
 
   it("has no site spelling the padding out instead of reading the token", () => {
-    // `--control-pad` exists because the pair was typed out at twelve sites. `.search-input`
-    // was the last site still spelling it. It wrote the pair as the first two values of a
-    // four-value padding, to add its icon clearance. `padding-left` after the token says the
-    // same thing and stays on the token.
+    // `--control-pad` exists so the padding pair is not typed out at every site. `.search-input`
+    // still spells it directly, as the first two values of a four-value padding, to add its icon
+    // clearance. `padding-left` after the token says the same thing and stays on the token.
     //
-    // The match is on the FIRST TWO components, which is what re-states the pair. Not on the
-    // two values appearing anywhere: `.qty input[type="number"]` pads
-    // `0.42rem 0.35rem 0.42rem 0.6rem` and is not the pair. Its sides are 0.35 and 0.6,
-    // lopsided so the number sits against its unit. A substring test failed on it, which is
-    // how this line came to exist.
+    // The match here is on the first two components, which is what re-states the pair, not on
+    // the two values appearing anywhere. `.qty input[type="number"]` pads
+    // `0.42rem 0.35rem 0.42rem 0.6rem`, which is not the pair: its sides are 0.35 and 0.6,
+    // lopsided so the number sits against its unit. A plain substring match would wrongly catch
+    // it, which is why this test matches only the leading pair.
     const literal: string[] = [];
     for (const b of blocksOf()) {
       for (const [prop, value] of declarations(b.body)) {
@@ -140,16 +139,17 @@ describe("rule 40's control standard", () => {
   });
 
   it("does not swallow the two font details that outrank it", () => {
-    // `font: inherit` is a CSS-wide keyword, so it sets EVERY font longhand, and the standard's
+    // `font: inherit` is a CSS-wide keyword, so it sets every font longhand, and the standard's
     // Settings block carries it at (0,2,1). Two controls in that column declare one font detail
-    // of their own at (0,1,0) and lose it: `.keyfield`'s monospace, which its own comment says is
-    // there so a revealed API key reads unambiguously, and `.hexfield`'s tabular figures. Each is
-    // re-stated on the rule that already clears the standard for that control's width, and the
-    // re-statement reads as redundant beside the base rule, which is why it is pinned here.
+    // of their own at (0,1,0) and would lose it: `.keyfield`'s monospace, which its own comment
+    // says is there so a revealed API key reads unambiguously, and `.hexfield`'s tabular
+    // figures. Each is re-stated on the rule that already clears the standard for that control's
+    // width, and the re-statement reads as redundant beside the base rule, which is why it is
+    // pinned here.
     //
-    // A pinning test, not a general one (rule 118). It cannot see a THIRD control that declares a
-    // font longhand under the standard: that needs selector-overlap analysis, and the two known
-    // cases did not justify it. What a new one costs is one property, silently.
+    // This is a pinning test, not a general one. It cannot see a third control that declares a
+    // font longhand under the standard: that would need selector-overlap analysis, and the two
+    // known cases did not justify building it. What a new one costs is one property, silently.
     for (const [selector, decl] of [
       [".set-row .set-control > input.keyfield", "font-family: var(--mono)"],
       [".set-control .hex-join .hexfield", "font-variant-numeric: tabular-nums"],
@@ -168,20 +168,20 @@ describe("rule 40's control standard", () => {
   });
 
   it("is worded the same in 00-tokens.css and 01-base.css", () => {
-    // Rule 144: the standard is written out twice besides the declarations. `00-tokens.css`
-    // carries the standard itself. `01-base.css`'s iOS-zoom comment rests on it to explain why
-    // that guard only has to hold the SIZE. If `font: inherit` stops being the standard, the
-    // reasoning behind the no-zoom floor is wrong too, and nothing else says so. This test
-    // fails when either sentence stops saying it, so the prose cannot drift out from under the
-    // declarations above.
+    // The standard is written out twice besides the declarations. `00-tokens.css` carries the
+    // standard itself. `01-base.css`'s iOS-zoom comment rests on it to explain why that guard
+    // only has to hold the size. If `font: inherit` stops being the standard, the reasoning
+    // behind the no-zoom floor is wrong too, and nothing else says so. This test fails when
+    // either sentence stops saying it, so the prose cannot drift out from under the declarations
+    // above.
     for (const [file, sentence] of [
       // The phrase, not the two words: a bare `font: inherit` would go vacuous the day a real
       // declaration of it lands in this file.
       ["styles/00-tokens.css", "color var(--text); font: inherit; and on :focus"],
       ["styles/01-base.css", "the control standard is font: inherit"],
     ] as const) {
-      // Whitespace collapsed: both sentences sit inside wrapped comments, so the phrase spans
-      // a line break at one of them and a raw substring test misses it.
+      // Whitespace is collapsed here: both sentences sit inside wrapped comments, so the phrase
+      // spans a line break at one of them, and a raw substring test would miss it.
       const text = readFileSync(new URL(`./${file}`, import.meta.url), "utf8").replace(/\s+/g, " ");
       expect(text, `${file} no longer states the control standard's font`).toContain(sentence);
     }
@@ -190,8 +190,8 @@ describe("rule 40's control standard", () => {
 
 describe("the control-standard walk itself", () => {
   it("reads a stylesheet with rules in it", () => {
-    // Rule 118's shape for a scanner: both empty-list assertions above pass against an empty
-    // walk. The count assertion does not, being the one that reads a number rather than a set.
+    // Both empty-list assertions above would pass against an empty walk. This count assertion
+    // would not, since it reads a number rather than a set.
     expect(blocksOf().length).toBeGreaterThan(1000);
     expect(onTheStandard().length).toBeGreaterThan(0);
   });

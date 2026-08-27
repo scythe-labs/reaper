@@ -43,9 +43,8 @@ export function BrandBadge({
       <g clipPath={`url(#${clip})`}>
         {/* The finished shape rather than the recipe (./dissolve.generated), so this draws the
             same geometry BrandMark does. The cowl opening is a notch in that one contour, and
-            the ink tile behind shows through it -- which is what the face cavity used to be
-            painted for. See BrandMark for why the recipe stopped being composed at render
-            time, and why this is one path with no fill rule. */}
+            the ink tile behind shows through it as the face cavity. See BrandMark for why this
+            geometry is composed ahead of render time, as one path with no fill rule. */}
         <path d={DISSOLVE_FIGURE_D} fill={DISSOLVE_BONE} />
         <path d={DISSOLVE_EYE_LEFT_D} fill="var(--accent)" />
         <path d={DISSOLVE_EYE_RIGHT_D} fill="var(--accent)" />

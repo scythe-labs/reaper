@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The policy editor. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* ---- policy editor ------------------------------------------------------- */
+ * The policy editor. See `../index.css` for how this file fits into the stylesheet's load
+ * order. */
 
 .editor {
   display: grid;
@@ -13,9 +12,9 @@
 }
 /* `minmax(0, ...)`, not a bare `1fr`: `1fr` means `minmax(auto, 1fr)`, and that `auto` floors
    the column at its widest child's min-content. One un-shrinkable control inside (the preset
-   picker's pill track, the pace matrix's max-content columns) then set the whole column to
-   362px on a 344px phone and STRETCHED every sibling to match -- the context band, the section
-   rail, every card -- carrying the entire page off the right edge. Letting the column shrink
+   picker's pill track, the pace matrix's max-content columns) can set the whole column to
+   362px on a 344px phone and stretch every sibling to match: the context band, the section
+   rail, every card, carrying the entire page off the right edge. Letting the column shrink
    keeps a too-wide child's problem to that child. */
 @media (max-width: 900px) {
   .editor {
@@ -24,7 +23,7 @@
 }
 
 /* The policy context band: which media type you're tuning, colored by the arr that runs
-   it -- Radarr gold for movies, Sonarr blue for TV (the same brand tokens the Settings
+   it. Radarr gold for movies, Sonarr blue for TV (the same brand tokens the Settings
    kind badges wear). The two policies must never blur together, and the color doubles as
    a pointer at the tool Reaper deletes through. The Movies/TV switch and the one-line
    blurb both live inside, so the switch's context is never in doubt. */
@@ -43,7 +42,7 @@
   margin-bottom: 1.1rem;
 }
 /* Movies -> Radarr, TV -> Sonarr. The wash stays light (13%) so a gold band never reads
-   as the amber "we could not look" warning; the badge and left edge carry the brand at
+   as the amber "could not check" warning. The badge and left edge carry the brand at
    full strength. */
 .policy-context.movie {
   --pc-brand: var(--radarr);
@@ -81,10 +80,10 @@
   display: block;
   margin-bottom: 1.1rem;
 }
-/* One shared label look for every labeled input -- the policy sliders (with a value on the
-   right), the login fields, the service forms, and the pace matrix's row + extra-setting
-   labels -- so a label reads the same on every screen: small, medium-weight, muted but
-   readable. Applied via .field-label wherever the label span is ours to class; the pace
+/* One shared label look for every labeled input: the policy sliders (with a value on the
+   right), the login fields, the service forms, and the pace matrix's row and extra-setting
+   labels. So a label reads the same on every screen: small, medium-weight, muted but
+   readable. Applied via .field-label wherever the label span is ours to class. The pace
    labels have no dedicated field-label class, so they pick up the same look through the
    grouped selector. */
 .field-label,
@@ -196,18 +195,18 @@
 
 /* Where a signal starts earning and where it earns in full. Two labeled boxes on the
    shared control chrome, wrapping to one column on a phone rather than shrinking the boxes
-   below the standard (rule 40 -- width is the only thing that may vary, and not below what
-   a number needs). */
+   below the standard: width is the only thing that may vary, and never below what a number
+   needs. */
 .rule-ramp {
   gap: var(--space-lg);
 }
 /* `align-items` is load-bearing, not tidiness. A column flex container stretches its
-   children by default, and `.qty` is a flex box with no width of its own, so each box came
-   out exactly as wide as the caption above it: "Pays nothing at or above" gave a 147px box
-   and "Full points at" a 101px one, for the same 3.6rem input. Two boxes side by side then
-   disagreed on width for a reason that had nothing to do with what they hold, and neither
-   fitted its own contents (rule 40 -- width is the only thing that may vary, and it varies
-   with the VALUE, never with the label). */
+   children by default, and `.qty` is a flex box with no width of its own, so without this,
+   each box would come out exactly as wide as the caption above it: "Pays nothing at or
+   above" would give a 147px box and "Full points at" a 101px one, for the same 3.6rem
+   input. Two boxes side by side would then disagree on width for a reason that has nothing
+   to do with what they hold, and neither would fit its own contents. Width is the only
+   thing that may vary here, and it varies with the value, never with the label. */
 .ramp-field {
   display: flex;
   flex-direction: column;
@@ -218,12 +217,12 @@
   font-size: var(--text-sm);
   color: var(--muted);
 }
-/* The box holds exactly what its own field can show, and no more. A single fixed width was
-   wrong in both directions: `narrow` clipped a four-digit dormancy end to "182", and the
-   standard width left a three-character rating floating in a box built for four. `1ch` is
+/* The box holds exactly what its own field can show, and no more. A single fixed width is
+   wrong in both directions: a narrow one clips a four-digit dormancy end to "182", and the
+   standard width leaves a three-character rating floating in a box built for four. `1ch` is
    one figure of the tabular face the box already uses, and the addend is the control
    standard's own padding plus room for the browser's spinner. `--ramp-chars` comes from
-   `PolicyEditor`'s `rampBoxWidth`, which is the one place the count is declared (rule 67). */
+   `PolicyEditor`'s `rampBoxWidth`, the one place the count is declared. */
 .ramp-field .qty input[type="number"] {
   width: calc(var(--ramp-chars, 4) * 1ch + 2.4rem);
 }
@@ -232,17 +231,18 @@
    signal row, so a bar means the same thing on both screens: one hue for how hard it charges,
    a neutral track for what it leaves alone.
 
-   `aria-hidden`, and it may be: the boxes above state both bounds and the worked example
-   below states what they do to a real title, so nothing here is the only place a fact lives.
-   Drawing it is what makes the DIRECTION legible, which is a thing eyes do and prose does
-   badly -- a rating charges leftward and dormancy rightward. */
+   It carries `aria-hidden`, and that is safe: the boxes above state both bounds, and the
+   worked example below states what they do to a real title, so nothing here is the only
+   place a fact lives. Drawing it is what makes the direction legible, since that is a thing
+   eyes read easily and prose does not: a rating charges leftward and dormancy rightward. */
 .ramp-strip {
   margin-top: 0;
 }
 /* The track is the "left alone" half of the picture, so it has to differ from whatever it
-   sits on. It sat on the page and read as `--surface-2`; inside the preview panel that IS
-   `--surface-2`, and the unfilled stretch vanished -- the one region meaning "Reaper does
-   not charge for this" became invisible. The page ground reads as the inset here. */
+   sits on. On the page it reads as `--surface-2`, but inside the preview panel the
+   background already is `--surface-2`, so the unfilled stretch would vanish there: the one
+   region meaning "Reaper does not charge for this" would become invisible. The page ground
+   reads as the inset here instead. */
 .ramp-strip-track {
   position: relative;
   height: 12px;
@@ -314,10 +314,10 @@
   margin: var(--space-md) 0 0;
 }
 
-/* Everything the setting DOES, in one panel: the strip that draws the range and the sentence
+/* Everything the setting does, in one panel: the strip that draws the range and the sentence
    that says what a title earns under it. Nothing inside is a control, and that is the whole
-   reason it is grouped and tinted -- the card reads settings first and consequences second,
-   rather than as six alternating rows where a picture, a link and a number all look like
+   reason it is grouped and tinted. The card reads settings first and consequences second,
+   rather than as six alternating rows where a picture, a link, and a number all look like
    things to press.
 
    The same fill the explanation panel gives a signal row's own reasoning, so a preview looks
@@ -331,7 +331,7 @@
 
 /* The delete threshold's consequence sentence: a quiet well under the slider, full text
    color rather than help gray, because it is the number the operator is actually setting
-   (same fill idiom as .ramp-shows above; the design-approved mockup's echo block). */
+   (same fill idiom as .ramp-shows above, the design-approved mockup's echo block). */
 .condemn-consequence {
   margin: var(--space-md) 0 0;
   padding: var(--space-md) var(--space-2xl);
@@ -357,9 +357,9 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Keep well-rated titles: the per-source bars as rows of ONE aligned table. The source
+/* Keep well-rated titles: the per-source bars as rows of one aligned table. The source
    names share a column sized by the longest, so every "at least" lines up whatever the
-   name's length -- the bars read as a set without each needing its own box. */
+   name's length. The bars read as a set without each needing its own box. */
 .bar-table {
   display: grid;
   grid-template-columns: max-content 1fr auto;
@@ -387,12 +387,12 @@
 .bar-x {
   width: var(--tap-min);
   height: var(--tap-min);
-  /* Without this the width declaration above does nothing (#736). `04-buttons.css`'s
-     `button { padding: 0.42rem 0.85rem }` applies here, and under the global
+  /* Without `padding: 0`, the width declaration above does nothing: 04-buttons.css's
+     `button { padding: 0.42rem 0.85rem }` still applies, and under the global
      `box-sizing: border-box` a specified width smaller than padding plus border floors at
-     padding plus border: 29.2px against the 24px it names. Height was already under the
-     floor, so only the width was wrong, which is why it read as a pill rather than the
-     circle every other chip dismiss draws. */
+     padding plus border, 29.2px against the 24px it names. Height already meets the 24px
+     floor on its own, so only the width needs this override, which is why without it the
+     button reads as a pill instead of the circle every other chip dismiss draws. */
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -423,7 +423,7 @@
 }
 /* 640px, on the file's 1100/900/640/560 grid. The column this table sits in is already
    single-column below 900px, so the extra width the old one-off 700px query bought was
-   never the thing that made the row fit; at 640 the source name takes its own line just
+   never the thing that made the row fit. At 640 the source name takes its own line just
    as it did, and the app keeps one set of breakpoints. */
 @media (max-width: 640px) {
   /* Narrow columns: the source name takes its own line and the controls keep aligning. */
@@ -462,10 +462,10 @@
   width: 7rem;
 }
 
-/* Custom-rules editor: a Radarr-style table where each rule declares its EFFECT, color-coded
+/* Custom-rules editor: a Radarr-style table where each rule declares its effect, color-coded
    in the same verdict language as the review queue (remove = red, keep = green).
 
-   THE settings-bearing card, wherever one appears on the policy tab: the custom-rules
+   The settings-bearing card, wherever one appears on the policy tab: the custom-rules
    editor and the TV season-protection group (.season-card) are one definition, so the
    two can never drift apart. */
 .rules-card,
@@ -479,18 +479,18 @@
 .season-card > h3 {
   margin-top: 0;
 }
-/* A protection that carries settings is a card whose header IS the protection's switch
-   and name -- the same row grammar as the plain rules, just promoted to a card. */
+/* A protection that carries settings is a card whose header is the protection's switch
+   and name: the same row grammar as the plain rules, just promoted to a card. */
 .card-head {
   display: flex;
   align-items: center;
   gap: var(--space-lg);
 }
-/* The rewatch hold's fitted ladder (#554 stage 2, PolicyEditor.tsx's RewatchLadder): the
-   library's own measured rate by dormancy range, read before the operator decides where to
-   set the percentage below it. One column, unlike the simulator's two-column .sim-delta
-   (16-simulator.css) -- that class is simulator chrome, and the mockup borrowed it only for
-   the picture (docs/history/REWATCH_PLAN.md, Stage 2). */
+/* The rewatch hold's fitted ladder (PolicyEditor.tsx's RewatchLadder): the library's own
+   measured rate by dormancy range, read before the operator decides where to set the
+   percentage below it. One column, unlike the simulator's two-column .sim-delta
+   (16-simulator.css). That class is simulator chrome, and the mockup borrowed it only for
+   the picture (docs/history/REWATCH_PLAN.md). */
 .rewatch-ladder {
   display: grid;
   grid-template-columns: 1fr;
@@ -548,19 +548,19 @@
 .rules-add .segmented {
   margin-bottom: var(--space-lg);
 }
-/* Sentence rows: rule as a sentence, its effect, and a remove button. No pill column --
+/* Sentence rows: rule as a sentence, its effect, and a remove button. No pill column:
    the card's lane already says which way the rule points. */
 .rules-row-simple {
   grid-template-columns: 1fr auto auto;
 }
 /* One height for every control in a rule form. Without this, Safari's native select,
    text and number-stepper chrome each pick their own intrinsic height and the row
-   staggers; with it, every engine renders the same row. */
+   staggers. With it, every engine renders the same row. */
 .condition-add :is(select, input) {
   height: 2.1rem;
 }
-/* Free-entry value input with library suggestions. An ordinary popover, NOT a native
-   <datalist>: Safari only reveals a datalist once typed text prefix-matches (an empty
+/* Free-entry value input with library suggestions. This is an ordinary popover, never a
+   native <datalist>: Safari only reveals a datalist once typed text prefix-matches (an empty
    click shows nothing), and embedded panes can draw the native popup at the wrong
    position entirely. This one is plain DOM and behaves the same everywhere. */
 .suggest {
@@ -570,10 +570,11 @@
 .suggest > input {
   min-width: 9rem;
 }
-/* Slid back on screen by --pop-shift, the same way the queue's filter menus are (rule 138,
-   popoverFit.ts): this box grows to its widest option, so a long library or collection name pushed
-   it off the right edge of a phone from an input already near that edge. The max-width caps how
-   wide one name may make it, and .suggest-opt trims what is left over. */
+/* Slid back on screen by --pop-shift, the same way the queue's filter menus are
+   (popoverFit.ts): this box grows to its widest option, so a long library or collection
+   name would push it off the right edge of a phone from an input already near that edge.
+   The max-width caps how wide one name may make it, and .suggest-opt trims what is left
+   over. */
 .suggest-pop {
   position: absolute;
   top: calc(100% + 4px);

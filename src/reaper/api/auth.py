@@ -1,20 +1,20 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The authentication endpoints -- the only part of the API reachable logged-out.
+"""The authentication endpoints. This is the only part of the API reachable logged-out.
 
 The frontend drives three flows against this router:
 
-* **Plex sign-in.** ``POST /plex/start`` returns a URL to open on plex.tv; the
-  page opens it and then polls ``POST /plex/poll`` until the user approves. The
-  browser never touches a Plex token -- the backend polls plex.tv and does the
-  ownership check. On success a session cookie is set.
+* **Plex sign-in.** ``POST /plex/start`` returns a URL to open on plex.tv. The page
+  opens it, then polls ``POST /plex/poll`` until the user approves. The browser
+  never touches a Plex token. The backend polls plex.tv and does the ownership
+  check. On success a session cookie is set.
 * **Local sign-in.** ``POST /local`` with a username and password.
 * **Recovery.** ``POST /recover`` redeems the single-use link Reaper prints to its
-  log when booted with ``REAPER_RECOVERY=true`` -- the last way in when both Plex
-  and the local password have failed you.
+  log when booted with ``REAPER_RECOVERY=true``. This is the last way in when both
+  Plex and the local password have failed.
 
 ``GET /me`` and ``GET /context`` let the SPA decide what to render before anyone
 has logged in. Everything here is exempt from the session requirement (see
-``reaper.api.middleware``) but *not* from CSRF: forging a login is an attack too.
+``reaper.api.middleware``), but not from CSRF. Forging a login is an attack too.
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ router = APIRouter(prefix="/api/auth", tags=[api_tags.SIGN_IN])
 
 
 def _safety(request: Request) -> RuntimeSafety:
-    # The Plex client here only signs in and reads -- it never deletes -- so it is built
+    # The Plex client here only signs in and reads. It never deletes, so it is built
     # read-only regardless of whether deletion is enabled elsewhere.
     return RuntimeSafety(destructive_enabled=False)
 
@@ -89,9 +89,9 @@ def _rate_limited(limiter: RateLimiter, key: str) -> None:
     """Count this call against ``key``'s window and raise 429 once it is over the cap.
 
     The Plex sign-in pair has no password to get wrong, so
-    :func:`reaper.api.deps.throttled` never fires on it -- a flood there is made of calls
-    that all *succeed*. This is the bound that does apply: it counts every call, not just
-    refused ones (S-1).
+    :func:`reaper.api.deps.throttled` never fires on it, since a flood there is made
+    of calls that all succeed. This bound applies instead. It counts every call, not
+    just refused ones.
     """
     refuse_if_waiting(limiter.retry_after(key))
 
@@ -104,9 +104,9 @@ def _rate_limited(limiter: RateLimiter, key: str) -> None:
 class AuthContext(BaseModel):
     """What the login screen needs to know before anyone signs in."""
 
-    setup_needed: bool  # no admin exists yet -- the first Plex owner claims the server
-    plex_linked: bool  # a server is linked, so Plex sign-in is a login rather than setup
-    local_login_available: bool  # at least one local admin exists to accept a password
+    setup_needed: bool  # No admin exists yet. The first Plex owner claims the server.
+    plex_linked: bool  # A server is linked, so Plex sign-in is a login, not setup.
+    local_login_available: bool  # At least one local admin exists to accept a password.
 
 
 class UserOut(BaseModel):
@@ -114,9 +114,10 @@ class UserOut(BaseModel):
     username: str
     provider: str
     thumb_url: str | None = None
-    #: This session was opened with a recovery code, so Settings -> Security lets it set a
-    #: new admin password without the current one. False on every ordinary sign-in, which
-    #: is the only safe default: a caller that cannot tell must ask for the old password.
+    #: This session was opened with a recovery code, so Settings -> Security lets it
+    #: set a new admin password without the current one. False on every ordinary
+    #: sign-in. That is the only safe default, since a caller that cannot tell must
+    #: ask for the old password.
     via_recovery: bool = False
 
     @classmethod
@@ -136,8 +137,8 @@ class PlexStartOut(BaseModel):
 
 class PlexPollIn(BaseModel):
     pin_id: int
-    # First-run setup, multi-server accounts only: the machine identifier of the owned
-    # server the user picked, echoed back from a "choose_server" response.
+    # First-run setup, multi-server accounts only. The machine identifier of the
+    # owned server the user picked, echoed back from a "choose_server" response.
     machine_identifier: str | None = None
 
 
@@ -145,17 +146,17 @@ class PlexPollOut(BaseModel):
     status: str  # "pending" | "retrying" | "ok" | "choose_server"
     user: UserOut | None = None
     setup: bool = False
-    # Present only with status "choose_server": the owned servers to pick from.
+    # Present only with status "choose_server". Lists the owned servers to pick from.
     servers: list[PlexServerChoiceOut] | None = None
-    # Present only with status "retrying": why this poll could not finish yet -- the typed
-    # id plus raw params (docs/history/I18N_PLAN.md §5): the frontend composes it, the same
-    # posture every other reason field on the wire takes (rule 92). The sign-in is still good
-    # and the browser keeps polling.
+    # Present only with status "retrying". Says why this poll could not finish yet,
+    # as the typed id plus raw params, the same shape every other reason field on
+    # the wire takes. The frontend composes the sentence from these. The sign-in is
+    # still good, and the browser keeps polling.
     reason: ReasonKey | None = None
 
 
 class LocalLoginIn(BaseModel):
-    # Bounded, like every field that reaches Argon2 or a lockout key: hashing
+    # Bounded, like every field that reaches Argon2 or a lockout key. Hashing
     # unbounded input is a CPU-exhaustion vector, and a megabyte "username" should
     # be a 422, not a lockout-table entry.
     username: str = Field(max_length=128)
@@ -173,10 +174,10 @@ class RecoverIn(BaseModel):
 
 @router.get("/context")
 async def context(request: Request) -> AuthContext:
-    """Unauthenticated: the shape of the login screen.
+    """Unauthenticated. Describes the shape of the login screen.
 
-    Deliberately low-detail. It reveals only whether setup is still pending and
-    which sign-in methods can succeed -- nothing about *who* the admins are.
+    This is deliberately low-detail. It never reveals who the admins are, only
+    whether setup is still pending and which sign-in methods can succeed.
     """
     async with session_factory(request)() as session:
         user_count = int(
@@ -199,8 +200,9 @@ async def me(request: Request) -> UserOut:
     """The signed-in admin, or 401. The SPA calls this to decide login vs app."""
     async with session_factory(request)() as session:
         user, token = await resolve_session_from_cookies(session, request.cookies)
-        # Read the mark before the commit: this is the same answer the password route will
-        # act on, and the Security panel grays out its current-password box from it.
+        # Reads the mark before the commit. This is the same answer the password
+        # route will act on, and the Security panel grays out its current-password
+        # box from it.
         via_recovery = await session_via_recovery(session, token)
         await session.commit()
         if user is None:
@@ -221,12 +223,12 @@ async def me(request: Request) -> UserOut:
 
 @router.post("/plex/start")
 async def plex_start(request: Request, payload: PlexStartIn = NO_PLEX_FORWARD) -> PlexStartOut:
-    """Begin a Plex sign-in: mint a PIN and hand back the URL to approve it on.
+    """Begin a Plex sign-in. Mint a PIN and hand back the URL to approve it on.
 
-    Rate-limited per address before any work happens. Every call writes a pending row and
-    asks plex.tv for a PIN, so an unthrottled flood both grows the table and pushes the
-    install's egress address into plex.tv's own rate limiting -- which would lock the real
-    operator out of Plex sign-in entirely (S-1).
+    Rate-limited per address before any work happens. Every call writes a pending
+    row and asks plex.tv for a PIN, so an unthrottled flood both grows the table and
+    pushes the install's egress address into plex.tv's own rate limiting. That would
+    lock the real operator out of Plex sign-in entirely.
     """
     _rate_limited(plex_start_limit, client_ip(request))
     start = await start_pin(
@@ -240,8 +242,9 @@ async def plex_start(request: Request, payload: PlexStartIn = NO_PLEX_FORWARD) -
 
 @router.post("/plex/poll")
 async def plex_poll(request: Request, payload: PlexPollIn, response: Response) -> PlexPollOut:
-    # Far looser than /plex/start: one real sign-in polls every two seconds for up to five
-    # minutes, so the cap has to clear ~150 calls without touching an honest browser.
+    # Far looser than /plex/start. One real sign-in polls every two seconds for up
+    # to five minutes, so the cap has to clear about 150 calls without touching an
+    # honest browser.
     _rate_limited(plex_poll_limit, client_ip(request))
     try:
         result = await poll_plex_login(
@@ -253,8 +256,9 @@ async def plex_poll(request: Request, payload: PlexPollIn, response: Response) -
             choice=payload.machine_identifier,
         )
     except PlexServerChoiceNeededError as exc:
-        # First-run setup, account owns several servers. The sign-in itself succeeded;
-        # the PIN stays valid, and the browser re-polls with the owner's pick.
+        # First-run setup, account owns several servers. The sign-in itself
+        # succeeded. The PIN stays valid, and the browser re-polls with the owner's
+        # pick.
         return PlexPollOut(
             status="choose_server",
             servers=[
@@ -263,11 +267,12 @@ async def plex_poll(request: Request, payload: PlexPollIn, response: Response) -
             ],
         )
     except PlexLinkRetryableError as exc:
-        # First-run setup: the sign-in was approved but the server did not answer this
-        # instant. ``poll_plex_login`` keeps the pending row for exactly this case, so
-        # answering with an error would strand a sign-in that is still good -- the browser
-        # aborts its poll loop on any thrown status (B2-14). A non-final status instead,
-        # so the loop keeps polling until the server is back or the deadline passes.
+        # First-run setup. The sign-in was approved but the server did not answer
+        # this instant. ``poll_plex_login`` keeps the pending row for exactly this
+        # case, so answering with an error would strand a sign-in that is still
+        # good. The browser aborts its poll loop on any thrown status, so this
+        # returns a non-final status instead, and the loop keeps polling until the
+        # server is back or the deadline passes.
         return PlexPollOut(
             status="retrying",
             reason=ReasonKey.model_validate(to_wire(Reason(exc.code, dict(exc.params)))),
@@ -297,8 +302,8 @@ async def local(request: Request, payload: LocalLoginIn, response: Response) -> 
     ip_key = f"ip:{ip}"
     throttled(login_throttle, ip_key, user_key)
 
-    # Shed load before hashing: if too many Argon2 verifications are already in
-    # flight, refuse quickly rather than adding to the CPU pile-up. This is a
+    # Sheds load before hashing. If too many Argon2 verifications are already in
+    # flight, this refuses quickly instead of adding to the CPU pile-up. This is a
     # capacity limit, not a credential failure, so it does not count against the
     # lockout counters.
     if not argon2_gate.acquire():
@@ -311,9 +316,9 @@ async def local(request: Request, payload: LocalLoginIn, response: Response) -> 
             user_agent=request.headers.get("user-agent"),
         )
     except LoginError as exc:
-        # A real failed credential. Count it against both keys; if either just
+        # A real failed credential. Count it against both keys. If either just
         # crossed into a lockout, log at warning level so the operator sees a
-        # brute-force attempt rather than only quiet info-level rejections.
+        # brute-force attempt, instead of only quiet info-level rejections.
         locked = max(
             login_throttle.record_failure(ip_key),
             login_throttle.record_failure(user_key),
@@ -339,10 +344,10 @@ async def local(request: Request, payload: LocalLoginIn, response: Response) -> 
 
 @router.post("/logout")
 async def logout(request: Request, response: Response) -> OkOut:
-    # Revoke every session the jar can present, not just the first name carrying a cookie.
-    # With two names in play a stale cookie used to absorb the logout -- its row was
-    # already gone, so the delete was a no-op -- and the genuinely live session under the
-    # other name stayed valid in the database after the operator had asked to sign out.
+    # Revokes every session the jar can present, not just the first name carrying a
+    # cookie. With two cookie names in play, revoking only one would let a stale
+    # cookie absorb the logout while a genuinely live session under the other name
+    # stayed valid in the database.
     async with session_factory(request)() as session:
         for token in read_session_tokens(request.cookies):
             await close_session(session, token)
@@ -355,19 +360,19 @@ async def logout(request: Request, response: Response) -> OkOut:
 async def recover(request: Request, payload: RecoverIn, response: Response) -> UserOut:
     """Redeem a recovery link and sign in as an admin.
 
-    The token is single-use and 15 minutes old at most; obtaining it required host
-    access (setting an env var, then reading either the console or the 0600 file in the
-    data folder). It logs in as an existing admin -- a local one by preference, since
+    The token is single-use and at most 15 minutes old. Obtaining it required host
+    access, either the console after setting an env var, or the 0600 file in the
+    data folder. This logs in as an existing admin, a local one by preference, since
     recovery exists precisely for when Plex is unreachable.
 
-    The session it opens is marked ``via_recovery``, which is what makes the landing page's
-    promise true: Settings -> Security accepts a new admin password from this session
-    without the current one. Without the mark the operator arrived at a form asking for the
-    password they came here because they had forgotten (#433).
+    The session it opens is marked ``via_recovery``, which is what makes the landing
+    page's promise true. Settings -> Security accepts a new admin password from this
+    session without the current one. Without the mark, the operator would land on a
+    form asking for the password they came here because they had forgotten.
     """
-    # No Argon2 here -- recovery redeems a random single-use token, so brute force
-    # is already near-hopeless -- but a per-IP cap still stops a token-guessing
-    # flood from tying up the endpoint.
+    # No Argon2 here. Recovery redeems a random single-use token, so brute force is
+    # already near-hopeless. A per-IP cap still stops a token-guessing flood from
+    # tying up the endpoint.
     ip_key = f"ip:{client_ip(request)}"
     throttled(recover_throttle, ip_key)
 
@@ -379,33 +384,36 @@ async def recover(request: Request, payload: RecoverIn, response: Response) -> U
 
         target = await _recovery_target(session)
         if target is None:
-            # Give the code back. ``redeem_recovery_token`` already stamped ``used_at``,
-            # and committing that here would burn the operator's ONE 15-minute code on a
-            # failure that is nothing to do with the code -- forcing another
-            # REAPER_RECOVERY reboot to mint a fresh one, at the exact moment recovery is
-            # most needed (B-13). Rolling back leaves the token unused, so it still works
-            # once an admin exists.
+            # Gives the code back. ``redeem_recovery_token`` already stamped
+            # ``used_at``, and committing that here would burn the operator's one
+            # 15-minute code on a failure that has nothing to do with the code,
+            # forcing another REAPER_RECOVERY reboot to mint a fresh one at the
+            # exact moment recovery is most needed. Rolling back leaves the token
+            # unused, so it still works once an admin exists.
             await session.rollback()
-            # Name a route that exists on the install reading this. ``reaper-admin`` is not
-            # in the Windows or macOS bundle at all (one PyInstaller executable, built from
-            # ``packaging/pyinstaller/entry.py``, which runs the launcher and nothing else),
-            # so offering it alone sent half of all operators after a command they do not
-            # have (rule 25, #433). Plex sign-in claims an unclaimed server everywhere.
+            # Names a route that exists on the install reading this. ``reaper-admin``
+            # is not in the Windows or macOS bundle at all. It ships as one
+            # PyInstaller executable, built from ``packaging/pyinstaller/entry.py``,
+            # which runs only the launcher, so recommending that command alone
+            # leaves those operators with nothing they can run. Plex sign-in claims
+            # an unclaimed server everywhere, so it works on every install.
             refuse(409, "error.auth.recovery_no_admin")
 
         token_str = await open_session(
             session, target, user_agent=request.headers.get("user-agent"), via_recovery=True
         )
         await session.commit()
-        # Past the commit: the redemption is durable and the admin session is open, so this
-        # records an outcome. Logging it at flush time asserted a sign-in the 409 rollback
-        # then undid, while the code was in fact still live (rule 26, #467).
+        # This logs only past the commit, once the redemption is durable and the
+        # admin session is open, so the log records a real outcome. Logging any
+        # earlier could assert a sign-in that a later rollback undoes, while the
+        # code was in fact still live.
         log.warning("recovery.redeemed", detail="A recovery link was used to gain admin access.")
 
-    # Only now, past the commit: the code is spent, so the copy in the data folder is a
-    # secret with no remaining use. Deleting it earlier would take the operator's only
-    # written copy on a path that can still roll the redemption back (rule 125) -- the
-    # no-admin 409 above does exactly that, and leaves the file where it was.
+    # This runs only now, past the commit. The code is spent, so the copy in the
+    # data folder is a secret with no remaining use. Deleting it earlier would take
+    # the operator's only written copy on a path that can still roll the redemption
+    # back. The no-admin 409 above does exactly that, and leaves the file where it
+    # was.
     clear_recovery_file(runtime_settings(request).data_dir)
 
     recover_throttle.record_success(ip_key)
@@ -421,8 +429,8 @@ async def recover(request: Request, payload: RecoverIn, response: Response) -> U
 
 
 async def _recovery_target(session: AsyncSession) -> AppUser | None:
-    """The admin a recovery link logs in as: the first active local admin, or any
-    active admin if none is local."""
+    """Return the admin a recovery link logs in as. This is the first active local
+    admin, or any active admin if none is local."""
     local_admin = await session.scalar(
         select(AppUser)
         .where(

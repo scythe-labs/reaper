@@ -71,9 +71,8 @@ class TestSecretBox:
 
 
 class TestSecretRedaction:
-    """Every credential Reaper holds is destructive-capable, and Tautulli and
-    MDBList both take their key as a *query parameter* -- so a logged URL is a
-    logged credential."""
+    """Every credential Reaper holds is destructive-capable, and Tautulli and MDBList both
+    take their key as a *query parameter*. So a logged URL is a logged credential."""
 
     def test_secret_keys_are_redacted(self) -> None:
         out = redact_secrets(None, "info", {"event": "call", "api_key": "abc123"})
@@ -107,18 +106,16 @@ class TestSecretRedaction:
     def test_the_httpx_logger_is_quieted_so_it_cannot_leak_urls(
         self, _restore_logging: None
     ) -> None:
-        """The redaction processor only sees *structlog* events. httpx logs every
-        request URL -- with the apikey/token in the query string -- through the stdlib
-        at INFO, where the processor never runs. So configure_logging must lift those
-        loggers above INFO, or the credential goes to the log in cleartext.
+        """The redaction processor only sees *structlog* events. httpx logs every request
+        URL, with the apikey/token in the query string, through the stdlib at INFO, where
+        the processor never runs. So configure_logging must lift those loggers above INFO,
+        or the credential goes to the log in cleartext.
 
-        Found by watching a live scan's own log print the Tautulli key verbatim.
-
-        ``_restore_logging`` (conftest) is not optional here: ``configure_logging`` is
-        entirely process-global -- root level, a ring handler on the root logger, every
-        noisy library logger, and structlog's own configuration -- and this test used to
-        call it with no cleanup, leaving all of that behind for whatever the xdist worker
-        picked up next.
+        ``_restore_logging`` (conftest) is not optional here. ``configure_logging`` is
+        entirely process-global: root level, a ring handler on the root logger, every
+        noisy library logger, and structlog's own configuration. This test used to call it
+        with no cleanup, leaving all of that behind for whatever the xdist worker picked up
+        next.
         """
         import logging
 

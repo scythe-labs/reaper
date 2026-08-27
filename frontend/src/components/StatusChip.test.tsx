@@ -36,7 +36,7 @@ describe("the spared chip", () => {
 
   it("says the spare expired, on the dashed fill, once the clock has passed", () => {
     // Still "Spared by hand": the item really is still kept, because only a scan realizes a
-    // spare's clock. What changes is the clause and the fill -- dashed rather than solid,
+    // spare's clock. What changes is the clause and the fill, dashed rather than solid,
     // since this is no longer a live decision.
     const el = chip({ spareCoversUntil: inDays(-3) });
     expect(el.textContent).toBe("Spared by hand, expired");
@@ -65,7 +65,7 @@ describe("the spared chip", () => {
 });
 
 // The server chip's tone picks the class, so a tone the server can send and the stylesheet
-// has no rule for paints as an unstyled span. `held` is the came-back hold's (#553): the one
+// has no rule for paints as an unstyled span. `held` is the came-back hold's tone: the one
 // protection with an expiry, outlined because it is Reaper's decision and not the owner's.
 describe("the server chip's tones", () => {
   function serverChip(tone: "kept" | "quiet" | "look" | "held", reason: ReasonKey) {
@@ -81,10 +81,10 @@ describe("the server chip's tones", () => {
   });
 
   it("has a stylesheet rule for every tone the server can send", () => {
-    // Rule 66's shape in CSS: a tone with no rule still renders, so nothing fails -- the chip
-    // just comes out as the base gray and the operator reads a hold as "nothing to act on".
-    // Read through the barrel's own concatenation, because a test reading one file reads the
-    // cascade wrong (see `test/stylesheet.ts`).
+    // A tone with no stylesheet rule still renders, so nothing fails: the chip just comes out
+    // as the base gray, and the operator reads a hold as "nothing to act on." Read through the
+    // barrel's own concatenation, because a test reading one file reads the cascade wrong (see
+    // `test/stylesheet.ts`).
     const tones: Chip["tone"][] = ["kept", "quiet", "look", "held"];
     for (const tone of tones) {
       expect(CSS, `no .status-${tone} rule`).toContain(`.status-${tone} {`);

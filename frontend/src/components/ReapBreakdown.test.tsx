@@ -20,7 +20,7 @@ vi.mock("../api", async (importOriginal) => ({
 
 const GB = 1024 ** 3;
 
-/** A scan status with nothing running -- the shape `api.scanStatus` returns. */
+/** A scan status with nothing running, the shape `api.scanStatus` returns. */
 const idleScan: ScanStatus = {
   running: false,
   phase: "idle",
@@ -123,12 +123,12 @@ describe("the ledger", () => {
     expect(
       await screen.findByText(/4 titles can't be measured, so Reaper won't remove/),
     ).toBeInTheDocument();
-    // With the allowance off the planner drops those 4, so the headline and total count only
-    // 565, and the raw 569 never appears (B-8).
+    // With the allowance off, the planner drops those 4, so the headline and total count only
+    // 565. The raw 569 never appears.
     expect(screen.getAllByText("565").length).toBeGreaterThan(0);
     expect(screen.queryByText("569")).not.toBeInTheDocument();
-    // And the split subtracts the same four, so the page states ONE number for one reap:
-    // 399 + 166 = 565, never the raw 402 + 167 (B-5, rule 30).
+    // The split subtracts the same four, so the page states one number for one reap:
+    // 399 + 166 = 565, never the raw 402 + 167.
     expect(screen.getByText(/399 movies, 166 TV seasons/)).toBeInTheDocument();
   });
 
@@ -139,20 +139,20 @@ describe("the ledger", () => {
     );
     renderBreakdown();
     // Allowance on: the planner admits the unmeasured, so the line must not promise they are
-    // kept, and the count is not reduced (B-8).
+    // kept, and the count includes them.
     expect(
       await screen.findByText(/Only as many as your Unknown-size items limit allows are removed/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/won't remove them/)).not.toBeInTheDocument();
-    // Not reduced: the unmeasured stay in the count when the allowance admits them -- and in
-    // the split, which follows the same set.
+    // The unmeasured stay in the count when the allowance admits them, and in the split too,
+    // which follows the same set.
     expect(screen.getAllByText("569").length).toBeGreaterThan(0);
     expect(screen.getByText(/402 movies, 167 TV seasons/)).toBeInTheDocument();
   });
 
   it("says a reap removes nothing when every condemned title is unmeasured", async () => {
-    // The old empty-state test was `will_reap === 0`, which renders a full ledger totaling
-    // zero when the whole list is held back for want of a size (B-5).
+    // Checking only `will_reap === 0` would miss this case: the ledger can still render fully,
+    // totaling zero, when the whole list is held back for lacking a known size.
     apiMock.reapBreakdown.mockResolvedValue(
       full({
         will_reap: 4,
@@ -179,7 +179,7 @@ describe("the ledger", () => {
       /couldn't check how many titles with no known size it may remove/,
     );
     expect(notice).toHaveClass("notice-warn");
-    // Neither answer may be stated as fact: not the held-back 565, not the raw 569 (B-16).
+    // Neither number may be stated as fact here: not the held-back 565, not the raw 569.
     expect(screen.queryByText("565")).not.toBeInTheDocument();
     expect(screen.queryByText("569")).not.toBeInTheDocument();
     expect(screen.queryByText("Will be reaped")).not.toBeInTheDocument();
@@ -188,17 +188,16 @@ describe("the ledger", () => {
   it("reports held hand reaps rather than dropping them", async () => {
     apiMock.reapBreakdown.mockResolvedValue(full({ hand_reaped_held: 2 }));
     renderBreakdown();
-    // The operator marked reaps the engine won't honor yet: say so (PR-2), and name the
-    // operation that is actually holding them -- this reap, never "a scan" (U-10).
+    // The operator marked reaps the engine won't honor yet. Say so, and name the operation
+    // actually holding them: this reap, never "a scan".
     expect(await screen.findByText(/2 reaps you marked are on hold/)).toBeInTheDocument();
     expect(screen.queryByText(/a scan won't remove/)).not.toBeInTheDocument();
   });
 
   it("says when expired spares are keeping titles out of the reap, and offers the scan", async () => {
-    // Those titles are counted in "You spared by hand" and absent from the total, and until
-    // this line existed nothing on the page said why. A spare's clock is realized only by a
-    // scan, so a scan is the remedy offered -- and the copy must not claim the reap will take
-    // them, because it will not.
+    // Those titles are counted in "You spared by hand" and absent from the total. A spare's
+    // clock only advances on a scan, so a scan is the remedy this notice offers, and the copy
+    // must not claim the reap itself will take them.
     apiMock.reapBreakdown.mockResolvedValue(full({ hand_spared: 12, spares_expired: 3 }));
     renderBreakdown();
     const notice = (await screen.findByText(/3 titles are kept by spares that expired/)).closest(
@@ -241,8 +240,8 @@ describe("the ledger", () => {
   });
 
   it("says the scan didn't start, in the tone every other failure uses", async () => {
-    // An action that fails silently reads as an action that did nothing. Its own notice in
-    // the shared error tone, not red text tucked inside the warning (rule 42).
+    // An action that fails silently reads as an action that did nothing, so it gets its own
+    // notice in the shared error tone, not red text tucked inside the warning.
     apiMock.reapBreakdown.mockResolvedValue(full({ spares_expired: 2 }));
     apiMock.startScan.mockRejectedValue(new Error("nope"));
     const user = userEvent.setup();
@@ -255,10 +254,10 @@ describe("the ledger", () => {
   });
 
   it("reads the count in document order and the press failure as an interruption (#375)", async () => {
-    // The two sit two lines apart and are the clearest statement of the distinction in the
-    // tree: the count is scan-derived and true before the page loaded, so it is furniture; the
-    // failure answers the Scan now press inside it. Both are asserted here rather than only the
-    // first, because the flag that silences one would silence the other just as quietly.
+    // The count is scan-derived and already true before the page loaded, so it needs no live
+    // announcement. The failure answers the "Scan now" press, so it does. Both are asserted
+    // here, not just the first, because a flag that silences one would silence the other just
+    // as quietly.
     apiMock.reapBreakdown.mockResolvedValue(full({ spares_expired: 2 }));
     apiMock.startScan.mockRejectedValue(new Error("nope"));
     const user = userEvent.setup();
@@ -339,12 +338,13 @@ describe("the pointers off the page", () => {
 });
 
 describe("the arrows drawn on the pointers off this page", () => {
-  // The glyph sat INSIDE the button's text, so it landed in the accessible name and a reader said
-  // the punctuation as part of the control: "See Review right arrow" (#177). Hidden, not removed
-  // -- it is drawn exactly as before.
+  // The arrow glyph must stay outside the accessible name: if it sits inside the button's text,
+  // a screen reader reads the punctuation as part of the control, saying "See Review right
+  // arrow" instead of "Review queue". It stays hidden from the name, not removed from the
+  // screen.
   //
-  // `toHaveAccessibleName` with the whole string, never a substring matcher: /Review queue/ was
-  // already satisfied by the broken name and is what let this sit here.
+  // Checked against the whole string with `toHaveAccessibleName`, never a substring matcher:
+  // a substring match like /Review queue/ would also pass against the broken name.
   it("keeps them out of what a reader calls the control", async () => {
     renderBreakdown();
 

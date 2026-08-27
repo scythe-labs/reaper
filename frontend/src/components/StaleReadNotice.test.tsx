@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Which stale-read lines a panel draws when several of its reads can fail at once (#198).
+// Which stale-read lines a panel draws when several of its reads can fail at once.
 //
 // The rule is a pure function, so it is driven here directly rather than only through the two
 // panels that use it: the panel tests can each reach a handful of states, and the states that
-// matter are the boundaries between one line and several. The panels then prove the wiring --
+// matter are the boundaries between one line and several. The panels then prove the wiring:
 // PlexPanel.test.tsx and SettingsStaleRead.test.tsx both drive a real multi-read failure.
 
 import { render, screen } from "@testing-library/react";
@@ -47,7 +47,7 @@ describe("collapseStaleReads", () => {
 
   it("puts the collapsed line in the FIRST read's slot, whichever reads failed", () => {
     // The slot is the one every caller places above the groups it covers, and the sentence says
-    // what's BELOW may be out of date. Drawing it in a failing group's slot would leave it
+    // what is below it may be out of date. Drawing it in a failing group's slot would leave it
     // speaking for the groups above it.
     for (const failing of [
       [SECOND, THIRD],

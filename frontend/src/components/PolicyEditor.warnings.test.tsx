@@ -26,7 +26,8 @@ vi.mock("../api", async (importOriginal) => {
 const { renderEditor, renderTvEditor } = policyEditorKit(apiMock);
 
 // Seeded here for the same reason `PolicyEditor.test.tsx` seeds it: the probe under each signal's
-// range fires on a 250ms debounce, and rule 135's gate only catches a queryFn that actually ran.
+// range fires on a 250ms debounce, and a queryFn that never runs cannot be caught by the check
+// that fails on an unanswered mock.
 beforeEach(() => {
   apiMock.probePolicy.mockResolvedValue({ points: 0.8 });
 });
@@ -47,8 +48,8 @@ describe("PolicyEditor warning anchors", () => {
 
   /** The rating card holding two bars, on the two scales it draws differently: IMDb is the
    *  ten-point scale with a vote floor beside it, Rotten Tomatoes critics is a bare
-   *  percentage. Two rather than one because the complaint this binding exists to stop is a
-   *  bar reading its NEIGHBOUR's -- a card with one bar cannot fail that way. */
+   *  percentage. Two bars rather than one, because the complaint this binding exists to stop is
+   *  a bar reading its neighbor's warning; a card with one bar cannot fail that way. */
   const barsBody: PolicyBody = {
     ...ratingBody(true),
     keep_rating_rules: [
@@ -58,10 +59,10 @@ describe("PolicyEditor warning anchors", () => {
   };
 
   /** The four protections the server warns about, each in the switch position its warning
-   *  actually fires in: the two thresholds are warned about only while their gate is ON (a
+   *  actually fires in: the two thresholds are warned about only while their gate is on (a
    *  gate that is off holds nothing, and its box is not rendered), and the two switches only
-   *  while theirs is OFF. So this is not an arrangement chosen to make boxes appear -- it is
-   *  the one page state all four warnings can reach an operator in at once.
+   *  while theirs is off. This is not an arrangement chosen to make boxes appear. It is the
+   *  one page state all four warnings can reach an operator in at once.
    *
    *  The default fixture ships no gates at all, which is why the `gates` binding needs its
    *  own state rather than the unguarded one: the block under the list renders either way,
@@ -77,16 +78,16 @@ describe("PolicyEditor warning anchors", () => {
   };
 
   /** The two page states each guard is checked in, plus the accessible name of a control that
-   *  exists on the held branch ONLY. That control is what pins a guard's name to the mount
+   *  exists on the held branch only. That control is what pins a guard's name to the mount
    *  condition it claims to be: without it these cases would assert a guard against itself.
    *  Exhaustive over `WarningGuard` by its type, so a guard added to the editor does not
-   *  compile until the states that hold and drop it are written here (rule 145). */
+   *  compile until the states that hold and drop it are written here. */
   const GUARDS: Record<WarningGuard, { control: string; held: Drive; absent: Drive }> = {
     pace: {
       control: "Items with an unknown size",
       held: unguarded,
-      // A profile read that FAILED, which is how #145 reached an operator: the whole pace
-      // section is one error paragraph, and the box this warning sits under is gone with it.
+      // A profile read that failed: the whole pace section becomes one error paragraph, and
+      // the box this warning sits under disappears with it.
       absent: async (warnings) => {
         renderEditor({ body: body() }, new Error("boom"), null, warnings);
       },
@@ -112,8 +113,8 @@ describe("PolicyEditor warning anchors", () => {
     },
   };
 
-  /** A probe fixture's own text, back out of its `legacy` reason (`why.ts`'s `composeIn`
-   *  renders a legacy reason's `p.text` verbatim). This walk cares only about WHERE a
+  /** A probe fixture's own text, read back out of its `legacy` reason (`why.ts`'s `composeIn`
+   *  renders a legacy reason's `p.text` verbatim). This walk cares only about where a
    *  warning lands, never what it says, so every fixture here carries a made-up sentence
    *  with no catalog entry rather than a real backend id. */
   const probeText = (w: PolicyWarning): string => String(w.reason.p?.text ?? "");
@@ -149,15 +150,15 @@ describe("PolicyEditor warning anchors", () => {
 
   it("declares the nine anchors these cases walk", () => {
     // Pinned because the walk is flag-shaped: an anchor deleted from the list takes its own
-    // case away with it, and every assertion that remains still passes (rule 145). Move this
-    // number in the same commit that adds or removes an anchor.
+    // case away with it, and every assertion that remains still passes. Move this number in
+    // the same commit that adds or removes an anchor.
     expect(WARNING_ANCHORS).toHaveLength(9);
   });
 
   for (const anchor of WARNING_ANCHORS) {
     it(`renders every warning the ${anchor.id} anchor claims, exactly once`, async () => {
       const mine = probes(anchor);
-      // The fields it claims are the fields it is probed with -- one list in the declaration,
+      // The fields it claims are the fields it is probed with, one list in the declaration,
       // so a claim cannot quietly go unprobed.
       for (const w of mine) expect(anchorClaims(anchor, w.field)).toBe(true);
 
@@ -178,12 +179,12 @@ describe("PolicyEditor warning anchors", () => {
     });
   }
 
-  // The anchors whose warnings each have ONE control that fixes them, and that control's
-  // accessible name. SIX of the nine are here; the three that are not warn about a LIST or a
-  // card -- the signal sliders and the two rule editors -- where there is no single box to
-  // point at and binding every child would read the whole card's complaints at each of them.
-  // Deliberately partial, and named here so the boundary is a decision on the page rather than
-  // an omission (#174).
+  // The anchors whose warnings each have one control that fixes them, and that control's
+  // accessible name. Six of the nine are here. The three that are not warn about a list or a
+  // card, the signal sliders and the two rule editors, where there is no single box to point at,
+  // and binding every child would read the whole card's complaints at each of them. This is
+  // deliberately partial, and named here so the boundary is a decision on the page rather than
+  // an omission.
   //
   // Three of the six earned their place rather than arriving with one obvious box:
   //
@@ -193,26 +194,26 @@ describe("PolicyEditor warning anchors", () => {
   //
   // `gates` looks like a list and is not one: every warning in that family names one setting
   // of one protection, so each already has the single owning box the other three lack, and
-  // binding them needed no judgment about what a group should say (#189).
+  // binding them needed no judgment about what a group should say.
   //
-  // `keep_rating_rules` was the same shape in disguise, and joined on the server rather than
+  // `keep_rating_rules` is the same shape in disguise, and joined on the server rather than
   // here: three of its four producers sit inside the loop over the bars and name one bar each
   // through `source_label(rule.source)`, so giving them a `keep_rating_rules.{source}.floor`
-  // field was all they needed (#189). Its fourth is the card's own -- the protection on with no
-  // sources -- and that one stays unbound, below.
+  // field was all they needed. Its fourth is the card's own, the protection on with no sources,
+  // and that one stays unbound, below.
   //
-  // Keyed by FIELD, not by anchor: `keep_last` claims three, and each is fixed from a different
-  // control. Bound to the anchor as a whole, the seasons box spoke the scope control's
-  // complaint and the scope control said nothing.
+  // Keyed by field, not by anchor: `keep_last` claims three, and each is fixed from a different
+  // control. Bound to the anchor as a whole, the seasons box would speak the scope control's
+  // complaint while the scope control said nothing.
   const BOUND: {
     anchor: WarningAnchorId;
     controls: Record<string, string>;
-    /** Fields this anchor DECLARES that deliberately reach no single control, with the reason
-     *  at the entry. Without this the check below would read a mixed anchor as an unfinished
-     *  one, and the only way to quiet it would be to stop claiming the field -- which drops
-     *  the warning off the page rather than down to the catch-all (#145, rule 42). Declared
-     *  rather than omitted, and the whole population is pinned by the count case below, so a
-     *  binding cannot be given up by quietly moving its field into here. */
+    /** Fields this anchor declares that deliberately reach no single control, with the reason
+     *  at the entry. Without this, the check below would read a mixed anchor as an unfinished
+     *  one, and the only way to quiet it would be to stop claiming the field, which drops the
+     *  warning off the page rather than down to the catch-all. Declared rather than omitted, and
+     *  the whole population is pinned by the count case below, so a binding cannot be given up
+     *  by quietly moving its field into here. */
     unbound?: readonly string[];
     /** The page state these boxes exist in, where the anchor's own guard does not name it.
      *  `gates` is one: its block is unguarded and renders on the default fixture, but that
@@ -224,9 +225,9 @@ describe("PolicyEditor warning anchors", () => {
       anchor: "gates",
       // The four the server sends today, each named by `engine/policy_warnings.py` as
       // `gates.<protection>.<setting>`. `PolicyEditor` binds them generically off the gate id
-      // in the served body, so a fifth protection warning about one of these three settings
-      // binds with no frontend change -- which is also why this list cannot prove the binding
-      // covers every BOX a row draws. The walk below that one does.
+      // in the served body, so a fifth protection warning about one of these settings binds
+      // with no frontend change. That is also why this list cannot prove the binding covers
+      // every box a row draws; the walk below does that instead.
       controls: {
         "gates.min_dormancy.threshold": "Give every title time to be rewatched threshold",
         "gates.server_popularity.window_days": "How far back recent plays count",
@@ -240,7 +241,7 @@ describe("PolicyEditor warning anchors", () => {
     {
       anchor: "keep_rating_rules",
       // The three the server sends today all name one bar's number, so each lands on the box
-      // holding that number. Named per SOURCE, which is what makes them distinct: `PolicyBody`
+      // holding that number. Named per source, which is what makes them distinct: `PolicyBody`
       // refuses two rules on one source, so the source keys the row the way the gate id keys a
       // protection row.
       controls: {
@@ -263,8 +264,8 @@ describe("PolicyEditor warning anchors", () => {
         keep_last_seasons: "Newest seasons to always keep",
         keep_last_scope: "Keep-last scope",
         // The switch is the third, and it is bound rather than left to the card: the warning
-        // it carries (#224) has no remedy this family will recommend, so the one control it
-        // can point at is the one whose own help text offers the other way out.
+        // it carries has no remedy this family will recommend, so the one control it can point
+        // at is the one whose own help text offers the other way out.
         flag_keep_conflicts: "Ask me first when a removal looks unusual",
       },
     },
@@ -281,16 +282,15 @@ describe("PolicyEditor warning anchors", () => {
   ];
 
   it("binds six of the nine anchors, and walks each one it binds", () => {
-    // Rule 145: this table is flag-shaped the same way the anchor list is. An entry deleted
-    // takes both of its cases away with it and every assertion left still passes, so the count
-    // is what says an anchor stopped being bound. Move it in the same commit that binds one or
-    // gives one up, and move the sentence above it too -- the three it describes are 9 minus
-    // this.
+    // This table is flag-shaped the same way the anchor list is. An entry deleted takes both of
+    // its cases away with it, and every assertion left still passes, so the count is what says
+    // an anchor stopped being bound. Move it in the same commit that binds one or gives one up,
+    // and move the sentence above it too: the three it describes are nine minus this.
     expect(BOUND).toHaveLength(6);
     expect(new Set(BOUND.map((b) => b.anchor)).size).toBe(BOUND.length);
     // And the exemptions, by name and in full. `unbound` excuses a declared field from the
     // description walk below, so it is the one place a binding could be given up without the
-    // count noticing: pinning the whole population is what closes that (rule 145).
+    // count noticing: pinning the whole population is what closes that.
     expect(BOUND.flatMap((b) => b.unbound ?? [])).toEqual(["keep_rating_rules"]);
   });
 
@@ -303,7 +303,7 @@ describe("PolicyEditor warning anchors", () => {
     const { anchor: id, controls } = entry;
     it(`lets each ${id} control speak the warning that is about IT`, async () => {
       // The warning was rendered beside the box and the box never mentioned it, so reaching it
-      // meant leaving the control to go looking. Asserted as the accessible DESCRIPTION, which
+      // meant leaving the control to go looking. Asserted as the accessible description, which
       // is what a reader computes: an `aria-describedby` naming an id that is not on the page
       // would satisfy an attribute check and still say nothing.
       const anchor = WARNING_ANCHORS.find((a) => a.id === id)!;
@@ -331,9 +331,9 @@ describe("PolicyEditor warning anchors", () => {
 
       await driveBound(entry, anchor)([...mine, catchAll]);
 
-      // Wait for the WARNING, not for the box: validation is debounced, so the control is on
+      // Wait for the warning, not for the box: validation is debounced, so the control is on
       // the page a beat before there is anything for it to describe itself with, and asserting
-      // on the box alone would read the empty description every time (rule 137's shape).
+      // on the box alone would read the empty description every time.
       await screen.findByText(probeText(mine[0]!));
 
       for (const w of mine) {
@@ -345,8 +345,8 @@ describe("PolicyEditor warning anchors", () => {
           if (other.field === w.field) continue;
           expect(box).not.toHaveAccessibleDescription(new RegExp(probeText(other)));
         }
-        // Never invalid. A policy warning does not block a save -- the save gate is a 422 from
-        // body validation plus the points budget, and `severity` reaches neither -- so a box
+        // Never invalid. A policy warning does not block a save: the save gate is a 422 from
+        // body validation plus the points budget, and `severity` reaches neither. So a box
         // marked invalid states a refusal that will not happen, which is the same lie as one
         // that hides the complaint.
         expect(box).not.toHaveAttribute("aria-invalid");
@@ -354,9 +354,9 @@ describe("PolicyEditor warning anchors", () => {
     });
 
     it(`never marks a ${id} control invalid, even when the warning is danger`, async () => {
-      // The severity a `warn` probe cannot reach. The first version of #174 read "danger" as
-      // "blocks a save" and marked three controls invalid over values the app saves happily,
-      // so this arm is what keeps the encoding from coming back.
+      // The severity a `warn` probe cannot reach. Reading "danger" as "blocks a save" would mark
+      // controls invalid over values the app saves happily, so this arm is what keeps that
+      // misreading from coming back.
       const anchor = WARNING_ANCHORS.find((a) => a.id === id)!;
       const blocking = boundProbes(controls).map((w) => ({ ...w, severity: "danger" as const }));
       await driveBound(entry, anchor)([...blocking, catchAll]);
@@ -369,20 +369,20 @@ describe("PolicyEditor warning anchors", () => {
   }
 
   it("leaves no box in a rating bar's row that its own warning cannot reach", async () => {
-    // The `gates` walk below, for the family that joined it (#189). Same reason it is needed:
-    // the `keep_rating_rules` entry above names the two fields the SERVER sends on this
-    // fixture, and those cannot see a third control added to `RatingBarRow` with no binding,
-    // because a field nobody sends yet has no probe to go missing (rule 145).
+    // The same reason the `gates` walk below is needed: the `keep_rating_rules` entry above
+    // names the two fields the server sends on this fixture, and those cannot see a third
+    // control added to `RatingBarRow` with no binding, because a field nobody sends yet has no
+    // probe to go missing.
     //
     // IMDb is the row that draws all of them: the ten-point score, the vote floor beside it,
     // and the × that removes the bar. `min_votes` carries no warning today and is bound
     // anyway, off the same generic helper the score uses, so the walk is over what the row
-    // RENDERS rather than over what the server currently complains about.
+    // renders rather than over what the server currently complains about.
     const BOXES: Record<string, string | null> = {
       "IMDb score out of 10": "keep_rating_rules.imdb.floor",
       "IMDb vote floor": "keep_rating_rules.imdb.min_votes",
-      // Deliberately unbound, and the one exemption on this row. It is the way OUT of the bar,
-      // not the way to fix its number, and it already says what it does; a complaint about a
+      // Deliberately unbound, and the one exemption on this row. It is the way out of the bar,
+      // not the way to fix its number, and it already says what it does. A complaint about a
       // score read from the remove button would offer deleting the protection as the remedy.
       "Remove the IMDb bar": null,
     };
@@ -394,8 +394,8 @@ describe("PolicyEditor warning anchors", () => {
         reason: { k: "legacy", p: { text: `anchor probe: ${field}` } },
       }));
     // The neighboring bar's complaint, driven in the same render. This is the misattribution
-    // the issue was filed on -- a warning about IMDb spoken by the Rotten Tomatoes row -- so it
-    // is probed rather than argued.
+    // to guard against: a warning about IMDb spoken by the Rotten Tomatoes row. It is probed
+    // rather than argued.
     const neighbor: PolicyWarning = {
       field: "keep_rating_rules.rotten_tomatoes_critic.floor",
       severity: "warn",
@@ -405,8 +405,8 @@ describe("PolicyEditor warning anchors", () => {
     renderEditor({ body: barsBody }, pace, null, [...probed, neighbor, catchAll]);
     await screen.findByText(probeText(probed[0]!));
 
-    // Typed, unlike the `closest("li")` in the walk below: TypeScript resolves a TAG selector
-    // to that tag's element type and a CLASS selector only to `Element`, which `within` will
+    // Typed, unlike the `closest("li")` in the walk below: TypeScript resolves a tag selector
+    // to that tag's element type and a class selector only to `Element`, which `within` will
     // not take.
     const row = screen.getByLabelText("IMDb score out of 10").closest<HTMLElement>(".bar-line")!;
     // A container query rather than a role query, deliberately: the point is to collect boxes
@@ -432,11 +432,11 @@ describe("PolicyEditor warning anchors", () => {
   });
 
   it("leaves no box in a protection's row that its own warning cannot reach", async () => {
-    // The `gates` entry above names the four fields the SERVER sends today, and rule 145 is
-    // exactly why that is not the whole proof: those four cannot see a fifth control added to
-    // `GateRow` with no binding, because a field nobody sends yet has no probe to go missing.
-    // So the population walked here is the other one -- every box one row draws -- counted and
-    // reconciled by hand against what that row renders.
+    // The `gates` entry above names the four fields the server sends today, and that is not the
+    // whole proof: those four cannot see a fifth control added to `GateRow` with no binding,
+    // because a field nobody sends yet has no probe to go missing. So the population walked
+    // here is the other one, every box one row draws, counted and reconciled by hand against
+    // what that row renders.
     //
     // `server_popularity` is the row that draws all of them: the switch, a threshold, and the
     // look-back window with its unit picker. The three probes are driven together, which the
@@ -492,7 +492,7 @@ describe("PolicyEditor warning anchors", () => {
     const guard = anchor.guard;
     if (guard === undefined) continue;
     it(`sends ${anchor.id}'s warnings to the catch-all when its control is not mounted`, async () => {
-      // #145 as a property of every guarded anchor rather than of the one that was found:
+      // This holds as a property of every guarded anchor, not just the one that surfaced it:
       // on the branch where the block is not there, claiming has to stop, or the warning is
       // dropped from the page instead of falling to the bottom.
       const mine = probes(anchor);
@@ -503,28 +503,25 @@ describe("PolicyEditor warning anchors", () => {
         expect(screen.getAllByText(probeText(w))).toHaveLength(1);
       }
       // Read after the warnings, not before: the control is trivially absent from a page that
-      // has not rendered yet, and this has to say something about the settled one (rule 137).
+      // has not rendered yet, and this has to say something about the settled one.
       expect(screen.queryByLabelText(GUARDS[guard].control)).toBeNull();
     });
   }
 
-  // The two walks above prove a guard an anchor DECLARES, and they are blind to one it should
-  // have declared and did not -- which is #145 itself, not a variant of it. The first walk
-  // drives an unguarded anchor in one state, and `pace` is held there, so a block sitting
-  // inside the pace section had a mount to paint its probe on and the failed-read branch was
-  // never rendered at all; the second walk skips the anchor for having no guard to drive.
-  // Dropping `guard: "pace"` from `max_unmeasured_per_run` therefore put the unknown-size
-  // warning back off the page and this file went green (#167) -- at 40 cases rather than 41,
-  // because the mutation deletes the one case that mentions it and every case left still
-  // passes, which is the flag shape rule 145 is about. The two guards that DO fail on that
-  // mutation only do so by luck of the default state being their absent branch, so the walk
-  // below is what actually holds this, not them.
+  // The two walks above prove a guard an anchor declares, and they are blind to one it should
+  // have declared and did not. The first walk drives an unguarded anchor in one state, with
+  // `pace` held there, so a block sitting inside the pace section had a mount to paint its
+  // probe on and the failed-read branch was never rendered at all. The second walk skips the
+  // anchor for having no guard to drive. So dropping a guard declaration from an anchor whose
+  // default state already happens to render its block would go unnoticed by both walks. The two
+  // guards that do fail if their guard declaration is dropped only do so by luck of the default
+  // state being their absent branch, so the walk below is what actually holds this, not them.
   //
-  // So every anchor is also driven through every branch it does NOT name, where rule 42's
-  // sentence is the whole invariant: a claimed field lands at its own block or in the bottom
-  // catch-all, and either way renders EXACTLY ONCE. Zero is the silent drop; twice is a claim
-  // that also fell through. This needs no assertion about which of the two it was -- an anchor
-  // is free to be unmounted here, and pinning the location would only re-state the declaration.
+  // So every anchor is also driven through every branch it does not name, where the invariant
+  // is: a claimed field lands at its own block or in the bottom catch-all, and either way
+  // renders exactly once. Zero is the silent drop; twice is a claim that also fell through.
+  // This needs no assertion about which of the two it was: an anchor is free to be unmounted
+  // here, and pinning the location would only re-state the declaration.
   const GUARD_NAMES = Object.keys(GUARDS) as WarningGuard[];
 
   for (const anchor of WARNING_ANCHORS) {
@@ -545,10 +542,10 @@ describe("PolicyEditor warning anchors", () => {
   }
 
   it("renders both of two warnings that are byte-identical", async () => {
-    // #146. Two protect conditions on the same movie-only field produce the same sentence,
-    // because `ConditionSpec` carries nothing an operator named. Keyed on field+message they
-    // collided, and React logged "two children with the same key" -- both still painted under
-    // React 19, but the reconciliation guarantee is what rule 19 is about.
+    // Two protect conditions on the same movie-only field produce the same sentence, because
+    // `ConditionSpec` carries nothing an operator named. Keyed on field and message, they
+    // collide, and React logs "two children with the same key", though both still paint under
+    // React 19's reconciliation guarantee.
     const twin: PolicyWarning = {
       field: "protect_conditions",
       severity: "danger",

@@ -44,10 +44,6 @@ export function manualPath(doc: Doc): string {
   return `${dir}/${doc.id}.mdx`;
 }
 
-/** MDX reads `{` as an expression and `<` as a tag. Neither appears in the docs today, and both
- *  are one ordinary sentence away, so escape them before they become a build failure nobody can
- *  place. Code spans are left alone: MDX does not interpolate inside them, and escaping there
- *  would put a backslash on the operator's screen. */
 /** `[text](doc-id#section)` carries a doc id, which is the app's address for a page and not
  *  the site's. The manual needs the path the page is written to, so the id is resolved through
  *  the same `manualPath` the generator uses: one mapping, so a link and the file it points at
@@ -64,9 +60,13 @@ function resolveRefs(text: string): string {
   );
 }
 
+/** MDX reads `{` as an expression and `<` as a tag. Neither appears in the docs today, and both
+ *  are one ordinary sentence away, so escape them before they become a build failure nobody can
+ *  place. Code spans are left alone: MDX does not interpolate inside them, and escaping there
+ *  would put a backslash on the operator's screen. */
 function escapeText(text: string): string {
   // The backslash is in the class so a literal one cannot pair with the next character
-  // as an MDX escape; one pass keeps the escaping characters from re-escaping each other.
+  // as an MDX escape. One pass keeps the escaping characters from re-escaping each other.
   return resolveRefs(text)
     .split(/(`[^`]*`)/g)
     .map((part) => (part.startsWith("`") ? part : part.replace(/[\\{}<>]/g, (c) => `\\${c}`)))
@@ -81,11 +81,12 @@ function yaml(value: string): string {
 
 /** A JSX attribute, written as an expression rather than a quoted literal.
  *
- *  `title="Read a few \"why\" panels"` is NOT valid JSX: an attribute delimited by quotes has no
- *  backslash escape, so MDX stops on the backslash and reports an unexpected character in an
- *  attribute name, pointing at a column in a generated file nobody wrote. Inside `{…}` the value
- *  is ordinary JavaScript, where JSON quoting is exactly right. One of the five docs already
- *  carries a quoted phrase in a step title, so this is the shipped case, not a hypothetical. */
+ *  `title="Read a few \"why\" panels"` is not valid JSX: an attribute delimited by quotes has
+ *  no backslash escape, so MDX stops on the backslash and reports an unexpected character in
+ *  an attribute name, pointing at a column in a generated file nobody wrote. Inside `{…}` the
+ *  value is ordinary JavaScript, where JSON quoting is exactly right. One of the five docs
+ *  already carries a quoted phrase in a step title, so this is the shipped case, not a
+ *  hypothetical. */
 function jsxAttr(value: string): string {
   return `{${JSON.stringify(value)}}`;
 }
@@ -100,20 +101,21 @@ function wrap(open: string, body: string, close: string): string {
  *
  *  Outside a code span that is all it takes, because `escapeText` has already doubled every
  *  backslash and the inline parser undoes exactly that. Inside one it is not: a row is split
- *  into cells BEFORE code spans are parsed, the splitter consumes one backslash and the code
+ *  into cells before code spans are parsed, the splitter consumes one backslash and the code
  *  span keeps the rest verbatim, so a run of `c` backslashes written before a pipe arrives
  *  intact only while `c` is even. An odd run leaves the pipe unescaped, and the row silently
  *  becomes two columns.
  *
- *  No encoding renders an odd run — `c` and `c + 2` are the neighbors GFM can spell, never
- *  `c + 1` — so this refuses the cell instead of publishing a table that lost a column. Same
+ *  No encoding renders an odd run: `c` and `c + 2` are the neighbors GFM can spell, never
+ *  `c + 1`, so this refuses the cell instead of publishing a table that lost a column. Same
  *  call `manualPath` makes on an unmapped group: reject over invent.
  *
  *  CodeQL reads the `replace` below as the sanitizer and reports the backslash it leaves alone
  *  (`js/incomplete-sanitization`, dismissed as a false positive). The backslash was escaped one
- *  call earlier, by `escapeText`; escaping it again here is not the missing half of that pass
- *  but a second one, measured against remark-gfm as 14 of 18 round-trips broken. The query also
- *  assumes untrusted input, and every cell here is typed doc content compiled into the app. */
+ *  call earlier, by `escapeText`. Escaping it again here is not the missing half of that pass,
+ *  but a second one: measured against remark-gfm, it fixes 14 of 18 broken round-trips. The
+ *  query also assumes untrusted input, and every cell here is typed doc content compiled into
+ *  the app. */
 function cell(text: string): string {
   for (const part of text.split(/(`[^`]*`)/g)) {
     if (!part.startsWith("`")) continue;
@@ -183,10 +185,9 @@ function blockToMdx(b: Block): string {
 /** The whole page: Docusaurus front matter, a banner naming the generator, then the blocks.
  *
  *  `position` orders the page within its sidebar category. The site's sidebar is autogenerated
- *  from the directory, so a new doc appears there with no second list to update (rule 103's
- *  hazard, avoided rather than guarded); the caller passes the doc's place in `DOCS`, which is
- *  the order the app's own index already uses. Hand-written pages carry their own
- *  `sidebar_position` and interleave with these. */
+ *  from the directory, so a new doc appears there with no second list to update. The caller
+ *  passes the doc's place in `DOCS`, which is the order the app's own index already uses.
+ *  Hand-written pages carry their own `sidebar_position` and interleave with these. */
 export function docToMdx(doc: Doc, position = 1): string {
   const front = [
     "---",
@@ -197,9 +198,9 @@ export function docToMdx(doc: Doc, position = 1): string {
     "---",
   ].join("\n");
 
-  // Rule 68: an artifact that says it is generated names the committed script that makes it.
-  // The doc is named rather than its file, because the two do not match and deriving one from
-  // the other would be a guess: `how-a-delete-is-kept-safe` lives in `deletionSafety.ts`.
+  // An artifact that says it is generated names the committed script that makes it. The doc
+  // is named rather than its file, because the two do not match, and deriving one from the
+  // other would be a guess: `how-a-delete-is-kept-safe` lives in `deletionSafety.ts`.
   const banner = [
     GENERATED_MARKER,
     `    Source:     the ${JSON.stringify(doc.id)} doc in frontend/src/docs/content/`,

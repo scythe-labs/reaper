@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Secret-key resolution.
 
-The dangerous failure here is not "no key" -- that fails loudly. It is a key that
-*changes*. Every integration credential in the database is encrypted with it, so
-a fresh key on the next boot silently renders all of them unreadable, and the
-damage is only discovered the next time a scan tries to reach Sonarr.
+A missing key fails loudly and is caught right away. The dangerous failure is a key that
+changes between boots. Every stored credential is encrypted with it, so a fresh key on the
+next boot silently makes all of them unreadable, and the damage is only found the next
+time a scan tries to reach Sonarr.
 
-So the property under test is: **stable across boots**.
+The property this file tests is that the key stays stable across boots.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ class TestAutoGeneration:
         assert first == second
 
     def test_credentials_encrypted_on_one_boot_decrypt_on_the_next(self, tmp_path: Path) -> None:
-        """The failure this guards against, stated end to end."""
+        """Encrypts on one boot and decrypts on the next, proving the key really is stable."""
         boot1 = SecretBox(resolve_secret_key(_settings(tmp_path)))
         ciphertext = boot1.encrypt("sonarr-api-key")
 
@@ -72,12 +72,14 @@ class TestAutoGeneration:
     def test_an_empty_key_file_refuses_to_boot_rather_than_minting_a_new_one(
         self, tmp_path: Path
     ) -> None:
-        """An empty key file is a crashed write or a truncated volume, not a fresh install.
+        """An empty key file means a crashed write or a truncated volume, not a fresh
+        install.
 
-        Minting a replacement would look like recovery and be the opposite: the file is
-        what decrypts every stored service credential, so a new one makes all of them
-        permanently unreadable, silently, and the operator only finds out when a scan
-        cannot reach Sonarr (S-5). Stopping with an explanation keeps every option open.
+        Generating a replacement key would look like recovery, but it would do the
+        opposite. The file is what decrypts every stored credential, so a new key would
+        make all of them permanently unreadable. The operator would not find out until a
+        scan could no longer reach Sonarr. Stopping with an explanation instead keeps
+        every option open.
         """
         settings = _settings(tmp_path)
         settings.ensure_data_dir()
@@ -113,12 +115,12 @@ class TestPerInstallSalt:
     def test_a_junk_salt_file_refuses_to_boot_rather_than_minting_a_new_one(
         self, tmp_path: Path
     ) -> None:
-        """A salt that exists but will not parse is unreadable material, not absence.
+        """A salt file that exists but will not parse counts as unreadable, not absent.
 
         The fixed-v1 fallback only covers data from before this install had a salt at
-        all, so anything written under the salt this file held would stop decrypting
-        (S-5). A salt file that never existed is a different case and still generates,
-        which the test above pins.
+        all, so anything written under the salt this file held would stop decrypting.
+        A salt file that never existed is a different case, and still generates a new
+        salt, which the test above pins.
         """
         settings = _settings(tmp_path)
         settings.ensure_data_dir()
@@ -129,8 +131,8 @@ class TestPerInstallSalt:
         assert salt_file_path(settings).read_text() == "not-hex\n"
 
     def test_data_written_before_the_salt_existed_still_decrypts(self, tmp_path: Path) -> None:
-        """The upgrade path: an install whose credentials were encrypted under the fixed
-        v1 salt gains a per-install salt and must still open everything."""
+        """Checks the upgrade path. An install whose credentials were encrypted under the
+        fixed v1 salt gains a per-install salt and must still open everything."""
         old_box = SecretBox("the-key")  # pre-salt derivation
         ciphertext = old_box.encrypt("sonarr-api-key")
 
@@ -138,8 +140,8 @@ class TestPerInstallSalt:
         assert new_box.decrypt(ciphertext) == "sonarr-api-key"
 
     def test_new_data_is_written_under_the_install_salt(self, tmp_path: Path) -> None:
-        """The point of the change: what a salted box writes, a fixed-salt-only box
-        cannot read -- proof the encrypting derivation really is per-install."""
+        """What a salted box writes, a fixed-salt-only box cannot read. This proves the
+        encrypting derivation really is per-install."""
         salted = SecretBox("the-key", salt=resolve_kdf_salt(_settings(tmp_path)))
         ciphertext = salted.encrypt("sonarr-api-key")
 
@@ -171,9 +173,11 @@ class TestExplicitKeyWins:
         assert not key_file_path(_settings(tmp_path)).exists()
 
     def test_an_explicit_key_does_not_overwrite_an_existing_key_file(self, tmp_path: Path) -> None:
-        """Setting REAPER_SECRET_KEY later must not destroy the generated key --
-        the database is still encrypted with the old one, and the operator may
-        need to recover it."""
+        """Setting REAPER_SECRET_KEY later must not destroy the generated key.
+
+        The database is still encrypted with the old one, and the operator may need to
+        recover it.
+        """
         generated = resolve_secret_key(_settings(tmp_path))
 
         resolve_secret_key(_settings(tmp_path, "explicit-key"))

@@ -88,10 +88,10 @@ def _imdb(value: float, votes: int) -> tuple[Rating, ...]:
 def _plex_imdb(value: float) -> Rating:
     """One IMDb rating as Plex serves it, with no vote count at all.
 
-    Built through the real reader rather than by hand: the claim these cases rest on is
-    ``from_plex``'s own -- it returns ``votes=None`` for *every* Plex-sourced rating, whatever
-    the source -- so transcribing a ``votes=None`` here would pin the transcription instead
-    (rule 119). The assert is what makes it evidence rather than a coincidence.
+    This is built through the real reader rather than by hand. The claim these cases rest
+    on is ``from_plex``'s own: it returns ``votes=None`` for *every* Plex-sourced rating,
+    whatever the source, so transcribing a ``votes=None`` here would pin the transcription
+    instead. The assert is what makes it evidence rather than a coincidence.
     """
     rating = from_plex(str(value), "imdb://image.rating")
     assert rating is not None and rating.votes is None
@@ -131,7 +131,7 @@ def facts(draw: st.DrawFn) -> Facts:
         on_lists=draw(observations(st.text(max_size=20))),
         # Drawn across the popularity gate's 365-day window in both directions, so the
         # sweep keeps reaching the gate's answering branches. Left at its default this is
-        # `Absent`, which the gate reads as un-checkable: every example would block, and
+        # `Absent`, which the gate reads as un-checkable. Every example would block, and
         # the invariants below would hold for a reason that has nothing to do with them.
         history_reach_days=draw(observations(st.floats(0, 5000, allow_nan=False))),
         # The built-in rewatch keep's two frozen inputs (docs/history/REWATCH_PLAN.md, Stage
@@ -144,7 +144,7 @@ def facts(draw: st.DrawFn) -> Facts:
 
 
 def _on_list_gate(name: str = "My keep list") -> fields.CustomProtectGate:
-    """List membership protects through the operator's own ``on_list`` rule now; the
+    """List membership protects through the operator's own ``on_list`` rule now. The
     whitelist and curated-list gate classes are deleted."""
     return fields.CustomProtectGate(fields.Condition(field="on_list", op=fields.Op.EQ, value=name))
 
@@ -169,9 +169,8 @@ ALL_SIGNALS = [
 
 
 class TestAGateCannotDelete:
-    """The structural claim. There is no CONDEMN constructor on a gate, so no
-    input -- however malformed, missing, or hostile -- can make a protection
-    delete a file."""
+    """The structural claim. There is no *condemn* constructor on a gate, so no input,
+    however malformed, missing, or hostile, can make a protection delete a file."""
 
     @given(item=facts())
     @settings(max_examples=300, deadline=None)
@@ -181,44 +180,44 @@ class TestAGateCannotDelete:
 
 
 class TestOnlyTwoGatesMayEverRefuseAHandReap:
-    """The membership guard on the ONE set that still holds a hand reap (rule 103).
+    """The membership guard on the *one* set that still holds a hand reap.
 
     This class used to guard the opposite list. A blocked gate released a hand reap only
     when its gate was in ``verdict.DEFERRABLE_BLOCK_GATES`` *and* its producer set
-    ``defers_to_owner``, and nothing pinned the membership half: growing the frozenset
-    failed no test, so a gate could join it in silence. That list is gone -- no block holds
-    a hand reap now -- and the same drift risk moved, whole, onto ``STRUCTURAL_GATES``,
+    ``defers_to_owner``, and nothing pinned the membership half. Growing the frozenset
+    failed no test, so a gate could join it in silence. That list is gone. No block holds
+    a hand reap now, and the same drift risk moved, whole, onto ``STRUCTURAL_GATES``,
     which is what a reap cannot pass. Both directions of a change to it are dangerous, and
-    only one of them looks it: dropping a member RELEASES a file, and adding one takes away
-    an overrule the owner is entitled to and hides the fact behind a "safety" set.
+    only one of them looks it. Dropping a member *releases* a file, and adding one takes
+    away an overrule the owner is entitled to and hides the fact behind a "safety" set.
     """
 
     def test_the_structural_list_is_exactly_the_two_stops_that_are_not_judgments(self) -> None:
         """Editing this set must be a deliberate change that fails this test first, because
         the reviewer then has to answer the question membership does not: is the gate a fact
-        about whether the file can be REMOVED at all, or a judgment about whether it is
-        WANTED? Only the first belongs here. Deleting mid-stream breaks a session someone is
-        watching, and a file no *arr manages has no path to delete through -- so overruling
+        about whether the file can be *removed* at all, or a judgment about whether it is
+        *wanted*? Only the first belongs here. Deleting mid-stream breaks a session someone
+        is watching, and a file no *arr manages has no path to delete through, so overruling
         either cannot give the owner what they asked for. Everything else (dormancy, rating,
         popularity, a curated list, the keep list, the season keep-rule conflict) is a
         cautious judgment, and a judgment is the owner's to overrule."""
         assert frozenset({GateId.STREAMING_NOW, GateId.UNMANAGED}) == STRUCTURAL_GATES
 
     def test_only_a_fired_structural_gate_refuses_and_a_blocked_one_does_not(self) -> None:
-        """The set is consulted for a gate that FIRED, and that distinction is the whole
+        """The set is consulted for a gate that *fired*, and that distinction is the whole
         reason it is safe for a blocked one to pass.
 
-        A fired ``streaming_now`` is "somebody is playing this"; a blocked one is "we could
-        not read who is playing", frozen well before anything is sent. The live veto at send
-        time (``executor._being_watched_now``) re-polls Plex per item and spares on any read
-        failure, so it both supersedes the frozen guess and fails closed where the scan could
-        only guess. Asserted through the production caller, never a transcription of what it
-        passes (rule 119).
+        A fired ``streaming_now`` is "somebody is playing this". A blocked one is "we could
+        not read who is playing", frozen well before anything is sent. The live veto at
+        send time (``executor._being_watched_now``) re-polls Plex per item and spares on
+        any read failure, so it both supersedes the frozen guess and fails closed where the
+        scan could only guess. This is asserted through the production caller, never a
+        transcription of what it passes.
 
         The two gates are named here rather than read out of ``STRUCTURAL_GATES``, which
-        looks like the tidier spelling and is the one that cannot fail: emptying the set
-        empties the loop, and a vacuous sweep reads as a proof while asserting nothing
-        (rule 118). Written out, shrinking the set fails this test as well as the membership
+        looks like the tidier spelling and is the one that cannot fail. Emptying the set
+        empties the loop, and a vacuous sweep would read as a proof while asserting
+        nothing. Written out, shrinking the set fails this test as well as the membership
         one above."""
         policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
         for gate in (GateId.STREAMING_NOW, GateId.UNMANAGED):
@@ -243,8 +242,8 @@ class TestUnknownNeverCondemns:
     @settings(max_examples=300, deadline=None)
     def test_an_unknown_input_blocks_its_gate_rather_than_passing_it(self, item: Facts) -> None:
         """A gate that could not be evaluated is reported as *blocked*, not as
-        'checked and fine'. Treating those alike is the whole Deleterr failure
-        class: an API blip silently disarms a protection."""
+        'checked and fine'. Treating those alike is the whole Deleterr failure class.
+        An API blip silently disarms a protection."""
         evaluation = evaluate_all(ALL_GATES, item)
 
         for result in evaluation.results:
@@ -255,13 +254,12 @@ class TestUnknownNeverCondemns:
     @given(item=facts())
     @settings(max_examples=300, deadline=None)
     def test_an_unknown_input_never_increases_the_score(self, item: Facts) -> None:
-        """THE property. Signals are unsigned, so an Unknown contributes 0 -- the
-        floor. Replacing any known value with Unknown must never make an item MORE
-        condemned.
+        """*The* property. Signals are unsigned, so an Unknown contributes 0, the floor.
+        Replacing any known value with Unknown must never make an item *more* condemned.
 
-        Under the tempting signed design (start at 50, subtract for 'well rated'),
-        a Trakt outage removes a negative and the score RISES: a beloved film flips
-        from spare to condemn because a third-party API had a bad minute."""
+        Under the tempting signed design (start at 50, subtract for 'well rated'), a Trakt
+        outage removes a negative and the score *rises*. A beloved film flips from spare
+        to condemn because a third-party API had a bad minute."""
         baseline = score(ALL_SIGNALS, item).value
 
         for field_name in (
@@ -307,9 +305,9 @@ class TestUnknownNeverCondemns:
 
 
 #: Every fact the catalog's gates can read is readable here, so a case below is the only
-#: thing unreadable in its own run. Deliberately not `_rating_facts` or `_popularity_facts`:
-#: both leave fields `Absent` that a gate under test would then block on for a reason the
-#: case never named.
+#: thing unreadable in its own run. This is deliberately not `_rating_facts` or
+#: `_popularity_facts`. Both leave fields `Absent` that a gate under test would then block
+#: on for a reason the case never named.
 _ALL_READABLE = Facts(
     title="A Film",
     days_observed_unwatched=Known(value=1200.0, source="t"),
@@ -347,11 +345,11 @@ _GUARD_IDS = [f"{gate.__class__.__name__}.{field}" for gate, field in FAIL_CLOSE
 def _blocked_call_sites() -> set[tuple[str, str]]:
     """Every `_blocked(...)` call in the gate catalog, as (class, fact field).
 
-    Read out of the source rather than hand-listed, so the population the table below claims
-    to cover is the population that exists (rule 145). The shape it accepts is asserted, not
-    assumed (rule 147): a guard spelled some other way than ``_blocked(self.id, facts.x, …)``
-    fails the walk instead of dropping out of it, which would quietly shrink both the scan
-    and the table it is reconciled against.
+    This reads out of the source rather than hand-listed, so the population the table
+    below claims to cover is the population that exists. The shape it accepts is
+    asserted, not assumed. A guard spelled some other way than
+    ``_blocked(self.id, facts.x, …)`` fails the walk instead of dropping out of it, which
+    would quietly shrink both the scan and the table it is reconciled against.
     """
     source = Path(inspect.getfile(gates)).read_text()
     sites: set[tuple[str, str]] = set()
@@ -373,14 +371,14 @@ def _blocked_call_sites() -> set[tuple[str, str]]:
 class TestEveryFailClosedGuardKeepsTheFile:
     """`gates._blocked` at each call site, driven one gate at a time.
 
-    The property above cannot stand in for these. It reads `if result.blocked:` over whatever
-    the sweep produced, so deleting a guard yields *fewer* blocked results and the conditional
-    over the smaller set still holds -- green, while the gate it covered stopped failing
-    closed. Rule 118: where the guard upstream makes a branch indiscriminable, drive the
-    interlock directly.
+    The property above cannot stand in for these. It reads `if result.blocked:` over
+    whatever the sweep produced, so deleting a guard yields *fewer* blocked results, and
+    the conditional over the smaller set still holds, green, while the gate it covered
+    stopped failing closed. Where the guard upstream makes a branch indiscriminable like
+    this, the interlock is driven directly instead.
 
-    What each case pins is the difference between "we could not check this protection" and
-    "this protection did not fire", which is the whole of rule 93 at the gate layer.
+    What each case pins is the difference between "we could not check this protection"
+    and "this protection did not fire", at the gate layer.
     """
 
     @pytest.mark.parametrize(("gate", "field"), FAIL_CLOSED_GUARDS, ids=_GUARD_IDS)
@@ -428,18 +426,18 @@ class TestAnOnListRuleHoldsWhatIsOnTheList:
     (``fields.CustomProtectGate``), so this class pins the same three claims the deleted
     gate classes carried: a listed title is held and the list is named, a title on no list
     is a checked miss, and an unreadable membership blocks rather than passing. Deleting
-    the membership arm turns "on your list" into a green miss behind a green run: a
-    protection withdrawn from every listed title in the library, with nothing to say so.
-    Rule 118, in the condemn direction.
+    the membership arm turns "on your list" into a green miss behind a green run. A
+    protection would be withdrawn from every listed title in the library, with nothing to
+    say so.
     """
 
     def test_a_listed_title_is_protected_and_the_list_is_named(self) -> None:
         """The hold fires, and the detail names the list the rule matched.
 
         The fact is the multi convention's comma-joined names, so an item on two lists is
-        matched per element, and the match is case-insensitive on both sides (rule 88):
-        the rule spells the list "awards shortlist" and the fact carries the operator's
-        own casing.
+        matched per element, and the match is case-insensitive on both sides. The rule
+        spells the list "awards shortlist" and the fact carries the operator's own
+        casing.
         """
         gate = _on_list_gate("awards shortlist")
         listed = replace(
@@ -455,8 +453,8 @@ class TestAnOnListRuleHoldsWhatIsOnTheList:
         )
 
     def test_a_title_on_other_lists_only_is_a_checked_miss(self) -> None:
-        """eq on a multi-valued fact is per element, never a whole-string comparison --
-        but it must still be an exact element match, or "keep" would match "keep list"."""
+        """eq on a multi-valued fact is per element, never a whole-string comparison, but
+        it must still be an exact element match, or "keep" would match "keep list"."""
         gate = _on_list_gate("My keep list")
         elsewhere = replace(
             _ALL_READABLE, on_lists=Known(value="My keep list extended", source="t")
@@ -481,9 +479,9 @@ class TestAnOnListRuleHoldsWhatIsOnTheList:
         assert flat(result.detail) == "custom_checked[cond=none_recorded[field=on_list]]"
 
     def test_an_unreadable_membership_blocks_the_rule(self) -> None:
-        """Rule 93: a membership that could not be read is ``Unknown``, and the rule
-        blocks -- amber, "could not check" -- rather than reporting a green miss that
-        withdraws the protection library-wide."""
+        """A membership that could not be read is ``Unknown``, and the rule blocks,
+        amber, "could not check", rather than reporting a green miss that withdraws the
+        protection library-wide."""
         gate = _on_list_gate()
         unreadable = replace(
             _ALL_READABLE, on_lists=Unknown(reason="the list sync failed", source="t")
@@ -508,8 +506,8 @@ class TestScoreBounds:
     @given(item=facts())
     @settings(max_examples=200, deadline=None)
     def test_no_signal_is_ever_negative(self, item: Facts) -> None:
-        """Unsigned. A signal measures a reason to delete; there is no such thing
-        as a negative reason, and a negative would let one signal cancel another."""
+        """Unsigned. A signal measures a reason to delete. There is no such thing as a
+        negative reason, and a negative would let one signal cancel another."""
         for result in score(ALL_SIGNALS, item).results:
             assert result.pressure >= 0.0
             assert result.pressure <= result.weight + 1e-9
@@ -545,8 +543,8 @@ class TestScoreBounds:
         ]
         reduced = score(without_size, item)
 
-        # Both saturate here, so both should read 100 -- the point is that removing
-        # a signal does not push a mid-range score upward.
+        # Both saturate here, so both should read 100. The point is that removing a
+        # signal does not push a mid-range score upward.
         assert full.value <= 100.0
         assert reduced.value <= 100.0
 
@@ -601,11 +599,11 @@ def _rating_facts(ratings: tuple[Rating, ...]) -> Facts:
 
 
 #: How a bar of 75 from 1,000 votes reads for every source Reaper knows, written from the
-#: spec rather than from the branch that produces it (rule 119): a percentage source leads
-#: with its name, a 0-10 source leads with its number and carries the vote clause. Keyed on
-#: the whole enum, so a source added to `RatingSource` fails here until someone decides which
-#: word order it takes -- the population, not just the two members that motivated the table
-#: (rule 145).
+#: spec rather than from the branch that produces it: a percentage source leads with its
+#: name, a 0-10 source leads with its number and carries the vote clause. Keyed on the
+#: whole enum, so a source added to `RatingSource` fails here until someone decides which
+#: word order it takes, the population, not just the two members that motivated the
+#: table.
 
 
 class TestRatingGate:
@@ -644,12 +642,12 @@ class TestRatingGate:
         The why-panel prints both, one line apart: the bar under "you keep", the item's own
         count under "too few to trust". They shared one vote clause and came out word for
         word the same, so "from 1,000 votes" was a floor in one sentence and a measurement
-        in the next, with nothing saying which (#623). The bar and the value therefore carry
-        DIFFERENT reason ids, and the bar's catalog entry spells the floor with a "+" --
-        pinned below, because the sentence lives in the catalog now and `describeBar` in
-        frontend/src/components/PolicyEditor.tsx renders the same clause for the same rule
-        (rule 144). With no floor there is nothing honest to print, so the floorless bar
-        takes the entry with no vote clause at all.
+        in the next, with nothing saying which. The bar and the value therefore carry
+        *different* reason ids, and the bar's catalog entry spells the floor with a "+".
+        This is pinned below, because the sentence lives in the catalog now and
+        `describeBar` in frontend/src/components/PolicyEditor.tsx renders the same clause
+        for the same rule. With no floor there is nothing honest to print, so the
+        floorless bar takes the entry with no vote clause at all.
         """
         bar = RatingRule(source=RatingSource.IMDB, floor=75, min_votes=min_votes)
 
@@ -667,11 +665,11 @@ class TestRatingGate:
         """A percentage bar reads "Rotten Tomatoes critics 75%", never "75% on Rotten
         Tomatoes critics".
 
-        A percentage source takes the percentage entry, which leads with the label; a 0-10
-        source takes the scored entry, which leads with the number -- and the word order is
-        the catalog's, pinned on the templates so the percentage arm cannot be deleted
+        A percentage source takes the percentage entry, which leads with the label. A
+        0-10 source takes the scored entry, which leads with the number. The word order
+        is the catalog's, pinned on the templates so the percentage arm cannot be deleted
         without a word. `describeBar` in frontend/src/components/PolicyEditor.tsx states
-        the same bar in the same word order (rule 144).
+        the same bar in the same word order.
         """
         bar = RatingRule(source=source, floor=75, min_votes=1000)
 
@@ -696,11 +694,11 @@ class TestRatingGate:
     def test_each_source_reads_as_english_where_the_item_has_no_rating_at_all(
         self, source: RatingSource
     ) -> None:
-        """The miss phrase places a label too, and placed it after "no" until #338.
+        """The miss phrase places a label too, and it used to place it right after "no".
 
-        "no IMDb rating" reads fine, which is how this survived; "no an unknown source
+        "no IMDb rating" reads fine, which is how this survived. "no an unknown source
         rating" does not. The catalog entry now holds the sentence, with the label after
-        the preposition, so it reads for whatever a label turns out to be; the reason
+        the preposition, so it reads for whatever a label turns out to be. The reason
         carries the source id and the bar for its two slots.
         """
         bar = RatingRule(source=source, floor=75, min_votes=1000)
@@ -740,21 +738,22 @@ class TestRatingGate:
     ) -> None:
         """The three inclusive edges of the vote floor, each of which a mutant survived on.
 
-        The miss phrase and the decision now read one ``Rating.short_of_vote_floor``
-        (rule 104), and these are the cases that hold them there. A floor of 0 is no floor, so
-        the bar is missed on the score and "you need 0" would be a sentence about nothing; a
-        floor of 1 is the smallest ``RatingRuleSpec`` accepts on a source that counts votes,
-        and it still owes the clause; and a count exactly AT the floor clears it, so calling
+        The miss phrase and the decision now read one ``Rating.short_of_vote_floor``, and
+        these are the cases that hold them there. A floor of 0 is no floor, so the bar is
+        missed on the score and "you need 0" would be a sentence about nothing. A floor of
+        1 is the smallest ``RatingRuleSpec`` accepts on a source that counts votes, and it
+        still owes the clause. And a count exactly *at* the floor clears it, so calling
         that title short on votes would contradict the bar that just measured it.
 
-        Pinned as exact strings because both arms return the same ABSTAIN and differ only in
-        the sentence the operator reads (rule 21), and re-asserted against ``meets`` in the
-        same case because agreeing by accident is precisely what this pair did before. A floor
+        Pinned as exact strings because both arms return the same ABSTAIN and differ only
+        in the sentence the operator reads, and re-asserted against ``meets`` in the same
+        case because agreeing by accident is precisely what this pair did before. A floor
         of ``0.0`` there clears on value trivially, which isolates the vote half.
 
-        Two of the three are reachable from a saved policy. The 0 case is not: ``RatingRuleSpec``
-        refuses a vote floor below 1 on IMDb outright. It is the ``RatingRule`` dataclass's own
-        default, it is what every percentage bar carries, and the predicate has to meet it.
+        Two of the three are reachable from a saved policy. The 0 case is not.
+        ``RatingRuleSpec`` refuses a vote floor below 1 on IMDb outright. It is the
+        ``RatingRule`` dataclass's own default, it is what every percentage bar carries,
+        and the predicate has to meet it.
         """
         bar = RatingRule(source=RatingSource.IMDB, floor=75, min_votes=min_votes)
 
@@ -765,12 +764,12 @@ class TestRatingGate:
         """A rating gate switched on with an empty rule set still owes the operator a
         sentence.
 
-        Not a hypothetical state: it is exactly what `policy_migrations.recover_rating_rules`
-        exists to repair, and that function's own docstring quotes this sentence as the symptom the
-        operator would have seen. Deleting the arm drops through to the miss-list return,
-        which joins an empty list and renders `"."` -- a bare period in the panel whose job
-        is to be believed (rule 21). Pinned as an exact string because the failure is that
-        there is no string.
+        This is not a hypothetical state. It is exactly what
+        `policy_migrations.recover_rating_rules` exists to repair, and that function's own
+        docstring quotes this sentence as the symptom the operator would have seen.
+        Deleting the arm drops through to the miss-list return, which joins an empty list
+        and renders `"."`, a bare period in the panel whose job is to be believed. Pinned
+        as an exact string because the failure is that there is no string.
         """
         gate = RatingFloorGate(rules=())
 
@@ -792,10 +791,10 @@ class TestRatingGate:
         assert "need=1000" in flat(result.detail)  # ...against the vote floor
 
     def test_a_missing_rating_never_protects_and_never_blocks(self) -> None:
-        """A title with no rating for the bar's source is simply not kept on that bar --
-        it ABSTAINS, never PROTECTs, and (unlike the score gates) never blocks the whole
+        """A title with no rating for the bar's source is simply not kept on that bar. It
+        ABSTAINS, never PROTECTs, and (unlike the score gates) never blocks the whole
         verdict. A degraded IMDb dataset is caught upstream, where it degrades the whole
-        snapshot to un-executable; the keep gate itself only ever spares a file."""
+        snapshot to un-executable. The keep gate itself only ever spares a file."""
         gate = RatingFloorGate(rules=(_IMDB_BAR,))
         result = gate.evaluate(_rating_facts(()))  # no ratings at all
 
@@ -814,24 +813,24 @@ class TestRatingGate:
     def test_an_unreadable_imdb_number_blocks_where_a_missing_one_does_not(
         self, unreadable: str, check: str
     ) -> None:
-        """Rule 93 at the gate: ``Absent`` is "we looked and there is no rating", which the
-        test above pins as a clean ABSTAIN; ``Unknown`` is "we could not read IMDb at all",
-        and that must fail closed and BLOCK, or a dataset outage silently withdraws this
-        protection from every title carrying it.
+        """``Absent`` is "we looked and there is no rating", which the test above pins as
+        a clean ABSTAIN. ``Unknown`` is "we could not read IMDb at all", and that must
+        fail closed and *block*, or a dataset outage silently withdraws this protection
+        from every title carrying it.
 
         Nothing discriminated the two arms. ``_rating_facts`` hardcodes both numbers
         ``Absent``, so no test in this class could reach the ``Unknown`` one, and
-        ``TestUnknownNeverCondemns``'s property is stated as *if* blocked *then* abstain --
-        deleting the guard produces FEWER blocked results, which a conditional over a
-        smaller set still satisfies. Driven by a mutation run (#243): with the guard
-        removed, these same facts come back unblocked, so the assertion below is the only
-        thing standing between an IMDb outage and a library-wide loss of the rating keep.
+        ``TestUnknownNeverCondemns``'s property is stated as *if* blocked *then* abstain.
+        Deleting the guard produces *fewer* blocked results, which a conditional over a
+        smaller set still satisfies. A mutation run confirmed it: with the guard removed,
+        these same facts come back unblocked, so the assertion below is the only thing
+        standing between an IMDb outage and a library-wide loss of the rating keep.
 
-        Both halves are here rather than split, because the contrast IS the claim: one
+        Both halves are here rather than split, because the contrast *is* the claim. One
         observation kind blocks and the other does not, on facts identical otherwise.
         """
         gate = RatingFloorGate(rules=(_IMDB_BAR,))
-        facts = _rating_facts(())  # no rating either way; only the observation kind differs
+        facts = _rating_facts(())  # no rating either way, only the observation kind differs
 
         assert gate.evaluate(facts).blocked is False  # Absent: nothing to keep it on
 
@@ -844,8 +843,8 @@ class TestRatingGate:
         assert check in flat(result.detail)
 
     def test_a_second_source_can_keep_a_title_imdb_would_not(self) -> None:
-        """The point of multi-source: a film below the IMDb bar but above the Rotten
-        Tomatoes critics bar is kept, on ANY-of matching."""
+        """The point of multi-source. A film below the IMDb bar but above the Rotten
+        Tomatoes critics bar is kept, on *any*-of matching."""
         gate = RatingFloorGate(
             rules=(_IMDB_BAR, RatingRule(source=RatingSource.ROTTEN_TOMATOES_CRITIC, floor=75)),
             match="any",
@@ -860,8 +859,9 @@ class TestRatingGate:
         assert "rating_value_pct[source=rotten_tomatoes_critic pct=84]" in flat(result.detail)
 
     def test_all_of_matching_needs_every_bar(self) -> None:
-        """Under ALL matching, clearing one bar is not enough: a source we cannot read
-        counts as a miss, so ALL fails toward NOT protecting -- the safe direction."""
+        """Under *all* matching, clearing one bar is not enough. A source we cannot read
+        counts as a miss, so *all* fails toward *not* protecting. That is the safe
+        direction."""
         gate = RatingFloorGate(
             rules=(_IMDB_BAR, RatingRule(source=RatingSource.ROTTEN_TOMATOES_CRITIC, floor=75)),
             match="all",
@@ -875,11 +875,12 @@ class TestRatingGate:
         """A near miss under ALL says what cleared as well as what did not.
 
         The gate has two ABSTAIN sentences and only one of them credits the bar the title
-        passed. The case above drives this arm and asserts nothing about it, so deleting the
-        arm printed the misses alone: a title an inch under one of two bars reads as though
-        it cleared neither, and the operator cannot see how close the file came to being
-        kept. The second bar is present and below its floor here rather than missing
-        entirely, so the "below the bar you keep" miss is exercised alongside the credit.
+        passed. The case above drives this arm and asserts nothing about it, so deleting
+        the arm would print the misses alone. A title an inch under one of two bars reads
+        as though it cleared neither, and the operator cannot see how close the file came
+        to being kept. The second bar is present and below its floor here rather than
+        missing entirely, so the "below the bar you keep" miss is exercised alongside the
+        credit.
         """
         gate = RatingFloorGate(
             rules=(_IMDB_BAR, RatingRule(source=RatingSource.ROTTEN_TOMATOES_CRITIC, floor=75)),
@@ -910,14 +911,14 @@ def _popularity_facts(
 ) -> Facts:
     """A minimal Facts carrying only what the popularity gate reads.
 
-    ``added_days`` is how long the item has been on the server -- the span an ALL-TIME
+    ``added_days`` is how long the item has been on the server, the span an *all-time*
     count needs the mirror to cover, which the windowed gate does not read but the
     operator-authored lanes do (``Facts.days_since_added``). Defaulted well past the
     reaches these tests use, so a test that does not name it is exercising the window.
 
-    ``absent`` makes the watcher count a genuine ``Absent`` rather than a ``Known`` zero --
-    "the mirror was read and holds no play for this title", which is what the gate's own
-    substitution of 0 stands in for and a different fact from a counted zero (rule 93).
+    ``absent`` makes the watcher count a genuine ``Absent`` rather than a ``Known`` zero.
+    That means "the mirror was read and holds no play for this title", which is what the
+    gate's own substitution of 0 stands in for, and a different fact from a counted zero.
     """
     counted: Observation[int] = (
         Absent(source="t") if absent else Known(value=watchers or 0, source="t")
@@ -969,14 +970,14 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         "count", [3, 4, 10, 500], ids=["at-the-floor", "one-over", "ten", "many"]
     )
     def test_a_count_at_or_over_the_floor_protects(self, count: int) -> None:
-        """The floor is a floor, not a target, and only a count ABOVE it can say so.
+        """The floor is a floor, not a target, and only a count *above* it can say so.
 
         Every other case here sits at the floor or under it, which left ``count >= floor``
-        free to become ``count == floor``: the protection would then hold for a title watched
-        by exactly three people and withdraw from one watched by five hundred, silently
-        un-protecting the most-watched titles on the server while every test stayed green.
-        A comparison needs a case on each side of it, and "well over" is the side a floor
-        makes easy to forget.
+        free to become ``count == floor``. The protection would then hold for a title
+        watched by exactly three people and withdraw from one watched by five hundred,
+        silently un-protecting the most-watched titles on the server while every test
+        stayed green. A comparison needs a case on each side of it, and "well over" is
+        the side a floor makes easy to forget.
         """
         result = self.gate.evaluate(_popularity_facts(count, Known(value=400.0, source="t")))
 
@@ -999,9 +1000,9 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         """Both arms carry the count raw, and each names its own catalog entry.
 
         The pluralization ("1 person" against "2 people") is the catalog's ICU plural now,
-        proven where the sentences are composed (``frontend/src/why.test.ts``); what the
+        proven where the sentences are composed (``frontend/src/why.test.ts``). What the
         engine owes is the right id and the exact count, on the fired and the not-fired
-        line alike (rule 21 still governs the words -- they just live in the catalog).
+        line alike. The words themselves now live in the catalog.
         """
         gate = ServerPopularityGate(GateConfig(threshold=floor, window_days=365))
 
@@ -1011,8 +1012,8 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         assert result.detail.params["count"] == count
 
     def test_a_genuinely_absent_watcher_count_is_nobody_and_not_somebody(self) -> None:
-        """``Absent`` means the mirror was read and holds no play for this title (rule 93),
-        so it has to floor at zero watchers.
+        """``Absent`` means the mirror was read and holds no play for this title, so it
+        has to floor at zero watchers.
 
         The gate substitutes 0 for a non-``Known`` count, and with a watcher floor of 1 the
         difference between substituting 0 and substituting 1 is the difference between
@@ -1036,22 +1037,23 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         assert result.detail.id != "popularity_few"
 
     def test_the_block_stops_every_automatic_path_but_not_the_owners_own_hand(self) -> None:
-        """What the block is for, and what it is not for -- the two asserted together,
+        """What the block is for, and what it is not for. The two are asserted together,
         because the reach fix is only worth anything if the first survives the second.
 
         This test used to assert the reap was refused, and the refusal was carried by the
-        gate *id*: ``server_popularity`` was absent from a list of gates a reap could settle.
-        That list is gone. A block now means one thing -- Reaper could not answer a question
-        -- and it answers it the same way for every automatic path: no scan condemns on it,
-        no plan carries it, nothing is removed unattended. What it no longer does is refuse
-        the one party better placed to answer than the scan was: an owner reading the panel
-        that says, in the gate's own words, that their history does not go back far enough.
-        Refusing them was the worse trade for safety, since a reap that always bounces is a
-        file deleted outside Reaper with no journal and no interlocks.
+        gate *id*: ``server_popularity`` was absent from a list of gates a reap could
+        settle. That list is gone. A block now means one thing, Reaper could not answer a
+        question, and it answers it the same way for every automatic path: no scan
+        condemns on it, no plan carries it, nothing is removed unattended. What it no
+        longer does is refuse the one party better placed to answer than the scan was: an
+        owner reading the panel that says, in the gate's own words, that their history
+        does not go back far enough. Refusing them was the worse trade for safety, since a
+        reap that always bounces is a file deleted outside Reaper with no journal and no
+        interlocks.
 
-        Nothing on the result plays any part in either answer, which is asserted rather than
-        assumed: an earlier version read as though the wording were the interlock, and so
-        could not fail when the wording changed."""
+        Nothing on the result plays any part in either answer, which is asserted rather
+        than assumed. An earlier version read as though the wording were the interlock,
+        and so could not fail when the wording changed."""
         assert GateId.SERVER_POPULARITY not in STRUCTURAL_GATES
 
         result = self.gate.evaluate(_popularity_facts(0, Known(value=90.0, source="t")))
@@ -1066,8 +1068,8 @@ class TestThePopularityWindowCannotOutrunTheHistory:
 
     def test_enough_watchers_still_protect_on_a_short_history(self) -> None:
         """The lower bound only ever *understates*. Three people seen inside the covered
-        part did watch it within the window, so the protection is earned and fires -- and
-        keeps its own wording, which the review chip parses (``review._kept_reason``)."""
+        part did watch it within the window, so the protection is earned and fires. It
+        keeps its own wording too, which the review chip parses (``review._kept_reason``)."""
         result = self.gate.evaluate(_popularity_facts(3, Known(value=90.0, source="t")))
 
         assert result.outcome == PROTECT
@@ -1095,9 +1097,9 @@ class TestThePopularityWindowCannotOutrunTheHistory:
     def test_an_unrecorded_reach_blocks_rather_than_assuming_depth(
         self, reach: Observation[float]
     ) -> None:
-        """A snapshot frozen before the reach was a fact thaws it as ``Unknown`` (rule
-        104), and a Facts built by hand leaves it ``Absent``. Neither is permission to
-        claim a year of coverage, so both fail closed."""
+        """A snapshot frozen before the reach was a fact thaws it as ``Unknown``, and a
+        Facts built by hand leaves it ``Absent``. Neither is permission to claim a year
+        of coverage, so both fail closed."""
         result = self.gate.evaluate(_popularity_facts(0, reach))
 
         assert result.blocked is True
@@ -1135,14 +1137,15 @@ class TestThePopularityWindowCannotOutrunTheHistory:
 
 
 class TestEveryReaderOfTheSameCountHonorsTheReach:
-    """Rule 140's sweep. The reach was recorded and the gate above taught to fail closed
-    past it, while three other readers of the same two counts went on reading them at full
-    confidence: the operator's own protect rules, the graded keeps, and the built-in
-    ``FEW_WATCHERS`` signal. A bound honored in one lane and silently not in the next is
-    indistinguishable from the bug the bound was added to fix.
+    """This class sweeps every other reader of the same two counts. The reach was
+    recorded and the gate above taught to fail closed past it, while three other readers
+    of the same two counts went on reading them at full confidence: the operator's own
+    protect rules, the graded keeps, and the built-in ``FEW_WATCHERS`` signal. A bound
+    honored in one lane and silently not in the next is indistinguishable from the bug
+    the bound was added to fix.
 
     The shipped window is 365 days throughout, and ``_popularity_facts`` puts the item on
-    the server 800 days ago -- so a 90-day mirror can support neither count.
+    the server 800 days ago, so a 90-day mirror can support neither count.
     """
 
     WINDOW = 365
@@ -1183,9 +1186,9 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
 
     def test_a_count_that_already_clears_the_rule_still_fires(self) -> None:
         """The asymmetry, and it is what keeps the bound from costing protections. A
-        truncated count only ever UNDERSTATES, so three watchers already seen inside the
-        covered part cannot be un-seen by a deeper mirror: the protection is earned and
-        fires. Blocking here would withdraw a keep the operator's rule did win."""
+        truncated count only ever *understates*, so three watchers already seen inside
+        the covered part cannot be un-seen by a deeper mirror. The protection is earned
+        and fires. Blocking here would withdraw a keep the operator's rule did win."""
         for field in ("recent_watchers", "watchers_all_time"):
             result = self._protect(field, 3).evaluate(
                 _popularity_facts(3, Known(value=90.0, source="t"))
@@ -1195,8 +1198,8 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
             assert result.blocked is False, field
 
     def test_a_mirror_that_covers_the_span_answers_exactly_as_before(self) -> None:
-        """The check changes nothing once the evidence is there -- the same promise the
-        gate's own reach test makes."""
+        """The check changes nothing once the evidence is there. That is the same promise
+        the gate's own reach test makes."""
         item = _popularity_facts(0, Known(value=1200.0, source="t"))
 
         for field in ("recent_watchers", "watchers_all_time"):
@@ -1221,8 +1224,8 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
         assert self._protect("watchers_all_time", 1).evaluate(item).blocked is True
 
     def test_an_unrecorded_arrival_date_blocks_rather_than_assuming(self) -> None:
-        """A snapshot frozen before ``days_since_added`` was a fact thaws it Unknown
-        (rule 104). That is not permission to claim the mirror covers the item's life."""
+        """A snapshot frozen before ``days_since_added`` was a fact thaws it Unknown.
+        That is not permission to claim the mirror covers the item's life."""
         item = replace(
             _popularity_facts(0, Known(value=1200.0, source="t")),
             days_since_added=Unknown(reason="this scan did not record it", source="snapshot"),
@@ -1232,7 +1235,7 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
 
     def test_the_window_reaches_the_rule_through_the_real_gate_builder(self) -> None:
         """The plumbing, not a hand-built gate. ``build_gates`` is what hands the policy's
-        window to each authored protection; without it every such rule would read as
+        window to each authored protection. Without it every such rule would read as
         un-establishable and block the whole library. Both directions are asserted, so a
         window that never arrives cannot pass as the bound working."""
         from reaper.engine.policy import DEFAULT_MOVIE_POLICY, ConditionSpec
@@ -1258,7 +1261,7 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
     def test_a_graded_keep_on_a_truncated_count_takes_the_full_discount(self) -> None:
         """The second reader. ``evaluate_keep`` already gives the full discount on an
         Unknown, so the correct treatment existed and was bypassed on a Known(0) the
-        mirror cannot support: the keep quietly shrank to nothing on evidence nobody has.
+        mirror cannot support. The keep quietly shrank to nothing on evidence nobody has.
         """
         keep = KeepConfig(
             name="Keep what people have watched",
@@ -1284,8 +1287,8 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
 
     def test_few_watchers_withdraws_its_pressure_and_lets_coverage_see_the_hole(self) -> None:
         """The third reader, and the one that can condemn. The signal read the same
-        truncated count for its PRESSURE, and ``score()`` counted it evaluated because the
-        input was Known -- so its weight landed in the numerator AND coverage resolved to
+        truncated count for its *pressure*, and ``score()`` counted it evaluated because
+        the input was Known. Its weight landed in the numerator and coverage resolved to
         1.0, which is what kept ``coverage_floor_bp`` from ever seeing the gap.
         """
         configs = [
@@ -1311,7 +1314,7 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
         assert few.evaluated is False
         assert few.state is SignalState.UNREADABLE
         # The weight stays in the denominator, so the hole is visible to the coverage
-        # floor instead of hidden behind a coverage of 1.0 (rule 31).
+        # floor instead of hidden behind a coverage of 1.0.
         assert short.coverage == pytest.approx(0.8)
         assert few.detail.id == "signal_watchers_unchecked"
 
@@ -1325,7 +1328,7 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
         history only goes back 3 months", an operator goes and lengthens their Tautulli
         retention, and the season is still unmatched afterwards. Both twins resolve the
         unreadable input first (``gates.ServerPopularityGate``'s ``_blocked``,
-        ``fields.evaluate``); this pins the third against them (rule 72).
+        ``fields.evaluate``). This pins the third against them.
         """
         facts = replace(
             _popularity_facts(0, Known(value=90.0, source="t")),
@@ -1337,19 +1340,19 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
             window_days=self.WINDOW,
         )
 
-        # Same numbers either way -- withheld, weight retained. Only the sentence differs.
+        # Same numbers either way, withheld, weight retained. Only the sentence differs.
         assert result.pressure == 0.0
         assert result.evaluated is False
         assert result.state is SignalState.UNREADABLE
         assert result.detail == Reason("signal_watchers_unreadable")
 
     def test_a_genuine_absence_is_still_bounded_by_the_mirror_that_observed_it(self) -> None:
-        """The exemption above is for ``Unknown`` ONLY, and this is why.
+        """The exemption above is for ``Unknown`` *only*, and this is why.
 
         "We looked and there is genuinely nothing" is a claim about the window. A mirror
-        that does not span the window cannot support it -- it establishes only that nothing
-        happened in the part it holds -- so rule 93's precondition (a GENUINE absence) is
-        not met and rule 140 governs as the more specific. Exempting ``Absent`` alongside
+        that does not span the window cannot support it. It establishes only that nothing
+        happened in the part it holds, so a *genuine* absence has to have been observed
+        over the whole window, and this one was not. Exempting ``Absent`` alongside
         ``Unknown`` would report coverage 1.0 on a count the mirror cannot establish, which
         is the hole this whole branch exists to close, and would put this signal on the
         opposite side of its own twin: ``ServerPopularityGate._blocked`` matches ``Unknown``
@@ -1366,8 +1369,8 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
         assert short.evaluated is False
         assert "cause.history_reach_short" in flat(short.detail)
 
-        # ...and once the mirror does span the window, the same absence is real evidence:
-        # evaluated, weight retained, coverage intact, no pressure (rule 93).
+        # ...and once the mirror does span the window, the same absence is real
+        # evidence: evaluated, weight retained, coverage intact, no pressure.
         covered = evaluate_signal(
             cfg,
             replace(absent, history_reach_days=Known(value=1200.0, source="t")),
@@ -1402,9 +1405,9 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
 
     def test_a_condemn_rule_that_already_exceeds_its_bar_is_still_measured(self) -> None:
         """The asymmetry on the condemn lane. "at most 2 watchers" that a truncated count
-        already EXCEEDS stays exceeded however much more history arrives, so it is a real
-        finding and reads as one -- the bound withholds only what a deeper mirror could
-        overturn."""
+        already *exceeds* stays exceeded however much more history arrives, so it is a
+        real finding and reads as one. The bound withholds only what a deeper mirror
+        could overturn."""
         item = _popularity_facts(9, Known(value=90.0, source="t"))
 
         exceeded = fields.evaluate(
@@ -1426,8 +1429,8 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
 
 class TestExplainability:
     def test_every_gate_reports_even_when_it_does_not_fire(self) -> None:
-        """No short-circuit. The 'checked and did not fire, with the numbers' block
-        is the product; stopping at the first protection would destroy it."""
+        """No short-circuit. The 'checked and did not fire, with the numbers' block is
+        the product. Stopping at the first protection would destroy it."""
         item = Facts(
             title="x",
             days_observed_unwatched=Known(value=900.0, source="tautulli"),
@@ -1443,7 +1446,7 @@ class TestExplainability:
             is_whitelisted=Known(value=False, source="plex"),
             # Deeper than both the popularity window and the 900 days above, so the
             # watcher count is a complete answer and the gate reports it rather than
-            # blocking. A scan always knows this; only a hand-built Facts can omit it.
+            # blocking. A scan always knows this. Only a hand-built Facts can omit it.
             history_reach_days=Known(value=1200.0, source="tautulli"),
             # A below-floor IMDb rating, so the rating gate reports its actual number.
             ratings=_imdb(6.0, votes=50_000),
@@ -1464,7 +1467,7 @@ class TestExplainability:
 #
 # The four above cover the gate lane. These cover the score lane, and specifically
 # the two places the design argument is load-bearing but was never asserted: the
-# KEEP lane (which the older property test omits entirely) and the relationship
+# *keep* lane (which the older property test omits entirely) and the relationship
 # between the score and coverage (which is what makes condemn_at a second, implicit
 # coverage floor).
 
@@ -1488,7 +1491,7 @@ _CUSTOM_CONDEMN = [
     ),
 ]
 
-#: ``field`` here is the rule-authorable KEY (``fields.BY_KEY``), not the ``Facts``
+#: ``field`` here is the rule-authorable *key* (``fields.BY_KEY``), not the ``Facts``
 #: attribute name. They differ, and a key that does not resolve makes ``evaluate_keep``
 #: take its unreadable branch on every item, which would pass these tests vacuously.
 _KEEPS = [
@@ -1500,12 +1503,12 @@ _KEEPS = [
         floor=0,
         saturate_at=5,
     ),
-    # The built-in rewatch keep (docs/history/REWATCH_PLAN.md, Stage 1): a flat arm keyed on
-    # `field == REWATCH_KEEP`, deciding its condition over `rewatch_viewings` /
-    # `rewatch_last_play_days` rather than ramping one field, so it needs its own entry here
-    # to be under the same property tests as the two ramped keeps above. Bars off the shipped
-    # 10/730 default (rule 141): a fixture pinned to the default could not tell this config's
-    # own bars from a caller that silently fell back to them.
+    # The built-in rewatch keep (docs/history/REWATCH_PLAN.md, Stage 1). A flat arm keyed
+    # on `field == REWATCH_KEEP`, deciding its condition over `rewatch_viewings` /
+    # `rewatch_last_play_days` rather than ramping one field, so it needs its own entry
+    # here to be under the same property tests as the two ramped keeps above. Bars off
+    # the shipped 10/730 default. A fixture pinned to the default could not tell this
+    # config's own bars from a caller that silently fell back to them.
     KeepConfig(
         name=REWATCH_KEEP,
         max_discount=18,
@@ -1532,14 +1535,13 @@ def _observed_fields() -> tuple[str, ...]:
     Derived rather than hand-listed. A ``FieldSpec`` names its fact with a ``read``
     lambda instead of a string, so the names come back by handing every spec a probe
     whose observations each carry their own attribute name. The hand-list this replaced
-    left ``genres`` out while the comment above it said the sweep was exhaustive, which
-    is exactly the drift rule 7 forbids: a new authorable field can no longer be added
-    without joining the sweep.
+    left ``genres`` out while the comment above it said the sweep was exhaustive. A new
+    authorable field can no longer be added without joining the sweep.
 
     Out by construction: ``is_managed`` has no ``FieldSpec`` at all, so no rule can name
-    it. It is the fact the retired ``UnmanagedGate`` read (``engine.gates``) and now has no
-    consumer; it stays because it is a true observation and the evidence any re-wiring would
-    need. Out by choice: ``_GATE_ONLY``.
+    it. It is the fact the retired ``UnmanagedGate`` read (``engine.gates``) and now has
+    no consumer. It stays because it is a true observation and the evidence any
+    re-wiring would need. Out by choice: ``_GATE_ONLY``.
     """
     names = [f.name for f in dataclass_fields(Facts) if f.name not in ("title", "ratings")]
     probe = Facts(title="probe", **{n: Known(value=n, source="probe") for n in names})  # type: ignore[arg-type]
@@ -1550,8 +1552,8 @@ def _observed_fields() -> tuple[str, ...]:
 
 
 #: Every ``Observation`` field an authorable rule can read, minus ``_GATE_ONLY``.
-#: Derived by ``_observed_fields`` (see its docstring for what is out and why); the
-#: hand-written version of this list said "exhaustive" while omitting ``genres``.
+#: Derived by ``_observed_fields`` (see its docstring for what is out and why). A
+#: hand-written version of this list once said "exhaustive" while omitting ``genres``.
 _OBSERVED_FIELDS = _observed_fields()
 
 
@@ -1600,7 +1602,7 @@ class TestLosingEvidenceCannotCondemn:
     @given(item=facts())
     @settings(max_examples=500, deadline=None)
     def test_an_unreadable_input_never_raises_the_score_in_any_lane(self, item: Facts) -> None:
-        """THE property, restated over all three lanes.
+        """*The* property, restated over all three lanes.
 
         The older ``test_an_unknown_input_never_increases_the_score`` passes only
         built-in signals, so neither the custom-rule lane nor the keep lane has ever
@@ -1619,7 +1621,7 @@ class TestLosingEvidenceCannotCondemn:
             )
 
     def test_an_absent_keep_field_withdraws_its_keep_and_that_is_deliberate(self) -> None:
-        """``Absent`` on a keep field RAISES the score, on purpose. Read this before
+        """``Absent`` on a keep field *raises* the score, on purpose. Read this before
         touching the fact builders.
 
         ``Unknown`` and ``Absent`` are opposite instructions to the keep lane
@@ -1628,7 +1630,7 @@ class TestLosingEvidenceCannotCondemn:
         rating is not well rated, it is unrated, and a "keep well-rated titles" rule
         that also kept every unrated title would protect the whole library.
 
-        The consequence is that ``Absent`` is a *privileged* state: recording one
+        The consequence is that ``Absent`` is a *privileged* state. Recording one
         withdraws protection. So a fact builder may only ever emit ``Absent`` when it
         genuinely looked. A builder that cannot tell "no rating" from "no id to look
         it up with" silently un-protects the second case, with coverage still reading
@@ -1654,8 +1656,8 @@ class TestLosingEvidenceCannotCondemn:
         the denominator, and every evaluated one contributes at most its weight. So
         the score is bounded by the share of evidence we actually read.
 
-        The consequence is load-bearing and easy to delete by accident: ``condemn_at``
-        is ITSELF a coverage floor. An item cannot reach a condemn threshold of 70
+        The consequence is load-bearing and easy to delete by accident. ``condemn_at``
+        is *itself* a coverage floor. An item cannot reach a condemn threshold of 70
         without at least 70% of the policy's weight being readable, whatever
         ``coverage_floor_bp`` is set to. Any change that lets a rule add points
         outside the denominator removes that second floor silently.
@@ -1685,10 +1687,10 @@ class TestLosingEvidenceCannotCondemn:
 
     @given(value=st.integers(0, 100))
     def test_an_unreadable_keep_keeps_fully(self, value: int) -> None:
-        """A keep we could not evaluate takes its MAXIMUM discount.
+        """A keep we could not evaluate takes its *maximum* discount.
 
-        The mirror of the condemn lane's "Unknown contributes zero": on both sides,
-        the unreadable case resolves toward keeping the file. Only the keep lane is
+        The mirror of the condemn lane's "Unknown contributes zero". On both sides, the
+        unreadable case resolves toward keeping the file. Only the keep lane is
         asserted here because only the condemn lane was asserted before.
         """
         keep = _KEEPS[0]

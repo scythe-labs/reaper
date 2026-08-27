@@ -1,48 +1,49 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Did this title leave the library and come back? (#553)
+"""Did this title leave the library and come back?
 
 A return is the clearest evidence Reaper can get that a removal was wrong: somebody went and
-fetched the title again. This module is the memory that makes one visible, and the rule that
-decides what counts.
+fetched the title again. This module is the memory that makes a return visible, and the rule
+that decides what counts.
 
 **Plex is the witness, not the journal and not the \\*arr.** The journal only knows about
-deletions *Reaper* performed, so an operator who removes a title by hand and re-fetches it
-produces the same evidence and leaves no trace in it -- and it is blind to the commonest
-return Reaper itself causes, a season prune, which deletes episode files while the Sonarr
-series row survives. ``Radarr.added`` is no better: it marks when the row was created, so it
-never moves for an operator who deletes the file and leaves the entry. A file that leaves the
-Plex library and comes back gets a new rating key, and both scan lanes already carry it.
+deletions Reaper itself performed, so an operator who removes a title by hand and re-fetches
+it leaves no trace there, and the journal is also blind to the return Reaper itself causes
+most often, a season prune, which deletes episode files while the Sonarr series row
+survives. ``Radarr.added`` is no better: it marks when the row was created, so it never moves
+for an operator who deletes the file and leaves the entry. A file that leaves the Plex
+library and comes back gets a new rating key, and both scan lanes already carry it.
 
 The journal keeps exactly one job here: choosing which sentence the operator reads.
 
 **The rule.** A return is a title present now under a Plex rating key Reaper has never
-recorded for it, when every key it HAS recorded is gone from the index, and it was gone for a
-real span of time that Reaper was awake for. Four conditions, and each exists because of a
-measurement rather than a worry (``docs/history/RETURN_PLAN.md``, ``docs/LEARNINGS.md``):
+recorded for it, when every key it has recorded is gone from the index, and it was gone for a
+real span of time that Reaper was awake for. Four conditions, each backed by a measurement
+rather than a worry (``docs/history/RETURN_PLAN.md``, ``docs/LEARNINGS.md``):
 
 1. A key never recorded before. Rules out the ordinary state of a title that has sat still.
 2. Every recorded key gone from the index. Rules out a title listed twice, where the bind
    moved between two listings that both still exist. About one movie entry in 150 shares its
-   TMDb id with a second \\*arr entry, so without this the ledger would read the other copy's
-   key as a change on every scan and hold both copies forever (assumption 16).
+   TMDb id with a second \\*arr entry, so without this condition the ledger would read the
+   other copy's key as a change on every scan and hold both copies forever.
 3. A minimum absence, the operator's ``window_days``. Every rating-key change measured on a
    real library completed within 2.5 to 30 hours: mechanical churn, a file replaced in place
-   or a mistake put straight back, resolves in hours, where a regret takes as long as it takes
-   somebody to notice. A seven-day default clears the measured ceiling five times over.
+   or a mistake put straight back, resolves in hours, where a regret takes as long as it
+   takes somebody to notice. The seven-day default clears the measured ceiling five times
+   over.
 4. At least two scans ran inside that absence. A clock alone is not enough, because
-   ``last_seen_at`` is the last time Reaper *looked*: on a library averaging a 17-hour scan
+   ``last_seen_at`` is the last time Reaper looked: on a library averaging a 17-hour scan
    interval but containing a 202-hour one, a file upgraded during a pause reads as an
-   eight-day absence. Requiring that Reaper actually RAN while the title was missing closes it
-   at both ends. A dense cadence leans on the clock, a sparse one on the count, and neither
-   can be tuned into a false return.
+   eight-day absence. Requiring that Reaper actually ran while the title was missing closes
+   it at both ends. A dense cadence leans on the clock, a sparse one on the count, and
+   neither can be tuned into a false return.
 
-**The hold starts on the scan after the one that detects it**, and that is deliberate rather
-than a limitation worked around. The detection is visible for exactly one scan, so it is
-written to the ledger and read back as an ordinary stored fact, which lets both lanes read it
-identically and lets the population cap below be applied over a whole scan rather than over
-whichever items had been judged so far. It costs nothing an operator can reach: a title that
-just came back carries a fresh Plex ``added_at``, so its dormancy is near zero and the
-dormancy floor is already keeping it.
+**The hold starts on the scan after the one that detects it, and that is deliberate rather
+than a limitation.** The detection is visible for exactly one scan, so it is written to the
+ledger and read back as an ordinary stored fact. That lets both lanes read it identically,
+and lets the population cap below apply over a whole scan rather than over whichever items
+had been judged so far. It costs nothing an operator can reach: a title that just came back
+carries a fresh Plex ``added_at``, so its dormancy is near zero, and the dormancy floor is
+already keeping it.
 """
 
 from __future__ import annotations
@@ -67,8 +68,8 @@ log = structlog.get_logger(__name__)
 
 #: Rows per INSERT. ``watch_evidence._CHUNK``'s sibling and set the same way: six bound values
 #: a row puts this at 1,200, over SQLite's historical 999-variable ceiling, so it is lower.
-#: Deliberately not ``db.KEY_CHUNK``, which bounds a ``WHERE ... IN`` at one variable per key
-#: (rule 94). :func:`recall_all` binds nothing at all and needs no companion.
+#: Deliberately not ``db.KEY_CHUNK``, which bounds a ``WHERE ... IN`` at one variable per key.
+#: :func:`recall_all` binds nothing at all and needs no companion.
 _CHUNK = 150
 
 #: How many scans must have run while the title was missing (condition 4 above).
@@ -76,18 +77,18 @@ _SCANS_INSIDE_THE_ABSENCE = 2
 
 #: The share of this scan's bound items that may look returned before the whole batch is
 #: refused. A Plex library rebuilt from scratch reissues every rating key at once, and a
-#: rebuild slow enough to outlast the cooling-off period while Reaper keeps scanning satisfies
-#: all four conditions library-wide.
+#: rebuild slow enough to outlast the cooling-off period while Reaper keeps scanning
+#: satisfies all four conditions library-wide.
 #:
-#: This is #553's own guard over its own inputs, not the general one. **#809 is the scan-level
-#: rebuild check**, which belongs beside ``history_sync._check_regression`` and refuses to
-#: JUDGE a scan where identity moved wholesale; this is narrower and stays after #809 lands,
-#: because it is about what this feature is willing to believe. Nothing here blocks a scan.
+#: This guards only this feature's own inputs. ``identity_churn.wholesale_change`` is the
+#: scan-level rebuild check, which sits beside ``history_sync._check_regression`` and
+#: refuses to judge a scan where identity moved wholesale. This cap is narrower: it is about
+#: what this feature is willing to believe, and it never blocks a scan on its own.
 #:
-#: 2% because the measured rate of key churn is roughly one entry in a thousand and no title
-#: on that library left and came back at all in 24 days, so a real return is a handful of items
-#: (``docs/LEARNINGS.md``). Two percent of a 3,500-title library is 70 at once, which no
-#: operator produces by re-fetching things they missed.
+#: Measured key churn on a real library is roughly one entry in a thousand, and no title
+#: left and came back at all in 24 days, so a real return is a handful of items
+#: (``docs/LEARNINGS.md``). 2% of a 3,500-title library is 70 at once, which no operator
+#: produces by re-fetching things they missed.
 RETURN_POPULATION_CAP = 0.02
 
 #: The floor under which the cap does not apply, because a share is meaningless over a handful
@@ -99,10 +100,11 @@ _CAP_APPLIES_ABOVE = 200
 #: external id, or Reaper is seeing it for the first time, which is every title on a fresh
 #: install and on the first scan after this ships.
 #:
-#: Named rather than typed at the site so the drift walk can see it
+#: Named rather than typed at the site so a drift walk can see it
 #: (``test_review_chips.test_no_reason_is_typed_by_hand``). It reaches no why-panel CAUSE
-#: slot, because that slot is the tail of a BLOCKED gate's detail and ``ReturnedGate`` never
-#: blocks; the exemption is written down in that file's ``_NO_PANEL_ROUTE`` rather than assumed.
+#: slot, because that slot is the tail of a blocked gate's detail and ``ReturnedGate`` never
+#: blocks. The exemption is written down in that file's ``_NO_PANEL_ROUTE`` rather than
+#: assumed.
 NO_RETURN_RECORD_REASON = "no_return_record"
 
 #: The journal kinds that actually remove a file. ``sonarr_unmonitor`` and
@@ -112,10 +114,10 @@ NO_RETURN_RECORD_REASON = "no_return_record"
 #:
 #: **The same two kinds as ``executor._TERMINAL_DELETE_KINDS``, and deliberately a second
 #: copy.** Sharing one declaration would make this module import the executor, which imports
-#: the whole send path, to decide a SENTENCE -- and this reader only ever chooses which of two
-#: wordings the operator sees, where that one prices the rolling delete cap. They are named
-#: for each other here so a third kind reaches both (rule 72); nothing else keeps them in step,
-#: and a miss costs the more specific of two true sentences, never a file.
+#: the whole send path, just to decide a sentence, and this reader only ever chooses which of
+#: two wordings the operator sees, where that one prices the rolling delete cap. They are
+#: named for each other here so a third kind reaches both. Nothing else keeps them in step,
+#: and a miss here costs the more specific of two true sentences, never a file.
 _REMOVING_KINDS = frozenset({"radarr_delete", "sonarr_delete_files"})
 
 
@@ -154,17 +156,17 @@ def id_key(
     than a bug: a title with no external id cannot be tracked across a delete and a re-add by
     any id-matched feature in the tree. It resolves ``Unknown`` and takes no hold.
 
-    **The media kind leads, because a bare tmdb id is not a stable key across kinds** (rule
-    52): movie and TV tmdb ids share one integer space, so ``tmdb:12345`` can name two
-    different titles.
+    **The media kind leads, because a bare tmdb id is not a stable key across kinds.** Movie
+    and TV tmdb ids share one integer space, so ``tmdb:12345`` can name two different titles.
 
     The ladders are the ones the Plex resolver already binds on
     (``identity.MOVIE_ID_PRIORITY``, ``identity.SHOW_ID_PRIORITY``), so an item's ledger key
-    and its bind rest on the same id. Restated rather than imported because those tuples drive
-    ``resolve``'s narrowing over a ``PlexIndex`` and this needs one winner, not an ordered
-    walk; ``tests/test_library_seen.py`` pins the two orders against each other.
+    and its bind rest on the same id. This restates those tuples rather than importing them,
+    because they drive ``resolve``'s narrowing over a ``PlexIndex`` and this needs one winner
+    rather than an ordered walk. ``tests/test_library_seen.py`` pins the two orders against
+    each other.
 
-    An item whose available ids CHANGE between scans gets a new key and simply starts over,
+    An item whose available ids change between scans gets a new key and simply starts over,
     with no return found. That is the safe direction and the only one available: nothing can
     tell a title that gained a tmdb id from a different title.
     """
@@ -183,14 +185,16 @@ def id_key(
 async def recall_all(session: AsyncSession) -> dict[str, Seen]:
     """The whole ledger, keyed by ``id_key``.
 
-    The whole table for ``watch_evidence.recall_all``'s reason: the TV lane needs its rows
-    before it has resolved a single season, inside a concurrent task holding no session of its
-    own, so there is nothing to filter on yet. One row per title ever bound makes this
-    library-sized, and it binds no variables, so it cannot meet SQLite's ceiling (rule 94).
+    This reads the whole table for the same reason as ``watch_evidence.recall_all``: the TV
+    lane needs its rows before it has resolved a single season, inside a concurrent task
+    holding no session of its own, so there is nothing to filter on yet. One row per title
+    ever bound makes this library-sized, and it binds no variables, so it cannot meet
+    SQLite's variable ceiling.
 
-    A ``rating_keys_json`` that will not parse reads as an EMPTY set, which costs a detection
-    and can never invent one: with no recorded key, condition 1 holds trivially but condition 2
-    has nothing to have gone missing, and :func:`is_return` requires at least one recorded key.
+    A ``rating_keys_json`` that will not parse reads as an empty set, which can only cost a
+    detection and never invent one: with no recorded key, condition 1 holds trivially but
+    condition 2 has nothing to have gone missing, and :func:`is_return` requires at least one
+    recorded key.
     """
     rows = (await session.execute(select(LibrarySeen))).scalars()
     return {
@@ -248,7 +252,8 @@ def is_return(
     """
     if not seen.rating_keys:
         # Nothing recorded to have moved. The row was written this scan, or its stored keys
-        # were unreadable; either way there is no earlier key whose absence could be checked.
+        # were unreadable, and either way there is no earlier key whose absence could be
+        # checked.
         return False
     if sighting.rating_key in seen.rating_keys:
         return False
@@ -271,12 +276,12 @@ def observations(
     """``Facts.returned_days_ago`` and ``Facts.returned_by_reaper``, from one ledger row.
 
     The one derivation, called by both fact builders, so the two lanes cannot disagree about
-    what a missing row means (rules 35, 104). ``seen`` is ``None`` for a title with no external
-    id and for one Reaper has never bound before, and both are ``Unknown`` -- there was nothing
-    to look up, which is not the same as looking and finding no return (rule 93).
+    what a missing row means. ``seen`` is ``None`` for a title with no external id and for
+    one Reaper has never bound before, and both are ``Unknown``: there was nothing to look
+    up, which is not the same as looking and finding no return.
 
-    Elapsed days are floored by ``dormancy_days``, which leaves more of the hold standing: the
-    bound that produces less deletion pressure (rule 31).
+    Elapsed days are floored by ``dormancy_days``, which leaves more of the hold standing:
+    the bound that produces less deletion pressure.
     """
     if seen is None:
         return (
@@ -295,8 +300,8 @@ def within_cap(returns: int, bound: int) -> bool:
     """Whether this scan's crop of returns is small enough to believe.
 
     Above :data:`_CAP_APPLIES_ABOVE` items a share is meaningful and
-    :data:`RETURN_POPULATION_CAP` applies; below it every detection stands, because on a small
-    library one real return is already a large fraction of it.
+    :data:`RETURN_POPULATION_CAP` applies. Below it every detection stands, because on a
+    small library one real return is already a large fraction of it.
     """
     if bound <= _CAP_APPLIES_ABOVE:
         return True
@@ -307,16 +312,16 @@ async def removed_by_reaper(session: AsyncSession, id_keys: Iterable[str]) -> se
     """Which of these ids Reaper's own journal says it removed the files of.
 
     One query for the whole scan, run only when something looked returned, because the answer
-    is a property of the journal rather than of the item and the journal is small: retention
+    is a property of the journal rather than of the item, and the journal is small: retention
     pins every snapshot a run points at, so the rows behind a deletion outlive everything else.
 
-    A step counts when its file is confirmed gone, which is ``VERIFIED`` **or** a durable
-    ``file_removed_at`` -- rule 97's pair. A step whose file went but whose exclusion failed
-    stays ``FAILED`` and still removed the file, and claiming Reaper did not is the wrong way
-    for this sentence to be wrong: it would tell an operator their own settings are innocent.
+    A step counts when its file is confirmed gone, which is ``VERIFIED`` or a durable
+    ``file_removed_at``. A step whose file went but whose exclusion failed stays ``FAILED``
+    and still removed the file, and claiming Reaper did not would be the wrong way for this
+    sentence to be wrong: it would tell an operator their own settings are innocent.
 
-    ``False`` for an id absent from the result is a real answer, not a gap: it means Reaper has
-    no record of removing it, which is exactly what the second sentence says.
+    ``False`` for an id absent from the result is a real answer, not a gap: it means Reaper
+    has no record of removing it, which is exactly what the second sentence says.
     """
     wanted = set(id_keys)
     if not wanted:
@@ -371,7 +376,7 @@ def _season_of(media_key: str) -> int | None:
 
 
 async def scan_instants(session: AsyncSession) -> list[datetime]:
-    """Every scan's start, sorted -- the input to condition 4. One read per scan."""
+    """Every scan's start, sorted. This is the input to condition 4. One read per scan."""
     rows = (await session.execute(select(Snapshot.created_at).order_by(Snapshot.created_at))).all()
     return [row[0] for row in rows]
 
@@ -379,16 +384,17 @@ async def scan_instants(session: AsyncSession) -> list[datetime]:
 def note_sighting(batch: dict[str, set[int]], sighting: Sighting) -> None:
     """Fold one item's Plex key into this scan's batch, for :func:`record` to write.
 
-    **A set per id, not one key per id, and that is the measured requirement rather than
-    caution.** One external id routinely carries TWO \\*arr entries, one per copy, each bound
-    to a different Plex listing (``docs/LEARNINGS.md``, assumption 16). A batch keyed one
+    **A set per id, not one key per id, and that is a measured requirement rather than
+    caution.** One external id routinely carries two \\*arr entries, one per copy, each
+    bound to a different Plex listing (``docs/LEARNINGS.md``). A batch keyed one
     ``Sighting`` per id drops whichever copy the scan judged first, so the ledger never
-    records that copy's key at all -- and a key that was never recorded cannot later be
-    noticed as gone, which is the coverage this feature exists to have for exactly that
-    population. That finding was already paid for once, in the stored row; this is the same
-    failure one layer up, in the batching.
+    records that copy's key at all. A key that was never recorded cannot later be noticed
+    as gone, which is the coverage this feature exists to have for exactly that population.
+    This is the same failure one layer up from the stored row itself, in how the batch is
+    built.
 
-    One helper, called by both lanes, so neither can be the one that overwrites (rule 72).
+    One helper, called by both lanes, so neither one can be the one that overwrites the
+    other's key.
     """
     batch.setdefault(sighting.id_key, set()).add(sighting.rating_key)
 
@@ -411,14 +417,14 @@ async def record(
 
     The key set only ever grows, and the merge happens here rather than in SQL because SQLite
     has no set type and the union is over a handful of ints on a row already in hand. The
-    trade is that two concurrent scans could each write a union missing the other's key; only
-    one scan runs at a time, and the cost of losing a key is a detection, never a false one.
+    trade is that two concurrent scans could each write a union missing the other's key.
+    Only one scan runs at a time, and the cost of losing a key is a detection, never a false
+    one.
     """
     if not keys_seen:
         return
-    # Re-read inside the write rather than trusting the map the scan loaded at its start
-    # (rule 58), and chunked on ``db.KEY_CHUNK`` because this list is the whole bound library
-    # (rule 94).
+    # Re-read inside the write rather than trusting the map the scan loaded at its start,
+    # and chunked on ``db.KEY_CHUNK`` because this list is the whole bound library.
     wanted = list(keys_seen)
     stored: dict[str, LibrarySeen] = {}
     for start in range(0, len(wanted), KEY_CHUNK):

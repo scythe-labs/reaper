@@ -1,20 +1,18 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Loading a policy body an older Reaper wrote.
+"""Load a policy body an older version of Reaper wrote.
 
-A stored body is JSON that ``PolicyBody`` refused, and the shims here try to make it load
-without losing what the operator configured. Each one takes the *raw* stored dict, returns a
-dict that validates, and returns ``None`` when it cannot: the caller
-(``services.profiles.active_policy``) then falls back to the shipped default and says so.
-``PolicyRepair`` is the set of ways that can happen, and it is the declaration four surfaces
-derive their copy from.
+A stored body may be JSON that ``PolicyBody`` refuses to validate. Each shim here reads the
+raw stored dict and tries to fix it: it returns a dict that validates, or ``None`` when it
+cannot. The caller (``services.profiles.active_policy``) falls back to the shipped default
+and says so when a shim returns ``None``. ``PolicyRepair`` lists every way a shim can change
+a stored body, and every surface that tells the operator about a repair reads that list.
 
-Split out of ``engine/policy.py``, which is the model and the hash over it. Every SHIM here
-runs once, at load, and none is read by scoring. **One declaration is not a shim and is on
-the live path**: ``LIST_GATES_NOW_KEEP_RULES`` is read by ``scan_runner.build_gates`` on
-every scan, and is the membership the fail-closed abort tests -- so this file does not retire
-when every install has migrated, and that constant is the reason. The dependency runs one
-way -- this module imports ``PolicyBody`` and ``SCHEMA_VERSION`` from ``policy`` and
-``policy`` imports nothing back -- so the pair cannot cycle whatever either gains later.
+Split out of ``engine/policy.py``, which holds the model and the hash over it. Every shim here
+runs once, when a policy loads, and none of them run during scoring. One exception:
+``LIST_GATES_NOW_KEEP_RULES`` is read by ``scan_runner.build_gates`` on every scan, so this
+file stays even after every install has migrated. This module imports ``PolicyBody`` and
+``SCHEMA_VERSION`` from ``policy``, and ``policy`` imports nothing back, so the two modules
+cannot import each other in a loop.
 """
 
 from __future__ import annotations
@@ -36,55 +34,53 @@ from reaper.text import fold
 
 
 class PolicyRepair(enum.StrEnum):
-    """One way ``active_policy`` had to change a stored body to load it.
+    """One way ``active_policy`` changed a stored body so it would load.
 
-    **The set is the declaration every surface derives from**, and that is the whole reason
-    it is an enum rather than four booleans on ``ActivePolicy``. Each repair obliges four
-    things at once: the flag reaches ``PolicyOut``, the editor's savebar forces dirty on it,
-    a notice says which repair happened, and the scan's degradation sentence names what to
-    check. ``lists_migrated`` shipped with the first and skipped the rest, so a stored body
-    from before the lists move degraded every scan with an incomplete-scan banner the
-    operator could not clear: the editor never went dirty, so the page held no Save, and the
-    one exit the degradation names did not exist (#516). A boolean can be forgotten at three
-    of four sites and read correct at each one; a member of this enum cannot, because
-    ``tests/test_policy_repairs.py`` walks it and fails on any member either side lacks copy
-    for (rules 103, 144).
+    This is the single declaration every surface reads from. It must be an enum,
+    never four separate booleans on ``ActivePolicy``. Each repair has to reach four
+    places at once: the flag on ``PolicyOut``, the editor's dirty flag, the notice text, and
+    the scan's degradation message. A boolean can be wired to three of those four and still
+    look correct; a member of this enum cannot, because ``tests/test_policy_repairs.py``
+    walks every member and fails on one that is missing copy anywhere.
 
-    Adding a shim means adding a member here, then following the test where it fails.
+    Add a shim by adding a member here, then follow the test to every place it still needs
+    wiring.
     """
 
     RESCALED = "rescaled"
-    """Removal weights rescaled to total 100 (``rebalance``). Their tuning, in new units."""
+    """Removal weights rescaled to total 100 (``rebalance``). The operator's own tuning, in
+    the new units."""
 
     FELL_BACK = "fell_back"
-    """Unrepairable, so the body in hand is the SHIPPED DEFAULT. The loudest of the four:
-    these are numbers the operator never chose, and they can be looser than what was saved."""
+    """The body could not be repaired, so this is the shipped default instead. The loudest
+    of the four repairs: these are numbers the operator never chose, and they can protect
+    less than what was saved."""
 
     RATING_RULES_RESTORED = "rating_rules_restored"
     """The rating bar was put back from an older saved setting (``recover_rating_rules``).
-    That body loads perfectly well while protecting nothing, which is why it is a repair."""
+    The unrepaired body still validates, but protects nothing, which is why it counts as a
+    repair anyway."""
 
     LISTS_MIGRATED = "lists_migrated"
-    """List protections re-expressed as ``on_list`` keep rules (``convert_list_protections``).
-    Verdict-preserving by construction, and still not adopted silently, because the stored
-    body says one thing and the body in force says another."""
+    """List protections rewritten as ``on_list`` keep rules (``convert_list_protections``).
+    The rewrite keeps every verdict the same. It must still be shown to the operator, never
+    applied silently, since the stored body and the body now in force say different things."""
 
 
-#: Gate keys that stored bodies still carry and the model no longer declares. ``secondary``
-#: held the rating gate's vote floor until that bar moved to ``keep_rating_rules``; the
-#: migration ``e6f708192a3b`` rewrote every body where the number was inert, and deliberately
-#: left the ones where it is still the only copy of an operator's bar, so those arrive here.
+#: A gate key some stored bodies still carry that the model no longer declares. ``secondary``
+#: held the rating gate's vote floor before that bar moved to ``keep_rating_rules``. Some
+#: stored bodies still carry it because it is the only surviving copy of the operator's bar.
 _RETIRED_GATE_KEYS = frozenset({"secondary"})
 
 
 def drop_retired_gate_keys(body: dict[str, Any]) -> None:
     """Strip keys the model no longer declares, in place, from every gate row.
 
-    ``PolicyBody`` is ``extra="forbid"``, so a body a shim hands back still carrying one of
-    these does not load. Both shims read the *raw* stored dict and both must do this, or the
-    repair they exist to perform is the thing that fails (rules 72, 104): ``rebalance`` would
-    return ``None`` and throw away the operator's tuning, and ``recover_rating_rules`` would
-    raise into a handler that only logs, so a rating bar would stop being recovered in silence.
+    ``PolicyBody`` refuses any extra key, so a body still carrying one of these will not
+    load. Every shim that reads the raw stored dict calls this first: without it,
+    ``rebalance`` would return ``None`` and throw away the operator's tuning, and
+    ``recover_rating_rules`` would raise inside a handler that only logs, so a rating bar
+    would silently stop being recovered.
     """
     gates = body.get("gates")
     if not isinstance(gates, list):
@@ -96,36 +92,34 @@ def drop_retired_gate_keys(body: dict[str, Any]) -> None:
 
 
 def rebalance(raw: object) -> dict[str, Any] | None:
-    """A stored policy body rescaled so its removal weights total exactly 100.
+    """Rescale a stored policy body so its removal weights total exactly 100.
 
-    For bodies written before ``PolicyBody._weights_total_one_hundred`` existed, which
-    were free to total anything. Those cannot be loaded any more, and falling back to the
-    shipped default would silently throw away an operator's tuning and show them numbers
-    they never chose.
+    Older bodies, written before ``PolicyBody._weights_total_one_hundred`` existed, could
+    total anything. Such a body no longer loads, and falling back to the shipped default
+    would throw away the operator's tuning and show them numbers they never chose.
 
-    Rescaling is the right migration because the *exact* rescale is score-preserving: the
-    score is ``100 * Σpressure / Σweight`` already, so dividing every weight by the same
-    factor cannot move it. **Integer rounding can, by more than a point.** Largest-remainder
-    bounds each weight's own error at 1, but those errors do not cancel in the score, since
-    a rule that gained a point may be carrying pressure while one that lost a point is not:
-    ``score' - score = Σ (w'ᵢ - wᵢ·100/T)·fillᵢ``. Weights ``(1, 1, 1, 5)`` become
-    ``(13, 13, 12, 62)`` and move a score by a full point; six equal weights become
-    ``17,17,17,17,16,16`` and move one by 1.33, which is enough to cross a condemn line.
-    The drift is bounded by half the number of weighted rules, and no allocation does
-    better, because which rules will carry pressure is unknowable at rescale time (weighting
-    the remainder toward the larger weights does nothing at all in the equal-weight case).
+    An exact rescale never changes the score: the score is already
+    ``100 * Σpressure / Σweight``, so dividing every weight by the same factor leaves it
+    unchanged. Rounding the rescaled weights to integers can still move a score by more than
+    a point, even though largest-remainder rounding keeps each weight's own error to at most
+    1: those per-weight errors do not cancel out in the score, because a rule that gained a
+    point from rounding may be carrying pressure on an item while a rule that lost a point is
+    not. Weights ``(1, 1, 1, 5)`` round to ``(13, 13, 12, 62)`` and can move a score by a full
+    point; six equal weights round to ``17, 17, 17, 17, 16, 16`` and can move one by 1.33,
+    enough to cross a condemn threshold. The largest this drift can be is half the number of
+    weighted rules, and no other way of assigning the rounding error does better, because
+    which rules will actually carry pressure on a given item cannot be known while rescaling.
 
     So a rescaled body is never adopted silently. The caller flags it
-    (``PolicyRepair.RESCALED``), which makes ``profiles.ActivePolicy.repaired``
-    true, degrades the scan, and opens the editor on it as an unsaved draft the operator
-    reviews and re-saves themselves. ``tests/test_policy.py`` pins both the bound and the
-    fact that a verdict near the line can move.
+    (``PolicyRepair.RESCALED``), which marks ``profiles.ActivePolicy.repaired``, degrades the
+    scan, and opens the editor on the rescaled body as an unsaved draft for the operator to
+    review and save themselves. ``tests/test_policy.py`` checks the rounding bound above and
+    that a verdict near the threshold can move.
 
-    Returns ``None`` when the body is unreadable for any *other* reason -- including valid
-    JSON that is not an object at all -- so the caller can tell "needs rebalancing" from
-    "genuinely broken" and never present a repaired body it does not understand. This must
-    not raise: ``services.profiles.active_policy`` relies on it to keep the policy editor
-    reachable.
+    Returns ``None`` when the body cannot be read for any other reason, including valid JSON
+    that is not an object at all, so the caller can tell "needs rescaling" apart from
+    "genuinely broken" and never show a repaired body it does not understand. Never raises:
+    ``services.profiles.active_policy`` depends on that to keep the policy editor reachable.
     """
     try:
         if not isinstance(raw, dict):
@@ -149,50 +143,47 @@ def rebalance(raw: object) -> dict[str, Any] | None:
         PolicyBody.model_validate(body)  # only hand back something that actually loads
     except (AttributeError, KeyError, TypeError, ValueError, ValidationError):
         # AttributeError covers a body whose "signals"/"custom_condemn" entries are not
-        # objects either, so a `.get`/`["weight"]` on the wrong shape returns None here
-        # rather than escaping a function whose whole job is not to raise.
+        # objects either, so a `.get`/`["weight"]` on the wrong shape returns None here.
+        # This function must never raise.
         return None
     return body
 
 
 def recover_rating_rules(raw: object) -> dict[str, Any] | None:
-    """A stored body whose rating bar was lost when the bar moved off the gate row.
+    """Restore a rating bar lost when that bar moved off the gate row.
 
-    The bar used to live on the RATING_FLOOR gate setting as ``threshold`` (tenths) plus
-    ``secondary`` (minimum votes). It now lives in ``keep_rating_rules`` as one spec per
-    rating source, and the move shipped no backfill. A body written before it still
-    **validates cleanly** -- the gate keeps its now-meaningless numbers, ``keep_rating_rules``
-    defaults to empty -- and an empty rule set makes ``RatingFloorGate`` abstain on every
-    item with "No rating is set that would keep a title." So the operator's "keep anything
-    at 7.5 from 1,000 votes" silently protects nothing, on a healthy, executable snapshot.
-    Every install seeded before that move is in this state, whether or not anyone opened
-    the editor: ``services.profiles`` persists the shipped default as a real row the first
-    time a profile is saved.
+    The bar used to live on the RATING_FLOOR gate setting, as ``threshold`` (tenths) plus
+    ``secondary`` (minimum votes). It now lives in ``keep_rating_rules``, one spec per rating
+    source, and the move shipped no backfill for bodies written before it. Such a body still
+    validates: the gate keeps its now-unused numbers, and ``keep_rating_rules`` defaults to
+    empty. But an empty rule set makes ``RatingFloorGate`` abstain on every item, so an
+    operator's "keep anything at 7.5 from 1,000 votes" ends up protecting nothing, on a
+    snapshot that otherwise runs and executes normally. Every install seeded before the move
+    is in this state, whether or not anyone opened the editor, because ``services.profiles``
+    writes the shipped default as a real row the first time a profile is saved.
 
-    Returns the body with the equivalent IMDb bar synthesized, or ``None`` when there is
-    nothing to recover. The caller flags it (``PolicyRepair
-    .RATING_RULES_RESTORED``), which makes ``repaired`` true, degrades the scan, and opens
-    the editor on it as an unsaved draft -- never a silent substitution of an operator's
-    own safety value (rule 65).
+    Returns the body with the equivalent IMDb bar added back, or ``None`` when there is
+    nothing to recover. The caller flags it (``PolicyRepair.RATING_RULES_RESTORED``), which
+    marks ``repaired``, degrades the scan, and opens the editor on the restored body as an
+    unsaved draft: this must never silently swap in a value the operator never chose.
 
-    ``secondary`` is read here off the raw stored dict and is no longer a field on
-    ``GateSetting``; migration ``e6f708192a3b`` deliberately skipped exactly the rows this
-    still fires on, because the number is the only surviving copy of their bar. So the body
-    handed back goes through ``drop_retired_gate_keys`` first: ``Frozen`` forbids extra keys,
-    and a body returned with one raises into a caller that only logs, which would stop the
-    recovery in silence.
+    ``secondary`` is read here off the raw stored dict; it is not a field on ``GateSetting``
+    any more, but some stored rows still carry it as the only surviving copy of their bar. So
+    the body handed back goes through ``drop_retired_gate_keys`` first: ``PolicyBody``
+    refuses any extra key, and a body returned with one would raise inside a caller that only
+    logs, stopping the recovery silently.
 
-    What it keys on, and why not ``schema_version``: affected bodies already carry
-    ``schema_version: 2`` (it was 2 before the move too), so the version cannot tell them
-    apart. The trigger is the raw key ``keep_rating_rules`` being **absent** -- an explicit
-    ``[]`` is an operator who deliberately cleared their bars and must keep an empty set
-    (rule 1) -- plus an ENABLED ``rating_floor`` gate carrying numbers the old validator
-    would have accepted (``1 <= threshold <= 100``, ``secondary >= 1``). A disabled gate is
-    left alone: nothing was protecting anything either way, so there is nothing to restore
-    and no reason to degrade a scan over it. IMDb is the right source because it is the
-    only one the old single-source gate ever read.
+    This must never trigger off ``schema_version``: an affected body's schema version does
+    not change across the move, so it cannot tell old and new bodies apart. It instead fires
+    when the raw ``keep_rating_rules`` key is absent (an explicit empty list means the operator
+    deliberately cleared their bars, and that choice is kept) and the ``rating_floor`` gate
+    is enabled with numbers the old validator would have accepted (``1 <= threshold <= 100``,
+    ``secondary >= 1``). A disabled gate is left alone, since nothing was protecting anything
+    either way. IMDb is the source to recover into because it is the only one the old
+    single-source gate ever read.
 
-    Must not raise: ``services.profiles.active_policy`` keeps the policy editor reachable.
+    Never raises: ``services.profiles.active_policy`` depends on that to keep the policy
+    editor reachable.
     """
     if not isinstance(raw, dict) or "keep_rating_rules" in raw:
         return None
@@ -224,35 +215,34 @@ def recover_rating_rules(raw: object) -> dict[str, Any] | None:
     return None
 
 
-#: The two gates that became keep rules on Settings -> Lists. Retired as gates and kept as
-#: ``GateId`` members so a stored explanation still decodes, but NOT in ``RETIRED_GATES``:
-#: each was a live protection, so a body naming one is converted rather than stripped.
-#: Declared once, because three readers must agree on the membership -- the conversion, the
-#: strip beside it (a body could otherwise lose a gate without gaining its rule), and
-#: ``scan_runner.build_gates``, which owes an operator reaching it a different sentence from
-#: the one an unimplemented gate gets.
+#: The two gates that became keep rules on Settings -> Lists. Retired as gates, but their
+#: ``GateId`` members stay so a stored explanation can still decode. These stay listed
+#: separately from ``RETIRED_GATES``, because each protected something while it was live: a
+#: body naming one is converted to the equivalent rule, never simply stripped.
+#: Three readers share this one declaration: the conversion, the code that strips a gate row
+#: once its rule exists, and ``scan_runner.build_gates``, which tells an operator who still
+#: hits one of these a different message than it gives for a gate that was never implemented.
 LIST_GATES_NOW_KEEP_RULES: frozenset[GateId] = frozenset({GateId.WHITELISTED, GateId.CURATED_LIST})
 _LEGACY_LIST_GATES = frozenset(gate.value for gate in LIST_GATES_NOW_KEEP_RULES)
 
-#: What a fresh install's two lists are made of, beside ``policy.DEFAULT_TAG_LIST_NAME`` and
-#: ``policy.DEFAULT_IMDB_LIST_NAME``: the tag the seeded tag list carries and the preset its
-#: IMDb list names. Spelled here for the reason those names are, and read by
-#: ``list_config.DEFAULT_LISTS`` rather than respelled there, so the
-#: row a fresh install seeds and the row a converted upgrade looks for are one declaration
-#: (rule 104).
+#: What a fresh install's two seeded lists are made of: the tag the tag list carries, and
+#: the preset the IMDb list names. ``policy.DEFAULT_TAG_LIST_NAME`` and
+#: ``policy.DEFAULT_IMDB_LIST_NAME`` name the lists themselves. ``list_config.DEFAULT_LISTS``
+#: must read these two constants, never respell them, so the row a fresh install seeds and
+#: the row a converted upgrade looks for come from one declaration.
 DEFAULT_KEEP_TAG = "reaper-keep"
 DEFAULT_IMDB_PRESET = "top250"
 
 
 def legacy_keep_tags(raw: object) -> tuple[str, ...]:
-    """The *arr tags a legacy body was protecting on, blanks dropped.
+    """The *arr tags a legacy body was protecting on, with blanks dropped.
 
-    A body carrying no ``keep_tags`` key ran on the shipped default, so that is what it
-    returns; an explicit empty list is an operator who cleared it, and returns nothing
-    (rule 1). Empty therefore means "this body had no tag protection", which is what
-    ``convert_list_protections`` reads it as, and it is also how the caller finds the
-    registry row those tags became -- one derivation, since a resolver disagreeing with
-    the conversion would name a list for a body that has no tags to convert (rule 104).
+    A body carrying no ``keep_tags`` key ran on the shipped default, so this returns that
+    default. A body with an explicit empty list had it cleared by the operator, and this
+    returns nothing for it. So an empty result means "this body had no tag protection",
+    which is exactly how ``convert_list_protections`` reads it, and also how the caller
+    finds the registry row those tags became. Both callers read this one function so they
+    can never disagree about which bodies had a tag protection to convert.
     """
     if not isinstance(raw, dict):
         return ()
@@ -263,9 +253,11 @@ def legacy_keep_tags(raw: object) -> tuple[str, ...]:
 
 
 def _config_value(config_json: str | None, key: str) -> object:
-    """One value out of a stored list config, or ``None`` for a body that will not parse.
-    Unreadable reads as "not this row": it can only cost a conversion, and the half that does
-    not convert keeps its gate and stops the scan loudly (rule 96's direction)."""
+    """One value out of a stored list config, or ``None`` when it will not parse.
+
+    An unreadable config reads as "not this row." At worst that skips a conversion, and the
+    part that does not convert keeps its gate, which then must stop the scan loudly: it must
+    never run on a protection that silently vanished."""
     try:
         config = json.loads(config_json or "{}")
     except ValueError:
@@ -278,29 +270,27 @@ def conversion_list_names(
     *,
     keep_tags: Sequence[str],
 ) -> tuple[str | None, str | None, tuple[str, ...]]:
-    """Which lists ``convert_list_protections``'s rules must name, out of the registry.
+    """Which registry lists ``convert_list_protections``'s rules must name.
 
-    ``rows`` are ``(source, name, config_json)`` oldest first. Returns the tag list's current
-    name, the shipped IMDb list's, and every list the operator curates on Plex -- the three
-    arguments the conversion takes. ``None`` means no such list, and the conversion then leaves
-    that half's gate in place rather than converting it away.
+    ``rows`` are ``(source, name, config_json)``, oldest first. Returns the tag list's
+    current name, the shipped IMDb list's current name, and every list the operator curates
+    on Plex. ``None`` for either of the first two means no such list exists, and the
+    conversion then leaves that half's gate in place.
 
-    **Resolved by what a row HOLDS, never by age.** ``keep_tags`` is the legacy body's own
-    tags, tested against each *arr-tag row's configured ones; the shipped preset is tested
-    against each IMDb row's. Age was the rule until it turned out to be the operator's to
-    change as well: delete the tag list this converts and the *arr-tag list they added for
-    something else becomes the oldest of its source, so it inherited an outright keep that
-    nothing gave it. Settings -> Lists reads the same conversion (``list_rules.usage``), so
-    that list read "Keeps every title on it" while no rule mentioned it, and Remove could not
-    take the rule off -- ``list_rules.detach_list`` declines to write a repaired policy.
+    A list is matched by what it holds, never by how old it is. ``keep_tags`` (the legacy
+    body's own tags) is tested against each *arr-tag row's configured tags; the shipped
+    preset is tested against each IMDb row's configured preset. Matching by age instead would
+    misfire if the operator deletes the tag list this converts: the *arr-tag list they added
+    for something else would then become the oldest of its source and inherit a keep-outright
+    protection nobody gave it.
 
-    Tag matching is an OVERLAP, not an exact set: the upgrade migration unions both media
-    types' tags into the one list, and an operator who adds a tag beside them has not stopped
-    it being the list their tags became.
+    Tag matching succeeds on any shared tag, because the upgrade migration
+    merges both media types' tags into one list, and an operator adding a tag beside them
+    does not stop it being the list their tags became.
 
-    Pure, and takes rows rather than a session, because the load shim reads them through
-    SQLAlchemy and the upgrade migration through raw SQL -- and a second copy of this
-    selection is exactly what drifted (rule 104).
+    This function must stay pure, taking rows rather than a database session: the load
+    shim reads them through SQLAlchemy and the upgrade migration reads them through raw SQL.
+    Both must select lists the same way, so both call this one function.
     """
     wanted = {fold(t) for t in keep_tags if t.strip()}
 
@@ -308,7 +298,7 @@ def conversion_list_names(
         held = _config_value(config_json, "tags")
         if not isinstance(held, list):
             return False
-        # Case-folded on both sides, the comparison every reader of a tag makes (rule 88).
+        # Case-folded on both sides, the same comparison every reader of a tag makes.
         return bool(wanted & {fold(str(t)) for t in held})
 
     tag = next(
@@ -334,29 +324,29 @@ def conversion_list_names(
     return tag, imdb, own
 
 
-#: A collection whose library kind Reaper cannot pin down keeps a rule on BOTH policies. A name
-#: absent from ``own_list_media_scope``'s map reads as this too, so an empty map leaves every
-#: rule where it was before this scoping existed. Public so the load shim and the upgrade
-#: migration read one constant (rule 104).
+#: A collection whose library kind Reaper cannot pin down keeps its rule on BOTH policies. A
+#: name missing from ``own_list_media_scope``'s map reads as this too, so an empty map leaves
+#: every rule exactly where it was before this scoping existed. Public so the load shim and
+#: the upgrade migration share one constant.
 BOTH_MEDIA_TYPES: frozenset[str] = frozenset({"movie", "tv"})
 
 #: The policy media type each Plex library kind seeds a keep rule on. Plex names a TV library
-#: "show"; a policy names that side "tv". Music and photo libraries never reach here --
-#: ``PlexClient.video_sections`` surfaces only these two, and ``app_settings.set_plex_libraries``
-#: stores what it returns.
+#: "show"; a policy names that side "tv". Music and photo libraries never reach here, since
+#: ``PlexClient.video_sections`` surfaces only these two kinds, and
+#: ``app_settings.set_plex_libraries`` stores whatever it returns.
 _PLEX_KIND_TO_MEDIA: dict[str, str] = {"movie": "movie", "show": "tv"}
 
 
 def library_media_types(
     libraries: Sequence[Mapping[str, object]],
 ) -> dict[str, frozenset[str]]:
-    """Casefolded library title -> the media types libraries of that title span, from the synced
-    ``plex_libraries`` setting rows (each a ``{"title", "kind", ...}`` dict).
+    """Map each case-folded library title to the media types libraries with that title span.
 
-    Two same-titled libraries of different kinds union to both, which ``own_list_media_scope``
-    reads as "cannot tell" and so keeps a collection under that title on both policies. A kind
-    that is neither ``movie`` nor ``show`` (never surfaced today) is skipped. Case-folded, the
-    comparison every reader of a Plex name makes (rule 88)."""
+    Reads the synced ``plex_libraries`` setting rows, each a ``{"title", "kind", ...}`` dict.
+    Two same-titled libraries of different kinds map to both types, which
+    ``own_list_media_scope`` reads as "cannot tell" and keeps a collection under that title on
+    both policies. A kind that is neither ``movie`` nor ``show`` is skipped; none is surfaced
+    today. Titles are case-folded, the same comparison every reader of a Plex name makes."""
     out: dict[str, set[str]] = {}
     for lib in libraries:
         title = lib.get("title")
@@ -370,30 +360,26 @@ def own_list_media_scope(
     rows: Sequence[tuple[str, str, str | None]],
     library_types: Mapping[str, frozenset[str]],
 ) -> dict[str, frozenset[str]]:
-    """For each Plex list the operator curates by hand, the media types a keep rule naming it may
-    protect -- keyed by the list's name casefolded, the spelling every reader of a list name
-    compares on (rule 88).
+    """For each Plex list the operator curates by hand, the media types a keep rule naming it
+    may protect. Keyed by the list's name, case-folded, the same comparison every reader of a
+    list name makes.
 
-    A ``plex_collection`` lives in ONE Plex library, so it can only hold that library's one type;
-    a ``plex_watchlist`` spans the account and can hold both. ``library_types`` maps a casefolded
-    library title to the media types libraries of that title span (``library_media_types``, off
-    the synced ``plex_libraries`` setting): a library never synced, one since renamed, or two
-    same-titled libraries of different kinds all leave the title unknown or two-typed.
+    A ``plex_collection`` lives in one Plex library, so it can only hold that library's one
+    type. A ``plex_watchlist`` spans the whole account, so it can hold both. ``library_types``
+    maps a case-folded library title to the media types libraries with that title span
+    (``library_media_types``, from the synced ``plex_libraries`` setting): a library that was
+    never synced, has since been renamed, or shares a title with a library of a different kind
+    all leave the type unknown or spanning both.
 
-    Fail-open, the direction rules 65/91 require: this NARROWS a collection's rule to one policy
-    only when its library is known and single-typed. An unknown, ambiguous, or unsynced library
-    keeps BOTH -- a rule on the media type the collection cannot hold matches no item, so leaving
-    it costs nothing, while dropping it on a lookup that could not answer would withdraw a live
-    protection. A watchlist keeps both always. This is the whole reason scoping a collection is
-    "harder than the IMDb half" (#545): the IMDb chart is statically movies-only, a collection's
-    one type is its library's and nothing in the registry carries it.
+    This function only narrows a collection's rule to one policy when its library's type is
+    known and single. An unknown, ambiguous, or unsynced library keeps the rule on both: a
+    rule on a type the collection cannot hold simply matches nothing there, which costs
+    nothing, while dropping it for a library this function cannot read would withdraw a live
+    protection. A watchlist always keeps both.
 
-    Two rows can share a casefolded key, so the types UNION rather than overwrite (rule 63: a
-    key that is a display name always can collide). ``list_config.name`` is unique, but under a
-    ``NOCASE`` collation and a ``func.lower`` pre-check that both fold ASCII only, while this key
-    is a full-Unicode ``casefold`` -- so a non-ASCII case pair ("strasse" vs "stra"+eszett) is
-    admitted as two rows that collapse here. Overwriting would scope the loser to the other's
-    type and drop its rule off the policy it keeps on; the union keeps both, fail-open."""
+    Two rows can share the same case-folded key. Their types must be combined, never
+    overwritten: overwriting could drop a rule's protection on the type the
+    overwritten row needed."""
     scope: dict[str, set[str]] = {}
     for source, name, config_json in rows:
         key = fold(name)
@@ -408,9 +394,9 @@ def own_list_media_scope(
             if isinstance(library, str) and library.strip()
             else None
         )
-        # Narrow only a library that is known and single-typed. ``held`` is None for an unsynced
-        # or renamed library, and carries two types for same-titled movie and show libraries;
-        # both keep the rule on both policies.
+        # Narrow only when the library's type is known and single. ``held`` is None for an
+        # unsynced or renamed library, and holds two types when a movie and a show library
+        # share a title; either case keeps the rule on both policies.
         this = held if held is not None and len(held) == 1 else BOTH_MEDIA_TYPES
         scope.setdefault(key, set()).update(this)
     return {key: frozenset(media) for key, media in scope.items()}
@@ -423,25 +409,30 @@ def authorable_media_scope(
     synced: bool,
     library_types: Mapping[str, frozenset[str]],
 ) -> frozenset[str]:
-    """The media types a keep rule on this list can be AUTHORED for, the set the Policy editor's
-    list picker offers it on. An empty set means offer on neither: the list's type is not known,
-    so a rule on it could match nothing while reading as a protection (rule 38, #549).
+    """The media types a keep rule on this list can be authored for.
 
-    This decides whether to OFFER a NEW rule and never gates a deletion, so it fails CLOSED: a
-    list whose type it cannot establish is withheld, not offered on a type it may not hold. That
-    is the opposite of ``own_list_media_scope``, its twin (rule 72), which scopes a legacy
-    protection being converted and must never drop a live rule, so an unreadable lookup there
-    keeps BOTH. Where the type IS known the two agree; they part only on the unknown.
+    This is the set the Policy editor's list picker offers a new rule on. An empty set means
+    offer it on neither type: the list's type is not known, and a rule on it could match
+    nothing while still reading as a live protection.
 
-    Layered by how the type is known:
-    - ``plex_watchlist`` spans the account, so both, sync or not.
-    - ``imdb`` is stamped movie by every sync (``services.lists``), so movies, sync or not.
-    - ``plex_collection`` lives in one library, whose kind gives the type without a sync
-      (``library_types``). A library that is unknown, renamed, or two-typed leaves the kind
-      unsettled, so it falls through to what a sync observed.
-    - ``arr_tag`` (and the fallen-through collection) is known only from synced content: the
-      types its members span, or -- verified but empty -- both, so a list the operator means to
-      fill is protectable now. Never synced, so never read: withheld until a check runs."""
+    This decides whether to offer a NEW rule, never whether to keep an existing one, so it
+    fails closed: a list whose type cannot be established must be withheld, never offered on
+    a type it may not hold. ``own_list_media_scope`` makes the opposite choice, because it
+    scopes a legacy protection being converted and must never drop a rule that is already
+    live, so an unreadable library there keeps both types. The two functions agree whenever
+    the type is actually known, and differ only when it is not.
+
+    The type is known in layers:
+    - ``plex_watchlist`` spans the whole account, so both types, synced or not.
+    - ``imdb`` is stamped movie by every sync (``services.lists``), so movie, synced or not.
+    - ``plex_collection`` lives in one library, and the library's kind gives the type without
+      needing a sync (``library_types``). A library that is unknown, renamed, or shared
+      between a movie and a show library leaves the type unsettled, and falls through to
+      what a sync of the collection's own content observed.
+    - ``arr_tag``, and a collection that fell through the case above, are known only from
+      synced content: the types its members actually span, or both if a sync found it
+      verified but empty, so a list the operator means to fill can be authored now. A list
+      never synced is withheld until a sync runs."""
     if source == "plex_watchlist":
         return BOTH_MEDIA_TYPES
     if source == "imdb":
@@ -462,9 +453,10 @@ def authorable_media_scope(
 
 
 def has_legacy_list_protections(raw: object) -> bool:
-    """Whether ``convert_list_protections`` would fire on this body. Exposed so callers can
-    decide whether resolving the target list names (a database read) is worth it, against
-    the same trigger the conversion itself uses."""
+    """Whether ``convert_list_protections`` would change this body.
+
+    Exposed so a caller can decide whether it is worth resolving the target list names, which
+    needs a database read, before running the same check the conversion itself uses."""
     if not isinstance(raw, dict):
         return False
     if "keep_tags" in raw or "keep_tags_match" in raw:
@@ -489,54 +481,49 @@ def convert_list_protections(
     collection_list_names: tuple[str, ...] = (),
     collection_media_scope: Mapping[str, frozenset[str]] | None = None,
 ) -> dict[str, Any] | None:
-    """A stored body from before every list protected through its own keep rule.
+    """Convert a stored body from before every list protected through its own keep rule.
 
-    Three legacy shapes, converted together because they were saved together:
+    Converts three legacy shapes together, because they were saved together:
 
-    * ``keep_tags`` / ``keep_tags_match`` -- the *arr tags configured on Policy. The
-      upgrade migration turns them into a list on Settings -> Lists; this rewrites the
-      body's half: the keys leave (``Frozen`` forbids them), and an ENABLED ``whitelisted``
-      gate becomes a keeps-it-outright ``on_list`` rule naming that list. A disabled gate
-      converts to no rule -- the operator had the protection off, and the Lists screen now
-      says "not used by your policy" where the switch used to be.
-    * the ``whitelisted`` and ``curated_list`` gate rows leave the body. Both gates are
-      retired (``gates.GateId``), and unlike ``RETIRED_GATES`` they were LIVE protections,
-      so each enabled one converts to the equivalent rule rather than being dropped --
-      dropping alone would silently withdraw cover, the failure this codebase exists to
-      avoid.
-    * ``on_curated_list`` rules re-spell as ``on_list``: the field was renamed when it
-      widened from the shipped lists to every list. The value is kept -- it is the list's
-      name either way.
+    * ``keep_tags`` / ``keep_tags_match``, the *arr tags configured on Policy. Both keys are
+      removed from the body. An enabled ``whitelisted`` gate becomes an ``on_list`` rule that
+      keeps that list outright. A disabled gate converts to no rule, since the operator had
+      the protection off, and the Lists screen now shows it as not used by the policy.
+    * the ``whitelisted`` and ``curated_list`` gate rows. Both gates are retired but were live
+      protections while they existed, so each enabled one must convert to the equivalent rule,
+      never simply be dropped with nothing in its place.
+    * ``on_curated_list`` rules, re-spelled as ``on_list``. The field was renamed when it
+      widened from the two shipped lists to every list; the value, which is the list's name
+      either way, is kept as is.
 
-    ``tag_list_name`` / ``imdb_list_name`` are the CURRENT names of the registry rows the
-    new rules must point at; the caller reads them from the database because the operator
-    may have renamed either. ``None`` means no such list exists, and that half converts to
-    no rule rather than to a rule naming nothing (rule 25). The caller identifies those
-    rows by what they HOLD -- these tags, that preset -- never by position, or a list the
-    operator added for something else inherits the protection the moment the real one is
-    deleted (``profiles._conversion_list_names``).
+    ``tag_list_name`` and ``imdb_list_name`` are the current names of the registry rows the
+    new rules must point at. The caller reads them from the database, since the operator may
+    have renamed either. ``None`` means no such list exists, and that half converts to no
+    rule. The caller identifies those rows by what they
+    hold, such as the matching tags or preset, never by which row is oldest, or a list the
+    operator added for something unrelated could inherit the protection the moment the real
+    one is deleted.
 
     ``media_type`` scopes the IMDb rule to the body it can hold. ``active_policy`` converts
-    the movie and TV bodies separately, and the IMDb chart is movies only (Radarr's mirror,
-    ``services/lists.py``), so its rule lands on the movie body alone -- a TV rule naming it
-    can never match a season and would read as a protection the operator never chose (#539,
-    rule 38). The curated_list gate protected nothing on a TV body for the same reason, so
-    it strips there with no replacement. The tag list spans both libraries and its rule
-    lands on both.
+    the movie and TV bodies separately, and the IMDb chart is movies only, so its rule lands
+    on the movie body alone: a TV rule naming it could never match a season, and would read
+    as a protection the operator never chose. The ``curated_list`` gate protected nothing on
+    a TV body for the same reason, so it is stripped there with no replacement rule. The tag
+    list spans both media types, so its rule lands on both bodies.
 
     ``collection_media_scope`` scopes each Plex collection's rule the same way, keyed by the
-    collection name casefolded (``own_list_media_scope``). A collection lives in one Plex
-    library, so it holds that library's one type; its rule lands only on the policy for that
-    type. Fail-open: a name the map omits, or one the map keeps at both (an unsynced, renamed,
-    or ambiguous library, and every watchlist), lands on both -- so ``None`` here is the
-    behavior before this scoping existed (#545). A watchlist genuinely spans both and stays on
-    both.
+    collection name, case-folded. A collection lives in one Plex library, so its rule lands
+    only on the policy for that library's type. This is fail-open: a collection name the map
+    omits, or keeps at both types (an unsynced, renamed, or ambiguous library, and every
+    watchlist), gets its rule on both bodies, which is also what happens when
+    ``collection_media_scope`` is not given at all. A watchlist genuinely spans both types and
+    always keeps both.
 
-    Returns the converted body, or ``None`` when nothing is legacy-shaped. The caller
-    flags the conversion (``PolicyRepair.LISTS_MIGRATED``), which makes
-    ``repaired`` true, degrades the scan, and opens the editor on it as an unsaved draft:
-    a protection moved between surfaces is a policy edit nobody has saved yet (rule 105).
-    Must not raise, for the same reason every shim here must not.
+    Returns the converted body, or ``None`` when nothing here is in the legacy shape. The
+    caller flags a real conversion (``PolicyRepair.LISTS_MIGRATED``), which marks
+    ``repaired``, degrades the scan, and opens the editor on the converted body as an unsaved
+    draft, since moving a protection between surfaces is a policy edit nobody has saved yet.
+    Never raises, like every shim in this file.
     """
     if not has_legacy_list_protections(raw):
         return None
@@ -550,44 +537,45 @@ def convert_list_protections(
     }
 
     body = copy.deepcopy(raw)
-    # An explicit empty tag list is an operator who cleared it, and converts to no rule
-    # (rule 1). A body carrying no key at all ran on the shipped default tag, so it had a
-    # live protection to carry over. Both readings live in ``legacy_keep_tags``, which the
-    # caller resolving ``tag_list_name`` reads too.
+    # An explicit empty tag list means the operator cleared it, and converts to no rule. A
+    # body with no key at all ran on the shipped default tag, which was a live protection to
+    # carry over. Both readings live in ``legacy_keep_tags``, which the caller resolving
+    # ``tag_list_name`` also reads.
     had_tags = bool(legacy_keep_tags(body))
     body.pop("keep_tags", None)
     body.pop("keep_tags_match", None)
 
     new_rules: list[dict[str, Any]] = []
     if legacy_gates.get("whitelisted"):
-        # The gate covered every list the operator curates by hand -- the keep tags AND
-        # the Plex collection and watchlist definitions -- so each existing one gets its
-        # own rule, or an upgrade would quietly withdraw the collections' cover.
+        # The gate covered every list the operator curates by hand: the keep tags, and the
+        # Plex collection and watchlist definitions. Each one gets its own rule here, or an
+        # upgrade would silently drop the collections' cover.
         if had_tags and tag_list_name:
             new_rules.append({"field": "on_list", "op": Op.EQ.value, "value": tag_list_name})
         scope = collection_media_scope or {}
         for name in collection_list_names:
-            # A single-library collection's rule lands only on the policy for its library's
-            # type; an unknown/ambiguous library keeps it on both (#545, fail-open).
+            # A collection in a single-type library gets its rule only on that type's
+            # policy. An unknown or ambiguous library keeps it on both.
             if media_type in scope.get(fold(name), BOTH_MEDIA_TYPES):
                 new_rules.append({"field": "on_list", "op": Op.EQ.value, "value": name})
-    # The IMDb chart is movies only, so its rule lands on the movie body alone (#539).
+    # The IMDb chart is movies only, so its rule lands on the movie body alone.
     if legacy_gates.get("curated_list") and imdb_list_name and media_type == "movie":
         new_rules.append({"field": "on_list", "op": Op.EQ.value, "value": imdb_list_name})
 
     def converts(gate_id: str) -> bool:
-        """Whether this gate row may leave the body. A disabled row always may, and an
-        enabled one only once its replacement rule exists: stripping an enabled gate whose
-        target list is missing would withdraw a live protection with nothing in its place,
-        so the row stays and ``build_gates`` refuses the scan loudly instead (rule 38)."""
+        """Whether this gate row may leave the body.
+
+        A disabled row always may. An enabled row may leave only once its replacement rule
+        exists: stripping an enabled gate whose target list is missing would drop a live
+        protection with nothing in its place, so the row stays instead, and ``build_gates``
+        refuses the scan loudly."""
         if not legacy_gates.get(gate_id):
             return True
         if gate_id == "whitelisted":
             return not had_tags or tag_list_name is not None
-        # curated_list: on a TV body the IMDb chart protected nothing (movies only), so the
-        # gate strips clean with no replacement -- else a missing IMDb list would refuse the
-        # TV scan over a protection that never fired there (#539). On the movie body it
-        # strips only once its replacement rule exists.
+        # curated_list on a TV body protected nothing, since the IMDb chart is movies only,
+        # so it strips clean with no replacement rule needed. On a movie body it strips only
+        # once its replacement rule exists.
         return media_type != "movie" or imdb_list_name is not None
 
     if isinstance(gates, list):

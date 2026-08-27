@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The account chip and its dropdown. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* ---- user menu ----------------------------------------------------------- */
+ * The account chip and its dropdown. See `../index.css` for how this file fits into the
+ * stylesheet's load order. */
 
 .user-menu {
   position: relative;

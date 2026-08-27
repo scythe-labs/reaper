@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The frozen-facts codec must round-trip EXACTLY.
+"""The frozen-facts codec must round-trip *exactly*.
 
 The simulator replays the real engine over these thawed facts, so any lossy field is a
-wrong preview -- and a three-state arm that flips (an ``Unknown`` thawed as ``Absent``) is a
-fail-OPEN regression, the exact bug the whole Observation type exists to prevent. These
+wrong preview. A three-state arm that flips (an ``Unknown`` thawed as ``Absent``) is a
+fail-open regression, the exact bug the whole Observation type exists to prevent. These
 tests assert the identity ``from_dict(to_dict(x)) == x`` across every arm and every field.
 """
 
@@ -27,8 +27,8 @@ from reaper.engine.reason import Reason, from_wire, legacy, to_wire
 from reaper.ratings import Rating, RatingSource
 
 #: An ``Unknown.reason`` that carries params (the movie/season media select on the
-#: match-status and no-added-at/no-size causes, ``gates.no_key_reason`` and friends) --
-#: the other arm of ``Unknown.reason: str | Reason``, alongside the bare id below.
+#: match-status and no-added-at/no-size causes, ``gates.no_key_reason`` and friends).
+#: This is the other arm of ``Unknown.reason: str | Reason``, alongside the bare id below.
 _UNKNOWN_REASON = st.builds(
     Reason,
     id=st.text(min_size=1, max_size=15),
@@ -101,14 +101,14 @@ class TestFactsRoundTrip:
         thawed, _ = facts_from_dict(facts_to_dict(facts))
         for name in _OBS_FIELDS:
             before, after = getattr(facts, name), getattr(thawed, name)
-            # The arm (Known vs Absent vs Unknown) must not change -- that is the fail-safe.
+            # The arm (Known vs Absent vs Unknown) must not change. That is the fail-safe.
             assert type(before) is type(after), f"{name}: {before} -> {after}"
 
     def test_the_season_guard_result_round_trips(self) -> None:
         facts = _bare_facts()
-        # ``defers_to_owner=True`` is deliberately NOT the default (rule 141): both fixtures
-        # once left it at ``False``, so the codec dropping the field compared equal on both
-        # sides of the round trip and this test could not see the loss.
+        # ``defers_to_owner=True`` is deliberately *not* the default. Fixtures that leave it
+        # at ``False`` would compare equal on both sides of the round trip even if the codec
+        # dropped the field, hiding the loss.
         results = (
             GateResult(GateId.SEASON_PROGRESSION, PROTECT, detail=legacy("kept newest")),
             GateResult(
@@ -123,9 +123,9 @@ class TestFactsRoundTrip:
         assert extra == results
 
     def test_the_codec_carries_every_gate_result_field(self) -> None:
-        """Rule 103's drift guard over a hand-written serializer. ``_result_to_dict`` names
+        """A drift guard over a hand-written serializer. ``_result_to_dict`` names
         ``GateResult``'s fields one at a time, so a field added to the dataclass and not
-        added there is dropped in silence -- which is how ``defers_to_owner`` came to be
+        added there is dropped in silence. That is how ``defers_to_owner`` came to be
         frozen away, making the simulator replay disagree with the scan about whether a
         hand reap is honored. Equality above cannot catch the next one on its own, because
         a field both fixtures leave at its default compares equal either way."""
@@ -162,11 +162,11 @@ def _bare_facts() -> Facts:
 
 class TestTheWireDecoderNeverRaises:
     def test_a_blob_nested_past_any_real_reason_degrades_instead_of_recursing(self) -> None:
-        """Rule 96 for the reason decoder. The engine writes at most three levels of
-        nesting, so a deeply nested stored blob is corruption -- and an unbounded recursion
-        raises ``RecursionError``, which no reader's except tuple names -- the season
-        bundle reader above ``api.simulate._season_guard_replay`` chose its exceptions by
-        hand -- so it would raise a row off the queue instead of degrading."""
+        """A depth cap for the reason decoder. The engine writes at most three levels of
+        nesting, so a deeply nested stored blob is corruption. An unbounded recursion
+        raises ``RecursionError``, which no reader's except tuple names. The season bundle
+        reader above ``api.simulate._season_guard_replay`` chose its exceptions by hand, so
+        it would raise a row off the queue instead of degrading."""
         blob: dict[str, object] = {"k": "x"}
         for _ in range(2000):
             blob = {"k": "x", "p": {"inner": blob}}

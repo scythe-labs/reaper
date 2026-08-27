@@ -1,28 +1,27 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The sections the API reference is organized into.
 
-Untagged, every operation renders as one unbroken list at ``/api/docs``: nothing to
-scan, nothing to collapse, and no way to find the four routes that do the thing you
-came for. OpenAPI's answer is a tag per operation, so this module holds the tag names.
+Without tags, every operation renders as one unbroken list at ``/api/docs``. There is
+nothing to scan, nothing to collapse, and no way to find the route you came for.
+OpenAPI's answer is a tag per operation, so this module holds the tag names.
 
-**A router declares the tag, or its routes do -- never both.** Most routers here carry
-``tags=`` on the ``APIRouter`` itself, which files every route in the file. Seven leave it
-bare and tag each route instead: ``review`` and ``settings`` because they genuinely serve
-more than one section, ``plex`` because it splits a prefix with ``settings``, and
-``policy``, ``simulate``, ``vocabulary`` and ``about`` because they were cut out of one
-router that had to be bare and kept the shape. Those four could take a router-level tag;
-doing so means deleting their route-level ones in the same edit, because mixing the two
-does not override. FastAPI *concatenates* a
-route-level tag with its router's, so the operation lands in two sidebar sections at
-once, which ``tests/test_openapi_tags.py`` refuses. A router whose routes split across
-sections needs a second router, as ``api/runs.py`` does for the pace settings.
+**A router sets the tag, or its routes do, never both.** Most routers here set
+``tags=`` on the ``APIRouter`` itself, which tags every route in the file. A few leave
+the router bare and tag each route instead, because those routes span more than one
+section: ``review`` and ``settings`` genuinely serve more than one, ``plex`` splits a
+prefix with ``settings``, and ``policy``, ``simulate``, ``vocabulary``, and ``about``
+share that same bare pattern. Converting one of those to a router-level tag means
+deleting its route-level tags in the same change, because FastAPI concatenates a
+route-level tag with its router's tag rather than overriding it, which would land the
+operation in two sidebar sections at once. ``tests/test_openapi_tags.py`` refuses that.
+A router whose routes split across sections needs a second router, the way
+``api/runs.py`` does for the pace settings.
 
-The names are the app's own: ``Review``, ``Policy``, ``Reap``, ``Scales``, and the
-Settings tabs. Someone reading the reference is someone who has used the UI, so a
-section here lands them on the page they already know rather than on a word only this
-file uses.
+The names match the app's own: ``Review``, ``Policy``, ``Reap``, ``Scales``, and the
+Settings tabs. Someone reading the reference has used the UI, so a section here lands
+them on the page they already know instead of a word only this file uses.
 
-``GROUPS`` is the single declaration -- it fixes the sidebar order, carries each
+``GROUPS`` is the single declaration. It fixes the sidebar order, carries each
 section's one-line description, and gathers the sections under the three headings
 Scalar renders from ``x-tagGroups``. There is no parallel list to fall out of step
 with it, and ``tests/test_openapi_tags.py`` fails on an operation tagged with anything
@@ -102,10 +101,10 @@ ALL: Final[tuple[str, ...]] = tuple(name for _, members in GROUPS for name, _ in
 
 
 def openapi_tags() -> list[dict[str, str]]:
-    """The schema's root ``tags`` array. Order here is the order Scalar lists them in."""
+    """Build the schema's root ``tags`` array, in the order Scalar lists them."""
     return [{"name": name, "description": text} for _, members in GROUPS for name, text in members]
 
 
 def openapi_tag_groups() -> list[dict[str, object]]:
-    """The ``x-tagGroups`` extension, which Scalar renders as the sidebar's top level."""
+    """Build the ``x-tagGroups`` extension, which Scalar renders as the sidebar's top level."""
     return [{"name": heading, "tags": [name for name, _ in members]} for heading, members in GROUPS]

@@ -1,28 +1,28 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Resolving the key that encrypts every stored credential.
 
-Reaper must not demand that you generate a key before it will start. But the key
-cannot simply be minted at boot either: it decrypts credentials written on the
-*previous* boot, so a fresh key on every start would render the entire database
-of integration keys permanently unreadable -- silently, and only noticed the next
-time a scan tried to talk to Sonarr.
+Reaper must not require generating a key before it will start. But the key cannot
+simply be minted at boot either: it decrypts credentials written on the previous boot,
+so a fresh key on every start would render the entire database of integration keys
+permanently unreadable, silently, and only noticed the next time a scan tried to talk
+to Sonarr.
 
-So auto-generation *persists*. Precedence:
+So auto-generation persists. Precedence:
 
-1. ``REAPER_SECRET_KEY`` in the environment -- always wins, never overwritten.
-2. ``<data_dir>/secret.key`` -- generated on first boot, reused forever after.
+1. ``REAPER_SECRET_KEY`` in the environment: always wins, never overwritten.
+2. ``<data_dir>/secret.key``: generated on first boot, reused forever after.
 
-Honest limitation: a key file sitting beside the database it protects does not
-defend against an attacker who already has your filesystem. What it does defend
-against is the ordinary way these leak -- a database copied into a backup, an
-issue report, or a support thread. For real separation, set ``REAPER_SECRET_KEY``
-from a secret manager and Reaper will never write the file at all.
+Honest limitation: a key file sitting beside the database it protects does not defend
+against an attacker who already has your filesystem. What it does defend against is the
+ordinary way these leak: a database copied into a backup, an issue report, or a support
+thread. For real separation, set ``REAPER_SECRET_KEY`` from a secret manager, and Reaper
+will never write the file at all.
 
-Rotation, honestly: ``REAPER_SECRET_KEY`` decrypts data written on previous boots,
-so switching it to a *fresh* value bricks every stored credential. To rotate, put
-the new key in ``REAPER_SECRET_KEY`` and the *old* one in ``REAPER_SECRET_KEY_OLD``
-(comma-separated for a chain); Reaper encrypts under the new key and still decrypts
-what the old one wrote. Only drop the old key once everything has been re-saved.
+Rotation, honestly: ``REAPER_SECRET_KEY`` decrypts data written on previous boots, so
+switching it to a fresh value would break every stored credential. To rotate, put the
+new key in ``REAPER_SECRET_KEY`` and the old one in ``REAPER_SECRET_KEY_OLD``
+(comma-separated for a chain). Reaper encrypts under the new key and still decrypts what
+the old one wrote. Only drop the old key once everything has been re-saved.
 """
 
 from __future__ import annotations
@@ -46,10 +46,10 @@ _OWNER_READ_WRITE = 0o600
 _SALT_BYTES = 16
 
 # A floor below which an operator-supplied REAPER_SECRET_KEY is almost certainly a
-# memorable passphrase rather than a generated key. We warn rather than refuse:
-# refusing would brick an existing install that already runs on a short key, and the
+# memorable passphrase rather than a generated key. This warns rather than refuses:
+# refusing would break an existing install that already runs on a short key, and the
 # scrypt KDF (see reaper.crypto) already makes an offline attack expensive. The
-# auto-generated token_urlsafe(32) key is ~43 chars and never trips this.
+# auto-generated token_urlsafe(32) key is about 43 characters and never trips this.
 _WEAK_KEY_MIN_LENGTH = 24
 _WEAK_KEY_MIN_ENTROPY_BITS = 80.0
 
@@ -57,11 +57,11 @@ _WEAK_KEY_MIN_ENTROPY_BITS = 80.0
 class SecretMaterialError(RuntimeError):
     """Key or salt material is present but unusable, so Reaper refuses to start.
 
-    The alternative -- what this used to do -- is to mint a replacement and carry on
-    (S-5). That reads as recovery and is the opposite: the file is what decrypts every
-    stored Sonarr/Radarr/Plex credential, so replacing it makes all of them permanently
-    unreadable, silently, and the operator finds out on the next scan. A boot that stops
-    with an explanation is recoverable; one that quietly re-keys is not.
+    Minting a replacement instead would look like recovery but be the opposite: the file
+    is what decrypts every stored Sonarr/Radarr/Plex credential, so replacing it makes
+    all of them permanently unreadable, silently, and the operator finds out on the next
+    scan. A boot that stops with an explanation is recoverable; one that quietly re-keys
+    is not.
 
     Missing material is a different thing entirely and still generates: an install with
     no key file yet has nothing to lose.
@@ -79,8 +79,8 @@ def env_key_active(settings: Settings) -> bool:
     ``REAPER_SECRET_KEY`` always wins and is never written to disk, so a lingering
     ``secret.key`` file is inactive when the env key is set. Anything reporting where the
     key comes from, or whether a backup is self-sufficient, must read this rather than a
-    bare ``key_file_path(settings).is_file()`` -- provenance follows runtime precedence,
-    not file existence (rule 76).
+    bare ``key_file_path(settings).is_file()``, because provenance follows runtime
+    precedence, not file existence.
     """
     if settings.secret_key is None:
         return False
@@ -95,19 +95,19 @@ def resolve_kdf_salt(settings: Settings) -> bytes:
     """The per-install KDF salt, generated and persisted on first use.
 
     A random salt per install means a dictionary attack against one leaked database
-    cannot be precomputed or reused against another install -- each guess must be
-    stretched per target. The salt is not itself a secret (its job is uniqueness, not
-    concealment), but it lives beside ``secret.key`` at 0600 all the same, and it is
-    minted even when ``REAPER_SECRET_KEY`` comes from the environment: the KEY is the
-    operator's to manage, the salt is install state. A salt file that has never existed
-    is survivable -- :class:`~reaper.crypto.SecretBox` keeps the fixed v1 salt registered
-    decrypt-only, so a fresh salt only re-keys what is written next -- but back it up
-    with the key anyway so old and new data share one derivation.
+    cannot be precomputed or reused against another install: each guess must be
+    stretched per target. The salt is not itself a secret, since its job is uniqueness
+    rather than concealment, but it lives beside ``secret.key`` at 0600 all the same, and
+    it is minted even when ``REAPER_SECRET_KEY`` comes from the environment: the key is
+    the operator's to manage, the salt is install state. A salt file that has never
+    existed is survivable, since :class:`~reaper.crypto.SecretBox` keeps the fixed v1
+    salt registered decrypt-only, so a fresh salt only re-keys what is written next. Back
+    it up with the key anyway, so old and new data share one derivation.
 
-    A salt file that exists and cannot be read is NOT survivable, and raises
+    A salt file that exists and cannot be read is not survivable, and raises
     :class:`SecretMaterialError` rather than being replaced: everything written under the
     salt it held would stop decrypting, and the fixed-v1 fallback only covers data from
-    before this install had a salt at all (S-5).
+    before this install had a salt at all.
 
     Stored as hex so the file is inspectable and diffable like ``secret.key``.
     """
@@ -160,8 +160,8 @@ def resolve_old_keys(settings: Settings) -> list[str]:
 def _shannon_entropy_bits(value: str) -> float:
     """A rough entropy estimate: Shannon entropy per character times the length.
 
-    Deliberately crude -- it is only used to decide whether to *warn*. It flags
-    'myplexserver2024' (repetitive, low per-char entropy) while passing a generated
+    Deliberately crude, since it is only used to decide whether to warn. It flags
+    'myplexserver2024' (repetitive, low per-character entropy) while passing a generated
     token, which is all it needs to do.
     """
     if not value:
@@ -193,10 +193,10 @@ def _warn_if_weak(key: str) -> None:
 def resolve_secret_key(settings: Settings) -> str:
     """Return the encryption key, generating and persisting one if needed.
 
-    Raises :class:`SecretMaterialError` when a key file exists but holds nothing. That
-    used to regenerate, which bricks every credential in the database it sits beside
-    (S-5); an empty file is far more likely a crashed write or a truncated volume than an
-    install with nothing to lose, and the operator can still choose to delete it.
+    Raises :class:`SecretMaterialError` when a key file exists but holds nothing.
+    Regenerating in that case would break every credential in the database it sits
+    beside; an empty file is far more likely a crashed write or a truncated volume than
+    an install with nothing to lose, and the operator can still choose to delete it.
     """
     # 1. Explicit configuration always wins, and is never written to disk.
     if settings.secret_key is not None:
@@ -240,18 +240,18 @@ def resolve_secret_key(settings: Settings) -> str:
 
 
 def _write_key_atomically(path: Path, key: str) -> None:
-    """Create the key file owner-only *from the outset*.
+    """Create the key file owner-only from the outset.
 
     ``Path.open('x'|'w')`` takes no mode, so the file is born world-readable under a
-    typical 0022 umask and only tightened afterwards -- a window in which any local
-    user can read the master key. ``os.open`` with an explicit mode closes that
+    typical 0022 umask and only tightened afterward, leaving a window in which any
+    local user can read the master key. ``os.open`` with an explicit mode closes that
     window: the file exists at 0600 the instant it appears. ``O_EXCL`` refuses to
-    follow a symlink or clobber a pre-existing file, and we clamp the umask so the
+    follow a symlink or clobber a pre-existing file, and the umask is clamped so the
     process default cannot loosen the requested mode.
 
     The callers only reach here when there is no readable material to lose, so the
-    already-exists branch is for the odd leftover (a path that exists but is not a
-    regular file, say). It tightens *before* writing rather than after, for the same
+    already-exists branch is for the odd leftover, such as a path that exists but is not
+    a regular file. It tightens the mode before writing rather than after, for the same
     reason the create path clamps the umask.
     """
     if path.exists():
@@ -268,8 +268,8 @@ def _write_key_atomically(path: Path, key: str) -> None:
         os.write(fd, (key + "\n").encode("utf-8"))
     finally:
         os.close(fd)
-    # Belt and braces: guarantee 0600 even if a restrictive-but-not-identical umask
-    # (or a prior file we did not expect) left it otherwise.
+    # An extra safeguard: guarantee 0600 even if a restrictive-but-not-identical umask
+    # (or an unexpected prior file) left it otherwise.
     _ensure_owner_only(path)
 
 

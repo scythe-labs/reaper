@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Putting the policy page on screen, shared by the files that test it.
 //
-// `PolicyEditor.test.tsx` was one file of 2,400 lines and, at 54s alone, the slowest in the suite
-// by a factor of two. vitest runs a file's tests serially, so that one file set the floor for
-// every run of the suite. Its warning-anchor walk was more than half of it and now lives in
-// `PolicyEditor.warnings.test.tsx`. What both files need to boot the page lives here, once.
+// What `PolicyEditor.test.tsx` and `PolicyEditor.warnings.test.tsx` both need to boot the
+// policy page lives here, once.
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
@@ -56,8 +54,8 @@ export function body(custom: CustomCondemn[] = []): PolicyBody {
     protect_conditions: [],
     custom_condemn: custom,
     graded_keeps: [],
-    // Off the server defaults (rule 141): a fixture pinning 20/10/730 could not prove the
-    // editor passed anything.
+    // Off the server defaults: a fixture pinning 20/10/730 could not prove the editor passed
+    // anything.
     rewatch_keep_enabled: true,
     rewatch_keep_discount: 15,
     rewatch_min_viewings: 8,
@@ -117,12 +115,12 @@ function EditorAt({ open, media }: { open: PolicySectionId; media: "movie" | "tv
  *  Each test file builds its mock through `vi.hoisted` so that vitest can hoist the `vi.mock`
  *  installing it above every import. A mock built here instead would be created by an import,
  *  which is exactly what the hoisted factory cannot wait for, and `apiMock.ts` says why one
- *  instance may never be shared across files in any case (rule 133). */
+ *  instance may never be shared across files in any case. */
 export function policyEditorKit(apiMock: ApiMock) {
   function renderEditor(
     policy: Partial<Policy> & { body: PolicyBody },
-    /** An Error renders against a profile read that FAILED; "pending" against one still in
-     *  flight. The two are deliberately different states on this page (B-29). */
+    /** An Error renders against a profile read that failed. "pending" renders against one
+     *  still in flight. The two are deliberately different states on this page. */
     paceSettings: ProfileSettings | Error | "pending" = pace,
     /** Pass an Error to render the editors against a vocabulary fetch that failed. */
     vocabulary: Error | null = null,

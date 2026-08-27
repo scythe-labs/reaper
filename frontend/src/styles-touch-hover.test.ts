@@ -1,27 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @vitest-environment node
 //
-// A touch screen has no hover to leave. iOS Safari applies `:hover` to the last element TAPPED
-// and holds it there until something else is tapped, so a hover rule that repaints a control
-// reads on an iPad as a state the operator selected rather than one a pointer is resting on.
-// The collection chip was found that way on a real library: after the tap that opened the
-// collection it kept accent text and an accent border, on a card the operator had merely
-// visited, beside a genuinely selected card wearing the same accent.
+// A touch screen has no hover to leave. iOS Safari applies `:hover` to the last element tapped
+// and holds it there until something else is tapped. A hover rule that repaints a control then
+// reads, on an iPad, as a state the operator chose rather than one a pointer is resting on.
 //
-// **Scoped to the collection chip on purpose, and that is the uncomfortable half.** Every other
-// `:hover` in these 34 files has the same shape and no guard, so this pins one component while
-// the tree around it is unguarded. Widening it is a repo-wide change with its own issue; a
-// guard that fails for the whole sheet today would fail on arrival and get deleted, which is
-// worse than one that holds the ground this PR actually took.
+// This test guards the collection chip only. Every other `:hover` rule in the stylesheet has
+// the same risk and no guard yet. Widening the guard to the whole sheet is separate work.
 import { describe, expect, it } from "vitest";
 
 import { CSS } from "./test/stylesheet";
 
-/** Comments blanked to the same length, so prose naming a selector is never read as a rule
- *  while every offset still resolves to its real position. */
+/** Blanks out CSS comments to the same length. This stops a selector named in a comment from
+ *  matching as a real rule, while every character offset still lines up with the source. */
 const code = CSS.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
 
-/** Each `@media (hover: hover)` block's body, found by balancing braces from its own `{`. */
+/** Returns each `@media (hover: hover)` block's body, found by matching braces from its own
+ *  `{`. */
 function hoverGuardedRegions(): string[] {
   const out: string[] = [];
   const open = /@media\s*\(\s*hover\s*:\s*hover\s*\)\s*\{/g;
@@ -39,9 +34,9 @@ function hoverGuardedRegions(): string[] {
   return out;
 }
 
-/** The trigger that lights the whole chip, by state. Written out rather than matched loosely: a
- *  matcher accepting anything with "coll-chip" and ":hover" would also accept a rule that lights
- *  only one half, which is the defect this file exists for (rule 147). */
+/** The exact selector that lights the whole chip, by state. Written out in full rather than
+ *  matched loosely: a matcher that just checks for "coll-chip" and ":hover" would also accept
+ *  a rule that lights only half the chip. */
 const LIT = {
   hover: ".coll-chip:has(button:hover)",
   press: ".coll-chip:has(button:active)",
@@ -51,24 +46,24 @@ describe("the collection chip's lit state", () => {
   it("repaints on hover only where a pointer can actually hover", () => {
     const guarded = hoverGuardedRegions().join("\n");
     expect(guarded).not.toBe("");
-    // Present in the sheet at all, so a deleted rule cannot pass by being absent.
+    // Confirms the rule exists in the sheet, so a deleted rule cannot pass by being absent.
     expect(code).toContain(LIT.hover);
-    // ...and every occurrence sits inside a hover-capable block.
+    // Confirms every occurrence sits inside a hover-capable block.
     const total = code.split(LIT.hover).length - 1;
     expect(guarded.split(LIT.hover).length - 1).toBe(total);
   });
 
-  // The half this file was first written without, which left a tap with NO feedback: hover is
-  // pointer-only above, and `:focus-visible` never matches a tap at all, since Safari reserves
-  // it for keyboard focus. Press is the state a touch device actually has.
+  // A tap gives no hover (guarded above) and no focus-visible either, since Safari reserves
+  // that for keyboard focus. Press is the state a touch device actually produces.
   it("lights on press, on every device, so a tap is never silent", () => {
     const guarded = hoverGuardedRegions().join("\n");
     expect(code).toContain(LIT.press);
     expect(guarded).not.toContain(LIT.press);
   });
 
-  // The caret's expanded state is NOT a pointer's, so it must stay outside the guard: a picker
-  // left open on a touch device would otherwise draw no accent at all on the chip it belongs to.
+  // The caret's expanded state comes from opening the picker, not from a pointer resting on it,
+  // so it stays outside the hover guard. Otherwise an open picker on a touch device would draw
+  // no accent on its chip at all.
   it("keeps the open picker's accent on every device", () => {
     const guarded = hoverGuardedRegions().join("\n");
     const expanded = '.coll-chip-caret[aria-expanded="true"]';
@@ -76,9 +71,9 @@ describe("the collection chip's lit state", () => {
     expect(guarded).not.toContain(expanded);
   });
 
-  // The lit state belongs to the CHIP. Lighting one half was the reported defect: the name went
-  // accent and the caret sat dark inside an already-accent border. Both triggers therefore hang
-  // off `.coll-chip`, never off a half, so neither can paint one side on its own.
+  // The lit state belongs to the whole chip. Both hover and press triggers attach to
+  // `.coll-chip`, never to just the name or just the caret, so one half can never light without
+  // the other.
   it("is triggered from the chip, never from one half of it", () => {
     for (const half of [".coll-chip-main", ".coll-chip-caret"]) {
       for (const state of [":hover", ":active"]) {

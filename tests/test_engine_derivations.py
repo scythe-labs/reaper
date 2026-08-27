@@ -4,17 +4,17 @@
 Five of the same shape, each low severity on its own and each a way for two parts of the
 engine to disagree about one number:
 
-* the frozen-evidence field list was hand-maintained beside the dataclass it mirrors (R-1);
-* "days dormant" was derived twice and the two disagreed at a boundary -- one floored, the
-  other floated -- so an item could bucket one side of a threshold and score the other (R-2);
-  both readers were the retired lab engines, and what R-2 left behind is the single
-  ``engine.dormancy`` derivation every surviving lane takes;
-* the streamed dataset download opted out of the retry every other read gets (I-5);
-* a whole second condemn/protect/abstain decision function sat in the engine, reachable
-  only from its own tests (H-2);
-* the stored why-panel document is written by hand in ``services.snapshot._explain`` and
+* The frozen-evidence field list was hand-maintained beside the dataclass it mirrors.
+* "Days dormant" was derived twice, and the two disagreed at a boundary: one floored, the
+  other floated, so an item could bucket one side of a threshold and score the other. Both
+  readers were the retired lab engines, and what is left behind is the single
+  ``engine.dormancy`` derivation every surviving lane takes.
+* The streamed dataset download opted out of the retry every other read gets.
+* A whole second condemn/protect/abstain decision function sat in the engine, reachable
+  only from its own tests.
+* The stored why-panel document is written by hand in ``services.snapshot._explain`` and
   declared as models in ``engine.explanation``, and the reader drops what it does not
-  name (W5-1).
+  name.
 """
 
 from __future__ import annotations
@@ -51,15 +51,15 @@ NOW = utcnow()
 
 
 # ---------------------------------------------------------------------------
-# R-1: the frozen-evidence field list
+# The frozen-evidence field list
 # ---------------------------------------------------------------------------
 
 
 class TestTheFrozenFieldListFollowsTheDataclass:
     """``_OBS_FIELDS`` used to be typed out beside ``Facts``. Forgetting to extend it did not
-    raise and did not fail a test: the new field carries an ``Absent`` default, so it
-    constructed fine and round-tripped as ``Absent`` -- silently dropping whatever keep
-    discount the real value would have earned, on the lane where ``Absent`` fails OPEN."""
+    raise and did not fail a test. The new field carries an ``Absent`` default, so it
+    constructed fine and round-tripped as ``Absent``, silently dropping whatever keep
+    discount the real value would have earned, on the lane where ``Absent`` fails *open*."""
 
     def test_it_covers_every_observation_field_and_nothing_else(self) -> None:
         every = {f.name for f in dataclasses.fields(Facts)}
@@ -79,9 +79,9 @@ class TestTheFrozenFieldListFollowsTheDataclass:
         assert facts_codec._observation_fields(_FutureFacts) == ("size_bytes", "some_new_signal")
 
     def test_a_field_this_module_cannot_encode_is_loud(self) -> None:
-        """Not an observation and not one of the two handled by hand: nothing here would
-        serialize it, so it would vanish across the freeze in silence. Raised at import, which
-        is a build failure, never a scan-time one."""
+        """Not an observation and not one of the two handled by hand. Nothing here would
+        serialize it, so it would vanish across the freeze in silence. Raised at import,
+        which is a build failure, never a scan-time one."""
 
         @dataclasses.dataclass(frozen=True)
         class _BadFacts:
@@ -109,31 +109,31 @@ class TestTheFrozenFieldListFollowsTheDataclass:
 
     def test_a_snapshot_written_before_a_field_existed_thaws_unknown(self) -> None:
         """Old snapshots outlive the code that wrote them, so deriving the list on the write
-        side moves the problem to the read side. ``Unknown`` is the honest reading -- that
-        scan never looked -- and the fail-safe one: gates abstain on it and the scorer adds no
-        pressure. ``Absent`` would assert a real absence nobody observed."""
+        side moves the problem to the read side. ``Unknown`` is the honest reading, since
+        that scan never looked, and the fail-safe one. Gates abstain on it and the scorer
+        adds no pressure. ``Absent`` would assert a real absence nobody observed."""
         frozen = facts_codec.facts_to_dict(self._facts())
         del frozen["obs"]["requested"]  # a scan from before the field was added
 
         thawed, _ = facts_codec.facts_from_dict(frozen)
 
-        # `Unknown` and `Absent` are disjoint, so this one assert carries both halves:
-        # a second `not isinstance(..., Absent)` beside it could never fail (rule 118).
+        # `Unknown` and `Absent` are disjoint, so this one assert carries both halves. A
+        # second `not isinstance(..., Absent)` beside it could never fail.
         assert isinstance(thawed.requested, Unknown)
-        # And the fields that ARE recorded still come back exactly as they went in.
+        # And the fields that *are* recorded still come back exactly as they went in.
         assert thawed.days_observed_unwatched == Known(value=400, source="tautulli")
 
     def test_an_empty_stored_body_does_not_crash_the_simulator(self) -> None:
         """``facts_json`` is nullable, and the simulator reads it as ``"{}"`` when it is. That
-        used to be a ``KeyError`` a hundred frames into a re-decide; now it is an item with no
-        evidence at all, which reads Unknown everywhere and therefore keeps."""
+        used to be a ``KeyError`` a hundred frames into a re-decide. Now it is an item with
+        no evidence at all, which reads Unknown everywhere and therefore keeps."""
         thawed, extra = facts_codec.facts_from_dict({})
         assert extra == ()
         assert all(isinstance(getattr(thawed, name), Unknown) for name in facts_codec._OBS_FIELDS)
 
 
 # ---------------------------------------------------------------------------
-# R-2: one dormancy derivation
+# One dormancy derivation
 # ---------------------------------------------------------------------------
 
 
@@ -148,23 +148,23 @@ class TestDormancyIsDerivedOnce:
         )
 
     def test_never_played_measures_from_the_later_of_arrival_and_the_horizon(self) -> None:
-        """Never from epoch 0, which reads as ~20,600 days -- the maximum condemnation
-        pressure the scale can express, for the item we know least about. And never from
-        before our evidence begins: a mirror one year deep cannot say a file has been ignored
-        for five, only that it was not watched within reach."""
+        """Never from epoch 0, which reads as the maximum condemnation pressure the scale
+        can express, for the item we know least about. And never from before our evidence
+        begins. A mirror one year deep cannot say a file has been ignored for five, only
+        that it was not watched within reach."""
         added = NOW - timedelta(days=900)
         horizon = NOW - timedelta(days=365)
         assert reference_instant(last_played=None, added_at=added, horizon=horizon) == horizon
         assert reference_instant(last_played=None, added_at=NOW, horizon=horizon) == NOW
 
     def test_a_play_alone_is_enough_with_no_arrival_date(self) -> None:
-        """The thaw the two lanes used to spell differently (#272, #257).
+        """The thaw the two lanes used to spell differently.
 
         Dormancy *is* days since the last play, so a missing arrival date is not on its own a
         reason to refuse to measure. `snapshot.build_facts` used to take Unknown the moment
         `added_at` was missing whatever history it held, while `season_scan` measured from the
-        play -- one derived value, two thaw rules. The helper owns the branch now (rule 104),
-        so both lanes get this answer.
+        play. That was one derived value with two thaw rules. The helper owns the branch
+        now, so both lanes get this answer.
         """
         played = NOW - timedelta(days=10)
         assert (
@@ -175,9 +175,9 @@ class TestDormancyIsDerivedOnce:
     def test_neither_a_play_nor_an_arrival_date_measures_from_nothing(self) -> None:
         """The one state that genuinely cannot be measured, and the only one that may thaw to
         Unknown. Returning the horizon here instead would fabricate a Known dormancy out of a
-        record we hold no evidence about -- which is the epoch-0 failure wearing a later date,
-        and it condemns. `None` is what makes each lane render it as Unknown, which blocks both
-        dormancy gates and abstains, so the item is kept."""
+        record we hold no evidence about. That is the epoch-0 failure wearing a later date,
+        and it condemns. `None` is what makes each lane render it as Unknown, which blocks
+        both dormancy gates and abstains, so the item is kept."""
         assert (
             reference_instant(last_played=None, added_at=None, horizon=NOW - timedelta(days=365))
             is None
@@ -185,23 +185,23 @@ class TestDormancyIsDerivedOnce:
 
     def test_it_floors_rather_than_rounds(self) -> None:
         """Dormancy sits on the condemn lane, so reducing its precision must move it toward
-        LESS pressure (rule 31). An item an hour short of a 90-day floor stays kept."""
+        *less* pressure. An item an hour short of a 90-day floor stays kept."""
         reference = NOW - timedelta(days=89, hours=23, minutes=59)
         assert dormancy_days(reference, now=NOW) == 89
 
     def test_a_reference_in_the_future_is_negative_not_clamped(self) -> None:
         """A play after the cutoff means the evidence and the clock disagree. Callers treat
-        that as "cannot be judged"; inventing a 0 would score an item on a contradiction."""
+        that as "cannot be judged". Inventing a 0 would score an item on a contradiction."""
         assert dormancy_days(NOW + timedelta(days=2), now=NOW) < 0
 
 
 # ---------------------------------------------------------------------------
-# I-5: the streamed download
+# The streamed download
 # ---------------------------------------------------------------------------
 
 
 class TestTheStreamedDownloadIsRetried:
-    """Every other read rides the shared retry; this one called ``self._client.stream``
+    """Every other read rides the shared retry. This one called ``self._client.stream``
     directly, so one transient blip two hundred megabytes into the ratings dataset aborted
     the whole transfer and forced a restart from zero."""
 
@@ -225,7 +225,7 @@ class TestTheStreamedDownloadIsRetried:
         self, httpx2_mock: respx.Router, tmp_path: Path
     ) -> None:
         """An attempt restarts from the beginning, so the destination is reopened ``"wb"``.
-        Appending would leave a body that still parses -- as a dataset of the wrong contents,
+        Appending would leave a body that still parses, as a dataset of the wrong contents,
         which nothing downstream would notice."""
         destination = tmp_path / "data.tsv.gz"
         destination.write_bytes(b"leftovers from the last attempt")
@@ -265,7 +265,7 @@ class TestTheStreamedDownloadIsRetried:
 
 
 # ---------------------------------------------------------------------------
-# H-2: the second decision function
+# The second decision function
 # ---------------------------------------------------------------------------
 
 
@@ -273,9 +273,9 @@ class TestThereIsOnlyOneDecisionFunction:
     def test_the_requester_rule_is_gone(self) -> None:
         """``engine/requester.py`` held a complete CONDEMN/PROTECT/ABSTAIN decision with its
         own ``Verdict`` type, parallel to ``engine.verdict.decide_verdict``. Nothing in
-        production called it: Scales was rebuilt to sit on the last scan rather than re-judge
-        requests live, and only its own tests were left. Rule 38 -- it lands with a consumer
-        or it does not exist."""
+        production called it. Scales was rebuilt to sit on the last scan rather than
+        re-judge requests live, and only its own tests were left. Code lands with a
+        consumer or it does not exist."""
         assert importlib.util.find_spec("reaper.engine.requester") is None
 
     def test_the_evidence_it_carried_lives_with_the_surface_that_reads_it(self) -> None:
@@ -285,33 +285,33 @@ class TestThereIsOnlyOneDecisionFunction:
 
     def test_an_unlinked_account_reads_as_no_plays_not_as_an_error(self) -> None:
         """A Seerr account with no Plex link has history Reaper cannot see. Every caller
-        guards the ``None`` itself before acting; here it is simply zero."""
+        guards the ``None`` itself before acting. Here it is simply zero."""
         assert WatchEvidence(plays_by_user={7: 3}, distinct_watchers=1).plays_by(None) == 0
 
 
 # ---------------------------------------------------------------------------
-# W5-1: the stored explanation, written by hand and declared elsewhere
+# The stored explanation, written by hand and declared elsewhere
 # ---------------------------------------------------------------------------
 
 
 #: The two keys ``_explain`` writes on ``protections_unknown`` and on neither of the other
 #: two protection lists. One model types all three, and ``GateOutcomeOut``'s own docstring
-#: rests on the asymmetry: an entry in the other two reads ``None`` for a reason that is not
-#: the third state, so a reader must take the flag off ``protections_unknown``. Stated here
-#: as the one exception to "the writer names what the reader declares", so the walk below
-#: has no hole in it.
+#: rests on the asymmetry. An entry in the other two reads ``None`` for a reason that is
+#: not the third state, so a reader must take the flag off ``protections_unknown``. Stated
+#: here as the one exception to "the writer names what the reader declares", so the walk
+#: below has no hole in it.
 _UNKNOWN_ONLY_GATE_FLAGS = frozenset({"defers_to_owner", "unestablishable"})
 
 
 def _models_in(annotation: object) -> Iterator[type[BaseModel]]:
     """Every model reachable inside one annotation, at any nesting depth.
 
-    Recursive rather than one level deep. This is rule 147's bound, read off an annotation
-    instead of source text: the tree spells these two ways today, ``MatchOut | None`` and
-    ``list[SignalContribution]``. Their combination ``list[X] | None`` is the natural spelling
-    for a block added to a document that must still read old rows. One ``get_args`` pass sees
-    ``(list[X], NoneType)``, and neither is a model, so that block would leave the walk in
-    silence and its entries would never be compared.
+    Recursive rather than one level deep, read off an annotation instead of source text.
+    The tree spells these two ways today, ``MatchOut | None`` and
+    ``list[SignalContribution]``. Their combination ``list[X] | None`` is the natural
+    spelling for a block added to a document that must still read old rows. One
+    ``get_args`` pass sees ``(list[X], NoneType)``, and neither is a model, so that block
+    would leave the walk in silence and its entries would never be compared.
     """
     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
         yield annotation
@@ -323,9 +323,9 @@ def _nested_models(model: type[BaseModel]) -> dict[str, type[BaseModel]]:
     """Each field of ``model`` holding another model, or a list of one, as ``{key: model}``.
 
     Derived off the declaration rather than listed, so a block added to ``Explanation``
-    enters the walk below without anyone extending it. A hand-written list is the failure
-    rule 145 names: a member the walk never collected is missing from the guard and from
-    the proof of the guard alike.
+    enters the walk below without anyone extending it. A hand-written list has the same
+    failure mode. A member the walk never collected is missing from the guard and from the
+    proof of the guard alike.
     """
     found: dict[str, type[BaseModel]] = {}
     for name, field in model.model_fields.items():
@@ -337,10 +337,10 @@ def _nested_models(model: type[BaseModel]) -> dict[str, type[BaseModel]]:
 def _written_explanation() -> dict[str, Any]:
     """One stored explanation from the real writer, with every block populated at once.
 
-    **A shape, not a scan.** No single item produces a merged bind *and* a list of
-    candidate rows *and* all three protection lists; the subject here is which keys are
+    This is a shape, not a scan. No single item produces a merged bind *and* a list of
+    candidate rows *and* all three protection lists. The subject here is which keys are
     written, and a realistic vector leaves half of them unexercised. Every optional
-    argument is passed a value that is not its default for the same reason (rule 141).
+    argument is passed a value that is not its default, for the same reason.
     """
     evaluation = Evaluation(
         results=[
@@ -421,7 +421,7 @@ def _written_explanation() -> dict[str, Any]:
 def _blocks(document: dict[str, Any]) -> Iterator[tuple[str, set[str], type[BaseModel]]]:
     """Every object in the written document, as ``(label, its keys, the model typing it)``.
 
-    A declared block the writer never wrote is skipped rather than raising here: the
+    A declared block the writer never wrote is skipped rather than raising here. The
     top-level comparison already names it, and a ``KeyError`` mid-walk would fail the run
     before the rest of the document was read.
     """
@@ -435,19 +435,21 @@ def _blocks(document: dict[str, Any]) -> Iterator[tuple[str, set[str], type[Base
             yield key, set(value), model
 
 
-#: The two lists the flags above are NOT written on. Matched against the whole block name
-#: rather than as a prefix, so a field spelled `protections_fired_since` cannot inherit the
-#: exemption by looking like one of these.
+#: The two lists the flags above are *not* written on. Matched against the whole block
+#: name rather than as a prefix, so a field spelled `protections_fired_since` cannot
+#: inherit the exemption by looking like one of these.
 _LISTS_WITHOUT_THE_GATE_FLAGS = frozenset({"protections_fired", "protections_checked"})
 
 
 def _declared(label: str, model: type[BaseModel]) -> set[str]:
-    """The keys the writer owes this block: its model's fields, less the stated exceptions.
+    """The keys the writer owes this block. These are its model's fields, less the stated
+    exceptions.
 
     On the signal, keep and protection rows, ``detail`` is declared and deliberately never
-    written: it is the prose of a row frozen before details were typed (docs/history/I18N_PLAN.md
-    §5), so only stored legacy rows carry it and every fresh row writes ``detail_key``
-    instead. The ``match`` block's own ``detail`` is untouched audit prose and stays owed."""
+    written. It is the prose of a row frozen before details were typed
+    (docs/history/I18N_PLAN.md §5), so only stored legacy rows carry it and every fresh
+    row writes ``detail_key`` instead. The ``match`` block's own ``detail`` is untouched
+    audit prose and stays owed."""
     fields = set(model.model_fields)
     root = label.split("[")[0]
     if root in {
@@ -464,22 +466,23 @@ def _declared(label: str, model: type[BaseModel]) -> set[str]:
 
 
 class TestTheStoredExplanationIsWrittenAsItIsDeclared:
-    """``snapshot._explain`` builds the why-panel document by hand; ``engine.explanation``
-    declares it as pydantic models. The declaration is the READ side, so it drops any key it
-    does not name -- pydantic's ``extra="ignore"`` -- and that is exactly how ``keeps`` and
-    ``match`` were written on every scan for months while the panel rendered neither.
+    """``snapshot._explain`` builds the why-panel document by hand. ``engine.explanation``
+    declares it as pydantic models. The declaration is the *read* side, so it drops any key
+    it does not name, through pydantic's ``extra="ignore"``, and that is exactly how
+    ``keeps`` and ``match`` were written on every scan for months while the panel rendered
+    neither.
 
     Nothing pinned the key set before this class. The baseline fixture reads nine of the
     thirteen top-level keys and four fields of a signal row (``tests/_policy_lab.py``). So a
-    key added on one side alone was invisible to the whole suite, in both directions: a field
-    declared and never written reads ``None`` forever.
+    key added on one side alone was invisible to the whole suite, in both directions. A
+    field declared and never written reads ``None`` forever.
     """
 
     def test_the_writer_and_the_declaration_name_the_same_keys(self) -> None:
         """Every object in the document, against the model that types it. Collected rather
         than asserted per block, so a failure names each disagreement instead of the first,
-        and the message names both files, since whichever one a reader is holding the fix is
-        usually in the other (rule 144)."""
+        and the message names both files, since whichever one a reader is holding the fix
+        is usually in the other."""
         document = _written_explanation()
 
         wrong = [
@@ -500,8 +503,8 @@ class TestTheStoredExplanationIsWrittenAsItIsDeclared:
         """The exception above, stated positively. ``_explain`` writes ``defers_to_owner``
         and ``unestablishable`` on every ``protections_unknown`` entry and on no other, which
         is what lets ``api.review._chip`` read a missing key as "this row cannot say" instead
-        of as a gate with no opinion. One entry can appear in two lists -- an unestablishable
-        season PROTECT does -- and only the ``protections_unknown`` copy carries the flags."""
+        of as a gate with no opinion. One entry can appear in two lists, an unestablishable
+        season PROTECT does, and only the ``protections_unknown`` copy carries the flags."""
         document = _written_explanation()
 
         assert all(
@@ -514,14 +517,15 @@ class TestTheStoredExplanationIsWrittenAsItIsDeclared:
         )
 
     def test_the_walk_covers_every_block_the_declaration_holds(self) -> None:
-        """Rule 145: the assertions above can only fail on a block the walk collected, so the
-        population it collected is pinned rather than assumed. Seven objects over five models,
-        counted by hand against the fixture: the document, its ``match``, one signal, one keep,
-        and one entry in each of the three protection lists.
+        """The assertions above can only fail on a block the walk collected, so the
+        population it collected is pinned rather than assumed. Seven objects over five
+        models, counted by hand against the fixture. That is the document, its ``match``,
+        one signal, one keep, and one entry in each of the three protection lists.
 
-        **Labels, never a total.** A fixture landing two entries in one protection list and
-        none in another also totals seven. An empty list makes the ``all(...)`` above true over
-        nothing, so the flags claim would go unproven with three tests green."""
+        This checks labels, never a total. A fixture landing two entries in one protection
+        list and none in another also totals seven. An empty list makes the ``all(...)``
+        above true over nothing, so the flags claim would go unproven with three tests
+        green."""
         document = _written_explanation()
 
         assert set(_nested_models(Explanation)) == {
@@ -546,16 +550,16 @@ class TestTheStoredExplanationIsWrittenAsItIsDeclared:
 
     def test_the_reader_reads_back_what_the_writer_wrote(self) -> None:
         """The round trip the key sets exist to protect. ``read_explanation`` is the one
-        definition of "unreadable" for this document (rule 104) and both the panel and the
-        hand-reap path run it, so a writer the reader refuses holds every file. The two
-        blocks the reader used to drop are asserted by value, not by presence.
+        definition of "unreadable" for this document, and both the panel and the hand-reap
+        path run it, so a writer the reader refuses holds every file. The two blocks the
+        reader used to drop are asserted by value, not by presence.
 
-        **The merged keys are asserted RAW as well, and that is the load-bearing half.**
+        The merged keys are asserted *raw* as well, and that is the load-bearing half.
         ``MatchOut.merged_rating_keys`` is a lax ``list[int] | None``, so a stored
-        ``["4242", "4243"]`` reads back through it as ``[4242, 4243]`` and the model assertion
-        holds. ``executor._equivalent_keys`` filters the raw list on ``isinstance(value, int)``
-        and comes back with neither. That is the streaming veto and the played-since-approval
-        check losing the second listing of a merged bind."""
+        ``["4242", "4243"]`` reads back through it as ``[4242, 4243]`` and the model
+        assertion holds. ``executor._equivalent_keys`` filters the raw list on
+        ``isinstance(value, int)`` and comes back with neither. That is the streaming veto
+        and the played-since-approval check losing the second listing of a merged bind."""
         document = _written_explanation()
         body = read_explanation(document)
 
@@ -565,9 +569,9 @@ class TestTheStoredExplanationIsWrittenAsItIsDeclared:
         assert [keep.name for keep in body.keeps] == ["Rated well"]
 
     def test_a_row_without_rewatch_odds_reads_as_nothing_to_show(self) -> None:
-        """#554 stage 2: a row stored before this field existed carries no key at all, not
-        a null value written by a version that knows about it -- the same thaw rule 104
-        gives every other optional block here (``match``, ``keeps``)."""
+        """A row stored before this field existed carries no key at all, not a null value
+        written by a version that knows about it. That is the same thaw rule every other
+        optional block here gets (``match``, ``keeps``)."""
         document = _written_explanation()
         del document["rewatch_odds"]
 
@@ -577,11 +581,11 @@ class TestTheStoredExplanationIsWrittenAsItIsDeclared:
         assert body.rewatch_odds is None
 
     def test_a_rewatch_odds_block_without_bound_pct_does_not_blank_the_whole_panel(self) -> None:
-        """#936: ``bound_pct`` shipped after ``rewatch_odds`` did, so a row stored between
-        the two carries the block with no ``bound_pct`` key at all. A required field here
-        would raise out of ``Explanation`` entirely (rule 96's *unreadable* raises, exactly
-        as ``_thaw_rewatch_odds``'s own docstring describes for an illegible inner field) and
-        blank every other block on the panel with it -- not merely lose the rewatch section."""
+        """``bound_pct`` shipped after ``rewatch_odds`` did, so a row stored between the two
+        carries the block with no ``bound_pct`` key at all. A required field here would
+        raise out of ``Explanation`` entirely, exactly as ``_thaw_rewatch_odds``'s own
+        docstring describes for an illegible inner field, and blank every other block on
+        the panel with it, not merely lose the rewatch section."""
         document = _written_explanation()
         assert "bound_pct" in document["rewatch_odds"]
         del document["rewatch_odds"]["bound_pct"]

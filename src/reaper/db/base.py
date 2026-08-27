@@ -1,14 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Declarative base and metadata.
 
-The naming convention below is load-bearing and effectively unretrofittable.
+The naming convention below is load-bearing and cannot be changed later.
 
-SQLite cannot ALTER a constraint. Alembic works around this by rebuilding the
-table (``render_as_batch=True``), but to *drop* a constraint during that rebuild
-it must be able to name it -- and SQLite auto-generates anonymous names. Without
-a convention fixed before the first migration, later schema changes fail with
-``ValueError: Constraint must have a name``, and the only fix is to rewrite the
-entire migration history.
+SQLite cannot ALTER a constraint. Alembic works around this by rebuilding the table
+(``render_as_batch=True``), but dropping a constraint during that rebuild requires
+naming it, and SQLite auto-generates anonymous names. Without a convention fixed
+before the first migration, later schema changes fail with ``ValueError: Constraint
+must have a name``, and the only fix is to rewrite the entire migration history.
 """
 
 from __future__ import annotations
@@ -23,10 +22,10 @@ from reaper.db.types import EpochDateTime
 
 # Every timestamp in Reaper is timezone-aware UTC.
 #
-# Stored as an integer unix epoch. Not DateTime(timezone=True), which is a silent
-# no-op on SQLite (it stores no timezone and hands back naive datetimes on read).
-# An integer cannot carry that ambiguity at all -- the instant IS the value -- and
-# it is the format Tautulli and Plex already give us. See reaper.db.types.
+# Stored as an integer unix epoch, not DateTime(timezone=True), which is a silent
+# no-op on SQLite: it stores no timezone and hands back naive datetimes on read. An
+# integer cannot carry that ambiguity, since the instant is the value, and it is the
+# format Tautulli and Plex already give us. See reaper.db.types.
 UtcTimestamp = Annotated[datetime, mapped_column(EpochDateTime())]
 
 NAMING_CONVENTION = {

@@ -1,32 +1,31 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The "Leaving Soon" shelf.
 
-While an item is in its grace window, Reaper can show it on a **"Leaving Soon"
-collection** in Plex -- a real shelf on the library's Recommended page, visible to your
-users -- and put the matching label on it for anyone who builds smart collections or
-overlay tooling on top. The shelf tracks the grace set: an item entering grace appears,
-an item that leaves grace (spared, rescued, or re-judged) is taken off. That reconcile
-is the whole feature, run per enabled library: movies in movie libraries, seasons in TV
-libraries.
+While an item is in its grace window, Reaper can show it on a "Leaving Soon" collection
+in Plex, a real shelf on the library's Recommended page visible to your users, and put
+the matching label on it for anyone who builds smart collections or overlay tooling on
+top. The shelf tracks the grace set: an item entering grace appears, and an item that
+leaves grace (spared, rescued, or re-judged) is taken off. That reconcile is the whole
+feature, run per enabled library: movies in movie libraries, seasons in TV libraries.
 
-Honest limits, flagged rather than hidden:
+Honest limits, stated rather than hidden:
 
-* **Plex cannot force the shelf onto everyone.** It shows on the library's Recommended
-  page and on Home for users who pinned the library. Discord, configured under
-  Notifications, is the warning channel that reaches everyone else, and it works whether
-  or not the shelf is on.
-* **Writing the shelf is a mutation, so it is guarded** -- but a benign one. It goes
-  through ``benign_shelf_write``, which permits exactly the label batch edit and the
-  collection edits (see ``clients.plex._benign_shape``); by default it is gated exactly
-  like a deletion (write only when armed), and the operator can turn on "Update while
+* Plex cannot force the shelf onto everyone. It shows on the library's Recommended page
+  and on Home for users who pinned the library. Discord, configured under Notifications,
+  is the warning channel that reaches everyone else, and it works whether or not the
+  shelf is on.
+* Writing the shelf is a mutation, so it is guarded, but a benign one. It goes through
+  ``benign_shelf_write``, which permits only the label batch edit and the collection
+  edits (see ``clients.plex._benign_shape``). By default it is gated exactly like a
+  deletion, write only when armed, and the operator can turn on "Update while
   read-only" in Settings -> Plex to allow the write while read-only, so the warning can
-  appear *during* the grace countdown, which is the point of it. It can never permit a
+  appear during the grace countdown, which is the point of it. It can never permit a
   delete: only the shelf shapes are permitted, and file deletions still require arming
   plus a journalled declaration. Reading what is already marked is a GET and works any
   time.
 
-The reconcile itself is pure and lives at the top of this file, where it can be tested
-to death without a Plex server in sight.
+The reconcile itself is pure and lives at the top of this file, so it can be tested
+fully without a Plex server.
 """
 
 from __future__ import annotations
@@ -59,15 +58,15 @@ log = structlog.get_logger(__name__)
 class ShelfName:
     """What the shelf is called, and what Plex still calls it.
 
-    The collection and the label share one name deliberately: one shelf, one vocabulary.
-    The operator chooses it (``app_settings.get_leaving_soon_name``), because every Plex
-    user on the server reads it and a household that does not speak English should not be
-    handed an English shelf. Plex title-cases what it is given and every comparison in the
-    Plex client casefolds, so the display form is what Reaper writes and searches for.
+    The collection and the label share one name deliberately: one shelf, one name. The
+    operator chooses it (``app_settings.get_leaving_soon_name``), because every Plex user
+    on the server reads it, and a household that does not speak English should not be
+    handed an English shelf. Plex title-cases what it is given, and every comparison in
+    the Plex client lower-cases both sides first, so the display form is what Reaper
+    writes and searches for.
 
     ``previous`` is what the last completed pass wrote. The two are equal on every pass
-    except the first one after a rename, which is the pass that has to carry the shelf
-    across.
+    except the first one after a rename, which is the pass that carries the shelf across.
     """
 
     current: str
@@ -77,25 +76,26 @@ class ShelfName:
     def renaming(self) -> bool:
         """Whether Plex still holds the shelf under a different name.
 
-        Casefolded through the same helper the label comparisons use: Plex title-cases what
-        you write, so "leaving soon" and "Leaving Soon" name one shelf and re-titling one to
-        the other would be a write that changes nothing an operator can see.
+        Compared through the same lower-casing helper the label comparisons use: Plex
+        title-cases what you write, so "leaving soon" and "Leaving Soon" name one shelf,
+        and re-titling one to the other would be a write that changes nothing an operator
+        can see.
         """
         return normalize_label(self.current) != normalize_label(self.previous)
 
 
 #: How many libraries reconcile at once. Libraries are independent shelves, so they run
-#: concurrently rather than one after another -- but under a bound, for the same reason the
-#: season fan-out is bounded: a modest self-hosted Plex should see a handful of parallel
-#: reads, never one per library at once, and the client's shared requests session pools only
-#: ten connections. A setup with many libraries reconciles in waves rather than a stampede.
+#: concurrently rather than one after another, but under a bound: a modest self-hosted Plex
+#: should see only a handful of parallel reads, never one per library at once, and the
+#: client's shared requests session pools only ten connections. A setup with many libraries
+#: reconciles in waves rather than all at once.
 #:
-#: These tasks push reads AND writes through the one shared ``GuardedSession`` across threads
-#: without taking the client's ``_sweep_lock`` (which the GUID sweeps use). Acceptable here
-#: because urllib3's connection-pool checkout is atomic and each library's ``sync_section``
-#: holds a DISTINCT plexapi section object, so the per-library ``batchMultiEdits`` state never
-#: overlaps -- no shared mutable request state crosses threads. If that ever changes, serialize
-#: the shelf writes under ``_sweep_lock`` instead (rule 24 / PR-4).
+#: These tasks push reads and writes through the one shared ``GuardedSession`` across threads
+#: without taking the client's ``_sweep_lock`` (which the GUID sweeps use). That is safe
+#: because urllib3's connection-pool checkout is atomic, and each library's ``sync_section``
+#: holds its own distinct plexapi section object, so the per-library ``batchMultiEdits`` state
+#: never overlaps between threads. If that ever changes, serialize the shelf writes under
+#: ``_sweep_lock`` instead.
 SHELF_CONCURRENCY = 4
 
 
@@ -116,10 +116,9 @@ class LeavingSoonDegradedError(Refusal):
 class LeavingSoonUnlinkedError(Refusal):
     """No Plex server is linked, so there is nowhere to put a shelf.
 
-    Its own class because the route answers it 400 and a client ``PlexError`` 502. This used
-    to raise ``PlexError`` too, so one class reached the route carrying a configuration
-    problem and an upstream failure, and the route could not tell them apart: an unreachable
-    server was reported as a bad request, in a sentence the client wrote for a log (#734).
+    Its own class, distinct from a client's ``PlexError``, because the route answers this
+    one 400 and a ``PlexError`` 502: one means nothing is configured, the other means a
+    configured server did not answer.
     """
 
     def __init__(self) -> None:
@@ -129,17 +128,15 @@ class LeavingSoonUnlinkedError(Refusal):
 async def _latest_scan_degraded(session: AsyncSession) -> bool:
     """Did the most recent scan declare itself untrustworthy?
 
-    A degraded snapshot is un-plannable outright, and rule 116 says its side effects are
-    gated WITH its plan. The shelf and the Discord heads-up both read the same condemned
-    set the planner refuses to touch, so acting on it here is the same mistake as deleting
-    on it, minus the file: an operator is told in their own library, or in a room full of
+    A degraded snapshot cannot be planned at all, and its side effects must stay gated with
+    its plan. The shelf and the Discord heads-up both read the same condemned set the
+    planner refuses to touch, so acting on it here is the same mistake as deleting from it,
+    minus the file: an operator would be told, in their own library or in a room full of
     people, that a title is about to go, on evidence Reaper has already said it cannot
     stand behind.
 
-    ``scan_runner`` already skips the after-scan shelf on a degraded snapshot, but that
-    covered only the automatic path: ``POST /api/leaving-soon/sync`` still labeled items
-    and announced. Gating it here instead covers every caller of :func:`run_sync`, which
-    is the one place both paths converge.
+    Gating it here covers every caller of :func:`run_sync`, including the manual
+    ``POST /api/leaving-soon/sync`` route, not just the automatic after-scan pass.
 
     No snapshot at all is not degraded. It is simply nothing to announce, and the grace
     report below is empty on its own.
@@ -166,8 +163,8 @@ def reconcile(should_be_marked: set[int], currently_marked: set[int]) -> Leaving
     """The marked set should exactly track the in-grace set.
 
     Mark in-grace items that lack it; unmark items that carry it but are no longer in
-    grace (spared, rescued, or aged out). Sorted so the plan is stable and diffable, not
-    dependent on set iteration order.
+    grace (spared, rescued, or aged out). Sorted so the plan is stable and easy to diff,
+    rather than dependent on set iteration order.
     """
     return LeavingSoonPlan(
         to_add=sorted(should_be_marked - currently_marked),
@@ -182,15 +179,15 @@ class ShelfOutcome:
     section_key: int
     section_title: str
     kind: str
-    """``"movie"`` or ``"show"`` -- which level the shelf works at in this library."""
+    """``"movie"`` or ``"show"``: which level the shelf works at in this library."""
     added: int
     removed: int
     on_shelf: int
     """How many items belong on this library's shelf after the reconcile."""
     applied: bool
-    """Whether the shelf is real in Plex after this pass: writing was allowed and the
-    walk completed (a library that already matched counts -- nothing needed writing).
-    False only in preview (read-only, no opt-in)."""
+    """Whether the shelf is real in Plex after this pass: writing was allowed and the walk
+    completed. (A library that already matched counts too; nothing needed writing.) False
+    only in preview, meaning read-only with no opt-in."""
     error: str | None = None
     """A per-library failure. One unreachable library never blocks the others."""
 
@@ -203,8 +200,8 @@ class LeavingSoonResult:
     notified: bool
     announced: frozenset[int]
     """The updated set of rating keys that have been announced and are still in grace.
-    The caller persists this so the next pass knows what was already announced -- why
-    the heads-up is idempotent even when the shelf write never lands."""
+    The caller persists this so the next pass knows what was already announced, which is
+    why the heads-up stays idempotent even when the shelf write never lands."""
     movies_on_shelves: int
     seasons_on_shelves: int
 
@@ -218,8 +215,8 @@ class LeavingSoonResult:
 
     @property
     def applied(self) -> bool:
-        """Whether every attempted write landed. False when previewing, and false when
-        any library errored -- a partial write must never report itself as complete."""
+        """Whether every attempted write landed. False when previewing, and false when any
+        library errored: a partial write must never report itself as complete."""
         return bool(self.outcomes) and all(o.applied and o.error is None for o in self.outcomes)
 
     @property
@@ -231,43 +228,37 @@ class LeavingSoonResult:
         """Nothing is turned on, so the pass had nothing it was allowed to touch.
 
         One outcome is recorded per enabled library (``sync_shelves``), so an empty list is
-        exactly that state, and never a library that ran and found nothing to do.
+        exactly that state, never a library that ran and found nothing to do.
         """
         return not self.outcomes
 
     @property
     def ok(self) -> bool:
-        """Whether the pass did what it set out to do: no library failed, and there was one
-        turned on to update. Preview is not a failure, so this stays true there -- the shelf
-        was computed and the heads-up went out, and only the Plex write was held back."""
+        """Whether the pass did what it set out to do: no library failed, and at least one
+        was turned on to update. Preview is not a failure, so this stays true there: the
+        shelf was computed and the heads-up went out, and only the Plex write was held back."""
         return not self.problems and not self.no_libraries
 
     @property
     def summary(self) -> Reason:
         """One typed reason saying how this pass went, under ``jobs.result.*``.
 
-        Every surface reporting the pass reads this one: the stored Jobs row, the response the
-        "Update now" button flashes, and the Plex panel's status line. It was written twice --
-        here, and again in TypeScript over the response -- and the two disagreed, because the
-        route added the no-libraries case AFTER this had been stored. A pass with nothing
-        turned on was stored green while the button flashed red about the same pass (#555).
-        Composing one sentence from one reason, read by every surface, is what keeps that from
-        happening again: the server states the fact, the browser says the words.
+        Every surface reporting the pass reads this one: the stored Jobs row, the response
+        the "Update now" button flashes, and the Plex panel's status line. Composing one
+        sentence from one reason, read by every surface, is what keeps them from disagreeing
+        about the same pass: the server states the fact, the browser says the words.
 
-        The order is the fix. Nothing turned on is reported as itself rather than as preview,
-        which is what ``applied`` alone calls it (it is false whenever there are no outcomes),
-        and a real per-library failure beats the benign preview caveat.
+        Order matters. Nothing turned on is reported as itself rather than as preview (which
+        is what ``applied`` alone would call it, since it is false whenever there are no
+        outcomes), and a real per-library failure beats the benign preview caveat.
         """
         if self.no_libraries:
             return Reason("shelf_no_libraries")
         if self.problems:
-            # Named, not counted. "Some shelves didn't update" was the whole answer the
-            # operator got, on every surface, while the response carried the failing library
-            # per entry and nothing rendered it -- so one unreachable library out of five was
-            # indistinguishable from all five, and there was nowhere to go and look. The
-            # titles come from here rather than from ``problems`` because that string appends
-            # ``str(exc)``, which is a stack-shaped sentence rule 21 keeps off the screen; it
-            # stays the log's field, where a raw cause belongs.
+            # Named, not counted: an operator told only "some shelves didn't update" cannot
+            # tell one unreachable library out of five apart from all five failing. The
+            # titles come from here rather than from ``problems``, because that string
+            # appends ``str(exc)``, a raw error that belongs in the log, not on screen.
             failed = ", ".join(o.section_title for o in self.outcomes if o.error)
             return Reason("shelf_failed", {"libraries": failed})
         if not self.applied:
@@ -279,11 +270,10 @@ def _grace_keys(report: GraceReport) -> tuple[set[int], set[int], dict[int, str]
     """The in-grace rating keys by kind, plus rating key -> title for the announce.
 
     Items Plex never matched (``plex_rating_key is None``) cannot be addressed on a
-    shelf and are excluded here. They get no heads-up on any channel: the Discord
-    announce in :func:`announce_new` is built from this same set and dedupes on the
-    integer rating key, which an unmatched item does not have. Warning them would need a
-    separate per-item key (their ``media_key``); until then, this is a known gap, not a
-    guarantee.
+    shelf and are excluded here. They get no heads-up on any channel either, since the
+    Discord announce in :func:`announce_new` is built from this same set and dedupes on
+    the integer rating key, which an unmatched item does not have. Warning them would
+    need a separate per-item key (their ``media_key``), so this is a known gap.
     """
     movies: set[int] = set()
     seasons: set[int] = set()
@@ -296,8 +286,8 @@ def _grace_keys(report: GraceReport) -> tuple[set[int], set[int], dict[int, str]
         elif item.media_type == "season":
             seasons.add(item.plex_rating_key)
         else:
-            # A kind the shelf does not know how to place. Excluded rather than guessed
-            # into some section where it could be added but never removed.
+            # A kind the shelf does not know how to place. Excluded rather than guessed into
+            # a section it could be added to but never removed from.
             continue
         titles[item.plex_rating_key] = item.title
     return movies, seasons, titles
@@ -315,14 +305,14 @@ async def sync_section(
 ) -> ShelfOutcome:
     """Reconcile one library's shelf: the collection and the label together.
 
-    The target set is the in-grace keys that actually live in this section -- the
+    The target set is the in-grace keys that actually live in this section. The
     intersection scopes every mark to the library that holds the item, which is what
     lets a 4K/HD split or a movie/TV split each carry their own shelf without
     cross-contamination.
 
-    Removals run before adds, so the marked set never briefly over-covers if a later
-    add fails partway. A failure anywhere in this section is caught by the caller;
-    one unreachable library must not block the rest.
+    Removals run before adds, so the marked set never briefly covers more than it should
+    if a later add fails partway. A failure anywhere in this section is caught by the
+    caller; one unreachable library must not block the rest.
 
     A rename is carried across inside this same reconcile. The collection is re-titled in
     place, so it keeps its rating key and everything the operator hung on it; the label has
@@ -331,11 +321,11 @@ async def sync_section(
     """
 
     # The reads run one after another rather than concurrently: the whole-section key dump
-    # dominates a section's time, so overlapping the two small reads with it saves a second
-    # or two while tripling this section's live Plex connections. The libraries run
-    # concurrently instead (sync_shelves), which is where the real overlap is -- and keeping
-    # one section to one connection at a time is what keeps the bounded fan-out there under
-    # the requests session's connection pool.
+    # dominates a section's time, so overlapping the two small reads with it would save little
+    # while tripling this section's live Plex connections. The libraries run concurrently
+    # instead (sync_shelves), which is where the real overlap is, and keeping one section to
+    # one connection at a time is what keeps that bounded fan-out under the requests session's
+    # connection pool.
     section_keys = await plex.section_rating_keys(section_key, kind=kind)
     target = in_grace & section_keys
 
@@ -352,10 +342,10 @@ async def sync_section(
         if collection_key is None:
             rename_to = collection_key = stale_collection
         else:
-            # The new name is one the library ALREADY uses. Re-titling would leave two
-            # same-titled collections, which split the membership so neither ever fully
-            # clears -- the shelf would keep marking titles nothing takes back off. The
-            # existing collection wins and the old shelf is dropped into it.
+            # The new name is one the library already uses. Re-titling would leave two
+            # same-titled collections that split the membership, so neither would ever
+            # fully clear and the shelf would keep marking titles nothing takes back off.
+            # The existing collection wins and the old shelf is dropped into it.
             drop_stale = stale_collection
 
     on_collection = (
@@ -375,17 +365,17 @@ async def sync_section(
         else set()
     )
 
-    # When EVERY current member is leaving (a plain clear, or a total list swap where
-    # nothing carries over), the whole collection goes in ONE request rather than one detach
-    # per member. Hoisted above the write because the rename reads it: re-titling a
-    # collection this pass is about to delete is a wasted round trip.
+    # When every current member is leaving (a plain clear, or a total list swap where
+    # nothing carries over), the whole collection goes in one request rather than one detach
+    # per member. Checked above the write because the rename reads it: re-titling a
+    # collection this pass is about to delete would be a wasted round trip.
     clears_collection = bool(on_collection) and set(collection_plan.to_remove) == on_collection
     # The rename is work of its own, so a pass with nothing else to do still writes.
     carries_a_rename = rename_to is not None or drop_stale is not None or bool(stale_labeled)
     if apply and (carries_a_rename or not (collection_plan.is_noop and label_plan.is_noop)):
         with benign_shelf_write():
             # The rename first, so everything below writes under the name the shelf now
-            # carries -- `remove_collection_members` addresses the collection by name.
+            # carries: `remove_collection_members` addresses the collection by name.
             if rename_to is not None and not clears_collection:
                 await plex.rename_collection(rename_to, shelf.current)
             if drop_stale is not None:
@@ -406,9 +396,9 @@ async def sync_section(
                 await plex.remove_label(section_key, label_plan.to_remove, shelf.current)
             if collection_plan.to_add:
                 if collection_key is None:
-                    # No collection (never had one, or the clear above dropped it): Plex
-                    # refuses an empty collection, so it is born already holding the full
-                    # target set.
+                    # No collection: either there never was one, or the clear above dropped
+                    # it. Plex refuses an empty collection, so it is created already holding
+                    # the full target set.
                     await plex.create_collection(
                         section_key,
                         kind=kind,
@@ -420,10 +410,10 @@ async def sync_section(
             if label_plan.to_add:
                 await plex.add_label(section_key, label_plan.to_add, shelf.current)
 
-    # A section whose shelf already matches is APPLIED when writing was allowed: there
+    # A section whose shelf already matches is applied when writing was allowed: there
     # was nothing to write and nothing failed. Only a preview (apply=False) reports
-    # false -- otherwise one quiet library would make a fully-written pass claim
-    # "preview only", the exact dishonesty the applied flag exists to prevent.
+    # false. Otherwise one quiet library would make a fully-written pass falsely claim
+    # "preview only".
     return ShelfOutcome(
         section_key=section_key,
         section_title=section_title,
@@ -445,13 +435,13 @@ async def sync_shelves(
     shelf: ShelfName,
 ) -> list[ShelfOutcome]:
     """Reconcile every enabled library, movies in movie libraries and seasons in TV
-    libraries. A library that fails records its error and the pass continues; partial
+    libraries. A library that fails records its error and the pass continues, since partial
     honesty beats all-or-nothing silence for a warning feature. The libraries reconcile
-    concurrently -- each is an independent shelf, so nothing is shared but the client, and
-    the whole-section read that dominates one library's time overlaps the others' instead of
-    queuing behind them. Under SHELF_CONCURRENCY, so many libraries reconcile in waves rather
-    than opening one Plex connection each at once. A library's failure is caught inside its
-    own task so it can never cancel a sibling; the results stay in library order."""
+    concurrently, since each is an independent shelf sharing nothing but the client, so the
+    whole-section read that dominates one library's time overlaps the others' instead of
+    queuing behind them. Bounded by SHELF_CONCURRENCY, so many libraries reconcile in waves
+    rather than opening one Plex connection each at once. A library's failure is caught
+    inside its own task so it can never cancel a sibling; the results stay in library order."""
     bound = asyncio.Semaphore(SHELF_CONCURRENCY)
 
     async def _reconcile(lib: dict[str, Any]) -> ShelfOutcome:
@@ -471,7 +461,7 @@ async def sync_shelves(
                     shelf=shelf,
                 )
         except PlexError as exc:
-            # One unreachable library records its error and the pass carries on; caught
+            # One unreachable library records its error and the pass carries on. Caught
             # here rather than at the gather so a sibling reconcile is never canceled.
             return ShelfOutcome(
                 section_key=section_key,
@@ -499,8 +489,8 @@ async def announce_new(
     who never open Plex, so it fires for every newly-in-grace item whether or not any
     library carries a shelf. ``already_announced`` is the durable set of rating keys
     announced on previous passes; a title is announced only once per stay in grace. The
-    returned set is pruned to items still in grace, so a title that leaves grace and
-    later returns is announced afresh; the caller persists it.
+    returned set is pruned to items still in grace, so a title that leaves grace and later
+    returns is announced afresh. The caller persists it.
     """
     movies, seasons, titles = _grace_keys(report)
     in_grace = movies | seasons
@@ -511,8 +501,8 @@ async def announce_new(
     if notifier is not None and to_announce:
         names = [titles[k] for k in to_announce]
         notified = await notifier.announce_leaving_soon(names, grace_days=report.grace_days)
-        # Record as announced only if the post actually landed; a failed announce must
-        # be retried on the next pass, not silently marked done.
+        # Record as announced only if the post actually landed. A failed announce is
+        # retried on the next pass instead of being marked done.
         if notified:
             announced_now = set(to_announce)
 
@@ -526,14 +516,15 @@ async def announce_new(
 #: Serializes a whole Leaving Soon pass against every other one in this process.
 #:
 #: The announced set is read at the start of a pass and written at the end, with a
-#: whole-library Plex reconcile and a Discord post in between -- minutes of network I/O
-#: across which nothing else was held back. Two passes overlap easily: the operator presses
-#: "Update now" while a scheduled scan is landing, and its after-scan hook fires. Both read
-#: the same "already announced", both decide the same title is new, and your users get
-#: the same heads-up twice. Worse, the later writer persists a set derived from ITS pre-I/O
-#: read, dropping whatever the first pass recorded -- so that title is announced a third
-#: time on the next pass. Rule 8 wants the announcement idempotent on the durable set; the
-#: set was durable, the read-modify-write around it was not.
+#: whole-library Plex reconcile and a Discord post in between, which is minutes of network
+#: I/O with nothing else held back around it. Two passes overlap easily: the operator
+#: presses "Update now" while a scheduled scan is landing, and its after-scan hook fires.
+#: Without this lock both would read the same "already announced" set, both would decide the
+#: same title is new, and your users would get the same heads-up twice. Worse, the later
+#: writer would persist a set derived from its own pre-I/O read, dropping whatever the first
+#: pass recorded, so that title would be announced a third time on the next pass. The
+#: announcement must stay idempotent on the durable set, and the set itself was durable; the
+#: read-modify-write around it was not.
 #:
 #: Held across the reconcile too, not just the announce: a second concurrent whole-section
 #: reconcile against the same libraries is wasted work at best.
@@ -562,11 +553,10 @@ async def run_sync(
 ) -> LeavingSoonResult:
     """One full Leaving Soon pass: reconcile every enabled library and announce.
 
-    The single implementation behind the Reap-page button and the after-scan hook, so
-    the two can never drift. Raises :class:`LeavingSoonDisabledError` when the shelf is off,
+    The single implementation behind the Reap-page button and the after-scan hook, so the
+    two never drift apart. Raises :class:`LeavingSoonDisabledError` when the shelf is off,
     :class:`LeavingSoonUnlinkedError` when no server is linked, and :class:`PlexError` when
-    a linked server did not answer. The last two used to be one class, so the route reported
-    an unreachable server as a bad request (#734).
+    a linked server did not answer.
 
     Serialized against every other pass in this process (see :data:`_pass_lock`), because
     the announced set is read at the top and written at the bottom with minutes of network
@@ -599,10 +589,10 @@ async def _run_pass(
         )
         # build_notifier may have seeded the webhook from the environment on first read.
         await session.commit()
-        # Built LAST of everything this pass gathers. This pass owns the client (rule 34),
-        # and its close lives in the try/finally below; building it FIRST, as this used to,
-        # put four awaited reads between the construction and the only thing that closes it,
-        # so any one of them raising leaked the client and its pooled connections.
+        # Built last of everything this pass gathers. This pass owns the client, and its
+        # close lives in the try/finally below; building it any earlier would put an awaited
+        # read between the construction and the only thing that closes it, so that read
+        # raising would leak the client and its pooled connections.
         plex = await _plex_client(session, box, settings)
 
     if plex is None:
@@ -634,16 +624,16 @@ async def _run_pass(
     # (``ok`` and ``summary``). Nothing downstream re-words this pass.
     async with session_factory() as session:
         await app_settings.set_leaving_soon_announced(session, set(result.announced))
-        # What Plex now shows, recorded only once EVERY library wrote cleanly. A preview, or
+        # What Plex now shows, recorded only once every library wrote cleanly. A preview, or
         # one unreachable library, leaves the old name stored, so the next pass finds the
         # collection and the labels still sitting under it and carries them across then. The
         # cost of being wrong here is a shelf stranded in the library under a name nothing
         # will ever look for again, so this resolves toward retrying.
         #
         # Written on every clean pass, not only a renaming one, so a change the reconcile
-        # treats as no rename at all -- a different capitalization of the same name -- still
-        # settles. Otherwise the two rows disagree forever and the panel reports a pending
-        # rename that no pass can ever clear.
+        # treats as no rename at all, such as a different capitalization of the same name,
+        # still settles. Otherwise the two rows would disagree forever and the panel would
+        # report a pending rename that no pass can ever clear.
         if result.applied:
             await app_settings.set_leaving_soon_applied_name(session, shelf.current)
         await app_settings.set_leaving_soon_last(
@@ -666,8 +656,8 @@ async def _run_pass(
         notified=result.notified,
         problems=len(result.problems),
     )
-    # A library that could not be reached is surfaced here rather than in the UI: the sync
-    # is fire-and-forget from Settings, and the operator finds a failure in the logs.
+    # A library that could not be reached is surfaced here rather than in the UI, since the
+    # sync is fire-and-forget from Settings, and the operator finds a failure in the logs.
     if result.problems:
         log.warning("leaving_soon.problems", problems=result.problems)
     return result
@@ -681,16 +671,15 @@ async def after_scan(
     """The automatic pass that runs when a scan lands. Best-effort by design.
 
     A scan changes the grace set, so this is the moment the shelf goes stale. When the
-    shelf is on, run the full pass; when it is off but a Discord webhook is set, send
-    the heads-up alone (announcing is a read plus a webhook post -- no Plex write). A
-    failure here is logged and swallowed: the warning layer must never fail a scan that
+    shelf is on, run the full pass; when it is off but a Discord webhook is set, send the
+    heads-up alone (announcing is a read plus a webhook post, no Plex write). A failure
+    here is logged and swallowed, since the warning layer must never fail a scan that
     already committed.
 
-    Every skip below is written down (:func:`_record_skip`) bar one, the shelf being off,
-    and the comment on ``shelf_on`` says why. None of them reach the row ``_run_pass``
-    writes: the Jobs page then re-read the last COMPLETED pass and showed its green dot, its
-    timestamp and its counts as the answer for a scan that never touched the shelf, under a
-    heading reading "Runs after every scan".
+    Every skip below is written down (:func:`_record_skip`) except the shelf being off,
+    which the comment on ``shelf_on`` explains. Otherwise the Jobs page would re-read the
+    last completed pass and show its green dot, timestamp, and counts as the answer for a
+    scan that never touched the shelf, under a heading reading "Runs after every scan".
     """
     # The shelf is on until the pass says otherwise. Off is the one skip not worth writing
     # down: the Jobs row renders its "Off" branch from that same setting and shows no
@@ -706,17 +695,16 @@ async def after_scan(
         except LeavingSoonDisabledError:
             shelf_on = False
         except LeavingSoonDegradedError:
-            # The scan that triggered this could not be trusted. There is deliberately NO
-            # fall-through to the heads-up below: it reads the same condemned set (rule
-            # 116), so "shelf off" and "scan untrustworthy" are not the same skip.
+            # The scan that triggered this could not be trusted. There is deliberately no
+            # fall-through to the heads-up below, since it reads the same condemned set, so
+            # "shelf off" and "scan untrustworthy" are not the same skip.
             log.info("leaving_soon.skipped_degraded")
             await _record_skip(session_factory, Reason("error.leaving_soon.skip_degraded"))
             return
         except LeavingSoonUnlinkedError:
-            # Shelf on, no server linked at all. A separate clause from the one below, and
-            # separate for the same reason the degraded clause is: they are the operator's
-            # only signal for which of the two happened, and the fixes are different (rule
-            # 21). One class carried both until #734.
+            # Shelf on, no server linked at all. A separate clause from the one below, since
+            # this is the operator's only signal for which of the two happened, and the fix
+            # for each is different.
             log.info("leaving_soon.skipped_unlinked")
             await _record_skip(session_factory, Reason("error.leaving_soon.skip_unlinked"))
             recorded = True
@@ -735,14 +723,14 @@ async def after_scan(
         #
         # Under the same lock as the full pass, and for the same reason: this is the read-
         # announce-write in its barest form, and for an operator running Leaving Soon with
-        # the shelf off it is not an edge case, it is the ONLY path that ever announces.
+        # the shelf off it is not an edge case, it is the only path that ever announces.
         # run_sync has already released the lock by the time it raises its way to here.
         async with _pass_lock():
             async with session_factory() as session:
-                # Checked again on this path, because it is reached when the SHELF is off,
+                # Checked again on this path, because it is reached when the shelf is off,
                 # which returns before the guard in _run_pass ever runs. Announcing is the
-                # only thing this branch does, and an announcement of a title about to be
-                # removed is exactly a side effect of the condemned set (rule 116).
+                # only thing this branch does, and announcing a title about to be removed
+                # is exactly a side effect of the condemned set.
                 if await _latest_scan_degraded(session):
                     log.info("leaving_soon.announce_skipped_degraded")
                     return
@@ -763,8 +751,8 @@ async def after_scan(
     except Exception as exc:
         log.warning("leaving_soon.after_scan_failed", error=str(exc))
         # Not on the shelf-off path, which has no line on screen to correct, and not over a
-        # reason already written above. What is left is a surprise nobody has a name for,
-        # and the row still has to say the shelf did not move.
+        # reason already written above. What is left is an unnamed failure, and the row
+        # still has to say the shelf did not move.
         if shelf_on and not recorded:
             await _record_skip(session_factory, Reason("error.leaving_soon.skip_failed"))
 
@@ -775,9 +763,10 @@ async def _record_skip(
 ) -> None:
     """Write down that a scan finished without updating the shelf, and why, as a typed reason.
 
-    Read beside the last completed pass and preferred only while it is newer, so a pass that
-    later completes wins on its own timestamp and this is never cleared -- the arrangement
-    ``ScanRow`` already uses for a scheduled scan that crashed and wrote no snapshot.
+    The row is never deleted; it is read beside the last completed pass and preferred only
+    while it is newer, so a pass that later completes wins on its own timestamp. The same
+    arrangement ``ScanRow`` already uses for a scheduled scan that crashed and wrote no
+    snapshot.
 
     Never lets this bookkeeping break the scan it follows: a failed write is logged and
     swallowed, exactly as :func:`after_scan` handles its own errors.
@@ -801,9 +790,9 @@ async def cleanup_sections(
 ) -> bool:
     """Take everything off the given libraries' shelves, so nothing stale lingers.
 
-    The same per-library reconcile with an empty target set -- every current member is
+    The same per-library reconcile with an empty target set: every current member is
     leaving, so each library drops its whole collection in one request (delete_collection)
-    and the labels come off with it. Writes only when the guard allows (armed, or the
+    and the labels come off with it. Writes only when the guard allows it (armed, or the
     read-only opt-in); otherwise this is a no-op and the marks stay until Reaper is next
     allowed to write. Returns whether the cleanup actually ran. Best-effort: a failure is
     logged, never raised, because turning a warning off must always succeed.
@@ -813,15 +802,15 @@ async def cleanup_sections(
     try:
         async with session_factory() as session:
             safety = await app_settings.runtime_safety(session, settings)
-            # The guard first, the client second (rule 34). Read-only is the DEFAULT state,
-            # so building the client before checking it leaked one -- with its pooled
-            # connections -- every time a library or the whole shelf was switched off while
+            # The guard first, the client second. Read-only is the default state, so
+            # building the client before checking it would leak one, with its pooled
+            # connections, every time a library or the whole shelf was switched off while
             # deletion was not armed, which is the common way this is reached.
             if not safety.leaving_soon_write_allowed:
                 return False
             # Both names, because a cleanup that ran while a rename was still outstanding
             # would otherwise clear the new name and leave the collection Plex actually
-            # shows sitting in the library forever -- nothing looks under the old name once
+            # shows sitting in the library forever: nothing looks under the old name once
             # the operator turns the shelf back on.
             shelf = ShelfName(
                 current=await app_settings.get_leaving_soon_name(session),
@@ -856,8 +845,8 @@ async def cleanup_shelves(
     box: SecretBox,
 ) -> bool:
     """Take everything off every enabled library's shelf: the last pass when the whole
-    feature is turned off. (A single library toggled off gets the same treatment through
-    ``cleanup_sections`` -- see the libraries route -- so neither path strands a shelf.)
+    feature is turned off. A single library toggled off gets the same treatment through
+    ``cleanup_sections`` (see the libraries route), so neither path strands a shelf.
     """
     async with session_factory() as session:
         libraries = await app_settings.enabled_plex_libraries(session)

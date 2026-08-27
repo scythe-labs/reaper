@@ -59,10 +59,10 @@
 #
 if [ -z "${BASH_VERSION:-}" ]; then
   # `sh try-image.sh` is the reflex on a server, and it bypasses the shebang above: on
-  # Debian /bin/sh is dash, which has no arrays, so the first array assignment below was
-  # a parse error reported tens of lines away from anything the operator typed. Re-exec
-  # under bash rather than explain that. This block stays POSIX so dash can read it, and
-  # stays ahead of `set -o pipefail`, which dash only learned in 0.5.12.
+  # Debian /bin/sh is dash, which has no arrays, so the first array assignment below
+  # would be a parse error reported tens of lines away from anything the operator typed.
+  # Re-exec under bash rather than explain that. This block stays POSIX so dash can read
+  # it, and stays ahead of `set -o pipefail`, which dash only learned in 0.5.12.
   #
   # It also has to sit below the help text, which is read off the top of this file.
   if command -v bash > /dev/null 2>&1; then
@@ -78,7 +78,7 @@ IMAGE_REPO="${REAPER_IMAGE_REPO:-ghcr.io/scythe-labs/reaper}"
 
 # Every container and volume this script creates carries these, so `list` and `clean` can
 # find them again without keeping a state file, and can never match anything else on the
-# host -- including a production Reaper container started from a compose file.
+# host, including a production Reaper container started from a compose file.
 LABEL_MARK="net.scythe-labs.reaper.try"
 PREFIX="reaper-try"
 
@@ -91,10 +91,10 @@ log()  { printf '\033[36m[try]\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m[try]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[31m[try]\033[0m %s\n' "$*" >&2; exit 1; }
 
-# The help IS the header comment: everything from line 2 down to the first line that is not
-# a comment, which keeps it next to the flags it documents. Anchored on "not a comment"
-# rather than on whatever statement happens to come first, so moving that statement cannot
-# quietly truncate the help or spill code into it.
+# The help text is the header comment: everything from line 2 down to the first line that
+# is not a comment, which keeps it next to the flags it documents. Anchored on "not a
+# comment" rather than on whatever statement happens to come first, so moving that
+# statement cannot quietly truncate the help or spill code into it.
 usage() { sed -n '2,/^[^#]/p' "$0" | sed 's/^# \{0,1\}//; $d'; }
 
 # --- docker availability ---------------------------------------------------------------
@@ -109,10 +109,10 @@ require_docker() {
 container_of() { printf '%s-%s' "$PREFIX" "$1"; }
 volume_of()    { printf '%s-%s' "$PREFIX" "$1"; }
 
-# The port the app serves on INSIDE the container. It is 8420 unless the operator sets
-# REAPER_PORT, which the image's CMD passes to uvicorn and its healthcheck reads -- so
+# The port the app serves on inside the container. It is 8420 unless the operator sets
+# REAPER_PORT, which the image's CMD passes to uvicorn and its healthcheck reads. So
 # publishing to a fixed 8420 would hand back a URL nothing is listening on, while the
-# container still reported itself healthy on the port it had actually moved to.
+# container still reports itself healthy on the port it actually moved to.
 #
 # Reads the same sources docker does, in docker's own precedence: every --env-file in
 # order, then every --env, last one winning.
@@ -237,7 +237,7 @@ cmd_up() {
 
   # --- resolve the port ---
   if [ "$port" = "auto" ]; then
-    port=0                                  # docker picks a free one; read back after boot
+    port=0                                  # docker picks a free one, read back after boot
   else
     case "$port" in
       ''|*[!0-9]*) die "--port takes a port number or \"auto\": $port" ;;
@@ -249,7 +249,7 @@ cmd_up() {
   # (`--image`, and `docker build` never pushes anywhere) has nothing to pull from. The
   # fallback is loud and dates the copy: testing a pull request against yesterday's build
   # of it reads as "the fix did not work", which is the worst answer this script could
-  # give quietly. Nothing is assumed about which case you are in -- both get the date.
+  # give quietly. Nothing is assumed about which case you are in. Both get the date.
   if [ "$pull" -eq 1 ]; then
     log "pulling $image"
     local pulled=1
@@ -275,8 +275,8 @@ cmd_up() {
   fi
 
   # --- resolve the data source into one docker -v argument ---
-  # Set by resolve_data: MOUNT_SRC is what goes left of the colon, DATA_NOTE describes it
-  # for the label and the summary line, and RISKY marks a source used in place.
+  # The case below sets all three: MOUNT_SRC is what goes left of the colon, DATA_NOTE
+  # describes it for the label and the summary line, and RISKY marks a source used in place.
   local MOUNT_SRC DATA_NOTE RISKY=0
 
   case "${data:-}" in
@@ -297,7 +297,7 @@ cmd_up() {
       MOUNT_SRC="$volume"; DATA_NOTE="copy of $src"
       # The copy happens once, when the volume is made. A second `up` on the same instance
       # keeps whatever the first one has become, which is what you want while iterating on
-      # a rebuilt image -- but it is NOT a fresh copy, and reading it as one would mean
+      # a rebuilt image. It is not a fresh copy though, and reading it as one would mean
       # judging a pull request against state an earlier run left behind.
       if volume_exists "$volume"; then
         DATA_NOTE="earlier copy of $src"

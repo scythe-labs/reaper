@@ -1,17 +1,17 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The frozen season bundle survives a round trip through JSON, exactly.
+"""The frozen season bundle must survive a round trip through JSON exactly.
 
-``services.season_evidence`` is what stands between the policy simulator and a confident
-wrong preview of a season rule: the scan freezes ``plan_series_prune``'s inputs and the
-replay thaws them and re-derives the plan. Every one of those inputs is evidence, so a value
-that changes shape on the way through -- an int key arriving as a string, a ``None`` arriving
-as a zero, a three-state collapsing to two -- is a number on the operator's screen that no
-scan will produce.
+``services.season_evidence`` is what stands between the policy simulator and a confident but
+wrong preview of a season rule: the scan freezes ``plan_series_prune``'s inputs, and the
+replay reads them back and re-derives the plan. Every one of those inputs is evidence, so a
+value that changes shape on the way through, such as an int key arriving as a string, a
+``None`` arriving as a zero, or a three-state value collapsing to two states, becomes a
+number on the operator's screen that no scan would ever produce.
 
-``test_scan_pipeline.py`` proves the whole path against two real scans, which is the stronger
-claim. This file pins the codec directly, because that test can only see a round-trip loss
-that happens to change a plan on its fixture, and the fields most likely to be lost are the
-ones a fixture is least likely to exercise.
+``test_scan_pipeline.py`` proves the whole path against two real scans, which is the
+stronger claim. This file pins the codec directly, because that test can only catch a
+round-trip loss that happens to change a plan on its own fixture, and the fields most likely
+to be lost are the ones a fixture is least likely to exercise.
 """
 
 from __future__ import annotations
@@ -70,7 +70,8 @@ def _bundle(**edits: object) -> season_evidence.SeasonPruneInput:
         "last_play_by_user": {"7": {1: AT, 0: None}},
         "season_final_episode": {0: 3, 1: None},
         "episodes_unreadable": False,
-        # `None` is "on disk, but never resolved in Plex" -- not a measured zero (rule 93).
+        # `None` means "on disk, but never resolved in Plex". It must stay distinct from a
+        # measured zero.
         "watchers_by_season": {0: None, 1: 2},
         "shortfall_by_season": {0: None, 1: legacy("the mirror does not reach back that far")},
         "progress_unreadable": True,
@@ -101,10 +102,10 @@ class TestTheBundleSurvivesTheFreeze:
     def test_a_scan_that_never_read_the_episode_lists_stays_three_state(self) -> None:
         """The one field where two-state would be a preview of an answer nobody gathered.
 
-        ``None`` means the mid-binge fan-out never ran; ``{}`` means it ran and the show has
+        ``None`` means the mid-binge fan-out never ran. ``{}`` means it ran and the show has
         no episodes on disk. The planner reads both as "protect whole seasons", so nothing
-        downstream can tell them apart once they are conflated -- which is why the refusal
-        is decided off this value rather than off the plan it produces.
+        downstream can tell them apart once they are conflated. That is why the refusal is
+        decided off this value rather than off the plan it produces.
         """
         unread = _round_trip(_bundle(season_final_episode=None))
         assert unread.season_final_episode is None
@@ -117,8 +118,8 @@ class TestTheBundleSurvivesTheFreeze:
 
         A show whose ``episodes()`` call failed carries no map and still had its plan made
         from the empty one. Losing this bit in the codec would leave the two ``None`` bundles
-        indistinguishable, and the whole lane would refuse for whichever answer that collapsed
-        to (#500).
+        indistinguishable, and the whole lane would refuse based on whichever answer they
+        collapsed to.
         """
         failed = _round_trip(_bundle(season_final_episode=None, episodes_unreadable=True))
         assert failed.season_final_episode is None
@@ -175,8 +176,8 @@ class TestTheBundleSurvivesTheFreeze:
         thawed = season_evidence.plan_from_frozen(_round_trip(inp), policy=policy)
 
         assert thawed == live
-        # Not a plan that protects everything by accident, which two identical empty answers
-        # would also satisfy (rule 118).
+        # This must be a real plan, not one that protects everything by accident, which two
+        # identical empty answers would also satisfy.
         assert live.protected, "the fixture produced no protected season, so this compares little"
 
     def test_a_payload_missing_a_field_raises_rather_than_defaulting(self) -> None:
@@ -201,21 +202,18 @@ class TestTheBundleSurvivesTheFreeze:
 
 
 class TestTheReplayExpiresAgainstTheScansOwnClock:
-    """The frozen ``now`` decides the mid-binge expiry, not whenever the editor was opened.
+    """The frozen ``now`` must decide the mid-binge expiry, not whenever the editor is opened.
 
-    ``SeasonPruneInput.now`` exists for this and says so, and nothing tested it: replacing
-    ``now=inp.now`` with a live ``utcnow()`` inside :func:`plan_from_frozen` passed the whole
-    suite, the two-real-scan exactness sweep included. That sweep freezes its clock ten days
-    from the wall, and ten days moves no viewer across a 180-day hold, so the one fixture that
-    could have caught it was shaped not to.
+    ``SeasonPruneInput.now`` exists for exactly this. Reading a live ``utcnow()`` inside
+    :func:`plan_from_frozen` instead would cost the feature's own promise: a viewer inside
+    the hold when the scan ran, but outside it by the time the Policy page is opened, would
+    keep the season in the review queue and lose it on the panel, a preview no scan would
+    reproduce.
 
-    What it would cost is the feature's own claim: a viewer inside the hold when the scan ran
-    and outside it by the time the Policy page is opened keeps the season in the review queue
-    and loses it on the panel, which is a preview no scan will reproduce.
-
-    Its own seasons rather than the file's, because every season there reaches a guard that
-    is checked BEFORE the mid-binge one -- season 0 is specials and season 1 is incomplete and
-    airing -- so neither can ever show this arm.
+    This class builds its own seasons rather than reusing the module fixture's, because every
+    season there reaches a guard that is checked before the mid-binge one: season 0 is
+    specials, and season 1 is incomplete and airing, so neither season could ever show this
+    guard firing.
     """
 
     #: Far enough back that the drift dwarfs any hold: the viewer is ten days into a 180-day
@@ -281,10 +279,10 @@ class TestTheReplayExpiresAgainstTheScansOwnClock:
     def test_the_same_viewer_expires_once_the_hold_is_shorter_than_their_gap(self) -> None:
         """The negative control, on the same bundle and the same clock.
 
-        Without it the test above passes on a plan that holds season 2 for some other reason,
-        which is how a guard proves nothing (rule 118). Nine days of hold sits under the ten
-        the viewer has been idle AT THE SCAN INSTANT, so the hold expires on its own terms and
-        the comparison is demonstrably live.
+        Without this test, the one above could pass on a plan that holds season 2 for some
+        other reason, proving nothing about the mid-binge guard specifically. Nine days of
+        hold sits under the ten days the viewer has been idle at the scan instant, so the
+        hold expires on its own terms and the comparison is demonstrably live.
         """
         plan = season_evidence.plan_from_frozen(
             self._scanned_long_ago(), policy=self._policy(in_progress_hold_days=9)
@@ -297,14 +295,13 @@ class TestTheReplayExpiresAgainstTheScansOwnClock:
 
 
 class TestNoSeasonSettingCanBeOmitted:
-    """The nine season settings are required, and nothing else makes them so.
+    """The nine season settings on ``SeasonPolicy`` are all required, with no defaults.
 
-    Seven of the nine defaulted on ``season_scan.gather`` until it took this carrier, so a
-    caller could leave one out and plan against a value the operator never chose. What
-    replaced those defaults is the carrier having none: an omission is a ``TypeError`` and a
-    mypy error. Adding one back breaks nothing on its own, because the sole builder
-    (``SeasonPolicy.from_body``, which the scan and the simulator both call) passes all nine,
-    so nothing downstream would notice (rules 118, 141).
+    A default on any of them would let a caller leave it out and plan against a value the
+    operator never chose. Instead, an omission is a ``TypeError`` and a mypy error. Adding a
+    default back would break nothing on its own, because the sole builder
+    (``SeasonPolicy.from_body``, called by both the scan and the simulator) passes all nine,
+    so nothing downstream would notice. That is why this test pins the count directly.
     """
 
     def test_no_field_of_the_carrier_carries_a_default(self) -> None:
@@ -318,9 +315,9 @@ class TestNoSeasonSettingCanBeOmitted:
             "season against a value nobody configured. `from_body` passes all nine, so "
             "nothing else in the suite fails when one gains a default."
         )
-        # The count, because the walk above cannot see a field DELETED from the carrier: drop
-        # one along with its `from_body` line and both mypy and the assertion above still pass
-        # (rule 145). A tenth season setting moves this number deliberately.
+        # This count exists because the walk above cannot see a field deleted from the
+        # carrier. Drop one along with its `from_body` line, and both mypy and the assertion
+        # above still pass. A tenth season setting moves this number deliberately.
         assert len(declared) == 9, (
             f"SeasonPolicy declares {len(declared)} fields, not 9. A season setting was added "
             "or removed, so check `from_body`, `plan_from_frozen` and `PolicyBody`'s "
@@ -329,8 +326,8 @@ class TestNoSeasonSettingCanBeOmitted:
 
     def test_gather_requires_the_carrier(self) -> None:
         """The other half: a default on the parameter would let the whole policy be omitted."""
-        # `.get`, never `[...]`: a renamed parameter must fail on the sentence below rather
-        # than on a KeyError, which pins that SOME parameter was found (rule 141).
+        # `.get`, never `[...]`. A renamed parameter must fail on the sentence below rather
+        # than on a KeyError, which would only prove that some parameter was found.
         param = inspect.signature(season_scan.gather).parameters.get("season_policy")
 
         assert param is not None and param.default is inspect.Parameter.empty, (

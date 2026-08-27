@@ -1,10 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The queue's toolbar: search, and the filter and sort pills. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* ==========================================================================
-   Review queue — cards, posters, grouped shows, filters
-   ========================================================================== */
+ * The queue's toolbar: search, and the filter and sort pills. See `../index.css` for how
+ * this file fits into the stylesheet's load order. */
 
 .queue-toolbar {
   display: flex;
@@ -26,9 +23,9 @@
   color: var(--faint);
   pointer-events: none;
 }
-/* The one control chrome; only the left padding is this box's own, to clear the glyph. It is a
-   `padding-left` step after the token. A four-value padding would re-type `0.42rem 0.6rem`, and
-   this was the last site in the stylesheet still doing that. */
+/* The one control chrome. Only the left padding is this box's own, to clear the glyph. It is
+   a `padding-left` step after the token, since a four-value padding would re-type
+   `0.42rem 0.6rem`. */
 .search-input {
   width: 100%;
   padding: var(--control-pad);
@@ -44,8 +41,9 @@
   outline-offset: 1px;
 }
 
-/* .segmented (container) and .seg (pill) are defined alongside .tabs and .tab near the top of
-   the file -- one shared segmented-control so the two never diverge. */
+/* .segmented (container) and .seg (pill) come from 02-masthead.css and 04-buttons.css, so
+   this toolbar's filter and sort pills share the same segmented-control chrome instead of a
+   second copy. */
 
 .check {
   display: flex;

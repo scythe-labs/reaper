@@ -3,16 +3,16 @@
 // The stylesheet as the browser receives it, for the tests that walk it looking for a rule that
 // loses on source order.
 //
-// `index.css` is now a barrel of `@import`s. A test that reads that one file therefore reads no
-// rules at all -- and PASSES, having checked nothing, which is the failure this module exists to
-// prevent. `viewport-units.test.ts` did exactly that for the length of one commit. So the tests
-// read `CSS` from here: every imported file concatenated in the order the barrel lists them,
-// which is the order Vite inlines them and thus the cascade itself.
+// `index.css` is now a barrel of `@import`s. A test that reads only that one file therefore
+// reads no rules at all, and passes having checked nothing, which is the failure this module
+// exists to prevent. So the tests read `CSS` from here instead: every imported file
+// concatenated in the order the barrel lists them, which is the order Vite inlines them, and
+// thus the cascade itself.
 //
-// `siteOf` is the other half, and it is not a convenience. Two of those tests print where a
+// `siteOf` is the other half, and it is not a convenience. Two of these tests print where a
 // losing declaration sits, and an offset into this concatenation is not a line in any file on
-// disk: reporting `index.css:8213` would name a line that exists nowhere, and a confidently
-// wrong citation is worse than none (rule 144). An offset resolves to the file it came from.
+// disk. Reporting `index.css:8213` would name a line that exists nowhere, and a confidently
+// wrong citation is worse than none. An offset resolves back to the file it actually came from.
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -26,7 +26,7 @@ const barrelText = readFileSync(join(SRC, BARREL), "utf8");
 /** Comments blanked, so an `@import` quoted inside prose is not mistaken for a real one. */
 const barrelCode = barrelText.replace(/\/\*[\s\S]*?\*\//g, "");
 
-/** The imported files, in load order. The order is the cascade; see the barrel's own comment. */
+/** The imported files, in load order. The order is the cascade. See the barrel's own comment. */
 export const FILES: readonly string[] = [...barrelCode.matchAll(/@import\s+"\.\/([^"]+)"/g)]
   .map((m) => m[1])
   .filter((f): f is string => f !== undefined);
@@ -34,8 +34,9 @@ export const FILES: readonly string[] = [...barrelCode.matchAll(/@import\s+"\.\/
 if (FILES.length === 0) throw new Error(`${BARREL} imports nothing; the walk would check nothing`);
 
 // The barrel carries the design charter and the load order, and nothing else. A style rule
-// written directly into it would be invisible to every test below, so refuse rather than
-// under-check: a `{` surviving the comment strip is a rule (no at-rule here opens a block).
+// written directly into it would be invisible to every test below, so this refuses rather than
+// under-checking. A `{` surviving the comment strip is a rule, since no at-rule here opens a
+// block.
 const stray = barrelCode.replace(/@import\s+"[^"]+"\s*;/g, "").trim();
 if (stray.includes("{")) {
   throw new Error(
@@ -51,10 +52,10 @@ for (const file of FILES) {
   text += readFileSync(join(SRC, file), "utf8");
 }
 
-/** Every imported file, concatenated in load order: what the browser ends up with. */
+/** Every imported file, concatenated in load order. This is what the browser ends up with. */
 export const CSS = text;
 
-/** One rule block: its selector, its declarations as written, and where the body starts.
+/** One rule block. Its selector, its declarations as written, and where the body starts.
  *
  *  `at` is an offset into `CSS`, for `siteOf`. */
 export interface Block {
@@ -96,8 +97,8 @@ export function blocksOf(): Block[] {
 /** Where an offset in `CSS` actually lives, as `styles/21-queue-cards.css:431`. */
 export function siteOf(offset: number): string {
   let seg = segments[0];
-  // Unreachable while the barrel imports anything, which is checked above; stated so the
-  // resolver cannot silently answer for a stylesheet it never read.
+  // This is unreachable while the barrel imports anything, which is checked above. It is
+  // stated so the resolver cannot silently answer for a stylesheet it never read.
   if (seg === undefined) throw new Error("the stylesheet walk found no files to resolve against");
   for (const s of segments) {
     if (s.at > offset) break;

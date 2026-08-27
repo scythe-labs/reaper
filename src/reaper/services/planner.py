@@ -1,35 +1,35 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Turning condemned candidates into a plan Reaper can execute.
+"""Turn condemned candidates into a plan Reaper can execute.
 
 A plan is a ``ReapRun`` and its ordered ``ActionStep`` rows. Every step is written to
-the database **before** anything is sent, carrying its exact method, path and body -- so
-the record of intent exists prior to the act, and a crash mid-run leaves a durable audit
-trail of exactly what was in flight. That trail is not yet consumed by an automated
-reconciler: a partially-completed run is re-planned from a fresh scan rather than resumed
-(the executor refuses to re-run anything but a PLANNED run), so the ``idempotency_key`` on
-each step is recorded for a future recovery pass, not relied on for de-duplication today.
+the database before anything is sent, with its exact method, path and body. This records
+the intent before the act, so a crash mid-run leaves a full record of what was in flight.
+Nothing reads this record back automatically yet: a run that stopped partway is
+re-planned from a fresh scan rather than resumed (the executor refuses to run anything
+but a PLANNED run). Each step's ``idempotency_key`` is stored for a future recovery pass,
+not used to prevent duplicates today.
 
-The planner does not talk to any *arr, and it cannot delete anything. It reads condemned
-candidates and produces journal rows. Whether those rows are ever executed -- and whether
-execution is even permitted -- is entirely the executor's concern.
+The planner never talks to Sonarr or Radarr, and it cannot delete anything. It reads
+condemned candidates and writes journal rows. Whether those rows ever run is entirely the
+executor's decision.
 
-Two ordering decisions are load-bearing:
+Two ordering rules matter:
 
-* **The canary is ordinal 0: the single smallest condemned item.** It is executed and
-  verified *alone* before anything else is allowed to proceed, so that a broken path
-  mapping or a misunderstanding of an API costs one worthless file, not the whole run.
+* **The canary is ordinal 0: the single smallest condemned item.** Reaper deletes and
+  verifies it alone before touching anything else, so a broken path mapping or a
+  misunderstood API call costs one worthless file, not the whole run.
 
-* **A movie deletion is more than one step**, and the order is not arbitrary:
+* **A movie deletion takes more than one step, in a fixed order:**
 
       1. delete the movie file, with the import-exclusion flag set
-      2. re-read the exclusion list and ASSERT the id is present -- because Sonarr and
-         Radarr each accept the *other's* exclusion parameter and return 200 while doing
-         nothing, so the 200 is not evidence
+      2. re-read the exclusion list and check the id is present. Sonarr and Radarr each
+         accept the other's exclusion parameter and return 200 while doing nothing, so a
+         200 response proves nothing.
       3. refresh the affected Plex path (a partial scan, not a full re-download)
 
-  Plex's ``emptyTrash`` is deliberately NOT a per-item step: it is a single guarded
-  operation at the very end of the run, gated by an item-count delta check, because an
-  unmounted library plus a scan plus emptyTrash is how whole libraries are lost.
+  Plex's ``emptyTrash`` never runs per item. It is one guarded call at the end of the
+  run, gated by an item-count check, because emptying an unmounted library's trash can
+  destroy the whole library.
 """
 
 from __future__ import annotations
@@ -61,17 +61,17 @@ log = structlog.get_logger(__name__)
 
 
 class PlanError(Refusal):
-    """A plan could not be built -- e.g. a candidate whose media_key we cannot route. A
-    catalog code plus raw params."""
+    """The plan could not be built, for example when a candidate's media_key cannot be
+    routed. Carries a catalog code plus raw parameters."""
 
 
 @dataclass(frozen=True)
 class MediaRef:
-    """A media_key parsed back into the coordinates a delete needs.
+    """The coordinates a delete needs, parsed back out of a media_key.
 
-    A movie or a whole series is three parts (``radarr:1:42``); a *season* is four
-    (``sonarr:1:42:3`` -- series 42, season 3), because season pruning acts on a
-    season, not a series.
+    A movie or a whole series is three parts, for example ``radarr:1:42``. A season is
+    four parts, for example ``sonarr:1:42:3`` for season 3 of series 42. Season pruning
+    acts on a season, not a series, so it needs the fourth part.
     """
 
     kind: str  # "radarr" | "sonarr"
@@ -81,11 +81,11 @@ class MediaRef:
 
     @classmethod
     def parse(cls, media_key: str) -> MediaRef:
-        """``radarr:1:42`` -> movie; ``sonarr:1:42:3`` -> season 3 of series 42.
+        """Parse ``radarr:1:42`` as a movie, or ``sonarr:1:42:3`` as season 3 of series 42.
 
-        A media_key we cannot parse is a hard error, never a skipped item. Silently
-        dropping something from a deletion plan is safe; silently *mis-routing* it is
-        not, and the difference between the two is a parse we did not check.
+        A media_key that fails to parse raises an error instead of being skipped.
+        Dropping an item from a plan is safe. Routing it to the wrong item is not, so an
+        unparsed key must never be silently skipped.
         """
         parts = media_key.split(":")
         if len(parts) not in (3, 4) or parts[0] not in ("radarr", "sonarr"):
@@ -99,35 +99,36 @@ class MediaRef:
             ) from exc
 
         if ref.season is not None and ref.kind != "sonarr":
-            # Only TV has seasons; a four-part radarr key is a mis-built id, and routing
-            # it anywhere is worse than refusing it.
+            # Only TV has seasons. A four-part radarr key is a malformed id, so the
+            # planner refuses it instead of routing it anywhere.
             raise PlanError("error.plan.season_media_key_not_sonarr", media_key=media_key)
         return ref
 
 
 def manifest_hash(candidates: Sequence[Candidate]) -> str:
-    """A content-bound fingerprint of the frozen condemned set a plan was built from.
+    """A fingerprint of the frozen condemned set a plan was built from.
 
-    The human approves *this*: the confirmation the UI shows ("REAP 7 SOULS 214 GB") is
-    derived from it, and the executor recomputes it before acting. Both sides hash the same
-    immutable, per-snapshot candidate rows, so what this actually binds is the *integrity of
-    the frozen set*: it changes if a condemned candidate row is lost or tampered with under
-    a run (e.g. retention GC), which voids the approval. It is NOT live drift detection --
-    candidate rows are frozen at scan time and nobody re-reads the *arr here, so a title
-    deleted or resized in Radarr after approval does not change this hash; that live drift
-    is caught by the executor's per-item interlocks and its existence and size re-reads at
-    delete time, and a stale browser tab is stopped by the route's confirmation-phrase
-    recompute.
+    The confirmation phrase the UI shows (for example "REAP 7 SOULS 214 GB") comes from
+    this hash, and the executor recomputes it before acting. Both sides hash the same
+    frozen, per-snapshot candidate rows, so this checks the integrity of that frozen set:
+    it changes if a condemned candidate row is lost or altered while a run is pending,
+    which voids the approval.
 
-    Over the media_key and size of each item, sorted so the order candidates arrive in
-    cannot change the hash. An item Reaper could not measure encodes as JSON ``null``,
-    which is distinct from ``0``: a size later measured therefore voids the approval, as
-    it should, because the set the owner approved is not the set they would approve now.
-    Sorted explicitly on the media_key, which is unique per snapshot, so a ``None`` size
-    is never compared against an ``int``.
+    It does not detect drift in the *arr library. Candidate rows are frozen at scan time
+    and nothing here re-reads Radarr or Sonarr, so a title deleted or resized in Radarr
+    after approval leaves this hash unchanged. The executor's own per-item checks catch
+    that kind of drift, re-reading each item's existence and size right before it
+    deletes. A stale browser tab is caught separately, by the route recomputing the
+    confirmation phrase.
 
-    This hashes the WHOLE condemned set, held-back items included. It binds the frozen
-    set's integrity, not the plan.
+    The hash covers each item's media_key and size, sorted by media_key so the order
+    items arrive in cannot change it. An item Reaper could not measure encodes its size
+    as JSON ``null``, distinct from ``0``, so measuring it later changes the hash and
+    voids the approval, as it should: the owner approved a different set than the one
+    now on screen.
+
+    The hash covers the whole condemned set, including items held back for having no
+    size. It checks the integrity of that frozen set, not the plan built from it.
     """
     payload = sorted(((c.media_key, c.size_bytes) for c in candidates), key=lambda p: p[0])
     canonical = json.dumps(payload, separators=(",", ":"))
@@ -135,32 +136,30 @@ def manifest_hash(candidates: Sequence[Candidate]) -> str:
 
 
 def plan_bytes(candidates: Sequence[Candidate]) -> tuple[int, int]:
-    """A plan's size, as (bytes over what was measured, how many were not).
+    """The plan's size: total measured bytes, and how many items have no size.
 
-    Two numbers rather than one, and never a sum with an unknown folded into it as a zero.
-    A zero under-states, an under-stated total under-states a byte cap, and a cap that does
-    not fire deletes more than the owner allowed. Note the direction: rounding toward
-    keeping is right on the scoring lane and exactly backwards here.
+    Returns two numbers, never a sum that folds an unmeasured item in as zero. A zero
+    would understate the total, understating the byte cap, and a cap that does not fire
+    lets the run delete more than the owner allowed. Rounding toward keeping is correct
+    for scoring, but the wrong direction here.
     """
     measured = [c.size_bytes for c in candidates if c.size_bytes is not None]
     return sum(measured), len(candidates) - len(measured)
 
 
 def confirmation_phrase(candidates: Sequence[Candidate]) -> str:
-    """The typed confirmation, bound to the content.
+    """The confirmation phrase the operator must type, bound to what the plan will delete.
 
-    Not a static "DELETE": a phrase carrying the count and the size, so muscle memory
-    cannot carry someone through it and a stale plan reads as obviously different.
+    It carries the item count and total size instead of a static "DELETE", so it cannot
+    be typed from memory and a stale plan looks obviously different.
 
-    The GB figure covers the items that have a size, and it is never asked to absorb the
-    ones that do not. When the allowance (``ProfileSettings.max_unmeasured_per_run``) has
-    admitted any, the phrase gains a ``+ N UNSIZED`` suffix, so the owner types an
-    acknowledgment that the run holds things the GB figure does not describe. With the
-    allowance at its default the suffix never appears and the phrase is byte-identical to
-    what it has always been.
+    The GB figure covers only items with a known size. When the allowance
+    (``ProfileSettings.max_unmeasured_per_run``) admits unsized items, the phrase adds a
+    ``+ N UNSIZED`` suffix, so the operator acknowledges items the GB figure leaves out.
+    With the allowance at its default, the suffix never appears.
 
-    This string is recomputed at execute time (``api.runs.execute_run``) and compared to
-    what was typed, so any change of wording here 409s every execute.
+    ``api.runs.execute_run`` recomputes this string at execute time and compares it to
+    what was typed, so any wording change here fails every pending execute with a 409.
     """
     total, unsized = plan_bytes(candidates)
     gib = total / 1024**3
@@ -173,31 +172,30 @@ def confirmation_phrase(candidates: Sequence[Candidate]) -> str:
 def _movie_steps(
     run_id: int, candidate: Candidate, ref: MediaRef, ordinal: int, *, add_exclusion: bool
 ) -> list[ActionStep]:
-    """The one step to remove one movie: delete-with-exclusion.
+    """Build the one journal step that deletes a movie, with its import exclusion.
 
-    A season prunes in three journalled steps because two of them are reversible and their
-    order is load-bearing (``_season_steps``). A movie has one irreversible call, so the
-    exclusion poll and the Plex refresh that follow it are the executor's
-    (``executor._send_movie``) and are never journalled as steps. A reader auditing the
-    journal for a verify step on a movie will not find one.
+    A season prunes in three journalled steps because two of them are reversible and
+    their order matters (see :func:`_season_steps`). A movie has one irreversible call,
+    so the exclusion poll and the Plex refresh that follow it belong to the executor
+    (``executor._send_movie``) and are never journalled as their own steps. A journal for
+    a movie never shows a verify step.
 
-    ``path`` and ``body`` are recorded WITHOUT credentials -- the api key is injected by
-    the client at send time -- so the journal is safe to render in the UI and to keep
-    forever. ``idempotency_key`` is a stable per-step identifier written for a future
-    recovery pass; it is NOT yet consumed to de-duplicate a resumed step (a
-    partially-completed run is re-planned, not resumed), so nothing today relies on it to
-    prevent a double delete -- the "executes once" guard and the un-repeatable delete do.
+    ``path`` and ``body`` carry no credentials. The client injects the api key at send
+    time, so the journal is safe to show in the UI and keep forever. ``idempotency_key``
+    is a stable per-step id, stored for a future recovery pass; nothing reads it today to
+    prevent a double delete. The "executes once" guard and the fact that a delete cannot
+    repeat do that job instead.
 
-    ``add_exclusion`` is the target Radarr's ``add_import_exclusion`` setting, frozen into
-    the body here so the preview the operator approves is exactly what is sent -- and so the
-    executor reads the approved value back from the journal (``executor._send_movie``)
-    rather than re-reading a setting that could have changed since approval.
+    ``add_exclusion`` freezes the target Radarr's ``add_import_exclusion`` setting into
+    the body, so what the operator approves is exactly what gets sent. The executor
+    reads this same value back from the journal (``executor._send_movie``) rather than
+    re-reading a setting that may have changed since approval.
     """
     now = utcnow()
     idem = f"{run_id}:{candidate.media_key}"
 
-    # Radarr's spelling. Sonarr's differs, and each silently ignores the other's -- so
-    # the planner emits the correct one per kind rather than trusting one to work.
+    # Radarr's own parameter spelling. Sonarr uses a different one and each ignores the
+    # other's silently, so the planner sends the correct spelling for each kind.
     delete = ActionStep(
         run_id=run_id,
         media_key=candidate.media_key,
@@ -216,19 +214,18 @@ def _movie_steps(
 def _season_steps(
     run_id: int, candidate: Candidate, ref: MediaRef, ordinal: int
 ) -> list[ActionStep]:
-    """The steps to prune one season: unmonitor, verify the unmonitor, delete the files.
+    """Build the three journal steps that prune one season: unmonitor, verify, delete files.
 
-    The order is not cosmetic -- the two half-applied states are asymmetric.
-    "Unmonitored, files intact" is benign and resumable; "files gone, still monitored"
-    makes Sonarr re-download everything we just removed. So the file delete is last, and
-    only after the unmonitor is *verified* (Sonarr accepts a season-pass edit and returns
-    200 whether or not it took, exactly like the exclusion footgun on the movie side).
+    The order matters, because the two half-applied states are not equally safe.
+    "Unmonitored, files intact" is safe and can be resumed. "Files gone, still monitored"
+    makes Sonarr re-download everything just removed. So the file delete runs last, and
+    only after the unmonitor is verified. Sonarr returns 200 for a season-pass edit
+    whether or not it actually took, the same trap the movie exclusion has.
 
-    The final delete records the season's coordinates rather than a frozen list of
-    ``episodeFileIds``: the set of files in a season changes as Sonarr downloads, so the
-    ids must be resolved against the live series immediately before the delete, not
-    captured at plan time. That resolution -- and the whole multi-step live send -- is the
-    supervised executor work still ahead, exactly as the movie live send is.
+    The delete step records the season's coordinates, not a frozen list of
+    ``episodeFileIds``. A season's files change as Sonarr downloads, so the executor
+    resolves the ids against the live series immediately before deleting, never at plan
+    time.
     """
     now = utcnow()
     idem = f"{run_id}:{candidate.media_key}"
@@ -285,12 +282,12 @@ def _season_steps(
 
 
 def _plannable_size(candidate: Candidate) -> int:
-    """The smallest-first sort key, for the measured set only.
+    """The sort key that orders measured candidates smallest first.
 
-    Never called on an unmeasured item: ``build_plan`` partitions those out first. It
-    raises rather than substituting a number if that ever stops being true, because a
-    stand-in zero would sort an unmeasured item to the front and make it the canary,
-    which is the exact defect the partition exists to remove.
+    ``build_plan`` partitions out unmeasured items before calling this, so it should
+    never see one. It raises rather than returning a stand-in zero, because a zero would
+    sort an unmeasured item to the front and make it the canary, the exact mistake the
+    partition exists to prevent.
     """
     if candidate.size_bytes is None:
         raise PlanError("error.plan.unmeasured_sort_key", media_key=candidate.media_key)
@@ -298,18 +295,17 @@ def _plannable_size(candidate: Candidate) -> int:
 
 
 def _refuse_without_a_canary(plannable: list[Candidate], max_unmeasured: int) -> None:
-    """A plan whose first item has no measured size has no canary, only a first casualty.
+    """Refuse a plan whose first item has no measured size: it has no canary, only a
+    first casualty.
 
-    Called on the FINAL plannable list, after every narrowing. It used to run on the whole
-    effective set, about a hundred lines before ``only_media_keys`` cut that set down --
-    so "Reap just these" over nothing but unmeasured items sailed past a check that had
-    been satisfied by measured items the plan then dropped, and the first thing the run
-    deleted was an item of unknown cost. Rule 5/30: the check has to see the set that will
-    actually be acted on.
+    Call this on the final plannable list, after every narrowing. Checking it against an
+    earlier, wider list would let a "reap just these" request over only unmeasured items
+    pass a check that measured items later dropped from the plan satisfied, then delete
+    an item of unknown cost first. The check must see the exact set the run will act on.
 
-    Vacuous when the allowance is off, since ``build_plan`` then plans measured items only.
-    An empty list is not this function's refusal to make: the caller says "nothing is
-    condemned" for that, which is the truer sentence.
+    This never fires when the allowance is off, since ``build_plan`` plans measured
+    items only in that case. An empty plannable list is not this function's refusal to
+    raise: the caller reports "nothing is condemned" for that case instead.
     """
     if max_unmeasured <= 0 or not plannable:
         return
@@ -326,39 +322,38 @@ async def build_plan(
     only_media_keys: set[str] | None = None,
     max_unmeasured: int = 0,
 ) -> ReapRun:
-    """Build a run from the condemned candidates of a snapshot. Journal it. Send nothing.
+    """Build a run from a snapshot's condemned candidates, journal it, and send nothing.
 
-    The run is created in ``PLANNED`` state with every step ``PENDING``. It records the
-    manifest hash of what it would delete and who approved it; the executor will refuse
-    to act if either the snapshot's policy or that manifest no longer matches.
+    The run starts in ``PLANNED`` state with every step ``PENDING``. It records the
+    manifest hash of what it would delete and who approved it. The executor refuses to
+    act if either the snapshot's policy or that manifest no longer matches.
 
-    The policy hash is read off the snapshot here rather than passed in. It was a caller
-    argument that every caller filled with ``snapshot.policy_hash`` anyway, and the executor
-    now REFUSES a run whose policy hash is not the one in force -- so a caller free to pass a
-    different value was a way to hand that interlock the wrong number.
+    This reads the policy hash off the snapshot rather than taking it as an argument, so
+    a caller cannot pass a value other than ``snapshot.policy_hash`` and hand the
+    executor's policy check the wrong number.
 
-    ``only_media_keys`` restricts the plan to an explicit set of items -- the "reap just
-    these" path, and the safe way to do a first, single, hand-picked deletion. It changes
-    only *which items get steps*: the manifest still binds to the **whole** condemned set,
-    so if anything else in the snapshot shifts before execution the restricted run is voided
-    too. Every requested key must be actable in this snapshot -- condemned by the scan or
-    hand-reaped, and not spared -- or the build fails naming the offenders: a plan must
-    never silently target fewer items than asked, or none at all.
+    ``only_media_keys`` restricts the plan to an explicit set of items, the "reap just
+    these" path for a first, single, hand-picked deletion. It changes only which items
+    get steps: the manifest still binds to the whole condemned set, so a later change
+    anywhere in the snapshot still voids the restricted run. Every requested key must be
+    an actable item in this snapshot, condemned by the scan or hand-reaped, and not
+    spared. Otherwise the build fails and names the offending keys: a plan must never
+    target fewer items than requested, or none at all, without saying so.
     """
     snapshot = await session.get(Snapshot, snapshot_id)
     if snapshot is None:
         raise PlanError("error.plan.no_snapshot", snapshot_id=snapshot_id)
     if snapshot.degraded:
-        # A degraded snapshot missed a source or saw the history regress. Planning a
-        # deletion from it means acting on a candidate list we already know is wrong.
-        # Reaches the operator as an HTTP 422 body on the Reap page (`api/runs.py`), so it is
-        # written for them: no snapshot id, and not "degraded", the word the docs record as
-        # internal. It is the same sentence the three incomplete-scan notices lead with, which
-        # is the point -- this is the enforcement behind what they say (rules 21, 144).
-        # The reason goes LAST, with nothing after it. `ScanContext.degrade` terminates every
-        # reason it writes, but this reads a stored column, and a row written by anything else
-        # is not covered by that -- put prose after it and an unterminated one fuses into the
-        # sentence following, which is #514 all over again.
+        # A degraded snapshot missed a source or saw its watch history go backward.
+        # Planning a deletion from it acts on a candidate list already known to be
+        # wrong. This reaches the operator as an HTTP 422 body on the Reap page
+        # (`api/runs.py`), written in plain language for them: no snapshot id, and not
+        # the word "degraded". It matches the wording the incomplete-scan notices use
+        # elsewhere in the app.
+        # The reason must go last, with nothing appended after it. `ScanContext.degrade`
+        # always ends a reason with a period, but this reads a stored column that
+        # something else may have written without one, so appending text here could run
+        # two sentences together.
         raise PlanError("error.plan.snapshot_degraded", reason=snapshot.degraded_reason or "")
 
     all_condemned = list(
@@ -366,12 +361,12 @@ async def build_plan(
             await session.execute(
                 select(Candidate)
                 .where(Candidate.snapshot_id == snapshot_id, Candidate.verdict == "condemn")
-                # By key, not by size. This set feeds only ``manifest_hash`` (which sorts
-                # internally) and a membership set, so the order here decides nothing --
-                # and a size sort on a nullable column is an active trap, because SQLite
-                # puts NULL FIRST on ASC. That would seat an unmeasured item at the front
-                # of the very list the canary used to be drawn from. The ordering that
-                # does matter is below, on the plannable set.
+                # Ordered by key, not by size. This set feeds only ``manifest_hash``
+                # (which sorts internally) and a membership check, so this order decides
+                # nothing on its own. Sorting by a nullable size column is a trap:
+                # SQLite puts NULL first on ASC, which would put an unmeasured item
+                # first in a list read for the canary. The order that matters is below,
+                # on the plannable set.
                 .order_by(Candidate.media_key)
             )
         )
@@ -379,100 +374,97 @@ async def build_plan(
         .all()
     )
 
-    # A snapshot is frozen evidence, so the owner's overrides since it was taken are
-    # applied here: a spare drops its item (no plan ever targets a file the owner told us
-    # to keep), and a hand reap adds one -- when decide_verdict honors it past the
-    # cautious protections (services.condemned). A decision on a whole show covers each of
-    # its seasons. The executor re-derives this same set per item at execute time,
-    # catching an override changed later in the grace window.
+    # A snapshot freezes its evidence, so this applies the owner's overrides made since
+    # the scan ran. A spare removes its item: no plan ever targets a file the owner said
+    # to keep. A hand reap adds an item when :func:`services.condemned.effective_condemned`
+    # honors it past the built-in protections. A decision on a whole show covers each of
+    # its seasons. The executor re-derives this same set per item at execute time, so an
+    # override changed later in the grace window still takes effect.
     decisions = await whitelist.overrides(session)
     effective = await effective_condemned(session, snapshot_id, decisions)
 
-    # An item nobody would size is not plannable. A plan must be able to say what it would
-    # free: a bound is not a measurement, and an unmeasured item cannot be counted against
-    # a byte cap at all, so planning one means acting outside the limits the owner set.
+    # An item with no known size is not plannable on its own. A plan must be able to say
+    # what it will free, and an unmeasured item cannot count against a byte cap.
     #
-    # Smallest first among the rest, which is what makes ordinal 0 -- the canary -- the
-    # least costly possible mistake, and orders the remainder so an aborting cap stops at
-    # the cheapest frontier rather than a random one. The canary is why the two lists are
-    # never merged and re-sorted: an unmeasured item has no size to sort by, so it could
-    # only ever be seated by accident.
+    # The rest sort smallest first, so ordinal 0, the canary, is the least costly
+    # possible mistake, and an aborting cap stops at the cheapest items rather than a
+    # random set. The two lists stay separate rather than merging and re-sorting,
+    # because an unmeasured item has no size to sort by and could only land first by
+    # accident.
     measured = sorted(
         (c for c in effective.values() if c.size_bytes is not None), key=_plannable_size
     )
     held_back = sorted(
         (c for c in effective.values() if c.size_bytes is None), key=lambda c: c.media_key
     )
-    # The allowance (``ProfileSettings.max_unmeasured_per_run``) lets an owner who has a
-    # handful of items their *arr will not size reap them anyway. Zero by default, and
-    # whatever it is set to, the unmeasured tail always sorts LAST.
+    # The allowance (``ProfileSettings.max_unmeasured_per_run``) lets an owner reap a
+    # handful of items their *arr will not report a size for. It is zero by default, and
+    # whatever it is set to, unmeasured items always sort last.
     #
-    # Written as concatenation rather than a combined sort deliberately. The invariant is
-    # "no unmeasured item precedes a measured one", and it should be visible in the code
-    # rather than emerge from sort stability or from a key that treats None as a number.
+    # Concatenated rather than sorted together on purpose, so the rule "no unmeasured
+    # item precedes a measured one" is visible in the code itself, not left to sort
+    # stability or a key that treats None as a number.
     #
-    # Sorting last is necessary but NOT sufficient for the canary rule: with nothing
-    # measured to sort ahead of it, the tail becomes the whole plan and ordinal 0 is an
-    # item of unknown cost. So a plan with no measured item at all is refused outright --
-    # checked below, against the final list, for the reason ``_refuse_without_a_canary``
-    # gives.
+    # Sorting unmeasured items last is not enough on its own: with no measured item
+    # ahead of it, the whole plan is unmeasured and ordinal 0 is an item of unknown
+    # cost. :func:`_refuse_without_a_canary` checks the final list below and refuses
+    # that case outright.
     plannable = measured + held_back if max_unmeasured > 0 else measured
 
-    #: The requested selection after group_key expansion, for the funnel line below. Held
-    #: outside the block because a show-level reap sends ONE key and plans its seasons, so
-    #: the count the caller passed is not the count the plan was narrowed to.
+    #: The requested selection after group_key expansion, used in the summary log below.
+    #: Set outside the block below because a show-level reap sends one key but plans
+    #: several seasons, so the caller's count differs from the count the plan actually
+    #: used.
     selected: set[str] | None = None
 
     if only_media_keys is not None:
         # "Reap just these." Every requested key must be a condemned, non-spared item in
-        # THIS snapshot -- refuse loudly on anything else, so the plan can never silently
-        # cover fewer items than asked (or, worse, none). Spares are reported distinctly
-        # from unknowns because the fix differs (remove the spare vs. it isn't condemned).
+        # this snapshot. Anything else raises, so a plan can never silently cover fewer
+        # items than asked, or none. Spares are reported separately from unknown keys,
+        # since the fix differs: remove the spare, or the item was never condemned.
         requested = set(only_media_keys)
         if not requested:
-            # An explicit but empty selection means "reap nothing", never "reap
-            # everything". The caller distinguishes an omitted field (whole set) from an
-            # empty list (this), so an empty set reaching here is a real, deliberate
-            # "nothing selected" -- fail closed with a clear message rather than falling
-            # through to plan the entire condemned set.
+            # An explicit but empty selection means "reap nothing," not "reap
+            # everything." The caller distinguishes an omitted field, which means the
+            # whole set, from an empty list, which means this. So an empty set reaching
+            # here is a deliberate "nothing selected," and it raises a clear error
+            # instead of planning the entire condemned set.
             raise PlanError("error.plan.selection_empty")
 
         condemned_keys = {c.media_key for c in all_condemned}
-        # Two sets, and the difference decides which refusal the owner reads. ``actable``
-        # is everything the overrides left reapable; the held-back keys are the subset of
-        # it with no size. A held-back key is actable, so checking only the narrower
-        # plannable set would report it as spared and send the owner to remove a spare
-        # that does not exist.
+        # Two sets decide which error the owner sees. ``actable_keys`` is everything the
+        # overrides left reapable; ``held_back_keys`` is the subset of it with no size. A
+        # held-back key is still actable, so checking only the narrower plannable set
+        # would wrongly report it as spared and send the owner to remove a spare that
+        # does not exist.
         actable_keys = set(effective)
         held_back_keys = {c.media_key for c in held_back}
 
-        # A TV show is selectable in the review queue only at the show level, so a "reap
-        # just these" request can carry a show's group_key (three-part
-        # ``sonarr:{inst}:{series}``) instead of the four-part season media_keys beneath it.
-        # Expand each requested group_key to its actable member seasons before the checks
-        # below -- mirroring ``whitelist.effective_override``, where a decision on a whole
-        # show reaches each of its seasons -- so the destructive path is symmetric with the
-        # spare/reap override path (otherwise bulk-reaping any TV title is impossible). A
-        # spared season is left OUT of the expansion, exactly as the override path keeps it,
-        # rather than turning a show-level reap into a loud "these are spared" refusal for a
-        # season the owner never named directly. An explicitly-named key is carried through
-        # unchanged, so naming a spared or unknown key still fails loudly below. Members
-        # come from the MEASURED set, so a hand-reaped season rides its show's bulk reap
-        # and an unmeasured one is quietly left out -- exactly as a spared season is.
-        # Drawing them from the wider effective set instead would pull an unmeasured season
-        # into the expansion and then trip the refusal below on it, making "Reap now" fail
-        # outright on any show with one unmeasured season, over an item the owner never
-        # named. Measured rather than plannable even when the allowance is open: an
-        # unmeasured season enters a plan through a deliberate whole-set or by-name reap,
-        # never by riding a show-level click that was not aimed at it.
+        # The review queue lets an operator select a TV show only at the show level, so a
+        # "reap just these" request can carry a show's group_key
+        # (``sonarr:{inst}:{series}``) instead of the four-part season keys beneath it.
+        # Expand each requested group_key to its actable member seasons before the
+        # checks below, the same way ``whitelist.effective_override`` reaches every
+        # season of a show from one decision on it. A spared season stays out of the
+        # expansion, so a show-level reap does not fail loudly over a season the owner
+        # never named. A key named directly is carried through unchanged, so naming a
+        # spared or unknown key still fails below.
+        #
+        # Members come from the measured set only. A hand-reaped season rides along with
+        # its show's bulk reap, and an unmeasured one is left out, the same as a spared
+        # season. Using the wider effective set instead would pull an unmeasured season
+        # into the expansion and then fail the whole show's reap over an item the owner
+        # never named. An unmeasured season enters a plan only through a deliberate
+        # whole-set or by-name reap, never by riding a show-level click aimed at other
+        # seasons.
         members_by_group: dict[str, set[str]] = {}
         for c in measured:
             if c.group_key is not None:
                 members_by_group.setdefault(c.group_key, set()).add(c.media_key)
-        # Shows whose only reapable seasons are ones nothing would size. They have no
-        # entry above (that map holds measured members only), so without this they would
-        # fall through as an unrecognized key and be refused as "not condemned in this
-        # snapshot" -- true of the key, and completely misleading about the show.
+        # Shows whose only reapable seasons have no known size. They have no entry
+        # above, since that map holds measured members only. Without this, such a
+        # show's key would look unrecognized and get refused as "not condemned in this
+        # snapshot," which is technically true but misleading about the show.
         unmeasured_groups: dict[str, set[str]] = {}
         for c in held_back:
             if c.group_key is not None and c.group_key not in members_by_group:
@@ -494,9 +486,9 @@ async def build_plan(
         unknown = requested - (condemned_keys | actable_keys)
         if unknown:
             raise PlanError("error.plan.items_not_condemned", keys=", ".join(sorted(unknown)))
-        # Named directly, so it is refused out loud rather than dropped. A key the owner
-        # typed must never vanish from a plan in silence, even when the reason is safety.
-        # With the allowance open these items are plannable, so there is nothing to refuse.
+        # Refused out loud rather than dropped, since a key the owner named must never
+        # vanish from a plan silently, even for a safety reason. With the allowance
+        # open, these items are plannable, so there is nothing to refuse.
         named_held_back = requested & held_back_keys if max_unmeasured == 0 else set()
         if named_held_back:
             raise PlanError("error.plan.items_unmeasured", keys=", ".join(sorted(named_held_back)))
@@ -506,29 +498,28 @@ async def build_plan(
         plannable = [c for c in plannable if c.media_key in requested]
         selected = requested
 
-    # Every narrowing above is done, so this is the exact set the run will act on -- which
-    # is the only set the canary rule means anything over (rule 5/30).
+    # Every narrowing above is done, so this is the exact set the run will act on, the
+    # only set the canary check means anything over.
     _refuse_without_a_canary(plannable, max_unmeasured)
 
-    # Derived from what actually ended up in the plan, rather than decided up front by the
-    # allowance. Deciding it up front made ``omitted`` empty whenever the allowance was
-    # open, which silenced the very notice the allowance most needed: a show-level reap
-    # still leaves its unmeasured seasons out of the expansion (they may only enter a plan
-    # deliberately), so turning the allowance ON used to make the plan LESS honest than
-    # leaving it off. Anything held back that did not make the plan is omitted, whatever
-    # the setting says.
+    # Derived from what actually ended up in the plan, not decided up front from the
+    # allowance. A show-level reap still leaves its unmeasured seasons out of the
+    # expansion, since they can only enter a plan deliberately, so deciding this from
+    # the allowance alone would report it as empty even when items were held back.
+    # Anything held back that did not make the plan is omitted, whatever the allowance
+    # is set to.
     planned_keys = {c.media_key for c in plannable}
     admitted = [c for c in held_back if c.media_key in planned_keys]
     omitted = [c for c in held_back if c.media_key not in planned_keys]
     if only_media_keys is not None:
-        # Narrowed to what a requested show dropped from its own expansion: a held-back
+        # Narrowed to what a requested show dropped from its own expansion. A held-back
         # item the owner never pointed at is not this plan's business to report.
         named = set(only_media_keys)
         omitted = [c for c in omitted if c.group_key is not None and c.group_key in named]
 
-    # Abort, never truncate. Planning the first N would let sort order decide WHICH
-    # unmeasured file dies, which is the accident this whole design removes -- and it is
-    # the same abort-not-truncate discipline the byte caps already keep.
+    # Abort rather than truncate. Planning only the first N would let sort order decide
+    # which unmeasured file gets deleted, which is exactly what this design prevents.
+    # The byte caps use the same abort-not-truncate rule.
     if len(admitted) > max_unmeasured:
         raise PlanError(
             "error.plan.unmeasured_over_limit", count=len(admitted), limit=max_unmeasured
@@ -547,26 +538,29 @@ async def build_plan(
     if not plannable:
         raise PlanError("error.plan.nothing_condemned")
 
-    # Read every instance's row once: the KEYS are the ids configured right now (the
-    # existence check the guard below runs), and the VALUES are each Radarr's own
-    # import-exclusion choice, frozen into the movie delete body further down so the preview
-    # matches the send and the executor reads the approved value back from the journal
-    # (executor._send_movie) rather than a setting that could have changed since approval.
-    # add_import_exclusion is NOT NULL, so every instance has a row and the key set is
-    # complete for the guard.
+    # Read every instance's row once. The keys are the instance ids configured right
+    # now, which the guard below checks against. The values are each Radarr's own
+    # import-exclusion setting, frozen into the movie delete body below so the preview
+    # matches what actually gets sent, and so the executor reads this same approved
+    # value back from the journal (``executor._send_movie``) instead of a setting that
+    # may have changed since approval. ``add_import_exclusion`` is NOT NULL, so every
+    # instance has a row and this key set is complete.
     exclusion_by_instance: dict[int, bool] = {
         row.id: row.add_import_exclusion
         for row in (await session.execute(select(Instance.id, Instance.add_import_exclusion))).all()
     }
-    # A movie candidate froze its instance id at scan time; the map holds the instances that
-    # exist now. A Radarr removed between the scan and the plan misses here, and the miss is
-    # not benign: the movie cannot be deleted (executor.radarr_for refuses it at send), and
-    # its per-instance exclusion setting is gone -- so a plan built on a default would preview
-    # a delete that cannot run under a setting the operator never chose (rule 65/91). The
-    # snapshot is stale; refuse it out loud rather than substitute, the way the four refusals
-    # above do. A re-scan drops the item, since a removed instance is never fetched again.
-    # (The Sonarr season path freezes no per-instance setting, so it has no substitution to
-    # make; a season targeting a removed Sonarr is refused per item by the executor.)
+    # A movie candidate froze its instance id at scan time, but this map holds only the
+    # instances that exist now. A Radarr removed between the scan and the plan is
+    # missing here, and that miss matters: the movie cannot be deleted
+    # (``executor.radarr_for`` refuses it), and its exclusion setting is gone, so a plan
+    # built on a default would preview a delete under a setting the operator never
+    # chose. The snapshot is stale, so this refuses the plan outright instead of
+    # substituting a default, the same as the refusals above. A re-scan drops the item,
+    # since a removed instance is never fetched again.
+    #
+    # The Sonarr season path freezes no per-instance setting, so it has nothing to
+    # substitute; the executor refuses a season targeting a removed Sonarr per item
+    # instead.
     orphaned = sorted(
         {
             ref.instance_id
@@ -581,20 +575,21 @@ async def build_plan(
     now = utcnow()
     run = ReapRun(
         snapshot_id=snapshot_id,
-        # The policy this snapshot was scored under. The executor compares it against the
-        # policy in force at execute time and refuses a plan judged by a superseded one.
+        # The policy this snapshot was scored under. The executor compares it to the
+        # policy in force at execute time and refuses to run a plan judged under a
+        # policy since replaced.
         policy_hash=snapshot.policy_hash,
         state=RunState.PLANNED,
-        # The manifest binds to the WHOLE condemned set, spared or not. A spare is not a
-        # change to what was condemned -- it is a decision to keep one of them -- so sparing
-        # an item after approval must not change this fingerprint and void the run; the
-        # executor honors the spare per item instead. Both sides hash the identical frozen
-        # candidate rows for this immutable snapshot, so this fingerprint is a frozen-set
-        # integrity check (it catches a condemned candidate row lost or tampered with under
-        # the run), NOT live library drift -- nothing re-reads the *arr here. Live drift is
-        # caught by the executor's per-item interlocks and its existence and size re-reads
-        # at delete time; a stale tab is stopped by the route's confirmation-phrase
-        # recompute.
+        # The manifest binds to the whole condemned set, spared or not. Sparing an item
+        # is a decision to keep it, not a change to what was condemned, so sparing it
+        # after approval must not change this hash and void the run. The executor
+        # honors the spare per item instead. Both sides hash the same frozen candidate
+        # rows for this snapshot, so this checks the integrity of that frozen set. It
+        # catches a condemned candidate row lost or altered while the run is pending.
+        # It does not catch drift in the *arr library, since nothing here re-reads
+        # Radarr or Sonarr: the executor's per-item checks catch that, re-reading each
+        # item's existence and size right before deleting it, and the route
+        # recomputing the confirmation phrase catches a stale browser tab.
         approved_manifest_hash=manifest_hash(all_condemned),
         approved_by=approved_by,
         approved_at=now,
@@ -607,17 +602,17 @@ async def build_plan(
     for candidate in plannable:
         ref = MediaRef.parse(candidate.media_key)
         if ref.kind == "radarr":
-            # Guaranteed present: the orphaned-instance guard above refused the plan if any
-            # movie named a Radarr this map does not hold. A KeyError here is that guard
-            # failing, not an operator with a removed instance.
+            # Guaranteed present: the orphaned-instance guard above already refused the
+            # plan if any movie named a Radarr missing from this map. A KeyError here
+            # means that guard failed, not that the operator removed an instance.
             add_exclusion = exclusion_by_instance[ref.instance_id]
             steps = _movie_steps(run.id, candidate, ref, ordinal, add_exclusion=add_exclusion)
         elif ref.kind == "sonarr" and ref.season is not None:
             steps = _season_steps(run.id, candidate, ref, ordinal)
         else:
-            # A whole-series (three-part) sonarr key is not season pruning and has no
-            # delete path yet. Skip it LOUDLY -- logged, not silently dropped -- so the
-            # plan never claims to cover something it does not.
+            # A whole-series (three-part) sonarr key is not season pruning, and has no
+            # delete path yet. Log it and skip it, so the plan never claims to cover
+            # something it does not.
             log.warning(
                 "plan.no_delete_path",
                 media_key=candidate.media_key,
@@ -629,24 +624,23 @@ async def build_plan(
         ordinal += 1
 
     await session.flush()
-    # The set narrows four times between the queue and the plan -- overrides, the
-    # measured/held-back split, the requested selection, and items with no delete path --
-    # and only the last of those said anything. "The review queue showed 40 condemned and
-    # my plan has 12 steps" was then unanswerable without re-querying the snapshot by
-    # hand, since the run row stores only `held_back_unknown_size`.
+    # The set narrows four times between the review queue and the plan: overrides, the
+    # measured/held-back split, the requested selection, and items with no delete path.
+    # This line logs every stage, so a mismatch between what the queue showed and what
+    # the plan built is answerable from the log alone.
     #
-    # Every value here is a local already computed above, so the line costs nothing at
-    # INFO. The per-item detail behind the first two is at DEBUG below; the requested
-    # selection has none deliberately, since naming one title out of three hundred would
-    # emit two hundred and ninety-nine lines saying the rest were not picked, and the
-    # operator already knows which one they clicked. The no-delete-path drop names its
-    # item at WARNING above.
+    # Every value here is already computed above, so logging it costs nothing at INFO.
+    # The per-item detail behind the first two stages is logged at DEBUG below. The
+    # requested selection has no per-item detail here on purpose: naming one title out
+    # of three hundred would log the other two hundred ninety-nine as not picked, and
+    # the operator already knows which one they clicked. The no-delete-path drop names
+    # its item at WARNING above.
     #
-    # Both requested counts, because they answer different questions and a show-level reap
-    # makes them differ: `requested` is what the caller sent, `selected` is that set after
-    # each group_key expanded to its member seasons, which is the set the plan was actually
-    # narrowed to. Reporting only the first inverts the funnel this line exists to make
-    # readable -- one click on a five-season show read as `requested=1, planned=5` (rule 5/30).
+    # `requested` and `selected` answer different questions, and a show-level reap
+    # makes them differ: `requested` is what the caller sent, `selected` is that set
+    # after each group_key expanded to its member seasons, the set the plan was
+    # actually narrowed to. Reporting only `requested` would misrepresent a single click
+    # on a five-season show as `requested=1, planned=5`.
     log.info(
         "planner.built",
         run_id=run.id,

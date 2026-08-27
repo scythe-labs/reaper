@@ -2,16 +2,17 @@
 // Payloads for the settings reads a component tree performs on its own.
 //
 // A test that replaces `../api` wholesale hands every consumer `undefined` for whatever the
-// mock omits -- including hooks the test never names. `useHoldsBackUnmeasured` reads
-// ["profile"], the queue and the shell read ["general-settings"], the breakdown reads
-// ["scanStatus"]. React Query answers a missing queryFn with an error state, so the tree
-// quietly renders its "we could not read it" branch and the test passes for the wrong reason.
-// Rule 135 fails the run on that; these are what the mocks return instead.
+// mock omits, including hooks the test never names. `useHoldsBackUnmeasured` reads ["profile"],
+// the queue and the shell read ["general-settings"], and the breakdown reads ["scanStatus"].
+// React Query answers a missing queryFn with an error state, so the tree quietly renders its
+// "could not read it" branch and the test passes for the wrong reason. A test suite check
+// fails the run on that. These are what the mocks return instead.
 //
 // The values are the shipped defaults, picked so a tree that was silently rendering the failed
-// read keeps rendering the same thing: no unmeasured allowance (so unmeasured items are still
-// held back), seasons collapsed, spares kept forever. A test that cares about any of these sets
-// its own value -- these exist so a test that does NOT care never has to think about them.
+// read keeps rendering the same thing. There is no unmeasured allowance, so unmeasured items
+// are still held back, seasons stay collapsed, and spares are kept forever. A test that cares
+// about any of these sets its own value. These exist so a test that does not care never has to
+// think about them.
 import type { QueryClient } from "@tanstack/react-query";
 import type {
   AuthUser,
@@ -48,13 +49,13 @@ export const DEFAULT_GENERAL: GeneralSettings = {
   default_spare_days: 0,
   proxy_trust_enabled: false,
   trusted_proxies: [],
-  // Not a desktop build: the shape every install other than the Mac and Windows
-  // apps reports, and the one that renders no Desktop app group.
+  // This is not a desktop build. It is the shape every install other than the Mac and Windows
+  // apps reports, and it is the one that renders no Desktop app group.
   desktop: null,
 };
 
-/** No watch record held, and no scan has counted: the state a fresh install is in, and the
- *  one that renders the Plex panel's watch-history group at rest.
+/** No watch record held, and no scan has counted. This is the state a fresh install is in, and
+ *  it renders the Plex panel's watch-history group at rest.
  *
  *  `held_back` is `null`, not `0`, because that is what the route returns with no snapshot
  *  rows. A fixture stating `0` here would be the one shape a fresh database cannot produce,
@@ -62,10 +63,10 @@ export const DEFAULT_GENERAL: GeneralSettings = {
  *  instead of the "not recorded" one. */
 export const DEFAULT_WATCH_EVIDENCE: WatchEvidence = { titles: 0, held_back: null };
 
-/** The update check with nothing to say: enabled but unanswered, which renders no
- *  pill, no chip light, no banner -- the same nothing a tree rendered before the check
- *  existed. A test that cares about updates sets its own payload; this exists so every
- *  test that does not care never has to think about it. */
+/** The update check with nothing to say. Enabled but unanswered, this renders no pill, no chip
+ *  light, and no banner, the same nothing a tree rendered before the check existed. A test that
+ *  cares about updates sets its own payload. This exists so every test that does not care never
+ *  has to think about it. */
 export const DEFAULT_UPDATE: Update = {
   channel: "release",
   enabled: true,
@@ -79,14 +80,15 @@ export const DEFAULT_UPDATE: Update = {
 
 /** A linked server with nothing else said about it, and an empty library list.
  *
- *  Both exist for #704's reason rather than for convenience: an unanswered `api.plexStatus`
- *  and `api.plexLibraries` render the same could-not-read branch a real failure does, and the
- *  test then asserts against that branch believing it is the app. `linked: true` is the state
- *  the wizard's Plex step is about; a file whose subject is the UNLINKED step sets its own.
+ *  Both fields exist to keep every read answered rather than for convenience. An unanswered
+ *  `api.plexStatus` or `api.plexLibraries` renders the same could-not-read branch a real
+ *  failure does, and a test can then assert against that branch believing it is the app.
+ *  `linked: true` is the state the wizard's Plex step is about. A file whose subject is the
+ *  unlinked step sets its own.
  *
  *  The library list is empty rather than populated because a library row is what several of
  *  these tests are about, and a fixture that painted rows would answer a read a test means to
- *  make itself (rule 135). */
+ *  make itself. */
 export const DEFAULT_PLEX_STATUS: PlexStatus = {
   linked: true,
   name: "Example Server",
@@ -96,23 +98,23 @@ export const DEFAULT_PLEX_STATUS: PlexStatus = {
   web_url: "https://app.plex.tv",
 };
 
-/** No suggestions, which is what a fresh scan with nothing distinct to offer really returns:
- *  the route's own docstring says an unknown field or a missing scan is an empty list, and
- *  typing an unlisted value stays valid either way. So a tree rendered against this is the
- *  tree an operator can genuinely see, and a filter suggester falls back to free text rather
- *  than to its failed-read branch.
+/** No suggestions, which is what a fresh scan with nothing distinct to offer really returns.
+ *  The route's own docstring says an unknown field or a missing scan returns an empty list, and
+ *  typing an unlisted value stays valid either way. A tree rendered against this is the tree an
+ *  operator can genuinely see, and a filter suggester falls back to free text rather than to
+ *  its failed-read branch.
  *
- *  It exists because a mock that answers nothing renders the SAME failed-read branch, and
- *  nothing said so: `queryFn: () => api.vocabularyValues(f)` is an arrow, so the queryFn is
- *  present and throws inside it, which React Query files as an ordinary rejection (#704,
- *  rule 135's stated blind spot). */
+ *  This fixture exists because a mock that answers nothing renders the same failed-read branch
+ *  with nothing to say so. `queryFn: () => api.vocabularyValues(f)` is an arrow function, so
+ *  the queryFn is present and throws inside it, which React Query files as an ordinary
+ *  rejection. */
 export const DEFAULT_FIELD_VALUES: FieldValues = { field: "", values: [] };
 
-/** An ordinary finished scan, nothing degraded -- the shape `api.latestSnapshot` returns most of
- *  the time. `collection_sizes` is left absent, which is the honest default: most tests never
- *  put a candidate in a collection, and the queue's card pickers (#816 phase 4/5) read this
+/** An ordinary finished scan, nothing degraded. This is the shape `api.latestSnapshot` returns
+ *  most of the time. `collection_sizes` is left absent, which is the honest default. Most tests
+ *  never put a candidate in a collection, and the queue's card pickers read this
  *  unconditionally now, so a tree that does not care about it still needs an answer rather than
- *  the failed-read branch (rule 135). A test about a collection's own size sets its own. */
+ *  the failed-read branch. A test about a collection's own size sets its own. */
 export const DEFAULT_SNAPSHOT: Snapshot = {
   id: 1,
   created_at: "2026-01-01T00:00:00+00:00",
@@ -129,7 +131,7 @@ export const DEFAULT_SNAPSHOT: Snapshot = {
   unknown_size_items: 0,
 };
 
-/** Nothing running -- the shape `api.scanStatus` returns between scans. */
+/** Nothing running. This is the shape `api.scanStatus` returns between scans. */
 export const IDLE_SCAN: ScanStatus = {
   running: false,
   phase: "idle",
@@ -142,14 +144,15 @@ export const IDLE_SCAN: ScanStatus = {
   followup_queued: false,
 };
 
-/** A fully configured install: everything connected, a scan behind it, and a real run allowed.
+/** A fully configured install. Everything is connected, a scan is behind it, and a real run is
+ *  allowed.
  *
  *  The Reap page reads this on its own to say, before the button, what would turn a run away
- *  (`reapReadiness.ts`). `reap_ready: true` is the value that renders NOTHING extra, which is
- *  the point: a test that does not care about setup keeps rendering the page it always did,
- *  and a test that does care sets its own. A failed read is not the same as this and does not
- *  substitute for it -- the page says so out loud, which is why the fixture cannot be omitted
- *  and left to the mock gap (rule 135). */
+ *  (`reapReadiness.ts`). `reap_ready: true` is the value that renders nothing extra, which is
+ *  the point. A test that does not care about setup keeps rendering the page it always did, and
+ *  a test that does care sets its own. A failed read is not the same as this and does not
+ *  substitute for it, since the page says so out loud, which is why this fixture cannot be
+ *  omitted and left to an unanswered mock. */
 export const READY_SETUP: SetupStatus = {
   admin_exists: true,
   has_password: true,
@@ -167,10 +170,10 @@ export const READY_SETUP: SetupStatus = {
 
 /** An ordinary signed-in admin, for a panel that reads ["me"] on its own.
  *
- *  `via_recovery: false` is the shipped default AND the strict one: the Security panel's
- *  current-password box stays live and required, which is the form every test here was written
- *  against. A test about the recovery path sets its own user rather than editing this, so
- *  loosening the gate can never happen by accident in a suite that is about something else. */
+ *  `via_recovery: false` is both the shipped default and the strict setting. The Security
+ *  panel's current-password box stays live and required, which is the form every test here was
+ *  written against. A test about the recovery path sets its own user rather than editing this,
+ *  so loosening the gate can never happen by accident in a suite that is about something else. */
 export const SIGNED_IN_USER: AuthUser = {
   id: 1,
   username: "owner",
@@ -179,18 +182,18 @@ export const SIGNED_IN_USER: AuthUser = {
   via_recovery: false,
 };
 
-/** Put those settings in the cache, fresh, for a tree that reads them on its own and a test that
- *  does not care what they say -- it renders with them applied from its first paint.
+/** Puts those settings in the cache, fresh, for a tree that reads them on its own and a test
+ *  that does not care what they say. The tree renders with them applied from its first paint.
  *
  *  Mocking `api.profile` answers the read, but the answer arrives a microtask later, after a
- *  synchronous test body has finished asserting: such a test states its expectation about the
- *  panel while the settings are still pending, which is not the panel any operator sees, and the
- *  update lands after the test (rule 135). Seeding is the same payload, delivered at the only
- *  moment a sync test can read it. Keep the mock as well, for whatever refetches later.
+ *  synchronous test body has finished asserting. Such a test would state its expectation about
+ *  the panel while the settings are still pending, which is not the panel any operator sees,
+ *  since the update lands after the test. Seeding is the same payload, delivered at the only
+ *  moment a synchronous test can read it. Keep the mock as well, for whatever refetches later.
  *
  *  Never seed a key the test varies. Fresh cached data means no fetch, so seeding a suite that
- *  rejects `api.profile` or holds it pending -- ReapBreakdown and PolicyEditor both do -- would
- *  quietly answer the read it is trying to fail, and the test would prove nothing. */
+ *  rejects `api.profile` or holds it pending, which ReapBreakdown and PolicyEditor both do,
+ *  would quietly answer the read it is trying to fail, and the test would prove nothing. */
 export function seedSettings(client: QueryClient): QueryClient {
   client.setQueryDefaults(["profile"], { staleTime: Infinity });
   client.setQueryDefaults(["general-settings"], { staleTime: Infinity });

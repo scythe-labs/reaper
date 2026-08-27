@@ -1,31 +1,21 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""What every router needs off the request, and the gate that gets asked before deletion is armed.
+"""Give every router what it needs off the request, and gate what happens before deletion is armed.
 
-Two things live here. The gate is why this module is under ``.claude/rules/auth.md``'s globs;
-the accessors would not have earned that on their own.
+Two things live here. The gate is why this module falls under ``.claude/rules/auth.md``.
 
-**The admin-password gate.** Four routes ask for the admin password before doing something
-consequential: arming deletion, changing that password, forgetting the watch record, and
-confirming a restore. All four ran the same four-step ritual by hand, copied line for line,
-varying only in the log name and the sentence the operator reads.
-:func:`require_admin_password` is that ritual, written once.
+**The admin-password gate.** Four routes ask for the admin password before doing
+something consequential: arming deletion, changing that password, forgetting the watch
+record, and confirming a restore. :func:`require_admin_password` runs that check once,
+for all four.
 
-**The request accessors.** Seven routers each wrote their own two-line reader for the same three
-attributes of
-``app.state``, under two spellings -- ``_factory`` in ``api/auth.py``, ``api/backup.py``,
-``api/settings.py`` and ``api/setup.py``, ``_sessions`` in ``api/review.py``,
-``api/runs.py`` and ``api/whitelist.py`` -- and four more modules imported one of those
-copies rather than adding an eighth. ``_latest_snapshot`` was written twice and called
-from four modules. They are one declaration each now. :func:`state_singleton` is the same
-collapse for the lazily-built per-app objects, which were four copies of one read-build-store.
+**The request accessors.** These read three attributes off ``app.state``: the session
+factory, the settings, and the secret box. :func:`state_singleton` does the same job
+for objects that build lazily on first use, one per app.
 
-Routers that read ``request.app.state`` inline are left alone. They copied no function,
-so they are outside what this module collapses, and the pull request that landed it
-records the deferral (``docs/history/SIMPLIFICATION_PLAN.md``, wave 3). **Thirty-two such reads
-survive across eleven modules, and three of them are in ``api/runs.py``** -- the one route
-that deletes -- so a later sweep that walks only the read-only routers has not honored the
-deferral. Exactly three cannot adopt these accessors without a signature change, all in
-``api/scan.py``'s ``launch_scan(app: FastAPI)``, which holds no ``Request`` at all.
+Some routers still read ``request.app.state`` directly instead of using these
+accessors. That is left alone by choice. ``api/scan.py``'s ``launch_scan(app: FastAPI)``
+cannot adopt them without a signature change, since it holds an ``app``, not a
+``Request``.
 """
 
 from __future__ import annotations
@@ -70,14 +60,12 @@ def state_singleton[T](app: FastAPI, name: str, build: Callable[[], T]) -> T:
     """The one ``app.state.<name>`` for this app, built on first ask.
 
     Four callers keep a per-app object this way: the scan status, the reap status, the
-    Scales request cache, and the artwork client's lock. It is built here rather than in
-    the lifespan. That way a test app that never ran one still gets its own, bound to its
-    own running loop.
+    Scales request cache, and the artwork client's lock. It builds here rather than in
+    the lifespan, so a test app that never ran one still gets its own, bound to its own
+    running loop.
 
     **There is no await between the read and the write**, so two concurrent requests
-    cannot both install one and hand out different objects. That was written down at one
-    of the four call sites and silently relied on at the other three; keeping it true is
-    now this function's job rather than each caller's.
+    cannot both install one and hand out different objects.
     """
     existing: T | None = getattr(app.state, name, None)
     if existing is None:
@@ -98,12 +86,12 @@ async def newest_snapshot(session: AsyncSession) -> Snapshot | None:
 
 
 def client_ip(request: Request) -> str:
-    # The peer address, with one deliberate carve-out: when the operator turned on
-    # reverse-proxy trust (Settings -> General) and the peer IS a listed proxy,
-    # X-Forwarded-For is honored -- see auth.proxy.client_ip for the walk. From any
-    # other peer that header is attacker-controlled and ignored, because trusting it
-    # would let a single host dodge the per-IP lockout by rotating a spoofed value.
-    # The per-account lock still runs alongside either way.
+    # Returns the peer address, with one exception. If the operator turned on
+    # reverse-proxy trust (Settings, General) and the peer is a listed proxy, this reads
+    # X-Forwarded-For instead (see auth.proxy.client_ip). From any other peer, that
+    # header is attacker-controlled, so it is ignored. Trusting it there would let a
+    # single host dodge the per-IP lockout by rotating a spoofed value. The per-account
+    # lock still applies either way.
     return proxy.client_ip(request)
 
 
@@ -115,28 +103,24 @@ def refuse_if_waiting(retry: float) -> None:
 
 
 def throttled(throttle: Throttle, *keys: str) -> None:
-    """Raise 429 if any of ``keys`` is currently locked out, else return.
+    """Raise 429 if any of ``keys`` is currently locked out, otherwise return.
 
-    Checked *before* any password work happens, so a locked-out attacker never
-    reaches the expensive Argon2 verify -- that is what the throttle is for.
+    Callers check this before doing any password work, so a locked-out attacker never
+    reaches the expensive Argon2 verify. That is what the throttle is for.
     """
     refuse_if_waiting(max((throttle.retry_after(k) for k in keys), default=0.0))
 
 
 def _record_password_failure(throttle: Throttle, keys: Sequence[str], *, gate: str) -> None:
-    """Count a wrong password against every key, and say which interlock it was.
+    """Count a wrong password against every key, and log which gate it was.
 
-    Four routes are gated on the admin password -- arming deletion, changing that
-    password, forgetting the watch record, and confirming a restore -- and each recorded
-    the failure silently. So a hundred attempts to arm deletion from a borrowed session
-    left no trace whatever, while the one that eventually succeeded logged
-    ``safety.destructive_set``. The local login has warned on its lockout crossing all
-    along (``auth.local_locked_out``); this is that same line for its four siblings
-    (rule 72).
+    This covers all four gates behind the admin password: arming deletion, changing
+    that password, forgetting the watch record, and confirming a restore. It logs the
+    same way the local login already warns on its own lockout (``auth.local_locked_out``).
 
-    The throttle KEY and the gate, never ``payload.password``: an attempted password is
-    of no use to anyone reading this and is the one thing here that must never be
-    written down (rule 13).
+    Never log the attempted password. The log carries only the throttle key and the
+    gate name. A wrong password has no use to anyone reading this and must not be
+    stored anywhere.
     """
     locked_for = 0.0
     for key in keys:
@@ -162,13 +146,13 @@ def busy_hashing() -> RefusalHTTPException:
 
 
 async def _verify_admin_password(session: AsyncSession, password: str) -> bool:
-    """Check the admin password, turning a full Argon2 gate into a 503 rather than a
-    "wrong password".
+    """Check the admin password, and turn a full Argon2 concurrency gate into a 503
+    instead of a "wrong password".
 
-    The distinction matters: a capacity refusal must never reach the lockout counters, or
-    a server under load would lock out the operator who typed the right password. The gate
-    itself is taken inside ``admin_password.verify``, which is the only place that knows
-    how many hashes the call will run (S-4).
+    A capacity refusal must never reach the lockout counters, or a server under load
+    would lock out the operator who typed the right password. ``admin_password.verify``
+    takes the gate itself, since it is the only place that knows how many hashes the
+    call will run.
     """
     try:
         return await admin_password.verify(session, password)
@@ -184,25 +168,28 @@ async def require_admin_password(
     gate: str,
     code: str,
 ) -> None:
-    """Ask for the admin password behind the lockout, or refuse. The four gates' ritual, once.
+    """Ask for the admin password behind the lockout, or refuse. All four gates share
+    this one check.
 
-    **Returns nothing, and that is the safety property.** A ``-> bool`` a caller can forget to
-    read is a gate a caller can forget to close, and this one arms deletion. Every refusal
-    leaves as an exception, so a call site that ignores the result still cannot continue on a
-    wrong password.
+    **Returns nothing, and that is the safety property.** A ``-> bool`` a caller can
+    forget to read is a gate a caller can forget to close, and this one arms deletion.
+    Every refusal leaves as an exception, so a call site that ignores the return value
+    still cannot proceed on a wrong password.
 
-    ``keys`` is passed, never derived. All four gates share the per-IP key and each carries its
-    own ``account:`` key. An ``account:`` lockout refuses from every source address, so merging
-    them would let five wrong restore passwords from anywhere lock the operator out of arming
-    deletion from their own machine. The shared ``ip:`` half is deliberate: all four verify the
-    same secret, so one address guessing it at any gate is one guesser at one password.
+    Callers pass ``keys`` rather than have this function derive them. All four gates
+    share one per-IP key and each carries its own ``account:`` key. Merging the
+    ``account:`` keys would let five wrong restore-password guesses from anywhere lock
+    the operator out of arming deletion from their own machine. Sharing the ``ip:`` key
+    is deliberate: all four gates verify the same secret, so one address guessing it at
+    any gate is one guesser at one password.
 
-    A full Argon2 gate raises 503 out of :func:`_verify_admin_password` before the failure is
-    recorded, so a capacity refusal never reaches the lockout counters (rule 11/98). That is
-    structural rather than a branch here: the exception leaves before the ``if`` below runs.
+    A full Argon2 gate raises 503 out of :func:`_verify_admin_password` before the
+    failure is recorded, so a capacity refusal never reaches the lockout counters. That
+    guarantee is structural: the exception leaves before the ``if`` below ever runs.
 
-    ``code`` names the catalog sentence the operator reads, which names what was kept rather
-    than what went wrong (rule 21). ``gate`` names the interlock in the log and is never shown.
+    ``code`` names the catalog sentence the operator reads, which says what was kept
+    rather than what went wrong. ``gate`` names the interlock in the log only and is
+    never shown to the operator.
     """
     throttled(password_throttle, *keys)
     if not await _verify_admin_password(session, password):

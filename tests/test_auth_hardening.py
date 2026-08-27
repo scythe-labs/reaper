@@ -1,15 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The unauthenticated surface, and what it costs a stranger to hammer it.
 
-Four properties, each of which used to hold for some of the pre-auth routes and not the
-rest -- which is the shape of every finding here:
+Four properties that must hold evenly across every pre-auth route, not just some of them:
 
-* Plex sign-in is rate limited (S-1). The password routes have a consecutive-FAILURE
-  lockout, which never trips on an endpoint whose calls all succeed.
-* A forwarded header is believed only from a proxy the operator listed (S-7). That was
-  already true of ``X-Forwarded-For`` and not of ``X-Forwarded-Proto``.
-* The Argon2 gate counts hashes, not requests (S-4).
-* A recovery code is spent only when it actually signs someone in (B-13).
+* Plex sign-in is rate limited. The password routes have a consecutive-failure lockout,
+  which never trips on an endpoint whose calls all succeed.
+* A forwarded header is believed only from a proxy the operator listed. That was already
+  true of ``X-Forwarded-For`` but not of ``X-Forwarded-Proto``.
+* The Argon2 gate counts hashes, not requests.
+* A recovery code is spent only when it actually signs someone in.
 """
 
 from __future__ import annotations
@@ -86,7 +85,7 @@ class TestTheRateLimiter:
         assert limiter.retry_after("b") == 0.0
 
     def test_success_does_not_forgive_it(self) -> None:
-        """The difference from ``Throttle``: a flood made of calls that all succeed is
+        """The difference from ``Throttle``. A flood made of calls that all succeed is
         exactly the case a failure-lockout cannot see."""
         limiter = RateLimiter(limit=2, window=60.0, clock=lambda: 0.0)
         limiter.retry_after("k")
@@ -96,8 +95,8 @@ class TestTheRateLimiter:
 
 class TestTheArgon2GateCountsHashes:
     def test_a_caller_takes_one_slot_per_hash(self) -> None:
-        """One gated request used to occupy one slot while running a verification per
-        local admin, so the cap bounded requests and not the CPU behind them (S-4)."""
+        """A request takes one slot per password hash it runs, one per local admin, so the
+        cap bounds the actual CPU work rather than just the request count."""
         gate = ConcurrencyGate(4)
         assert gate.acquire(3) == 3
         # Only one slot left, so a two-hash caller is shed rather than admitted.
@@ -111,7 +110,7 @@ class TestTheArgon2GateCountsHashes:
         assert gate.acquire(4) == 4
 
     def test_a_caller_wanting_more_than_the_gate_holds_is_clamped_not_stuck(self) -> None:
-        """Clamping is why the taken count is returned: an install with more admins than
+        """Clamping is why the taken count is returned. An install with more admins than
         the gate has slots must still be able to sign in on a quiet server."""
         gate = ConcurrencyGate(2)
         assert gate.acquire(5) == 2
@@ -121,15 +120,15 @@ class TestTheArgon2GateCountsHashes:
 
 class TestTheRecoveryBanner:
     #: Bind values that name every interface. Spelled once so the S104 suppression sits in
-    #: one place: these are strings under test, not an address anything binds to.
+    #: one place. These are strings under test, not an address anything binds to.
     EVERY_INTERFACE = ("0.0.0.0", "::", "")  # noqa: S104
 
     @pytest.mark.parametrize("host", EVERY_INTERFACE)
     def test_a_bind_that_means_every_interface_is_not_printed_as_an_address(
         self, host: str
     ) -> None:
-        """It printed the bind address on a default install: not a place a locked-out
-        operator can open (B-12)."""
+        """It printed the bind address on a default install. That is not a place a
+        locked-out operator can open."""
         url = recovery_base_url(host, 8420)
         assert host not in url or not host
         assert "<your-reaper-address>" in url
@@ -141,9 +140,9 @@ class TestTheRecoveryBanner:
 
 class TestForwardedHeadersNeedATrustedPeer:
     """``is_secure_request`` decides the session cookie's ``Secure`` flag and ``__Host-``
-    name off ``X-Forwarded-Proto``. Believing that from anyone let a caller name its own
-    cookie: over plain HTTP the browser then DROPS it, so the sign-in silently does
-    nothing (S-7)."""
+    name off ``X-Forwarded-Proto``. Believing that from anyone lets a caller name its own
+    cookie. Over plain HTTP the browser then drops it, so the sign-in silently does
+    nothing."""
 
     def _request(
         self,
@@ -153,7 +152,7 @@ class TestForwardedHeadersNeedATrustedPeer:
         proto: str | None,
         scheme: str = "http",
     ) -> bool:
-        """``proto=None`` sends no ``X-Forwarded-Proto`` at all; ``scheme`` is the ASGI one."""
+        """``proto=None`` sends no ``X-Forwarded-Proto`` at all. ``scheme`` is the ASGI one."""
         from starlette.requests import Request
 
         from reaper.auth.cookie import is_secure_request
@@ -191,13 +190,13 @@ class TestForwardedHeadersNeedATrustedPeer:
         assert not self._request(proxies=proxies, peer="172.16.0.5", proto="http")
 
     def test_an_untrusted_https_claim_cannot_launder_through_the_scheme(self) -> None:
-        """The ASGI scheme is not evidence when the caller also claimed it (#125).
+        """The ASGI scheme must not count as evidence when the caller itself supplied the
+        header that produced it.
 
-        ``is_secure_request`` used to return True the instant ``request.url.scheme`` was
-        ``https``, before asking about trust at all. An upstream ``ProxyHeadersMiddleware``
-        derives that scheme from this very header, so the short-circuit turned the caller's
-        own unauthenticated claim into Reaper's answer -- which is the ``https`` scheme this
-        case sends alongside the header that produced it.
+        An upstream ``ProxyHeadersMiddleware`` derives ``request.url.scheme`` from
+        ``X-Forwarded-Proto``, so trusting the scheme alone would let an unauthenticated
+        caller's own header claim decide Reaper's answer. This case sends the ``https``
+        scheme alongside the exact header that produced it, to prove that loop is closed.
         """
         assert not self._request(proxies=(), peer="127.0.0.1", proto="https", scheme="https")
 
@@ -205,17 +204,17 @@ class TestForwardedHeadersNeedATrustedPeer:
         """The narrowness that keeps the case above from costing anyone their Secure flag.
 
         Only a *claim* is refused, never the transport. An install terminating TLS in the app
-        sends no ``X-Forwarded-Proto``, so nothing can have rewritten the scheme and it is
-        believed -- and that is the one place a bare scheme is still evidence.
+        sends no ``X-Forwarded-Proto``, so nothing can have rewritten the scheme, and it is
+        believed. That is the one place a bare scheme is still evidence.
         """
         assert self._request(proxies=(), peer="203.0.113.7", proto=None, scheme="https")
 
     def test_a_listed_proxy_reporting_http_outranks_an_https_leg(self) -> None:
-        """The question is about the BROWSER's leg, not the proxy's leg to Reaper.
+        """The question is about the browser's leg, not the proxy's leg to Reaper.
 
-        A proxy that speaks HTTPS to Reaper while serving the browser over plain HTTP used to
-        get a ``Secure``/``__Host-`` cookie out of the short-circuit -- one the browser then
-        drops, which is a sign-in that silently does nothing.
+        A proxy that speaks HTTPS to Reaper while serving the browser over plain HTTP must
+        not get a ``Secure``/``__Host-`` cookie. The browser would drop a cookie like that
+        immediately, making the sign-in silently do nothing.
         """
         proxies = parse_proxy_networks(["172.16.0.0/12"])
         assert not self._request(proxies=proxies, peer="172.16.0.5", proto="http", scheme="https")
@@ -227,15 +226,15 @@ class TestForwardedHeadersNeedATrustedPeer:
 
 
 class TestTheServerDoesNotDecidePeerTrust:
-    """What ``--no-proxy-headers`` buys, demonstrated against the real middleware (#125).
+    """What ``--no-proxy-headers`` buys, demonstrated against the real middleware.
 
-    ``tests/test_repo_hygiene.py`` pins the flag onto every launch; this says why it is worth
-    pinning, by running the layer the flag removes and showing what reaches
-    :func:`reaper.auth.proxy.client_ip` underneath it. Reverse-proxy trust is OFF here and no
+    ``tests/test_repo_hygiene.py`` pins the flag onto every launch. This shows why it is
+    worth pinning, by running the layer the flag removes and showing what reaches
+    :func:`reaper.auth.proxy.client_ip` underneath it. Reverse-proxy trust is off here and no
     proxy is listed, which is the default install.
 
-    It is also a canary on the dependency: if uvicorn ever stops trusting loopback by default,
-    the first assertion fails and this whole apparatus can be revisited.
+    It also acts as a canary on the dependency. If uvicorn ever stops trusting loopback by
+    default, the first assertion fails and this whole apparatus can be revisited.
     """
 
     SPOOF = "198.51.100.77"
@@ -281,20 +280,22 @@ class TestTheServerDoesNotDecidePeerTrust:
         return seen[0]
 
     def test_the_middleware_lets_a_loopback_caller_write_its_own_rate_limit_key(self) -> None:
-        """The defect: five bad passwords from one machine can be five different callers."""
+        """Without this, five bad passwords from one machine could count as five different
+        callers."""
         assert self._rate_limit_key(peer="127.0.0.1", middleware=True) == self.SPOOF
 
     def test_the_same_spoof_from_off_box_is_already_ignored(self) -> None:
-        """The middleware only rewrites for a peer IT trusts, which bounds the blast radius.
+        """The middleware only rewrites for a peer it trusts, which bounds the blast radius.
 
-        Under the shipped bridge-network compose the in-container peer is the gateway rather
-        than loopback, so the default deployment was never remotely reachable this way. That
-        bounds it; it does not restore the guarantee, which is the point of the fix.
+        Under the shipped bridge-network compose, the in-container peer is the gateway
+        rather than loopback, so the default deployment was never reachable this way from
+        outside the host. That bounds the risk. It does not restore the guarantee, which is
+        the point of the fix.
         """
         assert self._rate_limit_key(peer="172.18.0.1", middleware=True) == "172.18.0.1"
 
     def test_without_the_middleware_the_real_peer_is_what_gets_locked_out(self) -> None:
-        """What every launch now asks for with ``--no-proxy-headers``."""
+        """What every launch asks for with ``--no-proxy-headers``."""
         assert self._rate_limit_key(peer="127.0.0.1", middleware=False) == "127.0.0.1"
 
 
@@ -311,9 +312,9 @@ class TestPlexSignInIsRateLimited:
     def test_start_refuses_past_its_cap(
         self, client: TestClient, httpx2_mock: respx.Router
     ) -> None:
-        """Every call inserts a pending row and asks plex.tv for a PIN, so a flood grows
-        the table AND can get the install's egress address rate-limited by plex.tv --
-        locking the real operator out of Plex sign-in (S-1)."""
+        """Every call inserts a pending row and asks plex.tv for a PIN, so a flood grows the
+        table and can get the install's egress address rate-limited by plex.tv. That would
+        lock the real operator out of Plex sign-in."""
         minted = {"n": 0}
 
         def new_pin(request: object) -> httpx.Response:
@@ -327,8 +328,8 @@ class TestPlexSignInIsRateLimited:
         refused = client.post("/api/auth/plex/start", headers=HEADERS)
         assert refused.status_code == 429
         assert refused.headers["Retry-After"]
-        # Refused BEFORE the outbound call, which is the half that protects plex.tv (and
-        # therefore the operator's own ability to sign in) rather than just our table.
+        # Refused before the outbound call, which is the half that protects plex.tv (and
+        # therefore the operator's own ability to sign in) rather than just our own table.
         assert pins.call_count == plex_start_limit.limit
 
     def test_poll_has_a_much_looser_cap(self, client: TestClient) -> None:
@@ -376,15 +377,15 @@ class TestARecoveryCodeIsSpentOnlyOnASignIn:
         return TestClient(create_app(settings)), "code-abc"
 
     def test_no_admin_to_sign_in_as_leaves_the_code_usable(self, tmp_path: Path) -> None:
-        """The 409 path used to commit the redemption anyway, burning the operator's one
-        15-minute code on a failure that had nothing to do with the code -- and "no admin
-        exists" is exactly when recovery matters most (B-13)."""
+        """A 409 must never commit the redemption. That would burn the operator's one
+        15-minute code on a failure that had nothing to do with the code, and "no admin
+        exists" is exactly when recovery matters most."""
         app_client, code = self._client(tmp_path, with_admin=False)
         with app_client as client:
             refused = client.post("/api/auth/recover", json={"token": code}, headers=HEADERS)
             assert refused.status_code == 409
 
-        # A fresh app over the same database: the code still works once an admin exists.
+        # A fresh app over the same database. The code still works once an admin exists.
         settings = _settings(tmp_path)
         engine = sa_create_engine(settings.sync_database_url)
         with Session(engine) as session:
@@ -405,8 +406,8 @@ class TestARecoveryCodeIsSpentOnlyOnASignIn:
             assert ok.status_code == 200, ok.text
 
     def test_a_successful_redemption_still_spends_it(self, tmp_path: Path) -> None:
-        """The negative half: rolling back the failure case must not make the code
-        multi-use, which is the property the whole recovery design rests on."""
+        """The negative half of the property above. Rolling back the failure case must not
+        make the code multi-use, which is the property the whole recovery design rests on."""
         app_client, code = self._client(tmp_path, with_admin=True)
         with app_client as client:
             first = client.post("/api/auth/recover", json={"token": code}, headers=HEADERS)
@@ -415,10 +416,11 @@ class TestARecoveryCodeIsSpentOnlyOnASignIn:
             assert again.status_code == 401
 
     def test_the_redeemed_audit_line_fires_only_on_the_durable_login(self, tmp_path: Path) -> None:
-        """The "gained admin access" line records an outcome, so it fires past the commit,
-        never at flush time where the 409 rollback then undoes the redemption (rule 26, #467).
-        Asserting it at flush time logged a sign-in that never happened while the code stayed
-        live -- the one recovery event a security review reads first."""
+        """The "gained admin access" line records an outcome, so it fires only after the
+        commit, never at flush time, where a 409 rollback would undo the redemption first.
+        Logging at flush time would announce a sign-in that never happened, while the
+        recovery code remained usable, which is the one recovery event a security review
+        reads first."""
         from reaper import logbuffer
 
         def redeemed_since(cursor: int) -> list[str]:
@@ -428,7 +430,7 @@ class TestARecoveryCodeIsSpentOnlyOnASignIn:
                 if "recovery.redeemed" in line.text
             ]
 
-        # No admin to sign in as: the 409 rolls the redemption back, so nothing was gained
+        # No admin to sign in as. The 409 rolls the redemption back, so nothing was gained
         # and nothing may be logged as gained.
         no_admin, code = self._client(tmp_path / "no-admin", with_admin=False)
         with no_admin as client:
@@ -437,7 +439,7 @@ class TestARecoveryCodeIsSpentOnlyOnASignIn:
             assert refused.status_code == 409
             assert redeemed_since(cursor) == []
 
-        # An admin exists: the redemption commits and the line fires exactly once.
+        # An admin exists. The redemption commits and the line fires exactly once.
         with_admin, code = self._client(tmp_path / "with-admin", with_admin=True)
         with with_admin as client:
             cursor = logbuffer.RING.last_seq()

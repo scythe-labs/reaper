@@ -2,12 +2,12 @@
 //
 // The one anchored menu: a list of choices dropped under the control that opened it. The
 // review queue's filter and value pickers and the list modal's IMDb presets all render this,
-// so a menu opened anywhere in the app is the same menu (rule 18).
+// so a menu opened anywhere in the app is the same menu.
 //
-// The menu is absolutely positioned inside its anchor, which is what keeps it glued to its
-// control as the page scrolls. Left-aligned to that anchor it ran clean off the right edge of
-// a phone screen -- the ＋ Filter button sits at the end of the toolbar row, and a wrapped chip
-// can land there too -- so `usePopoverShift` slides it back (see `popoverFit.ts`, rule 138).
+// The menu is absolutely positioned inside its anchor, which keeps it glued to its control as
+// the page scrolls. Left-aligned to that anchor, it ran clean off the right edge of a phone
+// screen. The ＋ Filter button sits at the end of the toolbar row, and a wrapped chip can land
+// there too, so `usePopoverShift` slides it back (see `popoverFit.ts`).
 
 import { useRef, type CSSProperties, type ReactNode } from "react";
 
@@ -25,20 +25,20 @@ export function FilterMenu({
   /** Names the menu for a screen reader, and heads it for everyone else. */
   label: string;
   /** The class of the positioned ancestor the menu hangs from and is measured against.
-   *  `.filter-anchor` is the queue's inline wrapper; the list modal anchors on its own
-   *  card, whose layout an inline wrapper would break. */
+   *  `.filter-anchor` is the queue's inline wrapper. The list modal anchors on its own
+   *  card instead, since an inline wrapper would break its layout. */
   anchorClass?: string;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLUListElement>(null);
   const shift = usePopoverShift(ref, anchorClass);
 
-  // A plain list behind a disclosure, deliberately: this took `role="menu"` and `role="listbox"`
-  // from a prop, and implemented neither one's keyboard contract -- no arrow keys, no roving
-  // focus, no `aria-activedescendant`, and every option a separate Tab stop, which is not the
-  // listbox pattern at all. A listbox is ANNOUNCED as an arrow-key widget, so the roles were
-  // telling an operator to press keys that did nothing. App's UserMenu records the same defect
-  // being fixed the same way, and PolicyRuleEditors' combobox shows what keeping the role costs.
+  // This is deliberately a plain list behind a disclosure, not `role="menu"` or `role="listbox"`.
+  // Neither role's keyboard contract is implemented here. There are no arrow keys, no roving
+  // focus, no `aria-activedescendant`, and every option is its own Tab stop, which is not the
+  // listbox pattern. A listbox is announced as an arrow-key widget, so those roles would tell
+  // an operator to press keys that do nothing. App's `UserMenu` fixes the same defect the same
+  // way, and `PolicyRuleEditors`' combobox shows what keeping the role costs.
   return (
     <ul
       ref={ref}

@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """What a row's zero actually means.
 
-Four very different situations all end at a contribution of ``0``: a rule that pushed
-nothing because the value argues for keeping, a yes/no rule that does not describe this
-item, a field with nothing recorded, and an input we could not read at all. Only the
-last lowers coverage, and only the last may be rendered as "we could not look".
+Four different situations can all end at a contribution of ``0``. A rule can push nothing
+because the value argues for keeping the file. A yes/no rule can find that this item does
+not match it. A field can have nothing recorded. Or the input could not be read at all.
+Only the last one lowers coverage, how much of the evidence could be checked, and only the
+last one may be shown as "we could not look".
 
-``SignalState`` carries that distinction to the wire, because it is gone by the time
-anything downstream sees the result.
+``SignalState`` carries that distinction all the way to the API response, because it is
+gone by the time anything downstream sees the result.
 """
 
 from __future__ import annotations
@@ -73,7 +74,7 @@ class TestTheFourStates:
         assert result.state is SignalState.ADDS
 
     def test_a_measured_value_below_the_floor_argues_for_keeping(self) -> None:
-        # Watched 30 days ago: read, real, and a reason to keep the file.
+        # Watched 30 days ago. That is a real, readable value, and a reason to keep the file.
         result = evaluate_signal(UNWATCHED, _facts(days_observed_unwatched=Known(30.0, "tautulli")))
 
         assert result.pressure == 0
@@ -81,8 +82,8 @@ class TestTheFourStates:
         assert result.state is SignalState.ARGUES_KEEP
 
     def test_a_yes_no_rule_that_did_not_match_does_not_apply(self) -> None:
-        # It did not match, which is not the same as arguing for keeping: nothing about
-        # the item was found to be worth keeping.
+        # A rule that does not match is NOT_APPLICABLE, not ARGUES_KEEP. It found no
+        # reason to keep the item. It simply does not describe it.
         rule = CustomSignalConfig(
             name="a rule",
             weight=30,
@@ -116,8 +117,8 @@ class TestTheFourStates:
         assert result.state is SignalState.UNREADABLE
 
     def test_only_unreadable_lowers_coverage(self) -> None:
-        # The three evaluated states all sit at zero pressure, and none of them may be
-        # mistaken for "we could not look".
+        # The three evaluated states all contribute zero to the score, and none of them
+        # may be mistaken for "we could not look".
         keeping = evaluate_signal(
             UNWATCHED, _facts(days_observed_unwatched=Known(30.0, "tautulli"))
         )
@@ -132,10 +133,10 @@ class TestTheFourStates:
 
     def test_a_specials_absent_rank_does_not_apply_and_keeps_coverage(self) -> None:
         # A special (season 0) is deliberately left out of the season ranking, so its rank
-        # is Absent -- we looked, and it genuinely has no rank slot. The built-in signal
-        # must read that as NOT_APPLICABLE, evaluated, so it never lands in "Couldn't check"
-        # and never drags the special's coverage down for a rank it was never meant to have,
-        # exactly as the custom path already reads an Absent field.
+        # is Absent. The season was checked, and it genuinely has no rank slot. The signal
+        # must read that as NOT_APPLICABLE and evaluated, so the special never lands in
+        # "Couldn't check" and never lowers coverage for a rank it was never meant to have.
+        # The custom path already reads an Absent field the same way.
         result = evaluate_signal(SEASON_RANK, _facts(season_rank=Absent(source="sonarr")))
 
         assert result.pressure == 0
@@ -145,7 +146,7 @@ class TestTheFourStates:
 
     def test_a_rank_we_could_not_read_is_still_unreadable(self) -> None:
         # A genuine Sonarr read failure is Unknown, not Absent, and stays "we could not
-        # look" -- the one case that keeps the old wording and rightly lowers coverage.
+        # look". This is the one case that keeps the old wording and rightly lowers coverage.
         result = evaluate_signal(
             SEASON_RANK,
             _facts(season_rank=Unknown(source="sonarr", reason="Sonarr unreachable")),
@@ -176,8 +177,8 @@ class TestWhatReachesTheWire:
         assert all(row["state"] in {s.value for s in SignalState} for row in rows)
 
     def test_a_turned_off_rule_never_reaches_the_wire(self) -> None:
-        # Weight 0 is out of the denominator and worth no points, and its stored detail
-        # is engine shorthand no owner should ever be shown.
+        # A signal with weight 0 is out of the denominator and worth no points. Its stored
+        # detail is internal shorthand that no operator should ever see.
         off = SignalConfig(signal=SignalId.SIZE, weight=0)
         item = score([UNWATCHED, off], _facts())
         rows = json.loads(_explain(EVALUATION, item, _policy()))["signals"]
@@ -215,7 +216,7 @@ class TestTheRampReachesTheWire:
     def test_a_built_in_row_carries_the_ramp_it_was_scored_under(self) -> None:
         # Neither bound is the shipped default for this signal (60/0) or `SignalConfig`'s
         # own (1/0), so a config that never reached the result cannot produce these
-        # numbers by accident (rule 141).
+        # numbers by accident.
         item = score(
             [SignalConfig(SignalId.LOW_RATING, weight=100, saturate_at=72, floor=8)],
             _facts(imdb_rating_tenths=Known(value=64, source="imdb")),
@@ -239,7 +240,7 @@ class TestTheRampReachesTheWire:
         assert (row["floor"], row["saturate_at"]) == (11, 83)
 
     def test_a_yes_no_rule_of_your_own_carries_no_ramp(self) -> None:
-        # It matched or it did not; it cannot land part-way, so there is no line to state
+        # It matched or it did not. It cannot land part-way, so there is no line to state,
         # and inventing one would draw a ramp the rule does not have.
         boolean = CustomSignalConfig(
             name="the show ended",
@@ -257,10 +258,10 @@ class TestTheRampReachesTheWire:
 
 class TestHistoricalRows:
     def test_a_row_stored_before_the_ramp_existed_asserts_no_line(self) -> None:
-        # Two different things arrive as None here -- a rule with no ramp, and a row frozen
-        # before these fields shipped -- and the panel treats both the same way, by saying
-        # nothing. A `0` default would instead assert a line about every legacy row, which
-        # is the failure rule 142 names.
+        # Two different things arrive as None here. One is a rule with no ramp, the other
+        # is a row frozen before these fields shipped. The panel treats both the same way,
+        # by saying nothing. A `0` default would instead show a line for every legacy row,
+        # which would be wrong for rows that never had a ramp at all.
         row = SignalContribution.model_validate(
             {
                 "id": "low_rating",
@@ -286,9 +287,9 @@ class TestHistoricalRows:
             }
         )
 
-        # Absent, not guessed. The UI reads a missing state as "did not apply": claiming
-        # an old row argued for keeping, when nothing recorded whether it did, would
-        # overstate the case for keeping the file.
+        # The state is absent, not guessed. The UI reads a missing state as "did not
+        # apply". Claiming an old row argued for keeping, when nothing recorded whether it
+        # did, would overstate the case for keeping the file.
         assert row.state is None
 
     def test_a_stored_state_round_trips(self) -> None:

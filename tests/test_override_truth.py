@@ -1,23 +1,23 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""A hand reap takes effect the moment it is set -- honestly.
+"""A hand reap must take effect the moment it is set.
 
-Before this pass a reap override changed nothing until the next scan: the queue kept its
-green pill, the counts and the plan excluded the item, and grace never started. Now one
-module (``services.condemned``) assembles the effective condemned set -- scan-condemned
-minus hand-spares plus hand-reaps the engine honors -- and grace, the planner, the
-confirmation counts and the executor all read it. Pinned here:
+One module, ``services.condemned``, assembles the effective condemned set: scan-condemned
+items, minus hand-spares, plus hand-reaps the engine honors. Grace, the planner, the
+confirmation counts, and the executor all read that set, so setting a reap must change the
+queue, the counts, the plan, and the grace clock immediately, not on the next scan. Pinned
+here:
 
-* ``reap_override_verdict`` plumbs a frozen row into ``decide_verdict`` and nothing
-  else: every protection loses to the owner -- fired or merely unchecked alike -- and the
-  only two things that still refuse are the ones that are not protections at all, a bad
-  Plex match and an explanation this code cannot parse. Both are "we do not know what this
-  row IS", which is a different question from "we could not check whether it is wanted";
+* ``reap_override_verdict`` plumbs a frozen row into ``decide_verdict`` and nothing else.
+  Every protection loses to the owner, whether it fired or was merely unchecked. The only
+  two things that still refuse are not protections at all: a bad Plex match, and an
+  explanation this code cannot parse. Both mean "we do not know what this row is", a
+  different question from "we could not check whether it is wanted";
 * the effective set adds and removes the right rows, including show-level decisions and
   a season spared back out of a reaped show;
 * grace and the planner see a hand-reap immediately, and the plan refuses a refused one;
 * the override routes start the grace clock on an effective reap and remove it again
   when the reap is withdrawn, so a stale hand-reap timestamp can never shorten a later,
-  real condemnation's window (rule 4).
+  real condemnation's window.
 """
 
 from __future__ import annotations
@@ -64,18 +64,17 @@ NOW = utcnow()
 def stored_explanation(**blocks: Any) -> str:
     """One stored explanation, carrying the blocks every real one carries.
 
-    The scaffolding is not what these tests are about -- each varies ONE block and asserts
-    what a hand reap does with it -- but it has to be present, because a reap is now refused
-    on any document the why panel cannot render (#142), and a bare
-    ``{"protections_fired": [...]}`` is one of those. ``services.snapshot._explain`` has
-    written all six of these keys in every generation of the writer, so a fixture without
-    them was asserting reap behavior against a row no scan could ever have produced.
+    Each test below varies one block and asserts what a hand reap does with it, but the rest
+    of the document still has to be present: a reap is refused on any document the why panel
+    cannot render, and a bare ``{"protections_fired": [...]}`` is one of those.
+    ``services.snapshot._explain`` writes all six of these keys on every real explanation, so
+    a fixture missing them would test reap behavior against a row no scan could ever produce.
 
-    Deliberately NOT a transcription of ``_explain`` (rule 119): it carries the minimum the
-    reader requires, so a new REQUIRED field on ``Explanation`` fails these tests rather than
-    being back-filled here unnoticed. The values are inert -- the reap branch reads neither
-    score nor coverage (``test_the_score_is_inert_on_the_reap_branch`` pins that) -- and each
-    test that cares passes its own block.
+    This is not a transcription of ``_explain``. It carries the minimum the reader requires,
+    so a new required field on ``Explanation`` fails these tests instead of silently working
+    anyway. The values are inert, since the reap branch reads neither score nor coverage
+    (``test_the_score_is_inert_on_the_reap_branch`` pins that), and each test that cares
+    passes its own block.
     """
     return json.dumps(
         {
@@ -109,12 +108,12 @@ BLOCKED = stored_explanation(
         {"gate": "curated_list", "detail": "could not check curated lists: IMDb timed out"}
     ]
 )
-# The keep-rule conflict: the season guard flags a prunable season watched MORE than one
-# the rule keeps, and hands the call to a human. It rides in `protections_unknown` (blocked,
-# so the scan abstains and asks for a look), and `defers_to_owner` marks it as a decision
-# for the owner rather than a source Reaper could not read. A hand reap IS that decision,
-# so it condemns. The flag no longer decides that -- no block holds a hand reap -- but it
-# still picks the operator's chip (`api.review._chip`), so the shapes below keep varying it.
+# The keep-rule conflict. The season guard flags a prunable season watched more than one
+# the rule keeps, and hands the call to a human. It rides in `protections_unknown`, which
+# blocks the scan and asks for a look, and `defers_to_owner` marks it as a decision for the
+# owner rather than a source Reaper could not read. A hand reap is that decision, so it
+# condemns. No block holds a hand reap, but this flag still picks the operator's chip
+# (`api.review._chip`), so the shapes below keep varying it.
 KEEP_RULE_CONFLICT = stored_explanation(
     protections_unknown=[
         {
@@ -125,8 +124,8 @@ KEEP_RULE_CONFLICT = stored_explanation(
     ]
 )
 # The same gate blocked by a genuine plumbing failure rather than a decision put to the
-# owner. It used to be the fail-closed half of a two-condition test; now it lands where every
-# other block lands, and it is kept because it is the shape a reader most expects to differ.
+# owner. It lands wherever every other block lands, and it is kept because it is the shape a
+# reader most expects to differ.
 CONFLICT_BUT_PLUMBING = stored_explanation(
     protections_unknown=[
         {
@@ -136,14 +135,12 @@ CONFLICT_BUT_PLUMBING = stored_explanation(
         }
     ]
 )
-# The shape that shipped broken: the kept season is on disk but was never resolved in Plex,
-# so the comparison could not be made at all (`season_pruning.PruneConflict` with
-# `kept_watchers=None`). Note where the phrase sits -- the message opens with the watcher
-# count, so the old `detail.startswith("could not check")` arm never matched it. The sentence
-# is the one the producer emitted at the time, kept verbatim rather than refreshed: these are
-# STORED rows, an operator's database is full of ones written by older versions, and a fixture
-# that tracks the current copy would stop covering them. It is here because the wording trap
-# must go on deciding nothing, whichever way the decision itself points.
+# The season is on disk but was never resolved in Plex, so the comparison could not be made
+# at all (`season_pruning.PruneConflict` with `kept_watchers=None`). The message opens with
+# the watcher count rather than the phrase "could not check", which matters because a reader
+# matching on that phrase would miss this message entirely. The sentence is kept verbatim
+# rather than refreshed to the current wording, because an operator's database is full of
+# rows written by older versions, and this fixture exists to keep covering them.
 CONFLICT_COMPARISON_REFUSED = stored_explanation(
     protections_unknown=[
         {
@@ -157,9 +154,9 @@ CONFLICT_COMPARISON_REFUSED = stored_explanation(
         }
     ]
 )
-# A row frozen before the flag shipped: same conflict, no `defers_to_owner` key at all.
-# Nothing in it can tell a made comparison from a refused one -- which no longer changes the
-# reap, and still changes the chip the operator is shown (rule 104's thaw, in `_chip`).
+# A row frozen before the flag existed: the same conflict, with no `defers_to_owner` key at
+# all. Nothing in it can tell a made comparison from a refused one. That no longer changes
+# the reap, but it still changes the chip the operator is shown (`_chip`'s read of the key).
 LEGACY_CONFLICT_NO_FLAG = stored_explanation(
     protections_unknown=[
         {
@@ -184,18 +181,17 @@ class TestReapOverrideVerdict:
         "gate", ["curated_list", "server_popularity", "min_dormancy", "custom"]
     )
     def test_an_unchecked_protection_no_longer_holds_the_reap(self, gate: str) -> None:
-        """The reversal, on the stored-row path, across four distinct gates.
+        """Checked on the stored-row path, across four distinct gates so a single case
+        cannot hide a membership test standing in for a real check.
 
-        The old rule was a gate-id membership test, so one case cannot tell "no gate holds"
-        from "this gate happens to be on the permitted list"; the sweep can. ``blocked`` is
-        still computed and still true for each of these rows -- the scan abstained on them
-        and nothing automatic will touch them -- but it is no longer what
-        ``reap_override_verdict`` hands to ``blocked_holds_reap``. The owner is reading a
-        panel that names the check that came back empty, and is entitled to answer it.
+        ``blocked`` is still computed and still true for each of these rows, since the scan
+        abstained on them and nothing automatic will touch them, but it no longer holds a
+        hand reap. The owner is reading a panel that names the check that came back empty,
+        and is entitled to answer it.
 
-        What did NOT move is asserted in the same class, deliberately adjacent: a structural
-        stop, a bad Plex match, an unreadable protections list and an unreadable document all
-        still keep the file."""
+        Adjacent tests in the same class pin what still holds a reap: a structural stop, a
+        bad Plex match, an unreadable protections list, and an unreadable document all still
+        keep the file."""
         row = stored_explanation(
             protections_unknown=[
                 {"gate": gate, "detail": "could not check curated lists: IMDb timed out"}
@@ -212,18 +208,13 @@ class TestReapOverrideVerdict:
     def test_the_stored_deferral_flag_no_longer_moves_the_reap(self) -> None:
         """Every value ``defers_to_owner`` can carry on disk reaches the same verdict.
 
-        This was the strictest interlock on the path: the flag was thawed with ``is True``,
-        because that was the one value that let a hand reap through a block, and relaxing it
-        to a truthy test would have let stored junk -- the string ``"false"`` among it --
-        release a file while saying the opposite. The reap does not read the flag at all
-        now, so the sweep asserts the property that replaced it: no value of a stored key can
-        change what a hand reap does. It fails the moment any reader of this key re-appears
-        on the decision path.
+        The reap does not read this flag at all, so no stored value of it, including the
+        string ``"false"``, may change what a hand reap does. This test fails the moment any
+        reader of the key re-appears on the decision path.
 
-        The ``is True`` strictness itself is still live one surface over -- ``review._chip``
-        reads the same key the same way to pick the operator's chip, pinned in
-        ``test_review_chips.py`` -- which is why the key is still written and still varied
-        here rather than dropped."""
+        The key is still written and still varied here because it is read one surface over:
+        ``review._chip`` reads the same key, with an ``is True`` check, to pick the
+        operator's chip, pinned in ``test_review_chips.py``."""
         for raw_flag in ("true", "false", '"true"', '"false"', '"0"', "1", "[]", "{}", "null"):
             row = stored_explanation(
                 protections_unknown=[
@@ -241,42 +232,37 @@ class TestReapOverrideVerdict:
         assert reap_override_verdict(LEGACY_CONFLICT_NO_FLAG, score=90) == "condemn"
 
     def test_the_wording_of_a_blocked_reason_decides_nothing(self) -> None:
-        """The trap that shipped broken, pinned from the other side.
+        """Neither wording of a blocked season-progression reason may decide the reap.
 
-        A hand reap once removed a season whose keep-rule comparison Reaper had explicitly
-        declined to make, because the arm meant to catch it tested
-        ``detail.startswith("could not check")`` and the one message it existed for opens
-        with the watcher count. Both wordings are swept here, and they must land in the same
-        place -- whichever place that is. A future reader who reintroduces a hold and hangs
-        it off the sentence fails this test rather than shipping the same defect a third
-        time (rule 92)."""
+        A hand reap must not be held back or released based on whether the detail text
+        starts with "could not check": one real message opens with the watcher count
+        instead. Both wordings are swept here, and they must land in the same place. A
+        future reader who ties a hold to the sentence's wording fails this test."""
         prefixed = reap_override_verdict(CONFLICT_BUT_PLUMBING, score=90)
         count_first = reap_override_verdict(CONFLICT_COMPARISON_REFUSED, score=90)
 
         assert prefixed == count_first == "condemn"
 
     def test_a_protections_list_that_cannot_be_read_holds_the_reap(self) -> None:
-        """The other of the two holds left on this path, and the fail-open it closes.
+        """A protections list this code cannot read must hold the reap, not release it.
 
-        The readers use ``.get``, so both lists were filtered to objects first -- and a list
-        of three strings filtered down to an empty one, so ``blocked`` went False and the
-        reap condemned a file whose kept-reasons nobody could read. Evidence we cannot see
-        must never become evidence that nothing was wrong (rule 96).
-        ``simulate._has_blocked_protections`` reads the same block with this posture already;
-        the destructive reader was the permissive one.
+        The readers use ``.get``, so a list of three strings filters down to an empty one,
+        which would read as ``blocked`` False and let the reap condemn a file whose
+        kept-reasons nobody could actually read. Evidence nobody can see must never become
+        evidence that nothing was wrong. ``simulate._has_blocked_protections`` already reads
+        the same block this cautiously.
 
-        It survived the reversal for the same reason a bad match did, and the distinction is
-        worth stating because these rows LOOK like the released ones. An unreadable entry is
-        not a check that came back empty: the panel could not render the reasons at all, so
-        there was nothing for the owner to consent to. A block they can read is theirs to
-        answer; one that never reached them is not.
+        An unreadable entry is a different case from a check that came back empty: the panel
+        could not render the reasons at all, so there was nothing for the owner to consent
+        to. A block they can read is theirs to answer. One that never reached them is not,
+        even though both rows can look alike at a glance.
 
-        Each row is otherwise a complete document, so the list is the only thing wrong with
-        it. **Both readers refuse these shapes and the assertion cannot tell which one did**
-        (rule 118): a protections list carrying a string fails ``_protection_entries`` and
-        fails ``Explanation`` too, since the field is typed ``list[GateOutcomeOut]``. That is
-        the subsumption #142 intended, not a gap -- what this pins is that the shape keeps the
-        file, and ``TestThePanelAndTheReapAgree`` is where the two readers are held level."""
+        Each row is otherwise a complete document, so the malformed list is the only thing
+        wrong with it. A protections list carrying a string fails both
+        ``_protection_entries`` and ``Explanation`` (typed ``list[GateOutcomeOut]``), so this
+        test cannot tell which reader refused it. What it pins is that either way, the shape
+        keeps the file. ``TestThePanelAndTheReapAgree`` is where the two readers are held
+        to the same answer."""
         for bad_list in (
             ["season_progression could not be checked"],
             [None],
@@ -290,11 +276,12 @@ class TestReapOverrideVerdict:
             assert reap_override_verdict(row, score=90) == "protect", bad_fired
 
     def test_a_scalar_protections_list_does_not_raise_out_of_the_reap(self) -> None:
-        """A scalar where a list belongs used to raise ``TypeError`` straight out of this
-        function. The ``except`` above covers ``json.loads`` only, so it escaped into the
-        review queue, the planner's step expansion, the confirmation-phrase count and the
-        executor's per-item spare re-read (rule 112's path) -- one malformed row taking down
-        every surface that counts what a reap will remove."""
+        """A scalar where a list belongs must not raise ``TypeError`` out of this function.
+
+        The ``except`` above catches only ``json.loads`` failures, so a raise here would
+        reach the review queue, the planner's step expansion, the confirmation-phrase count,
+        and the executor's per-item spare re-read: one malformed row taking down every
+        surface that counts what a reap will remove."""
         assert reap_override_verdict(stored_explanation(protections_unknown=1), score=90) == (
             "protect"
         )
@@ -303,28 +290,25 @@ class TestReapOverrideVerdict:
         )
 
     def test_a_genuinely_empty_protections_list_stays_permissive(self) -> None:
-        """The other side of the same rule, so the fix above cannot be over-read: an empty
-        list is a readable answer -- the scan looked and found nothing holding the item --
-        and it must still let a hand reap through, or every clean abstain stops being
-        reapable."""
+        """The other side of the same rule. An empty list is a readable answer. The scan
+        looked and found nothing holding the item, and it must still let a hand reap
+        through, or every clean abstain stops being reapable."""
         assert reap_override_verdict(stored_explanation(), score=90) == "condemn"
         assert reap_override_verdict(stored_explanation(protections_unknown=[]), score=90) == (
             "condemn"
         )
 
     def test_a_recorded_nothing_and_a_missing_answer_are_not_the_same_row(self) -> None:
-        """Rule 1 on this path, and the half of #142 most easily read as a regression.
+        """An explicit ``[]`` says the scan looked and nothing held the item, and it reaps.
+        A ``null``, or no key at all, says only that nothing was recorded, and the why panel
+        cannot render such a row at all, showing no signals, no protections, and no
+        threshold above the Reap button. ``"{}"`` is that row at its smallest, and it reads
+        like the permissive case, but it is not one. ``engine.verdict`` promises the owner
+        "cannot consent to reasons the panel never rendered", so this row keeps the file
+        rather than reaping.
 
-        An explicit ``[]`` above says the scan looked and nothing held the item, and it reaps.
-        A ``null``, or no key at all, says only that nothing was recorded -- and the why panel
-        has never been able to render such a row, so the operator is shown no signals, no
-        protections and no threshold above the Reap button. ``"{}"`` is that row at its
-        smallest, and it used to condemn: it reads like the permissive case and is not one.
-        ``engine.verdict`` promises they "cannot consent to reasons the panel never rendered",
-        and these are the rows that made it false. They keep the file now.
-
-        The direction is the point. Omitted is not empty, and where they are told apart on a
-        deletion path the omitted one resolves toward keeping."""
+        The direction is the point. Omitted is not empty, and where the two are told apart
+        on a deletion path, the omitted one resolves toward keeping."""
         assert reap_override_verdict("{}", score=90) == "protect"
         assert reap_override_verdict(stored_explanation(protections_unknown=None), score=90) == (
             "protect"
@@ -336,20 +320,20 @@ class TestReapOverrideVerdict:
         ids=["unmatched", "ambiguous", "unreadable"],
     )
     def test_a_bad_plex_match_still_refuses_the_reap(self, match: object) -> None:
-        """One of the two holds left on this path, and the reason it is not a protection.
+        """A bad Plex match must hold the reap even though it is not a protection.
 
         A bad match says the file behind this row may not be the one the owner is looking
-        at, so a reap here could remove something they never saw. That is identity, not
-        judgment, and there is nothing for them to overrule -- which is exactly why it
-        survived a change that released every judgment. All three states are swept: the two
-        Plex reports, and the ``MATCH_UNREADABLE`` one Plex never reports, reached by a match
-        block that is present but is not an object (rule 96).
+        at, so a reap here could remove something they never saw. That is a question of
+        identity, not a judgment call the owner can overrule. All three states are swept:
+        the two Plex reports, and the ``MATCH_UNREADABLE`` state Plex never reports itself,
+        reached here by a match block that is present but is not an object.
 
-        Each row also carries a blocked protection, so the sweep cannot pass on a hold that
-        the gate block is quietly still supplying. It is otherwise a complete, readable
-        document, so it cannot pass on #142's wider hold either: the string case thaws to an
-        absent match (``Explanation._thaw_match`` guards the outer shape), leaving the match
-        itself as the only thing that can refuse the reap."""
+        Each row also carries a blocked protection, so the sweep proves the match itself is
+        holding the reap, not the gate block. The document is otherwise complete and
+        readable, so the general hold for an unreadable document cannot be what is firing
+        either: the string case reads as an absent match (``Explanation._thaw_match`` guards
+        the outer shape), leaving the match itself as the only thing that can refuse the
+        reap."""
         row = stored_explanation(
             match=match,
             protections_unknown=[
@@ -370,7 +354,7 @@ class TestReapOverrideVerdict:
         assert reap_override_verdict("[1, 2]", score=99) == "protect"
 
     def test_the_score_is_inert_on_the_reap_branch(self) -> None:
-        """decide_verdict's reap branch never reads the score or the thresholds; the
+        """decide_verdict's reap branch never reads the score or the thresholds. The
         zeros this module passes are plumbing, not policy. If this ever fails, the
         engine's decision order changed and services.condemned must be revisited.
 
@@ -634,8 +618,8 @@ def _seed_clock(
     first_flagged_at: datetime,
     last_seen_condemned_at: datetime,
 ) -> None:
-    """Force a grace clock into a chosen (possibly stale) state, standing in for the scans that
-    re-condemned an item while it still showed spared -- the B-2 burn-down."""
+    """Force a grace clock into a chosen, possibly stale, state, standing in for scans that
+    re-condemned an item while it still showed spared."""
     settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     with Session(engine) as s:
@@ -691,15 +675,15 @@ class TestOverrideRoutesAndTheGraceClock:
     def test_sparing_a_scan_condemned_item_restarts_its_clock_on_unspare(
         self, client: TestClient, tmp_path: Path
     ) -> None:
-        """A scan-condemned item the owner SPARES leaves the reap list, so its clock is
-        dropped; un-sparing re-enters it on a FRESH window rather than the weeks-old one it
-        left with, which would drop it straight past grace with no warning (rule 4).
+        """A scan-condemned item the owner spares leaves the reap list, so its clock is
+        dropped. Un-sparing must re-enter it on a fresh window, not the weeks-old one it left
+        with, or the item would drop straight past grace with no warning.
         radarr:1:21 was first flagged at the fixture's NOW."""
         original = _clock_rows(tmp_path)["radarr:1:21"]
         # Spared: off the list, clock gone.
         client.post("/api/override", json={"media_key": "radarr:1:21", "decision": "spare"})
         assert "radarr:1:21" not in _clock_rows(tmp_path)
-        # Un-spared: back on the list, but the countdown starts now -- not the spent one.
+        # Un-spared: back on the list, but the countdown starts now, not the spent one.
         client.delete("/api/override/radarr:1:21")
         refreshed = _clock_rows(tmp_path)
         assert "radarr:1:21" in refreshed
@@ -708,15 +692,15 @@ class TestOverrideRoutesAndTheGraceClock:
     def test_clearing_a_spare_restarts_a_clock_burned_down_while_invisible(
         self, client: TestClient, tmp_path: Path
     ) -> None:
-        """B-2 defense in depth (rule 71): if an item was invisibly re-condemned while it still
-        showed spared (the burn-down Phase 1's durable purge now prevents), clearing the stale
-        spare must NOT coast on the spent clock -- it restarts on a fresh window. Without the
-        cleared_spare wipe, record_first_flagged_bulk would honor the weeks-old first_flagged."""
+        """A second defense: if an item was invisibly re-condemned while it still showed
+        spared, clearing the stale spare must not coast on the spent clock. It must restart
+        on a fresh window. Without the ``cleared_spare`` wipe, ``record_first_flagged_bulk``
+        would honor the weeks-old ``first_flagged``."""
         # Spared: off the list, its scan clock is dropped.
         client.post("/api/override", json={"media_key": "radarr:1:21", "decision": "spare"})
         assert "radarr:1:21" not in _clock_rows(tmp_path)
-        # The invisible burn-down: first flagged three weeks ago, last seen condemned yesterday
-        # -- exactly what the recorder would treat as a clock still legitimately running.
+        # First flagged three weeks ago, last seen condemned yesterday: exactly what the
+        # recorder would otherwise treat as a clock still legitimately running.
         _seed_clock(
             tmp_path,
             "radarr:1:21",
@@ -844,18 +828,18 @@ class TestOverrideViewsInResponses:
 
 
 class TestAHandDecisionLeavesARecord:
-    """The operator's own overrides were the one action in the app that logged nothing.
+    """Every operator override must leave a log line, even one that clears itself.
 
-    Setting one at least leaves a `WhitelistEntry` row. **Clearing one deletes that row**
-    and wipes the grace clock in the same call, so after an un-spare nothing anywhere
-    recorded that the spare had ever existed -- and "this was spared and Reaper deleted
-    it" had no answer at all. `prior` is what makes the line a transition rather than a
-    snapshot: without it, a spare flipped to reap reads identically to a fresh reap.
+    Setting an override leaves a `WhitelistEntry` row. Clearing one deletes that row and
+    wipes the grace clock in the same call, so without a log line, an un-spare leaves no
+    record anywhere that the spare ever existed, and the question "was this spared and did
+    Reaper delete it" has no answer. `prior` makes the line a transition rather than a
+    snapshot, so a spare flipped to reap does not read identically to a fresh reap.
 
-    Read off the real ring rather than ``capture_logs``: ``create_app`` turns structlog's
+    Read off the real ring rather than ``capture_logs``. ``create_app`` turns structlog's
     logger caching on, which permanently deafens a route's module logger to any later
     capture (``conftest._capturable_logs`` explains the mechanism). The ring is also the
-    stronger proof -- it is what the operator downloads.
+    stronger proof, since it is what the operator downloads.
     """
 
     @staticmethod
@@ -886,14 +870,7 @@ class TestAHandDecisionLeavesARecord:
         assert "prior=None" in new[0]
 
     def test_clearing_one_records_what_it_used_to_be(self, client: TestClient) -> None:
-        """The row is gone after this, so the log is the only surviving record.
-
-        **One route, and it used to be parametrized over two.** ``DELETE /api/whitelist``
-        was line for line the same body under a second name, so this drove both to keep the
-        record from surviving on one path and not the other (rule 72). That route is gone,
-        and the parametrize went with it rather than staying as a second id driving the same
-        handler, which would read as twice the coverage (rule 118).
-        """
+        """The row is gone after this, so the log is the only surviving record."""
         client.post("/api/override", json={"media_key": "radarr:1:22", "decision": "spare"})
         before = logbuffer.RING.last_seq()
         cleared = client.delete("/api/override/radarr:1:22")

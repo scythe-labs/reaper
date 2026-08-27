@@ -26,7 +26,7 @@ vi.mock("../api", async (importOriginal) => ({
 }));
 
 function renderPanel(
-  /** Stable across renders, which the prop requires: pass one `vi.fn()`, never an inline arrow. */
+  /** Stable across renders, which the prop requires. Pass one `vi.fn()`, never an inline arrow. */
   onDirtyChange?: (dirty: boolean) => void,
   /** Passed in only when the test needs to drive a refetch itself. */
   queryClient = testQueryClient(),
@@ -67,12 +67,12 @@ describe("the admin password form", () => {
     expect(apiMock.setAdminPassword).not.toHaveBeenCalled();
   });
 
-  // #394. One box carries two kinds of message and they must not share a voice: the live count
-  // above changes on EVERY keystroke while the node stays mounted, and a `role="alert"` announces
-  // content changes, so typing a valid password re-read the whole string about eleven times on
-  // the form that sets the key arming deletion. A failed submit through the same box is the
-  // opposite and has to keep interrupting. Both directions are driven, because a flag that
-  // silenced one would silence the other just as quietly.
+  // One box carries two kinds of message, and they must not share the same voice. The live
+  // count above changes on every keystroke while the node stays mounted, and a `role="alert"`
+  // announces every content change, so typing a valid password would otherwise be read aloud
+  // repeatedly on the form that sets the key arming deletion. A failed submit through the same
+  // box is the opposite, and has to keep interrupting. Both directions are driven, because a
+  // flag that silenced one would silence the other just as quietly.
   it("does not interrupt while the operator is still typing", async () => {
     apiMock.safety.mockResolvedValue({ has_password: false });
     const person = renderPanel();
@@ -82,8 +82,8 @@ describe("the admin password form", () => {
 
     const complaint = screen.getByText(/use at least 12 characters/i).closest(".notice");
     expect(complaint).not.toHaveAttribute("role", "alert");
-    // Nothing is lost by not interrupting: the box the operator is standing in points at this
-    // very node, so a reader gets the complaint as that box's description.
+    // The box the operator is standing in points at this very node, so a reader gets the
+    // complaint as that box's description even without an interruption.
     expect(next).toHaveAttribute("aria-describedby", complaint?.id);
   });
 
@@ -98,12 +98,13 @@ describe("the admin password form", () => {
     await fill(person, confirm, "a-long-enough-password");
 
     const save = screen.getByRole("button", { name: /^save$/i });
-    // Rule 137: user-event reports a press on a disabled control as a success.
+    // user-event reports a press on a disabled control as a success, so this waits for it to
+    // enable first.
     await waitFor(() => expect(save).toBeEnabled());
     await person.click(save);
 
-    // Every live branch is clear by now -- `valid` requires it before Save can be pressed at all
-    // -- so this notice mounts fresh, which is the insertion `role="alert"` is announced on.
+    // Every live branch is clear by now, since `valid` requires it before Save can be pressed at
+    // all, so this notice mounts fresh. That insertion is what `role="alert"` announces.
     const failure = await screen.findByText(/the password wasn't set/i);
     expect(failure.closest(".notice")).toHaveAttribute("role", "alert");
   });
@@ -132,13 +133,13 @@ describe("the admin password form", () => {
   });
 
   it("never describes a box with the other box's complaint", async () => {
-    // Both boxes point at ONE region, and `tooShort` and `mismatch` are independent, so a short
+    // Both boxes point at one region, and `tooShort` and `mismatch` are independent, so a short
     // password with a non-matching confirm holds both at once while the region shows only the
-    // first. Gated on the bare predicates, the confirm box read out "use at least 12
-    // characters" -- the box above it -- and the mismatch text was not on the page to reach.
-    // Asserted as the accessible DESCRIPTION, which is what a reader computes: an
-    // `aria-describedby` naming an id that is not rendered satisfies an attribute check and
-    // still says nothing.
+    // first. Gated on the bare predicates alone, the confirm box would read out "use at least 12
+    // characters," the complaint that belongs to the box above it, while the mismatch text stays
+    // off the page. This asserts the accessible description, which is what a reader actually
+    // computes: an `aria-describedby` naming an id that is not rendered satisfies an attribute
+    // check while still saying nothing.
     apiMock.safety.mockResolvedValue({ has_password: false });
     const person = renderPanel();
 
@@ -169,9 +170,9 @@ describe("the admin password form", () => {
 
     // Matching, long enough, but the current password is still blank.
     expect(screen.getByRole("button", { name: /^save$/i })).toBeDisabled();
-    // ...and the form says so. This was the one refusal of the three with no arm in `errorNode`:
-    // Save went gray and nothing on the page named the box it was waiting on (#188). Bound to
-    // that box, because a `disabled` button is out of the Tab order.
+    // ...and the form says so. Without this, Save would go gray with nothing on the page naming
+    // the box it was waiting on. The sentence binds to that box, because a `disabled` button is
+    // out of the Tab order.
     const currentBox = screen.getByLabelText(/current password/i);
     // Regex, because `Notice tone="error"` prefixes its text with a visually-hidden "Problem:"
     // that belongs to the notice rather than to this sentence.
@@ -205,9 +206,9 @@ describe("the admin password form", () => {
 
   it("keeps the complaint the operator can act on when three could fire at once", async () => {
     // One region, now four possible messages, so the order it picks them in is the behavior.
-    // A short new password and a blank current password hold together; the length complaint is
-    // the one about the box being typed in, so it wins and the current box stays quiet -- the
-    // same discipline `errorOwner` was written for (#174), driven through the arm added by #188.
+    // A short new password and a blank current password hold together. The length complaint is
+    // the one about the box being typed in, so it wins and the current box stays quiet, the
+    // same discipline `errorOwner` enforces elsewhere.
     apiMock.safety.mockResolvedValue({ has_password: true });
     const person = renderPanel();
 
@@ -230,10 +231,11 @@ describe("the admin password form", () => {
 });
 
 describe("changing the password after signing in with a recovery code", () => {
-  // A forgotten password is what recovery mode is FOR, so this form asking for it left the
-  // operator signed in and still locked out of the credential that arms deletion -- and on a
-  // desktop build there was no CLI to fall back to (#433). The server takes a new password from
-  // a recovery session without the old one; these pin the form agreeing with it.
+  // A forgotten password is what recovery mode is for, so this form must not ask for the old
+  // one, or it would leave the operator signed in and still locked out of the credential that
+  // arms deletion, with no other way back in on a desktop build. The server takes a new
+  // password from a recovery session without the old one. These tests pin the form agreeing
+  // with it.
   beforeEach(() => {
     apiMock.safety.mockReset();
     apiMock.setAdminPassword.mockReset();
@@ -256,13 +258,13 @@ describe("changing the password after signing in with a recovery code", () => {
     await fill(person, screen.getByLabelText(/confirm new password/i), "a-long-enough-password");
 
     const save = screen.getByRole("button", { name: /^save$/i });
-    // Enabled with the current box empty, which is the whole point: on an ordinary session the
+    // Enabled with the current box empty, which is the whole point. On an ordinary session the
     // same three boxes in this state leave Save off (see "needs the current password" above).
     await waitFor(() => expect(save).toBeEnabled());
     await person.click(save);
 
-    // `undefined`, never the empty string: the server reads a present-but-empty current password
-    // as an attempt to prove the old one and refuses it with a 403.
+    // `undefined`, never the empty string. The server reads a present-but-empty current
+    // password as an attempt to prove the old one, and refuses it with a 403.
     expect(apiMock.setAdminPassword).toHaveBeenCalledWith("a-long-enough-password", undefined);
   });
 
@@ -290,7 +292,7 @@ describe("changing the password after signing in with a recovery code", () => {
     // A second tab mounted while the mark was still live holds `via_recovery: true` in a
     // cache nothing refetches (`main.tsx` turns off refetch-on-focus). Once the first tab
     // spends the mark, this one keeps a parked, empty current-password box and an enabled
-    // Save that the server refuses every time: no way out but a reload. The re-read on
+    // Save that the server refuses every time, with no way out but a reload. The re-read on
     // failure is what turns the refusal into the state that explains it.
     apiMock.safety.mockResolvedValue({ has_password: true });
     apiMock.me.mockResolvedValueOnce({ ...SIGNED_IN_USER, via_recovery: true });
@@ -311,11 +313,11 @@ describe("changing the password after signing in with a recovery code", () => {
   });
 
   it("demands the current password when the session cannot be read at all", async () => {
-    // Rule 17/36: the unknown state is answered explicitly, and the answer is the strict one.
-    // A read that fails must never be the thing that unlocks a credential change -- so the
-    // fallback here is the ordinary form, identical to a session that is genuinely not a
-    // recovery one. This is the branch a `?? false` would be doing silently; it is asserted so
-    // that flipping the default to the lenient side cannot pass.
+    // The unknown state is answered explicitly, and the answer is the strict one. A read that
+    // fails must never be the thing that unlocks a credential change, so the fallback here is
+    // the ordinary form, identical to a session that is genuinely not a recovery one. This is
+    // the branch a silent `?? false` would take instead. It is asserted here so that flipping
+    // the default to the lenient side cannot pass.
     apiMock.safety.mockResolvedValue({ has_password: true });
     apiMock.me.mockRejectedValue(new Error("no session"));
     const person = renderPanel();
@@ -343,8 +345,8 @@ describe("what leaving this panel would lose", () => {
   });
 
   it("reports a password too short to save, because leaving still throws it away", async () => {
-    // `valid` is the wrong signal here: a password Save refuses is still text the operator typed,
-    // and reporting only the saveable form would drop exactly the half-finished ones in silence.
+    // `valid` is the wrong signal here. A password Save refuses is still text the operator
+    // typed, and reporting only the saveable form would drop exactly the half-finished ones.
     apiMock.safety.mockResolvedValue({ has_password: false });
     const dirty = vi.fn();
     const person = renderPanel(dirty);
@@ -371,12 +373,12 @@ describe("what leaving this panel would lose", () => {
   });
 
   it("keeps the form when a refetch fails, so the typed password stays reachable", async () => {
-    // Rule 146: the report makes two claims at once -- there is something to lose, AND the
-    // operator can still get to it. This panel's draft lives in a CHILD, so an early return here
-    // does not hide the form, it unmounts it and takes three typed boxes with it. And `useSafety`
-    // polls every 15 seconds, so one failed poll reached that state with the operator doing
-    // nothing but typing. React Query keeps the last good row through a failed refetch, so the
-    // form stays on it; the old `isError || !data` branch traded it for one paragraph.
+    // The report makes two claims at once: there is something to lose, and the operator can
+    // still get to it. This panel's draft lives in a child, so an early return here does not
+    // hide the form, it unmounts it and takes three typed boxes with it. `useSafety` polls
+    // every 15 seconds, so one failed poll can reach that state with the operator doing nothing
+    // but typing. React Query keeps the last good row through a failed refetch, so the form
+    // must stay on it rather than being replaced by a failure paragraph.
     apiMock.safety.mockResolvedValue({ has_password: true });
     const dirty = vi.fn();
     const queryClient = testQueryClient();
@@ -386,29 +388,28 @@ describe("what leaving this panel would lose", () => {
     await fill(person, next, "a-long-enough-password");
     await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(true));
 
-    // In the app this arrives on `useSafety`'s own 15-second poll, which no test should sit out;
-    // the poll and this are the same refetch, so ask for one directly.
+    // In the app this arrives on `useSafety`'s own 15-second poll, which no test should sit out
+    // waiting for. The poll and this are the same refetch, so this asks for one directly.
     apiMock.safety.mockRejectedValue(new Error("server unreachable"));
     await act(() => queryClient.invalidateQueries({ queryKey: ["safety"] }));
 
-    // Still the form, still holding the draft, and still saying the read failed (rule 17/36):
-    // everything below is presented as current otherwise, and it is known to be stale.
+    // Still the form, still holding the draft, and still saying the read failed. Everything
+    // below would otherwise be presented as current, when it is actually known to be stale.
     expect(screen.getByLabelText(/^new password$/i)).toHaveValue("a-long-enough-password");
     expect(screen.queryByText(/Couldn't load these settings/)).toBeNull();
     const stale = await screen.findByText(/Couldn't check these settings just now/);
     expect(stale).toHaveClass("notice-warn");
     expect(dirty).toHaveBeenLastCalledWith(true);
-    // And it does NOT say to reload (#153). That line sat directly above these three boxes and
-    // named the one action that empties them: there is no `beforeunload` handler anywhere in
-    // `frontend/src`, so a reload took the typed password with no ask, from an operator doing what
-    // the page told them. The sentence lives in StaleReadNotice.tsx and is shared by seven panels,
-    // so this assertion moves with it (rule 144).
+    // The notice must not say to reload. There is no `beforeunload` handler anywhere in
+    // `frontend/src`, so a reload would take the typed password with no warning, from an
+    // operator doing exactly what the page told them. The sentence lives in
+    // StaleReadNotice.tsx and is shared by seven panels, so this assertion moves with it.
     expect(stale).not.toHaveTextContent(/reload/i);
   });
 
   it("reports nothing when the first read never lands, because there is no form to lose", async () => {
-    // The other side of rule 146: with no stored row there is no form, so a guard that fired here
-    // would demand a discard for boxes that were never on screen.
+    // The other side of the same claim: with no stored row there is no form, so a guard that
+    // fired here would demand a discard for boxes that were never on screen.
     apiMock.safety.mockRejectedValue(new Error("server unreachable"));
     const dirty = vi.fn();
     renderPanel(dirty);

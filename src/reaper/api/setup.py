@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""What is left to configure -- the state a first-run wizard reads.
+"""What is left to configure. The state a first-run wizard reads.
 
-A fresh Reaper is useless until it is pointed at the services it reads from, and the point
-of the setup flow is to make that obvious and quick rather than a treasure hunt through a
-settings page. This one endpoint answers "what still needs doing?" so the UI can show the
-right next step and stop nagging once everything is in place.
+A fresh Reaper is useless until it is pointed at the services it reads from. The setup
+flow makes that obvious and quick instead of leaving the operator to find every
+setting by hand. This one endpoint answers what still needs doing, so the UI can show
+the right next step and stop nagging once everything is in place.
 
-Behind the auth gate: the very first admin is claimed on the login screen (the Plex owner
-signs in), and everything here happens once someone is signed in.
+This sits behind the auth gate. The very first admin is claimed on the login screen,
+when the Plex owner signs in, and everything here happens once someone is signed in.
 """
 
 from __future__ import annotations
@@ -28,21 +28,22 @@ router = APIRouter(prefix="/api/setup", tags=[api_tags.SETUP])
 class SetupStatus(BaseModel):
     admin_exists: bool
     has_password: bool
-    """Whether an admin password exists, which is also whether a local account does.
+    """Whether an admin password exists, which is also whether a local account exists.
 
-    The wizard's first step sets it, and it reads this to know whether that step is behind
-    it -- the step the operator is on is derived from server state, never from how far this
-    browser happened to get, so closing the tab resumes where it left off.
+    The wizard's first step sets this password, and it reads this field to know
+    whether that step is done. The step the operator is on is derived from server
+    state, never from how far this browser happened to get, so closing the tab resumes
+    where it left off.
 
-    It is not merely a wizard convenience. The same password arms deletion
+    This password does more than gate the wizard. It also arms deletion
     (``PUT /api/settings/safety``) and confirms a restore (``POST .../restore/confirm``,
-    which refuses outright without one), and until it is set there is no local account at
-    all -- so a plex.tv outage locks the owner out of an install the login screen tells them
-    keeps one.
+    which refuses outright without one). Until it is set, there is no local account at
+    all, so a plex.tv outage would lock the owner out of an install the login screen
+    tells them keeps one.
     """
     plex_linked: bool
     instances: dict[str, int]
-    """How many of each kind are configured -- e.g. {"radarr": 2, "tautulli": 1}."""
+    """How many of each kind are configured, for example {"radarr": 2, "tautulli": 1}."""
 
     has_radarr: bool
     has_sonarr: bool
@@ -51,45 +52,43 @@ class SetupStatus(BaseModel):
     has_scanned: bool
 
     scan_ready: bool
-    """The minimum to run a scan: a Tautulli, plus at least one Radarr or Sonarr.
-    Mirrors the guard in ``services.scan_runner.build_sources``."""
+    """The minimum needed to run a scan. This requires a Tautulli, plus at least one
+    Radarr or Sonarr. Mirrors the guard in ``services.scan_runner.build_sources``."""
     reap_ready: bool
-    """The minimum for a *real* run, which is a strictly higher bar than ``scan_ready``.
+    """The minimum for a real run, a strictly higher bar than ``scan_ready``.
 
-    Scanning and reaping are two different readinesses and the endpoint used to publish only
-    the first, under a ``complete`` that reads like both: an install with Tautulli and one
-    *arr and no Plex finished the wizard, was told it was all set, and had its first reap
-    refused outright at the button (#383). Each conjunct here is a refusal that already
-    exists somewhere else, restated as a question the UI can ask *before* the operator picks
-    what to delete:
+    Scanning and reaping need different readiness checks. Each condition below
+    restates a refusal that already exists elsewhere, as a question the UI can ask
+    before the operator picks what to delete.
 
-    * ``has_password`` -- ``PUT /api/settings/safety`` is password-gated, so deletion cannot
-      be armed at all without one.
-    * ``plex_linked`` and ``has_tautulli`` -- ``api.runs._preflight_refusal`` returns a 409
-      for each, and ``services.executor.execute`` raises the same two sentences as its
-      backstop. Those refusals are correct and stay: the check for who is watching runs
-      through Plex, and the played-since-approval check through Tautulli.
-    * a Radarr or a Sonarr -- deletion goes *through* an *arr, so with neither there is
-      nothing a plan could remove.
+    * ``has_password`` reflects that ``PUT /api/settings/safety`` is password-gated,
+      so deletion cannot be armed at all without one.
+    * ``plex_linked`` and ``has_tautulli`` mirror the two 409s that
+      ``api.runs._preflight_refusal`` returns, and that ``services.executor.execute``
+      also checks as a backstop. The check for who is watching runs through Plex. The
+      played-since-approval check runs through Tautulli.
+    * Needing a Radarr or a Sonarr reflects that deletion goes through an *arr, so
+      with neither one, there is nothing a plan could remove.
 
-    The last three are ``scan_ready``, so this is that plus a password and a linked Plex.
-    Configuration only: a service that is configured but unreachable still fails at run
-    time, and nothing here can know that in advance.
+    The first three conditions are ``scan_ready``, so this field adds a password and a
+    linked Plex on top. It checks configuration only. A service that is configured but
+    unreachable still fails at run time, and nothing here can know that in advance.
     """
     complete: bool
-    """Nothing left the wizard needs to push: a password, scan-ready, and a scan has run.
+    """Whether the wizard has nothing left to push. That means a password is set,
+    scanning is ready, and a scan has run.
 
-    ``has_password`` is part of it because the wizard now asks for one, and a "complete"
-    that ignored it would send an install with no local account straight past the step that
-    creates it. That does mean an *existing* install without a password is no longer
-    complete and meets the wizard once more -- on the password step, with every later step
-    already satisfied.
+    ``has_password`` is part of it because the wizard now asks for one. Without it, an
+    install with no local account could read as complete and skip past the step that
+    creates one. An existing install without a password is therefore no longer
+    complete, and meets the wizard once more, on the password step, with every later
+    step already satisfied.
 
-    It deliberately does NOT include ``plex_linked``: an install with no Plex is finished
-    with the wizard, because Plex is optional for a scan and the wizard exists to get one
-    running. What that install cannot do is *reap*, and that is ``reap_ready``'s question
-    rather than this one -- published beside this field so the answer is available without
-    this one having to mean two things (#383).
+    This field leaves out ``plex_linked`` on purpose. An install with no Plex is
+    finished with the wizard, since Plex is optional for a scan and the wizard exists
+    to get a scan running. Whether that install can reap is a separate question,
+    answered by ``reap_ready`` and published beside this field, so this field does not
+    have to mean two things.
     """
 
 
@@ -110,8 +109,9 @@ async def setup_status(request: Request) -> SetupStatus:
         admins = int(
             (await session.execute(select(func.count()).select_from(AppUser))).scalar_one()
         )
-        # Read, never derived from `admins`: a Plex-provider admin is not a local one, so an
-        # install can hold admins and still have no password (and no local account) at all.
+        # Reads the password state directly instead of deriving it from `admins`. A
+        # Plex-provider admin is not a local one, so an install can have admins and
+        # still have no password, and no local account, at all.
         password_set = await admin_password.has_password(session)
         counts = await _counts(session)
         plex_linked = (

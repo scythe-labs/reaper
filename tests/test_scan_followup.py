@@ -1,12 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""A scan requested mid-scan runs AFTER the current one, never silently merges into it.
+"""A scan requested while another is running starts only after the current one finishes.
 
-The failure this pins was observed live: a policy save fires an auto-rescan, but a scan
-was already running -- started under the OLD policy. The start request "followed" the
-running scan, its snapshot landed carrying the old policy's hashes, and the policy
-page's "needs a fresh scan" notice never cleared, however long the owner waited. A scan
-reads the library under the policies in force when it *begins*, so the only honest
-response to a start request mid-run is to queue exactly one follow-up run.
+A scan reads the library under whatever policies are in force when it begins. A start
+request that arrived mid-run and used the old policies would produce a result that looks
+current but reflects stale settings, and the "needs a fresh scan" notice would never
+clear. So a start request that arrives mid-run queues exactly one follow-up run instead.
 """
 
 from __future__ import annotations
@@ -22,8 +20,10 @@ from reaper.services import scan_runner
 
 
 def _request() -> Any:
-    """The minimal duck-typed Request the route reads: ``app.state`` attributes only.
-    The fake ``run_scan`` ignores every constructor input, so placeholders suffice."""
+    """A minimal duck-typed Request. The route only reads ``app.state`` attributes.
+
+    The fake ``run_scan`` ignores every constructor input, so placeholders suffice.
+    """
     state = SimpleNamespace(
         settings=None,
         secret_box=None,
@@ -52,25 +52,27 @@ async def test_a_start_request_mid_scan_queues_exactly_one_followup(
     await asyncio.sleep(0)  # let the background task enter run_scan
     assert calls == [0]
 
-    # Two more start requests while the scan runs: both fold into ONE queued follow-up.
+    # Two more start requests arrive while the scan runs, and both combine into one
+    # queued follow-up.
     second = await scan_api.start_scan(request)
     third = await scan_api.start_scan(request)
     assert second is status and third is status
     assert status.followup_queued is True
     assert calls == [0]  # nothing launched in parallel
 
-    gate.set()  # the first run finishes; the queued follow-up starts and finishes too
+    gate.set()  # the first run finishes, then the queued follow-up starts and finishes too
     await request.app.state.scan_task
 
-    assert calls == [0, 1]  # exactly two runs: the original plus ONE follow-up
-    # A fresh binding, because the background task mutated `status` IN PLACE while this
-    # coroutine was suspended -- something the type checker cannot follow across the await,
-    # so narrowing from the `is True` above would otherwise read these as dead.
+    assert calls == [0, 1]  # exactly two runs, the original plus one follow-up
+    # This reads a fresh binding because the background task mutated `status` in place
+    # while this coroutine was suspended. The type checker cannot follow that mutation
+    # across the await, so narrowing from the `is True` above would make these lines look
+    # like dead code without a fresh read.
     finished = request.app.state.scan_status
     assert finished.running is False
     assert finished.followup_queued is False
     assert finished.phase == "complete"
-    # The reported snapshot is the follow-up's -- the one that saw the saved policy.
+    # The reported snapshot is the follow-up run's, the one that saw the saved policy.
     assert finished.snapshot_id == 2
 
 
@@ -96,8 +98,8 @@ async def test_running_stays_true_across_the_handoff(
     await asyncio.sleep(0)
     await scan_api.start_scan(request)  # queue the follow-up
 
-    gates[0].set()  # first run completes; the follow-up begins
-    for _ in range(100):  # bounded: a broken hand-off must fail, not hang
+    gates[0].set()  # first run completes, and the follow-up begins
+    for _ in range(100):  # bounded so a broken hand-off fails fast instead of hanging
         if len(seen_running) >= 2:
             break
         await asyncio.sleep(0)
@@ -113,8 +115,10 @@ async def test_running_stays_true_across_the_handoff(
 async def test_an_errored_run_drops_the_queued_followup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Rerunning after a failure would repeat (or mask) the error the owner needs to
-    see; the queue dies with the run and the error is what the UI shows."""
+    """Rerunning after a failure would repeat or mask the error the owner needs to see.
+
+    The queue dies with the run instead, and the error is what the UI shows.
+    """
     calls: list[int] = []
     gate = asyncio.Event()
 

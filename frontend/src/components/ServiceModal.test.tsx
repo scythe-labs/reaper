@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The service edit modal's two maps. The HD/4K library map (Sonarr/Radarr) and the multi-Seerr
-// service->instance map (Seerr) share one grammar, pinned here: each row is paired with a select,
-// a suggested-but-unconfirmed pick wears a "suggested" tag that clears once they choose, saving
-// sends the map they see, and a list that could not be read fails to a visible notice, never a
-// silent empty list.
+// The service edit modal has two maps: the HD/4K library map (Sonarr/Radarr) and the multi-Seerr
+// service-to-instance map (Seerr). Both follow the same pattern, pinned here: each row pairs with
+// a select, a suggested but unconfirmed pick wears a "suggested" tag that clears once the operator
+// chooses, saving sends the map shown on screen, and a list that fails to load shows a notice
+// instead of an empty list.
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -24,8 +24,8 @@ vi.mock("../api", async (importOriginal) => ({
   api: apiMock,
 }));
 
-// The mocks are shared across tests, so clear call history between them: otherwise a later
-// test that reads `updateInstance.mock.calls[0]` sees an earlier test's save, not its own.
+// The mocks are shared across tests, so this clears their call history first. A later test
+// reading `updateInstance.mock.calls[0]` would otherwise see an earlier test's save, not its own.
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -76,8 +76,8 @@ function renderModal(
   else apiMock.instanceRootFolders.mockResolvedValue(folders);
   if (libraries instanceof Error) apiMock.plexLibraries.mockRejectedValue(libraries);
   else apiMock.plexLibraries.mockResolvedValue(libraries);
-  // A re-sync answers what the read answered, so an empty list stays empty and the "nothing to
-  // map to" arm is reached rather than being papered over by the sync the hook fires.
+  // A re-sync returns the same list the read did, so an empty list stays empty. This lets the
+  // "nothing to map to" case run instead of the hook's own sync quietly filling it in.
   apiMock.syncPlexLibraries.mockResolvedValue(libraries instanceof Error ? [] : libraries);
   apiMock.updateInstance.mockResolvedValue(instance);
   const onClose = vi.fn();
@@ -87,10 +87,9 @@ function renderModal(
 
 /** The library select for one root-folder row, found by that row's folder label. */
 function selectForFolder(path: string): HTMLSelectElement {
-  // By accessible name, not by DOM position: the old walk from the .pl-root cell to its
-  // sibling found these selects while every one of them was nameless (#147), so it could
-  // not have told us they were. Reaching them the way a screen reader does keeps that
-  // regression red instead of invisible.
+  // Looked up by accessible name, not by DOM position. A screen reader also finds a control by
+  // its accessible name, so a test that reached through the DOM instead could pass while every
+  // select is still unnamed.
   return screen.getByLabelText(`Plex library for ${path}`) as HTMLSelectElement;
 }
 
@@ -119,11 +118,10 @@ describe("ServiceModal HD/4K library map", () => {
   });
 
   it("states the chosen library as text, so two long names cannot read alike", async () => {
-    // #306. A native <select> clips its selected option to the control's width and cannot wrap,
-    // so two libraries differing only past the visible prefix render as one string in the box.
-    // The restatement under it is the only surface here that rule 139 can reach, and this is
-    // the assertion that it carries the WHOLE name: truncating it too would pass a test that
-    // only checked the value was present somewhere.
+    // A native <select> clips its selected option to the control's width and cannot wrap, so two
+    // libraries differing only past the visible prefix render as one string in the box. The
+    // plain text restatement below the select is what actually shows the whole name, so this
+    // asserts it carries the full string rather than a still-truncated copy.
     const shared = "Movies Archive Second Floor Overflow";
     renderModal(
       sonarr(),
@@ -140,13 +138,14 @@ describe("ServiceModal HD/4K library map", () => {
 
     const echoed = [...document.querySelectorAll(".pl-echo")].map((e) => e.textContent ?? "");
     expect(echoed).toEqual([`${shared} 4K`, `${shared} HD`]);
-    // The property the operator actually depends on, stated as itself: no two rows read alike.
+    // This is the property the operator actually depends on. No two rows read alike.
     expect(new Set(echoed).size).toBe(echoed.length);
   });
 
   it("says nothing under a folder still on 'Not set'", async () => {
-    // The restatement is a rescue for a value that clips, and "Not set" is legible at every
-    // width. Rendering it anyway would put a second copy of nothing on every unmapped row.
+    // The restatement exists to show a value that would otherwise clip, and "Not set" already
+    // reads fine at any width. Rendering a copy of it anyway would add nothing to every unmapped
+    // row.
     renderModal(sonarr(), [{ path: "/tv", suggested_library: null }]);
     await waitFor(() => expect(selectForFolder("/tv").value).toBe(""));
     expect(document.querySelectorAll(".pl-echo")).toHaveLength(0);
@@ -171,16 +170,16 @@ describe("ServiceModal HD/4K library map", () => {
     const body = apiMock.updateInstance.mock.calls[0]![1] as {
       plex_library_map?: Record<string, string>;
     };
-    // The suggested folder is included; the unset one is dropped, not stored as "".
+    // The suggested folder is included. The unset one is dropped rather than stored as "".
     expect(body.plex_library_map).toEqual({ "/tv": "TV" });
   });
 
   it("keeps a saved mapping and does not tag it 'suggested'", async () => {
-    // The suggestion DIFFERS from what is saved, which is what makes this two proofs instead of
-    // one: the saved row holds "TV" because the stored pick won, not because both sides agreed
-    // (rule 141). And the second folder is what says the prefill actually ran. Without it the
-    // assertion lands on the first render and passes before the effect can overwrite anything,
-    // so a prefill that clobbers a saved pick reads green.
+    // The suggestion differs from what is saved, so this proves the stored pick wins because it
+    // was stored, not because both values happened to agree. The second folder proves the
+    // prefill effect actually ran: without it, the assertion could pass on the first render,
+    // before the effect has a chance to overwrite anything, and a prefill that clobbers a saved
+    // pick would still read as passing.
     renderModal(sonarr({ plex_library_map: { "/tv": "TV" } }), [
       { path: "/tv", suggested_library: "TV 4K" },
       { path: "/tv-spare", suggested_library: "TV 4K" },
@@ -192,16 +191,16 @@ describe("ServiceModal HD/4K library map", () => {
     expect(screen.getAllByText("suggested")).toHaveLength(1);
   });
 
-  // Saving REBUILDS the map from the folders in hand, which is how an entry for a folder the *arr
-  // no longer has gets dropped. That is right while the list is current and destructive when it is
-  // merely out of date: a refetch that fails keeps the last good list, the grid deliberately stays
-  // on screen with the stale line over it, and `.data` is truthy the whole time -- so the old
-  // `.data` test could not tell the two apart and Save pruned against a list nobody had confirmed
-  // (#204). The map is what tells an HD copy from a 4K one. Both directions are pinned, because a
-  // fix that stopped pruning altogether would leave a folder that IS gone mapped forever.
+  // Saving rebuilds the map from the folders currently in hand, so an entry for a folder the *arr
+  // no longer has gets dropped. That is correct while the list is current, and destructive when
+  // the list is only stale: a failed refetch keeps the last good list on screen with a
+  // stale-data notice over it, so a test that only checks "is there data" cannot tell a fresh
+  // list from an old one. The map is what tells an HD copy from a 4K one apart, so both
+  // directions are tested here. A fix that stopped pruning altogether would leave a folder that
+  // really is gone mapped forever.
   describe("pruning the stored map", () => {
-    /** The modal with a stored map wider than the folder list that lands, keeping the client so
-     *  the test can fail the refetch behind the grid. */
+    /** Renders the modal with a stored map wider than the folder list it gets back, and returns
+     *  the query client so the test can force a failed refetch behind the grid. */
     function renderWithStaleableFolders() {
       const instance = sonarr({ plex_library_map: { "/tv": "TV", "/archive": "TV 4K" } });
       apiMock.instanceRootFolders.mockResolvedValue([{ path: "/tv", suggested_library: "TV" }]);
@@ -227,7 +226,7 @@ describe("ServiceModal HD/4K library map", () => {
       renderWithStaleableFolders();
       await waitFor(() => expect(selectForFolder("/tv").value).toBe("TV"));
 
-      // The read succeeded, so "/archive is not in the list" is an answer, not a gap.
+      // The read succeeded, so the missing "/archive" folder is a confirmed answer, not a gap.
       expect(await savedMap()).toEqual({ "/tv": "TV" });
     });
 
@@ -239,7 +238,8 @@ describe("ServiceModal HD/4K library map", () => {
       await act(async () => {
         await queryClient.invalidateQueries({ queryKey: ["instance-root-folders"] });
       });
-      // The stale line is up and the grid is still there, which is the state the guard is about.
+      // The stale-data notice is up and the grid is still visible. This is exactly the state the
+      // guard is meant to handle.
       expect(
         await screen.findByText(/couldn't check this instance's folders/i),
       ).toBeInTheDocument();
@@ -256,9 +256,9 @@ describe("ServiceModal HD/4K library map", () => {
   });
 
   it("does not claim the operator has no libraries when the list can't be read", async () => {
-    // B-20: a failed fetch empties the options exactly as a genuinely-empty library list does,
-    // and the "none yet" sentence then states as fact something Reaper never learned -- and
-    // sends the operator off to re-sync a list that is already there.
+    // A failed fetch empties the options the same way a genuinely empty library list does. Left
+    // unhandled, the "none yet" sentence would then state as fact something Reaper never
+    // actually learned, and send the operator to re-sync a list that is already there.
     renderModal(sonarr(), [{ path: "/tv", suggested_library: "TV" }], new Error("unreachable"));
     expect(await screen.findByText(/couldn't read your Plex libraries/i)).toBeInTheDocument();
     expect(screen.queryByText(/No Plex libraries yet/i)).not.toBeInTheDocument();
@@ -266,19 +266,19 @@ describe("ServiceModal HD/4K library map", () => {
 
   it("keeps the 'none yet' sentence for a list that really is empty", async () => {
     renderModal(sonarr(), [{ path: "/tv", suggested_library: null }], []);
-    // It no longer sends anyone to Plex settings to press Sync: the hook runs the sync itself,
-    // so the only honest thing left to say is that the server has no library of this kind. The
-    // old copy asked a first-run operator to go do the app's own job (#384).
+    // The hook runs the sync itself now, so the panel no longer sends anyone to Plex settings
+    // to press Sync. The only honest thing left to say is that the server has no library of
+    // this kind.
     expect(await screen.findByText(/No TV libraries in Plex yet/i)).toBeInTheDocument();
     expect(screen.queryByText(/Sync them in Plex settings/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/couldn't read your Plex libraries/i)).not.toBeInTheDocument();
   });
 
   it("syncs a library list that has never been synced, instead of offering nothing", async () => {
-    // The whole of #384 in one assertion. `GET /plex/libraries` answers "as last synced", the
-    // wizard never synced, and so every picker here offered nothing while the "suggested" tags
-    // beside them -- which come from a live Plex read on the server -- named libraries that
-    // plainly existed. An empty read now triggers exactly one sync.
+    // `GET /plex/libraries` answers "as last synced." Before the wizard ran a sync, every
+    // picker here offered nothing, even though the "suggested" tags beside them come from a
+    // live Plex read and named libraries that plainly existed. An empty read now triggers
+    // exactly one sync.
     apiMock.instanceRootFolders.mockResolvedValue([{ path: "/tv", suggested_library: "TV" }]);
     apiMock.plexLibraries.mockResolvedValue([]);
     apiMock.syncPlexLibraries.mockResolvedValue(LIBRARIES);
@@ -292,7 +292,7 @@ describe("ServiceModal HD/4K library map", () => {
   });
 
   it("does not sync a list that merely failed to load", async () => {
-    // A read failure is not an empty list, and answering one with a WRITE would paper over the
+    // A read failure is not an empty list. Answering a failure with a write would hide the
     // state the operator needs to see. `libraries.data` is undefined here, never `[]`.
     renderModal(sonarr(), [{ path: "/tv", suggested_library: null }], new Error("plex down"));
     expect(await screen.findByText(/couldn't read your Plex libraries/i)).toBeInTheDocument();
@@ -300,10 +300,10 @@ describe("ServiceModal HD/4K library map", () => {
   });
 
   it("names every picker after its own folder", async () => {
-    // #147: the folder is in a sibling cell the select is not labeled by, so every row
-    // announced as "combobox, Not set" and an operator on a screen reader could not tell
-    // which folder they were mapping. Picking the wrong one aims Leaving Soon writes and
-    // the Never-Reap read at a library Reaper was never meant to touch.
+    // The folder name sits in a sibling cell the select isn't labeled by, so without a label
+    // every row would announce as "combobox, Not set" and a screen reader user couldn't tell
+    // which folder they were mapping. Picking the wrong one points Leaving Soon writes and the
+    // Never-Reap read at a library Reaper was never meant to touch.
     renderModal(sonarr(), [
       { path: "/tv", suggested_library: "TV" },
       { path: "/tv-4k", suggested_library: "TV 4K" },
@@ -313,10 +313,10 @@ describe("ServiceModal HD/4K library map", () => {
     const named = screen.getAllByRole("combobox").map((c) => c.getAttribute("aria-label"));
     expect(named).toEqual(["Plex library for /tv", "Plex library for /tv-4k"]);
     expect(screen.queryAllByRole("combobox", { name: "" })).toHaveLength(0);
-    // The spoken name is derived from the folder cell, and every helper in this file now
-    // reaches these selects through that name -- so nothing else here observes that the cell
-    // renders at all. Empty the column and each assertion above still passes, which is the
-    // same blindness #147 was hiding in, one layer over. Rule 118.
+    // The spoken name is derived from the folder cell, and every helper in this file reaches
+    // these selects through that name, so nothing else here checks that the cell itself still
+    // renders. Removing the folder column would leave every assertion above passing, which is
+    // the same kind of blind spot a missing label caused before, one layer over.
     expect(screen.getByText("/tv")).toBeInTheDocument();
     expect(screen.getByText("/tv-4k")).toBeInTheDocument();
   });
@@ -346,11 +346,11 @@ describe("ServiceModal external URL", () => {
   });
 
   it("blocks the save and shows an error when the external URL is not a web address", async () => {
-    // S-5: a scheme-less paste is caught before save (mirroring the server's 422), so the value
-    // is never sent to be stored verbatim.
+    // A scheme-less paste is caught before save, mirroring the server's own 422 rejection, so
+    // the value is never sent to be stored as typed.
     renderModal(sonarr({ external_url: null }), []);
-    // A session rather than the direct API, which the rest of this test uses: `fill` takes the
-    // `UserEvent` that `setup()` returns, and the module object is a different type.
+    // This uses a session rather than the direct API the rest of the test uses. `fill` takes
+    // the `UserEvent` that `setup()` returns, and the module object is a different type.
     await fill(userEvent.setup(), screen.getByLabelText("External URL"), "tv.example.com:8989");
 
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -378,11 +378,11 @@ function renderSeerrModal(
   return renderWithProviders(<ServiceModal kind="seerr" instance={instance} onClose={vi.fn()} />);
 }
 
-/** What each service row SHOWS, in document order.
+/** What each service row shows, in document order.
  *
  *  Read off the cell rather than through `getByText`, because the question is what the whole
- *  cell says: a tag the operator needs is one that changes this string, and a `getByText` for
- *  the bare name would pass on a row rendering the name alone -- which is the defect (#165). */
+ *  cell says. A tag the operator needs changes this string, and `getByText` for the bare name
+ *  would still pass on a row that renders only the name. */
 function visibleServiceRows(container: HTMLElement): string[] {
   return [...container.querySelectorAll(".pl-root")].map((c) => c.textContent ?? "");
 }
@@ -390,16 +390,17 @@ function visibleServiceRows(container: HTMLElement): string[] {
 /** The instance select for one service row, found by that row's service name and media kind. */
 function selectForService(name: string, media: "TV" | "Movies" = "TV"): HTMLSelectElement {
   // By accessible name, for the reason given on selectForFolder above. The media kind is part
-  // of that name because it is part of the row's identity: two services can share a name.
+  // of that name because it is part of the row's identity. Two services can share a name.
   return screen.getByLabelText(`Connection for ${name}, ${media}`) as HTMLSelectElement;
 }
 
 describe("ServiceModal multi-Seerr service map", () => {
   it("states the chosen connection as text too, on the same terms as the library picker", async () => {
-    // Rule 72: the two grids are declared twins, and #306 is a defect of the shape they share.
-    // This picker stores the instance id while the operator read its name, so the restatement
-    // is looked back up rather than read off the map -- a lookup that silently returns nothing
-    // would leave this row bare while the library row above it was fixed.
+    // This grid mirrors the folder grid above, so it shares the same clipping problem. This
+    // picker stores the instance id while the operator reads its name, so the plain text
+    // restatement is looked up from the map rather than read straight off it. A lookup that
+    // silently returns nothing would leave this row's restatement bare even after the folder
+    // row above was fixed.
     const shared = "Sonarr Second Floor Overflow";
     renderSeerrModal(
       seerr(),
@@ -457,13 +458,13 @@ describe("ServiceModal multi-Seerr service map", () => {
     const body = apiMock.updateInstance.mock.calls[0]![1] as {
       service_instance_map?: Record<string, number>;
     };
-    // The mapped service is sent keyed by "{kind}:{serviceId}"; the unset one is dropped.
+    // The mapped service is sent keyed by "{kind}:{serviceId}". The unset one is dropped.
     expect(body.service_instance_map).toEqual({ "sonarr:2": 3 });
   });
 
   it("does not collide a Sonarr and a Radarr service that share a serviceId", async () => {
-    // Seerr numbers Sonarr and Radarr services separately, so both have a serviceId 0. Each row
-    // must prefill its OWN suggestion; the movie row must not read the tv row's value.
+    // Seerr numbers Sonarr and Radarr services separately, so both can have a serviceId of 0.
+    // Each row must prefill its own suggestion. The movie row must not read the TV row's value.
     renderSeerrModal(seerr(), [
       { service_id: 0, kind: "sonarr", name: "HD TV", is_4k: false, suggested_instance_id: 3 },
       { service_id: 0, kind: "radarr", name: "HD Movies", is_4k: false, suggested_instance_id: 7 },
@@ -480,9 +481,8 @@ describe("ServiceModal multi-Seerr service map", () => {
   });
 
   it("names every picker after its own service, 4K included", async () => {
-    // #147 on this grid. A portal routinely carries an HD and a 4K service under one name,
-    // so the tag is the only thing telling those two rows apart -- it has to be spoken, not
-    // just shown.
+    // A portal routinely carries an HD and a 4K service under one name, so the tag is the only
+    // thing telling those two rows apart. It has to be spoken, not just shown.
     const { container } = renderSeerrModal(seerr(), [
       { service_id: 2, kind: "sonarr", name: "Main TV", is_4k: false, suggested_instance_id: 3 },
       { service_id: 5, kind: "sonarr", name: "Main TV", is_4k: true, suggested_instance_id: null },
@@ -491,16 +491,16 @@ describe("ServiceModal multi-Seerr service map", () => {
     const named = screen.getAllByRole("combobox").map((c) => c.getAttribute("aria-label"));
     expect(named).toEqual(["Connection for Main TV, TV", "Connection for Main TV 4K, TV"]);
     expect(screen.queryAllByRole("combobox", { name: "" })).toHaveLength(0);
-    // As on the folder grid: both helpers reach these selects by their spoken name, so the
-    // visible cell they are derived from is otherwise unobserved. Rule 118.
+    // As on the folder grid, both helpers reach these selects by their spoken name, so the
+    // visible cell they are derived from is otherwise unobserved by this test.
     expect(visibleServiceRows(container)).toEqual(["Main TVTV", "Main TVTV4K"]);
   });
 
   it("names a TV and a Movies service apart when the portal gives them one name", async () => {
-    // The row's identity is kind + id, so the name has to carry the kind too. Seerr numbers
-    // and names the two lists independently, so one portal can hold a TV and a Movies service
-    // both called "Media" -- with the name alone those two rows are announced identically and
-    // the operator maps their movie requests onto a TV connection.
+    // The row's identity is kind plus id, so the name has to carry the kind too. Seerr numbers
+    // and names its TV and Movies lists independently, so one portal can hold a TV service and
+    // a Movies service both called "Media." With the name alone, those two rows would announce
+    // identically and the operator could map their movie requests onto a TV connection.
     renderSeerrModal(seerr(), [
       { service_id: 0, kind: "sonarr", name: "Media", is_4k: false, suggested_instance_id: 3 },
       { service_id: 0, kind: "radarr", name: "Media", is_4k: false, suggested_instance_id: 7 },
@@ -513,11 +513,12 @@ describe("ServiceModal multi-Seerr service map", () => {
   });
 
   it("shows the media kind on the row, not only in its spoken name", async () => {
-    // #165, the sighted half of the test above. The name was announced with its kind and drawn
-    // without one, so a screen reader could tell the portal's TV service from its Movies one and
-    // an operator reading the grid could not -- and the row they pick decides which connection
-    // Reaper deletes a request's copy through. Both tags are pinned together because they are
-    // one cell: a fix that drew the kind and dropped 4K would trade one collision for another.
+    // The sighted half of the test above. The name was announced with its kind but drawn
+    // without one, so a screen reader could tell the portal's TV service from its Movies
+    // service while an operator reading the grid could not, and the row they pick decides
+    // which connection Reaper deletes a request's copy through. Both tags are pinned together
+    // because they are one cell. A fix that drew the kind and dropped 4K would trade one
+    // collision for another.
     const { container } = renderSeerrModal(seerr(), [
       { service_id: 0, kind: "sonarr", name: "Media", is_4k: false, suggested_instance_id: 3 },
       { service_id: 0, kind: "radarr", name: "Media", is_4k: false, suggested_instance_id: 7 },
@@ -526,14 +527,14 @@ describe("ServiceModal multi-Seerr service map", () => {
     await waitFor(() => expect(selectForService("Media", "TV").value).toBe("3"));
     const rows = visibleServiceRows(container);
     expect(rows).toEqual(["MediaTV", "MediaMovies", "MediaMovies4K"]);
-    // The point of the tags: three rows the portal named identically now read apart.
+    // This is the point of the tags. Three rows the portal named identically now read apart.
     expect(new Set(rows).size).toBe(rows.length);
   });
 
   it("says the media kind the same way to both audiences", async () => {
-    // Rule 144: the visible tag and the spoken name state one fact, and a drift between them
-    // leaves one audience reading a row the other cannot. Driven through both kinds, because a
-    // helper hardcoded to either spelling reads correct on the kind it was written for.
+    // The visible tag and the spoken name state one fact, and a drift between them leaves one
+    // audience reading a row the other cannot. Driven through both kinds, because a helper
+    // hardcoded to one spelling would read correct only for the kind it was written for.
     const { container } = renderSeerrModal(seerr(), [
       { service_id: 0, kind: "sonarr", name: "Media", is_4k: false, suggested_instance_id: 3 },
       { service_id: 0, kind: "radarr", name: "Media", is_4k: false, suggested_instance_id: 7 },
@@ -552,7 +553,7 @@ describe("ServiceModal multi-Seerr service map", () => {
   });
 
   it("does not claim there are no Sonarr or Radarr connections when the list can't be read", async () => {
-    // B-20, the same trap on the other picker: every `instanceOptions` comes back empty.
+    // The same trap as above, on the other picker: every `instanceOptions` comes back empty.
     renderSeerrModal(
       seerr(),
       [{ service_id: 2, kind: "sonarr", name: "Main TV", is_4k: false, suggested_instance_id: 3 }],
@@ -567,9 +568,10 @@ describe("ServiceModal multi-Seerr service map", () => {
 
 describe("ServiceModal while a save is in flight", () => {
   it("refuses to close, so the failure it is about to show survives", async () => {
-    // B-19: the scrim, Escape and ✕ used to tear the modal down mid-save. A 409 "a service with
-    // that name already exists" then landed on an unmounted component, the caches were never
-    // invalidated, and the operator walked away believing the change had saved.
+    // The scrim, Escape, and the close button must not tear the modal down while a save is in
+    // flight. A save can still fail after the modal closes, for example a 409 for a duplicate
+    // service name, and a response landing on an unmounted component would never invalidate the
+    // caches, leaving the operator believing the change had saved.
     const { onClose } = renderModal(sonarr(), [{ path: "/tv", suggested_library: "TV" }]);
     apiMock.updateInstance.mockReturnValue(new Promise(() => {})); // in flight, forever
     await userEvent.click(await screen.findByRole("button", { name: "Save" }));
@@ -582,13 +584,14 @@ describe("ServiceModal while a save is in flight", () => {
 });
 
 describe("what a screen reader calls the host box", () => {
-  // The scheme is drawn as a prefix fused inside the field's box, and the <label> wrapped it, so
-  // the box announced as "Hostname or IP http colon slash slash": the operator heard punctuation
-  // where the field's job should have been (#214).
+  // The scheme renders as a prefix fused inside the field's box, and the <label> wraps both, so
+  // without care the box's name would include it: "Hostname or IP http colon slash slash," with
+  // a screen reader hearing punctuation instead of the field's actual purpose.
   //
-  // `toHaveAccessibleName`, not `getByLabelText`, because the accessible name is the thing under
-  // test and only the name computation honors `aria-hidden`. A substring lookup is what let this
-  // sit here in the first place -- /Hostname or IP/ matched happily either way.
+  // This checks `toHaveAccessibleName`, not `getByLabelText`, because the accessible name is
+  // what is actually under test here, and only the name computation honors `aria-hidden`. A
+  // substring lookup like `getByLabelText(/Hostname or IP/)` would match the noisy name just as
+  // happily.
   const hostBox = () => screen.getByLabelText(/Hostname or IP/);
 
   it("names it for what goes in it, not for the scheme drawn beside it", async () => {
@@ -597,8 +600,9 @@ describe("what a screen reader calls the host box", () => {
   });
 
   it("keeps that name with SSL on, where the prefix is a different string", async () => {
-    // Both branches of the prefix driven, since the name must not depend on which one renders
-    // (rule 145). The toggle is the control that states the scheme in words, and it is reachable.
+    // Both branches of the prefix are driven, since the name must not depend on which one
+    // renders. The toggle is the control that states the scheme in words, and it stays
+    // reachable.
     renderModal(sonarr({ base_url: "https://10.0.0.5:8989" }), []);
     const toggle = screen.getByRole("switch", { name: /Use SSL/i });
     expect(toggle).toBeChecked();
@@ -607,18 +611,18 @@ describe("what a screen reader calls the host box", () => {
 });
 
 describe("what a screen reader hears when a connection is tested", () => {
-  // Press "Test connection" and the result rendered as a badge that sat in no live region, at
-  // any of its five sites -- so an operator using a reader learned the outcome only if they
-  // happened to navigate onto it. The failure path did not speak by another route either:
-  // `instances.py` never raises for a failed test, so an unreachable host arrives as a 200 with
-  // `ok=False` through `onSuccess` and never reaches the shared error notice (#192). Whether
-  // Reaper can reach the Sonarr it deletes THROUGH is worth hearing.
+  // Pressing "Test connection" renders the result as a badge, and a badge on its own sits in no
+  // live region, so a screen reader user would only learn the outcome by navigating onto it.
+  // There is no other route to hear a failure either: `instances.py` never raises for a failed
+  // test, so an unreachable host arrives as an ordinary 200 with `ok=False` through `onSuccess`,
+  // which never reaches the shared error notice. Whether Reaper can reach the Sonarr it deletes
+  // through is worth hearing out loud.
   const spoken = () =>
     [...document.querySelectorAll('[aria-live="polite"]')].map((n) => n.textContent).join("");
 
-  /** The ADD form, because "Test connection" is only offered there -- a saved instance is
-   *  tested from its Settings row instead, through `testSavedInstance`, the rule 72 sibling
-   *  that got the same call. */
+  /** The ADD form, because "Test connection" only appears there. A saved instance is tested
+   *  from its Settings row instead, through `testSavedInstance`, which shares this same
+   *  behavior. */
   async function renderWithAnnouncer() {
     apiMock.instanceRootFolders.mockResolvedValue([]);
     apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
@@ -644,8 +648,9 @@ describe("what a screen reader hears when a connection is tested", () => {
 
     await user.click(await screen.findByRole("button", { name: /Test connection/i }));
 
-    // "version 4.0.1" spelled out, where the badge shows "(v4.0.1)": a reader voices a bare
-    // "v" as a letter. The only deliberate difference between the two copies.
+    // "version 4.0.1" is spelled out here, while the badge shows "(v4.0.1)," because a screen
+    // reader voices a bare "v" as the letter V. This is the only deliberate difference between
+    // the two copies.
     await waitFor(() => expect(spoken()).toBe("Passed: Connected to Sonarr. (version 4.0.1)"));
   });
 
@@ -660,7 +665,7 @@ describe("what a screen reader hears when a connection is tested", () => {
     await user.click(await screen.findByRole("button", { name: /Test connection/i }));
 
     await waitFor(() => expect(spoken()).toBe("Failed: Couldn't reach it. Check the address."));
-    // The same string the badge renders for a reader who does navigate to it (rule 144).
+    // The same string the badge renders for a reader who does navigate to it.
     expect(document.querySelector(".test-badge")?.textContent).toContain(
       "Failed: ✗ Couldn't reach it. Check the address.",
     );
@@ -668,16 +673,14 @@ describe("what a screen reader hears when a connection is tested", () => {
 });
 
 describe("what the connection badge vouches for", () => {
-  // #178: `setTest` was called in exactly two places, the declaration and the mutation's
-  // `onSuccess`, and NOTHING cleared it -- not the submit handler, not the Test button. So a
-  // passed test followed by an edited hostname or key left the "Passed" badge on screen beside
-  // credentials that had never been tried. Rule 85's family: an indicator must describe the state
-  // it was computed from.
+  // The badge must be cleared whenever the hostname or key it was tested against changes. An
+  // indicator has to describe the state it was actually computed from, or a "Passed" badge could
+  // sit on screen beside credentials nobody has tried.
   const badge = () => document.querySelector(".test-badge");
   const hostBox = () => screen.getByLabelText(/Hostname or IP/);
   const keyBox = () => screen.getByLabelText(/^API key$/);
 
-  /** The ADD form with a passed test already on screen -- "Test connection" is only offered while
+  /** The ADD form with a passed test already on screen. "Test connection" is only offered while
    *  adding, so this is the one place the badge and the boxes are editable together. */
   async function passATest() {
     apiMock.testInstance.mockResolvedValue({
@@ -696,7 +699,7 @@ describe("what the connection badge vouches for", () => {
     const user = userEvent.setup();
     await fill(user, hostBox(), "10.0.0.5");
     await user.type(keyBox(), "k");
-    // Rule 137: the button gates on `canTest`, so act only once both boxes have filled it.
+    // The button gates on `canTest`, so wait until both boxes have filled it before acting.
     const press = await screen.findByRole("button", { name: /Test connection/i });
     await waitFor(() => expect(press).toBeEnabled());
     await user.click(press);
@@ -713,8 +716,8 @@ describe("what the connection badge vouches for", () => {
   });
 
   it("goes when the key it was computed for changes", async () => {
-    // The sharper half: the address on screen is still the one that passed, so the badge reads as
-    // current while the credential beside it is one nobody has tried.
+    // This is the sharper case: the address on screen is still the one that passed, so the
+    // badge would read as current while the credential beside it is one nobody has tried.
     const user = await passATest();
 
     await user.type(keyBox(), "2");
@@ -733,22 +736,23 @@ describe("what the connection badge vouches for", () => {
     await user.type(hostBox(), "{backspace}");
 
     expect(badge()!.textContent).toContain("Passed");
-    // One request the whole way through: the badge is re-shown, never re-earned.
+    // One request the whole way through. The badge is re-shown here, not re-earned.
     expect(apiMock.testInstance).toHaveBeenCalledTimes(1);
   });
 
   it("does not vouch for an address typed while the test was still in flight", async () => {
-    // The three above compare the held result against the boxes and are satisfied by reading
-    // `testedWith()` at either end. This one is not, and it is the arm nothing drove: the boxes
-    // stay live while the request is out, so a fingerprint read back at SUCCESS time is the
-    // address on screen when the answer lands rather than the one it was asked about. The two
-    // then match by construction and the badge vouches for a host nobody tried. Captured at
-    // issuance instead (`onMutate`), the held result no longer describes the boxes and the badge
-    // goes, which is the honest answer.
+    // The three tests above compare the held result against the boxes and pass by reading
+    // `testedWith()` at either end. This one covers the case the others don't drive: the boxes
+    // stay live while the request is in flight, so a fingerprint read back at success time would
+    // be whatever address is on screen when the answer lands, not the one the test was actually
+    // asked about. The two would then match by construction, and the badge would vouch for a
+    // host nobody tried. Capturing the fingerprint at issuance instead (`onMutate`) means the
+    // held result stops describing the boxes the moment they change, so the badge correctly
+    // goes.
     //
-    // Three siblings copy this pairing (`DiscordModal`, `NotificationsPanel`, `ServicesPanel`)
-    // and all three computed it at success time until this branch pinned the shape; a hygiene
-    // gate holds all four now (`test_a_held_test_result_is_stamped_when_its_request_is_issued`).
+    // `DiscordModal`, `NotificationsPanel` and `ServicesPanel` share this same pairing, and a
+    // hygiene gate (`test_a_held_test_result_is_stamped_when_its_request_is_issued`) holds all
+    // four to it.
     let land!: (r: unknown) => void;
     apiMock.testInstance.mockReturnValue(
       new Promise((resolve) => {
@@ -770,8 +774,8 @@ describe("what the connection badge vouches for", () => {
     await waitFor(() => expect(press).toBeEnabled());
     await user.click(press);
 
-    // The operator keeps typing while the request is out. `type`, not `fill`: the keystroke is
-    // the point here rather than the value it leaves behind.
+    // The operator keeps typing while the request is out. This uses `type`, not `fill`, because
+    // the keystroke is the point here, not the value it leaves behind.
     await user.type(hostBox(), "1");
     await act(async () => {
       land({
@@ -783,10 +787,10 @@ describe("what the connection badge vouches for", () => {
 
     expect(badge()).toBeNull();
 
-    // The second half, and the reason an absence alone is not the assertion: a result that was
-    // never stored is also absent here. Typing back to the address the request WAS about brings
-    // the badge, so what is being read is a held result filed under the right fingerprint rather
-    // than nothing at all.
+    // This is the second half of the proof. An absence alone would not be enough, since a result
+    // that was never stored is also absent. Typing back to the address the request was actually
+    // about brings the badge back, which shows a held result filed under the right fingerprint,
+    // not nothing at all.
     await user.type(hostBox(), "{backspace}");
 
     expect(badge()!.textContent).toContain("Passed");
@@ -794,14 +798,12 @@ describe("what the connection badge vouches for", () => {
 });
 
 describe("why 'Add service' will not act", () => {
-  // The submit button was `disabled` on a three-field conjunction with nothing on the page naming
-  // any of them: the operator pressed it, nothing happened, and the form did not say what it was
-  // waiting for. Not a screen-reader gap -- there was no copy for a sighted operator either
-  // (#188).
+  // The submit button is disabled on a three-field condition, so the page must name what it is
+  // waiting for, or the operator presses it and nothing happens with no explanation. This is
+  // not only a screen-reader concern. There is no copy for a sighted operator either without it.
   //
-  // The sentence binds to the BOX, not to the button, and that is the whole design: a `disabled`
-  // button is out of the Tab order, so a description hung on it can never be reached by the
-  // operator it is for.
+  // The sentence binds to the box, not to the button. A disabled button is out of the Tab
+  // order, so a description hung on the button could never be reached by the operator it is for.
   const submit = () => screen.getByRole("button", { name: "Add service" });
   const blocked = () => document.querySelector("#service-blocked");
 
@@ -813,13 +815,13 @@ describe("why 'Add service' will not act", () => {
   }
 
   it("names each empty box in turn, then the connection, then the map", async () => {
-    // Every arm of the chain driven, in the order it is walked, because the chain shows only
-    // the FIRST and a later arm is otherwise never reached (rule 145). The button stays off for
-    // all of them and turns on exactly when the last sentence goes.
+    // Every case in the chain is driven, in the order it is checked, because the chain only
+    // shows the first unmet case and a later one is otherwise never reached. The button stays
+    // off through all of them and turns on exactly when the last sentence clears.
     //
-    // The three boxes are no longer the whole road: filling them used to enable Add outright,
-    // which is how a service could be saved at an address Reaper had never reached, and a
-    // folder map nobody had made.
+    // Filling the three boxes alone is not enough to enable Add. A connection test and a folder
+    // map are also required, so a service can never be saved at an address Reaper has never
+    // reached, or with a folder map nobody made.
     const user = renderAdd();
     expect(submit()).toBeDisabled();
     expect(blocked()!.textContent).toBe("Enter a name to add this service.");
@@ -832,7 +834,8 @@ describe("why 'Add service' will not act", () => {
     expect(submit()).toBeDisabled();
     expect(blocked()!.textContent).toBe("Enter an API key to add this service.");
 
-    // Typing the key no longer enables the button: the connection has not been proved yet.
+    // Typing the key does not enable the button on its own. The connection still has to be
+    // proved.
     await user.type(screen.getByLabelText(/^API key$/), "k");
     expect(submit()).toBeDisabled();
     expect(blocked()!.textContent).toBe("Reaper has to reach this service before you can save.");
@@ -859,10 +862,10 @@ describe("why 'Add service' will not act", () => {
   });
 
   it("points the box that is empty at the sentence about it, and no other box", async () => {
-    // The reason this is a separate assertion from the text: one region carries three different
-    // complaints, so a box describing itself with the wrong one reads the sentence about a
-    // DIFFERENT field out as its own problem -- the bug `errorOwner` was written for in the
-    // password row (#174), reached here by the same shape.
+    // This is a separate assertion from the text above because one region carries three
+    // different complaints. A box that describes itself with the wrong one would read out the
+    // sentence about a different field as its own problem. `errorOwner` exists to prevent
+    // exactly this on the password row, and this test reaches the same shape here.
     const user = renderAdd();
     const name = screen.getByLabelText("Name");
     const host = screen.getByLabelText(/Hostname or IP/);
@@ -880,9 +883,9 @@ describe("why 'Add service' will not act", () => {
   });
 
   it("says 'to save' on an existing service, matching what its button does", async () => {
-    // The tail is read off the same `editing` the button's label is (rule 144). An edit form
-    // needs no API key, so clearing the NAME is the only way to block it -- and the arm that
-    // names the key must stay unreachable here.
+    // The tail sentence is read off the same `editing` flag the button's label uses. An edit
+    // form needs no API key, so clearing the name is the only way to block it here, and the
+    // message that names the key must stay unreachable in this state.
     const user = userEvent.setup();
     renderModal(sonarr(), []);
     await user.clear(screen.getByLabelText("Name"));
@@ -915,11 +918,11 @@ describe("what a failed folder read must not do", () => {
   }
 
   it("lets a passing test replace the failed by-id read, instead of trapping the operator", async () => {
-    // The flow this whole feature exists for: a saved Sonarr is pointed at a new address. The
-    // by-id read fails (it uses the STORED address), the operator types the new one, and the
-    // test passes and hands back folders. The never-landed notice used to outrank the grid, so
-    // Save stayed off for a mapping with no picker to make it in and the modal refused to close
-    // -- a guard whose signal outlived the surface that satisfies it (rule 146).
+    // This is the flow the feature exists for: a saved Sonarr is pointed at a new address. The
+    // by-id read fails because it still uses the stored address, the operator types the new
+    // one, and the test passes and hands back folders. Once that happens, the never-landed
+    // notice must not outrank the grid: Save must not stay off for a mapping the operator has
+    // no picker to make, and the modal must not refuse to close.
     const user = renderRepair();
     expect(await screen.findByText(/couldn't read this instance's folders/i)).toBeInTheDocument();
 
@@ -943,10 +946,11 @@ describe("what a failed folder read must not do", () => {
   });
 
   it("keeps the stored map when the test passes but the folder read fails", async () => {
-    // The silent-loss case. `map_error_reason` means the probe RAN and failed, so its empty list is a
-    // read that never landed -- and `[]` is truthy, so the save's prune walked it and sent `{}`,
-    // which the server stores as NULL. The map that tells an HD copy from a 4K one was gone with
-    // no confirmation, off a screen that had replaced the grid with a notice.
+    // The silent-loss case. `map_error_reason` means the probe ran and failed, so its empty
+    // list is a read that never landed, not a confirmed empty one. `[]` is truthy, though, so a
+    // prune that walked it would send `{}`, which the server stores as null. Without this
+    // guard, the map that tells an HD copy from a 4K one apart could be erased with no
+    // confirmation, while the screen shows a notice in place of the grid.
     apiMock.instanceRootFolders.mockResolvedValue([{ path: "/tv", suggested_library: null }]);
     apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
     apiMock.syncPlexLibraries.mockResolvedValue(LIBRARIES);
@@ -984,10 +988,10 @@ describe("what a failed folder read must not do", () => {
   });
 
   it("says a test is what fills the grid, rather than claiming to be reading already", async () => {
-    // The by-id query is `enabled: editing && isArr`, and a DISABLED query reports
-    // `status: "pending"` forever -- so the add form sat under "Reading this instance's folders…"
-    // from the moment it opened, describing a read nobody started, and the sentence written for
-    // that exact moment could never render.
+    // The by-id query is `enabled: editing && isArr`, and a disabled query reports
+    // `status: "pending"` forever. Without the fix, the add form would sit under "Reading this
+    // instance's folders…" from the moment it opened, describing a read that never started, and
+    // the sentence written for that exact moment could never render.
     apiMock.instanceRootFolders.mockResolvedValue([]);
     apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
     apiMock.syncPlexLibraries.mockResolvedValue(LIBRARIES);
@@ -999,9 +1003,10 @@ describe("what a failed folder read must not do", () => {
   });
 
   it("does not demand a key when only the certificate check was flipped", async () => {
-    // The switch is not an address. It changes what a held result vouches for, so the badge goes
-    // -- but demanding a fresh test for it also demanded a KEY, on a form whose key box is blank
-    // by design, and told the operator they had changed an address they had not touched.
+    // The switch is not an address, but it changes what a held result vouches for, so the badge
+    // still goes. Demanding a fresh test for it would also demand a key, on a form whose key
+    // box is blank by design, and would tell the operator they had changed an address they had
+    // not touched.
     apiMock.instanceRootFolders.mockResolvedValue([{ path: "/tv", suggested_library: "TV" }]);
     apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
     apiMock.syncPlexLibraries.mockResolvedValue(LIBRARIES);

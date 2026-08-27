@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The scan progress line, shared with the simulator. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* ---- scan progress bar (shared with the policy simulator) --------------- */
+ * The scan progress line, shared with the simulator. See `../index.css` for how this file
+ * fits into the stylesheet's load order. */
 
 .bar {
   height: 5px;
@@ -18,10 +17,10 @@
 }
 
 /* The background-scan cue: a thin accent line pinned to the very top of the window, shown
-   only while a scan runs (components/ScanLine.tsx). Determinate -- the fill tracks the scan's
-   real percent -- and it fades out the moment the scan finishes, so a still top edge always
-   means nothing is running. Sits above the page but below the modal scrim (z 60), so an
-   open dialog covers it. */
+   only while a scan runs (components/ScanLine.tsx). It is determinate: the fill tracks the
+   scan's real percent, and it fades out the moment the scan finishes, so a still top edge
+   always means nothing is running. It sits above the page but below the modal scrim (z 60),
+   so an open dialog covers it. */
 .scanline {
   position: fixed;
   top: 0;
