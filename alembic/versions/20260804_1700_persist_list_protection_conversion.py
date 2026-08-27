@@ -1,52 +1,50 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """persist the list-protection conversion, so the upgrade needs no visit to the policy page
 
-``c3d4e5f6a7b8`` moved the keep tags into the list registry and left the policy-body half to
-``engine.policy_migrations.convert_list_protections``, which runs **on load** and is never written back.
-That is the shape the shim was designed for -- a protection moving between surfaces is a
-policy edit nobody has saved, so the editor opens on it as a draft and the scan degrades
-until it is saved (rule 65). What it misses is that the load shim can never *finish*: the
-stored row stays legacy-shaped however many times the operator saves nothing, so every scan
-degrades, forever, and the incomplete-scan notice on the review screen never clears (#516).
+``c3d4e5f6a7b8`` moved the keep tags into the list registry and left the
+policy-body half to ``engine.policy_migrations.convert_list_protections``, which
+runs on load and is never written back. That shim exists because a protection
+moving between surfaces is a policy edit nobody has saved, so the editor opens on
+it as a draft and the scan degrades until it is saved. But the load shim can never
+finish: the stored row stays legacy-shaped no matter how many times the operator
+saves nothing, so every scan degrades forever, and the incomplete-scan notice on
+the review screen never clears.
 
-So the conversion is done once, here, where an upgrade can carry it: for each media type the
-newest policy row is converted and appended as a NEW row (the table is append-only, and
-snapshots and approvals point at the old one by hash). The next load finds nothing legacy,
-reports no repair, and the scan is clean.
+So the conversion runs once, here, where an upgrade can carry it: for each media
+type, the newest policy row is converted and appended as a new row (the table is
+append-only, and snapshots and approvals point at the old one by hash). The next
+load finds nothing legacy, reports no repair, and the scan is clean.
 
-**Writing it is safe because the conversion is verdict-preserving.** An enabled ``whitelisted``
-or ``curated_list`` gate becomes an ``on_list`` protect condition, which ``CustomProtectGate``
-answers with PROTECT and ``decide_verdict`` honors before score or coverage are consulted --
-the same branch the retired gates fired into. Nothing moves from kept to condemnable.
+Writing it is safe because the conversion preserves the verdict. An enabled
+``whitelisted`` or ``curated_list`` gate becomes an ``on_list`` protect condition,
+which ``CustomProtectGate`` answers with PROTECT and ``decide_verdict`` honors
+before score or coverage are consulted, the same branch the retired gates fired
+into. Nothing moves from kept to condemnable.
 
-Three refusals, each leaving the row alone for the load shim to handle exactly as it does
+Three refusals leave the row alone for the load shim to handle exactly as it does
 today, because a migration that guesses is worse than one that declines:
 
-* the conversion does not fully clear the legacy shape. It declines to strip an enabled gate
-  whose replacement list is missing, since an ``on_list`` rule naming no list reads as a green
-  "checked, did not fire" -- so the body it hands back still carries the gate on purpose, and
-  writing that would persist a body ``build_gates`` refuses to scan.
+* the conversion does not fully clear the legacy shape. It declines to strip an
+  enabled gate whose replacement list is missing, since an ``on_list`` rule naming
+  no list reads as a green "checked, did not fire." So the body it hands back
+  still carries the gate on purpose, and writing that would persist a body
+  ``build_gates`` refuses to scan.
 * the result does not validate as a ``PolicyBody``.
-* anything raises. A failed conversion must not fail the upgrade: the operator's exit is the
-  editor, and it now offers a Save whether or not this ran (``PolicyRepair.LISTS_MIGRATED``).
+* anything raises. A failed conversion must not fail the upgrade: the operator's
+  exit is the editor, and it now offers a Save whether or not this ran
+  (``PolicyRepair.LISTS_MIGRATED``).
 
-The shim stays for what this cannot reach: a restored backup, a hand-edited body, a database
-that never passed through this revision.
+The shim stays for what this cannot reach: a restored backup, a hand-edited body,
+a database that never passed through this revision.
 
-**Corrected after it shipped in v2026.8.2, and the correction is to WHICH list it names, never
-to the schema.** It resolved the tag and IMDb lists by age, and age is the operator's to change:
-delete the tag list this converts and the *arr-tag list they added for something else becomes
-the oldest of its source, so this wrote that list's name into their policy permanently. It now
-asks ``policy_migrations.conversion_list_names``, which identifies each row by what it holds. A database
-that has already run this revision does not run it again, so an install that upgraded into the
-window keeps the wrong rule -- visible on Policy as an ordinary keep rule and removable there,
-which is why it is left alone rather than healed by a later revision that would have to guess
-whether the rule was invented or re-tagged (#526).
-
-The same correction reaches the IMDb rule: the chart is movies only, so ``media_type`` now
-scopes it to the movie body, and a TV row converts to the tag list alone (#539). An install
-already through this revision keeps the inert TV rule, removable on Policy; it protects
-nothing, so no later revision heals it.
+Each candidate list is resolved by ``policy_migrations.conversion_list_names``,
+which identifies a list by what it holds rather than by when it was created.
+Picking the oldest list of a given kind is fragile: if the operator deletes the
+tag list this conversion expects and later adds an unrelated list from the same
+source, that new list becomes the oldest one of its kind, and resolving by age
+would write its name into the policy permanently instead. Comparing content
+avoids that. ``media_type`` also scopes the IMDb rule to the movie policy, since
+that chart is movies only, and a TV row converts to the tag list alone.
 
 Revision ID: d5e6f7a8b9c0
 Revises: a1b2c3d4e5f7
@@ -69,9 +67,9 @@ depends_on: str | Sequence[str] | None = None
 
 
 def _list_rows(conn: sa.Connection) -> list[tuple[str, str, str | None]]:
-    """Every registry row as ``policy_migrations.conversion_list_names`` takes them, oldest first. That
-    function decides WHICH row answers each half of the conversion, here and on the load path
-    alike (rule 104)."""
+    """Every registry row as ``policy_migrations.conversion_list_names`` takes them,
+    oldest first. That function decides which row answers each half of the
+    conversion, here and on the load path alike."""
     rows = conn.execute(
         sa.text("SELECT source, name, config_json FROM list_config ORDER BY id")
     ).fetchall()
@@ -80,9 +78,10 @@ def _list_rows(conn: sa.Connection) -> list[tuple[str, str, str | None]]:
 
 def _library_media_types(conn: sa.Connection) -> dict[str, frozenset[str]]:
     """Casefolded Plex library title -> the media types it spans, from the synced
-    ``plex_libraries`` setting. Read best-effort: it only ever narrows a collection's rule to
-    one policy, so an absent, unparseable, or unreadable setting leaves every collection on both
-    -- the wider protection, and the same fail-open the load path takes (rule 104, #545)."""
+    ``plex_libraries`` setting. Read best-effort: this only ever narrows a
+    collection's rule to one policy, so an absent, unparseable, or unreadable
+    setting leaves every collection covered by both policies. That is the wider
+    protection, and it matches what the load path does when it cannot tell either."""
     from reaper.engine.policy_migrations import library_media_types
 
     try:
@@ -116,8 +115,9 @@ def upgrade() -> None:
 
     conn = op.get_bind()
     rows = _list_rows(conn)
-    # One derivation of a collection's media scope for both bodies (rule 104): a single-library
-    # collection's rule lands only on the policy for its library's type (#545).
+    # One derivation of a collection's media scope for both bodies: a
+    # single-library collection's rule lands only on the policy for its
+    # library's type.
     collection_scope = own_list_media_scope(rows, _library_media_types(conn))
     now = int(datetime.now(UTC).timestamp())
 
@@ -135,8 +135,9 @@ def upgrade() -> None:
         if not has_legacy_list_protections(raw):
             continue
         try:
-            # Resolved per media type, because which list answers the tag half depends on the
-            # tags THIS body was protecting on, and the two policies are tuned separately.
+            # Resolved per media type, because which list answers the tag half depends
+            # on the tags this body was protecting on, and the two policies are tuned
+            # separately.
             tag_name, imdb_name, own_names = conversion_list_names(
                 rows, keep_tags=legacy_keep_tags(raw)
             )
@@ -165,21 +166,23 @@ def upgrade() -> None:
                 "hash": body.policy_hash(),
                 "body": body.model_dump_json(),
                 "mt": media_type,
-                # The operator's own name for their policy, carried across. This is the same
-                # policy; only where its list protections are written has changed.
+                # The operator's own name for their policy, carried across.
+                # This is the same policy. Only where its list protections
+                # are written has changed.
                 "name": str(row[1]),
-                # An INTEGER unix timestamp: `db.types.EpochDateTime` stores every instant as
-                # one, and raw SQL goes around the type. An ISO string here would land a row
-                # the ORM raises on for every later read (b2c3d4e5f6a7 found this the hard way).
+                # An INTEGER unix timestamp: `db.types.EpochDateTime` stores
+                # every instant as one, and raw SQL goes around that type. An
+                # ISO string here would produce a row the ORM cannot read back.
                 "now": now,
             },
         )
 
 
 def downgrade() -> None:
-    # Nothing. The rows this appended are ordinary policy rows an operator may have since
-    # edited or scanned against, and the table is append-only by design: deleting the newest
-    # row would silently put a DIFFERENT policy in force, which is the substitution every
-    # guard in this codebase exists to prevent. A downgrade re-reads the legacy row through
-    # the load shim, which is exactly what it did before this revision.
+    # Nothing. The rows this appended are ordinary policy rows an operator may
+    # have since edited or scanned against, and the table is append-only by
+    # design: deleting the newest row would silently put a different policy in
+    # force, which is the substitution every guard in this codebase exists to
+    # prevent. A downgrade re-reads the legacy row through the load shim,
+    # exactly as it did before this revision.
     pass

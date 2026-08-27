@@ -1,35 +1,34 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Custom column types.
 
-``EpochDateTime`` stores every timestamp as an **INTEGER unix epoch (UTC seconds)**
-and presents it to Python as a timezone-aware ``datetime``.
+``EpochDateTime`` stores every timestamp as an integer unix epoch (UTC seconds) and
+presents it to Python as a timezone-aware ``datetime``.
 
-Storing epoch rather than a DATETIME column removes a bug class rather than
-guarding against it. SQLite has no native date
-type and stores no timezone, so ``DateTime(timezone=True)`` is silently a no-op
-there: an aware datetime goes in and a *naive* one comes back. Comparing that
-against ``datetime.now(UTC)`` raises TypeError at best, and at worst -- if both
-sides happen to be naive -- compares a UTC instant against a local one and is
-quietly wrong by the size of the UTC offset.
+Storing an epoch integer instead of a DATETIME column removes a whole class of bug
+rather than guarding against it. SQLite has no native date type and stores no
+timezone, so ``DateTime(timezone=True)`` is silently a no-op there: an aware datetime
+goes in and a naive one comes back. Comparing that against ``datetime.now(UTC)`` raises
+``TypeError`` at best. At worst, if both sides happen to be naive, it compares a UTC
+instant against a local one and is quietly wrong by the size of the UTC offset.
 
-Every deletion decision rests on "when was this
-last watched", so a timezone slip silently condemns media that was watched
-recently, or spares media that was not.
+Every deletion decision rests on "when was this last watched," so a timezone slip
+could make recently watched media look overdue for deletion, or make media that was
+not watched recently look safe to keep.
 
-An integer cannot carry that ambiguity. There is no tzinfo to lose, no dialect
+An integer cannot carry that ambiguity. There is no ``tzinfo`` to lose, no dialect
 that can drop it, and no guard that has to stay correct.
 
-It also matches our inputs: Tautulli's ``date`` / ``started`` / ``stopped`` /
-``last_played`` / ``added_at`` and Plex's ``addedAt`` / ``lastViewedAt`` are all
-unix ints already, so this is the format the data arrives in.
+It also matches the inputs Reaper reads: Tautulli's ``date`` / ``started`` /
+``stopped`` / ``last_played`` / ``added_at`` and Plex's ``addedAt`` / ``lastViewedAt``
+are all unix integers already, so this is the format the data arrives in.
 
-Trade-off, stated plainly: raw SQL is less readable. Use SQLite's own conversion
-when poking at the database by hand::
+The trade-off is that raw SQL is less readable. Use SQLite's own conversion when
+looking at the database by hand::
 
     SELECT datetime(first_flagged_at, 'unixepoch') FROM first_flagged;
 
-Precision is whole seconds. Nothing in Reaper is sub-second -- watch history is
-recorded in seconds -- and rows that need a stable tiebreak order by their
+Precision is whole seconds. Nothing in Reaper needs sub-second precision, since watch
+history is recorded in seconds, and rows that need a stable tiebreak order by their
 autoincrement id.
 """
 
@@ -48,19 +47,19 @@ from reaper.clock import from_iso
 def _from_text(value: str) -> datetime:
     """Read an instant out of a TEXT value sitting in an epoch column.
 
-    Nothing in Reaper writes one, and a hand ``sqlite3`` edit does. One such row took
-    ``GET /api/settings/general`` down, because ``session.get`` decodes every column of the
-    row it fetches, so every reader of that row hit it and not just the one that wanted the
-    bad column (#937).
+    Nothing in Reaper writes one, but a hand edit through ``sqlite3`` can. A bad row like
+    this can break any endpoint that reads it, because ``session.get`` decodes every
+    column of the row it fetches, not just the one a caller actually wanted.
 
-    An ISO-8601 string carrying an offset names one exact instant, so it decodes. Anything
-    else raises. Reading it as ``None`` would be worse than the crash: ``NULL`` carries a
-    meaning on these columns, and on ``WatchHighWater.last_played_at`` that meaning is
-    "never played", which is the condemn direction.
+    An ISO-8601 string carrying an offset names one exact instant, so it decodes.
+    Anything else raises. Reading it as ``None`` would be worse than raising: ``NULL``
+    carries a meaning on these columns, and on ``WatchHighWater.last_played_at`` that
+    meaning is "never played," which pushes the deletion score up, not down.
 
-    ISO is the only spelling to decode because the column is INTEGER, and SQLite's affinity
-    converts a well-formed numeric literal on the way in. A hand-typed ``'1756046256'`` is an
-    integer by the time it lands, so it never reaches here.
+    ISO is the only spelling this decodes, because the column is INTEGER and SQLite's
+    affinity converts a well-formed numeric literal on the way in. A hand-typed
+    ``'1756046256'`` is already an integer by the time it lands, so it never reaches
+    here.
     """
     parsed = from_iso(value)
     if parsed is None:
@@ -111,11 +110,11 @@ class EpochDateTime(TypeDecorator[datetime]):
 def render_epoch_datetime(type_: str, obj: Any, autogen_context: Any) -> str | bool:
     """Alembic hook: render ``EpochDateTime`` as a plain ``sa.Integer()``.
 
-    The emitted DDL is identical -- ``EpochDateTime`` only changes Python-side
-    conversion -- so migrations need not import Reaper's own modules.
-    (Autogenerate otherwise writes ``reaper.db.types.EpochDateTime()`` *without*
-    emitting the import, producing a migration that fails at runtime with a
-    NameError: it reports success and creates no tables.)
+    The emitted DDL is identical, since ``EpochDateTime`` only changes Python-side
+    conversion, so migrations need not import Reaper's own modules. Autogenerate would
+    otherwise write ``reaper.db.types.EpochDateTime()`` without emitting the import,
+    producing a migration that fails at runtime with a ``NameError``: it reports success
+    and creates no tables.
     """
     if type_ == "type" and isinstance(obj, EpochDateTime):
         autogen_context.imports.add("import sqlalchemy as sa")

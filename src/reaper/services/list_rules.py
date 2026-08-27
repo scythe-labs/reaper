@@ -5,27 +5,27 @@ A list is defined on Settings -> Lists; what it does is a keep rule on Policy na
 (the ``on_list`` field, either strength). These helpers keep the two surfaces telling one
 story:
 
-* **adding a list writes no rule.** The operator chooses whether and how strongly it
-  protects, on Policy, and the Lists row reads "Not used by your policy yet" until they do
-  -- so adding a list is never a silent protection nobody asked for. The lists Reaper ships
-  and the ones an upgrade migrated are named by the policy body itself (the default body,
-  ``convert_list_protections``), which is why those act from the first scan and a hand-added
-  one does not;
-* **renaming a list re-spells the rules naming it**, so a rename never turns a live
-  protection into a rule naming nothing;
-* **deleting a list deletes its rules**, so none goes on rendering as a live protection
-  covering nothing (rule 25).
+* Adding a list writes no rule. The operator chooses whether and how strongly it
+  protects, on Policy, and the Lists row reads "Not used by your policy yet" until they
+  do, so adding a list is never a silent protection nobody asked for. The lists Reaper
+  ships and the ones an upgrade migrated are named by the policy body itself (the default
+  body, ``convert_list_protections``), which is why those act from the first scan and a
+  hand-added one does not.
+* Renaming a list re-spells the rules naming it, so a rename never turns a live
+  protection into a rule naming nothing.
+* Deleting a list deletes its rules, so none goes on rendering as a live protection
+  covering nothing.
 
 Every write lands through the same append-only shape the policy editor's save uses: a new
-policy row per media type, hash recomputed, active-by-recency semantics unchanged -- so a
+policy row per media type, hash recomputed, active-by-recency semantics unchanged. So a
 pending approval bound to the old hash refuses to execute, exactly as after any policy
-edit (rule 113).
+edit.
 
-**A repaired policy is never written back from here.** ``active_policy`` can hand back a
-body a shim produced (rescaled, recovered, converted); persisting that plus one rule would
-silently adopt the whole repair without the operator's review, the substitution rule 65
-forbids. Those cases skip the write and the Lists screen shows the honest result: the list
-is not used by the policy yet.
+A repaired policy is never written back from here. ``active_policy`` can hand back a
+body a shim produced (rescaled, recovered, converted), and persisting that plus one rule
+would silently adopt the whole repair without the operator's review. Those cases skip the
+write, and the Lists screen shows the honest result: the list is not used by the policy
+yet.
 """
 
 from __future__ import annotations
@@ -45,8 +45,8 @@ MEDIA_TYPES = ("movie", "tv")
 
 
 def _names_equal(a: object, b: str) -> bool:
-    """Both sides case-folded (rule 88): the rule's value and the list's name are each the
-    operator's typing, at different times."""
+    """Both sides lower-cased: the rule's value and the list's name are each the operator's
+    typing, at different times."""
     return fold(str(a)) == fold(b)
 
 
@@ -123,7 +123,7 @@ async def detach_list(session: AsyncSession, name: str) -> None:
 
 
 async def usage(session: AsyncSession) -> dict[str, list[dict[str, object]]]:
-    """How the policies use each list, keyed by the list name's case-folded form.
+    """How the policies use each list, keyed by the list name's lower-cased form.
 
     Each entry is ``{"media_type", "strength", "points"}``, the shape
     ``api.schemas.ListPolicyUseOut`` serializes. Read from the same ``active_policy`` the

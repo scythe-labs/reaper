@@ -1,87 +1,86 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Building a Plex library index for the scan's identity matching.
 
-One implementation for both media types -- ``snapshot.build_movie_index`` and
-``season_scan.build_tv_index`` are thin wrappers -- so a fix to the pagination, the
-staleness handling, or the failure semantics cannot land on one path and miss the
-other. The two indexes feed the same resolver, and the movie and TV libraries
-silently diverging in what enters the frozen snapshot is exactly the kind of drift
-rule 3 exists to prevent.
+One implementation serves both media types: ``snapshot.build_movie_index`` and
+``season_scan.build_tv_index`` are thin wrappers around it, so a fix to the pagination,
+the staleness handling, or the failure semantics lands on both paths at once instead of
+missing one. The two indexes feed the same resolver, and letting the movie and TV
+libraries silently diverge in what enters the frozen snapshot is exactly the kind of
+drift this module exists to prevent.
 
-The Tautulli ``get_library_media_info`` sweep is the **spine** -- it alone gives
-rating_key / title / year / added_at cheaply, and for every row it lists,
-``added_at`` keeps coming from there so dormancy stays byte-identical to the
-title-only era. The plexapi sweep enriches each spine row with external ids + file
-basenames, joined by rating key.
+The Tautulli ``get_library_media_info`` sweep is the **spine**. It alone gives
+rating_key, title, year and added_at cheaply, and for every row it lists, ``added_at``
+keeps coming from there so dormancy stays byte-identical to the title-only era. The
+plexapi sweep enriches each spine row with external ids and file basenames, joined by
+rating key.
 
-**The spine is walked on Tautulli's own reported count, never on a page coming back
-short.** A server is free to clamp a page below the length asked for, so a short page
-says nothing about whether the library ended, and reading one as the end admitted a
-fraction of a section and reported nothing wrong (#559). Every item the walk never
-listed resolves unmatched, which keeps it but explains it as "Plex has not matched
-this", so a walk that ends before the count degrades like every other read anomaly
-here (rule 28). A server that serves rows and reports no count at all is paged until a
-page comes back empty, bounded by ``_SPINE_MAX_PAGES`` (rule 56).
+**The spine walk ends on Tautulli's own reported count, never on a page coming back
+short.** A server may clamp a page below the length asked for, so a short page says
+nothing about whether the library ended. Reading a short page as the end would
+silently admit only a fraction of a section. Every item the walk never listed resolves
+unmatched, which keeps it but explains it as "Plex has not matched this", so a walk
+that ends before the count degrades the snapshot like any other read anomaly here. A
+server that serves rows but reports no count at all is paged until a page comes back
+empty, bounded by ``_SPINE_MAX_PAGES``.
 
-The spine is a Tautulli-side *cache*, though, and it lags: an item added to Plex
-since Tautulli's last library refresh is absent from the listing (verified live: a
-day-old item missing from the media-info listing while Tautulli's own get_metadata
-served it fine). Spine-only, that item never enters the index, so the resolver
-reports it unmatched -- kept, but with a false "Plex has not matched this item"
-explanation. The plexapi sweep walks the same sections directly, so any rating key
-it returns that the spine did not list is appended as its own row, carrying Plex's
-own added-at (there is no Tautulli value to preserve for a row Tautulli has not
-listed yet).
+The spine is a Tautulli-side cache, and it lags: an item added to Plex since
+Tautulli's last library refresh is absent from the listing. Verified live: a day-old
+item was missing from the media-info listing while Tautulli's own get_metadata served
+it fine. Read from the spine alone, that item would never enter the index, and the
+resolver would report it unmatched, kept, but with a false "Plex has not matched this
+item" explanation. The plexapi sweep walks the same sections directly, so any rating
+key it returns that the spine did not list is appended as its own row, carrying
+Plex's own added-at (there is no Tautulli value to preserve for a row Tautulli has
+not listed yet).
 
-**The cache lags in both directions, and the other one is the dangerous one.** A
-rating key the spine still lists that the sweep did NOT return is an item Plex no
-longer has -- re-matched, replaced, or deleted -- and admitting it builds a phantom
+**The cache lags in both directions, and the other direction is the dangerous one.**
+A rating key the spine still lists that the sweep did not return names an item Plex
+no longer has: re-matched, replaced, or deleted. Admitting it builds a phantom row
 into the index: a stale title, year and added-at, with no ids and no file name,
-because there was nothing to enrich it from. Carrying no ids and no basename it can
-only ever act through the resolver's tier 3 (title + year), where it does real harm
-twice. It VETOES a good bind, by naming a different row than the file name did, which
-abstains and tells the operator Plex holds several copies of a file it holds one copy
-of. Worse, it ORIGINATES a bind: with no id hit and a file name the real row does not
-carry (an ordinary *arr rename), title + year is the last tier standing, and the item
-binds to a rating key Plex 404s. That reads as *matched*, so the fact layer takes its
-affirmative branch -- ``watchers_window.get(rating_key, 0)`` is ``Known(0)``, a
-measurement rather than ``Unknown``, and dormancy anchors on the phantom's stale
-added-at. Nobody can have watched a row that does not exist, so a live file collects
-maximum condemn pressure at full coverage from an item that is gone. So a spine row
-the sweep did not return is dropped, and the item resolves unmatched instead, which
-keeps it.
+because there was nothing left to enrich it from. Carrying no ids and no basename, it
+can only ever match through the resolver's weakest tier, title plus year, where it
+causes real harm twice. It can block a good match, by naming a different row than the
+file name did, which makes the item abstain and tells the operator Plex holds several
+copies of a file it holds one copy of. Worse, it can create a false match on its own:
+with no id hit and a file name the real row does not carry (an ordinary *arr rename),
+title plus year is the last tier standing, and the item binds to a rating key Plex
+returns 404 for. That reads as matched, so the fact layer takes its affirmative
+branch: ``watchers_window.get(rating_key, 0)`` becomes ``Known(0)``, a measurement
+rather than ``Unknown``, and dormancy anchors on the phantom's stale added-at. Nobody
+can have watched a row that does not exist, so a live file collects maximum deletion
+pressure at full confidence from an item that is gone. So a spine row the sweep did
+not return is dropped instead, and the item resolves unmatched, which keeps it.
 
-That drop is gated on the sweep having actually *spoken*: a failed sweep and an
-unconfigured Plex both return an empty map, and reading "not in the sweep" as "not in
-Plex" there would retire the entire library on the strength of a read that never
-happened (rule 2). Both leave the old behavior in place -- the snapshot is degraded
-and un-executable in the failure case anyway. Both reads are filtered on the same
+That drop only happens once the sweep has actually run. A failed sweep and an
+unconfigured Plex both return an empty map, and reading "not in the sweep" as "not
+in Plex" there would retire the whole library on the strength of a read that never
+happened. Both cases leave the spine's rows in place, and the snapshot is degraded
+and unexecutable anyway in the failure case. Both reads are filtered on the same
 ``allowed_sections`` set, but that is where the guarantee stops: the spine enumerates
-Tautulli's cached library list and the sweep enumerates Plex's live sections, so the two
-can still disagree about which libraries exist. A large gap means they disagree about
-*scope* rather than about a handful of retired items, and that degrades -- measured per
-library, since a small section vanishing whole is the case worth catching and an overall
-share hides it behind the big healthy ones.
+Tautulli's cached library list and the sweep enumerates Plex's live sections, so the
+two can still disagree about which libraries exist. A large gap means they disagree
+about scope rather than about a handful of retired items, so that degrades the
+snapshot too. It is measured per library, since a whole section vanishing is the case
+worth catching, and an overall share would hide it behind the healthy libraries.
 
-A plexapi sweep that fails **degrades** the snapshot (rule 2: never let the id
-signal vanish and silently fall the whole library back to title-only) and leaves
-ids empty, so items still match by title+year but no run may execute against the
-result. A sweep that succeeds but could not read every item's *ratings* degrades
-too, without discarding the ids it did read (``plex.collecting_incomplete_reads``,
-opened around the gather below): a title whose ratings went missing is a title the
-rating bar can no longer keep. A deployment with no Plex configured simply gets no
-enrichment.
+A plexapi sweep that fails degrades the snapshot: the id signal must never vanish and
+silently fall the whole library back to matching by title and year alone. Items still
+match by title and year, but no run may execute against the result. A sweep that
+succeeds but could not read every item's ratings degrades too, without discarding the
+ids it did read (``plex.collecting_incomplete_reads``, opened around the gather
+below): a title whose ratings went missing is a title the rating bar can no longer
+keep. A deployment with no Plex configured simply gets no enrichment.
 
 The sweep and the spine read different services, so they run concurrently and are
-joined only afterwards; the pairing goes through ``aio.gather_reaped`` so a spine
+joined only afterwards. The pairing goes through ``aio.gather_reaped``, so a spine
 failure aborts the scan exactly as it did when the reads were sequential, with the
-sweep reaped rather than left running. Neither read raises: a failure, and every
-malformed shape either can produce, degrades and is skipped instead. That covers a
-listing entry that is not an object, a library with no usable id, a media row that
-is not an object, an item with no usable rating key, and a page count that is not a
-number -- the five places a response Reaper did not write could otherwise throw
-straight through ``gather_reaped``. So a bad source costs the operator a plan, never
-the whole scan.
+sweep reaped rather than left running. Neither read raises on its own: a failure, and
+every malformed shape either can produce, degrades the snapshot and is skipped
+instead. That covers a listing entry that is not an object, a library with no usable
+id, a media row that is not an object, an item with no usable rating key, and a page
+count that is not a number, the five shapes a response Reaper did not write could
+otherwise throw straight through ``gather_reaped``. So a bad source costs the
+operator a plan, never the whole scan.
 """
 
 from __future__ import annotations
@@ -107,41 +106,42 @@ log = structlog.get_logger(__name__)
 _SPINE_LIBRARY = "_reaper_library"
 
 #: The same stamp for the section's *id*, which is what the retirement share is bucketed on.
-#: Keyed on the id and not on ``_SPINE_LIBRARY``'s title (rule 63): two libraries may share a
-#: display name, and merging their buckets would hide a whole vanished section inside a
-#: healthy same-named one -- the very failure the per-section share exists to catch.
+#: Keyed on the id rather than on ``_SPINE_LIBRARY``'s title, because two libraries may
+#: share a display name, and merging their buckets would hide a whole vanished section
+#: inside a healthy same-named one, the very failure the per-section share exists to catch.
 _SPINE_SECTION = "_reaper_section_id"
 
 #: How much of the spine may be retired as "Plex no longer has this" before the scan stops
 #: believing the two reads covered the same libraries. A stale Tautulli cache retires a
-#: handful of items; a section the sweep never walked retires all of it, and every item in
+#: handful of items. A section the sweep never walked retires all of it, and every item in
 #: that library would then resolve unmatched with nothing announcing why. Both bounds must
-#: be passed, so a tiny library cannot degrade on a single retired row.
+#: be passed, so a tiny library cannot degrade the snapshot on a single retired row.
 #:
-#: **The share is measured PER SECTION, against that section's own spine rows.** Measured
-#: across every section of the type it cannot deliver the case it exists for: a 150-row
-#: library beside a 2,000-row one can vanish whole (150 > the floor, 150 < 10% of 2,150) and
-#: report nothing, which is exactly "a section the sweep never walked" going unannounced. The
-#: floor stays global, because one stale row in each of twenty libraries really is a lagging
-#: cache and not a scope mismatch.
+#: **The share is measured per section, against that section's own spine rows.** Measured
+#: across every section of the type instead, it could not catch the case it exists for: a
+#: 150-row library beside a 2,000-row one could vanish whole (150 is above the floor, but
+#: below 10% of 2,150) and report nothing, exactly the "section the sweep never walked" case
+#: going unannounced. The floor stays global, because one stale row in each of twenty
+#: libraries really is a lagging cache, not a scope mismatch.
 _RETIRED_DEGRADE_SHARE = 0.1
 _RETIRED_DEGRADE_FLOOR = 20
 
 #: How many rows the spine asks for per page, and how many pages one library may take. The
-#: client's own default is 100 and a whole library is read on every scan, so the size is set
-#: here rather than inherited. The bound is a million rows in one library, orders of magnitude
-#: past a real one, so it can only ever bind on a server that is not advancing through the
-#: listing at all -- which is what the walk needs, since ending on a short page is exactly the
-#: bug being fixed and the reported count is the only other thing that ends it (rule 56,
-#: ``history_sync.MAX_HISTORY_PAGES`` is the model).
+#: client's own default is 100, and a whole library is read on every scan, so the size is
+#: set here rather than inherited. The page cap bounds one library at a million rows, orders
+#: of magnitude past a real one, so it can only ever trigger on a server that is not
+#: advancing through the listing at all. That is exactly what this walk needs to catch,
+#: since ending on a short page was the bug being fixed, and the reported count is the only
+#: other thing that ends the walk (``history_sync.MAX_HISTORY_PAGES`` follows the same
+#: pattern).
 _SPINE_PAGE_SIZE = 1_000
 _SPINE_MAX_PAGES = 1_000
 
 
 def _as_year(value: Any) -> int | None:
-    """A row's release year, or ``None`` -- used only to disambiguate duplicate titles.
+    """A row's release year, or ``None``. Used only to disambiguate duplicate titles.
 
-    Tautulli returns years as ints or numeric strings; anything else reads as unknown.
+    Tautulli returns years as ints or numeric strings. Anything else reads as unknown.
     """
     if isinstance(value, int | str) and str(value).isdigit():
         return int(value)
@@ -151,12 +151,12 @@ def _as_year(value: Any) -> int | None:
 def _as_count(value: Any) -> int | None:
     """A page envelope's row count, or ``None`` for "the server did not tell us".
 
-    Zero folds into ``None`` deliberately. ``int(value or 0)`` makes a Tautulli that omits
-    the field indistinguishable from one reporting an empty library, and the walk would then
-    stop after page one having read a library it never finished; ``history_sync`` carries the
-    same note over the same field. Anything that is not a plain number reads as not-told too,
-    because this module's contract is that a shape Reaper did not write degrades rather than
-    raising out of the scan.
+    Zero folds into ``None`` deliberately. ``int(value or 0)`` would make a Tautulli that
+    omits the field indistinguishable from one reporting an empty library, and the walk
+    would then stop after page one having read a library it never finished. ``history_sync``
+    carries the same note over the same field. Anything that is not a plain number reads as
+    not-told too, because this module's contract is that a shape Reaper did not write
+    degrades the snapshot rather than raising out of the scan.
     """
     if isinstance(value, int | str) and str(value).isdigit():
         return int(value) or None
@@ -171,22 +171,23 @@ async def build_index(
     degrade: Callable[[str], None],
     allowed_sections: set[int] | None = None,
 ) -> identity.PlexIndex:
-    """The Plex library of one ``section_type``, inverted for id / basename / title
-    matching. See the module docstring for the spine + sweep design.
+    """The Plex library of one ``section_type``, inverted for id, basename and title
+    matching. See the module docstring for the spine and sweep design.
 
     ``allowed_sections`` scopes both reads to the libraries the operator included in scans
-    (Settings -> Plex): ``None`` means every library of this type, a set restricts to those
-    section keys. The **spine and the sweep are filtered on the same set** -- filtering only
-    one would leave the rating-key join reading a section the other never listed, and an
-    inconsistent join is exactly the drift rule 3 forbids. Scoping only ever removes an
-    item's enrichment (it then resolves unmatched and is kept), never adds condemnation.
+    (Settings, Plex): ``None`` means every library of this type, and a set restricts to
+    those section keys. The spine and the sweep are filtered on the same set. Filtering
+    only one would leave the rating-key join reading a section the other never listed,
+    which is exactly the kind of drift this module exists to prevent. Scoping only ever
+    removes an item's enrichment, so it resolves unmatched and is kept, never adds
+    deletion pressure.
     """
-    # This function runs TWICE per scan -- movies from `snapshot.build_movie_index`, shows
-    # from `season_scan.build_tv_index` -- against one shared `degraded_reasons` list. So a
-    # single outage reaches every `degrade` below twice, and undifferentiated it appended the
-    # identical sentence twice and read as two separate failures (#513). Naming the lane is
-    # what tells the two apart; it rides every message from here rather than being written
-    # into each of the seven, so a message added later cannot forget it.
+    # This function runs twice per scan: movies from `snapshot.build_movie_index`, shows
+    # from `season_scan.build_tv_index`, against one shared `degraded_reasons` list. A
+    # single outage reaches every `degrade` call below twice, so without a lane name it
+    # appended the identical sentence twice and read as two separate failures. Naming the
+    # lane tells the two apart. It rides every message from here rather than being written
+    # into each one by hand, so a message added later cannot forget it.
     lane = "Movies" if section_type == "movie" else "TV shows"
     _shared_degrade = degrade
 
@@ -198,12 +199,12 @@ async def build_index(
     degrade = _lane_degrade
 
     async def _sweep() -> tuple[dict[int, identity.PlexItem], bool]:
-        """The sweep's items, and whether it *spoke* for the scoped sections.
+        """The sweep's items, and whether it actually ran for the scoped sections.
 
-        The flag is not ``bool(items)``: a genuinely empty library and a sweep that never
-        ran both return an empty map, and only the first of them licenses the caller to
-        read "absent from the sweep" as "Plex does not have this" (see the module
-        docstring). A failed or unconfigured sweep says nothing, so it retires nothing.
+        The flag is not ``bool(items)``. A genuinely empty library and a sweep that never
+        ran both return an empty map, and only the first of them lets the caller read
+        "absent from the sweep" as "Plex does not have this" (see the module docstring). A
+        failed or unconfigured sweep says nothing, so it retires nothing.
         """
         if plex is None:
             return {}, False
@@ -215,11 +216,9 @@ async def build_index(
                 True,
             )
         except PlexError as exc:
-            # Plain language, because this lands verbatim in the incomplete-scan notice on
-            # three screens (rule 21). It read "Plex GUID sweep failed (...): id matching
-            # unavailable, snapshot un-executable" -- three pieces of internal vocabulary and
-            # a raw exception carrying the URL -- which said nothing to the person deciding
-            # what to delete.
+            # Plain language, because this text reaches the operator directly, in the
+            # incomplete-scan notice shown on three screens. It says what happened and what
+            # it means for their files, not the internal name of the read that failed.
             degrade(
                 f"Reaper couldn't read your Plex libraries ({exc}), so nothing in this scan "
                 "could be matched to your libraries and nothing may be deleted from it"
@@ -230,11 +229,11 @@ async def build_index(
         try:
             return await _spine_rows()
         except IntegrationError as exc:
-            # Same treatment the plexapi sweep already gets: degrade, return nothing,
-            # let the scan finish. A raise here would propagate through gather_reaped
-            # and kill the whole run with NO viewable snapshot, so a Tautulli hiccup
-            # would cost the operator their scan rather than costing them a plan. With
-            # no spine rows every item resolves unmatched, which abstains and keeps.
+            # Same treatment the plexapi sweep already gets: degrade, return nothing, and
+            # let the scan finish. A raise here would propagate through gather_reaped and
+            # kill the whole run with no viewable snapshot, so a Tautulli hiccup would cost
+            # the operator their scan instead of costing them a plan. With no spine rows,
+            # every item resolves unmatched, which keeps it.
             degrade(
                 f"the Plex library listing could not be read ({exc}), so nothing in this "
                 "scan could be matched to your libraries"
@@ -252,7 +251,7 @@ async def build_index(
             if not isinstance(library, Mapping):
                 # A listing entry that is not an object at all. Counted rather than read,
                 # because ``library.get(...)`` on it raises AttributeError straight out of
-                # ``gather_reaped`` and kills the scan -- the one outcome this module's
+                # ``gather_reaped`` and kills the scan, the one outcome this module's
                 # contract promises cannot happen.
                 malformed += 1
                 continue
@@ -263,9 +262,9 @@ async def build_index(
             except (KeyError, TypeError, ValueError):
                 # A library row with no usable section id cannot be listed, so everything
                 # in that library would quietly fall out of the index and read as "Plex
-                # has not matched this" -- a whole library judged on nothing. Skip it and
-                # degrade (rule 28), rather than raising out of a read the module contract
-                # says never raises.
+                # has not matched this", a whole library judged on nothing. Skip it and
+                # degrade the snapshot, rather than raising out of a read the module
+                # contract says never raises.
                 degrade(
                     "one of your libraries came back from Tautulli without an id, so "
                     "nothing in it could be matched and nothing may be deleted from "
@@ -288,18 +287,19 @@ async def build_index(
                 pages += 1
                 rows = page.get("data") or []
                 if total is None:
-                    # Tautulli's own count for this section, the way ``history_sync`` reads it
-                    # off the same API. No search filter is sent, so ``recordsFiltered`` counts
-                    # the whole section; ``recordsTotal`` is the same number and stands in
-                    # where only it is served.
+                    # Tautulli's own count for this section, read the way ``history_sync``
+                    # reads it off the same API. No search filter is sent, so
+                    # ``recordsFiltered`` counts the whole section. ``recordsTotal`` is the
+                    # same number, and stands in for it where only ``recordsTotal`` is
+                    # served.
                     total = _as_count(page.get("recordsFiltered")) or _as_count(
                         page.get("recordsTotal")
                     )
                 if not rows:
                     break
-                # Paging still advances on the RAW page length, never the filtered one
-                # (rule 56): a malformed row must not shorten a page and end the walk early,
-                # silently truncating the library.
+                # Paging always advances on the RAW page length, never the filtered one: a
+                # malformed row must not shorten a page and end the walk early, which would
+                # silently truncate the library.
                 usable = [row for row in rows if isinstance(row, Mapping)]
                 malformed += len(rows) - len(usable)
                 collected.extend(
@@ -312,16 +312,16 @@ async def build_index(
                 if total is not None and start >= total:
                     break
                 if pages >= _SPINE_MAX_PAGES:
-                    # A reported count ends the walk long before this at any library size that
-                    # exists, so reaching it means a server serving rows and reporting no
-                    # count, which is one that is ignoring `start`. Stop rather than spin.
+                    # A reported count ends the walk long before this at any library size
+                    # that exists, so reaching it means the server is serving rows,
+                    # reporting no count, and ignoring `start`. Stop rather than spin.
                     log.warning("library_index.page_cap", section_id=section_id, fetched=start)
                     capped = True
                     break
             if capped or (total is not None and start < total):
-                # Part of a library read as the whole of it is invisible without this: every
-                # item the walk never listed resolves unmatched, which keeps it, and the
-                # why-panel then explains a live file as one Plex has not matched (rule 28).
+                # Without this warning, a library read only in part looks read in full:
+                # every item the walk never listed resolves unmatched, which keeps it, and
+                # the why-panel then explains a live file as one Plex has not matched.
                 counted = f"{start} of {total}" if total is not None else str(start)
                 degrade(
                     f"Tautulli listed only {counted} items in one of your libraries, so the "
@@ -336,9 +336,9 @@ async def build_index(
 
     # The collector is opened around the gather so it is in place before the sweep task is
     # created (the task copies this context). A sweep that succeeded but could not read
-    # every item's RATINGS files its reason here rather than raising: the ids it returned
+    # every item's ratings files its reason here rather than raising. The ids it returned
     # are complete, so matching is unharmed, but a title whose ratings went missing is one
-    # the rating bar can no longer keep, and a withdrawn protection degrades (rule 28).
+    # the rating bar can no longer keep, and a withdrawn protection degrades the snapshot.
     with collecting_incomplete_reads() as incomplete:
         (plex_items, swept), spine_rows = await gather_reaped(_sweep(), _spine())
     for reason in incomplete:
@@ -354,15 +354,16 @@ async def build_index(
     retired_by_section: dict[object, int] = defaultdict(int)
     considered_by_section: dict[object, int] = defaultdict(int)
     for row in spine_rows:
-        # A row with no rating key -- or one that is not a number -- cannot become a
+        # A row with no rating key, or one that is not a number, cannot become a
         # candidate's join (its rating_key read would fail), so it is dropped, identically
         # for movies and shows. An item missing from the index resolves unmatched, which
         # keeps it.
         #
-        # Only the MALFORMED arm is counted and degrades. A row with no rating_key at all
-        # is a row Tautulli has not tied to Plex yet, which is an ordinary state on a
-        # library mid-scan; a rating_key that is present and not a number is a row that
-        # should have joined and cannot, which is evidence this scan lost.
+        # Only the malformed case is counted and degrades the snapshot. A row with no
+        # rating_key at all is a row Tautulli has not tied to Plex yet, which is an
+        # ordinary state on a library mid-scan. A rating_key that is present and not a
+        # number is a row that should have joined and could not, which is evidence this
+        # scan lost.
         rk = row.get("rating_key")
         if rk is None:
             continue
@@ -374,10 +375,10 @@ async def build_index(
         considered_by_section[row.get(_SPINE_SECTION)] += 1
         enriched = plex_items.get(rating_key)
         if enriched is None and swept:
-            # Tautulli still lists it; Plex, asked directly over the same sections, does
-            # not. The item is gone, and a row for it would be a phantom the title tier
-            # can bind a live file to (see the module docstring). Dropping it resolves
-            # that file unmatched, which keeps it.
+            # Tautulli still lists it, but Plex, asked directly over the same sections,
+            # does not. The item is gone, and a row for it would be a phantom the title
+            # tier can bind a live file to (see the module docstring). Dropping it
+            # resolves that file unmatched, which keeps it.
             retired += 1
             retired_by_section[row.get(_SPINE_SECTION)] += 1
             continue
@@ -390,16 +391,16 @@ async def build_index(
                 ids=enriched.ids if enriched is not None else identity.ExternalIds(),
                 file_basename=enriched.file_basename if enriched is not None else None,
                 files=enriched.files if enriched is not None else (),
-                # Display metadata from the plexapi sweep; rows the sweep did not list
-                # (or a failed sweep) simply carry none of it. Shows carry no media, so
+                # Display metadata from the plexapi sweep. Rows the sweep did not list, or
+                # a failed sweep, simply carry none of it. Shows carry no media, so
                 # video_resolution stays None for them by construction.
                 video_resolution=(enriched.video_resolution if enriched is not None else None),
                 content_rating=enriched.content_rating if enriched is not None else None,
                 runtime_minutes=(enriched.runtime_minutes if enriched is not None else None),
                 ratings=enriched.ratings if enriched is not None else (),
-                # The sweep's section title when it enriched this row, else the one the spine
-                # stamped from Tautulli's own library listing -- so a row the sweep missed (or
-                # a failed sweep) still carries its library.
+                # The sweep's section title when it enriched this row, or else the one the
+                # spine stamped from Tautulli's own library listing, so a row the sweep
+                # missed, or a failed sweep, still carries its library.
                 library=(
                     enriched.library
                     if (enriched is not None and enriched.library)
@@ -414,12 +415,13 @@ async def build_index(
             "id, so they could not be matched and nothing may be deleted from this scan"
         )
 
-    # Past the floor AND past the share of ANY ONE library, "Tautulli is a little behind"
-    # stops explaining it: the likelier story is a library the sweep never walked, and every
-    # item in it just became unjudgeable. Keeping the file is still the outcome, but a scan
-    # that quietly decided it can see nothing is worse than one that says so. Any-section
-    # rather than overall, so a small library vanishing whole beside a large healthy one is
-    # announced instead of being averaged away.
+    # Past the floor and past the share of any one library, "Tautulli is a little behind"
+    # stops explaining it. The likelier story is a library the sweep never walked, and
+    # every item in it just became impossible to judge. Keeping the file is still the
+    # outcome, but a scan that quietly decided it can see nothing is worse than one that
+    # says so. This checks any one section rather than the overall share, so a small
+    # library vanishing whole beside a large healthy one is announced instead of being
+    # averaged away.
     if retired > _RETIRED_DEGRADE_FLOOR and any(
         count > _RETIRED_DEGRADE_SHARE * considered_by_section[section]
         for section, count in retired_by_section.items()

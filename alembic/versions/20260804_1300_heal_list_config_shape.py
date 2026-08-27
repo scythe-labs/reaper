@@ -2,18 +2,19 @@
 """heal list_config's column shapes on databases created in the branch window
 
 ``add_list_config`` first shipped creating ``created_at`` as DATETIME and putting server
-defaults on ``config_json``/``enabled``/``built_in``, while the model declares
-``EpochDateTime`` (an INTEGER unix timestamp) and Python-side defaults. That migration is
-corrected in place, so a fresh database gets the model's shape -- but a CREATE TABLE only
-runs once, so any database that upgraded through the earlier spelling keeps the old shape
-and reads as drift to ``alembic check`` forever. This is the missing rebuild, the same
-obligation rule 81 states for a baseline edit.
+defaults on ``config_json``, ``enabled``, and ``built_in``, while the model declares
+``EpochDateTime`` (an integer unix timestamp) and Python-side defaults. That migration
+was corrected in place, so a fresh database gets the model's shape. A CREATE TABLE only
+runs once, though, so any database that upgraded through the earlier spelling keeps the
+old shape and reads as drift to ``alembic check`` forever. This revision is the missing
+rebuild for those databases.
 
-Idempotent and additive. Guarded by reflecting the live column first, so a database
-already carrying the corrected shape (every fresh install) is left completely untouched.
-An old database is reshaped in place and its rows are preserved: the stored values are
-already integer epochs (the ORM's ``EpochDateTime`` wrote them), so only the declared
-type and the stray defaults move. Testers never rebuild their database.
+This revision is idempotent and additive. It reflects the live column first, so a
+database that already has the corrected shape, including every fresh install, is left
+completely untouched. An old database is reshaped in place, and its rows are preserved.
+The stored values are already integer epochs, since the ORM's ``EpochDateTime`` wrote
+them, so only the declared type and the stray defaults change. No tester database needs
+to be rebuilt.
 
 Revision ID: d4e5f6a7b8c9
 Revises: c3d4e5f6a7b8
@@ -32,9 +33,9 @@ down_revision: str | None = "c3d4e5f6a7b8"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-# Copy the database aside before this runs (`reaper.db.schema_gate.SNAPSHOT_ATTR`, #566). Its
-# `alter_column` is a full table copy taken from SQLite's reflection, and the table it rebuilds
-# is `list_config`, which is the one carrying a collation reflection does not report.
+# This migration snapshots the database first (see `reaper.db.schema_gate.SNAPSHOT_ATTR`).
+# Its `alter_column` calls rebuild `list_config` from SQLite's reflection, which does not
+# report a collation that might already be on this table.
 needs_snapshot = True
 
 
@@ -71,6 +72,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Intentionally not reversed. The corrected shape is the model's; putting the DATETIME
-    # spelling back would only recreate the drift this exists to close.
+    # This migration is not reversed on purpose. The corrected shape is the model's shape.
+    # Putting the DATETIME spelling back would only recreate the drift this migration closes.
     pass

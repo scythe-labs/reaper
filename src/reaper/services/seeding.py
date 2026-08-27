@@ -10,7 +10,7 @@ you changed in the UI:
 
 * An instance is imported only if no instance of that ``(kind, name)`` exists.
 * An existing instance is **never** updated from the environment. If you rotate
-  a key, rotate it in the UI -- or delete the instance and let it re-seed.
+  a key, rotate it in the UI, or delete the instance and let it re-seed.
 * Once every declared instance is present, Reaper logs that the environment
   variables can be removed.
 """
@@ -41,11 +41,11 @@ async def seed_instances(
 
     imported = skipped = 0
     seeded_singletons: set[InstanceKind] = set()
-    #: ``(kind, name)`` pairs already added in THIS batch. The duplicate check below is a
+    #: ``(kind, name)`` pairs already added in this batch. The duplicate check below is a
     #: query, and nothing is flushed until the end, so two seeds naming the same instance
-    #: both read "not there yet" and both get added -- one instance the operator declared,
-    #: two rows the scan would walk (B-15). The singleton path has always had its own
-    #: in-batch set for exactly this; this is the same guard for every other kind.
+    #: would both read "not there yet" and both get added: one instance the operator
+    #: declared, two rows the scan would walk. This set catches that for every kind, the
+    #: same way the singleton path already catches it for a singleton kind.
     seeded_pairs: set[tuple[InstanceKind, str]] = set()
     for seed in seeds:
         try:
@@ -55,10 +55,11 @@ async def seed_instances(
             continue
 
         if kind in SINGLETON_KINDS:
-            # A singleton kind (Tautulli) allows exactly one, the same invariant the UI
-            # enforces. If one already exists -- from the UI, a prior boot, or earlier in
-            # this batch -- skip the rest rather than seed a second the scan would silently
-            # ignore. The in-batch set covers a session that has not flushed yet.
+            # A singleton kind (Tautulli) allows exactly one, the same rule the UI
+            # enforces. If one already exists, from the UI, a prior boot, or earlier in
+            # this batch, skip the rest rather than seed a second one the scan would
+            # silently ignore. The in-batch set catches a row this session added but has
+            # not flushed yet, which the query above cannot see.
             present = await session.scalar(select(Instance).where(Instance.kind == kind))
             if present is not None or kind in seeded_singletons:
                 log.warning("seed.singleton_skipped", kind=kind.value, name=seed.name)
@@ -69,9 +70,9 @@ async def seed_instances(
             select(Instance).where(Instance.kind == kind, Instance.name == seed.name)
         )
         if existing is not None or (kind, seed.name) in seeded_pairs:
-            # Never clobber the database from the environment: the UI is where
-            # credentials are managed once they exist. The in-batch set covers the repeat
-            # that this session has added but not yet flushed, which the query cannot see.
+            # Never overwrite the database from the environment: the UI is where
+            # credentials are managed once they exist. The in-batch set catches a repeat
+            # this session has added but not yet flushed, which the query cannot see.
             skipped += 1
             continue
 

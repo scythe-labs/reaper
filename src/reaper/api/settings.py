@@ -1,19 +1,22 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Configuring Reaper from the web UI.
 
-Everything an operator needs to stand the tool up and keep it running lives here: the
-external services it reads from, the schedule, and the safety switch. The Plex link and the
-library shelf moved to ``api/plex.py``, which keeps this prefix and restates the two facts
-below for its own readers.
+Everything an operator needs to stand the tool up and keep it running
+lives here. This includes the external services it reads from, the
+schedule, and the safety switch. The Plex link and the library shelf
+moved to ``api/plex.py``, which keeps this prefix and restates the two
+facts below for its own readers.
 
 Two things are true of the whole router:
 
 * **It requires a session.** These routes are behind the auth gate (see
-  ``api.middleware``); only a signed-in admin can change what Reaper is pointed at.
-* **API keys are write-only.** A key is encrypted the instant it arrives and is never
-  read back to the browser -- a view says only *whether* a key is set. The deletion
-  switch is asymmetric: turning it ON requires the admin password (see ``set_safety``),
-  turning it OFF requires nothing, because making Reaper safer is never gated.
+  ``api.middleware``). Only a signed-in admin can change what Reaper is
+  pointed at.
+* **API keys are write-only.** A key is encrypted the instant it arrives
+  and is never read back to the browser. A view says only whether a key
+  is set. The deletion switch is asymmetric. Turning it on requires the
+  admin password (see ``set_safety``). Turning it off requires nothing,
+  because making Reaper safer is never gated.
 """
 
 from __future__ import annotations
@@ -113,8 +116,9 @@ class InstanceOut(BaseModel):
     plex_library_map: dict[str, str]
     service_instance_map: dict[str, int]
     has_key: bool
-    # No `api_path_prefix` here: no route writes it, so it could only ever publish its
-    # default (#274, rule 25). `db.models.Instance.api_path_prefix` holds the reasoning.
+    # No `api_path_prefix` here. No route writes it, so it could only ever
+    # publish its default. `db.models.Instance.api_path_prefix` holds the
+    # reasoning.
     detected_version: str | None = None
     last_ok_at: str | None = None
     last_error: str | None = None
@@ -127,16 +131,19 @@ class InstanceOut(BaseModel):
 class InstanceCreateIn(BaseModel):
     kind: str
     name: str
+    # The address every Reaper request for this service goes to. A bad host is refused here
+    # rather than surfacing later as a failed connection or scan.
     base_url: str
     api_key: str
     verify_tls: bool = True
     add_import_exclusion: bool = False
-    # The address links open; blank/omitted means links use base_url. Display only.
+    # The address links open. Blank or omitted means links use base_url. Display only.
     external_url: str | None = None
-    # Both maps are accepted at creation because the add form maps the service before saving
-    # it: a passing connection test hands back the root folders (or the portal's services), so
-    # the mapping is made on the screen that adds the connection rather than only on a later
-    # edit. Omitted or empty stores NULL, which reads back as "no map".
+    # Both maps are accepted at creation because the add form maps the
+    # service before saving it. A passing connection test hands back the
+    # root folders (or the portal's services), so the mapping is made on
+    # the screen that adds the connection instead of only on a later edit.
+    # Omitted or empty stores NULL, which reads back as "no map".
     plex_library_map: dict[str, str] | None = None
     service_instance_map: dict[str, int] | None = None
 
@@ -146,16 +153,19 @@ class InstanceUpdateIn(BaseModel):
     base_url: str | None = None
     api_key: str | None = None  # blank/omitted keeps the stored key
     enabled: bool | None = None
-    verify_tls: bool | None = None  # omitted keeps the stored setting; explicit False sticks
+    verify_tls: bool | None = None  # omitted keeps the stored setting. Explicit False sticks
     add_import_exclusion: bool | None = None  # omitted keeps the stored setting
-    # The address links open. Omitted (None) keeps the stored value; a blank string clears it to
-    # NULL (links fall back to base_url); a value sets it.
+    # The address links open. Omitted (None) keeps the stored value. A
+    # blank string clears it to NULL, so links fall back to base_url. A
+    # value sets it.
     external_url: str | None = None
-    # The HD/4K library map: {root folder path: Plex library title}. Omitted keeps the stored
-    # map; a dict (even empty) replaces it, and an empty one clears it. Only Sonarr/Radarr.
+    # The HD/4K library map, as {root folder path: Plex library title}.
+    # Omitted keeps the stored map. A dict, even empty, replaces it, and an
+    # empty one clears it. Only Sonarr and Radarr use this.
     plex_library_map: dict[str, str] | None = None
-    # The multi-Seerr requester map: {Seerr service id: Reaper instance id}. Omitted keeps the
-    # stored map; a dict (even empty) replaces it, and an empty one clears it. Only Seerr.
+    # The multi-Seerr requester map, as {Seerr service id: Reaper instance
+    # id}. Omitted keeps the stored map. A dict, even empty, replaces it,
+    # and an empty one clears it. Only Seerr uses this.
     service_instance_map: dict[str, int] | None = None
 
 
@@ -180,18 +190,17 @@ class SeerrServiceOut(BaseModel):
 
 
 class TestOut(BaseModel):
-    """The verdict on a saved instance's connection test: did it reach the service, and what
-    to say about it.
+    """The verdict on a saved instance's connection test. This says
+    whether it reached the service, and what to say about it.
 
-    ``detail_reason`` used to be ``detail: str``, an *arr/Seerr integration's own
-    connectivity text (a probe result or a transport error) with no fixed vocabulary to
-    catalog. It has one now: a failure carries ``services.instances.explain_failure``'s
-    ``error.instance.*`` code, and a pass a ``services.test.*`` id ``ServiceModal.tsx`` owns.
-    The field is replaced rather than kept alongside a new typed twin, the same move
-    :class:`DiscordTestOut` below made first. The mapping a pre-save probe reads is on
-    :class:`InstanceProbeOut` below, because only that route can answer it and a shared shape
-    said otherwise: the published contract had a Discord webhook test declaring it may return
-    Sonarr root folders (rule 25)."""
+    ``detail_reason`` carries a fixed vocabulary. A failure carries
+    ``services.instances.explain_failure``'s ``error.instance.*`` code,
+    and a pass carries a ``services.test.*`` id ``ServiceModal.tsx``
+    owns. The mapping a pre-save probe reads lives on
+    :class:`InstanceProbeOut` below, not here, since only that route can
+    answer it. Keeping the mapping fields off this shared base keeps an
+    unrelated test, such as the Discord webhook test, from publishing a
+    schema that claims it might return Sonarr root folders."""
 
     ok: bool
     detail_reason: ReasonKey
@@ -199,14 +208,16 @@ class TestOut(BaseModel):
 
 
 class DiscordTestOut(BaseModel):
-    """The verdict on a Discord webhook test: did the sample post land.
+    """The verdict on a Discord webhook test. This says whether the
+    sample post landed.
 
-    Split from :class:`TestOut` rather than widening it (rule 25's reasoning extended):
-    unlike an *arr/Seerr probe, this test has exactly three fixed outcomes, so ``reason``
-    composes under ``services.discord.testResult.<id>`` (``DiscordModal.tsx`` and
-    ``NotificationsPanel.tsx`` compose it into the same ``detail`` shape ``TestBadge`` and
-    ``testSentence`` already render, via ``why.ts``'s ``composeIn``). The server never
-    renders English here (rule 92)."""
+    This is split from :class:`TestOut` rather than widening it. Unlike
+    an *arr/Seerr probe, this test has exactly three fixed outcomes, so
+    ``reason`` composes under ``services.discord.testResult.<id>``
+    (``DiscordModal.tsx`` and ``NotificationsPanel.tsx`` compose it into
+    the same ``detail`` shape ``TestBadge`` and ``testSentence`` already
+    render, via ``why.ts``'s ``composeIn``). The server never renders
+    English here."""
 
     ok: bool
     reason: ReasonKey
@@ -216,23 +227,26 @@ class DiscordTestOut(BaseModel):
 class InstanceProbeOut(TestOut):
     """The pre-save test on the add form, which also reads what the connection has to map.
 
-    Only this route can: it is the only caller with no instance id, so the mapping has to come
-    back on the same pass that proved the credentials. That is what lets the form map a service
+    Only this route can answer that. It is the only caller with no
+    instance id, so the mapping has to come back on the same pass that
+    proved the credentials. That is what lets the form map a service
     before it is saved.
     """
 
-    # Only one is ever populated -- a test is for exactly one kind -- and both stay empty on a
-    # failed test, since nothing was reached to read them from.
+    # Only one is ever populated, since a test is for exactly one kind,
+    # and both stay empty on a failed test, since nothing was reached to
+    # read them from.
     root_folders: list[RootFolderOut] = []
     seerr_services: list[SeerrServiceOut] = []
-    # Why the list above is empty, when it is empty because the read FAILED rather than because
-    # the service genuinely has nothing to map. The two must not look alike: "this instance
-    # reports no root folders" is a claim about the instance, and printing it over a read that
-    # never landed asserts something nobody checked (rule 93's Absent-vs-Unknown, and the same
-    # trap the modal's own empty-vs-stale notices are divided against). ``None`` means the read
-    # landed, so an empty list beside it really is nothing to map. The catalog id plus the
-    # integration's own plain-language translation as a raw ``error`` param (docs/history/
-    # I18N_PLAN.md §5): ``ServiceModal.tsx`` composes ``services.modal.mapError`` (rule 92).
+    # Says why the list above is empty, when it is empty because the read
+    # failed rather than because the service genuinely has nothing to map.
+    # The two must not look alike. "This instance reports no root
+    # folders" is a claim about the instance, and printing it over a read
+    # that never landed would assert something nobody checked. ``None``
+    # means the read landed, so an empty list beside it really is nothing
+    # to map. This carries the catalog id plus the integration's own
+    # plain-language translation as a raw ``error`` param.
+    # ``ServiceModal.tsx`` composes ``services.modal.mapError``.
     map_error_reason: ReasonKey | None = None
 
 
@@ -241,66 +255,77 @@ class LeavingSoonLastOut(BaseModel):
     movies: int
     seasons: int
     applied: bool
-    #: Whether the last sync did what it set out to do: no library failed, and there was
-    #: one turned on to update. Never false merely because it ran in preview (unarmed).
-    #: This, not ``applied``, is what should color the Jobs page's status dot.
+    #: Whether the last sync did what it set out to do. No library failed,
+    #: and there was one turned on to update. This is never false merely
+    #: because it ran in preview (unarmed). This, not ``applied``, is what
+    #: should color the Jobs page's status dot.
     ok: bool
-    #: The pass's own typed reason (``LeavingSoonResult.summary``), composed under
-    #: ``jobs.result.*``: no surface words a pass of its own (#555). The Plex panel's shelf
-    #: status shows it on every pass; the Jobs row shows it only when ``ok`` is false, since
-    #: ``JobStatus`` reads it as the reason a run failed and a run that worked is already
-    #: described by the counts beside it.
+    #: The pass's own typed reason (``LeavingSoonResult.summary``),
+    #: composed under ``jobs.result.*``. No surface writes its own words
+    #: for a pass. The Plex panel's shelf status shows it on every pass.
+    #: The Jobs row shows it only when ``ok`` is false, since ``JobStatus``
+    #: reads it as the reason a run failed, and a run that worked is
+    #: already described by the counts beside it.
     result_reason: ReasonKey
 
 
 class LeavingSoonLastSkipOut(BaseModel):
     """A scan that finished without updating the shelf.
 
-    Reported beside ``last`` rather than replacing it, because a skipped pass writes
-    nothing to Plex: the shelf still holds what the last completed pass put there, and
-    those counts are the only true ones anybody has. What is no longer true is that they
-    are the outcome of the most recent scan, which is what this says.
+    Reported beside ``last`` rather than replacing it, because a skipped
+    pass writes nothing to Plex. The shelf still holds what the last
+    completed pass put there, and those counts are the only true ones
+    anybody has. What is no longer true is that they are the outcome of
+    the most recent scan, which is what this field says.
     """
 
     at: str
-    #: Why, as a typed reason (phase 8a): the browser composes it, the same as any other
-    #: ``ReasonKey``. A row written before this conversion carries a bare English phrase,
-    #: thawed as ``Reason("legacy", {"text": ...})`` -- ``services.app_settings`` says how.
+    #: Why, as a typed reason. The browser composes it, the same as any
+    #: other ``ReasonKey``. A row written before this became typed carries
+    #: a bare English phrase, thawed as
+    #: ``Reason("legacy", {"text": ...})``. ``services.app_settings`` says
+    #: how.
     result_reason: ReasonKey
 
 
 class LeavingSoonSettingsOut(BaseModel):
     enabled: bool
     allow_unarmed: bool
-    #: What the operator calls the shelf: one name for the Plex collection and the label.
+    #: What the operator calls the shelf. One name for the Plex collection
+    #: and the label.
     name: str
-    #: What Plex still shows. Equal to ``name`` except between saving a rename and the pass
-    #: that carries it across, which is the window the panel and the Jobs row report. Sent
-    #: as the name rather than a "pending" flag so both surfaces can say WHICH name is still
+    #: What Plex still shows. Equal to ``name`` except between saving a
+    #: rename and the pass that carries it across, which is the window the
+    #: panel and the Jobs row report. Sent as the name rather than a
+    #: "pending" flag, so both surfaces can say which name is still
     #: standing without a second round trip.
     applied_name: str
     last: LeavingSoonLastOut | None = None
-    #: Present whenever a skip has ever been recorded. It is the READER that decides
-    #: whether it still governs, by preferring it only while it is newer than ``last`` --
-    #: nothing clears it, so a pass that later completes wins on its own timestamp. Same
-    #: arrangement as the scan's crash record (``ScheduledJob.last_ok``), and the reason
-    #: this is not resolved server-side is that both fields are already on the wire and a
-    #: second, disagreeing answer to "which is current" is worth less than one.
+    #: Present whenever a skip has ever been recorded. The reader decides
+    #: whether it still governs, by preferring it only while it is newer
+    #: than ``last``. Nothing clears it, so a pass that later completes
+    #: wins on its own timestamp. This is the same arrangement as the
+    #: scan's crash record (``ScheduledJob.last_ok``). This is not resolved
+    #: server-side because both fields are already on the wire, and a
+    #: second, disagreeing answer to "which is current" is worth less than
+    #: one.
     last_skip: LeavingSoonLastSkipOut | None = None
 
 
 class LeavingSoonSettingsIn(BaseModel):
     enabled: bool | None = None
     allow_unarmed: bool | None = None
-    #: A new shelf name, or an empty string to go back to the default. Bounded by the same
-    #: constant the service trims to, so the two cannot drift (rule 131).
+    #: A new shelf name, or an empty string to go back to the default.
+    #: Bounded by the same constant the service trims to, so the two
+    #: cannot drift.
     name: str | None = Field(default=None, max_length=app_settings.LEAVING_SOON_NAME_MAX)
 
 
 class ScheduledJobOut(BaseModel):
     id: str
-    #: The schedule the job runs on now, ``null`` when it is off. For the scan this is the
-    #: automatic-scan cron; for an upkeep job, its stored override or built-in default.
+    #: The schedule the job runs on now, ``null`` when it is off. For the
+    #: scan this is the automatic-scan cron. For an upkeep job, it is the
+    #: stored override or built-in default.
     cron: str | None
     #: The built-in default cron, for reference in the editor. ``null`` for the scan, which
     #: has no default (off until the owner sets one).
@@ -308,11 +333,13 @@ class ScheduledJobOut(BaseModel):
     next_run_at: str | None
     #: Whether the job is executing right this moment.
     running: bool
-    #: The last completion of this job: when it finished (ISO), whether it succeeded, and a
-    #: short plain-language result the Jobs page shows. All ``null`` for a job that has never
-    #: run. For the scan, a SUCCESSFUL run is read from the latest snapshot instead (see
-    #: ``ScanRow``); these fields are populated for the scan only when a scheduled run
-    #: crashed outright and wrote no snapshot, so ScanRow can still show it failed.
+    #: The last completion of this job. This includes when it finished
+    #: (ISO), whether it succeeded, and a short plain-language result the
+    #: Jobs page shows. All ``null`` for a job that has never run. For the
+    #: scan, a successful run is read from the latest snapshot instead
+    #: (see ``ScanRow``). These fields are populated for the scan only
+    #: when a scheduled run crashed outright and wrote no snapshot, so
+    #: ScanRow can still show it failed.
     last_run_at: str | None = None
     last_ok: bool | None = None
     #: The typed reason of the last completion (``jobs.result.*``), the browser's to compose
@@ -334,33 +361,36 @@ class SafetyOut(BaseModel):
     has_password: bool
     """Whether an admin password has been set. Turning deletion on requires one."""
     recovery_mode: bool = False
-    """Whether REAPER_RECOVERY is armed on this process. It holds ``destructive_enabled``
-    false however the stored switch is set, and the banner says so in its own tone: an
-    operator told only "read-only" would go to Policy, Deletion and find a switch that
-    refuses (rule 53, for a state rather than a limit)."""
+    """Whether REAPER_RECOVERY is armed on this process. It holds
+    ``destructive_enabled`` false however the stored switch is set, and
+    the banner says so in its own tone. An operator told only
+    "read-only" would go to Policy, Deletion and find a switch that
+    refuses."""
 
 
 class SafetyIn(BaseModel):
     enabled: bool
     password: str | None = Field(default=None, max_length=128)
-    """Required to turn deletion ON (checked against the admin password). Not needed to
-    turn it off -- making Reaper safer is never gated. Bounded, like every field that
-    reaches Argon2: hashing unbounded input is a CPU-exhaustion vector."""
+    """Required to turn deletion on, checked against the admin password.
+    Not needed to turn it off, since making Reaper safer is never gated.
+    Bounded, like every field that reaches Argon2, since hashing
+    unbounded input is a CPU-exhaustion vector."""
 
 
 class AdminPasswordIn(BaseModel):
     password: str = Field(max_length=128)
     current_password: str | None = Field(default=None, max_length=128)
-    """Required when a password already exists, unless a recovery code opened this session.
-    A borrowed signed-in session must not be able to swap the arming credential without
-    knowing it; a recovery session is the one that already proved host access instead."""
+    """Required when a password already exists, unless a recovery code
+    opened this session. A borrowed signed-in session must not be able
+    to swap the arming credential without knowing it. A recovery session
+    is the one that already proved host access instead."""
 
 
 class NotificationsOut(BaseModel):
     has_webhook: bool
-    """Whether a Discord webhook is stored. The URL itself is a credential and is NEVER
-    echoed back to the browser -- a view says only *whether* one is set, exactly like an
-    instance API key."""
+    """Whether a Discord webhook is stored. The URL itself is a credential
+    and is never echoed back to the browser. A view says only whether one
+    is set, exactly like an instance API key."""
 
 
 class NotificationsIn(BaseModel):
@@ -373,30 +403,34 @@ class NotificationsTestIn(BaseModel):
     saved channel without re-pasting the secret."""
 
 
-#: Only https URLs whose host is Discord's webhook endpoint are accepted; the token lives in
-#: the path, so a typo'd host would leak it to a stranger. Subdomains (ptb., canary.) count.
+#: Only https URLs whose host is Discord's webhook endpoint are accepted.
+#: The token lives in the path, so a typo'd host would leak it to a
+#: stranger. Subdomains (ptb., canary.) count.
 _DISCORD_WEBHOOK_HOSTS = ("discord.com", "discordapp.com")
 
 
 def _required_web_url(raw: str, *, code: str) -> tuple[SplitResult, str]:
-    """Rule 84's one shared check: a real http(s) address with a host, else 422.
+    """The one shared check for a real http(s) address with a host, else 422.
 
-    A scheme-less paste (``host:8989``), a ``javascript:``/``data:`` value, a scheme with no host
-    behind it (``http://``), and a blank string are all refused here rather than carried further
-    (rules 84/13). A ``type="url"`` input is not validation, so this is the real check even where
-    the browser mirrors it.
+    A scheme-less paste (``host:8989``), a ``javascript:`` or ``data:``
+    value, a scheme with no host behind it (``http://``), and a blank
+    string are all refused here instead of being carried further. A
+    ``type="url"`` input is not validation, so this is the real check
+    even where the browser mirrors it.
 
-    ``code`` is the catalog code for the operator's sentence, one per field, because they need to
-    know which box to fix and not merely that some URL somewhere was wrong.
+    ``code`` is the catalog code for the operator's sentence, one per
+    field, because they need to know which box to fix, not merely that
+    some URL somewhere was wrong.
 
-    Returns the parsed URL and its host, so a caller that needs the pieces (a probe wanting the
-    host and port) reads them from the value this validated instead of re-parsing and re-deciding
-    what a missing host means.
+    Returns the parsed URL and its host, so a caller that needs the
+    pieces (a probe wanting the host and port) reads them from the value
+    this validated instead of re-parsing and re-deciding what a missing
+    host means.
 
-    This IS the shared validator rule 84 asks for, and the docstring that stood here until #255
-    said there was not one -- naming the four divergent implementations and ``base_url``'s missing
-    check. All five now route through here. ``_validated_discord_webhook`` stays separate on
-    purpose: it checks a host allow-list, which is a narrower question than URL shape.
+    This is the one shared validator for URL shape. Every address field
+    routes through here. ``_validated_discord_webhook`` stays separate on
+    purpose: it checks a host allow-list, which is a narrower question
+    than URL shape.
     """
     parts = urlsplit(raw.strip())
     if parts.scheme not in ("http", "https") or not parts.hostname:
@@ -405,29 +439,30 @@ def _required_web_url(raw: str, *, code: str) -> tuple[SplitResult, str]:
 
 
 def _require_web_url(raw: str | None, *, code: str) -> None:
-    """The same check for an OPTIONAL field, where blank is a real answer and passes.
+    """The same check for an optional field, where blank is a real answer
+    and passes.
 
-    Blank means the operator turned the setting off (a link address cleared, a Plex web address
-    reset to the hosted default), or -- on a required field like ``base_url`` -- that the "this is
-    required" refusal downstream is the better sentence than one about URL shape. ``None``, the
-    field omitted from a partial update, keeps the stored value and is not our concern.
+    Blank means the operator turned the setting off, such as a link
+    address cleared or a Plex web address reset to the hosted default.
+    On a required field like ``base_url``, it instead means the "this is
+    required" refusal downstream is the better sentence than one about
+    URL shape. ``None``, the field omitted from a partial update, keeps
+    the stored value and is not this function's concern.
     """
     if raw is None or not raw.strip():
         return
     _required_web_url(raw, code=code)
 
 
-#: The address every Reaper request for a service goes to, so it is the most consequential URL an
-#: operator types -- and the one that used to reach storage unchecked, surfacing much later as a
-#: connection or scan failure rather than at the box that was wrong (#255).
 def _validate_external_url(raw: str | None) -> None:
     """The per-service link address Reaper renders into a jump link for every signed-in user."""
     _require_web_url(raw, code="error.settings.external_url_invalid")
 
 
 def _validated_discord_webhook(raw: str) -> str:
-    """Return the stripped URL if it is a Discord webhook, else 422. Server-side twin of the
-    form validation -- never trust the browser to have checked."""
+    """Return the stripped URL if it is a Discord webhook, else 422. This
+    is the server-side twin of the form validation. Never trust the
+    browser to have checked."""
     url = (raw or "").strip()
     parsed = urlsplit(url)
     host = (parsed.hostname or "").lower()
@@ -520,16 +555,20 @@ async def delete_instance(request: Request, instance_id: int) -> RemovedOut:
 
 
 async def _plex_section_paths(request: Request) -> dict[str, list[str]]:
-    """``{library title: that library's folder paths}``, the Plex side of a folder suggestion.
+    """Return ``{library title: that library's folder paths}``, the Plex
+    side of a folder suggestion.
 
-    Best-effort: if Plex is not linked or is unreachable this answers ``{}`` and the folders
-    still come back, just with nothing suggested. Titled, not keyed, because the stored library
-    map itself is titled; two libraries sharing a title contribute BOTH their folder lists here
-    rather than one dropping the other, so the prefill considers everything under that name.
+    Best-effort. If Plex is not linked or is unreachable, this answers
+    ``{}``, and the folders still come back, just with nothing suggested.
+    This keys by title, not by id, because the stored library map itself
+    is titled. Two libraries sharing a title contribute both their
+    folder lists here, instead of one dropping the other, so the prefill
+    considers everything under that name.
 
-    Written once because two routes need it -- the test below, which suggests for a service
-    that has no row yet, and ``instance_root_folders``, which suggests for one that does. A
-    second copy would be two suggestion sources for one control (rule 144).
+    Written once because two routes need it: the test below, which
+    suggests for a service that has no row yet, and
+    ``instance_root_folders``, which suggests for one that does. A
+    second copy would be two suggestion sources for one control.
     """
     section_paths: dict[str, list[str]] = {}
     async with session_factory(request)() as session:
@@ -555,20 +594,23 @@ async def _plex_section_paths(request: Request) -> dict[str, list[str]]:
 
 @router.post("/instances/test", tags=[api_tags.SERVICES])
 async def test_new_instance(request: Request, payload: InstanceTestIn) -> InstanceProbeOut:
-    """Test a URL and key before saving, and hand back what this connection has to map.
+    """Test a URL and key before saving, and hand back what this
+    connection has to map.
 
-    The add form gates its Save on this passing, so a service can never be saved at an address
-    Reaper has not reached. A pass therefore has to arrive carrying everything the operator
-    still has to decide, because an instance that is not saved yet has no id and cannot be
-    asked a second question: for Sonarr and Radarr that is the root folders with their
-    suggested Plex libraries, and for Seerr the portal's services with their suggested Reaper
-    instances.
+    The add form gates its Save on this passing, so a service can never
+    be saved at an address Reaper has not reached. A pass therefore has
+    to arrive carrying everything the operator still has to decide,
+    because an instance that is not saved yet has no id and cannot be
+    asked a second question. For Sonarr and Radarr that is the root
+    folders with their suggested Plex libraries. For Seerr it is the
+    portal's services with their suggested Reaper instances.
 
-    The mapping read never decides the verdict. It runs only after the connection passed, and
-    its own failure is reported as ``map_error`` beside an empty list rather than turning a
-    reachable service into a failed test -- the credentials really were proven, and refusing
-    the save over a folder list would strand an operator whose *arr answers ``/system/status``
-    but not ``/rootfolder``.
+    The mapping read never decides the verdict. It runs only after the
+    connection passed, and its own failure is reported as ``map_error``
+    beside an empty list, instead of turning a reachable service into a
+    failed test. The credentials really were proven, and refusing the
+    save over a folder list would strand an operator whose *arr answers
+    ``/system/status`` but not ``/rootfolder``.
     """
     kind = _kind(payload.kind)
     result = await instances.test_connection(
@@ -601,18 +643,21 @@ async def test_new_instance(request: Request, payload: InstanceTestIn) -> Instan
                 SeerrServiceOut.model_validate(s, from_attributes=True) for s in services
             ]
     except (IntegrationError, instances.InstanceError) as exc:
-        # The raw exception stays in the log, where a diagnosis needs it, and what the operator
-        # is shown is the same plain-language translation the test's own failure gets. Pasting
-        # `str(exc)` here put "radarr: HTTP 500 for GET /api/v3/rootfolder" in front of someone
-        # trying to get a URL and a key right -- the exact string shape `explain_failure` exists
-        # to prevent, on the one path that had not been given it (rule 21, rule 72).
+        # The raw exception stays in the log, where a diagnosis needs it.
+        # What the operator is shown is the same plain-language
+        # translation the test's own failure gets. Pasting `str(exc)`
+        # here instead would put "radarr: HTTP 500 for GET
+        # /api/v3/rootfolder" in front of someone trying to get a URL and
+        # a key right, exactly the string shape `explain_failure` exists
+        # to prevent.
         log.warning(
             "instance.map_probe_failed", kind=kind.value, error=f"{type(exc).__name__}: {exc}"
         )
-        # Assigned onto an already-built instance, which pydantic does not coerce the way a
-        # constructor kwarg is (`ChipOut`/`PolicyWarningOut`'s `reason=to_wire(...)`), so the
-        # wire dict is validated into a real `ReasonKey` explicitly rather than left a raw dict
-        # the serializer only duck-types.
+        # This is assigned onto an already-built instance, which pydantic
+        # does not coerce the way a constructor kwarg is
+        # (`ChipOut`/`PolicyWarningOut`'s `reason=to_wire(...)`), so the
+        # wire dict is validated into a real `ReasonKey` explicitly,
+        # instead of being left a raw dict the serializer only duck-types.
         out.map_error_reason = ReasonKey.model_validate(
             to_wire(Reason("mapError", {"error": instances.explain_failure(kind, exc)}))
         )
@@ -633,15 +678,18 @@ async def test_saved_instance(request: Request, instance_id: int) -> TestOut:
 
 @router.get("/instances/{instance_id}/root-folders", tags=[api_tags.SERVICES])
 async def instance_root_folders(request: Request, instance_id: int) -> list[RootFolderOut]:
-    """This instance's root folders, each with a suggested Plex library to prefill the map.
+    """Return this instance's root folders, each with a suggested Plex
+    library to prefill the map.
 
-    The suggestion compares each root folder to the Plex libraries' own folders; it only fills
-    a control the operator confirms, never binds. Sonarr/Radarr only. A 502 when the instance
-    cannot be reached, so the modal can say so rather than show an empty list as if the
+    The suggestion compares each root folder to the Plex libraries' own
+    folders. It only fills a control the operator confirms, never binds.
+    Sonarr and Radarr only. A 502 when the instance cannot be reached,
+    so the modal can say so instead of showing an empty list as if the
     instance had no folders.
     """
-    # The Plex side of the suggestion, from the one helper the test route also uses so a
-    # folder cannot be suggested differently depending on which screen asked (rule 144).
+    # The Plex side of the suggestion, from the one helper the test route
+    # also uses, so a folder cannot be suggested differently depending on
+    # which screen asked.
     section_paths = await _plex_section_paths(request)
 
     async with session_factory(request)() as session:
@@ -658,12 +706,14 @@ async def instance_root_folders(request: Request, instance_id: int) -> list[Root
 
 @router.get("/instances/{instance_id}/seerr-services", tags=[api_tags.SERVICES])
 async def instance_seerr_services(request: Request, instance_id: int) -> list[SeerrServiceOut]:
-    """This Seerr portal's Sonarr/Radarr services, each with a suggested Reaper instance.
+    """Return this Seerr portal's Sonarr and Radarr services, each with a
+    suggested Reaper instance.
 
-    The suggestion matches the service's own address to a Reaper instance; it only fills a
-    control the operator confirms, never binds. Seerr only. A 502 when the portal cannot be
-    reached (or its key is not admin, so settings are refused), so the modal can say so rather
-    than show an empty list as if the portal had no services.
+    The suggestion matches the service's own address to a Reaper
+    instance. It only fills a control the operator confirms, never
+    binds. Seerr only. A 502 when the portal cannot be reached, or its
+    key is not admin so settings are refused, so the modal can say so
+    instead of showing an empty list as if the portal had no services.
     """
     async with session_factory(request)() as session:
         try:
@@ -717,16 +767,19 @@ async def get_leaving_soon_settings(request: Request) -> LeavingSoonSettingsOut:
 async def set_leaving_soon_settings(
     request: Request, payload: LeavingSoonSettingsIn
 ) -> LeavingSoonSettingsOut:
-    """Flip the Leaving Soon switches, or rename the shelf. No password: these can only
-    touch the shelf -- a collection and a label -- never a file.
+    """Flip the Leaving Soon switches, or rename the shelf. No password
+    is needed. These can only touch the shelf, a collection and a
+    label, never a file.
 
-    Turning the shelf OFF runs one last pass that takes everything off it (when Reaper
-    is allowed to write), so nothing stale lingers in the library.
+    Turning the shelf off runs one last pass that takes everything off
+    it, when Reaper is allowed to write, so nothing stale lingers in the
+    library.
 
-    A rename is stored and nothing else. Moving the shelf means a whole-library reconcile
-    per library, minutes of Plex I/O, and this route answers a text box: the next pass
-    carries it across, and until then the response says which name Plex still shows so the
-    panel can too.
+    A rename is stored and nothing else. Moving the shelf means a
+    whole-library reconcile per library, minutes of Plex I/O, and this
+    route only answers a text box. The next pass carries the rename
+    across, and until then the response says which name Plex still
+    shows, so the panel can too.
     """
     async with session_factory(request)() as session:
         was_enabled = await app_settings.leaving_soon_enabled(session)
@@ -739,8 +792,9 @@ async def set_leaving_soon_settings(
         await session.commit()
 
     if was_enabled and payload.enabled is False:
-        # Best-effort: takes everything off the shelves so nothing stale lingers.
-        # Failure is logged inside, never raised -- turning a warning off must succeed.
+        # Best-effort. This takes everything off the shelves, so nothing
+        # stale lingers. Failure is logged inside, never raised. Turning a
+        # warning off must succeed.
         await leaving_soon.cleanup_shelves(
             session_factory(request), runtime_settings(request), secret_box(request)
         )
@@ -763,11 +817,12 @@ async def set_leaving_soon_settings(
 
 @router.get("/schedule", tags=[api_tags.JOBS])
 async def get_schedule(request: Request) -> ScheduleOut:
-    """Every schedulable job, in display order: the automatic scan and the upkeep jobs.
+    """Return every schedulable job, in display order. This is the
+    automatic scan and the upkeep jobs.
 
-    A job the owner turned off is still listed (with ``cron`` null and no next run), so the
-    Jobs page can offer to schedule it again -- it is never dropped from the list just
-    because it is off.
+    A job the owner turned off is still listed, with ``cron`` null and
+    no next run, so the Jobs page can offer to schedule it again. It is
+    never dropped from the list just because it is off.
     """
     scheduler = request.app.state.scheduler
     running: set[str] = getattr(request.app.state, "running_jobs", set())
@@ -805,11 +860,13 @@ async def get_schedule(request: Request) -> ScheduleOut:
 
 @router.put("/jobs/{job_id}/schedule", tags=[api_tags.JOBS])
 async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn) -> ScheduleOut:
-    """Set (or turn off) one job's schedule. The scan and every upkeep job are read-only, so
-    changing when they run -- or turning one off -- is always safe and never gated.
+    """Set, or turn off, one job's schedule. The scan and every upkeep
+    job are read-only, so changing when they run, or turning one off,
+    is always safe and never gated.
 
-    A malformed cron is a 422 with the reason: an owner who thinks they scheduled a nightly
-    run must not silently get nothing. An unknown job id is a 404.
+    A malformed cron is a 422 with the reason. An owner who thinks they
+    scheduled a nightly run must not silently get nothing. An unknown
+    job id is a 404.
     """
     cron = (payload.cron or "").strip() or None
     scheduler = request.app.state.scheduler
@@ -861,12 +918,14 @@ async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn
 async def run_job(request: Request, job_id: str) -> JobRunOut:
     """Run an upkeep job now, whether or not it is on a schedule.
 
-    A scheduled job is nudged to fire immediately; one the owner turned off is run once
-    without turning its schedule back on. Either way the schedule is left as it was. These
-    are read-only upkeep jobs (refreshing ratings and lists, sweeping watch history, asking
-    GitHub whether a newer Reaper exists) -- none can delete anything. The library scan is
-    deliberately absent: it runs through
-    ``/api/scan/start`` as a polled background job so the UI can show progress.
+    A scheduled job is nudged to fire immediately. One the owner turned
+    off is run once without turning its schedule back on. Either way the
+    schedule is left as it was. These are read-only upkeep jobs,
+    refreshing ratings and lists, sweeping watch history, and asking
+    GitHub whether a newer Reaper exists. None can delete anything. The
+    library scan is deliberately absent. It runs through
+    ``/api/scan/start`` as a polled background job, so the UI can show
+    progress.
     """
     if job_id not in MAINTENANCE_JOB_IDS:
         refuse(404, "error.settings.unknown_runnable_job", job_id=job_id)
@@ -907,24 +966,28 @@ async def get_safety(request: Request) -> SafetyOut:
 async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
     """Turn deletion on or off.
 
-    Turning it ON checks the admin password first -- so a stray click or a stale tab cannot
-    arm the tool. Turning it OFF needs nothing, because making Reaper safer should always be
-    one click. If no admin password has been set yet, enabling is refused with a message
+    Turning it on checks the admin password first, so a stray click or
+    a stale tab cannot arm the tool. Turning it off needs nothing,
+    because making Reaper safer should always be one click. If no admin
+    password has been set yet, enabling is refused with a message
     pointing at the password step.
 
-    The check runs through :func:`reaper.api.deps.require_admin_password`. That is the same
-    per-IP + per-account lockout shape as login and the same Argon2 concurrency gate
-    (``argon2_gate``), on its own counter (``password_throttle``, not ``login_throttle``):
-    arming is a password-guessing surface too, and Argon2 is expensive by design.
+    The check runs through :func:`reaper.api.deps.require_admin_password`.
+    That is the same per-IP and per-account lockout shape as login, and
+    the same Argon2 concurrency gate (``argon2_gate``), on its own
+    counter (``password_throttle``, not ``login_throttle``). Arming is a
+    password-guessing surface too, and Argon2 is expensive by design.
     """
     keys = (f"ip:{client_ip(request)}", "account:safety-arm")
     async with session_factory(request)() as session:
         if payload.enabled:
-            # Refused before the password is even looked at, because no password makes this
-            # allowed: `RuntimeSafety.destructive_allowed` holds deletion off for the whole
-            # life of a recovery-mode process, so accepting the flip would write a stored
-            # `true` the app then ignores and the banner contradicts. Answering here is what
-            # keeps the switch and the state one thing.
+            # Refused before the password is even looked at, because no
+            # password makes this allowed. `RuntimeSafety.destructive_allowed`
+            # holds deletion off for the whole life of a recovery-mode
+            # process, so accepting the flip would write a stored `true`
+            # the app then ignores, and the banner would contradict it.
+            # Answering here is what keeps the switch and the state one
+            # thing.
             if runtime_settings(request).recovery:
                 refuse(409, "error.settings.recovery_mode_blocks_arming")
             if not await admin_password.has_password(session):
@@ -946,30 +1009,37 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
 
 @router.post("/admin-password", tags=[api_tags.SECURITY])
 async def set_admin_password(request: Request, payload: AdminPasswordIn) -> OkOut:
-    """Set (or change) the admin password.
+    """Set, or change, the admin password.
 
-    This is the password that later confirms turning deletion on, and it doubles as the
-    local sign-in / anti-lockout account. Setting the FIRST password needs only a
-    signed-in session; changing an existing one also requires the current password, so a
-    borrowed session or an unattended tab cannot quietly swap the arming credential.
-    Verify and hash both run behind the login's lockout and Argon2 concurrency gate.
+    This is the password that later confirms turning deletion on, and
+    it doubles as the local sign-in and anti-lockout account. Setting
+    the first password needs only a signed-in session. Changing an
+    existing one also requires the current password, so a borrowed
+    session or an unattended tab cannot quietly swap the arming
+    credential. Verify and hash both run behind the login's lockout and
+    Argon2 concurrency gate.
 
-    **One session is excused from the current password: one opened with a recovery code.**
-    A forgotten password is what recovery mode is for, so demanding it here left the
-    operator signed in and still locked out of the only credential that arms deletion,
-    with no way forward on a desktop build (#433). The excusal grants nothing new: minting
-    that code took host access, and anyone holding host access can rewrite the hash in
-    ``reaper.db`` directly. It is spent immediately -- ``spend_recovery_mark`` runs in the
-    same transaction as the new hash, so a second change from that session asks for the
-    password like any other, and the mark cannot outlive the reset it was for.
+    One session is excused from the current password: one opened with a
+    recovery code. A forgotten password is what recovery mode is for.
+    Demanding the current password here would leave the operator signed
+    in and still locked out of the only credential that arms deletion,
+    with no way forward on a desktop build. The excusal grants nothing
+    new. Minting that code took host access, and anyone holding host
+    access can rewrite the hash in ``reaper.db`` directly. It is spent
+    immediately. ``spend_recovery_mark`` runs in the same transaction as
+    the new hash, so a second change from that session asks for the
+    password like any other, and the mark cannot outlive the reset it
+    was for.
     """
     keys = (f"ip:{client_ip(request)}", "account:admin-password")
     async with session_factory(request)() as session:
-        # Preserve the caller's own cookie so changing your password does not log you out
-        # of the tab you are using; every *other* session for that admin is still revoked.
-        # It has to be the token that actually RESOLVES: with two cookie names in play, a
-        # stale cookie under the other name would be the one spared here while the live
-        # session was revoked, signing the operator out of the very tab they were in.
+        # This preserves the caller's own cookie, so changing the password
+        # does not log the operator out of the tab they are using. Every
+        # other session for that admin is still revoked. This must be the
+        # token that actually resolves. With two cookie names in play, a
+        # stale cookie under the other name would be the one spared here
+        # while the live session was revoked, signing the operator out of
+        # the very tab they were in.
         _, keep = await resolve_session_from_cookies(session, request.cookies)
         via_recovery = await session_via_recovery(session, keep)
         if await admin_password.has_password(session) and not via_recovery:
@@ -980,8 +1050,9 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> OkOu
                 gate="change_password",
                 code="error.auth.change_password_mismatch",
             )
-        # Hashing the NEW password is one more Argon2 run, so it takes its own slot. Not part
-        # of the gate above: the verify has already passed, so a refusal here records nothing.
+        # Hashing the new password is one more Argon2 run, so it takes its
+        # own slot. This is not part of the gate above. The verify has
+        # already passed, so a refusal here records nothing.
         if not argon2_gate.acquire():
             raise busy_hashing()
         try:
@@ -992,9 +1063,11 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> OkOu
             refuse_from(exc)
         finally:
             argon2_gate.release()
-        # After set_password, so a refused password (too short) leaves the mark intact and
-        # the operator can try again -- rule 125's shape, for the permission rather than
-        # the code. set_password already revoked every OTHER session for this admin.
+        # This runs after set_password, so a refused password (too short)
+        # leaves the mark intact and the operator can try again. This
+        # mirrors the same single-use-credential shape as a recovery
+        # token: burn it only on success. set_password already revoked
+        # every other session for this admin.
         if via_recovery:
             await spend_recovery_mark(session, keep)
         await session.commit()
@@ -1009,8 +1082,9 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> OkOu
 
 @router.get("/notifications", tags=[api_tags.NOTIFICATIONS])
 async def get_notifications(request: Request) -> NotificationsOut:
-    """Whether a Discord webhook is configured. The URL is write-only -- like an API key,
-    only its presence is ever reported, never the value."""
+    """Whether a Discord webhook is configured. The URL is write-only.
+    Like an API key, only its presence is ever reported, never the
+    value."""
     async with session_factory(request)() as session:
         has = await app_settings.has_discord_webhook(
             session, secret_box(request), runtime_settings(request)
@@ -1020,8 +1094,9 @@ async def get_notifications(request: Request) -> NotificationsOut:
 
 @router.put("/notifications", tags=[api_tags.NOTIFICATIONS])
 async def set_notifications(request: Request, payload: NotificationsIn) -> NotificationsOut:
-    """Store (or replace) the Discord webhook. The URL is validated to a Discord https host
-    and encrypted at rest; it is never read back to the browser."""
+    """Store (or replace) the Discord webhook. The URL is validated to a
+    Discord https host and encrypted at rest. It is never read back to
+    the browser."""
     url = _validated_discord_webhook(payload.webhook_url)
     async with session_factory(request)() as session:
         await app_settings.set_discord_webhook(session, secret_box(request), url)
@@ -1032,7 +1107,7 @@ async def set_notifications(request: Request, payload: NotificationsIn) -> Notif
 
 @router.delete("/notifications", tags=[api_tags.NOTIFICATIONS])
 async def clear_notifications(request: Request) -> NotificationsOut:
-    """Forget the webhook -- Leaving Soon warnings go silent until one is set again."""
+    """Forget the webhook. Leaving Soon warnings go silent until one is set again."""
     async with session_factory(request)() as session:
         await app_settings.clear_discord_webhook(session)
         await session.commit()
@@ -1045,8 +1120,8 @@ async def test_notifications(request: Request, payload: NotificationsTestIn) -> 
     """Post a sample embed so an operator can confirm the channel before trusting it.
 
     Tests the URL in the body (the one about to be saved), or the stored webhook when the
-    body omits it. Best-effort like all Discord posting: a bad webhook comes back as
-    ``ok: false`` with a reason, it never raises.
+    body omits it. Best-effort, like all Discord posting. A bad webhook
+    comes back as ``ok: false`` with a reason. It never raises.
     """
     async with session_factory(request)() as session:
         language = await app_settings.get_notification_language(session)
@@ -1071,12 +1146,15 @@ async def test_notifications(request: Request, payload: NotificationsTestIn) -> 
 
 #: A six-digit hex color, ``#rrggbb``. The one shape the accent may take.
 _HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
-#: A BCP 47 language tag's SHAPE: ``es``, ``pt-BR``, ``zh-Hans-CN``. Deliberately not a
-#: membership test against a list of tags. The browser offers every catalog IT ships, and a
-#: translation reaches the UI a release before its ``backend.json`` does, so a list here would
-#: refuse a language the operator can already read the app in. Storing the tag is what makes a
-#: notification start speaking it the release that catalog lands
-#: (``app_settings.get_notification_language`` serves English until then).
+#: A BCP 47 language tag's shape, such as ``es``, ``pt-BR``, or
+#: ``zh-Hans-CN``. This is deliberately not a membership test against a
+#: list of tags. The browser offers every catalog it ships, and a
+#: translation reaches the UI a release before its ``backend.json`` does,
+#: so a list here would refuse a language the operator can already read
+#: the app in. Storing the tag is what makes a notification start
+#: speaking it the release that catalog lands
+#: (``app_settings.get_notification_language`` serves English until
+#: then).
 _LANGUAGE_TAG = re.compile(r"^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*$")
 
 
@@ -1089,9 +1167,10 @@ class DesktopSettingsOut(BaseModel):
     tray: bool
     """The menu-bar (macOS) / tray (Windows) icon with Open Reaper and Quit."""
     dock_icon: bool
-    """macOS only: show the Dock icon beside the menu-bar icon. The UI never renders
-    the row on Windows and the PUT refuses to set it there; the reported value echoes
-    launcher.conf, which nothing on Windows reads."""
+    """macOS only. Shows the Dock icon beside the menu-bar icon. The UI
+    never renders the row on Windows, and the PUT refuses to set it
+    there. The reported value echoes launcher.conf, which nothing on
+    Windows reads."""
 
 
 class GeneralSettingsOut(BaseModel):
@@ -1102,31 +1181,36 @@ class GeneralSettingsOut(BaseModel):
     ``America/New_York``). The effective value: the stored setting, else the env seed, else
     the host's own zone."""
     accent_color: str
-    """The UI accent as ``#rrggbb``; the built-in sky blue until changed."""
+    """The UI accent as ``#rrggbb``. The built-in sky blue until changed."""
     language: str | None = None
-    """The BCP 47 tag the app is shown in, and that a notification is written in. ``null``
-    while nobody has chosen: the browser seeds it on first sign-in from its own preferred
-    languages. A tag whose backend catalog has not shipped yet is stored and served back as
-    it is; the notification falls back to English on its own."""
+    """The BCP 47 tag the app is shown in, and that a notification is
+    written in. ``null`` while nobody has chosen. The browser seeds it
+    on first sign-in from its own preferred languages. A tag whose
+    backend catalog has not shipped yet is stored and served back as it
+    is. The notification falls back to English on its own."""
     api_key_set: bool
-    """Whether a key this install can actually use exists -- the value itself only leaves
-    through the dedicated reveal route, never rides along on a settings read. Read through
-    ``get_api_key``, so a key written under a secret key that has since rotated reports as
-    absent here exactly as it does to the header lane that would authenticate with it (rule
-    76). It used to report the row, which promised a working credential to an operator whose
-    reveal button then 404s."""
+    """Whether a key this install can actually use exists. The value
+    itself only leaves through the dedicated reveal route, never rides
+    along on a settings read. Read through ``get_api_key``, so a key
+    written under a secret key that has since rotated reports as absent
+    here, exactly as it does to the header lane that would authenticate
+    with it. Reporting the row's mere existence instead would promise a
+    working credential to an operator whose reveal button then 404s."""
     expand_seasons_mode: ExpandSeasonsMode
-    """Which screens the review queue opens each show's season list expanded on. A display
-    preference; ``off`` until the operator picks a screen."""
+    """Which screens the review queue opens each show's season list
+    expanded on. A display preference. ``off`` until the operator picks
+    a screen."""
     default_spare_days: int
-    """How long a plain Spare press keeps an item, in days. ``0`` means forever -- the shipped
-    default and the original behavior. A single title can still be spared for a different length
-    from its Spare menu; this is only what the button does by default."""
+    """How long a plain Spare press keeps an item, in days. ``0`` means
+    forever, the shipped default. A single title can still be spared
+    for a different length from its Spare menu. This is only what the
+    button does by default."""
     proxy_trust_enabled: bool
     trusted_proxies: list[str]
     desktop: DesktopSettingsOut | None = None
-    """Present only on the Windows and macOS apps; the container, the snap, and a
-    source run report ``null`` and the UI shows no Desktop app group."""
+    """Present only on the Windows and macOS apps. The container, the
+    snap, and a source run report ``null``, and the UI shows no Desktop
+    app group."""
 
 
 class GeneralSettingsIn(BaseModel):
@@ -1144,13 +1228,13 @@ class GeneralSettingsIn(BaseModel):
     expand_seasons_mode: ExpandSeasonsMode | None = None
     """Which screens the review queue opens seasons on. ``None`` leaves it unchanged."""
     default_spare_days: int | None = Field(default=None, ge=0, le=3650)
-    """Days a plain Spare keeps an item; ``0`` = forever. ``None`` leaves it unchanged."""
+    """Days a plain Spare keeps an item. ``0`` means forever. ``None`` leaves it unchanged."""
     proxy_trust_enabled: bool | None = None
     trusted_proxies: list[str] | None = Field(default=None, max_length=20)
     tray: bool | None = None
-    """The desktop build's menu-bar/tray icon; refused off a desktop build."""
+    """The desktop build's menu-bar or tray icon. Refused off a desktop build."""
     dock_icon: bool | None = None
-    """The macOS app's Dock icon; refused off a desktop build."""
+    """The macOS app's Dock icon. Refused off a desktop build."""
 
 
 class ApiKeyOut(BaseModel):
@@ -1161,13 +1245,14 @@ def _desktop_out() -> DesktopSettingsOut | None:
     platform = launcher.desktop_platform()
     if platform is None:
         return None
-    # The value the launcher resolved this boot. `load_launcher_conf` seeded the file into
-    # the environment before serving, so the environment is the effective record; the file
-    # only matters again at the next start.
+    # The value the launcher resolved this boot. `load_launcher_conf` seeded
+    # the file into the environment before serving, so the environment is
+    # the effective record. The file only matters again at the next start.
     #
-    # `default=True` is the same fact `launcher._tray_wanted` writes as `return frozen`, and
-    # the two agree only because the guard above returns None off a frozen build, which is
-    # the one shape where `frozen` is False (rule 104).
+    # `default=True` is the same fact `launcher._tray_wanted` writes as
+    # `return frozen`. The two agree only because the guard above returns
+    # None off a frozen build, which is the one shape where `frozen` is
+    # False.
     return DesktopSettingsOut(
         platform=platform,
         tray=env_flag(launcher.DESKTOP_TRAY_KEY, default=True),
@@ -1213,7 +1298,7 @@ async def _apply_timezone_to_scheduler(request: Request, name: str) -> None:
     Settings -> General takes effect now, not at the next restart. ``name`` is already
     validated to a real zone by the caller.
 
-    A test app may run without a scheduler; if so there is nothing to move.
+    A test app may run without a scheduler. If so, there is nothing to move.
     """
     scheduler = getattr(request.app.state, "scheduler", None)
     if scheduler is None:
@@ -1238,10 +1323,10 @@ async def _apply_timezone_to_scheduler(request: Request, name: str) -> None:
 class _GeneralField[T]:
     """One field of ``GeneralSettingsIn`` that is stored as an app setting.
 
-    ``clean`` validates the value that arrived and returns the one to store, raising
-    ``HTTPException`` on a refusal; a field with nothing to check leaves it unset and
-    stores what arrived. ``write`` is the setter, wrapped where its own signature is
-    keyword-only.
+    ``clean`` validates the value that arrived and returns the one to
+    store, raising ``HTTPException`` on a refusal. A field with nothing
+    to check leaves it unset and stores what arrived. ``write`` is the
+    setter, wrapped where its own signature is keyword-only.
 
     Generic in the stored type, and each row below names it, so mypy checks that a row's
     setter and its cleaner agree about what that field holds. Without the parameter the
@@ -1260,9 +1345,10 @@ def _clean_application_url(value: str) -> str:
 
 
 def _clean_timezone(value: str) -> str:
-    """The one validator here that also refuses an empty string. An empty accent means
-    "put the built-in one back"; there is no such thing as an empty zone, and storing one
-    would leave every timed job on whatever the host happens to be set to."""
+    """The one validator here that also refuses an empty string. An
+    empty accent means "put the built-in one back". There is no such
+    thing as an empty zone, and storing one would leave every timed job
+    on whatever the host happens to be set to."""
     stripped = value.strip()
     if not stripped or not app_settings.is_valid_timezone(stripped):
         refuse(422, "error.settings.timezone_unknown")
@@ -1281,7 +1367,7 @@ def _clean_accent_color(value: str) -> str:
 
 
 def _clean_language(value: str) -> str:
-    """Shape only, never membership -- see ``_LANGUAGE_TAG``."""
+    """Shape only, never membership. See ``_LANGUAGE_TAG``."""
     cleaned = value.strip()
     if not _LANGUAGE_TAG.match(cleaned):
         refuse(422, "error.settings.language_invalid", tag=value)
@@ -1312,13 +1398,14 @@ async def _write_proxy_trust_enabled(session: AsyncSession, value: bool) -> None
     await app_settings.set_proxy_trust_enabled(session, enabled=value)
 
 
-#: Every ``GeneralSettingsIn`` field that is an app-settings row, in the order the model
-#: declares them. ``put_general`` walks this twice, so adding a General setting is a row
-#: here rather than a check in one loop and a write in another that can disagree.
+#: Every ``GeneralSettingsIn`` field that is an app-settings row, in the
+#: order the model declares them. ``put_general`` walks this twice, so
+#: adding a General setting is a row here instead of a check in one loop
+#: and a write in another that can disagree.
 #:
-#: Order decides only which refusal an operator sees when two fields are both wrong, and
-#: nothing pins that: the promise is that a refusal writes nothing, whichever field earned
-#: it.
+#: Order decides only which refusal an operator sees when two fields are
+#: both wrong, and nothing pins that. The promise is that a refusal
+#: writes nothing, whichever field earned it.
 _GENERAL_FIELDS: tuple[_GeneralField[Any], ...] = (
     _GeneralField[str]("application_name", app_settings.set_application_name),
     _GeneralField[str]("application_url", app_settings.set_application_url, _clean_application_url),
@@ -1333,11 +1420,12 @@ _GENERAL_FIELDS: tuple[_GeneralField[Any], ...] = (
     ),
 )
 
-#: The fields of the same model that are deliberately NOT rows, each with the reason it
-#: cannot be one. Declared rather than left as anonymous lines in the route, so the pair
-#: with ``_GENERAL_FIELDS`` covers the model exactly and
-#: ``test_every_general_field_is_a_row_or_a_declared_exception`` fails on a field that is
-#: neither (rule 103).
+#: The fields of the same model that are deliberately not rows, each
+#: with the reason it cannot be one. Declared rather than left as
+#: anonymous lines in the route, so the pair with ``_GENERAL_FIELDS``
+#: covers the model exactly, and
+#: ``test_every_general_field_is_a_row_or_a_declared_exception`` fails on
+#: a field that is neither.
 _GENERAL_FIELD_EXCEPTIONS: Mapping[str, str] = {
     "tray": (
         "Not a settings row: it is a launcher.conf line plus an os.environ mirror, on the "
@@ -1351,10 +1439,11 @@ _GENERAL_FIELD_EXCEPTIONS: Mapping[str, str] = {
 
 
 def _cleaned_general_values(payload: GeneralSettingsIn) -> dict[str, Any]:
-    """Pass one: check every field that arrived, and return what each should store.
+    """Pass one. Check every field that arrived, and return what each
+    should store.
 
-    Nothing here touches the session, which is the point -- a refusal raises before the
-    first write rather than partway through it.
+    Nothing here touches the session, which is the point. A refusal
+    raises before the first write instead of partway through it.
     """
     cleaned: dict[str, Any] = {}
     for field in _GENERAL_FIELDS:
@@ -1366,21 +1455,21 @@ def _cleaned_general_values(payload: GeneralSettingsIn) -> dict[str, Any]:
 
 
 def _validated_desktop_values(payload: GeneralSettingsIn) -> dict[str, str]:
-    """The desktop pair's half of pass one: refuse it where the platform cannot honor it,
-    and return the launcher.conf lines to write. Empty when neither field was sent.
+    """The desktop pair's half of pass one. Refuse it where the platform
+    cannot honor it, and return the launcher.conf lines to write. Empty
+    when neither field was sent.
 
-    These two checks used to sit below the writes, where they were covered only by the
-    commit at the end of the route rolling the session back. They are checks, so they
-    belong with the other checks; the operator sees the same two refusals either way.
+    These are checks, so they belong with the other checks, ahead of any
+    write. The operator sees the same two refusals either way.
     """
     if payload.tray is None and payload.dock_icon is None:
         return {}
     platform = launcher.desktop_platform()
     if platform is None:
         refuse(422, "error.settings.desktop_only")
-    # Refused where it is inert: accepting it would write a launcher.conf line
-    # nothing on Windows reads, and every later read would echo a switch the
-    # platform cannot honor.
+    # Refused where it is inert. Accepting it would write a launcher.conf
+    # line nothing on Windows reads, and every later read would echo a
+    # switch the platform cannot honor.
     if payload.dock_icon is not None and platform != "macos":
         refuse(422, "error.settings.dock_icon_macos_only")
     values: dict[str, str] = {}
@@ -1392,16 +1481,17 @@ def _validated_desktop_values(payload: GeneralSettingsIn) -> dict[str, str]:
 
 
 def _write_desktop_values(data_dir: Path, values: dict[str, str]) -> None:
-    """Pass two for the desktop pair. Not a settings row and not in the transaction: this
-    writes a file and then the process environment."""
+    """Pass two for the desktop pair. Not a settings row, and not in
+    the transaction. This writes a file and then the process
+    environment."""
     try:
         launcher.write_conf_values(data_dir, values)
     except OSError:
         refuse(500, "error.settings.launcher_conf_write_failed")
     # The environment is the boot-resolved record _desktop_out reads (the
-    # launcher seeded the file into it), so mirror the write there too:
-    # the response and every later read then show the value the next start
-    # will use, instead of snapping the switch back.
+    # launcher seeded the file into it), so this mirrors the write there
+    # too. The response and every later read then show the value the next
+    # start will use, instead of snapping the switch back.
     os.environ.update(values)
 
 
@@ -1413,21 +1503,26 @@ async def get_general(request: Request) -> GeneralSettingsOut:
 
 @router.put("/general", tags=[api_tags.GENERAL])
 async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSettingsOut:
-    """Save the General settings. Partial: only the fields sent change.
+    """Save the General settings. This is partial. Only the fields sent
+    change.
 
-    The application URL must be a plain http(s) address (or empty to clear it), and
-    every trusted-proxy entry must parse as an address or a range -- refused with a
-    plain message otherwise, and nothing is changed.
+    The application URL must be a plain http(s) address, or empty to
+    clear it, and every trusted-proxy entry must parse as an address or
+    a range. A bad one is refused with a plain message, and nothing is
+    changed.
     """
-    # Two passes, and the loops are what make that structural rather than conventional:
-    # every field is checked before any field is written, so a body carrying five good
-    # values and one bad one leaves the stored settings exactly as they were. That is what
-    # the docstring above promises the operator and what
-    # `test_one_bad_field_writes_none_of_the_others` pins. A single pass that validated and
-    # wrote each field in turn would half-apply the save while telling them it failed.
+    # Two passes, and the loops are what make that structural instead of
+    # conventional. Every field is checked before any field is written, so
+    # a body carrying five good values and one bad one leaves the stored
+    # settings exactly as they were. That is what the docstring above
+    # promises the operator, and what
+    # `test_one_bad_field_writes_none_of_the_others` pins. A single pass
+    # that validated and wrote each field in turn would half-apply the save
+    # while telling the operator it failed.
     #
-    # The commit at the end is a second, independent layer: an `HTTPException` escaping
-    # this block closes the session unwritten. Every refusal is raised above it.
+    # The commit at the end is a second, independent layer. An
+    # `HTTPException` escaping this block closes the session unwritten.
+    # Every refusal is raised above it.
     cleaned = _cleaned_general_values(payload)
     desktop_values = _validated_desktop_values(payload)
     async with session_factory(request)() as session:
@@ -1435,14 +1530,17 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
             if field.name in cleaned:
                 await field.write(session, cleaned[field.name])
         await session.commit()
-        # After the commit, not before it (#748). `launcher.conf` is a file and
-        # `os.environ` is process state, so neither is in the transaction: written first,
-        # a commit that then failed left the switch on in the file and echoed back by
-        # `_desktop_out` from the environment, while the five fields saved beside it went
-        # back and the operator was told the save failed. Ordered this way the desktop pair
-        # is never ahead of the rows. It can still fall behind them, on a `launcher.conf`
-        # that cannot be written: the 500 below reports that, the environment is not
-        # updated, so the file and every later read still agree on the old value.
+        # This runs after the commit, not before it. `launcher.conf` is a
+        # file and `os.environ` is process state, so neither is in the
+        # transaction. Writing them first would mean a commit that then
+        # failed leaves the switch on in the file and echoed back by
+        # `_desktop_out` from the environment, while the five fields saved
+        # beside it roll back, telling the operator the save failed while
+        # it partly landed. Ordered this way, the desktop pair is never
+        # ahead of the rows. It can still fall behind them, on a
+        # `launcher.conf` that cannot be written. The 500 below reports
+        # that. The environment is not updated, so the file and every
+        # later read still agree on the old value.
         if desktop_values:
             _write_desktop_values(runtime_settings(request).data_dir, desktop_values)
         await _refresh_proxy_state(request, session)
@@ -1456,8 +1554,9 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
 
 @router.get("/general/api-key", tags=[api_tags.GENERAL])
 async def reveal_api_key(request: Request) -> ApiKeyOut:
-    """The stored key, for the Show button. Session-only: the middleware fences this
-    route away from API-key auth, so a key cannot read or manage itself."""
+    """Return the stored key, for the Show button. Session-only. The
+    middleware fences this route away from API-key auth, so a key
+    cannot read or manage itself."""
     async with session_factory(request)() as session:
         key = await app_settings.get_api_key(session, secret_box(request))
     if key is None:
@@ -1467,10 +1566,11 @@ async def reveal_api_key(request: Request) -> ApiKeyOut:
 
 @router.post("/general/api-key", tags=[api_tags.GENERAL])
 async def generate_api_key(request: Request) -> ApiKeyOut:
-    """Generate the key, replacing any previous one. The old key stops working the
-    moment this returns, so rotating revokes the previous key. It does not CLOSE the
-    header-credential lane, though: there is always a working key afterwards. Turning the
-    lane off is what ``DELETE`` below is for."""
+    """Generate the key, replacing any previous one. The old key stops
+    working the moment this returns, so rotating revokes the previous
+    key. This never closes the header-credential lane. There is always
+    a working key afterwards. Turning the lane off is what ``DELETE``
+    below is for."""
     key = secrets.token_urlsafe(32)
     async with session_factory(request)() as session:
         await app_settings.set_api_key(session, secret_box(request), key)
@@ -1482,15 +1582,19 @@ async def generate_api_key(request: Request) -> ApiKeyOut:
 
 @router.delete("/general/api-key", tags=[api_tags.GENERAL])
 async def remove_api_key(request: Request) -> RemovedOut:
-    """Close the header-credential lane: delete the key, and stop honoring it now.
+    """Close the header-credential lane. Delete the key, and stop
+    honoring it now.
 
-    Rotating replaces one working key with another, so an operator who generated a key for
-    a one-off script had no way to shut the lane again (PR2-2). This is that way.
+    Rotating replaces one working key with another, so an operator who
+    generated a key for a one-off script would otherwise have no way to
+    shut the lane again. This route is that way.
 
-    The stored digest on the app is cleared in the same breath. Auth reads that digest, not
-    the database, so a deleted key would otherwise keep working until the next restart.
-    Session-only, like every write here: the middleware is deny-by-default for anything
-    that is not a safe method, so a key cannot delete itself or anyone else's.
+    The stored digest on the app is cleared in the same breath. Auth
+    reads that digest, not the database, so a deleted key would
+    otherwise keep working until the next restart. Session-only, like
+    every write here. The middleware is deny-by-default for anything
+    that is not a safe method, so a key cannot delete itself or anyone
+    else's.
     """
     async with session_factory(request)() as session:
         await app_settings.clear_api_key(session)

@@ -2,40 +2,42 @@
 """The backend's own translation catalog, for the two surfaces with no browser to compose
 a sentence in: the Discord webhook (`notify/discord.py`) and the desktop launcher's tray
 and dialogs (`launcher.py`). Every other operator-facing sentence is composed in the SPA
-from `frontend/src/locales/en/ui.json` -- this module is the same idea, shipped the way
-Seerr ships its own backend catalog, for the two places that idea cannot reach.
+from `frontend/src/locales/en/ui.json`. This module ships the same idea, the way Seerr
+ships its own backend catalog, for the two places the SPA cannot reach.
 
-`say(key, tag, **params)` is the one entry point: look `key` up in `tag`'s catalog
-(`reaper.locales.<tag>.backend.json`), format it as ICU MessageFormat against `params`, and
-never raise -- a webhook post or a tray label has no UI to show an error in, so a bad key or
-a malformed message logs a warning and falls back to plain text instead.
+`say(key, tag, **params)` is the one entry point. It looks `key` up in `tag`'s catalog
+(`reaper.locales.<tag>.backend.json`), formats it as ICU MessageFormat against `params`,
+and never raises: a webhook post or a tray label has no UI to show an error in, so a bad
+key or a malformed message logs a warning and falls back to plain text instead.
 
-`format_icu` is the formatter underneath `say`, exported so `tests/_reasons.py`'s test-side
-composer for `frontend/src/locales/en/ui.json`'s `why.*` entries calls the same production
-code rather than a second, hand-copied implementation (rule 119). It supports:
+`format_icu` is the formatter underneath `say`. It is exported so `tests/_reasons.py`'s
+test-side composer for `frontend/src/locales/en/ui.json`'s `why.*` entries calls this
+same production code instead of a second, hand-copied implementation. It supports:
 
   * a bare `{name}` interpolation, and `{name, number}` (grouped: `1,234`)
   * `{name, plural, one {...} other {...}}` and `{name, selectordinal, ...}`, both with `#`
-    substituted for the (grouped) number inside the picked branch -- at that branch's own
-    brace depth only, so a plural nested inside another plural's branch keeps its own `#`
+    substituted for the (grouped) number inside the picked branch. The substitution only
+    reaches that branch's own brace depth, so a plural nested inside another plural's
+    branch keeps its own `#`
   * `{name, select, key {...} other {...}}`
   * a single-quoted literal: `''` for one literal quote, and `'...'` for a run of text
-    with no ICU meaning of its own -- but only when the opening `'` sits right before
-    `{`, `}`, `#` or another `'`, so a message can show a literal brace as `'{'` while
-    every plain contraction in this codebase's copy ("didn't", "can't") still renders
-    untouched: an apostrophe followed by an ordinary letter is never an escape
+    with no ICU meaning of its own. This only applies when the opening `'` sits right
+    before `{`, `}`, `#`, or another `'`, so a message can show a literal brace as `'{'`
+    while every plain contraction in this codebase's copy ("didn't", "can't") still
+    renders untouched. An apostrophe followed by an ordinary letter is never an escape
 
-**Not supported, and out of scope for this subset**: `offset:`, the `date`/`time`/`duration`
-argument types, and a `selectordinal` category outside English's four (`one`/`two`/`few`/
-`other`) -- an untranslated ordinal falls to `other`, which is the general fallback every
-unrecognized category takes. None of `say`'s catalogs use any of these today;
-`tests/test_backend_i18n.py` names this boundary and proves the formatter degrades rather
-than raising on syntax past it.
+Not supported, and out of scope for this subset: `offset:`, the `date`/`time`/`duration`
+argument types, and any `selectordinal` category outside English's four (`one`/`two`/
+`few`/`other`). An untranslated ordinal falls to `other`, the general fallback every
+unrecognized category takes. None of `say`'s catalogs use any of these today.
+`tests/test_backend_i18n.py` names this boundary and proves the formatter degrades
+instead of raising on syntax past it.
 
-Plural categories are CLDR's cardinal rule, reduced to the integer case this codebase's
-catalogs use (a whole count of titles, days, or seasons -- never a decimal). `PLURAL_RULES`
-is the table: `en` is what the catalog ships today, and the tags after it are one line each,
-ready for the day a Discord or launcher translation ships in that language.
+Plural categories follow CLDR's cardinal rule, reduced to the integer case this
+codebase's catalogs use: a whole count of titles, days, or seasons, never a decimal.
+`PLURAL_RULES` is the table. `en` is what the catalog ships today, and the tags after
+it are one line each, ready for the day a Discord or launcher translation ships in
+that language.
 """
 
 from __future__ import annotations
@@ -52,12 +54,13 @@ log = structlog.get_logger(__name__)
 
 DEFAULT_TAG = "en"
 
-#: CLDR cardinal plural rules, reduced to the integer case: every param this catalog
-#: pluralizes on is a whole count, never a fraction, so the decimal-category clauses CLDR
-#: also defines (Welsh's five-way split, Arabic's six) are not needed and not implemented.
-#: A tag with no rule here falls back to `en`'s (`_plural_category`), so `say` never raises
-#: for an untabled language -- `test_backend_i18n.py` is what makes ADDING one mandatory
-#: once a UI translation for that language ships.
+#: CLDR cardinal plural rules, reduced to the integer case: every param this
+#: catalog pluralizes on is a whole count, never a fraction, so the
+#: decimal-category clauses CLDR also defines (Welsh's five-way split,
+#: Arabic's six) are not needed and not implemented. A tag with no rule here
+#: falls back to `en`'s (`_plural_category`), so `say` never raises for an
+#: untabled language. `test_backend_i18n.py` is what makes adding one
+#: mandatory once a UI translation for that language ships.
 PLURAL_RULES: dict[str, Callable[[float], str]] = {
     "en": lambda n: "one" if n == 1 else "other",
     "de": lambda n: "one" if n == 1 else "other",
@@ -73,8 +76,9 @@ def _plural_category(n: float, tag: str) -> str:
 
 
 def _ordinal_category(n: int) -> str:
-    """English's four selectordinal categories. See the module docstring: this formatter
-    implements no other language's ordinal rule, because nothing shipped needs one yet."""
+    """English's four selectordinal categories. This formatter implements no other
+    language's ordinal rule yet, since nothing shipped needs one. See the module
+    docstring."""
     if n % 100 in (11, 12, 13):
         return "other"
     return {1: "one", 2: "two", 3: "few"}.get(n % 10, "other")
@@ -98,8 +102,8 @@ def _grouped(value: Any) -> str:
 
 
 def _replace_hash(text: str, replacement: str) -> str:
-    """`#` substituted only at brace depth 0, so a plural nested inside another plural's
-    branch keeps its OWN `#` for its own recursive pass (see `format_icu`'s docstring)."""
+    """Substitutes `#` only at brace depth 0, so a plural nested inside another plural's
+    branch keeps its own `#` for its own recursive pass (see `format_icu`'s docstring)."""
     out: list[str] = []
     depth = 0
     for ch in text:
@@ -117,7 +121,7 @@ def _replace_hash(text: str, replacement: str) -> str:
 
 
 def _split_options(body: str) -> dict[str, str]:
-    """`one {...} other {...}` parsed into a selector-to-message map."""
+    """Parses `one {...} other {...}` into a selector-to-message map."""
     options: dict[str, str] = {}
     i = 0
     while i < len(body):
@@ -142,21 +146,22 @@ def _split_options(body: str) -> dict[str, str]:
     return options
 
 
-#: A quote only escapes when it sits right before one of these -- otherwise it is plain
+#: A quote only escapes when it sits right before one of these. Otherwise it is plain
 #: text, which is what keeps every contraction in this codebase's copy ("didn't", "can't")
-#: from being read as the start of a quoted literal. Matches real ICU MessageFormat: a
-#: bare apostrophe has no special meaning, only one adjacent to syntax does.
+#: from being read as the start of a quoted literal. This matches real ICU MessageFormat:
+#: a bare apostrophe has no special meaning, only one next to syntax does.
 _ICU_QUOTE_STARTS = ("'", "{", "}", "#")
 
 
 def format_icu(message: str, params: Mapping[str, Any], tag: str = DEFAULT_TAG) -> str:
-    """`message` rendered as the ICU MessageFormat subset this module's docstring names,
-    against `params`. `tag` picks the plural rule (`PLURAL_RULES`); `selectordinal` is
-    English-only regardless of `tag` (see `_ordinal_category`).
+    """Renders `message` as the ICU MessageFormat subset this module's docstring
+    names, against `params`. `tag` picks the plural rule (`PLURAL_RULES`).
+    `selectordinal` is English-only regardless of `tag` (see `_ordinal_category`).
 
-    Known gap, out of scope for this subset: a literal brace escaped with `'{'` inside a
-    plural or selectordinal branch can desync `_replace_hash`/`_split_options`'s own brace
-    depth counting, since neither is quote-aware. No catalog entry combines the two today.
+    Known gap, out of scope for this subset: a literal brace escaped with `'{'`
+    inside a plural or selectordinal branch can desync `_replace_hash` and
+    `_split_options`'s own brace depth counting, since neither is quote-aware.
+    No catalog entry combines the two today.
     """
     out: list[str] = []
     i = 0
@@ -224,19 +229,20 @@ def format_icu(message: str, params: Mapping[str, Any], tag: str = DEFAULT_TAG) 
 
 
 def _locales_root() -> Any:
-    """`reaper.locales`'s own directory, as a `Traversable`. Broken out of `_load` so a test
-    can monkeypatch it to a `tmp_path` fixture (a plain `pathlib.Path` already implements
-    every `Traversable` method this module calls) rather than needing a committed, non-English
-    `backend.json` to prove a translated catalog is checked (see
-    `tests/test_backend_locales.py`)."""
+    """`reaper.locales`'s own directory, as a `Traversable`. This is broken out of
+    `_load` so a test can monkeypatch it to a `tmp_path` fixture, instead of needing
+    a committed, non-English `backend.json` to prove a translated catalog is checked
+    (see `tests/test_backend_locales.py`). A plain `pathlib.Path` already implements
+    every `Traversable` method this module calls."""
     return resources.files("reaper.locales")
 
 
 def _load(tag: str) -> dict[str, Any] | None:
-    """`<tag>/backend.json`, or `None` if it does not exist, is unreadable, or is not a JSON
-    object. Loaded through `importlib.resources`, anchored on the `reaper.locales` package
-    -- never a path relative to the current working directory -- so this resolves the same
-    way from a test run, a wheel install, and the editable install the Docker image uses."""
+    """`<tag>/backend.json`, or `None` if it does not exist, is unreadable, or is
+    not a JSON object. Loaded through `importlib.resources`, anchored on the
+    `reaper.locales` package rather than a path relative to the current working
+    directory, so this resolves the same way from a test run, a wheel install, and
+    the editable install the Docker image uses."""
     try:
         traversable = _locales_root().joinpath(tag, "backend.json")
         if not traversable.is_file():
@@ -257,10 +263,11 @@ def _load(tag: str) -> dict[str, Any] | None:
 
 
 def _merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
-    """`overlay` layered onto `base`: a nested dict recurses, a non-blank string wins, and a
-    blank string or any other shape is skipped, so `base`'s value shows through underneath
-    it -- the fallback `catalog` and `say` promise for an untranslated or blank key, the same
-    posture as the SPA's `returnEmptyString: false`."""
+    """`overlay` layered onto `base`: a nested dict recurses, a non-blank string
+    wins, and a blank string or any other shape is skipped, so `base`'s value
+    shows through underneath it. This is the fallback `catalog` and `say` promise
+    for an untranslated or blank key, the same posture as the SPA's
+    `returnEmptyString: false`."""
     merged = dict(base)
     for key, value in overlay.items():
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
@@ -274,10 +281,10 @@ def _merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
 def catalog(tag: str = DEFAULT_TAG) -> dict[str, Any]:
     """`tag`'s catalog, English always loaded underneath it as the fallback.
 
-    A shipped `<tag>/backend.json` need only carry the leaves a translator filled in;
-    `_merge` overlays its non-blank strings onto the English tree, so a key it omits, or
-    left blank, reads back the English sentence rather than a hole. Cached: a shipped
-    catalog is read once per tag for the life of the process."""
+    A shipped `<tag>/backend.json` need only carry the leaves a translator filled
+    in. `_merge` overlays its non-blank strings onto the English tree, so a key it
+    omits, or leaves blank, reads back the English sentence rather than a hole.
+    Cached: a shipped catalog is read once per tag for the life of the process."""
     english = _load(DEFAULT_TAG) or {}
     if tag == DEFAULT_TAG:
         return english
@@ -292,12 +299,13 @@ def shipped_tags() -> tuple[str, ...]:
     """Every BCP 47 tag with a shipped backend catalog: the directories under
     `reaper.locales` holding a `backend.json`, English always first.
 
-    `services.app_settings.get_notification_language` is the one reader: it clamps the stored
-    language tag to this set, so a notification composed here falls back to English while the
-    operator's language has no `backend.json` yet, and a build that drops one stops reading a
-    tag `say` cannot serve. Nothing offers this set as a *choice* -- the picker in Settings ->
-    General lists the browser's own catalogs, which ship a translation a release ahead of this
-    one. Cached like `catalog`: the shipped set is fixed for the life of the process.
+    `services.app_settings.get_notification_language` is the one reader. It clamps
+    the stored language tag to this set, so a notification composed here falls
+    back to English while the operator's language has no `backend.json` yet, and a
+    build that drops one stops reading a tag `say` cannot serve. Nothing offers
+    this set as a choice: the picker in Settings -> General lists the browser's
+    own catalogs, which ship a translation a release ahead of this one. Cached
+    like `catalog`: the shipped set is fixed for the life of the process.
     """
     root = _locales_root()
     tags = sorted(
@@ -318,14 +326,14 @@ def _lookup(node: Mapping[str, Any], dotted: str) -> str | None:
 
 
 def say(key: str, tag: str | None = None, **params: Any) -> str:
-    """`key`'s message in `tag` (English when `tag` is `None`, or when `tag` ships no
-    catalog), formatted with `params`.
+    """`key`'s message in `tag` (English when `tag` is `None`, or when `tag` ships
+    no catalog), formatted with `params`.
 
-    Never raises. `notify/discord.py`'s webhook post and `launcher.py`'s tray/dialogs are
-    best-effort surfaces with no UI to render a formatting error in, so a key missing from
-    every catalog, or a message this formatter cannot render, logs a warning and returns
-    the bare key -- readable, and the same posture `why.ts`'s composer takes for an id its
-    build has no entry for.
+    Never raises. `notify/discord.py`'s webhook post and `launcher.py`'s tray and
+    dialogs are best-effort surfaces with no UI to render a formatting error in, so
+    a key missing from every catalog, or a message this formatter cannot render,
+    logs a warning and returns the bare key. That stays readable, and matches the
+    posture `why.ts`'s composer takes for an id its build has no entry for.
     """
     resolved_tag = tag or DEFAULT_TAG
     message = _lookup(catalog(resolved_tag), key)

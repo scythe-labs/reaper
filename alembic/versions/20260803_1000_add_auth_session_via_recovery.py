@@ -1,20 +1,19 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """add auth_session.via_recovery
 
-Recovery mode signs an operator in when both Plex and the local password have failed them,
-and the screen it lands on promised they could "reset a password" from there. They could
-not: ``POST /api/settings/admin-password`` asks for the current password whenever one is
-set, and a forgotten password is the reason recovery was used at all. The way out was the
-``reaper-admin`` CLI, which the desktop bundles do not ship.
+Recovery mode signs an operator in when both Plex and the local password have failed
+them, and the screen it lands on offers to "reset a password". Without this column that
+offer does not work: ``POST /api/settings/admin-password`` asks for the current password
+whenever one is set, and a forgotten password is the reason recovery was used at all.
 
-This column is how the server tells one session from the other. A session opened by
-redeeming a recovery code carries it; every other session does not, and may still only
-change the password by proving the old one. It is spent on first use, so the elevated
-permission never outlives the reset it existed for.
+This column is how the server tells a recovery session apart from an ordinary one. A
+session opened by redeeming a recovery code carries it. Every other session does not, and
+can still only change the password by proving the old one. The flag is spent on first
+use, so the elevated permission never outlives the reset it exists for.
 
-Non-breaking by construction: one NOT NULL boolean with a server default of false, which is
-also the fail-closed reading. Every session already issued backfills to "not a recovery
-session" and keeps behaving exactly as it did. Testers never rebuild their database.
+The new column is a NOT NULL boolean with a server default of false, which is also the
+fail-closed reading. Every session already issued backfills to "not a recovery session"
+and keeps behaving exactly as it did. No tester database needs to be rebuilt.
 
 Revision ID: f708192a3b4c
 Revises: e6f708192a3b
@@ -35,9 +34,9 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # batch_alter_table for SQLite parity with the baseline. The server default lets SQLite
-    # add a NOT NULL column to a populated table (it cannot otherwise) and backfills every
-    # live session to "false"; new rows still take the model's default.
+    # batch_alter_table matches the baseline's SQLite style. The server default lets SQLite
+    # add a NOT NULL column to a populated table, and it backfills every live session to
+    # "false". New rows still take the model's own default.
     with op.batch_alter_table("auth_session", schema=None) as batch_op:
         batch_op.add_column(
             sa.Column("via_recovery", sa.Boolean(), nullable=False, server_default=sa.false())

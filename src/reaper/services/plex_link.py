@@ -1,22 +1,22 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Linking the Plex server, without anyone pasting a token.
 
-The owner signs in on plex.tv itself, so Reaper never sees a password. What it gets
-back is an **account token**, and that is worth being blunt about:
+The owner signs in on plex.tv itself, so Reaper never sees a password. What it gets back
+is an account token, and that is worth being blunt about:
 
     Verified against a live account: ``resource.accessToken == account.authToken``.
 
-The per-resource ``accessToken`` that plex.tv hands out for an *owned* server is **the
-same string** as the account credential. It is not narrower, not scoped to that server,
-and not a mitigation of any kind. Reaper stores a credential with full administrative
-control of the Plex account -- including permanent deletion -- and the README says so
-in exactly those words rather than implying a boundary that does not exist.
+The per-resource ``accessToken`` that plex.tv hands out for an owned server is the same
+string as the account credential. It is not narrower, not scoped to that server, and not
+a mitigation of any kind. Reaper stores a credential with full administrative control of
+the Plex account, including permanent deletion, and the README says so in exactly those
+words rather than implying a boundary that does not exist.
 
-We store it anyway, because it is what ``plexapi.connect()`` uses and there is no
-narrower credential on offer. What we do *not* do is pretend.
+Reaper stores it anyway, because it is what ``plexapi.connect()`` uses and there is no
+narrower credential on offer.
 
 Two things here are not about linking, and both are here because the sign-in flow in
-:mod:`reaper.services.login` needs them too: :func:`client_identifier`, our stable
+:mod:`reaper.services.login` needs them too: :func:`client_identifier`, Reaper's stable
 identity to plex.tv, and :func:`start_pin`, which opens either flow's PIN and is told
 which one by ``purpose``. Only the polling halves belong to one flow each.
 """
@@ -56,27 +56,27 @@ CLIENT_ID_KEY = "plex_client_identifier"
 #: How long a browser has to finish a PIN flow, sign-in or link, before the pending row
 #: expires. It has to outlive the window the browser actually polls for, which is
 #: ``DEADLINE_MS`` in ``frontend/src/components/PlexPin.tsx``, the one poll hook all three
-#: flows drive, or a row expires underneath an operator still typing their plex.tv
-#: password. Twice it today, and `test_the_pending_pin_ttl_outlives_the_browsers_poll`
-#: holds the pair, since nothing else spans the two languages.
-#: ``PlexTvClient.PIN_TIMEOUT`` is NOT the bound, though it is the same 5 minutes and this
-#: comment used to cite it: that governs ``wait_for_pin``, whose only caller is the CLI
-#: :func:`link`, and that path writes no pending row at all.
+#: flows drive, or a row would expire underneath an operator still typing their plex.tv
+#: password. `test_the_pending_pin_ttl_outlives_the_browsers_poll` holds that relationship,
+#: since nothing else spans the two languages.
+#: ``PlexTvClient.PIN_TIMEOUT`` is not the bound here, even though it is also 5 minutes:
+#: that one governs ``wait_for_pin``, whose only caller is the CLI :func:`link`, and that
+#: path writes no pending row at all.
 PIN_TTL = timedelta(minutes=10)
 
 #: Which flow a pending row belongs to. ``poll_plex_login`` reads only ``"login"`` rows and
 #: ``poll_link`` only ``"link"`` ones, so a PIN approved for one flow can never be spent by
-#: the other. That fence is what keeps an admin's re-link from being redeemed for a session
+#: the other. That fence is what stops an admin's re-link from being redeemed for a session
 #: at ``/api/auth/plex/poll``, which is an open route where the link routes are not.
 PinPurpose = Literal["login", "link"]
 
 
 class PlexLinkError(Refusal):
-    """The link could not be completed. A catalog code plus raw params.
+    """The link could not be completed. A catalog code plus raw parameters.
 
-    Defaults to 400 rather than ``Refusal``'s own 422: every call site here answers a
-    request that was well-formed but describes a Plex account or server Reaper cannot
-    link, which every route above answers with 400 rather than 422's "content refused."
+    Defaults to 400 rather than ``Refusal``'s own 422: every route answering one of
+    these describes a request that was well-formed but names a Plex account or server
+    Reaper cannot link, which is a 400 rather than 422's "content refused."
     """
 
     def __init__(self, code: str, /, *, status: int = 400, **params: ReasonParam) -> None:
@@ -84,16 +84,17 @@ class PlexLinkError(Refusal):
 
 
 class PlexLinkRetryableError(PlexLinkError):
-    """A *transient* link failure: the sign-in succeeded and the PIN is still valid.
+    """A transient link failure: the sign-in succeeded and the PIN is still valid.
 
-    Distinct from the permanent refusals (owns no server / owns several). It means the
-    reachable-connection probe momentarily failed -- the server was mid-restart, a network
-    blip, a relay hiccup -- none of which invalidate the sign-in. Treated separately so the
-    in-app poll does not burn the pending PIN over it and force the owner through a fresh
-    OAuth round-trip despite having already authenticated. A subclass of ``PlexLinkError``
-    so existing ``except PlexLinkError`` callers (the CLI flow) still catch it.
+    Distinct from the permanent refusals (owns no server, or owns several). It means the
+    reachable-connection probe failed for now, perhaps because the server is mid-restart,
+    a network blip, or a relay hiccup, none of which invalidate the sign-in. Treated
+    separately so the in-app poll does not spend the pending PIN over it and force the
+    owner through a fresh OAuth round trip despite having already authenticated. A
+    subclass of ``PlexLinkError``, so an existing ``except PlexLinkError`` caller (the CLI
+    flow) still catches it.
 
-    Defaults to 502 (an upstream, Plex-side unreachability) where its parent defaults to 400.
+    Defaults to 502, an upstream Plex-side unreachability, where its parent defaults to 400.
     """
 
     def __init__(self, code: str, /, *, status: int = 502, **params: ReasonParam) -> None:
@@ -115,9 +116,9 @@ class PlexServerChoiceNeededError(PlexLinkError):
     Not a refusal: the sign-in succeeded and the owner merely has to say which library
     this deletion tool should manage. Callers that can render a choice (the web flows,
     the CLI) catch this, present ``candidates``, and retry with an explicit pick. Like
-    the retryable error it must NOT consume the pending PIN -- the same sign-in has to
-    finish once the choice is made. A subclass of ``PlexLinkError`` so any caller not
-    yet showing a picker degrades to the old refusal, never to a silent guess.
+    the retryable error, this must not consume the pending PIN: the same sign-in has to
+    finish once the choice is made. A subclass of ``PlexLinkError``, so any caller not
+    yet showing a picker falls back to the plain refusal rather than guessing silently.
     """
 
     def __init__(self, candidates: list[PlexServerCandidate]) -> None:
@@ -130,12 +131,12 @@ class PlexServerChoiceNeededError(PlexLinkError):
 
 
 async def client_identifier(session: AsyncSession) -> str:
-    """Reaper's stable identity to plex.tv. Generated once, then **never regenerated**.
+    """Reaper's stable identity to plex.tv. Generated once, then never regenerated.
 
-    Not derived from the host. ``plexapi`` defaults this to ``hex(getnode())`` -- the
-    machine's MAC address -- which is both unstable inside a container (so plex.tv sees
-    a brand-new device on every redeploy, and the token can be invalidated) and a
-    needless leak of host hardware. A persisted uuid4 is neither.
+    Not derived from the host. ``plexapi`` defaults this to ``hex(getnode())``, the
+    machine's MAC address, which is unstable inside a container, since plex.tv would see
+    a brand-new device on every redeploy and could invalidate the token, and is also a
+    needless leak of host hardware. A persisted uuid4 avoids both problems.
     """
     row = await session.get(AppSetting, CLIENT_ID_KEY)
     if row is not None:
@@ -166,17 +167,17 @@ async def sweep_expired_pins(session: AsyncSession) -> int:
     """Delete every pending PIN whose window has closed. Returns how many went.
 
     The twin of :func:`reaper.auth.sessions.sweep_expired`, and it exists for the same
-    reason: `start_pin` used to drop stale rows opportunistically, which only runs when
-    somebody starts ANOTHER PIN, so an abandoned sign-in on an install where nobody starts
-    one again sat there indefinitely (#710, rule 129). Both are swept by the one scheduled
-    job, `scheduler.sweep_expired_sessions`, which is on an interval and off the operator's
-    schedulable list for the argument written there: a switch on it could only ever let the
+    reason: nothing else on its own reaps a PIN nobody ever comes back to poll, so an
+    abandoned sign-in on an install where nobody starts another one would sit there
+    indefinitely. Both are swept by the one scheduled job,
+    `scheduler.sweep_expired_sessions`, which runs on a fixed interval and is off the
+    operator's schedulable list, since a switch to turn it off could only ever let the
     table grow.
 
     An expired row authorizes nothing either way. `poll_plex_login` and `poll_link` each
-    re-check `expires_at` on read and delete the row when it has passed, so an expired PIN
-    cannot be spent whether or not its row is still on disk. This is housekeeping, not a
-    control. The caller commits.
+    re-check `expires_at` on read and delete the row when it has passed, so an expired
+    PIN cannot be spent whether or not its row is still on disk. This function is
+    housekeeping, not a control. The caller commits.
     """
     result = await session.execute(
         delete(PendingPlexLogin).where(PendingPlexLogin.expires_at <= utcnow())
@@ -195,18 +196,17 @@ async def start_pin(
 
     Both browser-driven plex.tv flows start here: signing an operator in
     (:func:`reaper.services.login.poll_plex_login`) and linking a server from Settings
-    (:func:`poll_link`). They were written out twice and differed only in ``purpose``,
-    which is now the one argument. Whichever value is passed is the only poller that can
-    ever spend the row.
+    (:func:`poll_link`). ``purpose`` is the only thing that differs between them.
+    Whichever value is passed is the only poller that can ever spend the row.
 
-    The backend polls plex.tv; the browser never handles a token. ``forward_url`` is where
-    plex.tv sends the sign-in window when the operator is done, which is how that window
-    gets closed (``schemas.PLEX_FORWARD_PATH``).
+    The backend polls plex.tv; the browser never handles a token. ``forward_url`` is
+    where plex.tv sends the sign-in window when the operator is done, which is how that
+    window gets closed (``schemas.PLEX_FORWARD_PATH``).
 
-    No transaction is held across the network call. Two brief database touches sit either
-    side of it, for the same reason :func:`link` gives at length: SQLite hands one writer
-    the database, and a session held open across a plex.tv round trip blocks every other
-    writer for as long as it takes.
+    No transaction is held across the network call. Two brief database touches sit
+    either side of it, for the same reason :func:`link` gives at length: SQLite hands
+    one writer the database, and a session held open across a plex.tv round trip blocks
+    every other writer for as long as it takes.
     """
     async with session_factory() as session:
         cid = await client_identifier(session)
@@ -242,21 +242,22 @@ async def reachable_connection(
 ) -> PlexConnection:
     """Probe every connection and take the best one that answers.
 
-    Ordered local/https, then local/http, then remote, then **relay last**: the relay is
+    Ordered local HTTPS, then local HTTP, then remote, then relay last: the relay is
     bandwidth-capped and proxied through Plex, so it is a fallback rather than a default.
 
-    Every alternative is stored alongside the winner, so that a URI which stops working
-    can be re-resolved later without dragging the owner back through OAuth. ``verify``
-    is the operator's certificate-check choice for THIS server (a self-signed HTTPS
-    Plex is unreachable with it on); it rides through to every probe.
+    Every alternative is stored alongside the winner, so a URI that stops working can be
+    re-resolved later without dragging the owner back through OAuth. ``verify`` is the
+    operator's certificate-check choice for this server (a self-signed HTTPS Plex is
+    unreachable with it on); it rides through to every probe.
     """
     for connection in resource.preferred_connections():
         if await probe_connection(connection, token, verify=verify):
             return connection
 
-    # Retryable, deliberately: a server that answers none of its advertised addresses right
-    # now may simply be restarting. The caller (poll_link) must not consume the PIN over
-    # this, so the browser can re-poll the still-valid PIN once the server is back.
+    # Retryable, deliberately: a server that answers none of its advertised addresses
+    # right now may simply be restarting. The caller (poll_link) must not consume the
+    # PIN over this, so the browser can re-poll the still-valid PIN once the server is
+    # back.
     raise PlexLinkRetryableError(
         "error.plex.link_unreachable", name=resource.name, count=len(resource.connections)
     )
@@ -272,27 +273,29 @@ async def link(
 ) -> LinkedServer:
     """Run the PIN flow end to end and persist the result.
 
-    Takes a session *factory*, not a session, and holds a database transaction only for
-    the two brief moments it needs one -- reading the client identifier at the start and
-    writing the server row at the end. **The multi-minute wait for the human to sign in
-    happens with no transaction open at all.**
+    Takes a session factory, not a session, and holds a database transaction only for
+    the two brief moments it needs one: reading the client identifier at the start and
+    writing the server row at the end. The multi-minute wait for the human to sign in
+    happens with no transaction open at all.
 
-    SQLite gives a writer the database, and an ``AsyncSession`` held
-    open across ``wait_for_pin`` keeps a connection (and its lock) for up to five minutes
-    -- long enough to block every other writer and, on a busy instance, to stall the app
-    while someone fishes out their phone. Hold the lock for milliseconds, not minutes.
+    SQLite gives one writer the database at a time, and an ``AsyncSession`` held open
+    across ``wait_for_pin`` would keep a connection, and its lock, for up to five
+    minutes: long enough to block every other writer and, on a busy instance, to stall
+    the app while someone fishes out their phone. Hold the lock for milliseconds, not
+    minutes.
 
-    ``on_prompt`` is called with the auth URL so the caller can render it -- the CLI
-    prints it, the web UI opens it. The *backend* polls for the token; the browser never
-    handles one. (Overseerr has the browser POST the authToken to its own API. Do not
-    copy that: it puts a full account credential in a place a page script can read.)
+    ``on_prompt`` is called with the auth URL so the caller can render it: the CLI
+    prints it, the web UI opens it. The backend polls for the token; the browser never
+    handles one. Overseerr instead has the browser POST the authToken to its own API,
+    which puts a full account credential in a place a page script can read. Reaper's
+    backend-only poll avoids that.
     """
-    # -- brief DB touch: our stable identity to plex.tv --------------------
+    # -- brief DB touch: Reaper's stable identity to plex.tv ----------------
     async with session_factory() as session:
         cid = await client_identifier(session)
         await session.commit()
 
-    # -- no transaction held across any of this: it is all network + a human ----
+    # -- no transaction held across any of this: it is all network and a human --
     async with PlexTvClient(cid, safety=safety) as plextv:
         pin = await plextv.create_pin()
 
@@ -312,12 +315,12 @@ async def link(
 
 
 def _select_owned(owned: list[PlexResource], choice: str) -> PlexResource:
-    """Resolve an explicit server choice against the OWNED list, and only that list.
+    """Resolve an explicit server choice against the owned list, and only that list.
 
     Matching from ``owned`` is the property that matters: whatever string arrives here,
     the result can never be a server the account does not own. The choice is a machine
-    identifier (what the web picker sends back) or an exact name (what a human types at
-    the CLI). Two owned servers sharing the chosen name is refused rather than guessed,
+    identifier, what the web picker sends back, or an exact name, what a human types at
+    the CLI. Two owned servers sharing the chosen name is refused rather than guessed,
     exactly like every other ambiguity on this path.
     """
     by_id = [r for r in owned if r.client_identifier == choice]
@@ -346,17 +349,17 @@ async def complete_link(
 ) -> LinkedServer:
     """Turn a signed-in owner's discovered servers into a persisted link.
 
-    Split out of :func:`link` so the web setup flow can reuse it: that flow runs
-    its own poll-based PIN loop (the browser needs to be told to open the auth
-    URL and then polled), but the *decision* -- refuse if they own no server,
-    demand an explicit choice if they own several, probe for a reachable
-    connection, encrypt and persist -- is identical, and must not drift between
-    the CLI and the UI.
+    Split out of :func:`link` so the web setup flow can reuse it: that flow runs its own
+    poll-based PIN loop, since the browser needs to be told to open the auth URL and
+    then polled, but the decision itself, refusing an owner with no server, demanding an
+    explicit choice from one with several, probing for a reachable connection, and
+    encrypting and persisting the result, is identical and must not drift between the
+    CLI and the UI.
 
-    ``choice`` names one of the *owned* servers (machine identifier, or exact
-    name from the CLI). Absent, a single owned server is linked and several
-    raise :class:`PlexServerChoiceNeededError` -- never a guess, because picking one
-    arbitrarily is how you point a deletion tool at the wrong library.
+    ``choice`` names one of the owned servers (a machine identifier, or an exact name
+    from the CLI). Left absent, a single owned server is linked, and several servers
+    raise :class:`PlexServerChoiceNeededError` rather than a guess, since picking one
+    arbitrarily is how a deletion tool ends up pointed at the wrong library.
     """
     if not owned:
         raise PlexLinkError("error.plex.link_not_owner", username=account.username)
@@ -383,8 +386,8 @@ async def complete_link(
             (r for r in rows if r.machine_identifier == resource.client_identifier), None
         )
         # One linked server is the invariant every reader (`select(PlexServer).first()`)
-        # relies on. Re-linking a DIFFERENT server must replace, never accumulate: two
-        # rows would make "the" server an arbitrary pick -- exactly the ambiguity a
+        # relies on. Re-linking a different server must replace, never accumulate: two
+        # rows would make "the" server an arbitrary pick, exactly the ambiguity a
         # deletion tool cannot carry.
         others = [r for r in rows if r is not existing]
         for other in others:
@@ -438,15 +441,16 @@ async def switch_server(
 ) -> LinkedServer:
     """Point Reaper at a different server the same account owns, without a fresh OAuth.
 
-    The stored token is the account credential (see the module docstring), so plex.tv can
-    be asked which servers it owns right now; the choice is resolved against that OWNED
-    list and nothing else, exactly like the link flow. Reuses :func:`complete_link`, so
-    the probe, the single-row invariant, and the stale-state clearing cannot drift from
-    the OAuth path.
+    The stored token is the account credential (see the module docstring), so plex.tv
+    can be asked which servers it owns right now; the choice is resolved against that
+    owned list and nothing else, exactly like the link flow. Reuses
+    :func:`complete_link`, so the probe, the single-row invariant, and the stale-state
+    clearing cannot drift from the OAuth path.
 
-    ``verify_tls`` overrides the certificate check for the NEW server; omitted, it keeps
-    the current server's setting. The old value is the wrong default when the target is a
-    different, self-signed server -- the probe would fail with no way to turn it off.
+    ``verify_tls`` overrides the certificate check for the new server; left unset, it
+    keeps the current server's setting. The old value is the wrong default when the
+    target is a different, self-signed server: the probe would fail with no way to turn
+    it off.
     """
     async with session_factory() as session:
         row = (await session.execute(select(PlexServer))).scalars().first()
@@ -492,16 +496,16 @@ async def poll_link(
     choice: str | None = None,
     verify_tls: bool = True,
 ) -> LinkedServer | None:
-    """Check an in-app link once. ``None`` while still pending; the linked server once done.
+    """Check an in-app link once. ``None`` while still pending, the linked server once done.
 
-    Raises :class:`PlexLinkError` on a *permanent* refusal (owns no server, or a choice
-    that matches none) and consumes the pending row so the obtained token cannot be
-    replayed. Two outcomes leave the pending row **intact**, so the browser can re-poll
-    the still-valid PIN without a fresh OAuth round-trip: a transient failure of the
+    Raises :class:`PlexLinkError` on a permanent refusal (owns no server, or a choice
+    that matches none) and consumes the pending row, so the obtained token cannot be
+    replayed. Two outcomes leave the pending row intact, so the browser can re-poll the
+    still-valid PIN without a fresh OAuth round trip: a transient failure of the
     reachable-connection probe (:class:`PlexLinkRetryableError`), and an account owning
-    several servers (:class:`PlexServerChoiceNeededError`) -- the browser shows the candidates
-    and re-polls with ``choice`` set. ``complete_link`` upserts by machine id, so
-    re-linking the same server just refreshes its stored connection and token.
+    several servers (:class:`PlexServerChoiceNeededError`), where the browser shows the
+    candidates and re-polls with ``choice`` set. ``complete_link`` upserts by machine id,
+    so re-linking the same server just refreshes its stored connection and token.
     """
     async with session_factory() as session:
         pending = await session.scalar(
@@ -525,7 +529,7 @@ async def poll_link(
             token = await plextv.check_pin(pin_id)
         except IntegrationError as exc:
             if exc.status == 429:
-                return None  # we polled too eagerly; tell the browser to retry
+                return None  # Reaper polled too eagerly; tell the browser to retry
             raise PlexLinkError("error.plex.link_check_failed") from exc
 
         if not token:
@@ -537,12 +541,13 @@ async def poll_link(
         except IntegrationError as exc:
             raise PlexLinkError("error.plex.link_account_unreadable") from exc
 
-    # Consume the pending PIN only on a *final* outcome: success, or a permanent refusal
-    # (owns no server / a choice matching nothing). Two intermediate outcomes leave it
-    # intact so the browser can re-poll the still-valid PIN -- a transient probe failure
-    # (otherwise a server briefly unreachable at the instant of sign-in forces a fresh
-    # OAuth flow despite a successful sign-in), and a multi-server account waiting on its
-    # owner's choice. Consuming on the final outcomes still prevents token replay.
+    # Consume the pending PIN only on a final outcome: success, or a permanent refusal
+    # (owns no server, or a choice matching nothing). Two intermediate outcomes leave it
+    # intact so the browser can re-poll the still-valid PIN: a transient probe failure,
+    # since otherwise a server briefly unreachable at the instant of sign-in would force
+    # a fresh OAuth flow despite a successful sign-in, and a multi-server account
+    # waiting on its owner's choice. Consuming it on the final outcomes still prevents
+    # token replay.
     consume_pending = True
     try:
         linked = await complete_link(
@@ -555,7 +560,7 @@ async def poll_link(
             verify_tls=verify_tls,
         )
     except (PlexLinkRetryableError, PlexServerChoiceNeededError):
-        # PIN still valid in both cases; let the browser re-poll it -- after the
+        # PIN still valid in both cases; let the browser re-poll it, either after the
         # transient blip passes, or carrying the owner's server choice.
         consume_pending = False
         raise

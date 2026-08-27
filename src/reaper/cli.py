@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""``reaper-admin`` -- the out-of-band escape hatch.
+"""``reaper-admin``: manage admin accounts from outside the web UI.
 
 Run it against a live container:
 
@@ -7,14 +7,14 @@ Run it against a live container:
     docker exec -it reaper reaper-admin reset-password --username admin
     docker exec -it reaper reaper-admin create-admin --username backup-admin
 
-Using it requires the ability to exec into the container -- that is, host access.
-So it grants nothing an attacker with the host could not already do by opening
-the SQLite file, while giving *you* a guaranteed way back in when Plex OAuth
+Using it requires the ability to exec into the container, which already means
+host access. So it grants an attacker nothing beyond what opening the SQLite
+file directly would, while giving you a guaranteed way back in when Plex OAuth
 fails or a password is forgotten.
 
-This module deliberately prints to stdout: it is a terminal tool, and its output
-(a freshly generated password) must never go to the structured log, which is
-persisted and shipped elsewhere.
+Prints to stdout on purpose. This is a terminal tool, and its output (a freshly
+generated password) must never reach the structured log, which is persisted and
+shipped elsewhere.
 """
 
 from __future__ import annotations
@@ -43,13 +43,13 @@ from reaper.services.plex_link import PlexLinkError, PlexServerChoiceNeededError
 
 
 def _out(message: str = "") -> None:
-    """Print, and **flush**.
+    """Print a line and flush stdout immediately.
 
-    The flush is not decoration. ``link-plex`` prints a sign-in URL and then blocks for
-    up to several minutes waiting for the owner to use it. Python line-buffers stdout
-    only when it is a TTY, so piped or captured -- which is exactly how you run it under
-    `docker exec ... | tee`, or from any supervisor -- the URL would sit unseen in the
-    buffer while the command waited for a sign-in that could never happen.
+    ``link-plex`` prints a sign-in URL, then waits up to several minutes for the
+    operator to use it. Python only line-buffers stdout when it is a TTY. Piped or
+    captured output, such as under ``docker exec ... | tee`` or any supervisor, would
+    otherwise leave the URL sitting unseen in the buffer while the command waited for
+    a sign-in that could never happen.
     """
     sys.stdout.write(message + "\n")
     sys.stdout.flush()
@@ -148,11 +148,13 @@ async def _cmd_deactivate(username: str) -> int:
 async def _cmd_link_plex(server: str | None) -> int:
     """Link the Plex server by signing in on plex.tv.
 
-    Headless-friendly: it prints a URL, you open it anywhere, and the *backend* polls
-    for the token. Nothing is ever pasted, and the browser never handles a credential.
+    Works without a browser on the machine: it prints a URL, you open it anywhere,
+    and the backend polls for the token. Nothing is ever pasted, and the browser
+    never handles a credential.
 
     ``server`` picks one server by exact name or machine identifier when the account
-    owns several; without it, a multi-server account gets the list and instructions.
+    owns several. Without it, an account with several servers gets the list and
+    instructions instead.
     """
     settings = get_settings()
     engine = create_engine(settings)

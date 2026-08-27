@@ -1,20 +1,22 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The Scales endpoints.
 
-Read-only. Join the available Seerr requests to the latest scan's candidates and return
-the per-person roll-up (``/fairness``) or one person's full breakdown (``/fairness/people``).
-Delete nothing, plan nothing -- they are reports.
+Read-only. These join the available Seerr requests to the latest scan's candidates
+and return the per-person roll-up (``/fairness``) or one person's full breakdown
+(``/fairness/people``). They are reports: nothing here deletes or plans anything.
 
 Scales sits on the last scan (see ``services.fairness``), so it needs no live Radarr,
-Sonarr or Tautulli read: sizes, titles and verdicts come from the stored candidates, and
-watches from the mirror. It still requires **Seerr** (who requested what) and a configured
-**Tautulli** (without a watch mirror every title would read as never-played) -- if either is
-missing it says so with a 400 rather than returning a report that looks complete.
+Sonarr, or Tautulli read. Sizes, titles, and verdicts come from the stored
+candidates, and watches come from the mirror. It still requires Seerr, to know who
+requested what, and a configured Tautulli, since without a watch mirror every title
+would read as never-played. If either is missing, this answers with a 400 instead of
+returning a report that looks complete.
 
-Seerr's own request counts and per-type limits are read for ONE person at a time, when the
-drawer opens them (``services.fairness._enrich_accounts``), and best-effort: a portal whose
-user list is unreadable drops those extras, never the whole panel. The board itself reads no
-account data, so opening Scales costs no per-person quota calls.
+Seerr's own request counts and per-type limits are read for one person at a time,
+when the drawer opens them (``services.fairness._enrich_accounts``). That read is
+best-effort. A portal whose user list is unreadable drops those extras, never the
+whole panel. The board itself reads no account data, so opening Scales costs no
+per-person quota calls.
 """
 
 from __future__ import annotations
@@ -47,9 +49,10 @@ router = APIRouter(prefix="/api", tags=[api_tags.SCALES])
 
 
 def _request_cache(request: Request) -> fairness.RequestCache:
-    """The one short-TTL request cache the board and the drawer share, lazily created on
-    ``app.state`` (P-1). One per app, so a fresh test app starts with an empty cache and the
-    board's read is reused by a drawer opened seconds later, never re-paging every portal."""
+    """Return the one short-TTL request cache the board and the drawer share, lazily
+    created on ``app.state``. One per app, so a fresh test app starts with an empty
+    cache, and the board's read is reused by a drawer opened seconds later instead of
+    re-paging every portal."""
     return state_singleton(request.app, "fairness_request_cache", fairness.RequestCache)
 
 
@@ -70,8 +73,9 @@ def _unmatched_out(u: fairness.UnmatchedTitle) -> UnmatchedRequestOut:
 
 
 async def _seerr_rows(request: Request) -> list[Instance]:
-    """The enabled Seerr instances, or a 400 when Scales cannot run (no Seerr, or no
-    Tautulli to read watches from). Seerr is multi-instance, so every portal is returned."""
+    """Return the enabled Seerr instances, or refuse with 400 when Scales cannot run
+    (no Seerr, or no Tautulli to read watches from). Seerr is multi-instance, so this
+    returns every portal."""
     async with request.app.state.session_factory() as session:
         rows = (
             (await session.execute(select(Instance).where(Instance.enabled.is_(True))))
@@ -88,9 +92,9 @@ async def _seerr_rows(request: Request) -> list[Instance]:
 async def _open_seerrs(
     stack: AsyncExitStack, rows: list[Instance], box: SecretBox, safety: RuntimeSafety
 ) -> list[SeerrClient]:
-    """One client per portal, each owned by the stack (rule 34). The decrypted key travels
-    on the connection; TLS verification is relaxed only where the operator turned it off for
-    that instance."""
+    """Open one client per portal, each owned by the stack. The decrypted key travels
+    on the connection. TLS verification is relaxed only where the operator turned it
+    off for that instance."""
     seerrs: list[SeerrClient] = []
     for row in rows:
         seerr = SeerrClient(
@@ -101,9 +105,9 @@ async def _open_seerrs(
             # The stable per-portal id, stamped onto every request this client reads, so a
             # Seerr user id (unique only within a portal) can be told apart across portals.
             instance_key=str(row.id),
-            # The operator's external address for the panel's profile link, when set -- the
-            # same external_url the why-panel jump links use. Blank leaves the link on the
-            # connect address (``base_url``).
+            # The operator's external address for the panel's profile link, when set.
+            # This is the same external_url the why-panel jump links use. Blank leaves
+            # the link on the connect address (``base_url``).
             link_base_url=row.external_url,
         )
         await stack.enter_async_context(seerr)
@@ -114,7 +118,7 @@ async def _open_seerrs(
 @router.get("/fairness")
 async def get_fairness(request: Request) -> FairnessReportOut:
     box: SecretBox = request.app.state.secret_box
-    # Read-only: Scales only ever GETs -- from Seerr, and from the local snapshot and mirror.
+    # Read-only. Scales only ever sends GETs, to Seerr, and to the local snapshot and mirror.
     safety = RuntimeSafety(destructive_enabled=False)
     seerr_rows = await _seerr_rows(request)
 
@@ -128,9 +132,9 @@ async def get_fairness(request: Request) -> FairnessReportOut:
                 cache=_request_cache(request),
             )
     except IntegrationError as exc:
-        # Any unreachable Seerr is a 502 with the reason -- never a partial leaderboard that
-        # looks complete. (Seerr's user list / quota are best-effort inside build_report and
-        # do not reach here.)
+        # Any unreachable Seerr is a 502 with the reason, never a partial leaderboard
+        # that looks complete. (Seerr's user list and quota are best-effort inside
+        # build_report and do not reach here.)
         refuse(502, "error.fairness.build_failed", error=exc.as_reason())
 
     return FairnessReportOut(
@@ -146,20 +150,21 @@ async def get_fairness(request: Request) -> FairnessReportOut:
 
 
 def _row_out(row: fairness.RequesterRow) -> RequesterRowOut:
-    """One board row on the wire, field for field off the service record. Its own function
-    so a test can assert what the board is actually sent without transcribing this mapping
-    (rule 119). Why ``plex_id`` is carried at all is on the field itself, in
-    ``RequesterRowOut``: it is what lets the card tell a measured zero apart from a person
-    whose history Reaper cannot see (rule 93)."""
+    """Map one board row to the wire, field for field off the service record. This is
+    its own function so a test can assert what the board actually sends, without
+    transcribing this mapping. Why ``plex_id`` is carried at all is explained on the
+    field itself, in ``RequesterRowOut``. It is what lets the card tell a measured
+    zero apart from a person whose history Reaper cannot see."""
     return RequesterRowOut.model_validate(row, from_attributes=True)
 
 
 @router.get("/fairness/people/{identity}")
 async def get_person(request: Request, identity: str) -> PersonDetailOut:
-    """One person's full request story: every title they asked for that the scan still has,
-    when it arrived, whether they watched it, its fate, who else asked, and their Seerr
-    account totals and caps. ``identity`` is a Scales row's ``identity`` -- the cross-portal
-    person key, not a bare Seerr user id (which collides across portals)."""
+    """Return one person's full request history. This includes every title they asked
+    for that the scan still has, when it arrived, whether they watched it, its fate,
+    who else asked, and their Seerr account totals and caps. ``identity`` is a Scales
+    row's ``identity``, the cross-portal person key, not a bare Seerr user id, which
+    collides across portals."""
     box: SecretBox = request.app.state.secret_box
     safety = RuntimeSafety(destructive_enabled=False)
     seerr_rows = await _seerr_rows(request)
@@ -184,10 +189,11 @@ async def get_person(request: Request, identity: str) -> PersonDetailOut:
 
 
 def _person_out(detail: fairness.PersonDetail) -> PersonDetailOut:
-    """One person's breakdown on the wire. Its own function for the same reason ``_row_out``
-    is (rule 119): a test can assert what the drawer is actually sent, rather than transcribing
-    this mapping. A field the service derives and this drops is invisible from both sides, and
-    that is exactly how the drawer came to print watch figures it could not bound."""
+    """Map one person's breakdown to the wire. This is its own function for the same
+    reason ``_row_out`` is. A test can assert what the drawer actually sends, rather
+    than transcribing this mapping. A field the service derives and this function
+    drops stays invisible on both sides, so dropping one silently risks the drawer
+    printing a watch figure it cannot actually bound."""
     quota = detail.quota
     return PersonDetailOut(
         plex_id=detail.plex_id,
@@ -231,9 +237,10 @@ def _person_out(detail: fairness.PersonDetail) -> PersonDetailOut:
             for t in detail.titles
         ],
         unmatched=[_unmatched_out(u) for u in detail.unmatched],
-        # The span the watch figures above were counted over, exactly as the board is sent it.
-        # Without it the drawer -- which makes the flattest claim of the two, a per-title "not
-        # watched" -- is the one surface that cannot name the window it is claiming over.
+        # The span the watch figures above were counted over, exactly as the board
+        # is sent it. Without it, the drawer, which makes the flattest claim of the
+        # two (a per-title "not watched"), would be the one surface that cannot name
+        # the window it is claiming over.
         horizon_at=detail.horizon_at.isoformat() if detail.horizon_at else None,
         profile_url=detail.profile_url,
     )

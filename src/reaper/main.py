@@ -96,28 +96,30 @@ class HealthResponse(BaseModel):
     """Route return types must be resolvable at runtime.
 
     ``from __future__ import annotations`` turns them into strings, and FastAPI
-    builds a response model by resolving them -- so a type imported only under
-    ``TYPE_CHECKING`` yields a 500 at request time, not an error at import time.
+    builds a response model by resolving them. A type imported only under
+    ``TYPE_CHECKING`` yields a 500 at request time instead of an error at import
+    time.
     """
 
     status: str
 
 
 def _refuse_unservable_schema(revision: str | None) -> None:
-    """Stop the boot rather than serve a schema this build does not know (#565).
+    """Stop the boot rather than serve a schema this build does not know.
 
-    ``schema_gate.refusal`` is the verdict; this is the app's half of it. Raising out of
-    the lifespan is what uvicorn turns into "Application startup failed" and a non-zero
-    exit, so no request is ever answered against a database an older build cannot read --
-    which is the alternative, and it fails item by item, hours later, mid-scan.
+    ``schema_gate.refusal`` is the verdict. This is the app's half of it. Raising
+    out of the lifespan is what uvicorn turns into "Application startup failed"
+    and a non-zero exit, so no request is ever answered against a database an
+    older build cannot read. The alternative fails item by item, hours later,
+    mid-scan.
 
-    Preflight refuses the same database earlier on every boot that runs it (the container
-    entrypoint, ``scripts/dev-local.sh``, ``launcher.main``). This is the copy for a
-    process started without one, and it is the reason the claim covers *every* path into
-    the app rather than the packaged ones (rule 127).
+    Preflight refuses the same database earlier on every boot that runs it (the
+    container entrypoint, ``scripts/dev-local.sh``, ``launcher.main``). This is
+    the copy for a process started without one, so this check covers every path
+    into the app, not only the packaged ones.
 
-    The revision rides as its own log field, never inside the sentence: support wants the
-    hash and the operator cannot do anything with it (rule 21).
+    The revision rides as its own log field, never inside the sentence: support
+    wants the hash, and the operator cannot do anything with it.
     """
     message = schema_gate.refusal(revision)
     if message is None:
@@ -131,10 +133,10 @@ async def _integration_inventory(
 ) -> dict[str, int | bool]:
     """What this install is wired to, as counts and flags.
 
-    Never a base URL, a name, or a key: an instance's address is one of the two places
-    a credential can hide (rule 13), and the count is what answers "why is my second
-    Radarr missing from this scan". Disabled instances are excluded, because the scan
-    excludes them too and a total that disagrees with the scan is worse than no total.
+    Never a base URL, a name, or a key: an instance's address can carry a
+    credential, and the count is what answers "why is my second Radarr missing
+    from this scan." Disabled instances are excluded, because the scan excludes
+    them too, and a total that disagrees with the scan is worse than no total.
     """
     rows = await session.execute(
         select(Instance.kind, func.count())
@@ -159,16 +161,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     factory = create_session_factory(engine)
     app.state.session_factory = factory
 
-    # First, before the block below seeds instances and writes settings: a database at a
-    # revision this build never shipped is refused here rather than discovered later as SQL
-    # naming a column that is not there.
+    # First, before the block below seeds instances and writes settings: a
+    # database at a revision this build never shipped is refused here rather
+    # than discovered later as SQL naming a column that is not there.
     #
-    # Read through the gate's own reader rather than a second query beside it. There was one
-    # here -- an async `SELECT version_num` catching `OperationalError` alone -- and it fed
-    # this gate, so "no alembic_version table" and "could not read the database" arrived as
-    # the same `None`, which `refusal` unconditionally allows. That is rule 93's conflation
-    # sitting on the gate's input, and one reader with one error policy is the fix (rule 104).
-    # It also serves `db.ready` below, which is where the revision was first wanted.
+    # Read through the gate's own reader rather than a second query beside
+    # it. A second reader that only catches `OperationalError` cannot tell
+    # "no alembic_version table" apart from "could not read the database at
+    # all": both come back as `None`, and `refusal` unconditionally allows a
+    # `None` revision to boot. One reader with one error policy keeps that
+    # distinction from being lost. It also serves `db.ready` below, which is
+    # where the revision was first wanted.
     revision = schema_gate.stored_revision(settings.database_path)
     _refuse_unservable_schema(revision)
 
@@ -210,14 +213,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 base_url=recovery_base_url(settings.host, settings.port),
                 data_dir=settings.data_dir,
             )
-            # Recovery mode is a door that opens for anyone who can reach the host, so this
-            # is the last boot on which Reaper should also be able to delete media.
-            # `RuntimeSafety.destructive_allowed` already holds it off for the life of this
-            # process; writing the stored switch off as well is what makes the state survive
-            # the restart that turns recovery back off. Otherwise an install that was armed
-            # before the lockout would come back armed the moment the operator "finished",
-            # with the change they never made. Re-arming is one password away, deliberately.
-            # Restore does the same thing for the same reason (`restore._force_destructive_off`).
+            # Recovery mode is a door that opens for anyone who can reach the
+            # host, so this is the last boot on which Reaper should also be
+            # able to delete media. `RuntimeSafety.destructive_allowed`
+            # already holds it off for the life of this process. Writing the
+            # stored switch off as well is what makes that hold survive the
+            # restart that turns recovery back off. Otherwise an install that
+            # was armed before the lockout would come back armed the moment
+            # the operator "finished," with a change they never made.
+            # Re-arming is one password away, deliberately. Restore does the
+            # same thing for the same reason (`restore._force_destructive_off`).
             await app_settings.set_destructive_enabled(session, enabled=False)
         else:
             # Recovery is off, so any recovery.txt left in the data folder is a spent or
@@ -232,8 +237,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if await count_local_admins(session) == 0:
             log.warning(
                 "auth.no_local_admin",
-                # Settings first, because it is the only one of the two that exists on
-                # every install: the desktop bundles ship no ``reaper-admin`` (rule 25).
+                # Settings first, because it is the only one of the two that
+                # exists on every install: the desktop bundles ship no
+                # ``reaper-admin``.
                 detail=(
                     "No local admin exists. If Plex sign-in fails you will be locked out. "
                     "Set an admin password in Settings, Security, or on Docker and snap "
@@ -241,21 +247,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 ),
             )
 
-        # The EFFECTIVE deletion permission: the stored toggle, which the env var only
-        # seeds on first run. The startup banner must tell the truth about what this
-        # process can do right now -- an install armed from the web UI must not log
-        # "nothing can be deleted" on its next restart. (/api/health reads the same way.)
+        # The effective deletion permission: the stored toggle, which the env
+        # var only seeds on first run. The startup banner must tell the truth
+        # about what this process can do right now. An install armed from the
+        # web UI must not log "nothing can be deleted" on its next restart.
+        # (/api/health reads the same way.)
         safety = await app_settings.runtime_safety(session, settings)
 
-        # The stored logging level wins over the environment seed, like every other
-        # env-seeded switch -- and it applies to this very startup's remaining lines.
+        # The stored logging level wins over the environment seed, like every
+        # other env-seeded switch, and it applies to the rest of this
+        # startup's own log lines.
         stored_level = await app_settings.get_log_level_setting(session)
         if stored_level:
             logbuffer.set_level(stored_level)
 
-        # The API key's digest and the trusted-proxy networks live on app.state so the
-        # middleware's hot path never touches the database. Both are refreshed by their
-        # settings routes on change; this is the boot-time load.
+        # The API key's digest and the trusted-proxy networks live on
+        # app.state so the middleware's hot path never touches the database.
+        # Both are refreshed by their settings routes on change. This is the
+        # boot-time load.
         api_key = await app_settings.get_api_key(session, box)
         app.state.api_key_digest = (
             hashlib.sha256(api_key.encode("utf-8")).digest() if api_key else None
@@ -273,12 +282,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         commit=short_commit(),
         destructive_actions_enabled=safety.destructive_allowed,
     )
-    # The install fingerprint, at INFO and not DEBUG: this is the first thing support asks
-    # for, and an operator should not have to turn anything on to already have it in the log
-    # they are about to send. The four shapes keep their data in four places and take their
-    # configuration by four different routes, so "which one is this" comes before every other
-    # question -- and `log_level_from` answers the one that blocks all the others, since a
-    # stored level silently outranks REAPER_LOG_LEVEL and DEBUG is how anything else is chased.
+    # The install fingerprint, at INFO and not DEBUG: this is the first thing
+    # support asks for, and an operator should not have to turn anything on
+    # to already have it in the log they are about to send. The four shapes
+    # keep their data in four places and take their configuration by four
+    # different routes, so "which one is this" comes before every other
+    # question. `log_level_from` answers the one question that blocks all the
+    # others, since a stored level silently outranks REAPER_LOG_LEVEL, and
+    # DEBUG is how anything else gets chased down.
     log.info(
         "reaper.install",
         install=install_kind(),
@@ -290,25 +301,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         host=settings.host,
         port=settings.port,
     )
-    # Counts and flags only, never a base URL or a key: those carry credentials (rule 13).
+    # Counts and flags only, never a base URL or a key: those can carry credentials.
     log.info("reaper.integrations", **integrations)
-    # Offered against accepted, because `parse_proxy_networks` drops an entry it cannot parse
-    # and carries on. Only the env-seeded path can hold a typo -- the settings route validates
-    # and refuses -- and that is the declarative deployment with no UI to tell. Silently
-    # dropping one is how a reverse-proxied install ends up keying every lockout and rate
-    # limit on the proxy's own address instead of the caller's (rule 101).
+    # Offered against accepted, because `parse_proxy_networks` drops an entry
+    # it cannot parse and carries on. Only the env-seeded path can hold a
+    # typo, since the settings route validates and refuses one, and the
+    # env-seeded path is exactly the declarative deployment with no UI to
+    # tell. Silently dropping one is how a reverse-proxied install ends up
+    # keying every lockout and rate limit on the proxy's own address instead
+    # of the caller's.
     log.info(
         "reaper.proxy_trust",
         enabled=proxy_trust,
         offered=len(offered),
         accepted=len(app.state.trusted_proxies),
     )
-    # The cache read is caught and reaper.db's is not, deliberately. `cache.db` is disposable
-    # by contract (`create_cache_engine`) and is rebuilt by the next sync, so a cache file that
-    # cannot be opened -- truncated by an unclean shutdown, or owned by another uid after a
-    # container's user changed -- must not stop the app from starting. This line is the first
-    # thing in the boot to open it, so without the catch a diagnostic would be the one thing
-    # standing between the operator and a UI they could have deleted the file from.
+    # The cache read is caught and reaper.db's is not, deliberately. `cache.db`
+    # is disposable by contract (`create_cache_engine`) and is rebuilt by the
+    # next sync, so a cache file that cannot be opened, whether truncated by an
+    # unclean shutdown or owned by another uid after a container's user
+    # changed, must not stop the app from starting. This line is the first
+    # thing in the boot to open it, so without the catch a diagnostic would be
+    # the one thing standing between the operator and a UI they could have
+    # deleted the file from.
     try:
         cache_mode = await journal_mode(cache_engine)
     except SQLAlchemyError:
@@ -339,22 +354,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             detail="Destructive actions are disabled. Nothing can be deleted.",
         )
 
-    # Background maintenance. Refreshes only -- it never deletes. The startup catch-up
-    # runs in a task rather than inline so a first-boot 280 MB dataset download does not
-    # block the app from serving; the first scan degrades until it lands, which is the
-    # correct, loud behavior.
-    # The server time zone every timed job runs on: the stored setting, else the
-    # REAPER_TIMEZONE seed, else the host's own zone (see app_settings.get_timezone). A cron
-    # set for 2 AM fires at 2 AM here; without a pinned zone APScheduler would use the
-    # container's own, which is UTC in most images. get_timezone only ever returns a
-    # validated IANA name, so ZoneInfo cannot raise on it.
+    # Background maintenance refreshes data only. It never deletes. The
+    # startup catch-up runs in a task rather than inline so a first-boot
+    # 280 MB dataset download does not block the app from serving. The first
+    # scan degrades until it lands, which is the correct, loud behavior.
+    # The server time zone every timed job runs on: the stored setting, else
+    # the REAPER_TIMEZONE seed, else the host's own zone (see
+    # app_settings.get_timezone). A cron set for 2 AM fires at 2 AM here.
+    # Without a pinned zone, APScheduler would use the container's own zone,
+    # which is UTC in most images. get_timezone only ever returns a validated
+    # IANA name, so ZoneInfo cannot raise on it.
     async with factory() as session:
         scheduler_tz = ZoneInfo(await app_settings.get_timezone(session, settings))
         scan_cron = await app_settings.get_scan_schedule(session)
         maintenance_schedules = await app_settings.get_maintenance_schedules(session)
-    # The zone every timed job resolved to, whichever of the three layers won. A cron set
-    # for 2 AM firing at the wrong hour is the symptom; this is the cause, and a typo'd
-    # REAPER_TIMEZONE otherwise falls through to the host zone with no trace.
+    # The zone every timed job resolved to, whichever of the three layers
+    # won. A cron set for 2 AM firing at the wrong hour is the symptom, and
+    # this is the cause: a typo'd REAPER_TIMEZONE otherwise falls through to
+    # the host zone with no trace.
     log.info("scheduler.timezone", timezone=str(scheduler_tz))
 
     scheduler = build_scheduler(
@@ -365,9 +382,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # The app's own checker, so the nightly check and the About route share one cache.
         update_checker=app.state.update_checker,
         timezone=scheduler_tz,
-        # A reap's live flag lives on app state, which the scheduler has no handle on. Passed
-        # as a predicate rather than read at wiring time so the snapshot sweep asks the
-        # question when it is about to take the write lock, not twelve hours earlier (#325).
+        # A reap's live flag lives on app state, which the scheduler has no
+        # handle on. Passed as a predicate rather than read at wiring time,
+        # so the snapshot sweep asks the question when it is about to take
+        # the write lock, not up to twelve hours earlier.
         reap_running=lambda: reap_in_flight(app),
     )
     # Track which jobs are executing before the scheduler starts, so the very first firing
@@ -376,14 +394,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler.start()
     app.state.scheduler = scheduler
 
-    # Restore what the owner stored: the automatic-scan cron if they set one, and any upkeep
-    # job they moved off its built-in default or turned off. A scan is read-only, so it is the
-    # one scheduled job that produces new review candidates; the rest is cache upkeep.
+    # Restore what the owner stored: the automatic-scan cron if they set one,
+    # and any upkeep job they moved off its built-in default or turned off. A
+    # scan is read-only, so it is the one scheduled job that produces new
+    # review candidates. Everything else here is cache upkeep.
     #
-    # The same call the timezone save makes, which is the point -- this used to be the same two
-    # ladders written out again here, and a guard that boot survives is only worth anything if
-    # the runtime replay of the same data survives it too (rule 87). A stored-but-malformed
-    # cron is logged and skipped in there rather than crashing startup.
+    # This calls the same function the timezone save uses, so a boot that
+    # tolerates a stored-but-malformed cron and a settings save that replays
+    # the same stored values share one guard instead of two. A
+    # stored-but-malformed cron is logged and skipped in there rather than
+    # crashing startup.
     apply_stored_schedules(
         scheduler,
         scheduler_tz,
@@ -429,20 +449,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         scan_task = getattr(app.state, "scan_task", None)
         if scan_task is not None and not scan_task.done():
             scan_task.cancel()
-        # A reap (api/runs.py) is detached too, but it is DELETING -- so it must be canceled
-        # AND awaited before the engines go, so the executor's CancelledError branch marks the
-        # run ABORTED and its finally commits that state and tidies Plex against the still-live
-        # DB and clients. Bounded, so a slow Plex cannot hang shutdown forever; if it exceeds
-        # the bound the second cancel (from wait_for) interrupts the cleanup and we proceed.
+        # A reap (api/runs.py) is detached too, but it is deleting, so it
+        # must be canceled and awaited before the engines go. That lets the
+        # executor's CancelledError branch mark the run ABORTED, whose
+        # finally commits that state and tidies Plex against the still-live
+        # DB and clients. Bounded, so a slow Plex cannot hang shutdown
+        # forever. If it exceeds the bound, the second cancel (from
+        # wait_for) interrupts the cleanup and shutdown proceeds anyway.
         reap_task = getattr(app.state, "reap_task", None)
         if reap_task is not None and not reap_task.done():
             reap_task.cancel()
             with suppress(asyncio.CancelledError, TimeoutError):
                 await asyncio.wait_for(reap_task, timeout=20)
         scheduler.shutdown(wait=False)
-        # The artwork proxy keeps one Tautulli client alive across requests (api/poster.py).
-        # It is built lazily on the first poster request, so it may never exist; closing it
-        # here is what gives it an owner (rule 34).
+        # The artwork proxy keeps one Tautulli client alive across requests
+        # (api/poster.py). It is built lazily on the first poster request,
+        # so it may never exist. Closing it here is what gives it an owner.
         await close_artwork_client(app)
         await engine.dispose()
         await cache_engine.dispose()
@@ -462,27 +484,28 @@ _HTTP_METHODS = frozenset({"get", "put", "post", "delete", "options", "head", "p
 def _mark_credentials(schema: dict[str, Any]) -> None:
     """Give every operation the credential that actually reaches it.
 
-    Three answers, and rule 7/24 governs all of them: each is a predicate in
-    ``api/middleware.py``, evaluated for that exact method and path, never a list kept
-    beside the fence.
+    Three answers, each a predicate in ``api/middleware.py``, evaluated for that
+    exact method and path, never a list kept beside the fence.
 
-    * **Refused a key** (``api_key_refused``) narrows to ``Session``, which is strictly
-      narrower than the document-wide default, so this can only ever ask for *more* than
-      the auth box offers. Both halves of that mark matter: ``security`` is the
-      machine-readable half a generated client and the try-it-out panel read, and the
-      sentence is the half a person reads. It goes first in the description because a
-      security requirement is quiet and the 403 it predicts is not.
-    * **Asks for nothing** (``no_credential_needed``) gets ``security: []``: the health
-      probe and the sign-in endpoints, which have to answer before anyone is signed in.
-    * **Everything else** is left inheriting either credential, because either works.
+    * Refused a key (``api_key_refused``) narrows to ``Session``, which is
+      strictly narrower than the document-wide default, so this can only ever
+      ask for more than the auth box offers. Both halves of that mark matter:
+      ``security`` is the machine-readable half a generated client and the
+      try-it-out panel read, and the sentence is the half a person reads. It
+      goes first in the description because a security requirement is quiet
+      and the 403 it predicts is not.
+    * Asks for nothing (``no_credential_needed``) gets ``security: []``: the
+      health probe and the sign-in endpoints, which have to answer before
+      anyone is signed in.
+    * Everything else is left inheriting either credential, because either
+      works.
 
-    The middle answer was once the whole open set, left inheriting on the argument that
-    ``security: []`` would trade one wrong claim for another, since several open routes
-    refuse anonymously for their own reasons. That was true of exactly one of them, and
-    leaving all eight alone published a credential requirement on the seven that have
-    none and offered the key on the one that refuses it. The exception is now declared
-    where the guard is (``_SIGNED_IN_ONLY_READS``) and read by both predicates, so the
-    document states what was measured on all three.
+    A route can look open while still refusing an anonymous request for a
+    reason of its own, and marking it ``security: []`` would wrongly tell a
+    client that no credential is needed at all. ``_SIGNED_IN_ONLY_READS`` names
+    that kind of route, and both ``api_key_refused`` and ``no_credential_needed``
+    read it, so the two predicates and the document agree on which routes are
+    genuinely open.
     """
     for path, operations in schema.get("paths", {}).items():
         for method, operation in operations.items():
@@ -509,33 +532,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version=__version__,
         description="Grave decisions, clearly explained.",
         lifespan=lifespan,
-        # The stock /docs, /redoc and /openapi.json sit OUTSIDE /api, which the
-        # AuthGuard lets straight through -- so the defaults would publish the whole
-        # API description to anyone who can reach the port. They are disabled here and
-        # served signed-in-only at /api/docs and /api/openapi.json below instead.
+        # The stock /docs, /redoc, and /openapi.json sit outside /api, which
+        # the AuthGuard lets straight through, so the defaults would publish
+        # the whole API description to anyone who can reach the port. They
+        # are disabled here and served signed-in-only at /api/docs and
+        # /api/openapi.json below instead.
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
     )
     app.state.settings = settings
-    # One instance for the app's lifetime, so its hours-long answer cache is shared across
-    # requests -- and with the nightly `check_for_updates` job, which is handed this same
-    # instance so its ask leaves the answer ready for the next page load. Lazy: nothing is
-    # fetched until the job fires or a surface asks.
+    # One instance for the app's lifetime, so its hours-long answer cache is
+    # shared across requests, including with the nightly `check_for_updates`
+    # job, which is handed this same instance so its check leaves the answer
+    # ready for the next page load. Lazy: nothing is fetched until the job
+    # fires or a surface asks.
     app.state.update_checker = UpdateChecker()
 
     @app.exception_handler(RequestValidationError)
     async def _validation_reason(_: Request, exc: RequestValidationError) -> JSONResponse:
         """Strip pydantic's ``Value error,`` prefix off a wire-schema refusal, and type it.
 
-        The SPA renders ``detail[].msg`` verbatim (``api.ts``'s ``reason``), so a domain
-        refusal raised in a schema validator reached the operator as "Value error, There is
-        no ... protection to switch on" -- internal vocabulary in front of a plain sentence,
-        which rule 21 does not allow. ``policy._to_body`` and ``runs.update_profile`` strip
-        exactly this for a refusal raised inside a route by constructing an engine model
-        directly; this is the same removal, through the same ``validation_error_items``, for
-        the ones FastAPI handles before the route body ever runs, so all three paths read
-        alike and carry the same ``code``/``params`` where the underlying error is typed.
+        The SPA renders ``detail[].msg`` verbatim (``api.ts``'s ``reason``), so a
+        domain refusal raised in a schema validator reached the operator as
+        "Value error, There is no ... protection to switch on": internal
+        vocabulary in front of a plain sentence, which operator-facing text may
+        not show. ``policy._to_body`` and ``runs.update_profile`` strip exactly
+        this for a refusal raised inside a route by constructing an engine model
+        directly. This is the same removal, through the same
+        ``validation_error_items``, for the ones FastAPI handles before the
+        route body ever runs, so all three paths read alike and carry the same
+        ``code``/``params`` where the underlying error is typed.
 
         Shape is otherwise FastAPI's own, so nothing downstream has to change.
         """
@@ -546,14 +573,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(RefusalHTTPException)
     async def _refusal_reason(_: Request, exc: RefusalHTTPException) -> JSONResponse:
-        """Every coded refusal's wire shape: the English ``detail`` an API client already
-        reads, plus ``code`` and ``params`` beside it at the top level for a typed reader
-        (the SPA's composer, a test). One serializer (``refusal_body``) shared with
-        ``api.middleware``'s raw ASGI rejections, so the two cannot drift apart.
+        """Every coded refusal's wire shape: the English ``detail`` an API client
+        already reads, plus ``code`` and ``params`` beside it at the top level for
+        a typed reader (the SPA's composer, a test). One serializer
+        (``refusal_body``) shared with ``api.middleware``'s raw ASGI rejections,
+        so the two cannot drift apart.
 
-        A plain ``HTTPException`` that is not this subclass -- FastAPI's own 404/405,
-        Starlette's -- is untouched and keeps its default shape; this handler is registered
-        for ``RefusalHTTPException`` alone.
+        A plain ``HTTPException`` that is not this subclass, such as FastAPI's
+        own 404/405 or Starlette's, is untouched and keeps its default shape.
+        This handler is registered for ``RefusalHTTPException`` alone.
         """
         return JSONResponse(
             status_code=exc.status_code,
@@ -563,89 +591,67 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/health", tags=[api_tags.SETUP])
     async def health() -> HealthResponse:
-        # An UNAUTHENTICATED liveness probe (the container HEALTHCHECK hits it), so it
-        # tells an anonymous caller nothing: no armed state, no safety note, no exact
-        # version. The safety banner reads the authenticated /api/settings/safety.
+        # An unauthenticated liveness probe (the container HEALTHCHECK hits
+        # it), so it tells an anonymous caller nothing: no armed state, no
+        # safety note, no exact version. The safety banner reads the
+        # authenticated /api/settings/safety.
         return HealthResponse(status="ok")
 
     def openapi_with_api_key() -> dict[str, Any]:
-        """The stock schema plus the two security schemes, marked per operation, and the
-        section list that keeps the whole API from rendering as one flat scroll.
+        """Build the OpenAPI schema once, add the two security schemes, mark
+        which credential actually reaches each operation, and group routes into
+        sections so the reference does not render as one flat list.
 
-        **Which credential reaches which route is part of the reference, not a footnote.**
-        The scheme alone was applied globally, so the auth box rendered over all 87
-        operations and try-it-out looked available on every one of them -- while the fence
-        in ``api/middleware.py`` refuses a key on most. Each operation therefore carries
-        the credential that actually reaches it, from ``api_key_refused``, the same two
-        predicates the guard itself runs: nothing here restates the fence, so nothing here
-        can fall behind it. A session-only operation also says so in words, because a
-        security requirement is a quiet signal and a 403 nobody predicted is a loud one.
+        Each operation gets the credential that actually reaches it, using the
+        same ``api_key_refused`` and ``no_credential_needed`` predicates the
+        auth guard itself runs (see :func:`_mark_credentials`), so the
+        reference cannot fall out of sync with the guard. A session-only
+        operation also says so in its description, since a security
+        requirement is a quiet signal and an unexpected 403 is not.
 
-        **The order of the two schemes is load-bearing.** Scalar preselects
-        the FIRST one an operation accepts and sends it, so with ``ApiKey`` first every
-        try-it-out went out carrying an ``X-Api-Key`` header holding the unfilled scheme's
-        placeholder, which is the empty string -- and the guard judges a presented key on
-        the key alone, never falling back to the cookie, so the reference answered its own
-        requests "That API key is not valid." With ``Session`` first the preselected
-        credential is a cookie, which no page script can set (``Cookie`` is a forbidden
-        fetch header, so the browser drops it), and the real session rides along instead.
-        Measured against the shipped bundle: reading the last snapshot answered 401 under
-        one order and authenticated under the other, and the key stays selectable in the
-        same dropdown.
+        ``Session`` must be listed before ``ApiKey``. Scalar's try-it-out
+        preselects whichever scheme is listed first. With ``ApiKey`` first,
+        try-it-out would send an empty ``X-Api-Key`` placeholder, and the
+        guard rejects a presented key on its own terms with no fallback to
+        the cookie. With ``Session`` first, the preselected credential is the
+        browser's own session cookie, which no page script can set (browsers
+        refuse to let JavaScript set the ``Cookie`` header), so the real
+        session is what rides along.
 
-        **The guard wants a third thing, and the page now supplies it.** Every unsafe
-        method off the key lane needs ``X-Reaper-CSRF: 1``, which a cookie cannot carry on
-        its own, so the panel's own three headers (``accept``, ``content-type``,
-        ``cookie``) met a 403 on all 47 writes. ``api_docs`` sets it from the reference's
-        ``onBeforeRequest`` hook, which is handed the mutable builder the outgoing request
-        is built FROM -- the hook's ``request`` argument is a throwaway built from the
-        payload, so mutating that one changes nothing, and ``requestBuilder`` is the live
-        object (``@scalar/api-reference``'s ``map-config-plugins``). The sibling
-        ``onRequestBuilt`` hook would also have worked, on the real ``Request`` rather than
-        the builder; this one is chosen because the builder is the documented place to add
-        a header, not because the ``Request`` is closed to it.
-        Measured against the shipped bundle: ``POST /api/policy/validate`` from try-it-out
-        went 403 CSRF before and reaches the handler after, with ``x-reaper-csrf: 1`` on
-        the wire beside the cookie. The ``Session`` description now says the button writes,
-        and still names the header for the script author writing their own client.
+        The reference page also needs ``X-Reaper-CSRF: 1`` on every write,
+        which a cookie cannot carry by itself. ``api_docs`` sets that header
+        from Scalar's ``onBeforeRequest`` hook, writing onto
+        ``event.requestBuilder`` rather than the hook's ``request`` argument:
+        the builder is the live, mutable object, while ``request`` is a
+        throwaway built from the payload, so mutating it changes nothing that
+        is actually sent.
 
-        **This widens what the PAGE may do. It does not widen what the CREDENTIAL may
-        do.** Before the hook the reference could send none of the document's 47 writes;
-        now it sends all of them, as the operator, and 15 succeed on the first Send with
-        the body Scalar prefills from the schema example -- including rotating the API key
-        under every script pointed at it, and dropping the stored Plex server. None of
-        that is reach the session lacked, since the SPA holds the same cookie; what
-        changes is that the SPA spends it behind its own confirmations and this page
-        spends it on one click. Say it plainly wherever the link is handed out rather than
-        rounding it off here: the "API reference" row in ``GeneralPanel.tsx`` is the copy that
-        has to carry it, and this paragraph existing is not a substitute for that one.
+        This makes the reference page a fully working client under the
+        operator's own session: every write the API offers can now be sent
+        from a button, prefilled with the schema's example body, including
+        rotating the API key or dropping the stored Plex server. It grants no
+        access the session did not already have. The SPA spends the same
+        cookie behind its own confirmations, and this page spends it in one
+        click. That trade-off belongs in the copy next to wherever this link
+        is offered (``GeneralPanel.tsx``'s "API reference" row), not only
+        here. The CSRF header itself proves same-origin, not identity: it is
+        not a secret, and any same-origin page could set it.
 
-        The header itself is not a credential. It proves same-origin, which this page is,
-        being served by Reaper at ``/api/docs`` behind the same session, and any
-        same-origin page could always set it; nothing server-side changed.
+        A stray Send still cannot delete anything. ``POST
+        /api/runs/{run_id}/execute`` refuses unless
+        ``app_settings.runtime_safety`` reports ``destructive_allowed``, then
+        recomputes the content-bound confirmation phrase server-side and
+        compares it before sending anything. Arming itself is password-gated
+        in the request body, so a prefilled, empty password is refused too.
 
-        **A stray Send still cannot delete anything, and here is what stops it.**
-        ``POST /api/runs/{run_id}/execute`` reaches ``api/runs.py``'s ``execute_run``,
-        which refuses unless ``app_settings.runtime_safety`` reports
-        ``destructive_allowed``, then recomputes the content-bound phrase with
-        ``planner.confirmation_phrase`` and compares it server-side before anything is
-        sent. Arming is itself password-gated in the request body
-        (``api/settings.py``'s ``set_safety``), so the prefilled empty password is
-        refused. Driven in the reference-page request shape: unarmed 403, armed with the
-        prefilled empty phrase 409, armed with the correct phrase stopped at the
-        executor's own preflight.
-
-        ``tags`` names and orders the sections; ``x-tagGroups`` is the vendor extension
-        Scalar reads to nest them under three headings. Both come from
-        ``api.tags.GROUPS``, the one place a section is declared.
-
-        A route carrying a tag that is not in that list **vanishes from the reference
-        entirely** -- once ``x-tagGroups`` is present Scalar builds the sidebar from the
-        group members alone, so an ungrouped tag emits no navigation entry and its
-        operations are reachable only by someone who already knows the path. Measured
-        against the shipped bundle by retagging one route: every other operation
-        navigable, the retagged one absent, and no stray heading.
-        ``tests/test_openapi_tags.py`` refuses it for that reason, not for tidiness.
+        ``tags`` names and orders the sections, and ``x-tagGroups`` is the
+        vendor extension Scalar reads to nest them under headings. Both come
+        from ``api.tags.GROUPS``, the one place a section is declared. A
+        route carrying a tag that is not in that list vanishes from the
+        reference entirely, since Scalar builds its sidebar from the group
+        members alone once ``x-tagGroups`` is present, leaving an ungrouped
+        route reachable only by someone who already knows its path.
+        ``tests/test_openapi_tags.py`` is the gate.
         """
         if app.openapi_schema is None:
             schema = get_openapi(
@@ -661,27 +667,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "type": "apiKey",
                 "in": "header",
                 "name": "X-Api-Key",
-                # Built from the fence in api/middleware.py, never written beside it: the
-                # box that offers the key on every operation in the document has to say
-                # which ones it will actually get through. Neither sentence carries the
-                # operation count any more -- both said 87 against a real 96, drifting once
-                # per route added and reading as measured the whole time (rule 144). The
-                # count was load-bearing in neither, so it is gone rather than gated.
+                # Built from the fence in api/middleware.py, never written
+                # beside it: the box that offers the key on every operation in
+                # the document has to say which ones it will actually get
+                # through. This description does not state an operation
+                # count, since a written count silently drifts every time a
+                # route is added and would keep reading as measured.
                 "description": api_key_scope_description(),
             }
             components["securitySchemes"]["Session"] = {
                 "type": "apiKey",
                 "in": "cookie",
                 "name": DOCUMENTED_SESSION_COOKIE,
-                # Still names the CSRF header, for the reason it always did: this is the
-                # only place the document mentions it, and a script author writing their
-                # OWN client needs it before their first write rather than after the 403
-                # it causes. What changed is that the button no longer needs telling --
-                # the reference page sets it (``api_docs``), so the sentence describes
-                # the header as something a script sends rather than something missing.
+                # Still names the CSRF header: this is the only place the
+                # document mentions it, and a script author writing their own
+                # client needs to know about it before their first write, not
+                # after the 403 it causes. The reference page itself sets the
+                # header automatically (``api_docs``), so the sentence
+                # describes the header as something a script sends, not
+                # something missing.
                 #
-                # Header and value interpolated from the guard's own constants, so the
-                # sentence a script author copies cannot outlive what _csrf_ok accepts.
+                # Header and value interpolated from the guard's own
+                # constants, so the sentence a script author copies cannot
+                # outlive what _csrf_ok accepts.
                 "description": (
                     "The sign-in cookie your browser already holds. Nothing to paste: it "
                     "rides along on its own, so the try-it-out button reads and writes as "
@@ -697,15 +705,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.openapi_schema = schema
         return app.openapi_schema
 
-    # The one producer of the schema, so there is no second way to build it. Both this and
-    # the stock ``FastAPI.openapi`` cache into ``app.openapi_schema`` and short-circuit on
-    # it, so whichever runs first wins for the life of the process: one stock call before
-    # the first request would serve the reference a document with no ``tags``, no
-    # ``x-tagGroups`` and no ``ApiKey`` scheme -- a flat scroll under an auth box that does
-    # not authenticate -- and nothing would raise. No such caller exists today (``docs_url``,
-    # ``redoc_url`` and ``openapi_url`` are all ``None`` above, so FastAPI registers no route
-    # that calls it), which is exactly why the trap is worth closing here rather than in
-    # whichever change first adds one.
+    # The one producer of the schema, so there is no second way to build it.
+    # Both this and the stock ``FastAPI.openapi`` cache into
+    # ``app.openapi_schema`` and short-circuit on it, so whichever runs first
+    # wins for the life of the process. One stock call before the first
+    # request would serve the reference a document with no ``tags``, no
+    # ``x-tagGroups``, and no ``ApiKey`` scheme: a flat scroll under an auth
+    # box that does not authenticate, and nothing would raise to catch it. No
+    # such caller exists today (``docs_url``, ``redoc_url``, and
+    # ``openapi_url`` are all ``None`` above, so FastAPI registers no route
+    # that calls it), which is why this trap is worth closing here rather
+    # than in whichever change first adds one.
     app.openapi = openapi_with_api_key  # type: ignore[method-assign]
 
     @app.get("/api/openapi.json", include_in_schema=False)
@@ -715,9 +725,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/docs", include_in_schema=False)
     async def api_docs() -> HTMLResponse:
-        # The API reference, rendered by a Scalar bundle the frontend build vendors to
-        # /vendor/scalar.js -- shipped in the container, no CDN, works offline. Signed-in
-        # only, exactly like the schema it renders.
+        # The API reference, rendered by a Scalar bundle the frontend build
+        # vendors to /vendor/scalar.js. Shipped in the container, no CDN,
+        # works offline. Signed-in only, exactly like the schema it renders.
         return HTMLResponse(
             "<!doctype html>\n"
             "<html>\n"
@@ -747,17 +757,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(setup_router)
     app.include_router(settings_router)
-    # Beside its parent, which is where a reader looks for it. Not an ordering
-    # constraint: `paths` insertion order moves whatever the include order, and
-    # nothing reads it.
+    # Beside its parent, which is where a reader looks for it. This is not an
+    # ordering constraint: it only shifts where routes land in `paths`
+    # insertion order, and nothing reads that order.
     app.include_router(plex_router)
     app.include_router(backup_router)
-    # The five that used to be one API routes module, in the order its four banners drew them. The
-    # sections were contiguous there, so including them in that order reproduces the served
-    # route table **exactly** -- 79 paths and 96 operations, position for position, measured
-    # against the pre-split document rather than assumed. Keep them in this order: FastAPI
-    # matches first-registered-wins, and while no parameterized path in this app currently
-    # shadows a literal sibling, that is a property of today's paths and not of the framework.
+    # Keep these five in this order. FastAPI matches routes first-registered
+    # wins, and while no parameterized path in this app currently shadows a
+    # literal sibling, that is a property of today's paths, not a guarantee
+    # from the framework. This order also matches how these routers were
+    # grouped before they were split out of one module, so the served route
+    # table's position order stays stable.
     app.include_router(review_router)
     app.include_router(policy_router)
     app.include_router(simulate_router)
@@ -775,24 +785,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(lists_router)
     app.include_router(logs_router)
 
-    # The gate. Every /api route above requires a session and passes a CSRF check,
-    # except the health probe and /api/auth (you cannot sign in if signing in needs
-    # a session). Added last so it wraps the whole app -- including the SPA, which
-    # it lets straight through. See reaper.api.middleware.
+    # The gate. Every /api route above requires a session and passes a CSRF
+    # check, except the health probe and /api/auth (you cannot sign in if
+    # signing in needs a session). Added last so it wraps the whole app,
+    # including the SPA, which it lets straight through. See
+    # reaper.api.middleware.
     app.add_middleware(AuthGuard)
 
-    # The built SPA, served as low-priority routes: every /api route above is matched
-    # first, and only then does the frontend get a look. Missing paths fall back to
-    # index.html so client-side routing survives a refresh or a bookmarked deep link.
-    # This is what makes the shipped container one service on one port.
+    # The built SPA, served as low-priority routes: every /api route above is
+    # matched first, and only then does the frontend get a look. Missing
+    # paths fall back to index.html so client-side routing survives a
+    # refresh or a bookmarked deep link. This is what makes the shipped
+    # container one service on one port.
     #
-    # Off in development (REAPER_SERVE_SPA=false, set in .claude/launch.json), because
-    # Vite serves the UI on its own port and proxies /api here; mounting dist too would
-    # leave a stale second copy of the UI on this one. A missing dist in *production* is
-    # a broken image, and should not be papered over by silently serving 404s from a
-    # directory that was never built -- so that case still warns rather than passing.
-    # In a packaged install (frozen bundle, snap) the install root stands in for the
-    # repo root: the built SPA travels inside it, with no src/ level above the package.
+    # Off in development (REAPER_SERVE_SPA=false, set in
+    # .claude/launch.json), because Vite serves the UI on its own port and
+    # proxies /api here. Mounting dist too would leave a stale second copy of
+    # the UI on this one. A missing dist in production is a broken image,
+    # and should not be papered over by silently serving 404s from a
+    # directory that was never built, so that case still warns rather than
+    # passing. In a packaged install (frozen bundle, snap) the install root
+    # stands in for the repo root: the built SPA travels inside it, with no
+    # src/ level above the package.
     dist = project_root() / "frontend" / "dist"
     if not settings.serve_spa:
         log.info(

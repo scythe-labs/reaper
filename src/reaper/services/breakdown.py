@@ -4,13 +4,13 @@
 Three things, all derived from the latest snapshot and the owner's live overrides, so the
 numbers match the exact set the planner will act on (``services.condemned``):
 
-  * **the ledger** -- what the policy condemned, what the owner spared or added by hand,
-    and the net a reap would remove (with the count that could not be measured);
-  * **the movie/season split** of that net set;
-  * **why the policy condemned them** -- a participation tally over each condemned row's
+  * the ledger: what the policy condemned, what the owner spared or added by hand, and
+    the net a reap would remove, with the count that could not be measured;
+  * the movie/season split of that net set;
+  * why the policy condemned them: a participation tally over each condemned row's
     frozen signals. A title trips several signals at once, so the counts overlap and sum
-    past the total; this is a "how many condemned titles trip each signal", never a
-    partition.
+    past the total. This counts how many condemned titles trip each signal, and is never
+    a partition.
 
 Deletes nothing and plans nothing. The plan itself is still built, dry-run, and executed
 through the runs API; this only explains what that plan would cover.
@@ -48,36 +48,38 @@ class ReapBreakdown:
     policy_condemned_bytes: int
     hand_spared: int
     spares_expired: int
-    """The share of ``hand_spared`` a scan would hand straight back to policy -- titles kept out
-    of this plan by a spare whose clock has already passed.
+    """The share of ``hand_spared`` a scan would hand straight back to policy: titles kept
+    out of this plan by a spare whose clock has already passed.
 
-    A spare's expiry is realized ONLY by a scan (``whitelist.purge_expired_spares``), so between
-    the clock passing and the next scan the planner, this ledger and the executor all still read
-    it and the file is genuinely kept. Reported so the Reap page can say why those titles are
-    missing and that a scan releases them, instead of leaving them silently absent.
+    A spare's expiry is realized only by a scan (``whitelist.purge_expired_spares``), so
+    between the clock passing and the next scan the planner, this ledger, and the executor
+    all still read it and the file is genuinely kept. Reported so the Reap page can say why
+    those titles are missing and that a scan releases them, instead of leaving them
+    silently absent.
 
-    Counted as "still spared after the purge?", via ``whitelist.without_expired_spares`` -- the
-    same rule the scan judges on -- and not as "has its own clock passed?". The two differ where
-    spares nest: a season spared for 10 days inside a show spared forever has an expired clock,
-    but the purge deletes only the season's row and the show's spare keeps it anyway. That title
-    is not one a scan would release, and the page must not promise it is.
+    Counted as "still spared after the purge?", via ``whitelist.without_expired_spares``,
+    the same rule the scan judges on, and not as "has its own clock passed?" The two differ
+    where spares nest: a season spared for 10 days inside a show spared forever has an
+    expired clock, but the purge deletes only the season's row and the show's spare keeps
+    it anyway. That title is not one a scan would release, and the page must not promise it
+    is.
 
-    Titles, not spares: one whole-show spare holding five condemned seasons counts five, which
-    is what the operator's copy says."""
+    Titles, not spares: one whole-show spare holding five condemned seasons counts five,
+    which is what the operator's copy says."""
     hand_reaped: int
     hand_reaped_bytes: int
     hand_reaped_held: int
-    """Hand reaps the engine refuses to honor yet (a fired structural gate, or a row it
-    cannot identify -- NOT merely evidence it could not check, which no longer holds), so
-    they are NOT in ``will_reap``. Reported so an operator who marked N items and sees fewer
-    reaped is told the rest are held, never silently dropped (PR-2)."""
+    """Hand reaps the engine refuses to honor yet, such as a fired structural gate or a row
+    it cannot identify, not merely evidence it could not check, which no longer holds. So
+    they are not in ``will_reap``. Reported so an operator who marked N items and sees fewer
+    reaped is told the rest are held, never silently dropped."""
     will_reap: int
     will_reap_bytes: int
     will_reap_unknown: int
     # The movie/season split of the net set, with the unmeasured share of each. The planner
     # holds unmeasured items back while the unknown-size allowance is 0, so the page needs
-    # both halves to subtract the same rows the headline does -- otherwise the split and the
-    # total state two different numbers for one reap (rule 30).
+    # both halves to subtract the same rows the headline does, or the split and the total
+    # would state two different numbers for one reap.
     movies: int
     movies_unknown: int
     seasons: int
@@ -110,16 +112,16 @@ def _empty() -> ReapBreakdown:
 def _adds_signals(explanation_json: str) -> set[str]:
     """The signal ids that pushed one stored row toward removal.
 
-    A signal "adds" when it contributed pressure. Rows frozen since the ``state`` field
-    shipped carry it explicitly; older rows fall back to a positive contribution, which is
-    the same fact.
+    A signal "adds" when it raised the deletion score. Rows frozen since the ``state``
+    field shipped carry it explicitly; older rows fall back to a positive contribution,
+    which is the same fact.
 
-    Guarded at all four layers a stored explanation can be corrupt at (rule 96): the parse,
-    the top-level shape, each entry's shape, and the contribution value itself, which is
-    read as a number or not at all -- ``float("")`` on a hand-edited row raises a ValueError
-    the same way the parse does. An unreadable explanation contributes nothing rather than
+    Guarded at all four layers a stored explanation can be corrupt at: the parse, the
+    top-level shape, each entry's shape, and the contribution value itself, which is read
+    as a number or not at all (``float("")`` on a hand-edited row raises a ValueError the
+    same way the parse does). An unreadable explanation contributes nothing rather than
     failing the whole breakdown, and empty is the cautious reading here: this tally only
-    explains rows the planner has ALREADY put on the removal list, so a missing entry
+    explains rows the planner has already put on the removal list, so a missing entry
     under-explains a removal and can never cause one.
     """
     try:
@@ -164,7 +166,7 @@ async def reap_breakdown(session: AsyncSession) -> ReapBreakdown:
         .all()
     )
     # The exact set the planner will act on: frozen condemned, minus hand-spares, plus the
-    # hand-reaps the engine honors. One source of truth, so the ledger's total matches the
+    # hand-reaps the engine honors. One shared derivation, so the ledger's total matches the
     # confirmation phrase the owner will approve.
     effective = list((await effective_condemned(session, latest.id, decisions)).values())
 
@@ -178,17 +180,17 @@ async def reap_breakdown(session: AsyncSession) -> ReapBreakdown:
     hand_spared = len(spared_rows)
 
     # ...and of those, the ones a scan would hand straight back to policy. Counted over the
-    # SPARED condemned rows only, not every expired whitelist row, because the Reap page's
-    # claim is "these are not in this plan" -- true only of a title the policy condemned and a
+    # spared condemned rows only, not every expired whitelist row, because the Reap page's
+    # claim is "these are not in this plan," true only of a title the policy condemned and a
     # spare is holding back.
     #
-    # The test is "would this still be spared after the purge", not "has its own clock passed":
-    # the two differ when spares nest. A season spared for 10 days inside a show spared forever
-    # has an expired clock of its own, but the scan deletes only the season's row and the show's
-    # spare goes on keeping it -- so counting it would send the operator scanning for a title
-    # that cannot move, which is exactly the false promise the notice exists to avoid (rule 61).
-    # `without_expired_spares` is the same rule `overrides_effective_at` judges on, so this
-    # count is what the next scan really releases.
+    # The test is "would this still be spared after the purge," not "has its own clock
+    # passed": the two differ when spares nest. A season spared for 10 days inside a show
+    # spared forever has an expired clock of its own, but the scan deletes only the season's
+    # row and the show's spare goes on keeping it, so counting it would send the operator
+    # looking for a title that cannot move. `without_expired_spares` is the same rule
+    # `overrides_effective_at` judges on, so this count is what the next scan really
+    # releases.
     now = utcnow()
     expiries = await whitelist.spare_expiries(session)
     surviving = whitelist.without_expired_spares(decisions, expiries, now)
@@ -209,13 +211,12 @@ async def reap_breakdown(session: AsyncSession) -> ReapBreakdown:
     hand_reaped = len(hand_reaped_rows)
     hand_reaped_bytes = sum(c.size_bytes for c in hand_reaped_rows if c.size_bytes is not None)
 
-    # The operator's reap marks the engine refuses to honor yet: counted (not dropped) so the
-    # ledger can say "N of your reap marks are held" rather than silently under-report (PR-2).
+    # The operator's reap marks the engine refuses to honor yet: counted, not dropped, so the
+    # ledger can say "N of your reap marks are held" rather than silently under-reporting.
     hand_reaped_held = len(await held_reaps(session, latest.id, decisions))
 
-    # Participation over the frozen condemned rows: for each signal that added pressure, how
-    # many condemned titles carry it. Overlapping by design. The per-signal byte totals this
-    # used to accumulate beside the counts went with the wire fields nothing read.
+    # Participation over the frozen condemned rows: for each signal that raised the score,
+    # how many condemned titles carry it. Overlapping by design.
     counts: dict[str, int] = {}
     for row in condemned_rows:
         for sid in _adds_signals(row.explanation_json):

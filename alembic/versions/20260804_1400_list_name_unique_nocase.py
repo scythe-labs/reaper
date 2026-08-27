@@ -1,28 +1,31 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """a list name is unique without regard to case
 
-``list_config.name`` was unique byte for byte while every reader case-folds it (rule 88),
-so "Never Reap" and "never reap" were two rows to SQLite and one list to the policy: the
-second never got a keep rule of its own, it shared the first's, and deleting either one
-took that rule away and stopped the other protecting (#508).
+``list_config.name`` was unique byte for byte, but every reader case-folds it before
+comparing. So "Never Reap" and "never reap" counted as two rows to SQLite but one list to
+the policy. Only one of the two ever got its own keep rule. It was shared with the other,
+and deleting either row took that rule away and stopped both from protecting anything.
 
-The column gains ``COLLATE NOCASE``, which is what makes its UNIQUE constraint compare the
-way the code does. Additive in effect and safe on a populated database: SQLite cannot alter
-a collation in place, so this is a batch rebuild, and the rows carry over untouched.
+The column gains ``COLLATE NOCASE``, which makes its UNIQUE constraint compare names the
+way the code already does. This is additive in effect and safe on a populated database.
+SQLite cannot alter a collation in place, so this runs as a batch rebuild, and the rows
+carry over untouched.
 
-Guarded twice. The stored DDL is read first, so a database already carrying the collation
-(every fresh install) is left alone. Then any name that already collides is disambiguated
-before the constraint could refuse it -- a suffix on the LATER row, keeping the oldest
-spelling, because the older row is the one whose name the keep rule is most likely to spell.
+This migration guards twice. First, it reads the stored DDL, so a database that already
+has the collation, including every fresh install, is left alone. Then, before adding the
+constraint, it disambiguates any name that already collides: it adds a suffix to the
+later row and keeps the oldest spelling as is, since the older row's name is the one a
+keep rule is most likely to use.
 
-**A rename takes the renamed row's protection with it, so the rule is re-spelled in the same
-transaction.** That is the whole defect this revision is about, seen from the other end: one
-rule was covering both rows precisely because ``on_list`` case-folds both sides
-(``engine.fields._compare``), so suffixing the later row leaves it matching nothing, and the
-next ``sync_rule_names`` rewrites its stored membership to a spelling no rule names. The keep
-rule naming the shared spelling is DUPLICATED for the new one, never moved: the older row
-still answers to the original, and both lists go on keeping exactly what they kept before the
-upgrade. ``services.list_rules.rename_list`` is the same act at runtime.
+A rename takes the renamed row's protection with it unless the keep rule is re-spelled in
+the same transaction. That is the same defect this revision fixes, seen from the other
+side: one rule was covering both rows only because ``on_list`` case-folds both sides
+(``engine.fields._compare``). Suffixing the later row would leave it matching nothing, and
+the next ``sync_rule_names`` would rewrite its stored membership to a spelling no rule
+names. So the keep rule naming the shared spelling is duplicated for the renamed row,
+never moved: the older row still answers to the original rule, and both lists go on
+keeping exactly what they kept before the upgrade. ``services.list_rules.rename_list``
+does the same thing at runtime.
 
 Revision ID: e5f6a7b8c9d0
 Revises: d4e5f6a7b8c9
@@ -43,9 +46,8 @@ down_revision: str | None = "d4e5f6a7b8c9"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-# Copy the database aside before this runs (`reaper.db.schema_gate.SNAPSHOT_ATTR`, #566). It
-# renames rows to break a collision and then rebuilds `list_config` from reflection. This is the
-# revision that taught the collation lesson every later comment cites.
+# This migration snapshots the database first (see `reaper.db.schema_gate.SNAPSHOT_ATTR`).
+# It renames rows to break a collision, then rebuilds `list_config` from reflection.
 needs_snapshot = True
 
 
@@ -68,8 +70,8 @@ def _disambiguate(bind: sa.Connection) -> list[tuple[str, str]]:
         if key not in taken:
             taken.add(key)
             continue
-        # Truncated to the column's 100 characters INCLUDING the suffix, or the rebuild
-        # below refuses a name this migration itself made too long.
+        # Truncated to the column's 100 characters, including the suffix, or
+        # the rebuild below refuses a name this migration itself made too long.
         suffix = 2
         while f"{name[:94]} ({suffix})".strip().casefold() in taken:
             suffix += 1
@@ -86,20 +88,23 @@ def _disambiguate(bind: sa.Connection) -> list[tuple[str, str]]:
 def _respell_keep_rules(bind: sa.Connection, renames: Sequence[tuple[str, str]]) -> None:
     """Give each renamed list a keep rule of its own, appended to the newest policy per type.
 
-    Additive by construction, which is what makes writing a policy body from a migration
-    safe here: the rule naming the shared spelling is COPIED, never edited, so the row that
-    kept its name keeps its cover and the renamed row regains the cover the suffix took. No
-    title moves from kept toward condemnable.
+    Additive by construction, which is what makes writing a policy body from a
+    migration safe here: the rule naming the shared spelling is copied, never
+    edited, so the row that kept its name keeps its cover and the renamed row
+    regains the cover the suffix took. No title moves from kept toward
+    condemnable.
 
-    Appended as a new row, because ``db.models.Policy`` is append-only by contract: snapshots
-    and approvals point at the parent by hash and must stay readable. A pending approval is
-    voided by the hash moving, exactly as after any policy edit (rule 113), and an upgrade is
-    already a moment no plan survives.
+    Appended as a new row, because ``db.models.Policy`` is append-only by
+    contract: snapshots and approvals point at the parent by hash and must
+    stay readable. A pending approval is voided by the hash moving, the same
+    as after any policy edit, and an upgrade is already a moment no plan
+    survives.
 
-    Declines rather than guesses, on the same three grounds as ``d5e6f7a8b9c0``: a body that
-    is not JSON, one that carries no rule naming a renamed list, and one the model will not
-    validate. A legacy-shaped body takes the second exit on its own, since the rules only
-    exist after the list conversion.
+    Declines rather than guesses, on the same three grounds as
+    ``d5e6f7a8b9c0``: a body that is not JSON, one that carries no rule naming
+    a renamed list, and one the model will not validate. A legacy-shaped body
+    takes the second exit on its own, since the rules only exist after the
+    list conversion.
     """
     if not renames:
         return
@@ -162,9 +167,9 @@ def _respell_keep_rules(bind: sa.Connection, renames: Sequence[tuple[str, str]])
                 # The operator's own name for their policy, carried across: this is the same
                 # policy, and only the spelling of a list it names has changed.
                 "name": str(row[1]),
-                # An INTEGER unix timestamp: `db.types.EpochDateTime` stores every instant as
-                # one, and raw SQL goes around the type. An ISO string lands a row the ORM
-                # raises on for every later read (b2c3d4e5f6a7 found this the hard way).
+                # An INTEGER unix timestamp: `db.types.EpochDateTime` stores
+                # every instant as one, and raw SQL goes around that type. An
+                # ISO string here would produce a row the ORM cannot read back.
                 "now": now,
             },
         )

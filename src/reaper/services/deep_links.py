@@ -2,18 +2,18 @@
 """Deep links from a candidate to the tools that manage it, and to the rating sites.
 
 The why-panel offers several jumps: the title opens the item in Plex Web, pills open it
-in Tautulli, Seerr and the managing Radarr/Sonarr, and the ratings chips open the site
+in Tautulli, Seerr, and the managing Radarr/Sonarr, and the ratings chips open the site
 each number came from. Every URL is computed here, server-side, from coordinates frozen
-at scan time -- the frontend never learns the media_key grammar, and the one parser
+at scan time. The frontend never learns the media_key grammar, and the one parser
 (``MediaRef.parse``) stays the only one.
 
 Every link degrades to ``None`` when a coordinate is missing (an unmatched item has no
 rating key; a pre-rescan row has no tmdb id; a deleted instance has no base URL). The
-UI hides a missing link; it never renders a broken one.
+UI hides a missing link rather than rendering a broken one.
 
 Route notes, verified against the apps' own web UIs:
 
-* Radarr details live at ``/movie/{tmdbId}`` -- the TMDb id, NOT Radarr's internal id
+* Radarr details live at ``/movie/{tmdbId}``, the TMDb id, not Radarr's internal id
   (which is what media_key carries, and which does not resolve in the web UI).
 * Sonarr details live at ``/series/{titleSlug}``.
 * Tautulli's item page is ``/info?rating_key={rating_key}`` against the same Plex
@@ -52,7 +52,7 @@ class CandidateLink:
 @dataclass(frozen=True, slots=True)
 class DeepLinks:
     """Every jump the panel offers, each ``None`` when it cannot be built. At most one
-    of ``radarr``/``sonarr`` is set -- whichever app the media_key routes to."""
+    of ``radarr``/``sonarr`` is set: whichever app the media_key routes to."""
 
     plex: str | None = None
     tautulli: str | None = None
@@ -67,7 +67,7 @@ class DeepLinks:
     match_candidates: tuple[CandidateLink, ...] = ()
     """The rows an abstain was choosing between. ``plex``/``tautulli`` above are built
     from the item's own rating key, which is null on exactly those items, so without
-    these the panel names a problem in Plex and offers no way to look at it."""
+    these the panel would name a problem in Plex with no way to look at it."""
 
 
 def _base(url: str | None) -> str | None:
@@ -83,9 +83,9 @@ def _plex_web_link(web: str, machine_identifier: str, plex_rating_key: int) -> s
     serves it, so the path is chosen from the host rather than hardcoded. The
     plex.tv-hosted app (the ``app.plex.tv`` default) answers under ``/desktop``. A
     Plex Media Server serves its own copy under ``/web`` and returns 403 for
-    ``/desktop`` -- so an operator who points this at their own address gets ``/web``.
-    (The hosted app also accepts ``/web`` by redirecting it to ``/desktop``, but the
-    canonical path for each host is sent directly rather than leaning on that.)
+    ``/desktop``, so an operator who points this at their own address gets ``/web``.
+    The hosted app also accepts ``/web`` by redirecting it to ``/desktop``, but the
+    canonical path for each host is sent directly rather than leaning on that redirect.
     """
     metadata_key = quote(f"/library/metadata/{plex_rating_key}", safe="")
     host = (urlsplit(web).hostname or "").lower()
@@ -115,8 +115,8 @@ def build_links(
     ``arr_base_url`` must belong to the instance ``media_key`` routes to (the caller
     resolves it by ``MediaRef.instance_id``); passing "the first Radarr" would send a
     multi-instance operator to the wrong app. ``media_type`` picks the movie-vs-tv
-    route on Seerr and TMDb (a season row carries its show's ids, so both route to
-    the show's page).
+    route on Seerr and TMDb, since a season row carries its show's ids, so both route
+    to the show's page.
 
     ``candidate_rating_keys`` are the Plex rows an abstain could not choose between. They
     get the same two links the item's own key would have got, built through the same two

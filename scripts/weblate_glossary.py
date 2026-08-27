@@ -2,25 +2,26 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Create Reaper's Weblate glossary component, and seed its terms into every language.
 
-Standalone by design (stdlib only, rule 15), and run by hand rather than by CI: creating a
-component is a one-time, human-approved step, and seeding follows a language being added,
-which a person does on Weblate. `frontend/src/locales/glossary/en.tbx` is the glossary
-itself. TBX is a bilingual format on Weblate, so a term lives inside each target language's
-file and the English file is never read by Weblate (the component's language filter skips
-it): this script reads it instead, and posts
-every term it holds into each target language's glossary translation, with the TBX
-``descrip`` as the term's explanation. "Sanctuary" and "Limbo", Reaper's own product names,
-carry Weblate's `read-only` flag, so a translator sees them without a target box inviting a
-translation that would never be used.
+Standalone by design, using only the standard library, and run by hand rather than by
+CI, since creating a component is a one-time, human-approved step, and seeding follows
+a language being added, which a person does on Weblate.
+`frontend/src/locales/glossary/en.tbx` is the glossary itself. TBX is a bilingual
+format on Weblate, so a term lives inside each target language's file, and Weblate
+never reads the English file itself (the component's language filter skips it). This
+script reads the English file instead, and posts every term it holds into each target
+language's glossary translation, with the TBX `descrip` as the term's explanation.
+"Sanctuary" and "Limbo", Reaper's own product names, carry Weblate's `read-only` flag,
+so a translator sees them without a target box inviting a translation that would never
+be used.
 
     python3 scripts/weblate_glossary.py            # creates the component if missing, seeds
     python3 scripts/weblate_glossary.py --dry-run   # prints what it would do, changes nothing
 
-Idempotent either way: a component that already exists is left alone, a term a language
-already holds is not posted again, and a term already flagged read-only is not re-flagged.
-With no target language yet, seeding has nowhere to go and says so (#878). The API key is
-read from `WEBLATE_API_KEY`, or from the file `--key-file` names (default
-`/opt/reaper_1/.weblate_api`). Never printed, never logged.
+Idempotent either way: a component that already exists is left alone, a term a
+language already holds is not posted again, and a term already flagged read-only is
+not re-flagged. With no target language yet, seeding has nowhere to go and says so.
+The API key is read from `WEBLATE_API_KEY`, or from the file `--key-file` names
+(default `/opt/reaper_1/.weblate_api`). Never printed, never logged.
 """
 
 from __future__ import annotations
@@ -48,8 +49,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 GLOSSARY_DIR = "frontend/src/locales/glossary"
 GLOSSARY_FILE = f"{GLOSSARY_DIR}/en.tbx"
 
-#: Copied from the `ui` component (task #868 phase 6), never invented here: a glossary that
-#: pushes to a different repo, branch or license than the strings it defines terms for is a
+#: Copied from the `ui` component, never invented here. A glossary that pushes to a
+#: different repo, branch, or license than the strings it defines terms for becomes a
 #: second source of truth nobody asked for.
 COPIED_FIELDS = ("repo", "branch", "push", "license", "vcs")
 
@@ -58,12 +59,12 @@ READ_ONLY_TERMS = ("Sanctuary", "Limbo")
 
 
 def _language_filter(source_code: str) -> str:
-    """The language filter that keeps the English file out of Weblate's language list.
+    """Return the language filter that keeps the English file out of Weblate's language list.
 
-    The component is bilingual (no template, #877), so ``en.tbx`` matches the filemask as
-    an English translation of an English component, and Weblate raises its "Duplicated
-    translation" alert for it. The file stays in git as the glossary this script seeds from;
-    this filter is how Weblate is told to skip it.
+    The component is bilingual, with no template, so ``en.tbx`` matches the filemask
+    as an English translation of an English component, and Weblate raises its
+    "Duplicated translation" alert for it. The file stays in git as the glossary this
+    script seeds from. This filter is how Weblate is told to skip it.
     """
     return f"^(?!{source_code}$)[^.]+$"
 
@@ -87,7 +88,7 @@ def _ensure_language_filter(component: dict[str, Any], *, key: str, dry_run: boo
 
 
 def _ensure_component(key: str, *, dry_run: bool) -> bool:
-    """True once the glossary component exists. Creates it only when absent."""
+    """Return True once the glossary component exists. Creates it only when absent."""
     existing = request(GLOSSARY_COMPONENT_URL, key=key, allow_404=True)
     if existing is not None:
         print("glossary component already exists, nothing to create")
@@ -117,10 +118,11 @@ def _ensure_component(key: str, *, dry_run: bool) -> bool:
 
 
 def _terms_from_tbx(path: Path) -> list[tuple[str, str]]:
-    """Every ``(term, explanation)`` in the English TBX, in file order.
+    """Return every ``(term, explanation)`` in the English TBX, in file order.
 
-    One ``termEntry`` holds one ``term`` and at most one ``descrip``, which CONTRIBUTING's
-    "Translate it" describes as the one-line explanation a translator sees beside the term.
+    One ``termEntry`` holds one ``term`` and at most one ``descrip``, which
+    CONTRIBUTING's "Translate it" section describes as the one-line explanation a
+    translator sees beside the term.
     """
     root = ET.parse(path).getroot()  # noqa: S314 (a committed file of our own, not input)
     namespace = root.tag[1:].split("}", 1)[0] if root.tag.startswith("{") else ""
@@ -141,7 +143,7 @@ def _terms_from_tbx(path: Path) -> list[tuple[str, str]]:
 
 
 def _target_translations(key: str) -> list[tuple[str, str]]:
-    """``(language code, units URL)`` for every glossary language except the source."""
+    """Return ``(language code, units URL)`` for every glossary language except the source."""
     component = request(GLOSSARY_COMPONENT_URL, key=key)
     source_code = component["source_language"]["code"]
     targets: list[tuple[str, str]] = []
@@ -172,11 +174,12 @@ def _units_by_source(units_url: str, key: str) -> dict[str, dict[str, Any]]:
 def _seed_language(code: str, units_url: str, terms: list[str], key: str, *, dry_run: bool) -> None:
     """Post every term the language does not hold yet.
 
-    A product name is posted translated, the term itself, which is how Weblate's own
-    "untranslatable" checkbox stores one. Every other term is seeded the way Weblate's "copy
-    source" does it: the English term in the target, marked "needs editing" (state 10), because
-    the API refuses a blank target. The explanation and the `read-only` flag are not sent here:
-    Weblate keeps both on the source unit, which `_sync_source_units` writes once per term.
+    A product name is posted as its own translation, the term itself, which is how
+    Weblate's own "untranslatable" checkbox stores one. Every other term is seeded
+    the way Weblate's "copy source" feature does it: the English term in the target,
+    marked "needs editing" (state 10), since the API refuses a blank target. The
+    explanation and the `read-only` flag are not sent here. Weblate keeps both on the
+    source unit, which `_sync_source_units` writes once per term.
     """
     present = _units_by_source(units_url, key)
     posted = 0
@@ -196,9 +199,9 @@ def _seed_language(code: str, units_url: str, terms: list[str], key: str, *, dry
 
 def _sync_source_units(terms: list[tuple[str, str]], key: str, *, dry_run: bool) -> None:
     """Write each term's explanation and, for the product names, the `read-only` flag onto
-    its source unit, the `en` side every language shares. Only the fields that differ are
-    sent, so a re-run is silent. A term with no source unit yet has not been seeded into any
-    language and is named."""
+    its source unit, the `en` side every language shares. Sends only the fields that
+    differ, so a re-run stays silent. A term with no source unit yet has not been
+    seeded into any language, and is named in the output."""
     present = _units_by_source(GLOSSARY_SOURCE_UNITS_URL, key)
     changed = 0
     for term, explanation in terms:

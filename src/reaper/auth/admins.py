@@ -1,33 +1,26 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Admin account management, and the invariant that keeps you out of a lockout.
+"""Admin account management, and the rule that keeps an operator from a lockout.
 
-The lockout risk is real and specific. If Plex OAuth is the only way in, then
-*any* of these locks you out of your own tool:
+If Plex OAuth were the only way to sign in, any of these could lock an operator
+out of their own tool, and none of them is under Reaper's control:
 
 * plex.tv is down, or its API changes
-* your Plex token is revoked (a password change with "sign out devices" ticked)
-* you rebuild the Plex server and the ``machineIdentifier`` changes, so the
+* the Plex token is revoked (a password change with "sign out devices" checked)
+* the Plex server is rebuilt, so its ``machineIdentifier`` changes and the
   ownership check no longer matches
-* Plex completes its migration to JWT device auth and the legacy flow stops working
+* Plex retires the legacy sign-in flow this app was built against
 
-None of those are hypothetical, and all of them are outside our control. So:
+So **Reaper always keeps at least one working local admin account.** Setup
+creates it: the first-run wizard's opening step cannot be skipped, and the
+password it sets goes through :func:`services.admin_password.set_password`,
+which creates a local admin on an install that has none.
+:class:`LastAdminError` then keeps it: it refuses to delete the last local
+admin, and refuses to turn off that admin's local login.
 
-    **Reaper keeps at least one working local admin account.**
+:func:`count_local_admins` counts only ``LOCAL`` accounts, so an owner who
+signed in through Plex OAuth alone does not count as one.
 
-That has two halves, and for a long time only the second one existed. Setup
-*establishes* it: the first-run wizard's opening step cannot be skipped, and the
-password it sets goes through :func:`services.admin_password.set_password`, which
-creates a local admin on an install that has none. :class:`LastAdminError` then
-*maintains* it: the last local admin cannot be deleted, and cannot have local login
-disabled.
-
-Without the first half zero was a reachable state that nothing here ever tripped on,
-because the invariant is enforced downward from one and never upward from zero. An
-owner who claimed the server over Plex OAuth got a Plex-provider user;
-:func:`count_local_admins` counts only ``LOCAL`` ones, so it was zero on an install
-whose sign-in screen told the operator the opposite (#382).
-
-Plex OAuth is *additive* convenience, never the sole key to the door.
+Plex OAuth is an added way to sign in. It is never the only way in.
 """
 
 from __future__ import annotations
@@ -95,10 +88,10 @@ async def set_password(session: AsyncSession, username: str, password: str | Non
 
     plaintext = password or generate_password()
     user.password_hash = hash_password(plaintext)
-    user.provider = AuthProvider.LOCAL  # a reset re-enables local login by definition
+    user.provider = AuthProvider.LOCAL  # resetting the password re-enables local login
     user.is_active = True
-    # A reset is the out-of-band lockout escape hatch; it must also evict any existing
-    # sessions, since resolve_session validates only the token, never password_hash.
+    # A password reset must also sign out every existing session, because
+    # resolve_session checks only the token, never the password hash.
     await close_all_for_user(session, user.id)
     await session.flush()
     return plaintext
@@ -119,8 +112,8 @@ async def deactivate(session: AsyncSession, username: str) -> None:
         )
 
     user.is_active = False
-    # resolve_session already refuses a deactivated user's cookie lazily, but evict the
-    # rows now too: defense in depth, and the sessions table stops advertising a dead
-    # account's devices.
+    # resolve_session already refuses a deactivated user's cookie the next time it is
+    # used, but deleting the session rows now too keeps the sessions list from still
+    # showing a deactivated account's devices.
     await close_all_for_user(session, user.id)
     await session.flush()

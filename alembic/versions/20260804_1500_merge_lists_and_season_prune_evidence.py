@@ -1,16 +1,17 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """the lists registry and the season prune evidence meet
 
-Two chains grew from ``add_auth_session_via_recovery`` at once: the season prune evidence
-on ``dev``, and the list registry on the branch that became this one. Both are additive and
-neither touches the other's tables, so nothing here has anything to do -- what this revision
-carries is the single head ``alembic upgrade`` needs, and the two paths into it, so a
-database that took either chain reaches head without being told to skip the other.
+Two chains grew from ``add_auth_session_via_recovery`` at once: the season prune
+evidence on ``dev``, and the list registry on the branch that became this one. Both
+are additive and neither touches the other's tables, so there is no schema work
+here. This revision only declares the single head ``alembic upgrade`` needs, with
+the two paths into it, so a database that took either chain reaches head without
+being told to skip the other.
 
-Re-chaining one branch onto the other would have done it in one line and been wrong: a
-tester already sitting on the lists chain would find ``add_season_prune_evidence`` behind
-them and never apply it, ending at head with a table the code expects and the database does
-not have.
+Re-chaining one branch onto the other would have done it in one line, and would
+have been wrong: a tester already sitting on the lists chain would find
+``add_season_prune_evidence`` behind them and never apply it, ending at head with
+a table the code expects and the database does not have.
 
 Revision ID: f1a2b3c4d5e6
 Revises: 0819a3b4c5d6, e5f6a7b8c9d0

@@ -2,40 +2,41 @@
 """What a season plan is decided from, frozen, and the one derivation off it.
 
 ``services.season_pruning.plan_series_prune`` is pure and takes nineteen arguments. Ten of
-them are the operator's policy; the rest are evidence a scan gathered. This module is the
-seam: :class:`SeasonPruneInput` holds the evidence half for one show, :func:`plan_from_frozen`
-supplies the policy half and calls the real planner, and the scan freezes the bundle so the
-policy simulator can call the same function again under an edited policy. Two pure derivations
-off that plan sit here for the same reason the planner call does. :func:`guard_result` turns one
-season's verdict into the gate result the why-panel reads, and the scan and the replay both call
-it, so there is no second implementation to drift. :func:`no_key_reason` is called by the scan
-alone: it produces ``progress_unknown_reason``, which is :func:`guard_result`'s input and is
-frozen onto the bundle, so the replay reads the scan's wording rather than re-deriving it off a
-live match status. That is the same "one derivation, not two" this module exists for, reached
-from the freeze side.
+them are the operator's policy, and the rest are evidence a scan gathered. This module is
+the seam: :class:`SeasonPruneInput` holds the evidence half for one show,
+:func:`plan_from_frozen` supplies the policy half and calls the real planner, and the scan
+freezes the bundle so the policy simulator can call the same function again under an edited
+policy. Two pure derivations off that plan sit here for the same reason the planner call
+does. :func:`guard_result` turns one season's verdict into the gate result the why-panel
+reads, and the scan and the replay both call it, so there is no second implementation to
+drift. :func:`no_key_reason` is called by the scan alone: it produces
+``progress_unknown_reason``, which is :func:`guard_result`'s input and is frozen onto the
+bundle, so the replay reads the scan's wording rather than re-deriving it off a live match
+status. That is the same one-derivation discipline this module exists for, reached from the
+freeze side.
 
-**One derivation, not two.** Every plan whose result is *stored* -- the scan's and the
-simulator's alike -- reaches ``plan_series_prune`` through :func:`plan_from_frozen`, so the
-exactness the simulator claims is structural rather than measured: there is no second
-implementation to drift (rule 3/22, and ``docs/LEARNINGS.md``'s "Two code paths answering one
-question will drift"). The pieces that turn a policy number into a planner argument -- the
-mid-binge expiry, the mirror-reach predicate, the keep-last scope -- live here for the same
-reason, since each was a place the two could have disagreed.
+**One derivation, not two.** Every plan whose result is stored, the scan's and the
+simulator's alike, reaches ``plan_series_prune`` through :func:`plan_from_frozen`, so the
+exactness the simulator claims is structural rather than measured. There is no second
+implementation to drift (``docs/LEARNINGS.md``'s "Two code paths answering one question
+will drift"). The pieces that turn a policy number into a planner argument, the mid-binge
+expiry, the mirror-reach predicate, the keep-last scope, live here for the same reason,
+since each was a place the two could have disagreed.
 
 ``season_scan.gather``'s offline first pass still calls ``plan_series_prune`` directly, and
 that is not an exception to the above: it runs before any watch evidence exists, its answer
 decides nothing (a log line and the fully-kept count), and its own docstring says so.
 
 **A missing episode map is ``None``, never ``{}``.** ``season_final_episode`` is read from
-Sonarr only while ``keep_in_progress`` is on, and an empty dict is what a show whose episodes
-were read and found nothing carries, so the field is three-state rather than defaulted
-(rule 93). Two different absences land on ``None`` and
-:attr:`SeasonPruneInput.episodes_unreadable` separates them: the guard was off and nobody was
-asked, or Sonarr was asked and did not answer. Only the first is unanswerable. In the second
-the scan planned from the empty map itself, so a replay off that map returns the scan's own
-verdicts -- and refusing over it cost the operator every TV preview until Sonarr answered for
-a whole scan (#500). :func:`missing_episode_map` is what the route asks before it previews an
-edit that turns the guard on.
+Sonarr only while ``keep_in_progress`` is on, and an empty dict is what a show whose
+episodes were read and found nothing carries, so the field is three-state rather than
+defaulted. Two different absences land on ``None``, and
+:attr:`SeasonPruneInput.episodes_unreadable` separates them: the guard was off and nobody
+was asked, or Sonarr was asked and did not answer. Only the first is unanswerable. In the
+second, the scan planned from the empty map itself, so a replay off that map returns the
+scan's own verdicts, rather than refusing every TV preview until Sonarr answers for a whole
+scan. :func:`missing_episode_map` is what the route asks before it previews an edit that
+turns the guard on.
 
 Pure: no clock, no network, no database. The scan instant rides in the bundle.
 """
@@ -81,10 +82,10 @@ class SeasonPruneInput:
     airing_seasons: tuple[int, ...]
 
     progress_by_user: Mapping[str, Mapping[int, int | None]]
-    """Each viewer's highest completed episode per season, **before** the hold expires any
-    of them. Expiry is ``in_progress_hold_days``, an operator setting, so it is applied in
-    :func:`plan_from_frozen` rather than baked in here -- freezing the expired set would
-    make that setting unpreviewable while looking exactly as if it were not."""
+    """Each viewer's highest completed episode per season, before the hold expires any of
+    them. Expiry is ``in_progress_hold_days``, an operator setting, so it is applied in
+    :func:`plan_from_frozen` rather than baked in here. Freezing the expired set would make
+    that setting unpreviewable while looking exactly as if it were not."""
 
     last_watched_by_user: Mapping[str, datetime | None]
     """When each viewer last played anything of this show, the other half of that expiry.
@@ -96,7 +97,7 @@ class SeasonPruneInput:
     """The highest episode on disk per season, or ``None`` when this scan did not read one.
 
     Three-state on purpose: see the module docstring. ``None`` covers both a scan that never
-    asked and a Sonarr read that failed; ``episodes_unreadable`` below says which."""
+    asked and a Sonarr read that failed. ``episodes_unreadable`` below says which."""
 
     episodes_unreadable: bool
     """Whether the episode fan-out ran for this show and Sonarr did not answer.
@@ -114,7 +115,7 @@ class SeasonPruneInput:
 
     Its wording goes to :func:`guard_result`. Whether it is set at all also goes to
     the planner, as ``progress_show_unmatched``: a show with no rating key anywhere is the one
-    shape whose mid-binge hold must not blame the watch mirror's depth (#489)."""
+    shape whose mid-binge hold must not blame the watch mirror's depth."""
 
     requested_known_false: bool
     """Whether the request index said, definitely, that nobody requested this show. The one
@@ -136,31 +137,25 @@ class SeasonPolicy:
     ``services.snapshot.scan``, the simulator off the draft.
 
     **One road from a ``PolicyBody`` to these nine values, so a field added to the season
-    card is written onto it once.** There were two until the second was removed: the scan
-    unpacked the body into nine keywords on ``season_scan.gather``, which repacked them into
-    this class, and a field that reached one road and not the other read correct while being
-    incomplete (rule 144). Adding a field here now means adding it to :meth:`from_body`, and
-    the scan and the replay both get it or neither does.
+    card is written onto it once.** Adding a field here means adding it to
+    :meth:`from_body`, and the scan and the replay both get it or neither does.
 
     The value-level guard is ``tests/test_scan_pipeline.py``'s exactness test, which proves
     the road carries the operator's numbers and not merely the field names. **Its
     discriminating assertion is the scan-against-scan one**, ``scanned_before !=
-    scanned_after``, and that changed when the second road went: with the scan and the replay
-    both reading this class, a value dropped here is dropped identically on both sides, so
-    the replay still reproduces the scan and ``replayed == scanned_after`` stays green. What
-    reds is the first scan and the edited scan agreeing when the edit should have moved them.
-    That assertion's message reads like a precondition and is now the guard, so do not delete
-    it as a sanity check.
+    scanned_after``: with the scan and the replay both reading this class, a value dropped
+    here is dropped identically on both sides, so the replay still reproduces the scan and
+    ``replayed == scanned_after`` stays green. What reds is the first scan and the edited
+    scan agreeing when the edit should have moved them. That assertion's message reads
+    like a precondition and is now the guard, so do not delete it as a sanity check.
 
-    No field declares a default, and that is the safety property rather than a style choice.
-    Seven of the nine defaulted on ``gather`` before it took this carrier. Five of those
-    seven were the *protective* pole, so what an omission cost was the operator's edit being
-    overridden in the keeping direction, which is rule 141's reading of a fixture that cannot
-    tell a passed value from a defaulted one; ``season_lookahead`` at 0 and
-    ``in_progress_hold_days`` at 180 are the two that could widen. Here an omission is a mypy
-    error and a ``TypeError``, and ``tests/test_season_evidence_codec.py``'s
-    ``TestNoSeasonSettingCanBeOmitted`` is what fails when a default is added back, since
-    both build sites pass all nine and neither would notice.
+    No field declares a default, and that is a safety property rather than a style choice.
+    A default here would let a caller omit a value and silently apply the protective pole
+    for most fields (``season_lookahead`` at 0 and ``in_progress_hold_days`` at 180 are
+    the two that could widen instead). An omission is a mypy error and a ``TypeError``
+    instead, and ``tests/test_season_evidence_codec.py``'s
+    ``TestNoSeasonSettingCanBeOmitted`` fails if a default is added back, since both build
+    sites pass all nine and neither would notice on its own.
     """
 
     keep_last_seasons: int
@@ -202,7 +197,7 @@ def plan_from_frozen(inp: SeasonPruneInput, *, policy: SeasonPolicy) -> SeriesPr
 
     Called by ``season_scan._judge_series`` during a scan and by the policy simulator's
     replay afterwards, with the same bundle and a different policy. Both reach the real
-    ``plan_series_prune``; nothing here re-implements a protection (rule 3/22).
+    ``plan_series_prune``. Nothing here re-implements a protection.
     """
     return plan_series_prune(
         series_title=inp.series_title,
@@ -222,7 +217,7 @@ def plan_from_frozen(inp: SeasonPruneInput, *, policy: SeasonPolicy) -> SeriesPr
         last_play_by_user=inp.last_play_by_user,
         # `or {}` collapses the three-state to the planner's two: it reads an empty map as
         # "no episode is known to be the last", which protects whole seasons rather than
-        # positions. Safe for the scan, and NOT exact for a replay -- which is why the route
+        # positions. Safe for the scan, but not exact for a replay, which is why the route
         # asks `missing_episode_map` first rather than letting this line answer quietly.
         season_final_episode=inp.season_final_episode or {},
         season_lookahead=policy.season_lookahead,
@@ -235,7 +230,7 @@ def plan_from_frozen(inp: SeasonPruneInput, *, policy: SeasonPolicy) -> SeriesPr
         # Non-None is exactly "this show has no Plex rating key" (`season_scan` derives it as
         # `no_key_reason(...) if item.show_rating_key is None else None`), which is the one
         # state where no depth of watch mirror can name a viewer's place. The planner takes
-        # the bit rather than the sentence, so the wording stays operator copy (rule 142).
+        # the bit rather than the sentence, so the wording stays operator copy.
         progress_show_unmatched=inp.progress_unknown_reason is not None,
         keep_specials=policy.keep_specials,
         protect_incomplete=policy.protect_incomplete_seasons,
@@ -250,18 +245,18 @@ def missing_episode_map(inp: SeasonPruneInput, *, policy: SeasonPolicy) -> bool:
     """Whether replaying this show under ``policy`` would read a map the scan never gathered.
 
     Only ``keep_in_progress`` consults ``season_final_episode``, so a draft with that guard
-    off replays exactly off a bundle that holds no map -- the planner short-circuits the
-    sequential guard before the map is touched. A draft with it *on* over a bundle whose scan
-    never asked would silently fall back to whole-season protection, which reads as a
+    off replays exactly off a bundle that holds no map, since the planner short-circuits the
+    sequential guard before the map is touched. A draft with it on, over a bundle whose scan
+    never asked, would silently fall back to whole-season protection, which reads as a
     confident preview of an answer nobody gathered.
 
     A read Sonarr refused is not that state, which is what ``episodes_unreadable`` is for.
-    The scan planned from the empty map and every verdict in the snapshot was decided from
-    it, so a replay off the same empty map returns those verdicts. What it diverges from is a
-    healthy re-scan, by exactly whole-season protection where episode-precise protection
-    would have stood, which keeps more (rule 31). The refusal it replaces was whole-lane, so
-    one show Sonarr would not answer for blanked every TV preview until a scan in which every
-    show's read succeeded (#500).
+    The scan planned from the empty map, and every verdict in the snapshot was decided from
+    it, so a replay off the same empty map returns those verdicts. What it diverges from is
+    a healthy re-scan, by exactly whole-season protection where episode-precise protection
+    would have stood, which keeps more. A whole-lane refusal instead would let one show
+    Sonarr would not answer for blank every TV preview, until a scan in which every show's
+    read succeeded.
     """
     return (
         policy.keep_in_progress and inp.season_final_episode is None and not inp.episodes_unreadable
@@ -275,43 +270,40 @@ def guard_result(
 
     Four outcomes, mapped onto the gate vocabulary the why-panel already speaks:
 
-    * **Protected by a guard** -> ``PROTECT``. Beats the score, like any gate.
-    * **In a keep-rule conflict** (prunable by the rule, but more-watched than a season
-      the rule keeps) -> a *blocked* ABSTAIN. ``blocked`` forces the whole item to
+    * **Protected by a guard** maps to ``PROTECT``. Beats the score, like any gate.
+    * **In a keep-rule conflict** (prunable by the rule, but more watched than a season
+      the rule keeps) maps to a blocked ABSTAIN. ``blocked`` forces the whole item to
       abstain, which is exactly right: the rule is fighting the evidence, so a human must
       look. It renders amber, not green.
-    * **Prunable, on a show that never bound to Plex** (``progress_unknown_reason``) -> a
-      *blocked*, ``unestablishable`` ABSTAIN. Nothing is held on it: with no rating key
-      anywhere every season already abstains on its own Unknown facts, and there is no
-      readable sibling to endanger, which is why #485 scoped the hold away from here. What
-      it corrects is the sentence. The mid-binge check asked nobody, and reporting that as
-      a pass sat one fold above four gates saying the opposite on the same season (#486).
-    * **Cleanly prunable** -> ABSTAIN, recorded so the panel shows the guard ran and had
-      nothing to protect here.
+    * **Prunable, on a show that never bound to Plex** (``progress_unknown_reason``) maps
+      to a blocked, ``unestablishable`` ABSTAIN. Nothing is held on it: with no rating key
+      anywhere, every season already abstains on its own Unknown facts, and there is no
+      readable sibling to endanger. What this corrects is only the sentence: the
+      mid-binge check asked nobody, and reporting that as a pass would sit one fold above
+      four gates saying the opposite about the same season.
+    * **Cleanly prunable** maps to ABSTAIN, recorded so the panel shows the guard ran and
+      had nothing to protect here.
 
-    The conflict arm carries ``defers_to_owner``, and only where the comparison behind it
+    The conflict case carries ``defers_to_owner``, and only where the comparison behind it
     was one Reaper could actually make. ``_detect_conflicts`` raises a conflict in three
     shapes:
 
-    * the kept season's count was read and the rule lost it -- a comparison Reaper made;
-    * that count could NOT be read (``kept_watchers is None`` -- on disk, but never resolved
+    * the kept season's count was read and the rule lost it, a comparison Reaper made;
+    * that count could not be read (``kept_watchers is None``: on disk, but never resolved
       in Plex), a plumbing failure;
     * the watch mirror does not reach back to when one of the two seasons arrived
       (``shortfall``), so the count it reports for that season is a lower bound and more
       history could overturn the outcome either way.
 
     All three are blocked and all three send the item to a human. The last two are
-    ``Unknown``, not a decision (rule 93): there is no comparison for the operator to
-    *settle*, only evidence too thin to make one.
+    ``Unknown``, not a decision: there is no comparison for the operator to settle, only
+    evidence too thin to make one.
 
-    **That distinction no longer decides a hand reap, and the flag is no longer an
-    interlock.** A blocked gate does not hold a reap at all now -- see ``engine.verdict``
-    -- so all three shapes are overrulable by hand, and the flag survives to pick what the
-    operator is TOLD: the card's chip (``api.review._chip``) and, across the wire through
-    ``api.schemas.GateOutcomeOut``, the why panel's verdict note. Keeping the last two
-    un-overrulable is exactly what made a short watch mirror refuse every TV reap on the
-    server, which is the opposite of what "evidence too thin" should cost someone who can
-    see the library themselves. Read off typed fields, never the wording (rule 142).
+    **A blocked gate never holds back a hand reap** (see ``engine.verdict``), so all three
+    shapes are overrulable by hand, and the flag only picks what the operator is told: the
+    card's chip (``api.review._chip``) and, across the wire through
+    ``api.schemas.GateOutcomeOut``, the why panel's verdict note. Read off typed fields,
+    never the wording.
     """
     for protected in plan.protected:
         if protected.season_number == season_number:
@@ -319,29 +311,28 @@ def guard_result(
                 GateId.SEASON_PROGRESSION,
                 GATE_PROTECT,
                 detail=protected.reason,
-                # A season held because the guard could not be ANSWERED is blocked as well
+                # A season held because the guard could not be answered is blocked as well
                 # as protecting: `Evaluation.could_not_be_checked` selects on `blocked`
                 # independently of the outcome, so the result rides in `protections_unknown`
                 # and the panel shows it amber, "could not check", rather than green
-                # "checked and passed" (rule 93). That is what `blocked` buys here.
+                # "checked and passed". That is what `blocked` buys here.
                 #
-                # It no longer buys anything against a hand reap -- no blocked gate does
-                # (`engine.verdict`) -- so the rule 143 argument this line was originally
-                # added for has lapsed: PROTECT and blocked are now equally overrulable, and
-                # only a FIRED structural gate refuses. The flag stays because the
-                # Known/Absent/Unknown distinction is true and the operator is entitled to
-                # see which one this is, which was always the better reason.
+                # It does not buy anything against a hand reap: no blocked gate does
+                # (`engine.verdict`), so PROTECT and blocked are equally overrulable, and
+                # only a fired structural gate refuses. The flag stays because the
+                # Known/Absent/Unknown distinction is true, and the operator is entitled to
+                # see which one this is.
                 blocked=protected.unestablishable,
                 # The same fact, carried to the panel rather than left to be inferred from
                 # the verdict. This row reaches `protections_unknown` too, and the panel's
-                # conflict branch skipped it only because a fired protection makes the
-                # verdict `protect` and an earlier branch returns first (rule 142).
+                # conflict branch skips it only because a fired protection makes the
+                # verdict `protect` and an earlier branch returns first.
                 unestablishable=protected.unestablishable,
             )
 
-    # EVERY conflict naming this season, not just the first. ``_detect_conflicts`` raises
+    # Every conflict naming this season, not just the first. ``_detect_conflicts`` raises
     # one per (pruned, kept) pair, so a single pruned season routinely carries more than one
-    # shape at once -- on shipped defaults, a kept newest season still resolving in Plex
+    # shape at once. On shipped defaults, a kept newest season still resolving in Plex
     # conflicts with every watched prunable season below it, while an older kept season's
     # count reads fine. A short mirror mixes them the same way: it truncates the seasons
     # that predate the horizon and leaves a recently-added one exact.
@@ -349,11 +340,10 @@ def guard_result(
     if matching:
         # A refused comparison wins, and it decides the message as well as the flag.
         # Reading only the first conflict let a readable one mask an unread one, so the
-        # operator saw only the comparison that HAD been made and nothing ever told them
-        # one had not. That is now a reporting bug rather than a reap bug -- the reap is
-        # theirs either way -- but it is the same bug: the sentence and the flag must come
-        # from the same conflict (rule 92), and the season nobody could read is the one
-        # worth putting in front of them.
+        # operator saw only the comparison that had been made and nothing ever told them
+        # one had not. The reap is theirs either way, but the sentence and the flag must
+        # come from the same conflict, and the season nobody could read is the one worth
+        # putting in front of them.
         #
         # Both non-comparisons count as refused, and for the same reason: a count nobody
         # could take and a count taken over a mirror that cannot support it are equally
@@ -372,23 +362,24 @@ def guard_result(
         )
 
     if progress_unknown_reason is not None:
-        # Last, so a real protection and a real conflict both still win: this arm says only
-        # that nobody could be asked, and either of those is something Reaper found. Neither
-        # can co-occur with it in practice -- `_detect_conflicts` skips a season whose watcher
-        # count is None, and every count is None when no season carries a rating key -- but
-        # the order is what makes that safe rather than the coincidence.
+        # Last, so a real protection and a real conflict both still win: this case says
+        # only that nobody could be asked, and either of those is something Reaper found.
+        # Neither can co-occur with it in practice, since `_detect_conflicts` skips a
+        # season whose watcher count is None, and every count is None when no season
+        # carries a rating key, but the order is what makes that safe rather than the
+        # coincidence.
         #
-        # The `blocked` shape `engine.gates.blocked_reason` produces, on the SAME cause id
-        # this season's four Plex-dependent gates carry, so the panel folds all five into
-        # one box naming the cause once instead of opening a second box that says it again
-        # (`WhyPanel.LeftForYou`, rule 144).
+        # This uses the `blocked` shape `engine.gates.blocked_reason` produces, on the same
+        # cause id this season's four Plex-dependent gates carry, so the panel folds all
+        # five into one box naming the cause once instead of opening a second box that says
+        # it again (`WhyPanel.LeftForYou`).
         return GateResult(
             GateId.SEASON_PROGRESSION,
             GATE_ABSTAIN,
             blocked=True,
             unestablishable=True,
             # `progress_unknown_reason` is the bare id `season_scan` froze onto the bundle
-            # (this function's own docstring above); this is the one place season context
+            # (this function's own docstring above). This is the one place season context
             # attaches the panel's `mediaType` select, since every caller of this guard is
             # season-only.
             detail=blocked_reason(
@@ -407,28 +398,27 @@ def guard_result(
 def no_key_reason(show_match_status: identity.MatchStatus | None) -> str:
     """Why this season has no Plex rating key, as the bare catalog id.
 
-    A thin wrapper over ``gates.no_key_reason_id`` now that the movie and season lanes share
-    one ``MatchStatus`` -> id table (rule 72: this used to be its own copy, ``_NO_KEY_
-    REASONS``, naming the same three outcomes with season-flavored strings -- "this season"
-    against "this item" -- where the catalog's ICU ``mediaType`` select now carries that
-    difference instead). Kept bare rather than media-typed because this is the one caller
-    (``season_scan``'s ``progress_unknown_reason``) that freezes the id as plain text on
-    :class:`SeasonPruneInput`, through its own codec; :func:`guard_result` below is what
-    attaches ``mediaType`` when it turns the frozen id into a panel-facing cause, and every
-    OTHER season call site reads ``gates.no_key_reason`` directly for the same reason.
+    A thin wrapper over ``gates.no_key_reason_id``, now that the movie and season lanes
+    share one ``MatchStatus`` to id table. Kept bare rather than media-typed because this
+    is the one caller (``season_scan``'s ``progress_unknown_reason``) that freezes the id
+    as plain text on :class:`SeasonPruneInput`, through its own codec. :func:`guard_result`
+    below is what attaches ``mediaType`` when it turns the frozen id into a panel-facing
+    cause, and every other season call site reads ``gates.no_key_reason`` directly for the
+    same reason.
 
-    One derivation for both readers (rule 104): ``season_scan.build_season_facts`` stamps the
-    media-typed reason on every Unknown observation, and ``season_scan._judge_series`` hands
-    the same reason to the mid-binge guard so the panel groups all of them under one cause.
+    One derivation for both readers: ``season_scan.build_season_facts`` stamps the
+    media-typed reason on every Unknown observation, and ``season_scan._judge_series``
+    hands the same reason to the mid-binge guard so the panel groups all of them under one
+    cause.
     """
     return no_key_reason_id(show_match_status)
 
 
 #: Every field of :class:`SeasonPruneInput`, and the codec key it is stored under. Written
 #: out rather than derived from the field names so the stored shape is stable across a
-#: rename, and checked against the dataclass at import (below) so a field added later cannot
-#: be dropped from the freeze in silence -- a bundle missing an input replays a plan the scan
-#: never made (rule 103).
+#: rename, and checked against the dataclass at import (below) so a field added later
+#: cannot be dropped from the freeze in silence. A bundle missing an input replays a plan
+#: the scan never made.
 _KEYS: dict[str, str] = {
     "series_title": "title",
     "seasons": "seasons",
@@ -458,10 +448,10 @@ if set(_KEYS) != _DECLARED:
 
 
 #: ``SeasonStats``' fields, mirrored by hand below because the stored shape has to survive a
-#: rename. Checked at import for the same reason ``_KEYS`` is (rule 103), and it is the
-#: sharper of the two: a field added to ``SeasonStats`` **with a default** would thaw as that
-#: default in silence, and the replay would then plan from a season that is not the one the
-#: scan measured. Without a default it raises and the bundle is refused, which is fine.
+#: rename. Checked at import for the same reason ``_KEYS`` is, and it is the sharper of the
+#: two: a field added to ``SeasonStats`` with a default would thaw as that default in
+#: silence, and the replay would then plan from a season that is not the one the scan
+#: measured. Without a default it raises and the bundle is refused, which is fine.
 _SEASON_FIELDS = frozenset(
     {
         "season_number",
@@ -485,10 +475,10 @@ if _SEASON_FIELDS != _DECLARED_SEASON:
 def _epoch(value: datetime | None) -> int | None:
     """Whole seconds, matching how every timestamp in this codebase crosses a boundary.
 
-    Sub-second precision is lost, and only ``now`` actually carries any -- Tautulli's values
-    are already whole seconds. The truncation moves ``active_progress``'s cutoff *earlier*,
-    so a replay keeps a viewer the scan expired at a sub-second boundary rather than the
-    reverse, which is the keep direction (rule 31).
+    Sub-second precision is lost, and only ``now`` actually carries any, since Tautulli's
+    values are already whole seconds. The truncation moves ``active_progress``'s cutoff
+    earlier, so a replay keeps a viewer the scan expired at a sub-second boundary rather
+    than the reverse, which is the keep direction.
     """
     return int(value.timestamp()) if value is not None else None
 
@@ -559,7 +549,7 @@ def from_dict(d: Mapping[str, Any]) -> SeasonPruneInput:
 
     Raises on anything it cannot read, rather than defaulting a member. There is no safe
     default here: every one of these is evidence, and a missing key means the scan did not
-    record it, which is a refusal (rule 93). The caller catches and refuses to preview -- see
+    record it, which is a refusal. The caller catches and refuses to preview. See
     ``api.simulate._SeasonReplay``, which catches ``OSError`` and ``OverflowError`` alongside
     the obvious three, because ``from_epoch`` ends in ``datetime.fromtimestamp`` and that
     raises ``OSError`` for an out-of-range epoch. Do not narrow this to a list: the contract
@@ -594,8 +584,8 @@ def from_dict(d: Mapping[str, Any]) -> SeasonPruneInput:
         watchers_by_season={
             int(n): None if c is None else int(c) for n, c in d[_KEYS["watchers_by_season"]].items()
         },
-        # A str here is a shortfall frozen before reasons were typed; it thaws as a
-        # legacy reason and renders raw in the conflict sentence, as it did before.
+        # A str here is a shortfall frozen before reasons were typed. It thaws as a
+        # legacy reason and renders raw in the conflict sentence, exactly as before.
         shortfall_by_season={
             int(n): None if r is None else from_wire(r)
             for n, r in d[_KEYS["shortfall_by_season"]].items()

@@ -2,82 +2,82 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Replay real watch history and measure the delete-threshold ratio-to-score curve.
 
-The delete threshold is a score out of 100. The coming feature lets the operator say
-"one mistake per N cleared" and resolves that ratio into a score instead. This script
-produces the evidence behind that resolution: for each candidate score threshold, how
-many titles the current policy would have flagged at a real cutoff, and how many of
-those were actually played again within the following year (the "mistakes").
+The delete threshold is a score out of 100. A planned feature will let the operator say
+"one mistake per N cleared" and translate that ratio into a score. This script produces
+the evidence for that: for each candidate score threshold, how many titles the current
+policy would have flagged at a real cutoff, and how many of those were actually played
+again within the following year (the "mistakes").
 
-Read-only over both input shapes, and it prints ratios, counts and spans only: never a
-title, path, id, or username.
+This script only prints ratios, counts, and spans, for either input shape. It never
+prints a title, path, id, or username.
 
     uv run python scripts/delete_threshold_ratio_measure.py data/
     uv run python scripts/delete_threshold_ratio_measure.py reaper-dump.json.gz
 
 Two input shapes, auto-detected:
 
-* a **Reaper data directory** holding ``reaper.db`` and ``cache.db`` -- the watch
-  history mirror (table ``watch_event``) lives in ``cache.db``, not ``reaper.db``
-  (``services/history_sync.py``);
-* an **anonymized Tautulli dump**, the gzipped-or-plain JSON ``scripts/tautulli_anon_dump.py``
-  writes. ``reference_now`` from the dump is the clock, always -- its timestamps are
-  shifted for anonymity, so the wall clock would compute a nonsense cutoff.
+* a **Reaper data directory** holding ``reaper.db`` and ``cache.db``. The watch history
+  mirror (table ``watch_event``) lives in ``cache.db`` (see ``services/history_sync.py``);
+* an **anonymized Tautulli dump**, the gzipped-or-plain JSON file
+  ``scripts/tautulli_anon_dump.py`` writes. ``reference_now`` from the dump is always the
+  clock, because its timestamps are shifted for anonymity and the wall clock would
+  compute a cutoff that does not match them.
 
 ## What one cutoff means
 
 One wall-clock instant is picked for the whole server: ``cutoff = now - 365 days`` (the
 1-year default; ``--cutoff-days`` overrides it). Every title is scored as the policy
-would have scored it AT the cutoff, from history at or before it only; a play strictly
-after the cutoff and within a year after it is a "mistake" -- the policy would have
-deleted a title somebody came back for. A title's own last play is never held out
-specially: every title is judged from the one shared cutoff, which is what stops the
-future leaking into the past (docs/SIGNALS.md, "The population trap" is the same lesson
-for a baseline; this is the same discipline for an individual score).
+would have scored it at the cutoff, using only history at or before it. A play that
+happens after the cutoff, but within a year of it, counts as a "mistake": the policy
+would have deleted a title someone came back for. Every title uses this one shared
+cutoff, including its own last play, which is what stops a later play from leaking into
+an earlier score (docs/SIGNALS.md covers the same discipline for a baseline).
 
-``now`` is never the wall clock. The dump path reads ``reference_now`` (shifted with
-every other timestamp in the file, so the two stay comparable); the data-dir path takes
-the newest ``watch_event`` row instead of asking the OS -- both keep two runs over the
-same input printing identical bytes.
+``now`` always comes from the data, never the wall clock. The dump path reads
+``reference_now`` (shifted along with every other timestamp in the file, so the two
+stay comparable). The data-dir path takes the newest ``watch_event`` row instead of
+asking the OS. Both choices keep two runs over the same input printing identical
+output.
 
 ## The approximation, spelled out once
 
-Full policy scoring needs *arr and Plex evidence a pure history replay does not have
-(current ratings, live watcher windows, season structure). This script approximates
-with the dormancy-driven core instead, imported from ``reaper.engine`` rather than
-reimplemented: the shipped ``UNWATCHED`` signal alone (``floor=365``, ``saturate=1825``,
-the same ramp both default policies ship) as the score, plus the ``MIN_DORMANCY`` gate
-(1,095 days) as the one hard floor. ``docs/SIGNALS.md`` measured that dormancy alone
-scores as well as, or better than, the full default signal set -- "Dormancy alone" beat
-the shipped policy's regret rate on the library it was measured against -- so this is
-the same approximation the app's own backtest leaned on, not a new one. It drops
-``FEW_WATCHERS``, ``LOW_RATING``, ``SEASON_RANK``, ``RATING_FLOOR``, ``SERVER_POPULARITY``,
-``REWATCH_ODDS``, ``STREAMING_NOW``, ``DATA_HORIZON`` and the coverage floor. Every run
-prints this paragraph's claim as one header line so nobody mistakes the curve for a full
-policy replay.
+Full policy scoring needs Sonarr/Radarr and Plex evidence that a pure history replay
+does not have (current ratings, live watcher windows, season structure). This script
+approximates it with the dormancy-driven core instead, imported from ``reaper.engine``
+rather than reimplemented: the shipped ``UNWATCHED`` signal alone (``floor=365``,
+``saturate=1825``, the same ramp both default policies ship) as the score, plus the
+``MIN_DORMANCY`` gate (1,095 days) as the one hard floor. ``docs/SIGNALS.md`` found that
+dormancy alone scores as well as, or better than, the full default signal set, so this
+is the same approximation the app's own backtest relies on, not a new one. It drops
+``FEW_WATCHERS``, ``LOW_RATING``, ``SEASON_RANK``, ``RATING_FLOOR``,
+``SERVER_POPULARITY``, ``REWATCH_ODDS``, ``STREAMING_NOW``, ``DATA_HORIZON``, and the
+coverage floor. Every run prints this paragraph's claim as one header line, so nobody
+mistakes the curve for a full policy replay.
 
 ## The two lanes
 
-Every title lands in exactly one lane, reported separately (never combined -- a single
-number improves for the wrong reasons, same population trap):
+Every title lands in exactly one lane, and the two lanes are always reported
+separately. Combining them into one number would improve it for the wrong reasons, the
+same trap a pooled baseline falls into.
 
-* **played before the cutoff** -- dormancy is days since that last play. Measurable from
-  watch history alone, for both input shapes.
+* **played before the cutoff** -- dormancy is days since that last play. Measurable
+  from watch history alone, for both input shapes.
 * **never played before the cutoff** -- dormancy is days since the title arrived. The
-  Tautulli dump carries an arrival date per item, so this lane is fully measurable there.
-  ``reaper.db`` does not retain one (``Facts`` derives dormancy at scan time and never
-  stores the raw arrival date, see ``engine/dormancy.py``), so for the data-dir input this
-  lane's population is counted but its curve is not computed -- printed plainly, not
-  silently dropped.
+  Tautulli dump carries an arrival date per item, so this lane is fully measurable
+  there. ``reaper.db`` does not keep one (``Facts`` derives dormancy at scan time and
+  never stores the raw arrival date, see ``engine/dormancy.py``), so for the data-dir
+  input, this lane's population is counted and its curve is printed as unmeasured
+  rather than left out.
 
 ## Qualification
 
-Before trusting a resolved ratio, the script checks: enough history before the cutoff to
-judge dormancy at all (at least 1 further year, matching the cutoff rule above); enough
-titles in a lane to make its rate meaningful (``REWATCH_BLOCK_FLOOR_N`` = 30, the same
-floor the app's own rewatch-probability fit uses for a cohort, imported rather than
-reinvented); and a defensible bound on any row with zero mistakes observed, via
-``gates.wilson_upper`` (its 95% upper bound on ``k/n``), never a bare "0 mistakes" read
-as "infinitely good."
+Before trusting a resolved ratio, the script checks three things: enough history
+before the cutoff to judge dormancy at all (at least one more year, matching the
+cutoff rule above); enough titles in a lane to make its rate meaningful
+(``REWATCH_BLOCK_FLOOR_N``, imported rather than reinvented, the same floor the app's
+own rewatch-probability fit uses for a cohort); and a defensible bound on any row with
+zero mistakes observed, via ``gates.wilson_upper``'s 95% upper bound on ``k/n``, so a
+row with zero mistakes is never read as "infinitely good."
 """
 
 from __future__ import annotations
@@ -106,7 +106,7 @@ from reaper.engine.signals import score as engine_score
 from reaper.services.rewatch import RewatchOutcome, training_pair
 
 #: The shipped default for both media types (``engine/policy.py``,
-#: ``DEFAULT_MOVIE_POLICY`` / ``DEFAULT_TV_POLICY``): the ``UNWATCHED`` signal's ramp.
+#: ``DEFAULT_MOVIE_POLICY`` / ``DEFAULT_TV_POLICY``), the ``UNWATCHED`` signal's ramp.
 UNWATCHED_FLOOR_DAYS = 365
 UNWATCHED_SATURATE_DAYS = 1825
 
@@ -116,20 +116,21 @@ MIN_DORMANCY_GATE_DAYS = 1095
 #: The score thresholds the curve is measured at.
 THRESHOLDS: range = range(60, 96)
 
-#: How far past the cutoff a play counts as a "mistake" -- the coming feature's own
-#: window, and the training window ``services.rewatch``'s Stage 2 fit was validated over.
+#: How far past the cutoff a play counts as a "mistake". This is the planned
+#: delete-threshold feature's own window, and the training window
+#: ``services.rewatch``'s Stage 2 fit was validated over.
 OUTCOME_WINDOW_DAYS = 365
 
 #: How much history before the cutoff is needed to trust a dormancy reading there
-#: (module docstring, "What one cutoff means").
+#: (see "What one cutoff means" above).
 MIN_HISTORY_BEFORE_CUTOFF_DAYS = 365
 
 _SOURCE = "delete_threshold_ratio_measure"
 
 DAY_SECONDS = 86_400
 
-#: The two ``watch_event`` sweeps ``load_datadir`` runs, as fixed literals (never built
-#: from a parameter) -- a movie keyed on its own rating key, a season on its episodes'
+#: The two ``watch_event`` sweeps ``load_datadir`` runs, as fixed literals never built
+#: from a parameter. A movie is keyed on its own rating key, a season on its episodes'
 #: ``parent_rating_key`` (the season's own key, matching ``Candidate.plex_rating_key``
 #: for a season row).
 _MOVIE_SWEEP_SQL = (
@@ -145,13 +146,13 @@ _SEASON_SWEEP_SQL = (
 
 
 def _minimal_facts(days: float) -> Facts:
-    """A ``Facts`` carrying only dormancy, everything else ``Unknown``.
+    """Return a ``Facts`` object carrying only dormancy. Every other field is ``Unknown``.
 
-    Every other field is unreadable-by-construction here rather than genuinely absent:
-    this script did not look, so ``Unknown`` (never ``Absent``) is the honest state, and
-    it is also the ONE state that cannot condemn (``engine/observation.py``). Safe
-    because only the ``UNWATCHED`` signal and the ``MIN_DORMANCY`` gate ever read this
-    object below -- neither reads any other field.
+    This script never looked at those other fields, so ``Unknown`` is the honest state
+    to use, not ``Absent``. ``Unknown`` is also the one state that can never condemn a
+    title (``engine/observation.py``). That is safe here because only the ``UNWATCHED``
+    signal and the ``MIN_DORMANCY`` gate ever read this object, and neither reads any
+    other field.
     """
     unreadable = Unknown(reason="not_replayed", source=_SOURCE)
     return Facts(
@@ -171,11 +172,11 @@ def _minimal_facts(days: float) -> Facts:
 
 
 def unwatched_score(days: float) -> float:
-    """0-100: the shipped ``UNWATCHED`` signal alone, via the real engine's ``score()``.
+    """Score 0-100 from the shipped ``UNWATCHED`` signal alone, via the engine's ``score()``.
 
-    The weight is irrelevant to the result -- it is the only signal in the denominator,
-    so it cancels -- and is passed as the shipped 70 purely so a reader cross-checking
-    ``engine/policy.py`` sees the same number.
+    The weight passed in does not affect the result, since it is the only signal in the
+    denominator and cancels out. It is set to the shipped value of 70 only so a reader
+    cross-checking ``engine/policy.py`` sees the same number.
     """
     result = engine_score(
         [
@@ -192,8 +193,8 @@ def unwatched_score(days: float) -> float:
 
 
 def min_dormancy_protects(days: float) -> bool:
-    """Whether the real ``MinDormancyGate`` at its shipped 1,095-day threshold holds
-    this title, whatever the score threshold asks for."""
+    """Return whether the real ``MinDormancyGate``, at its shipped 1,095-day threshold,
+    protects this title, regardless of what the score threshold asks for."""
     result = MinDormancyGate(config=GateConfig(threshold=MIN_DORMANCY_GATE_DAYS)).evaluate(
         _minimal_facts(days)
     )
@@ -204,9 +205,9 @@ def min_dormancy_protects(days: float) -> bool:
 
 
 def build_curve(pairs: list[tuple[float, bool]]) -> list[tuple[int, int, int]]:
-    """One row per threshold: ``(threshold, flagged, mistakes)``.
+    """Return one row per threshold: ``(threshold, flagged, mistakes)``.
 
-    Pure and small enough to unit test directly -- see ``tests/test_delete_threshold_ratio.py``.
+    Pure and small enough to unit test directly. See ``tests/test_delete_threshold_ratio.py``.
     """
     scored = [
         (unwatched_score(days), min_dormancy_protects(days), watched_again)
@@ -224,20 +225,19 @@ def build_curve(pairs: list[tuple[float, bool]]) -> list[tuple[int, int, int]]:
 
 
 def _ratio(part: int, whole: int) -> str:
-    """``part`` of ``whole`` as "1 in N" -- the shape ``return_signal_measure.py`` prints."""
+    """Format ``part`` of ``whole`` as "1 in N", matching ``return_signal_measure.py``."""
     if not whole or not part:
         return f"{part} of {whole:,}"
     return f"{part} of {whole:,}, about 1 in {round(whole / part):,}"
 
 
 def ratio_text(flagged: int, mistakes: int) -> str:
-    """The good-deletions-per-mistake ratio for one threshold row.
+    """Return the good-deletions-per-mistake ratio for one threshold row.
 
-    Zero mistakes is never printed as "infinitely good": ``wilson_upper`` gives the 95%
-    upper bound on the true mistake rate at zero observed events, inverted into the same
-    "1 mistake per N cleared" shape the non-zero rows use, so the reader compares apples
-    to apples instead of reading a bare zero as a stronger claim than the evidence
-    supports (module docstring, "Qualification").
+    A row with zero mistakes never prints as "infinitely good". ``wilson_upper`` gives
+    the 95% upper bound on the true mistake rate when zero events were observed,
+    converted into the same "1 mistake per N cleared" shape the non-zero rows use, so
+    every row is comparable.
     """
     if flagged == 0:
         return "no titles flagged"
@@ -267,13 +267,13 @@ class Replay:
     lane_a: list[tuple[float, bool]]
     """Played before the cutoff: (dormancy_days_at_cutoff, watched_again)."""
     lane_b: list[tuple[float, bool]] | None
-    """Never played before the cutoff, same shape -- or ``None`` when this input shape
-    cannot measure it (the data-dir path: no arrival date)."""
+    """Never played before the cutoff, same shape. ``None`` when this input shape
+    cannot measure it (the data-dir path has no arrival date)."""
     lane_b_population: int
     """Titles in lane b, whether or not ``lane_b`` itself could be measured."""
     withheld: int = 0
-    """Titles seen but excluded from both lanes: not present at the cutoff (arrived
-    after it) or with no honest anchor at all."""
+    """Titles seen but excluded from both lanes, either not present at the cutoff
+    (they arrived after it) or with no honest anchor at all."""
 
 
 def _dt(epoch: int) -> datetime:
@@ -293,18 +293,18 @@ def title_pair(
     window_end_epoch: int,
     earliest_epoch: int | None = None,
 ) -> tuple[tuple[float, bool] | None, bool]:
-    """One title's ``(dormancy_days_at_cutoff, watched_again)`` training pair via the
-    real ``rewatch.training_pair``, plus whether it landed in lane A (played before the
-    cutoff). ``pair is None`` means withheld: not present at the cutoff, or no honest
-    anchor either side (``training_pair``'s own contract).
+    """Return one title's ``(dormancy_days_at_cutoff, watched_again)`` training pair via
+    the real ``rewatch.training_pair``, plus whether it landed in lane A (played before
+    the cutoff). Returns ``pair=None`` when the title is withheld: not present at the
+    cutoff, or with no honest anchor on either side (``training_pair``'s own contract).
 
     ``earliest_epoch`` is the start of the watch history held. A never-played title's
-    anchor clamps to it, exactly as the live engine's ``dormancy.reference_instant``
-    clamps to the mirror's horizon: an arrival date the history cannot see past would
-    otherwise read as dormancy nobody measured.
+    anchor clamps to it, the same way the live engine's ``dormancy.reference_instant``
+    clamps to the mirror's horizon. Without that clamp, an arrival date older than the
+    history could read as dormancy nobody actually measured.
 
-    Hoisted out of :func:`load_dump` so the cutoff/leak logic is testable without a real
-    dump file (``tests/test_delete_threshold_ratio_measure.py``).
+    Kept separate from :func:`load_dump` so the cutoff and leak logic can be tested
+    without a real dump file (``tests/test_delete_threshold_ratio_measure.py``).
     """
     if added_at_epoch is not None and earliest_epoch is not None:
         added_at_epoch = max(added_at_epoch, earliest_epoch)
@@ -330,11 +330,11 @@ def title_pair(
 
 
 def load_datadir(path: Path, cutoff_days: int) -> Replay:
-    """Read ``reaper.db`` (candidates) and ``cache.db`` (``watch_event``), read-only.
+    """Read ``reaper.db`` (candidates) and ``cache.db`` (``watch_event``), both read-only.
 
     Lane A's dormancy comes straight off ``watch_event``, so it needs no arrival date.
-    Lane B would need one -- ``Facts`` never persists it (``engine/dormancy.py``) -- so
-    it is counted, never scored, for this input shape (module docstring).
+    Lane B would need one, and ``Facts`` never persists it (``engine/dormancy.py``), so
+    for this input shape lane B is counted but never scored.
     """
     rdb = sqlite3.connect(f"file:{path / 'reaper.db'}?mode=ro", uri=True)
     cdb = sqlite3.connect(f"file:{path / 'cache.db'}?mode=ro", uri=True)
@@ -358,11 +358,12 @@ def load_datadir(path: Path, cutoff_days: int) -> Replay:
         ).fetchall()
 
         def _sweep(query: str, media_type: str) -> tuple[dict[int, int], set[int]]:
-            """Every rating key's last play at-or-before the cutoff, and the set played
-            again within the following year -- one pass over ``watch_event``, no ``IN``
-            clause (this is an offline batch read, not a scan-sized live query). ``query``
-            is one of the two literals below, never built from a parameter (rule 33's
-            spirit: no interpolated SQL, even read-only)."""
+            """Return every rating key's last play at-or-before the cutoff, and the set
+            played again within the following year. One pass over ``watch_event``, no
+            ``IN`` clause, since this is an offline batch read rather than a
+            scan-sized live query. ``query`` is always one of the two literals above,
+            never built from a parameter, so this never interpolates SQL, even for a
+            read-only query."""
             last_before: dict[int, int] = {}
             watched_after: set[int] = set()
             for raw_key, watched_at in cdb.execute(query, (media_type,)):
@@ -418,9 +419,10 @@ def _load_dump(path: Path) -> dict[str, Any]:
 
 
 def load_dump(path: Path, cutoff_days: int) -> Replay:
-    """Read a ``scripts/tautulli_anon_dump.py`` dump. ``reference_now`` is the clock
-    (module docstring); the dump carries an arrival date per item, so both lanes are
-    measurable here, unlike the data-dir path.
+    """Read a ``scripts/tautulli_anon_dump.py`` dump. ``reference_now`` is the clock.
+
+    The dump carries an arrival date per item, so both lanes are measurable here,
+    unlike the data-dir path.
     """
     data = _load_dump(path)
     now_epoch = int(data["reference_now"])
@@ -559,8 +561,8 @@ def print_lane(
 
 def run(replay: Replay, *, kind: str, cutoff_days: int) -> None:
     print("Reaper delete-threshold ratio measurement")
-    # The kind only: the path the operator typed stays off shareable output, per the
-    # module docstring's privacy stance.
+    # Prints the kind only. The path the operator typed never appears in shareable
+    # output.
     print(f"input: {kind}")
     now_note = (
         "the dump's own reference clock, shifted for anonymity, never this machine's"

@@ -2,24 +2,23 @@
 """add season_prune_evidence
 
 The policy simulator answers a policy edit by replaying the real engine over each item's
-frozen ``Candidate.facts_json``. That works for every movie control and blanked on every
-season control, because ``facts_json`` freezes the season guard's *output* while
-``season_pruning.plan_series_prune``'s inputs are per-show and never reached ``Facts`` at all.
-Nine controls, the densest card in the editor, and the lane where most bytes usually sit
-(#491). This table is those inputs, one row per show per snapshot.
+frozen ``Candidate.facts_json``. That works for every movie control, but not for the
+season controls, because ``facts_json`` freezes the season guard's output, while
+``season_pruning.plan_series_prune``'s inputs are per-show and never reach ``Facts`` at
+all. This table holds those inputs, one row per show per snapshot.
 
-Non-breaking by construction: a new table, nothing altered. A snapshot with no row for a show
-reads as "this scan did not record it" and the simulator refuses the season card, never as an
-empty bundle to replay a plan from -- the whole point being that a plausible wrong number on
-the screen where someone chooses a deletion threshold is worse than a blank. A snapshot taken
-before this migration refuses for a second reason as well: the same change re-scoped
-``PolicyBody.evidence_hash``, so no earlier snapshot can match it and every edit falls to the
-generic refusal until the next scan. Both heal on that scan. Testers never rebuild their
-database.
+This is a new table, so nothing existing is altered. A snapshot with no row for a show
+reads as "this scan did not record it", and the simulator refuses the season card rather
+than replay a plan from an empty bundle. A plausible but wrong number on the screen where
+someone picks a deletion threshold is worse than a blank one. A snapshot taken before this
+migration also refuses, for a second reason: the same change re-scopes
+``PolicyBody.evidence_hash``, so no earlier snapshot can match it, and every edit falls
+back to the generic refusal until the next scan. Both cases heal on that next scan. No
+tester database needs to be rebuilt.
 
-Swept with its snapshot through the CASCADE below, so ``services.retention`` needs no change:
-it deletes ``Snapshot`` rows and the database removes these with them, exactly as it already
-does for ``candidate``.
+This table is cascade-deleted with its snapshot, so ``services.retention`` needs no
+change. Deleting a ``Snapshot`` row removes these with it, exactly as it already does for
+``candidate``.
 
 Revision ID: 0819a3b4c5d6
 Revises: f708192a3b4c
@@ -50,9 +49,9 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("snapshot_id", "group_key"),
     )
-    # No standalone index on `group_key`: the unique constraint above already serves the one
-    # read (`simulate._season_payloads`, `WHERE snapshot_id = ?`) on its leading column, and no
-    # query filters a show key across snapshots.
+    # There is no standalone index on `group_key`. The unique constraint above already serves
+    # the one read (`simulate._season_payloads`, `WHERE snapshot_id = ?`) on its leading
+    # column, and no query filters a show key across snapshots.
 
 
 def downgrade() -> None:

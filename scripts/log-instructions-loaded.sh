@@ -1,25 +1,24 @@
 #!/usr/bin/env bash
-# Records every load of CLAUDE.md or .claude/rules/*.md, so we can confirm the
+# Records every load of CLAUDE.md or .claude/rules/*.md, to confirm that the
 # path-scoped rules actually reach an agent's context before it edits the code
 # they govern.
 #
 # The rule files are scoped by `paths:` frontmatter and load lazily, when Claude
-# reads a matching file. That is the whole design: a file must be read before it
-# can be edited, so its rules land first. But "designed to" is not "does," and
-# this is the only way to see it happen. Read the log after a session:
+# reads a matching file. A file must be read before it can be edited, so its
+# rules should land first. This log is the only way to see that actually
+# happen. Read it after a session:
 #
 #     tail .claude/instructions-loaded.log
 #
 # A backend session with no backend.md line means the glob is not matching and
-# the rules are silently absent -- treat that as a broken safety net, not a
+# the rules are silently absent. Treat that as a broken safety net, not a
 # cosmetic bug.
 #
 # Wired as an InstructionsLoaded hook in .claude/settings.json. That event
 # cannot block anything (its exit code is ignored), so this only ever observes.
 #
-# Payload shape (confirmed empirically 2026-07-26, and against the hooks
-# reference). The event fires ONCE PER FILE, so `file_path` is a single string,
-# never a list:
+# Payload shape, checked against a live session and the hooks reference. The
+# event fires once per file, so `file_path` is a single string, never a list:
 #
 #     {"session_id": ..., "transcript_path": ..., "cwd": ...,
 #      "hook_event_name": "InstructionsLoaded",
@@ -31,11 +30,9 @@
 #      "globs": ["src/reaper/**/*.py", ...],          # its paths: frontmatter
 #      "trigger_file_path": "<abs>/src/reaper/..."}   # the read that pulled it
 #
-# The first version of this script guessed `.matcher`/`.instruction_files` and
-# logged its own `//` fallbacks, so 31 consecutive loads recorded as "?  |" and
-# read like data. A parse that cannot find its keys now logs PARSE-FAILED and
-# the payload's actual key names, so the next schema drift announces itself
-# instead of quietly flatlining.
+# A parse that cannot find its keys logs PARSE-FAILED and the payload's actual
+# key names, so a schema drift announces itself instead of quietly writing
+# fallback lines that read like data.
 set -uo pipefail
 
 project_dir="${CLAUDE_PROJECT_DIR:-.}"
@@ -47,9 +44,9 @@ mkdir -p "${log_dir}" 2>/dev/null || exit 0
 
 payload="$(cat 2>/dev/null || true)"
 
-# python3 is a project dependency (3.13), so parse with it and keep a grep
-# fallback for the case where it is somehow absent. Paths are logged relative to
-# the repo so a line stays readable at a glance.
+# python3 is a project dependency, so parse with it, and keep a grep fallback
+# for the case where it is somehow absent. Paths are logged relative to the
+# repo so a line stays readable at a glance.
 if command -v python3 >/dev/null 2>&1; then
   detail="$(printf '%s' "${payload}" | python3 -c '
 import json, os, sys

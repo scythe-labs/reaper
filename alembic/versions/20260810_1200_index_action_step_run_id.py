@@ -11,7 +11,7 @@ excludes every snapshot a run points at, so ``action_step`` and ``reap_run`` gro
 life of the install and each journal read gets slower with every reap ever executed. The
 exclusion stays as it is: ``services/retention.py`` prices the rolling delete cap off those
 same pinned rows and calls it a safety interlock, so narrowing it to live or recent runs
-would silently unprice the cap. The growth is paid for, the scan was not.
+would silently unprice the cap. The growth is paid for. The scan was not.
 
 Additive and cheap: ``CREATE INDEX`` is plain DDL, building a new b-tree and never
 rebuilding ``action_step``. Existing rows are untouched, and a database that has not run

@@ -1,17 +1,20 @@
 """add instance.service_instance_map
 
-The multi-Seerr requester-attribution map: a JSON object mapping a Seerr portal's own services
-to the Reaper Sonarr/Radarr instance each one adds media to, keyed "{kind}:{serviceId}" (Seerr
-numbers Sonarr and Radarr services separately), e.g. {"sonarr:0": 7, "radarr:0": 8}. A Seerr
-request carries the *arr's own item id (externalServiceId) plus the portal-local serviceId, so
-this map resolves serviceId -> Reaper instance and lets "requested by" bind the exact copy a
-person asked for (the main vs a restricted library) instead of the loose tmdb/tvdb union across
-every copy. Display only, never a gate (services.requested_by.build_map).
+Adds the multi-Seerr requester-attribution map. It is a JSON object mapping each of a
+Seerr portal's own services to the Reaper Sonarr/Radarr instance it adds media to, keyed
+"{kind}:{serviceId}" since Seerr numbers Sonarr and Radarr services separately, for
+example {"sonarr:0": 7, "radarr:0": 8}.
 
-Additive and non-breaking by construction: a single NULLABLE column, so SQLite adds it to a
-populated tester database with no default and no rebuild, and every existing instance reads as
-NULL -- "no map" -- which keeps today's tmdb/tvdb union behavior. No backfill; the operator
-fills the map in from the Seerr instance's edit form in Settings.
+A Seerr request carries the *arr's own item id (externalServiceId) and the portal-local
+serviceId. This map resolves serviceId to a Reaper instance, so "requested by" can bind
+the exact copy a person asked for, such as the main library versus a restricted one,
+instead of the looser tmdb/tvdb match across every copy. It is display only. It never
+gates a decision. See ``services.requested_by.build_map``.
+
+The new column is nullable, so SQLite adds it to a populated database with no rebuild.
+Every existing instance reads back as NULL, meaning "no map", which keeps today's
+tmdb/tvdb match behavior. There is no backfill. The operator fills the map in from the
+Seerr instance's edit form in Settings.
 
 Revision ID: 4d5e6f708192
 Revises: 3c4d5e6f7081
@@ -33,8 +36,8 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # A nullable column needs no server default: SQLite adds it to a populated table directly,
-    # and existing rows read NULL, which the app treats as "no service map".
+    # A nullable column needs no server default. SQLite adds it to a populated table
+    # directly, and existing rows read back as NULL, which the app treats as "no service map".
     with op.batch_alter_table("instance", schema=None) as batch_op:
         batch_op.add_column(sa.Column("service_instance_map", sa.Text(), nullable=True))
 

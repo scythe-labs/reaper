@@ -1,18 +1,20 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """add candidate.collections_json, snapshot.collection_sizes_json
 
-Phase 2 of the collections plan (#816). Two nullable columns, mirroring how genres already
-ride along: ``candidate.collections_json`` holds the item's own collection names (sorted
-smallest-first, ties alphabetical); ``snapshot.collection_sizes_json`` holds every collection
-this scan saw, name to Plex's own member count, for the picker and the header.
+Phase 2 of the collections plan. Two nullable columns, mirroring how genres
+already ride along. ``candidate.collections_json`` holds the item's own
+collection names (sorted smallest-first, ties alphabetical).
+``snapshot.collection_sizes_json`` holds every collection this scan saw, name
+to Plex's own member count, for the picker and the header.
 
-Both NULL on every row scanned before this column existed, and NULL again whenever a scan's
-Plex collection read failed -- the two are indistinguishable on purpose, because collections
-are navigation, never protection (docs/COLLECTIONS_PLAN.md's fence): the worst a bad read
-costs is a missing chip, never a degraded snapshot.
+Both are NULL on every row scanned before this column existed, and NULL again
+whenever a scan's Plex collection read failed. The two are indistinguishable
+on purpose, because collections are navigation, never protection
+(docs/COLLECTIONS_PLAN.md's fence): the worst a bad read costs is a missing
+chip, never a degraded snapshot.
 
-Non-breaking by construction: two nullable columns, no backfill, no table rebuild under
-SQLite's batch mode. Testers never rebuild their database.
+Non-breaking by construction: two nullable columns, no backfill, no table
+rebuild under SQLite's batch mode. Testers never rebuild their database.
 
 Revision ID: b9c0d1e2f3a4
 Revises: a8b9c0d1e2f3

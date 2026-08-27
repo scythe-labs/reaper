@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The session lifecycle: open a session, resolve one from a cookie, revoke.
+"""The session lifecycle: open a session, resolve one from a cookie, revoke it.
 
-Sessions are opaque random tokens, hashed before storage -- never JWTs. The
-reasoning lives in :mod:`reaper.auth.tokens`: one server, so statelessness buys
-nothing, while instant revocation of a stolen cookie is worth a great deal for a
+Sessions are opaque random tokens, hashed before storage, never JWTs. The reasoning
+lives in :mod:`reaper.auth.tokens`: there is exactly one server, so a stateless token
+buys nothing, while instant revocation of a stolen cookie matters a great deal for a
 tool that can delete a media library.
 
-Only the SHA-256 of the token is stored. The plaintext exists for exactly as long
-as it takes to put it in a ``Set-Cookie`` header; a database leak therefore hands
-out no live sessions.
+Only the SHA-256 of the token is stored. The plaintext exists for exactly as long as it
+takes to put it in a ``Set-Cookie`` header, so a database leak hands out no live
+sessions.
 """
 
 from __future__ import annotations
@@ -24,15 +24,12 @@ from reaper.auth.tokens import SESSION_TTL, generate_token, hash_token
 from reaper.clock import expiry, utcnow
 from reaper.db.models import AppUser, AuthSession
 
-# A session is a FIXED 30-day window from login, not a sliding one: the cookie is set at
-# login (and at a Plex poll or a recovery redemption, which are logins too) and never
-# re-set afterwards, so using the app does not extend it. Deliberate -- a stolen cookie
-# that is being used should still expire on schedule -- and stated here because the
-# comment that used to sit in this spot described a per-request refresh that no code does
-# (I-3), which would have made the throttle below look like a write-amplification guard
-# rather than what it is.
+# A session uses a fixed 30-day window from login, not a sliding one. The cookie is set
+# at login (and at a Plex poll or a recovery redemption, which are logins too) and never
+# re-set afterward, so using the app does not extend it. This is deliberate: a stolen
+# cookie that is being used should still expire on schedule.
 #
-# What IS written per request is the row's ``last_seen``, and rewriting that on every
+# What is written per request is the row's ``last_seen``, and rewriting that on every
 # authenticated request would be a needless write per page load. Bump it at most this
 # often: fresh enough to answer "when was this device last used?", cheap enough not to be
 # a write amplifier under WAL.
@@ -115,13 +112,13 @@ async def clear_recovery_marks(session: AsyncSession) -> int:
     Run at every boot (``main.lifespan``), so the elevated permission cannot outlive the
     uptime that granted it. :func:`spend_recovery_mark` only fires when the operator
     actually resets the password; one who signs in with a code, changes nothing, and
-    restarts would otherwise keep a session that can rewrite the arming credential without
-    knowing it -- for thirty days, past the restart the manual gives as the last step, and
-    with nothing on screen saying so.
+    restarts would otherwise keep a session that can rewrite the arming credential
+    without knowing it. That session would stay elevated for thirty days, past the
+    restart the manual gives as the last step, with nothing on screen saying so.
 
-    Demoted rather than revoked: the operator stays signed in and simply has to prove the
-    old password like anyone else, which is the ordinary state. Revoking would sign someone
-    out mid-repair for the crime of restarting.
+    Demoted rather than revoked: the operator stays signed in and simply has to prove
+    the old password like anyone else, which is the ordinary state. Revoking would sign
+    someone out in the middle of the restart the manual told them to do.
     """
     result = await session.execute(
         update(AuthSession).where(AuthSession.via_recovery.is_(True)).values(via_recovery=False)
@@ -132,9 +129,9 @@ async def clear_recovery_marks(session: AsyncSession) -> int:
 async def resolve_session(session: AsyncSession, token: str | None) -> AppUser | None:
     """The active user behind a cookie, or ``None``.
 
-    Returns ``None`` for an absent, unknown, expired, or deactivated session --
-    every failure mode collapses to "not logged in", because the caller should
-    treat them identically and a distinguishable error only helps an attacker.
+    Returns ``None`` for an absent, unknown, expired, or deactivated session. Every
+    failure mode collapses to "not logged in", because the caller should treat them
+    identically, and a distinguishable error would only help an attacker.
 
     Expired rows are deleted on sight so the table self-prunes, and ``last_seen``
     is bumped (throttled) so the sessions list stays honest. The caller commits.
@@ -173,14 +170,15 @@ async def resolve_session_from_cookies(
     """The active user behind a request's cookies, plus the token that carried them.
 
     Two cookie names are in play (:mod:`reaper.auth.cookie`), and a jar can hold both.
-    Try each in turn and keep the first that really resolves, rather than the first that
-    merely exists: a stale cookie under one name must not shadow a live session under the
-    other. That shadowing locked operators out of sign-in, spared the wrong session on a
-    password change, and let logout revoke a dead row while the live one stayed open.
+    This tries each token in turn and keeps the first that actually resolves, rather
+    than the first that merely exists: a stale cookie under one name must not hide a
+    live session under the other. Trusting mere existence over resolution could lock an
+    operator out of sign-in, spare the wrong session on a password change, or let logout
+    revoke a dead row while the live one stays open.
 
-    Returning the winning token matters as much as returning the user. Callers that
-    revoke or preserve "this session" must act on the token that is actually authorizing
-    the request, not on whichever name happened to sort first.
+    Returning the winning token matters as much as returning the user. A caller that
+    revokes or preserves "this session" must act on the token that is actually
+    authorizing the request, not on whichever name happened to sort first.
 
     The caller commits, exactly as with :func:`resolve_session`.
     """
@@ -201,10 +199,11 @@ async def close_session(session: AsyncSession, token: str | None) -> None:
 async def sweep_expired(session: AsyncSession) -> int:
     """Delete every session whose window has closed. Returns how many went. Caller commits.
 
-    :func:`resolve_session` already drops an expired row the moment its cookie is presented
-    again, but a device that is never opened again presents nothing -- so its row sat there
-    forever, and the table only grew on an install that had been used for a while (PR-13).
-    An expired row authorizes nothing either way; this is housekeeping, not a control.
+    :func:`resolve_session` already drops an expired row the moment its cookie is
+    presented again, but a device that is never opened again presents nothing, so its
+    row would sit there forever and the table would only grow on an install used for a
+    while. An expired row authorizes nothing either way; this is housekeeping, not a
+    control.
     """
     result = await session.execute(delete(AuthSession).where(AuthSession.expires_at <= utcnow()))
     return int(getattr(result, "rowcount", 0) or 0)
@@ -213,12 +212,12 @@ async def sweep_expired(session: AsyncSession) -> int:
 async def close_all_for_user(
     session: AsyncSession, user_id: int, *, except_token_hash: str | None = None
 ) -> None:
-    """Revoke every session for a user -- the "sign out everywhere" primitive.
+    """Revoke every session for a user: the "sign out everywhere" primitive.
 
     Called when an admin's password is reset (a stolen cookie must stop working) and
-    when an admin is deactivated. Pass ``except_token_hash`` to spare one session --
-    the acting admin's own, so changing your own password does not log you out of the
-    tab you are using while it still evicts every *other* device. The caller commits.
+    when an admin is deactivated. Pass ``except_token_hash`` to spare one session, the
+    acting admin's own, so changing your own password does not log you out of the tab
+    you are using while it still evicts every other device. The caller commits.
     """
     stmt = delete(AuthSession).where(AuthSession.user_id == user_id)
     if except_token_hash is not None:

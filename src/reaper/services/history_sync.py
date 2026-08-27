@@ -1,28 +1,28 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """A local mirror of Tautulli's watch history.
 
-Reaper needs to ask questions Tautulli's API cannot answer in one call: *"as of a
-year ago, who had watched this, and how long had it sat untouched?"* Answering those over a
+Reaper needs to ask questions Tautulli's API cannot answer in one call: "as of a year
+ago, who had watched this, and how long had it sat untouched?" Answering that over a
 whole library needs the whole history in a form we can query, not paginate.
 
 A mature Tautulli install holds hundreds of thousands of rows. The first pull walks all
 of them, once, in large pages. After that it is genuinely incremental: it asks Tautulli
 for only the rows since the newest one we hold, using ``get_history``'s ``after`` filter,
-which turns a per-scan sync from minutes into seconds. (Measured: ``after`` a day ago
-returned a couple hundred rows against a six-figure history.)
+which turns a per-scan sync from minutes into seconds. Measured: ``after`` a day ago
+returned a couple hundred rows against a six-figure history.
 
 Two facts about Tautulli's API shape this, both verified live and neither obvious:
 
-* **You cannot sort ``get_history`` by insertion id.** ``order_column=id`` is ignored;
-  the only reliable order is newest-first by *watched date*. So incremental sync filters
+* **You cannot sort ``get_history`` by insertion id.** ``order_column=id`` is ignored.
+  The only reliable order is newest-first by watched date. So incremental sync filters
   by date (``after``), not by a stable row cursor.
 * **Date-filtering can miss a backfilled old event.** If Tautulli imports history, or
-  Plex reports a play with an old timestamp, that row lands with an *old* date and an
-  ``after=<recent>`` sync skips it. So a **periodic full sweep** (``full=True``, run by
-  the scheduler every three days, and by the Jobs page's Run now) re-walks everything and
-  catches any backfill. Per-scan syncs stay fast. Only a row backdated FURTHER than
-  ``INCREMENTAL_OVERLAP`` waits for the sweep at all; inside those two days the next scan
-  picks it up on its own, which is what the cadence is chosen against
+  Plex reports a play with an old timestamp, that row lands with an old date, and an
+  ``after=<recent>`` sync skips it. So a periodic full sweep (``full=True``, run by the
+  scheduler every three days, and by the Jobs page's Run now) re-walks everything and
+  catches any backfill. Per-scan syncs stay fast. Only a row backdated further than
+  ``INCREMENTAL_OVERLAP`` waits for the sweep at all. Inside those two days, the next
+  scan picks it up on its own, which is what the cadence is chosen against
   (``scheduler.DEFAULT_MAINTENANCE_CRONS``).
 
 Rows are written with ``INSERT OR REPLACE`` keyed on the stable ``row_id``, so re-fetching
@@ -30,28 +30,26 @@ the overlap window (or a whole full sweep) is idempotent and never duplicates.
 
 ## The horizon
 
-The oldest row we hold is Reaper's **data horizon**, and it is load-bearing.
-Tautulli cannot import Plex history from before it was installed, so *everything*
-watched before that point looks never-watched. On a server that has run Tautulli for
-years the horizon is deep and this barely matters -- but on a fresh install it is
-*yesterday*, and a naive tool would conclude the entire library is abandoned and
-delete all of it. The horizon is therefore recorded on every snapshot and enforced by
-a gate, not left as an assumption.
+The oldest row we hold is Reaper's data horizon, and it is load-bearing. Tautulli cannot
+import Plex history from before it was installed, so everything watched before that
+point looks never-watched. On a server that has run Tautulli for years, the horizon is
+deep and this barely matters. On a fresh install, the horizon is yesterday, and a naive
+tool would conclude the entire library is abandoned and delete all of it. The horizon is
+therefore recorded on every snapshot and enforced by a gate, not left as an assumption.
 
 This is the single largest mass-deletion vector in the ecosystem, and it is why the
 horizon is stored, not computed on the fly.
 
 ## Regression detection
 
-If Tautulli's history *shrinks*, someone has reset, pruned or restored its database. Our
+If Tautulli's history shrinks, someone has reset, pruned or restored its database. Our
 evidence just changed underneath us, and any "never watched" verdict is suspect.
 
-The check compares **Tautulli's own reported total** (``recordsTotal``, which the API
+The check compares Tautulli's own reported total (``recordsTotal``, which the API
 returns on every call) against the total we recorded on the previous sync. It cannot be
 based on our local mirror's row count, because we write with ``INSERT OR REPLACE`` and
-never delete -- so our mirror only ever grows, and a mirror-based check can never fire.
-(It did not, before: the guard was a silent no-op.) Storing Tautulli's total each sync
-is what makes the guard real.
+never delete, so our mirror only ever grows and a mirror-based check could never fire.
+Storing Tautulli's total each sync is what makes the guard real.
 """
 
 from __future__ import annotations
@@ -81,73 +79,62 @@ INCREMENTAL_OVERLAP = timedelta(days=2)
 
 log = structlog.get_logger(__name__)
 
-#: Rows per page of the history walk. What a page costs is almost entirely FIXED per request,
-#: so the page size sets the whole runtime. Measured through this client against a live
-#: instance holding 426,018 rows: 1,000 rows took 4.4s, 5,000 took 6.5s, 25,000 took 8.4s and
-#: 50,000 took 12.9s. A deep offset is not what costs, which was the obvious guess and was
-#: measured too: 25,000 rows at offset 401,017 took 8.6s against 8.4s at offset 0.
+#: Rows per page of the history walk. A page's cost is almost fixed per request, so the
+#: page size sets most of the runtime: a full sweep measured end to end fell from 704s to
+#: 237s when the page size rose from 5,000 to 25,000 rows. A deep offset does not add cost
+#: on its own.
 #:
-#: So 5,000 spends 86 requests on that history where 25,000 spends 18, and the whole sweep
-#: measured end to end, the two run back to back against the same instance, went from 704s to
-#: 237s. The curve keeps improving past 25,000 and is not taken further, because a page that
-#: times out is retried at half the size and the reach that matters is the SMALLEST page the
-#: walk can end up choosing on a slower server than this one.
-#:
-#: **The page size is only safe alongside its own read budget, and 25,000 was tried without
-#: one.** It spent 60-80% of the client's shared 30s read budget, so the same instance
-#: answering roughly 1.8x slower timed out on the first page and the sweep aborted, three days
-#: from its next slot (#780). The margin was bought by dropping to 5,000, because the client
-#: had one budget for every Tautulli call and widening it would have handed the same minute to
-#: the artwork proxy answering a browser (``api.poster._artwork_client``) and to the executor's
-#: per-item re-ask mid-reap (``executor._watched_since_approval``). Now the sweep carries a
-#: budget of its own (:data:`PAGE_READ_TIMEOUT`) and those two keep the shared one.
+#: **The page size is only safe alongside its own read budget.** A page this large can
+#: spend most of the client's shared read budget, so an instance answering more slowly
+#: than the one this was measured on could time out before finishing a page and abort the
+#: sweep. That risk is why the sweep now carries a read budget of its own
+#: (:data:`PAGE_READ_TIMEOUT`), separate from the client's shared budget, which stays free
+#: for the artwork proxy answering a browser (``api.poster._artwork_client``) and the
+#: executor's per-item re-ask mid-reap (``executor._watched_since_approval``).
 PAGE_SIZE = 25_000
 
 #: The read budget one page of the sweep gets, in place of the client's shared 30s.
 #:
-#: Seven times the 8.4s a 25,000-row page measured above, so the sweep survives an instance
-#: several times slower than the one it was measured on. Past that the shrink ladder takes
-#: over and the run degrades to a longer sweep rather than to none. Held to a number a stuck
-#: source cannot hide behind: ``transient_retry`` re-sends each page twice more before the
-#: shrink, so every doubling here doubles what a genuinely dead source costs before the walk
-#: reaches the floor and raises.
+#: Seven times the 8.4s a full-size page measured, so the sweep survives an instance
+#: several times slower than the one it was measured on. Past that, the shrink ladder
+#: takes over and the run degrades to a longer sweep rather than to none. Held to a
+#: number a stuck source cannot hide behind: ``transient_retry`` re-sends each page twice
+#: more before the shrink, so every doubling here doubles what a genuinely dead source
+#: costs before the walk reaches the floor and raises.
 PAGE_READ_TIMEOUT = 60.0
 
 #: The floor the walk shrinks to on a read timeout, and the page size the library sweep
-#: already uses against this same source (``library_index._SPINE_PAGE_SIZE``). A source that
-#: cannot finish a page this small inside the read budget is not merely slow -- 1,000 rows
-#: measured at 4.4s against a 60s budget -- so the walk raises there instead of shrinking
-#: further.
+#: already uses against this same source (``library_index._SPINE_PAGE_SIZE``). A source
+#: that cannot finish a page this small inside the read budget is not merely slow: 1,000
+#: rows measured at 4.4s against a 60s budget, so the walk raises there instead of
+#: shrinking further.
 MIN_PAGE_SIZE = 1_000
 
 #: Hard stop on the history paging loop, for a source that serves page after page without
 #: ever reporting a total. A shrink does not spend one of these: it re-asks for rows that
 #: were never served.
 #:
-#: **Count it at MIN_PAGE_SIZE, never at PAGE_SIZE.** The bound is in pages, so its reach in
+#: **Counted at MIN_PAGE_SIZE, never at PAGE_SIZE.** The bound is in pages, so its reach in
 #: rows moves with the page size, and the walk that runs at the floor is by construction the
-#: slow one against the deepest history. At 1,000 pages the old figure covered 25M rows at
-#: the old 25k page and would cover 1M at the floor, which is one to ten times a mature
-#: install rather than far past it. Tripping the cap logs and stops with the sweep still
-#: reporting success, and the mirror shortfall guard cannot catch that on a repeat sweep
-#: (the mirror is already complete from earlier syncs, so there is no shortfall to see), so
-#: a cap reached quietly is the #780 loss again at the oldest tail. 5,000 pages holds 5M rows
-#: at the floor and 125M at PAGE_SIZE, and still stops a source that is not advancing.
+#: slow one against the deepest history. 5,000 pages holds 5M rows at the floor and 125M at
+#: PAGE_SIZE, well past a mature install, while still stopping a source that is not
+#: advancing. Tripping the cap logs and stops with the sweep still reporting success, and
+#: the mirror shortfall guard cannot catch that on a repeat sweep, since the mirror is
+#: already complete from earlier syncs and there is no shortfall to see, so a cap reached
+#: quietly loses evidence at the oldest tail of the history.
 MAX_HISTORY_PAGES = 5_000
 
-#: How many rows the walk may step over because Tautulli answered HTTP 500 for each one alone.
-#: ``get_history`` renders its rows in Python after the query, and a row it cannot render
-#: fails every page that holds it, at any page size and on every sweep. Verified live: two
-#: sessions left in Tautulli's temporary activity table by a crash, with no start time, which
-#: ``get_history`` appended to the listing as activity and which sorted last, so they sat on
-#: the final page of three sweeps in a row. The walk now asks without activity
-#: (``TautulliClient.history``, ``include_activity``), so that pair cannot recur; this is the
-#: fail-safe for a history row itself Tautulli cannot render. The walk halves the page until
-#: the row stands alone, skips it, and counts it: the scan degrades on the count and the
+#: How many rows the walk may step over because Tautulli answered HTTP 500 for each one
+#: alone. ``get_history`` renders its rows in Python after the query, and a row it cannot
+#: render fails every page that holds it, at any page size and on every sweep. The walk
+#: asks without activity (``TautulliClient.history``, ``include_activity``), which is the
+#: fail-safe for a history row itself Tautulli cannot render, distinct from an
+#: in-progress session sorting into the same listing. The walk halves the page until the
+#: row stands alone, skips it, and counts it: the scan degrades on the count and the
 #: sweep records it, so a skip is never quiet. Past this many the source is broken rather
-#: than holding a bad row or two, and the walk raises. Measured live, before the activity
-#: change: the two rows cost 34 requests and 215s on top of a 237s sweep, so this also
-#: bounds the runtime (``docs/LEARNINGS.md``, "A row Tautulli cannot render").
+#: than holding a bad row or two, and the walk raises. Two unservable rows measured live
+#: cost 34 extra requests and 215s on top of a 237s sweep, so this bound also caps the
+#: runtime (``docs/LEARNINGS.md``, "A row Tautulli cannot render").
 MAX_UNSERVABLE_ROWS = 20
 
 
@@ -156,7 +143,7 @@ class HistoryRegressionError(RuntimeError):
 
     Someone reset, pruned or restored the database. Every "never watched" verdict we
     would now produce is suspect, so the sync stops before writing and no run proceeds
-    until a human looks. Our existing mirror is preserved -- stopping loses nothing.
+    until a human looks. Our existing mirror is preserved, so stopping loses nothing.
     """
 
 
@@ -165,10 +152,10 @@ class HistoryState:
     rows: int
     earliest: datetime | None
     latest: datetime | None
-    #: What the source said IT holds, at the last sync that reached it
+    #: What the source said it holds, at the last sync that reached it
     #: (``history_sync_state.tautulli_total``). ``None`` when no sync has ever recorded one,
-    #: which is "we were never told" and not zero (rule 93). Carried here so the scan can ask
-    #: whether the mirror is COMPLETE in the same read that asks whether it is empty or stale.
+    #: which is "we were never told" and not zero. Carried here so the scan can ask whether
+    #: the mirror is complete in the same read that asks whether it is empty or stale.
     source_total: int | None = None
     #: Rows the walk that produced this state stepped over because the source answered
     #: HTTP 500 for each one alone (``MAX_UNSERVABLE_ROWS``). A play the mirror was refused is
@@ -225,17 +212,18 @@ CREATE TABLE IF NOT EXISTS history_sync_state (
 );
 """
 
-#: Every index on ``watch_event``, by name. Kept OUT of ``SCHEMA`` on purpose: an index can
+#: Every index on ``watch_event``, by name. Kept out of ``SCHEMA`` on purpose: an index can
 #: be added to a cache that already holds rows, where a column change cannot. The shape
-#: check below compares COLUMNS, so an index added to ``SCHEMA`` would look current on
-#: every existing install and simply never be created -- and the only way to force it would
-#: be to bump the column tuple, which drops the whole mirror and costs a full re-sync from
+#: check below compares columns, so an index added to ``SCHEMA`` would look current on
+#: every existing install and simply never be created. The only way to force it would be
+#: to bump the column tuple, which drops the whole mirror and costs a full re-sync from
 #: Tautulli to land an index. ``ensure_schema`` instead notices a missing index by name and
 #: creates it in place, leaving the mirrored rows alone.
 #:
-#: Every column a fairness query filters on wants one here: the board and the person drawer
-#: run ``WHERE ... IN (:keys)`` per ``db.KEY_CHUNK``, and an unindexed column turns each chunk
-#: into a full scan of a table that holds every play the server has ever recorded (P-4).
+#: Every column a fairness query filters on wants one here: the board and the person
+#: drawer run ``WHERE ... IN (:keys)`` per ``db.KEY_CHUNK``, and an unindexed column turns
+#: each chunk into a full scan of a table that holds every play the server has ever
+#: recorded.
 INDEXES = {
     "ix_watch_event_rating_key": (
         "CREATE INDEX IF NOT EXISTS ix_watch_event_rating_key ON watch_event "
@@ -275,17 +263,17 @@ async def _store_tautulli_total(engine: AsyncEngine, total: int) -> None:
 
 
 #: Every column ``SCHEMA`` declares on ``watch_event``, in order, as
-#: ``(name, declared type, notnull)`` -- the first three fields ``PRAGMA table_info``
+#: ``(name, declared type, notnull)``, the first three fields ``PRAGMA table_info``
 #: returns after ``cid``. Names alone are not enough: the change that made
 #: ``watched_status`` nullable moved no name and no position, so a name-only comparison
 #: would call an upgraded install's table current and leave the old ``0.0`` rows in place.
 #: ``row_id INTEGER PRIMARY KEY`` is a rowid alias, which sqlite reports as ``notnull=0``.
 #: Keep this and ``SCHEMA`` together. The fast path in ``ensure_schema`` only runs ``SCHEMA``
-#: (and its companion ``history_sync_state`` table) when THIS tuple mismatches, so a new
-#: table added to ``SCHEMA`` must also change this tuple (bump a column, add one) or existing
-#: caches will never execute it. Indexes are the exception and live in ``INDEXES``, which
-#: ``ensure_schema`` reconciles by name on every call -- adding one there needs no change
-#: here and costs no rebuild.
+#: (and its companion ``history_sync_state`` table) when this tuple mismatches, so a new
+#: table added to ``SCHEMA`` must also change this tuple (bump a column, add one) or
+#: existing caches will never execute it. Indexes are the exception and live in
+#: ``INDEXES``, which ``ensure_schema`` reconciles by name on every call. Adding one there
+#: needs no change here and costs no rebuild.
 _WATCH_EVENT_COLUMNS = (
     ("row_id", "INTEGER", 0),
     ("rating_key", "INTEGER", 1),
@@ -306,10 +294,10 @@ _rebuild_lock = per_loop_lock()
 
 
 async def ensure_schema(engine: AsyncEngine) -> None:
-    """Create ``watch_event`` if it is not there, and REBUILD it if its shape is stale.
+    """Create ``watch_event`` if it is not there, and rebuild it if its shape is stale.
 
     Called by ``sync`` and before every read. The cache database is rebuildable and can
-    be deleted at any time -- so on a fresh install, or after someone clears the cache,
+    be deleted at any time, so on a fresh install, or after someone clears the cache,
     reading it must find an empty table rather than crash with ``no such table``. A
     missing table should read as "no history yet" (which degrades the snapshot loudly),
     never as an opaque SQL error a hundred frames deep in the scan.
@@ -320,27 +308,27 @@ async def ensure_schema(engine: AsyncEngine) -> None:
     patched into shape. Three reasons, and the last is the one that matters:
 
     * There is nothing to preserve. ``sync`` refetches from Tautulli, and an empty table
-      makes the next sync a FULL one automatically, so the cache heals itself.
+      makes the next sync a full one automatically, so the cache heals itself.
     * A migration is code that runs once, on a path no test exercises twice, against a
       shape nobody has locally. Pre-release that is pure risk for no gain.
     * Carried-over rows are exactly the untrustworthy ones. When ``watched_status``
-      became nullable, every existing ``0.0`` was already ambiguous -- reported, or
+      became nullable, every existing ``0.0`` was already ambiguous, either reported, or
       invented by the old ``or 0`` coercion, with no way to tell. Preserving them would
       have kept the bad data the shape change existed to fix.
 
     The cost is one full re-sync, and a scan in between degrades loudly rather than
     judging on a thin mirror.
     """
-    # Common path: the table exists and its shape is current. Check that in a READ
-    # connection -- no write lock, no fsync -- and return. ensure_schema runs several times
-    # per scan (state, watch stats, the liveness read), and each one was opening a write
-    # transaction on cache.db purely to re-run idempotent DDL that changed nothing.
+    # Common path: the table exists and its shape is current. Check that in a read
+    # connection, no write lock, no fsync, and return. ensure_schema runs several times
+    # per scan (state, watch stats, the liveness read), so this path avoids opening a
+    # write transaction on cache.db just to re-run idempotent DDL that changes nothing.
     async with engine.connect() as conn:
         cols = (await conn.execute(text("PRAGMA table_info(watch_event)"))).all()
         live = tuple((row[1], str(row[2]).upper(), int(row[3])) for row in cols)
         shape_ok = bool(cols) and live == _WATCH_EVENT_COLUMNS
         # An index can be added to a cache that already holds rows, so a shape that is
-        # otherwise current still gets checked for one that is missing -- that is how a new
+        # otherwise current still gets checked for one that is missing. That is how a new
         # entry in INDEXES reaches an install that synced before it existed, without
         # dropping the mirror. Reading sqlite_master costs one indexed lookup.
         missing = (
@@ -363,18 +351,18 @@ async def ensure_schema(engine: AsyncEngine) -> None:
         return
 
     # Only here do we take the write transaction: the table is missing (fresh or cleared
-    # cache -> create it, and the next sync becomes a full one automatically) or its shape
-    # is stale (drop and recreate empty -- rebuild, never migrate; see the docstring).
+    # cache, so create it, and the next sync becomes a full one automatically) or its
+    # shape is stale (drop and recreate empty, rebuild, never migrate, see the docstring).
     #
     # Serialize the whole rebuild behind a process-level asyncio.Lock and re-read the shape
-    # INSIDE it, deciding from THAT, never from the pre-lock read above. The LOCK is the
+    # inside it, deciding from that, never from the pre-lock read above. The lock is the
     # mutual exclusion here, not any database write lock: pysqlite runs the PRAGMA and the
-    # DROP/CREATE in autocommit with no BEGIN IMMEDIATE, so nothing at the SQLite level stops
-    # two concurrent callers (the scan, the fairness route, the sweep -- all one
-    # process) from both seeing "stale" and the second re-DROPping the table the first just
-    # rebuilt (a redundant double rebuild; the next full sweep refills either way). Under
-    # the lock the re-read is authoritative, and the pre-lock read only decides whether taking
-    # the lock and the transaction is worth it at all.
+    # DROP/CREATE in autocommit with no BEGIN IMMEDIATE, so nothing at the SQLite level
+    # stops two concurrent callers (the scan, the fairness route, the sweep, all one
+    # process) from both seeing "stale" and the second re-dropping the table the first just
+    # rebuilt (a redundant double rebuild that costs nothing, since the next full sweep
+    # refills either way). Under the lock the re-read is authoritative, and the pre-lock
+    # read only decides whether taking the lock and the transaction is worth it at all.
     async with _rebuild_lock(), engine.begin() as conn:
         cols = (await conn.execute(text("PRAGMA table_info(watch_event)"))).all()
         live = tuple((row[1], str(row[2]).upper(), int(row[3])) for row in cols)
@@ -417,18 +405,17 @@ async def _state(engine: AsyncEngine) -> HistoryState:
 #: (``scan_runner.run_scan``) and the full sweep (``scheduler.full_history_sweep``, plus
 #: its Run now button). Nothing stopped them overlapping, and both write ``watch_event``.
 #:
-#: **Measured, because the page size moved it**: one page's INSERT OR REPLACE holds the
-#: cache write lock 129ms at 5,000 rows and 1,876ms at 25,000, against the 5s
-#: ``busy_timeout`` in ``db/session.py``. So the margin is 2.7x rather than 39x, and a
-#: data directory that refuses WAL (a NAS bind mount, named at ``db.session.journal_mode``)
-#: has readers waiting on that write too. Serializing is what takes the collision off the
-#: table rather than leaving it to storage speed.
+#: **This is measured, not assumed.** One page's INSERT OR REPLACE can hold the cache
+#: write lock for close to 2 seconds at this page size, against the 5s ``busy_timeout``
+#: in ``db/session.py``. A data directory that refuses WAL (a NAS bind mount, named at
+#: ``db.session.journal_mode``) has readers waiting on that write too. Serializing is
+#: what takes the collision off the table rather than leaving it to storage speed.
 #:
 #: **The waiter is the scan, and it waits rather than skipping.** A sweep that yields to
-#: whatever else is running is a sweep that stops running, which is #780's actual loss --
-#: and with a scan cron the operator picks, "skip if busy" can silently mean "never again".
-#: A scan reaching a sweep in flight is bounded by the sweep (measured at 237s), shows
-#: "syncing watch history" while it waits, and gets fresher evidence for having waited.
+#: whatever else is running is a sweep that stops running, and with a scan cron the
+#: operator picks, "skip if busy" can silently mean "never again". A scan reaching a
+#: sweep in flight is bounded by the sweep's own runtime, shows "syncing watch history"
+#: while it waits, and gets fresher evidence for having waited.
 #:
 #: Ordering with ``_rebuild_lock`` is one-way: this is taken first and ``ensure_schema``
 #: takes the other inside it. Nothing takes them the other way round.
@@ -443,10 +430,10 @@ async def sync(
 ) -> HistoryState:
     """Pull history into the local mirror, one walk at a time process-wide.
 
-    Incremental by default -- fetches only rows since our newest, via Tautulli's
-    ``after`` filter, which is fast. Pass ``full=True`` for the periodic sweep that
-    re-walks everything and catches any backfilled old events (see the module docstring).
-    A fresh, empty mirror always does a full walk regardless of ``full``.
+    Incremental by default: fetches only rows since our newest, via Tautulli's ``after``
+    filter, which is fast. Pass ``full=True`` for the periodic sweep that re-walks
+    everything and catches any backfilled old events (see the module docstring). A fresh,
+    empty mirror always does a full walk regardless of ``full``.
 
     The lock is here rather than at the two call sites so a third caller cannot miss it,
     and it covers ``_check_regression`` too: that reads the previous total and records the
@@ -472,11 +459,11 @@ async def _sync(
 
     before = await _state(engine)
 
-    # Regression check FIRST, against Tautulli's own reported total -- before we write
+    # Regression check first, against Tautulli's own reported total, before we write
     # anything. If the source shrank, we stop rather than judge against changed evidence.
     await _check_regression(engine, client)
 
-    # Incremental only when we already hold history AND know its newest instant. Filter by
+    # Incremental only when we already hold history and know its newest instant. Filter by
     # date with INCREMENTAL_OVERLAP (two days) of overlap: `after` is date-granular and
     # Tautulli's exact boundary semantics are unverified, so re-asking for our newest days
     # guarantees no gap, and INSERT OR REPLACE makes the overlap free.
@@ -510,11 +497,11 @@ async def _sync(
                 # A read timeout says the source took the request and could not finish the
                 # body in time, which is a fact about how much was asked for. Halve and keep
                 # paging. `transient_retry` has already re-sent this identical page twice
-                # against the same budget by the time we get here, so a fourth attempt at the
-                # same size is not the move -- and aborting means no sweep at all until the
-                # next cron slot, while every backfilled row stays missing and its title reads
-                # never watched (#780). At the floor the source is not merely slow: raise, and
-                # let the scheduler record the failure.
+                # against the same budget by the time we get here, so a fourth attempt at
+                # the same size is not the move, and aborting means no sweep at all until
+                # the next cron slot, while every backfilled row stays missing and its
+                # title reads never watched. At the floor the source is not merely slow:
+                # raise, and let the scheduler record the failure.
                 if ceiling <= MIN_PAGE_SIZE:
                     raise
                 ceiling = length = max(MIN_PAGE_SIZE, ceiling // 2)
@@ -525,10 +512,10 @@ async def _sync(
             # A 500 is Tautulli's own answer for a page it could not render, and one row it
             # cannot render fails every page that holds it, at any size
             # (MAX_UNSERVABLE_ROWS). Halve until the row stands alone, then step over it: the
-            # rows on either side land, where raising lost the whole tail of every sweep. A
-            # 502 or 503 is a proxy saying the source is away, which no smaller page fixes,
-            # so it raises above. The floor does not apply: it bounds a timeout, and the
-            # question here is which row rather than how many.
+            # rows on either side land, where raising would lose the whole tail of every
+            # sweep. A 502 or 503 is a proxy saying the source is away, which no smaller page
+            # fixes, so it raises above. The floor does not apply: it bounds a timeout, and
+            # the question here is which row rather than how many.
             if length > 1:
                 length //= 2
                 continue
@@ -545,7 +532,7 @@ async def _sync(
         pages += 1
         rows = page.get("data") or []
         if total is None:
-            # recordsFiltered reflects the `after` filter; on an incremental sync it is
+            # recordsFiltered reflects the `after` filter. On an incremental sync it is
             # the small delta, on a full sync it is the whole history.
             total = int(page.get("recordsFiltered") or 0)
         if not rows:
@@ -555,7 +542,7 @@ async def _sync(
         for row in rows:
             row_id = row.get("row_id")
             # row_id is null only for live/in-progress sessions (verified against a real
-            # instance); those are not history yet, so skipping them is correct.
+            # instance). Those are not history yet, so skipping them is correct.
             if row_id is None:
                 skipped_live += 1
                 continue
@@ -574,13 +561,14 @@ async def _sync(
                     "grandparent_rating_key": _int_or_none(row.get("grandparent_rating_key")),
                     "user_id": int(user_id),
                     "watched_at": int(watched_at.timestamp()),
-                    # NULL, not 0.0, when Tautulli omitted it. `or 0` collapsed "not
-                    # watched" and "we were not told" into the same number, and once
-                    # written the two are indistinguishable forever. See the column note.
+                    # NULL, not 0.0, when Tautulli omitted it. Coercing with `or 0` would
+                    # collapse "not watched" and "we were not told" into the same number,
+                    # and once written the two would be indistinguishable forever. See the
+                    # column note.
                     "watched_status": _float_or_none(row.get("watched_status")),
                     "percent_complete": int(row.get("percent_complete") or 0),
                     "media_type": str(row.get("media_type") or "unknown"),
-                    # Episode number for TV rows; None for movies. Fail-safe: a NULL here
+                    # Episode number for TV rows, None for movies. Fail-safe: a NULL here
                     # leaves that season "position unknown" and the guard falls back to the
                     # season-level protection, never under-protecting.
                     "media_index": _int_or_none(row.get("media_index")),
@@ -604,10 +592,10 @@ async def _sync(
             inserted += len(batch)
 
         # Advance by what the page actually held, never by what was asked for. A middle
-        # page shorter than the requested length used to move `start` past rows nobody had
-        # fetched, and a truncated mirror reads as a shallow horizon -- which is the single
-        # largest mass-deletion vector this codebase has (rule 56). This is also what makes
-        # a shrunk page correct: `length` falls mid-walk, and `start` follows the rows.
+        # page shorter than the requested length must not move `start` past rows nobody
+        # fetched, since a truncated mirror reads as a shallow horizon, the single largest
+        # mass-deletion vector this codebase has. This is also what makes a shrunk page
+        # correct: `length` falls mid-walk, and `start` follows the rows.
         start += len(rows)
         if length < ceiling:
             # Climb back after a 500 was isolated, one doubling per page that lands: a second
@@ -616,13 +604,14 @@ async def _sync(
         log.info("history.page", fetched=start, of=total, inserted=inserted)
         # `total` is trusted only when it is actually there. `int(... or 0)` makes a
         # Tautulli that omits recordsFiltered indistinguishable from one reporting an
-        # empty history, and 0 ended the loop after page one. Falsy means "we were not
-        # told how many": keep paging until a page comes back empty.
+        # empty history, so checking `start >= total` alone would end the loop after page
+        # one. Falsy means "we were not told how many": keep paging until a page comes
+        # back empty.
         if total and start >= total:
             break
         if pages >= MAX_HISTORY_PAGES:
             # Only reachable if the source keeps serving non-empty pages without ever
-            # reporting a total. Stop rather than spin; the horizon gate treats the
+            # reporting a total. Stop rather than spin. The horizon gate treats the
             # shorter mirror as less evidence, which keeps files rather than deleting.
             log.warning("history.page_cap_reached", pages=pages, fetched=start)
             break
@@ -648,15 +637,16 @@ async def _sync(
 
 
 async def _check_regression(engine: AsyncEngine, client: TautulliClient) -> None:
-    """Detect a Tautulli reset/prune, and record the new total.
+    """Detect a Tautulli reset or prune, and record the new total.
 
     Compares Tautulli's own reported total against the total we saw last time. A
-    significant drop means the source shrank -- reset, pruned or restored -- and our
-    "never watched" evidence just changed underneath us. We raise before writing anything.
+    significant drop means the source shrank (reset, pruned or restored), and our "never
+    watched" evidence just changed underneath us. We raise before writing anything.
 
-    On the very first sync there is no prior total, so there is nothing to compare; we
-    just record it. This deliberately does NOT compare our mirror's row count, which
-    never shrinks (INSERT OR REPLACE, no deletes) and so could never detect a regression.
+    On the very first sync there is no prior total, so there is nothing to compare, and we
+    just record it. This compares Tautulli's reported total rather than our mirror's row
+    count, because the mirror never shrinks (INSERT OR REPLACE, no deletes) and so could
+    never detect a regression on its own.
     """
     # Without activity, so the total counts the same rows the walk reads: with it, every
     # play in progress is one more row in the count.
@@ -689,9 +679,9 @@ async def _check_regression(engine: AsyncEngine, client: TautulliClient) -> None
 def _float_or_none(value: object) -> float | None:
     """A completion fraction Tautulli actually sent, or ``None``.
 
-    Deliberately NOT ``float(value or 0)``: a genuine 0.0 ("started it, did not finish")
-    and a missing field are different facts, and the sequential guard acts on the
-    difference. Once collapsed they cannot be separated again.
+    Never coerced with ``float(value or 0)``: a genuine 0.0 ("started it, did not
+    finish") and a missing field are different facts, and the sequential guard acts on
+    the difference. Once collapsed, they cannot be separated again.
     """
     if not isinstance(value, int | float | str) or value == "":
         return None
@@ -721,15 +711,16 @@ async def horizon(engine: AsyncEngine) -> datetime | None:
 async def last_synced_at(engine: AsyncEngine) -> datetime | None:
     """When the ingest last ran, or ``None`` if it never has.
 
-    The liveness signal ``HistoryState.latest`` is not. ``history_sync_state.synced_at`` is
-    written by :func:`_store_tautulli_total` whenever Tautulli answered and its history had
-    not shrunk, so this moves on a quiet library while ``MAX(watched_at)`` stands still.
-    A stalled ingest and a quiet library share the same newest event, so degrading a scan on
-    that reads users who went away for the weekend as a broken pipeline. This is what the
-    scan's staleness guard degrades on instead (``services.snapshot``).
+    This is the liveness signal that ``HistoryState.latest`` is not.
+    ``history_sync_state.synced_at`` is written by :func:`_store_tautulli_total` whenever
+    Tautulli answered and its history had not shrunk, so this moves on a quiet library
+    while ``MAX(watched_at)`` stands still. A stalled ingest and a quiet library share the
+    same newest event, so degrading a scan on that would read users who went away for the
+    weekend as a broken pipeline. This is what the scan's staleness guard degrades on
+    instead (``services.snapshot``).
 
     Precise about what it marks: ``_store_tautulli_total`` is called from
-    ``_check_regression``, which runs *before* the page walk, so this says "the source
+    ``_check_regression``, which runs before the page walk, so this says "the source
     answered", not "the walk finished". That is the right signal for the guard, which is
     distinguishing a reachable source from an unreachable one.
     """

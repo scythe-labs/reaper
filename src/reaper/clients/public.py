@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Fetching public, unauthenticated resources: dataset mirrors and curated lists.
 
-These are plain GETs of public data, but they still belong in ``clients/`` -- the one
-place HTTP lives -- so they ride the shared retry, timeout, error-mapping and redirect
-machinery instead of growing bespoke copies in the services layer.
+These are plain GETs of public data, but they still belong in ``clients/``, the one
+place HTTP lives, so they use the same retry, timeout, error-mapping and redirect
+code as every other client instead of a separate copy in the services layer.
 
-One deliberate difference from the credentialed clients: **cross-origin redirects are
-followed here.** No API key or token rides on these requests, so there is nothing for a
-redirect to carry away, and public mirrors genuinely do bounce to CDNs.
+One difference from the credentialed clients: cross-origin redirects are followed
+here. These requests carry no API key or token, so there is nothing for a redirect to
+carry away, and public mirrors genuinely do bounce to CDNs.
 """
 
 from __future__ import annotations
@@ -36,9 +36,9 @@ _CHUNK = 1 << 16
 class PublicClient(BaseClient):
     """A read-only client for one public origin. No credentials, GETs only.
 
-    Constructed with a fresh, default :class:`RuntimeSafety`: the guard only ever gates
-    mutations and this client issues none, so callers need not thread safety state into
-    code that cannot write anything anywhere.
+    Constructed with a fresh, default :class:`RuntimeSafety`. The guard only gates
+    mutations, and this client never sends one, so a caller does not need to pass
+    safety state into code that can never write anything.
     """
 
     service: ClassVar[str] = "public-fetch"
@@ -54,14 +54,15 @@ class PublicClient(BaseClient):
     async def stream_to(self, path: str, destination: Path) -> None:
         """Stream one GET body to ``destination``, following a few redirects.
 
-        The redirect loop is manual for the same reason as ``_send``'s (the client never
-        auto-follows), but unlike ``_send`` a cross-origin hop is fine here: these
-        requests carry no credentials. Errors map to :class:`IntegrationError` exactly
-        like every other client call; the caller owns temp-file-and-rename semantics.
+        The redirect loop is manual for the same reason as :meth:`_send`'s: the client
+        never auto-follows a redirect. Unlike :meth:`_send`, a cross-origin hop is fine
+        here, because these requests carry no credentials. Errors map to
+        :class:`IntegrationError` exactly like every other client call. The caller owns
+        the temp-file-and-rename logic.
 
-        Retried on a transient transport failure like every other read (:meth:`_stream_once`
-        holds the policy), which the streamed path used to opt out of by accident: a single
-        blip two hundred megabytes into the ratings dataset aborted the whole download.
+        Retried on a transient transport failure like every other read
+        (:meth:`_stream_once` holds the retry policy), so a single blip partway through
+        a large download does not abort the whole transfer.
         """
         try:
             await self._stream_once(path, destination)
@@ -70,20 +71,22 @@ class PublicClient(BaseClient):
 
     @transient_retry
     async def _stream_once(self, path: str, destination: Path) -> None:
-        """One whole attempt at the streamed download, transport errors left unmapped.
+        """One whole attempt at the streamed download. Transport errors are left unmapped.
 
-        Same split as ``_request``/``_send``: the retry predicate matches raw ``httpx2``
-        errors, so mapping them here would make the backoff dead code. :meth:`stream_to`
-        maps what survives every attempt.
+        This follows the same split as :meth:`_request` and :meth:`_send`: the retry
+        predicate matches raw ``httpx2`` errors, so mapping them here would keep the
+        backoff from ever firing. :meth:`stream_to` maps whatever error survives every
+        attempt.
 
-        **An attempt restarts the download from the beginning.** ``destination`` is reopened
-        ``"wb"`` each time, so a half-written body is truncated rather than appended to. That
-        matters more than the wasted bytes: a resumed transfer concatenated onto a partial
-        one would parse as a valid dataset of the wrong contents, and nothing downstream
-        would notice.
+        Each attempt restarts the download from the beginning. ``destination`` is
+        reopened ``"wb"`` every time, so a half-written body is replaced rather than
+        appended to. That matters more than the wasted bytes: a resumed transfer glued
+        onto a partial one would parse as a valid dataset with the wrong contents, and
+        nothing downstream would notice.
         """
-        # The streamed download rides past `_send`, so it traces itself: `path` is the
-        # argument, never the post-redirect target, matching every other `client.call` line.
+        # This streamed download bypasses `_send`, so it traces itself here. `path` is
+        # what gets logged, never the post-redirect target, matching every other
+        # `client.call` line.
         started = time.monotonic()
         status: int | None = None
         try:

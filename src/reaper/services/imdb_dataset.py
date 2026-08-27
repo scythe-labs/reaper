@@ -1,33 +1,32 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The IMDb ratings dataset.
 
-``https://datasets.imdbws.com/title.ratings.tsv.gz`` -- 8.2 MB gzipped, ~1.69M
-rows, refreshed daily, no API key. Columns: ``tconst``, ``averageRating``,
+``https://datasets.imdbws.com/title.ratings.tsv.gz`` is a gzipped TSV, about 8 MB,
+refreshed daily, with no API key needed. Columns: ``tconst``, ``averageRating``,
 ``numVotes``.
 
-Why this rather than an API: it is the source of truth, it is free, it needs no
-key or rate-limit budget, and -- uniquely -- it covers **TV series and individual
-episodes**, not just movies. It also gives us the **vote count**, without which a
-rating floor is meaningless: a 9.5 from 12 votes is noise, and a rule that
-protects on rating alone would preserve junk.
+This dataset beats an API call. It is the source of truth, it costs nothing, and
+it needs no key or rate limit. It also covers TV series and individual episodes,
+not only movies. The vote count matters as much as the rating itself: a 9.5 from
+12 votes is noise, and a rule that protects on rating alone would preserve junk.
 
-## The failure direction that matters
+## Why a missing rating is dangerous
 
-Every other unknown in Reaper protects an item. **A missing rating does the
-opposite.** The rule is "do not delete this if IMDb >= 7.5", so an absent rating
-means the protection cannot fire, and a well-rated film becomes deletable. An
-empty or half-loaded table would therefore silently strip protection from the
-entire library -- the worst possible failure, arriving quietly.
+Most missing evidence in Reaper protects an item. A missing rating does the
+opposite. The rule reads "do not delete this if IMDb is at least 7.5", so a
+missing rating means the protection cannot fire and a well-rated film becomes
+deletable. An empty or half-loaded table would silently strip protection from
+the whole library, the worst failure this module can produce.
 
 Two defenses:
 
-* **The load is atomic.** Rows go into a staging table and are swapped in only
-  once every row has landed. A download that dies halfway leaves the previous
-  data intact rather than a partial one.
-* **Degradation is loud and fails closed.** If the table is empty, or the data is
-  older than ``max_age_days``, ``ImdbRatings.degraded`` is true -- and the rating
-  gate must then protect everything rather than quietly protect nothing. Callers
-  cannot forget this: ``lookup`` refuses to answer while degraded.
+* **The load is atomic.** Rows land in a staging table and swap in only once
+  every row has loaded. A download that dies partway leaves the previous data
+  in place instead of a partial table.
+* **Degradation is loud and fails closed.** When the table is empty, or the data
+  is older than ``max_age_days``, ``ImdbRatings.degraded`` is true, and the
+  rating gate must then protect everything instead of quietly protecting
+  nothing. ``lookup`` enforces this itself: it refuses to answer while degraded.
 """
 
 from __future__ import annotations
@@ -86,8 +85,8 @@ class DatasetDegradedError(RuntimeError):
     """The ratings data is missing or stale.
 
     Raised rather than returning None, because a None here would be read as "this
-    film has no rating" -- and therefore "no rating protection applies" -- which
-    would strip protection from every title at once.
+    film has no rating", and therefore "no rating protection applies", which would
+    strip protection from every title at once.
     """
 
 
@@ -105,7 +104,7 @@ def _take_batch(rows: Iterator[tuple[str, float, int]], size: int) -> list[dict[
 
 
 #: Above this share of dropped rows, a load is treated as format drift rather than the
-#: ordinary trickle of IMDb nulls. A healthy dataset drops a fraction of a percent; the
+#: ordinary trickle of IMDb nulls. A healthy dataset drops a fraction of a percent. The
 #: shape this catches is an upstream column change that silently halves rating coverage
 #: while still loading millions of rows, so the zero-row tripwire never fires.
 DRIFT_SKIP_FRACTION = 0.05
@@ -140,7 +139,7 @@ def parse_rows(
     ``counters`` (optional) accumulates a ``skipped`` count of the dropped rows. ``load``
     returns it on :class:`LoadResult` and the nightly job puts it in front of the
     operator, because a large skip fraction quietly shrinks rating coverage while staying
-    above the zero-row tripwire that would otherwise catch it -- and less rating coverage
+    above the zero-row tripwire that would otherwise catch it, and less rating coverage
     means fewer well-rated titles protected.
     """
 
@@ -166,16 +165,16 @@ def parse_rows(
                 yield tconst, float(rating), int(votes)
             except ValueError:
                 _skip()
-                continue  # \N or junk -- absent, not zero
+                continue  # IMDb's null (\N) or a bad value: skip it, never read it as 0.0
 
 
 async def download(destination: Path, *, url: str = DATASET_URL) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     tmp = destination.with_suffix(".part")
 
-    # Through clients/ like every other fetch (rule 33): shared timeouts, error mapping,
-    # and redirect policy. The dataset mirror redirects to a CDN, which PublicClient
-    # (credential-less by construction) is allowed to follow.
+    # This goes through clients/ like every other fetch, for shared timeouts, error
+    # mapping, and redirect policy. The dataset mirror redirects to a CDN, and
+    # PublicClient can follow it because it carries no credentials.
     parts = urlsplit(url)
     path = parts.path + (f"?{parts.query}" if parts.query else "")
     async with PublicClient(
@@ -191,19 +190,20 @@ async def download(destination: Path, *, url: str = DATASET_URL) -> Path:
 
 
 async def load(engine: AsyncEngine, archive: Path) -> LoadResult:
-    """Load the dataset, swapping it in atomically.
+    """Load the dataset, and swap it in atomically.
 
-    The multi-minute parse+insert populates a *staging* table in many short transactions,
-    each committed on its own, so no write lock is held across the parse. The cache DB is
-    WAL with a 5s ``busy_timeout``, which allows concurrent readers but only one writer; a
-    single transaction spanning the whole load would make every other cache writer
-    (``history_sync`` during a scan, ``lists.sync``, the nightly curated refresh) wait out
-    the timeout and fail with 'database is locked'. Only the final swap must be atomic, and
-    it holds the write lock for well under a second.
+    The parse and insert takes minutes and populates a staging table in many short
+    transactions, each committed on its own, so no write lock is held across the parse.
+    The cache database is WAL with a 5-second busy timeout, which allows concurrent
+    readers but only one writer. A single transaction spanning the whole load would make
+    every other cache writer (``history_sync`` during a scan, ``lists.sync``, the nightly
+    curated refresh) wait out the timeout and fail with "database is locked". Only the
+    final swap must be atomic, and it holds the write lock for well under a second.
 
-    Crash safety is unchanged. The previous ``imdb_rating`` stays live until the swap, so a
-    process killed mid-populate leaves only a partial ``imdb_rating_staging`` -- which the
-    next run's ``DROP TABLE IF EXISTS imdb_rating_staging`` below clears before starting.
+    Crash safety does not depend on this. The previous ``imdb_rating`` table stays live
+    until the swap, so a process killed mid-load leaves only a partial
+    ``imdb_rating_staging`` table, which the next run's
+    ``DROP TABLE IF EXISTS imdb_rating_staging`` clears before it starts.
     """
     insert = text(
         "INSERT OR REPLACE INTO imdb_rating_staging (tconst, average_rating, num_votes) "
@@ -229,8 +229,9 @@ async def load(engine: AsyncEngine, archive: Path) -> LoadResult:
     with archive.open("rb") as handle:
         parsed = parse_rows(handle, counters)
         while True:
-            # The 1.7M-row gunzip + parse is CPU-bound; producing each batch in a worker
-            # thread keeps the event loop serving requests through the refresh.
+            # Parsing the multi-million-row gzip file is CPU-bound. Producing each batch
+            # in a worker thread keeps the event loop free to serve requests during the
+            # refresh.
             batch = await asyncio.to_thread(_take_batch, parsed, 10_000)
             if not batch:
                 break
@@ -239,9 +240,9 @@ async def load(engine: AsyncEngine, archive: Path) -> LoadResult:
             rows += len(batch)
 
     if rows == 0:
-        # Never swap in an empty table: it would look exactly like "nothing is rated",
-        # and every rating protection in the library would stop firing. The partial (empty)
-        # staging table is left for the next run's DROP to clear; imdb_rating stays live.
+        # An empty table would read as "nothing is rated", and every rating protection in
+        # the library would stop firing, so refuse to swap it in. The empty staging table
+        # is left for the next run's DROP to clear, and imdb_rating stays live.
         raise ValueError("IMDb dataset parsed to zero rows; refusing to swap it in.")
 
     # -- the swap: the only part that must be atomic, and it is sub-second ---------
@@ -270,15 +271,16 @@ async def load(engine: AsyncEngine, archive: Path) -> LoadResult:
             {"synced_at": int(utcnow().timestamp()), "row_count": rows},
         )
 
-    # ``skipped`` counts rows dropped as null or malformed. A sudden jump against a steady
-    # ``rows`` is the signature of an upstream format change silently shrinking coverage.
+    # ``skipped`` counts rows dropped as null or malformed. A sudden jump against a
+    # steady ``rows`` count is the signature of an upstream format change that is
+    # silently shrinking coverage.
     skipped = counters["skipped"]
     result = LoadResult(rows=rows, skipped=skipped)
     if result.drifted:
-        # Loud, because this is the failure that removes protection: fewer ratings means
-        # fewer well-rated titles kept, and the zero-row tripwire never fires for a load
-        # that is merely half a load. Returned as well as logged -- the caller puts it in
-        # front of the operator (see scheduler.refresh_ratings).
+        # This failure removes protection: fewer ratings means fewer well-rated titles
+        # kept, and the zero-row tripwire never catches a load that is only half a load.
+        # Logged as a warning and returned to the caller, which shows it to the operator
+        # (``scheduler.refresh_ratings``).
         log.warning("imdb.load_drift", rows=rows, skipped=skipped, fraction=result.skip_fraction)
     else:
         log.info("imdb.loaded", rows=rows, skipped=skipped)
@@ -319,10 +321,10 @@ class ImdbRatings:
     async def lookup(self, imdb_ids: list[str]) -> dict[str, ImdbRating]:
         """Ratings for a batch of IMDb ids.
 
-        Raises ``DatasetDegradedError`` when the data is missing or stale. It does
-        *not* quietly return an empty mapping: the caller would read that as "none
-        of these are rated", conclude that no rating protection applies, and make
-        the entire library deletable.
+        Raises ``DatasetDegradedError`` when the data is missing or stale, and never
+        returns an empty mapping instead. A caller reading an empty mapping as "none of
+        these are rated" would conclude that no rating protection applies and make the
+        whole library deletable.
         """
         state = await self.state()
         if state.degraded(max_age=self._max_age):
@@ -343,8 +345,8 @@ class ImdbRatings:
                 chunk = imdb_ids[start : start + KEY_CHUNK]
                 placeholders = ", ".join(f":id{i}" for i in range(len(chunk)))
                 params = {f"id{i}": value for i, value in enumerate(chunk)}
-                # The interpolated fragment is ":id0, :id1, ..." -- generated here,
-                # never user input. The ids themselves are bound parameters.
+                # The interpolated fragment is ":id0, :id1, ...", built here rather than
+                # taken from user input. The ids themselves are passed as bound parameters.
                 query = (
                     "SELECT tconst, average_rating, num_votes FROM imdb_rating "  # noqa: S608
                     f"WHERE tconst IN ({placeholders})"
