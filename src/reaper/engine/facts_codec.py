@@ -1,21 +1,18 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Freezing a scan's per-item evidence, and thawing it exactly.
+"""Saving a scan's per-item evidence to disk, and reading it back exactly.
 
-A scan gathers each item's :class:`~reaper.engine.gates.Facts` once, scores it, and throws
-the Facts away -- only the scoring *outputs* (the rounded score, the verdict) survive on the
-Candidate row. That is why re-deciding a snapshot under a new weight or a new rating bar used
-to need a full re-scan: the raw inputs were gone.
+A scan gathers each item's :class:`~reaper.engine.gates.Facts` once, scores it, and
+discards the Facts. Only the scoring outputs (the rounded score, the verdict) survive on
+the Candidate row. This module serializes the Facts instead, plus the season-pruning
+guard result merged alongside them, as JSON, so the policy simulator can replay the real
+engine (``score``, ``evaluate_all``, ``decide_verdict``) over the saved evidence with no
+API calls, and get a verdict identical to a fresh scan of the same evidence.
 
-This module serializes the Facts (and the season-pruning guard result merged alongside them)
-to canonical JSON so the simulator can replay the **real** engine -- ``score``,
-``evaluate_all``, ``decide_verdict`` -- over the frozen evidence with zero API calls, and get
-a verdict bit-identical to a fresh scan of the same evidence.
-
-**The three-state ``Observation`` must round-trip exactly.** ``Known``/``Absent``/``Unknown``
-are not interchangeable: an ``Unknown`` serialized as ``Absent`` would flip the scorer's
-fail-safe arithmetic from "weight retained, pushes score down" to "evaluated as real absence",
-a fail-OPEN regression. Every field is tagged with its arm, and a round-trip test asserts an
-arbitrary Facts survives unchanged.
+The three-state ``Observation`` must survive a round trip exactly. ``Known``, ``Absent``,
+and ``Unknown`` are not interchangeable: saving an ``Unknown`` as an ``Absent`` would turn
+"this lowers the score, but the weight still counts toward coverage" into "this is a real
+absence", which can raise a score that should stay lowered. Every field is tagged with its
+state, and a round-trip test asserts that an arbitrary Facts comes back unchanged.
 """
 
 from __future__ import annotations
@@ -39,21 +36,22 @@ _OBSERVATION_ANNOTATION = re.compile(r"^Observation\[")
 
 
 def _observation_fields(cls: type = Facts) -> tuple[str, ...]:
-    """Every ``Observation``-typed field on ``Facts``, read off the dataclass itself.
+    """Every Observation-typed field on ``Facts``, read directly off the dataclass.
 
-    ``cls`` is a parameter so a test can hand it a stand-in for the ``Facts`` of some future
-    commit -- one with a field added, or one with a field this module could not encode --
-    and check the two outcomes below without waiting for that commit to exist.
+    ``cls`` lets a test pass in a stand-in for a future version of ``Facts``, such as one
+    with a field added or one with a field this module cannot encode, and check both
+    outcomes below without waiting for that change to actually happen.
 
-    Derived, never transcribed. A hand-written list is a fail-**open** waiting to happen:
-    every custom-rule field on ``Facts`` carries a default of ``_UNSET`` (an ``Absent``), so
-    one added to ``Facts`` and forgotten here would construct fine, round-trip as ``Absent``,
-    and silently drop whatever keep discount the real value would have earned (rule 35). No
-    exception, no failing assertion, just a simulator that quietly disagrees with the scan.
+    This list is derived, never hand-written. A hand-written list would go stale silently:
+    every custom-rule field on ``Facts`` defaults to ``_UNSET`` (an ``Absent``), so a field
+    added to ``Facts`` and forgotten here would still construct without error, round-trip
+    as ``Absent``, and silently drop whatever protection the real value would have given
+    the item. Nothing would raise. The simulator would just quietly disagree with the scan.
 
-    A field that is neither an observation nor one of the two handled by hand raises here, at
-    import: nothing else in this module would serialize it, so it would vanish across the
-    freeze in the same silence. Loud at build time beats wrong at scan time.
+    A field that is neither an observation nor one of the two handled by hand raises here,
+    at import time. Nothing else in this module serializes it, so it would otherwise
+    disappear silently when the evidence is saved. Failing loudly at startup beats failing
+    silently during a scan.
     """
     observed: list[str] = []
     unhandled: list[str] = []
@@ -81,10 +79,10 @@ def _obs_to_dict(obs: Observation[Any]) -> dict[str, Any]:
         return {"k": "known", "v": obs.value, "s": obs.source}
     if isinstance(obs, Absent):
         return {"k": "absent", "s": obs.source}
-    # A bare id (``"imdb_unreadable"``) stores as itself, same as always. A producer that
-    # needed a param (the movie/season media select) hands ``Unknown`` a full ``Reason``
-    # instead (``gates.no_key_reason`` and friends), and that one is wire-encoded like any
-    # other stored ``Reason`` so its params round-trip too.
+    # A bare id (``"imdb_unreadable"``) stores as itself, the same as always. A producer
+    # that needs a value attached (choosing movie or season wording) gives ``Unknown`` a
+    # full ``Reason`` instead (``gates.no_key_reason`` and similar functions), and that
+    # Reason is wire-encoded like any other, so its values round-trip too.
     reason = to_wire(obs.reason) if isinstance(obs.reason, Reason) else obs.reason
     return {"k": "unknown", "r": reason, "s": obs.source}
 
@@ -95,20 +93,19 @@ def _obs_from_dict(d: dict[str, Any]) -> Observation[Any]:
         return Known(value=d["v"], source=d["s"])
     if kind == "absent":
         return Absent(source=d["s"])
-    # A reason frozen before the i18n conversion is the English sentence itself, not a
-    # catalog id. It stays that string: a re-decision wraps it as a cause via
-    # ``gates.blocked_reason``, which a consumer keyed on catalog ids simply will not
-    # match, and the frontend's missing-entry fallback (``why.ts`` composeIn) renders it
-    # raw -- the same "not translated" reading it had before the conversion. A dict is the
-    # media-typed shape ``to_wire`` produces above, and decodes back through ``from_wire``.
+    # An old row's reason is a finished English sentence, and it stays that string: a
+    # re-decision wraps it as a cause via ``gates.blocked_reason``, which no catalog id
+    # will match, so the frontend's missing-entry fallback (``why.ts`` composeIn)
+    # renders it as-is, untranslated. A dict is the shape ``to_wire`` produces above,
+    # and decodes back through ``from_wire``.
     raw = d["r"]
     reason = from_wire(raw) if isinstance(raw, dict) else raw
     return Unknown(reason=reason, source=d["s"])
 
 
 def _rating_to_dict(r: Rating) -> dict[str, Any]:
-    # as_of is always None in production (from_plex/from_radarr set it), so it is not
-    # serialized; a future dated rating would add it here.
+    # as_of is always None today, since neither from_plex nor from_radarr sets it, so it
+    # is not serialized. A future dated rating would add it here.
     return {"src": r.source.value, "val": r.value, "votes": r.votes, "prov": r.provider}
 
 
@@ -120,11 +117,8 @@ def _rating_from_dict(d: dict[str, Any]) -> Rating:
 
 def _result_to_dict(r: GateResult) -> dict[str, Any]:
     # Names every ``GateResult`` field one by one, so a field added to the dataclass and not
-    # added here is silently dropped. ``defers_to_owner`` was exactly that: the season guard
-    # is the only producer that sets it AND the only result frozen through here, so the
-    # simulator replay read every keep-rule conflict as a plumbing failure while the scan
-    # read it as the owner's call to make. Rule 103's drift guard is the field-coverage test
-    # in ``tests/test_facts_codec.py``; keep this list under it.
+    # added here is silently dropped instead of saved. The field-coverage test in
+    # ``tests/test_facts_codec.py`` checks that this list stays complete.
     return {
         "gate": r.gate.value,
         "outcome": r.outcome,
@@ -139,45 +133,43 @@ def _result_from_dict(d: dict[str, Any]) -> GateResult:
     return GateResult(
         gate=GateId(d["gate"]),
         outcome=d["outcome"],
-        # A str here is a detail frozen before reasons were typed; it thaws as a legacy
-        # reason and renders raw, exactly as it did before (docs/history/I18N_PLAN.md §5).
+        # A str here is a detail saved before reasons were typed. It comes back as a
+        # legacy reason and renders raw, exactly as it did before.
         detail=from_wire(d["detail"]),
         blocked=d["blocked"],
-        # The thaw, stated rather than left to a ``KeyError`` (rule 104): a row frozen before
-        # the flag existed carries nothing that distinguishes a comparison that was made from
-        # one that was refused, so it reads as "Reaper did not establish this" -- the claim
-        # that asserts less. That answer reaches the operator's chip (``api.review._chip``),
-        # not any reap decision: no blocked gate holds a hand reap (``engine.verdict``).
+        # Read back through the shared function rather than a raw dict lookup that could
+        # raise KeyError. A row saved before this flag existed carries nothing that tells a
+        # comparison that was made apart from one that was refused, so it reads as "Reaper
+        # did not establish this," the answer that claims less. That reaches the operator's
+        # chip (``api.review._chip``), not any reap decision: no blocked gate holds a hand
+        # reap (``engine.verdict``).
         #
-        # Through the shared reader, which is where that rule is now written down, even though
-        # this consumer is two-state by construction: ``GateResult.defers_to_owner`` is a plain
-        # ``bool``, so "cannot tell" and "refused" collapse here on purpose. Routing it anyway
-        # means a change to what counts as a legible flag lands on all three readers at once
-        # rather than on the two somebody remembered (#112).
+        # ``GateResult.defers_to_owner`` is a plain bool, so "cannot tell" and "refused"
+        # both collapse to the same value here on purpose. Reading it through the shared
+        # function anyway means a future change to what counts as a readable flag reaches
+        # every reader at once, not just the ones someone remembers to update.
         defers_to_owner=thaw_defers_to_owner(d.get("defers_to_owner")) is True,
-        # Same thaw, deliberately the same function: both are gate flags off the same frozen
-        # row, and one reader of "what counts as a legible flag" is the whole point of routing
-        # either through here (rule 104). A row frozen before this flag reads False, which is
-        # what those rows meant -- the only season guard result reaching the blocked list on an
-        # abstaining item was a keep-rule conflict.
+        # Read back the same way, through the same function: both fields are gate flags off
+        # the same saved row. A row saved before this flag existed reads False, which is
+        # what those rows meant. The only season guard result that could reach the blocked
+        # list on an abstaining item was a keep-rule conflict.
         unestablishable=thaw_defers_to_owner(d.get("unestablishable")) is True,
     )
 
 
 def facts_to_dict(facts: Facts, *, extra_results: tuple[GateResult, ...] = ()) -> dict[str, Any]:
-    """The frozen evidence for one item: its Facts plus any extra gate results merged into
-    its evaluation (the season-pruning guard). Stored as ``Candidate.facts_json``.
+    """The saved evidence for one item: its Facts, plus any extra gate results merged into
+    its evaluation, such as the season-pruning guard. Stored as ``Candidate.facts_json``.
 
-    The season guard is frozen alongside so a stored row can EXPLAIN itself without the
-    show's bundle. It is no longer what a re-decision reads: the scan freezes the plan's
-    inputs per show (``db.models.SeasonPruneEvidence``) and the simulator re-derives the
-    guard from them through ``services.season_evidence.plan_from_frozen``.
+    The season guard is saved alongside so a stored row can explain itself without the
+    show's whole bundle. A re-decision does not read this copy: the scan saves the plan's
+    inputs per show (``db.models.SeasonPruneEvidence``), and the simulator rebuilds the
+    guard from those through ``services.season_evidence.plan_from_frozen``.
 
-    So the hash no longer stands behind this value. The nine season fields are in
-    ``policy.PolicyBody._EVIDENCE_REPLAYABLE_FIELDS``, which means a season edit does not move
-    ``evidence_hash`` and does not force a fresh scan. What refuses instead is
-    ``api.simulate._season_guard_replay``, asked of the stored evidence rather than of the
-    policy -- a hash cannot say whether a show's bundle is present and readable.
+    The nine season fields listed in ``policy.PolicyBody._EVIDENCE_REPLAYABLE_FIELDS`` do
+    not move ``evidence_hash``, so editing them does not force a fresh scan.
+    ``api.simulate._season_guard_replay`` checks the saved evidence directly instead, since
+    a hash cannot say whether a show's bundle is present and readable.
     """
     return {
         "title": facts.title,
@@ -187,29 +179,28 @@ def facts_to_dict(facts: Facts, *, extra_results: tuple[GateResult, ...] = ()) -
     }
 
 
-#: Why a field is unreadable on a snapshot written before that field existed.
+#: Why a field is unreadable on a snapshot saved before that field existed.
 #:
-#: One of seven reasons in ``src/`` with NO ``why.cause.*`` catalog entry, and the
-#: reasoning here is about where it can be READ: ``facts_from_dict`` has a single caller,
-#: the policy simulator (``api.simulate``), which reads a re-decided score and verdict and
-#: never builds or stores an ``Explanation``. So this string reaches a reader only through
-#: a stored explanation that does not exist, and giving it panel copy would claim a route
-#: it cannot take (rule 25). Named anyway, so the ban on hand-typed reasons has no
-#: exception and the exemption is a line in ``test_review_chips.py`` rather than a
-#: silence. If a route ever renders a thawed Facts, it wants a catalog entry and this
-#: comment is the wrong answer.
+#: This id has no entry in the ``why.cause.*`` catalog. ``facts_from_dict`` has one
+#: caller, the policy simulator (``api.simulate``), which reads a re-decided score and
+#: verdict and never builds or stores an explanation for the operator to see. So this id
+#: can never actually reach a why-panel, and giving it panel wording would claim a route
+#: it cannot take. It is named anyway, and ``test_review_chips.py`` exempts it by name,
+#: so the exemption is written down instead of silent. If a future route ever renders
+#: Facts read back this way, it needs a real catalog entry, and this comment is the wrong
+#: answer.
 NOT_RECORDED_REASON = "not_recorded"
 
 
 def facts_from_dict(d: dict[str, Any]) -> tuple[Facts, tuple[GateResult, ...]]:
-    """Rebuild the Facts and its frozen extra results from :func:`facts_to_dict` output.
+    """Rebuild the Facts and its saved extra results from :func:`facts_to_dict` output.
 
-    A field the stored snapshot does not carry thaws as ``Unknown``, not ``Absent``. Old
-    snapshots outlive the code that wrote them: add a field to ``Facts`` and every scan
-    already on disk is missing it. ``Unknown`` is the honest reading -- that scan never
-    looked -- and it is the fail-safe one: the gates abstain on it and the scorer keeps its
-    weight while adding no pressure, so an old snapshot re-decides toward keeping rather
-    than inventing a real absence the scan never observed.
+    A field the stored snapshot does not carry comes back as ``Unknown``, not ``Absent``.
+    Old snapshots outlive the code that wrote them: adding a field to ``Facts`` means every
+    scan already on disk is missing it. ``Unknown`` is the honest reading, since that scan
+    never looked, and it is the safe one: the gates abstain on it, and the scorer counts
+    its weight toward coverage without adding to the score. An old snapshot re-decides
+    toward keeping the file rather than inventing a real absence the scan never saw.
     """
     obs = d.get("obs", {})
     kwargs = {

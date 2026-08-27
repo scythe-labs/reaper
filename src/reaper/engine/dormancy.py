@@ -1,21 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""How long an item has sat unwatched, derived in exactly one place.
+"""Count how many days an item has gone unwatched. Both scans use these helpers.
 
-``days_observed_unwatched`` is the single biggest source of deletion pressure in the whole
-scorer, and it is *derived*, not read: "days since last play" is null for precisely the
-items this tool exists to find, and every naive implementation coerces that null to epoch 0
--- roughly 20,600 days, the maximum pressure the scale can express, for the item we know
-least about. So the reference instant is chosen deliberately (:func:`reference_instant`) and
-the day count is floored (:func:`dormancy_days`).
+A never-played item has no "last played" date. Code that treats the missing date
+as zero makes the item look unwatched since 1970, the strongest possible case
+for deleting it. :func:`reference_instant` picks a real start date instead, such
+as when the item was added.
 
-The live scan and the season scan answer the same question, and there used to be four
-answerers, each with its own arithmetic. That is the dual derivation rule 3 warns about: the
-two retired lab engines bucketed on an integer floor and scored a float respectively, so one
-item could bucket one side of a boundary and score the other. One helper, every caller.
-
-**Floored, never rounded or ceiled** (rule 31). Dormancy sits on the condemn lane, so
-reducing its precision must move it toward *less* pressure: 9.9 days dormant is 9, and an
-item one hour short of a 90-day floor stays kept for that hour.
+:func:`dormancy_days` rounds down, so rounding always favors keeping: 9.9 days
+counts as 9, and an item one hour short of a 90-day threshold stays kept.
 """
 
 from __future__ import annotations
@@ -26,38 +18,19 @@ from datetime import datetime
 def reference_instant(
     *, last_played: datetime | None, added_at: datetime | None, horizon: datetime
 ) -> datetime | None:
-    """The instant dormancy is measured from, or ``None`` when there is no such instant.
+    """The instant dormancy is measured from, or ``None`` when there is none.
 
-    The last play if there is one. Failing that, whichever is *later* of when the item
-    arrived and how far back the watch mirror reaches -- never epoch 0, and never a date
-    before our evidence begins. A mirror that only goes back a year cannot honestly say a
-    file has been ignored for five, so an item older than the mirror is measured from the
-    mirror's edge and reads as "not watched within our reach".
+    Returns the last play if there is one. Otherwise it returns whichever is later:
+    when the item arrived, or how far back the watch history reaches. It never returns
+    a date before the watch history begins, because a history that only covers the last
+    year cannot say an item has been ignored for five years. An item older than the
+    history reads instead as "not watched within our reach."
 
-    **The thaw lives here, not in the callers** (rule 104). A record with neither a play nor
-    an arrival date has nothing to measure from, and this returns ``None`` for it so each
-    lane renders one shared answer as its own ``Unknown`` -- which blocks both dormancy gates
-    and abstains, so the item is kept. A play alone is enough: dormancy *is* days since the
-    last play, so a missing arrival date is not on its own a reason to refuse to measure.
-
-    That last sentence used to be true of one lane only. `snapshot.build_facts` took Unknown
-    the moment ``added_at`` was missing, whatever history it held, while
-    `season_scan.build_season_facts` measured from the play and judged the season -- one
-    derived value with two thaw rules, and the movie lane's why-panel telling the operator
-    dormancy could not be measured with a play for that item in scope. Measured before the
-    lanes were joined: across 41 stored snapshots and a six-figure count of movie rows -- the
-    only rows that can reach a movie-lane arm, out of a larger count still over both media
-    types -- that arm was reached zero times, so no observed verdict moved
-    (`docs/LEARNINGS.md`).
-
-    **Every caller takes the same thaw**, which is what makes this one derivation rather
-    than one helper with several dialects. The two retired lab engines used to be the
-    exception: each dropped a record with no arrival date *before* asking, so a `datetime`
-    overload existed to spare them a None-check that could not fire. That narrowing was itself
-    a second thaw rule -- a movie with no arrival date and a play 400 days ago is condemned by
-    a live scan and never entered the rehearsal at all, so the replay under-reported exactly
-    what production would remove. The overload is gone, and the signature says the one true
-    thing about every lane.
+    Every caller applies this same rule, so dormancy means the same thing everywhere it
+    is measured. A record with neither a play nor an arrival date has nothing to measure
+    from, so this returns ``None`` for it, and each caller reads that as Unknown: it
+    blocks the dormancy gates and keeps the file. A play alone is enough to measure from,
+    even with no arrival date, because dormancy is days since the last play.
     """
     if last_played is not None:
         return last_played
@@ -67,25 +40,26 @@ def reference_instant(
 
 
 def dormancy_days(reference: datetime, *, now: datetime) -> int:
-    """Whole days between ``reference`` and ``now``, floored.
+    """Whole days between ``reference`` and ``now``, rounded down.
 
-    Negative when ``reference`` is in the future, which callers treat as "cannot be judged"
-    rather than clamping to zero: a play after the cutoff means the evidence and the clock
-    disagree, and inventing a 0 there would score an item on a contradiction.
+    Returns a negative number when ``reference`` is in the future. Treat a negative
+    result as unjudgeable, never as zero: a play after the cutoff means the evidence
+    and the clock disagree, and scoring it as zero would score the item on that
+    disagreement.
     """
     return (now - reference).days
 
 
 def history_reach_days(horizon: datetime, *, now: datetime) -> int:
-    """How many days of watch history we hold -- the *reach* of the evidence.
+    """How many days of watch history we hold, counting back from ``horizon``.
 
-    :func:`reference_instant` uses the horizon to stop dormancy claiming more time than we
-    can see. This answers the other half: how much of a *window* the mirror covers, which
-    is what a windowed watcher count needs before a number below the floor may be read as
+    :func:`reference_instant` uses the horizon to stop dormancy from claiming more time
+    than we can see. This answers the other half: how wide a window the history covers,
+    which a watcher count needs to know before a count below the floor can be read as
     "nobody watched it" (``gates.ServerPopularityGate``).
 
-    Floored like :func:`dormancy_days`, and for the same reason read the other way round:
-    reach sits on the *keep* lane, so shortening it can only withhold a protection Reaper
-    is not sure of, never grant one it has not earned (rule 31).
+    Rounded down like :func:`dormancy_days`, but for the opposite reason: shortening this
+    number can only withhold a protection Reaper is not sure of. It can never grant one
+    Reaper has not earned.
     """
     return (now - horizon).days
