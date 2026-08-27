@@ -7,7 +7,8 @@ paths:
 # Backend blockers — `src/reaper/`
 
 Blockers, not suggestions, distilled from six adversarial review passes. **Rule numbers are
-permanent** (tests and comments cite them); where two overlap, the more specific governs.
+permanent** (tests and the archived review passes cite them); where two overlap, the more
+specific governs. Code comments state constraints in plain language and do not cite rule numbers.
 Rules binding every file are in the root `CLAUDE.md`; the SPA's are in
 `.claude/rules/frontend.md`. Holds 1–6, 8–10, 13, 22, 23, 26–35, 38, 52, 55–59, 63, 65, 70, 71, 73, 77, 78, 81, 82, 87–97, 102–117, 124, 127–129, 131, 140, 142, 143, 148.
 

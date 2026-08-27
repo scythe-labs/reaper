@@ -19,10 +19,12 @@ Where the two touch the same subject, CONTRIBUTING is the copy to correct.
 ## Where the engineering rules live
 
 148 numbered blockers, adversarially verified across seven review passes. **The numbers are
-permanent** — code and comments cite them (`rule 28` in `snapshot.py`), so never renumber and
-never reuse a number for a different rule. A comment may only cite a rule that exists;
-`tests/test_repo_hygiene.py` fails on one that does not. New rules append to the scoped file
-that governs them, from 149.
+permanent** — the tests and the archived review passes in `docs/history/` cite them, so never
+renumber and never reuse a number for a different rule. **Code comments do not cite rule
+numbers.** A comment states its constraint in plain language a first-time reader gets in one
+pass; the rule file is where the number lives. A comment that does cite a rule may only cite
+one that exists; `tests/test_repo_hygiene.py` fails on one that does not. New rules append to
+the scoped file that governs them, from 149.
 
 They live in `.claude/rules/`, scoped by `paths` frontmatter so each set loads when you read a
 file it governs, and a file must be read before it can be edited. **The scoping is the budget**:
