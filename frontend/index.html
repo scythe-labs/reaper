@@ -6,8 +6,11 @@
     <meta name="color-scheme" content="light dark" />
     <!-- The color a browser paints its own chrome with. Safari 15 to 18, Chrome and Edge on
          Android, and an installed PWA read this tag. Safari 26 parses it and ignores the
-         value, tinting from the body background instead, and desktop Chrome never read it at
-         all, so on a Mac this tag changes nothing (#945). Ships at the built-in accent and is
+         value, taking the tint from the page background instead, and desktop Chrome never read
+         it at all, so on a Mac this tag changes nothing. Safari's behavior is deliberate and
+         is confirmed by WebKit at https://bugs.webkit.org/show_bug.cgi?id=301756: the top bar
+         tint extends only from a fixed or sticky element bordering an obscured content inset,
+         and Reaper's masthead is neither. Ships at the built-in accent and is
          rewritten to the install's accent by the pre-paint below and by accent.ts. The web
          manifest's theme_color is a static file and cannot follow a per-install setting, so
          this tag is what carries it. -->

@@ -172,7 +172,7 @@ function applyFavicon(hex: string): void {
 }
 
 /** Paint the browser's own chrome at the accent. index.html's comment on the tag lists which
- *  browsers read it and which ignore it (#945). The browser picks its own readable ink for
+ *  browsers read it and which ignore it. The browser picks its own readable ink for
  *  anything it draws there, so `accentInk` does not apply here. No cache key of its own:
  *  index.html pre-paints the tag from the accent it already reads back. */
 function applyThemeColor(hex: string): void {
