@@ -32,9 +32,9 @@ from reaper.services.imdb_dataset import (
 
 SAMPLE = (
     "tconst\taverageRating\tnumVotes\n"
-    "tt0111161\t9.3\t3206008\n"  # Shawshank
-    "tt0068646\t9.2\t2236351\n"  # The Godfather
-    "tt0944947\t9.2\t2633825\n"  # Game of Thrones (a *series*, since the dataset covers TV)
+    "tt0000001\t9.3\t3000000\n"  # a film
+    "tt0000002\t9.2\t2000000\n"  # another film
+    "tt0000003\t9.2\t2500000\n"  # a series, since the dataset covers TV
     "tt9999999\t8.9\t12\n"  # high rating, 12 votes: noise
     "tt0000000\t\\N\t\\N\n"  # IMDb's null
     "malformed-line\n"
@@ -61,7 +61,7 @@ class TestParsing:
         with archive.open("rb") as handle:
             rows = list(parse_rows(handle))
 
-        assert ("tt0111161", 9.3, 3_206_008) in rows
+        assert ("tt0000001", 9.3, 3_000_000) in rows
 
     def test_nulls_are_skipped_not_coerced_to_zero(self, archive: Path) -> None:
         """IMDb writes \\N for null. A rating of 0.0 would read as 'terrible film, delete
@@ -96,7 +96,7 @@ class TestDegradedStateRefusesToAnswer:
         films are rated', conclude no rating protection applies, and hand the whole
         library to the reaper."""
         with pytest.raises(DatasetDegradedError, match="missing or stale"):
-            await ImdbRatings(engine).lookup(["tt0111161"])
+            await ImdbRatings(engine).lookup(["tt0000001"])
 
     async def test_stale_data_raises(self, engine: AsyncEngine, archive: Path) -> None:
         await load(engine, archive)
@@ -108,7 +108,7 @@ class TestDegradedStateRefusesToAnswer:
             )
 
         with pytest.raises(DatasetDegradedError):
-            await ImdbRatings(engine, max_age=timedelta(days=14)).lookup(["tt0111161"])
+            await ImdbRatings(engine, max_age=timedelta(days=14)).lookup(["tt0000001"])
 
     def test_state_reports_degraded_when_empty(self) -> None:
         assert DatasetState(row_count=0, synced_at=None).degraded() is True
@@ -190,18 +190,18 @@ class TestAtomicLoad:
             await load(engine, empty)
 
         # The good data survived, and lookups still work.
-        found = await ImdbRatings(engine).lookup(["tt0111161"])
-        assert found["tt0111161"].average_rating == 9.3
+        found = await ImdbRatings(engine).lookup(["tt0000001"])
+        assert found["tt0000001"].average_rating == 9.3
 
 
 class TestLookup:
     async def test_returns_rating_and_votes(self, engine: AsyncEngine, archive: Path) -> None:
         await load(engine, archive)
 
-        found = await ImdbRatings(engine).lookup(["tt0111161", "tt0068646"])
+        found = await ImdbRatings(engine).lookup(["tt0000001", "tt0000002"])
 
-        assert found["tt0111161"].average_rating == 9.3
-        assert found["tt0111161"].num_votes == 3_206_008
+        assert found["tt0000001"].average_rating == 9.3
+        assert found["tt0000001"].num_votes == 3_000_000
         assert len(found) == 2
 
     async def test_covers_television_not_just_film(
@@ -211,8 +211,8 @@ class TestLookup:
         individual episodes, which nothing else gives us for free."""
         await load(engine, archive)
 
-        found = await ImdbRatings(engine).lookup(["tt0944947"])  # Game of Thrones
-        assert found["tt0944947"].num_votes > 1_000_000
+        found = await ImdbRatings(engine).lookup(["tt0000003"])  # the series
+        assert found["tt0000003"].num_votes > 1_000_000
 
     async def test_an_unknown_id_is_simply_absent(self, engine: AsyncEngine, archive: Path) -> None:
         """Absent from a *healthy* dataset is a real answer. This title genuinely has no

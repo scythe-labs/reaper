@@ -108,20 +108,20 @@ class TestTheMovieJoinAtTheScanLane:
         # title+year backstop is what binds them.
         return identity.PlexIndex.build(
             [
-                identity.PlexItem(rating_key=11, title="The Mummy", year=1999, added_at=NOW),
-                identity.PlexItem(rating_key=22, title="The Mummy", year=2017, added_at=NOW),
+                identity.PlexItem(rating_key=11, title="Same Title", year=1999, added_at=NOW),
+                identity.PlexItem(rating_key=22, title="Same Title", year=2017, added_at=NOW),
             ]
         )
 
     def test_raw_items_leaves_an_ambiguous_movie_unmatched(self) -> None:
-        movie = {"id": 1, "title": "The Mummy", "hasFile": True, "sizeOnDisk": 1}
+        movie = {"id": 1, "title": "Same Title", "hasFile": True, "sizeOnDisk": 1}
         items = _raw_items([movie], self._index(), instance_id=1)
         assert len(items) == 1
         assert items[0].plex_rating_key is None
         assert items[0].added_at is None
 
     def test_raw_items_binds_a_disambiguated_movie_by_title(self) -> None:
-        movie = {"id": 1, "title": "The Mummy", "year": 2017, "hasFile": True, "sizeOnDisk": 1}
+        movie = {"id": 1, "title": "Same Title", "year": 2017, "hasFile": True, "sizeOnDisk": 1}
         items = _raw_items([movie], self._index(), instance_id=1)
         assert items[0].plex_rating_key == 22
         assert items[0].added_at == NOW

@@ -1094,11 +1094,11 @@ class TestImdbList:
     async def test_a_custom_list_id_is_appended_to_the_mirror_path(
         self, engine: AsyncEngine, httpx2_mock: respx.Router
     ) -> None:
-        route = httpx2_mock.get(IMDB_LIST_BASE + "ls005421403").mock(
+        route = httpx2_mock.get(IMDB_LIST_BASE + "ls000000001").mock(
             return_value=httpx.Response(200, json=_top250_payload(count=3))
         )
 
-        assert await sync(engine, ImdbList(variant="ls005421403")) == 3
+        assert await sync(engine, ImdbList(variant="ls000000001")) == 3
         assert route.called
 
     def test_the_slug_carries_the_variant_and_the_definition(self) -> None:
@@ -1107,16 +1107,16 @@ class TestImdbList:
         what a one-off refresh writes."""
         assert ImdbList().slug == "imdb-top250"
         assert ImdbList(variant="popular", list_id=3).slug == "imdb-popular-list3"
-        assert ImdbList(variant="ls005421403", list_id=9).slug == "imdb-ls005421403-list9"
+        assert ImdbList(variant="ls000000001", list_id=9).slug == "imdb-ls000000001-list9"
 
     async def test_membership_is_binary_because_the_source_has_no_rank(
         self, engine: AsyncEngine, httpx2_mock: respx.Router
     ) -> None:
         """The payload carries *no* rank field, and the entries come back in roughly
-        chronological order, the first is The Kid (1921).
+        chronological order, so the first entry is a silent film from the 1920s.
 
-        Taking the array index as a chart position would tell the owner "The Kid is #1
-        on the IMDb Top 250", which is false. The why-panel would be confidently lying.
+        Taking the array index as a chart position would tell the owner that film is #1
+        on the IMDb Top 250, which is false. The why-panel would be confidently lying.
         So membership is binary and rank stays None."""
         httpx2_mock.get(IMDB_TOP_250_URL).mock(
             return_value=httpx.Response(200, json=_top250_payload())
@@ -1175,13 +1175,13 @@ class TestImdbList:
     ) -> None:
         """A custom list has no known size, so its floor is 1: a single-entry list is the
         operator's to keep, and only an empty answer reads as a broken mirror."""
-        url = IMDB_LIST_BASE + "ls005421403"
+        url = IMDB_LIST_BASE + "ls000000001"
         httpx2_mock.get(url).mock(return_value=httpx.Response(200, json=[]))
         with pytest.raises(IntegrationError, match="too short to trust"):
-            await sync(engine, ImdbList(variant="ls005421403"))
+            await sync(engine, ImdbList(variant="ls000000001"))
 
         httpx2_mock.get(url).mock(return_value=httpx.Response(200, json=_top250_payload(count=1)))
-        assert await sync(engine, ImdbList(variant="ls005421403")) == 1
+        assert await sync(engine, ImdbList(variant="ls000000001")) == 1
 
     async def test_a_failed_fetch_leaves_the_previous_list_intact(
         self, engine: AsyncEngine, httpx2_mock: respx.Router
