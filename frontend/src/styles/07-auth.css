@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The sign-in screen. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* ---- auth / login -------------------------------------------------------- */
+ * The sign-in screen. See `../index.css` for how this file fits into the stylesheet's load
+ * order. */
 
 .auth-screen {
   position: fixed;
@@ -44,10 +43,9 @@
 }
 @media (prefers-reduced-motion: reduce) {
   /* Keep the depth, drop the drift. This is the largest and longest-running motion in the
-     app -- a full-bleed blurred layer, 22s, forever -- on the first screen a person sees
-     and the one they cannot skip past. Every smaller motion here already has an opt-out;
-     this one shipped without it (U-5, agent rule 18). The gradient alone still lifts the
-     card off the page. */
+     app: a full-bleed blurred layer that runs for 22 seconds, forever, on the first screen
+     a person sees and cannot skip past. The gradient alone still lifts the card off the
+     page. */
   .auth-aurora {
     animation: none;
   }
@@ -155,7 +153,7 @@
 }
 
 /* The server picker: shown when the signing-in account owns several Plex servers.
- * One tap per server; Reaper never guesses which library a deletion tool manages. */
+ * One tap per server. Reaper never guesses which library a deletion tool manages. */
 .server-pick {
   display: flex;
   flex-direction: column;
@@ -183,8 +181,8 @@
   color: var(--text);
   font-size: var(--text-base);
   font-weight: var(--weight-semi);
-  /* The server's name comes from plex.tv, and a <button> does not take the page's wrapping the
-     way surrounding text does, so it declares the break opportunity itself (rule 139). */
+  /* The server's name comes from plex.tv, and a <button> does not inherit the page's wrapping
+     the way surrounding text does, so it declares the break opportunity itself. */
   overflow-wrap: anywhere;
   cursor: pointer;
   transition:

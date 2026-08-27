@@ -10,12 +10,12 @@ import type { Block, CalloutTone, DiagramBlock, DiagramNode } from "./blocks";
 
 const INLINE = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]\n]+\]\([a-z0-9-]+(?:#[a-z0-9-]+)?\))/g;
 /** `[text](doc-id#section)`. The target is a doc id, never a URL, so a cross-reference can
- *  only ever point inside the docs; `manual.links.test.ts` fails on an id or section that
+ *  only ever point inside the docs. `manual.links.test.ts` fails on an id or section that
  *  does not exist, which is what keeps the two surfaces from shipping a dead link. */
 const REF = /^\[([^\]]+)\]\(([a-z0-9-]+)(?:#([a-z0-9-]+))?\)$/;
 
 /** How a cross-reference opens, supplied by whatever is rendering the doc. The docs modal
- *  passes its own navigator so a link moves within the open modal; anything rendering a doc
+ *  passes its own navigator so a link moves within the open modal. Anything rendering a doc
  *  without one gets the link text as plain prose rather than a button that does nothing. */
 const NavCtx = createContext<((id: string, anchor?: string) => void) | null>(null);
 
@@ -104,14 +104,14 @@ function DiagramNodeBox({ node }: { node: DiagramNode }) {
 
 /** A hand-drawn flowchart (no Mermaid dependency): a centered spine of nodes joined by
  *  labeled connectors, each decision able to shed a side branch. Every node is real, readable
- *  text; the container scrolls sideways on a narrow pane rather than clipping. */
+ *  text. The container scrolls sideways on a narrow pane rather than clipping. */
 function DocDiagram({ block }: { block: DiagramBlock }) {
   const { t } = useTranslation();
   return (
-    // Named but unreachable was the worse half of this: the group advertised itself in the
-    // accessibility tree as somewhere to go, and the Tab order never went there, so the
-    // sideways scroll a narrow pane needs could not be moved from a keyboard (WCAG 2.1.1,
-    // #177). `.doc-table` below and the four outside this file went the same way (rule 72).
+    // Without tabIndex and role="group" here, the group would advertise itself in the
+    // accessibility tree as somewhere to go, while the Tab order never actually reaches it,
+    // so the sideways scroll a narrow pane needs could not be reached from a keyboard (WCAG
+    // 2.1.1). `.doc-table` below and four other places outside this file need the same fix.
     <div
       className="doc-diagram"
       tabIndex={0}
@@ -174,9 +174,9 @@ function renderBlock(b: Block, key: number): ReactNode {
   switch (b.kind) {
     case "h":
       // `h4`/`h5`, not `h2`/`h3`: the article hangs off the doc title `DocsModal` renders at
-      // `h3`, which itself sits under the `h2` `ModalShell` titles every dialog with. At the
-      // old levels a section of a doc read as a SIBLING of the whole dialog rather than as
-      // part of the doc it is in (#177). The `sub` flag, not the tag, is what decides a jump
+      // `h3`, which itself sits under the `h2` `ModalShell` titles every dialog with. Using
+      // `h2`/`h3` here would make a section of a doc read as a sibling of the whole dialog,
+      // instead of as part of the doc it is in. The `sub` flag, not the tag, decides a jump
       // target, so the index is unaffected.
       return b.sub ? (
         <h5 key={key} id={b.id}>
@@ -224,10 +224,11 @@ function renderBlock(b: Block, key: number): ReactNode {
     case "table":
       return (
         // Horizontal scroll with no focusable cell, so a keyboard could not move it (WCAG
-        // 2.1.1, #177). Focusable and nothing more, unlike the five siblings: a table block
-        // carries no title, so `role="region"` here could only be an UNNAMED landmark, which
-        // is worse than none -- it adds a stop to the landmark list that says nothing about
-        // what it holds. A reader entering the stop reads the table, which is the name.
+        // 2.1.1). Focusable and nothing more, unlike the five siblings: a table block
+        // carries no title, so `role="region"` here could only be an unnamed landmark. An
+        // unnamed landmark is worse than none: it adds a stop to the landmark list that says
+        // nothing about what it holds. A reader entering the stop reads the table, which is
+        // the name.
         <div key={key} className="doc-table" tabIndex={0}>
           <table>
             <thead>

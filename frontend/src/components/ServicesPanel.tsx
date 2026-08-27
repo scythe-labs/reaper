@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Settings -> Services: the Radarr, Sonarr, Tautulli and Seerr connections Reaper reads from, and
-// the two of them it deletes through, one card per configured instance.
+// Settings -> Services: the Radarr, Sonarr, Tautulli and Seerr connections Reaper reads
+// from, and the two of them it deletes through, one card per configured instance.
 //
-// Nothing is edited in place. A card opens `ServiceModal`, whose scrim covers the section rail,
-// so no draft here can be lost to a section switch and this panel reports none upward
-// (`dirtyPanels` in Settings.tsx says so, and a draft added to the panel BEHIND the modal
-// would have to start reporting).
+// Nothing is edited in place. A card opens `ServiceModal`, whose scrim covers the section
+// rail, so no draft here can be lost to a section switch, and this panel reports no dirty
+// state upward (`dirtyPanels` in Settings.tsx). If this panel ever gains draft state of its
+// own, sitting behind the modal, it would need to start reporting that too.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type RefObject, useRef, useState } from "react";
@@ -28,28 +28,30 @@ function ServiceCard({
   instance: Instance;
   onEdit: () => void;
   /** Called as the remove is sent, so the section above can catch focus when this card goes.
-   *  Lives up there rather than here because the successor is not inside this card -- the card
-   *  IS what unmounts (#173). */
+   *  Lives up there rather than here because the successor is not inside this card: the card
+   *  is what unmounts. */
   onRemoving?: () => void;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  // The result and the address it was computed for, the third of this badge's siblings to keep the
-  // pairing (rule 72; `ServiceModal` and the Discord row are the others). Nothing cleared this, and
-  // editing a service through the modal invalidates `instances`, so the card re-rendered with a new
-  // address while the local result went on vouching for the old one (rule 85, #178).
+  // The result and the address it was computed for, the third of this badge's siblings to
+  // keep the pairing (`ServiceModal` and the Discord row are the others). Nothing else
+  // clears this state, and editing a service through the modal invalidates `instances`, so
+  // without the pairing, the card would re-render with a new address while the local result
+  // went on vouching for the old one.
   //
-  // The address and the certificate setting are what this card can see change. A key ROTATED at the
-  // same address is not visible here -- `has_key` stays true -- so it is included for the false-to-
-  // true case only. The rotation is answered on the server instead: `update_instance` clears
-  // `last_ok_at` / `last_error` / `detected_version` whenever the address, the key or the
-  // certificate setting changes, so the fallbacks below cannot outlive what they were computed
-  // against either, and this card drops to "Not tested yet" (#264, rule 85).
+  // The address and the certificate setting are what this card can see change. A key
+  // rotated at the same address is not visible here (`has_key` stays true), so it is
+  // included for the false-to-true case only. The rotation is answered on the server
+  // instead: `update_instance` clears `last_ok_at`, `last_error` and `detected_version`
+  // whenever the address, the key or the certificate setting changes, so the fallbacks
+  // below cannot outlive what they were computed against either, and this card drops to
+  // "Not tested yet".
   const [test, setTest] = useState<{ result: InstanceTest; of: string } | null>(null);
   const testedWith = () => `${instance.base_url} ${instance.verify_tls} ${instance.has_key}`;
   // A two-step "Remove" -> "Confirm remove" toggle, mirroring the arm confirm in
-  // `DeletionToggle.tsx`, rather than a native confirm() dialog -- the OS alert box ignores the
-  // app's theme and typography and is the only confirmation in the product that does.
+  // `DeletionToggle.tsx`, rather than a native confirm() dialog. The OS alert box ignores
+  // the app's theme and typography, and is the only confirmation in the product that does.
   const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   const invalidate = () => {
@@ -59,15 +61,16 @@ function ServiceCard({
 
   const testSaved = useMutation({
     mutationFn: () => api.testSavedInstance(instance.id),
-    // Announced, like `ServiceModal`'s own test and the webhook's in `NotificationsPanel` --
-    // three siblings of one
-    // result that reached nobody by ear (#192, rule 72). `testSentence` is the one wording.
+    // Announced, like `ServiceModal`'s own test and the webhook's in `NotificationsPanel`:
+    // three siblings of one result that would otherwise reach nobody by ear. `testSentence`
+    // is the one wording.
     //
-    // What this request is ABOUT, captured when it is issued rather than computed at success
-    // time, the same as those siblings. Here the fingerprint moves under a REFETCH, not under
-    // typing. The Edit modal opens over this card, and saving a new address there invalidates
-    // `instances`. A test still in flight for the old address would settle stamped with the new
-    // one, and the card would read "Reached" for a host nobody tried.
+    // What this request is about, captured when it is issued rather than computed at
+    // success time, the same as those siblings. Here the fingerprint moves under a
+    // refetch, not under typing. The Edit modal opens over this card, and saving a new
+    // address there invalidates `instances`. A test still in flight for the old address
+    // would settle stamped with the new one, and the card would read "Reached" for a host
+    // nobody tried.
     onMutate: () => ({ of: testedWith() }),
     onSuccess: (r, _v, issued) => {
       setTest({ result: r, of: issued.of });
@@ -77,8 +80,8 @@ function ServiceCard({
   });
   const remove = useMutation({
     mutationFn: () => api.deleteInstance(instance.id),
-    // Adding a service speaks and removing one did not, which is the asymmetry #192 was about:
-    // the whole card vanishes, and an absence cannot be perceived by ear.
+    // Removing a service must announce itself explicitly: the whole card vanishes, and an
+    // absence cannot be perceived by ear.
     onSuccess: () => {
       announce(t("services.panel.card.removedAnnouncement", { name: instance.name }));
       invalidate();
@@ -174,10 +177,10 @@ function ServiceCard({
             <button
               type="button"
               disabled={testSaved.isPending}
-              // Carries the state, because the name REPLACES the visible text rather than
-              // extending it: a fixed name freezes the button at "Test" while its label flips
-              // to "Testing…", and nothing else here announces that the press did anything.
-              // Visible word first, so "click Test" still reaches it by voice.
+              // Carries the state, because the name replaces the visible text rather than
+              // extending it: a fixed name freezes the button at "Test" while its label
+              // flips to "Testing…", and nothing else here announces that the press did
+              // anything. Visible word first, so "click Test" still reaches it by voice.
               aria-label={
                 testSaved.isPending
                   ? t("services.panel.card.testAriaPending", { name: instance.name })
@@ -214,13 +217,14 @@ function ServiceCard({
 /** One kind's cards and its Add button.
  *
  *  Its own component only so it can hold a hook per kind: a `useSuccessorFocus()` inside the
- *  `kinds().map` below would be a hook in a loop. What it buys is where focus goes when a card
- *  removes itself -- the card IS the thing that unmounts, so the successor cannot live inside it
- *  (#173). The Add button is the target rather than a neighbouring card: the cards' own focusable
- *  content is a Test/Edit/Remove triplet, and landing on another service's Test button reads as
- *  the wrong service being acted on, where Add is the one thing left to do in this section. It is
- *  also the only candidate that is always there -- removing a singleton kind's one card empties
- *  the grid, and `canAdd` flips the Add button ON in the same refetch, which the hook waits for. */
+ *  `kinds().map` below would be a hook in a loop. What it buys is where focus goes when a
+ *  card removes itself. The card is what unmounts, so the successor cannot live inside it.
+ *  The Add button is the target rather than a neighbouring card: the cards' own focusable
+ *  content is a Test/Edit/Remove triplet, and landing on another service's Test button reads
+ *  as the wrong service being acted on, where Add is the one thing left to do in this
+ *  section. It is also the only candidate that is always there: removing a singleton kind's
+ *  one card empties the grid, and `canAdd` flips the Add button on in the same refetch,
+ *  which the hook waits for. */
 function ServiceSection({
   kind,
   rows,
@@ -270,13 +274,11 @@ export function ServicesPanel() {
   const [modal, setModal] = useState<{ kind: InstanceKind; instance: Instance | null } | null>(
     null,
   );
-  // The modal decides when it may be dismissed; it mirrors that whole answer here so Back
-  // refuses exactly what the scrim, Escape and the ✕ refuse, the same arrangement the schedule
-  // editor uses (B-19). It carried only the SAVE half once, and the moment the modal grew a
-  // second reason to stay open -- a folder map read but never made -- Back walked through the
-  // new guard while every other dismissal honored it (rule 80).
+  // The modal decides when it may be dismissed. This mirrors that whole answer here so Back
+  // refuses exactly what the scrim, Escape and the ✕ refuse, the same arrangement the
+  // schedule editor uses.
   const blockCloseRef = useRef(false);
-  // Back closes the service editor instead of leaving Reaper -- unless the modal says otherwise.
+  // Back closes the service editor instead of leaving Reaper, unless the modal says otherwise.
   useBackGuard(
     modal !== null,
     () => setModal(null),
@@ -286,15 +288,15 @@ export function ServicesPanel() {
   return (
     <div className="panel panel-wide">
       <h2>{t("services.panel.heading")}</h2>
-      {/* "It only ever reads" was false about Radarr and Sonarr, which are how a reap removes
-          anything: the executor unmonitors, deletes files and adds exclusions through them.
-          Bounded to the scan, which is what the claim was reaching for. Its twin is the
-          wizard's Connect step (rule 72). */}
+      {/* This panel must not claim "it only ever reads": Radarr and Sonarr are how a reap
+          removes anything, since the executor unmonitors, deletes files and adds exclusions
+          through them. The blurb bounds that claim to the scan. Its twin is the wizard's
+          Connect step. */}
       <p className="blurb">{t("services.panel.blurb")}</p>
-      {/* The one Settings panel #140 did not reach. A raw exception string over the full service
-          list broke rule 21 on its own, and said the read had failed above the connections it
-          had read (#190): saving or removing an instance invalidates ["instances"], so an
-          ordinary edit reaches it. */}
+      {/* A raw exception string over the full service list would read as jargon here. This
+          states that the read failed above the connections it did read: saving or removing
+          an instance invalidates ["instances"], so an ordinary edit can reach this state
+          too, not only a failed first load. */}
       {error && !data && <Notice tone="error">{t("services.panel.loadError")}</Notice>}
       {error && data && <StaleReadNotice what={t("services.panel.staleWhat")} />}
       {isPending && <p className="muted">{t("common.loading")}</p>}

@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// How far Reaper can see into one person's watching, for the two Scales surfaces that report
-// it: the board's cards and the person drawer. One derivation, because the two surfaces make
-// the same claim and drew it differently -- the board guarded an unlinked account while the
-// drawer went on printing a red 0% and "not watched" past the mirror's horizon (rule 72).
+// How far Reaper can see into one person's watching, for the two Scales surfaces that
+// report it: the board's cards and the person drawer. One derivation, because the two
+// surfaces make the same claim and could easily draw it differently: guarding an unlinked
+// account on one but printing a red 0% and "not watched" past the mirror's horizon on the
+// other.
 //
-// Every watch figure Scales carries is counted with NO lower time bound (`fairness
+// Every watch figure Scales carries is counted with no lower time bound (`fairness
 // ._evidence_index` and `_distinct_episodes` query `watch_event` unfiltered), and the mirror
-// itself begins at its horizon. So a zero is a LOWER BOUND, and on a screen built to decide
-// whose files to delete a lower bound must never be drawn as a verified zero -- the same
-// reasoning `ServerPopularityGate` follows when it refuses the negative past its reach
+// itself begins at its horizon. So a zero is a lower bound, and on a screen built to decide
+// whose files to delete, a lower bound must never be drawn as a verified zero. That is the
+// same reasoning `ServerPopularityGate` follows when it refuses the negative past its reach
 // (`engine/gates.py`), arriving here down the reporting lane instead of the deletion one.
 
 import { date } from "../format";
@@ -54,9 +55,9 @@ export function reachIsMeasured(reach: WatchReach): reach is MeasuredReach {
  * What the mirror can see, in one line, for the surfaces reporting over everybody: the span
  * it reaches back to, or that it holds nothing yet.
  *
- * Always a sentence, never null. The board rendered this only when there WAS a span, which
- * left the worst case -- a mirror that has never synced, where every card reads a red 0% --
- * as the one case carrying no caveat at all.
+ * Always a sentence, never null. Rendering this only when there is a span would leave the
+ * worst case, a mirror that has never synced, where every card reads a red 0%, as the one
+ * case carrying no caveat at all.
  */
 export function mirrorNote(horizonAt: string | null): string {
   return horizonAt == null
@@ -66,8 +67,9 @@ export function mirrorNote(horizonAt: string | null): string {
 
 /** The same line for one person, or null when there is no figure of theirs to bound: an
  *  unlinked account already says so on its own tile, and naming the mirror's span beside it
- *  would suggest the span is what stopped Reaper seeing them. The drawer renders this because
- *  on a phone it is a sheet OVER the board, so the board's copy is not on screen to borrow. */
+ *  would suggest the span is what stopped Reaper seeing them. The drawer renders this
+ *  because on a phone it is a sheet over the board, so the board's copy is not on screen to
+ *  borrow. */
 export function reachNote(reach: WatchReach): string | null {
   if (reach.kind === "no_account") return null;
   return mirrorNote(reach.kind === "measured" ? reach.since : null);

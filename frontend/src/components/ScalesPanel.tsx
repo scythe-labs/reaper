@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The Scales person panel: one requester's whole request story, opened from a card. It is
-// the review screen's why-panel shell (`.why`, `main.split`) reused wholesale, so it rides
-// the same responsive behavior -- a side column on wide screens, a right-hand sheet that
-// slides over the list below 1100px, full-screen under 900px -- and the same head/close
-// grammar. A person is not a title, so there is no poster hero and no whole-person
-// Spare/Reap footer: this panel decides nothing, it explains. Each title row still opens
-// its real card in Review, exactly like the old reclaimable chips did.
+// The Scales person panel shows one requester's whole request story, opened from a card. It
+// reuses the review screen's why-panel shell (`.why`, `main.split`), so it gets the same
+// responsive layout (a side column on wide screens, a sheet over the list below 1100px, full
+// screen under 900px) and the same head and close controls. A person is not a single item, so
+// the panel has no poster hero and no Spare/Reap footer. It only explains. Each title row
+// opens that title's real card in Review to act on it.
 
 import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -28,11 +27,12 @@ function initial(name: string): string {
 /** The title's poster, proxied from Plex through /api/poster, with the film-strip mark as a
  *  fallback when there is no poster key or the image cannot load. */
 function Poster({ url }: { url: string | null }) {
-  // No reset effect, unlike the queue's poster and the two backdrops (`useArtFallback`). The
-  // row key this sits under carries the title's id when it has one, so a different title is
-  // a different component and the flag starts false. That key falls back to a display title,
-  // which rule 19 forbids, so the first branch is what holds this up. Change it and the flag
-  // latches: one failed load leaves the film strip on every title the row is reused for.
+  // This component has no reset effect, unlike the queue's poster and the two backdrops
+  // (`useArtFallback`). The row key above carries the title's id when there is one, so a
+  // different title mounts a fresh component and `failed` starts false again. That key falls
+  // back to the title text when there's no id, which is a display name rather than a stable
+  // key: change that fallback and `failed` can latch, leaving the film strip on every title
+  // the row is reused for after one failed image load.
   const [failed, setFailed] = useState(false);
   return (
     <span className="scales-poster" aria-hidden="true">
@@ -49,8 +49,9 @@ function Poster({ url }: { url: string | null }) {
  *  "at limit" flag when they are capped there right now. */
 function limitText(line: QuotaLine): string {
   if (line.limit === null) return i18next.t("scales.personPanel.limits.unlimited");
-  // A daily quota read "1 per 1 days" while this same file and Fairness already say
-  // "person"/"people" and "title"/"titles" (U-19).
+  // Plural-aware: a daily quota can literally be "1 per 1 days", so the translation key
+  // handles the day/days split itself, the same way this file and Fairness already handle
+  // person/people and title/titles.
   return i18next.t("scales.personPanel.limits.text", {
     limit: count(line.limit),
     hasDays: line.days ? "yes" : "no",
@@ -76,7 +77,7 @@ function LimitChip({ label, line }: { label: string; line: QuotaLine }) {
 }
 
 /** The person's name in the panel head. Links to their page on the request portal when one
- *  could be built ({base_url}/users/{id}); plain text otherwise, never a dead link. Follows
+ *  could be built ({base_url}/users/{id}), plain text otherwise, never a dead link. Follows
  *  the app's title-link idiom: text at rest, an accent underline on hover, a small outbound
  *  arrow so the link is discoverable. */
 function ProfileName({ id, name, href }: { id: string; name: string; href: string | null }) {
@@ -115,25 +116,26 @@ function Fate({ verdict }: { verdict: string }) {
   return <span className="scales-kept">{verdict}</span>;
 }
 
-/** How much of it they watched, in the item's own terms: a movie's plays, a series' distinct
- *  episodes watched. Never a raw play sum for a show, which reads as inflated next to Tautulli.
+/** How much of it a person watched, in the item's own terms: a movie's play count, or a
+ *  series' distinct episodes watched. Never a raw play sum for a show: that reads as
+ *  inflated next to Tautulli's own numbers.
  *
- *  The negative branch is the careful one. `watched_by_them` is counted over the whole mirror
- *  and the mirror begins at its horizon, so a zero is a LOWER BOUND: it says nothing about
- *  plays behind that date, which on an install whose history is younger than its library is
- *  most of them. A bare "not watched" states a verified never as fact on the screen where the
- *  operator decides whose files to delete, so a zero is only ever printed with the date it
- *  counts from, and where nothing is readable at all (`reachIsMeasured`, covering both an
- *  unlinked request account and an empty mirror) it says so instead of naming a number. */
+ *  The zero case needs care. `watched_by_them` only counts plays recorded since the local
+ *  watch-history mirror started (its horizon), so a zero means "not watched since that
+ *  date," not "never watched." On an install whose history is younger than its library,
+ *  most plays could sit before that date. Since the operator is deciding whose files to
+ *  delete from this screen, a zero always prints with the date it counts from, never as a
+ *  bare "not watched." When there's no readable history at all (`reachIsMeasured` is false,
+ *  covering an unlinked request account or an empty mirror), this says so instead of naming
+ *  a number. */
 function watchedLabel(t: PersonTitle, reach: WatchReach): string {
   if (!reachIsMeasured(reach)) return i18next.t("scales.personPanel.watched.noHistory");
   if (t.watched_by_them <= 0)
     return i18next.t("scales.personPanel.watched.noneSince", { date: date(reach.since) });
-  // "times", not a multiplication sign. The glyph carries the meaning here rather than
-  // decorating it, and a reader at its default symbol level drops it -- leaving "watched 3" on
-  // the screen where the operator decides whose files to delete. It is inside a composed string,
-  // so there is no element to hang `aria-hidden` on even if hiding it were right: the word is
-  // the fix, exactly as the middots in composed strings became commas (#299, rule 21).
+  // Spelled out as "times", not a multiplication sign: a screen reader at its default
+  // verbosity skips symbols, which would leave "watched 3" on the screen where the operator
+  // decides whose files to delete. This sits inside a composed string, so there is no element
+  // to mark decorative even if that were the fix. Spelling out the word is.
   if (t.media_type === "movie") {
     return i18next.t("scales.personPanel.watched.movieTimes", { n: t.watched_by_them });
   }
@@ -157,10 +159,10 @@ function TitleRow({
   const { t: tr } = useTranslation();
   const kind =
     t.media_type === "movie" ? tr("scales.mediaKind.movie") : tr("scales.mediaKind.series");
-  // Some stored titles already carry their year (e.g. "Some Show (2019)"); don't print it
-  // twice. Only append the year when the title does not already end with it. The search term
-  // the jump below carries asks the same question through the same helper, so a title that
-  // names its own year is not handed a second one there either.
+  // Some stored titles already carry their year (e.g. "Some Show (2019)"). Append the year
+  // only when the title doesn't already end with it. The search term the jump below builds
+  // asks the same question through the same helper, so a title with its own year isn't
+  // handed a second one there either.
   const showYear = t.year != null && !carriesYear(t.title, t.year);
 
   const meta: string[] = [kind];
@@ -181,9 +183,10 @@ function TitleRow({
         <span className="scales-title-meta">
           {meta.map((m, i) => (
             <span key={i}>
-              {/* A separator, not a word: read out it lands as "middle dot" between two
-                  facts a reader is trying to hear as a list (#177). Its twin in
-                  UnmatchedList/ScalesPanel carries the same hide (rule 72). */}
+              {/* Decorative separator, not a word: a screen reader would read it out as
+                  "middle dot" between two facts a listener is trying to hear as a list, so
+                  it carries aria-hidden. UnmatchedList has the same separator, hidden the
+                  same way. */}
               {i > 0 && (
                 <span className="scales-dot" aria-hidden="true">
                   ·
@@ -219,8 +222,8 @@ function TitleRow({
   );
 }
 
-/** The panel proper. Takes an already-fetched detail (App owns the query, exactly as it does
- *  for the why-panel), so this stays testable without standing up React Query. */
+/** The panel itself. Takes an already-fetched detail, the same way the why-panel does (App
+ *  owns the query), so this component can be tested without setting up React Query at all. */
 export function ScalesPanel({
   detail,
   onClose,
@@ -237,12 +240,12 @@ export function ScalesPanel({
   const headingId = useId();
   const granted = detail.gb_granted_bytes;
   const reclaim = detail.reclaimable_bytes;
-  // How far Reaper can see into this person's watching, from the one derivation the board's
-  // cards also read (rule 72). Null where there is no reading to report -- no Plex account
-  // behind the request account, or an empty mirror -- because `played_by_them` is then
-  // structurally 0 (`fairness._roll_up` counts plays only inside `if pid is not None`) and a
-  // red 0% would be a measurement nobody took. The rows below take the same `reach`, and the
-  // note under the tiles bounds the percentage that IS shown.
+  // How far Reaper can see into this person's watching, from the same derivation the board's
+  // cards read. This is null when there is nothing to report: no Plex account behind the
+  // request account, or an empty mirror. In both cases `played_by_them` is always 0
+  // (`fairness._roll_up` only counts a play when `pid is not None`), and a red 0% would be a
+  // measurement nobody actually took. The rows below use this same `reach`, and the note
+  // under the tiles explains what the shown percentage covers.
   const reach = watchReach(detail.plex_id, detail.horizon_at);
   const note = reachNote(reach);
   const watched = !reachIsMeasured(reach)
@@ -252,17 +255,18 @@ export function ScalesPanel({
       : 0;
   const hasReclaim = detail.reclaimable_items > 0;
 
-  // The lane travels with the jump. Review's queue is one lane of three, and this row already
-  // knows which one the title is in -- it is the fate printed beside it, and the server derives
-  // it the same override-aware way the queue filters (rule 77). Sending only the id landed the
-  // panel over whichever lane the operator happened to leave the queue on, so a "Left to decide"
-  // title opened its reasoning above a Condemned list it is not in, with nothing on screen
-  // saying where to find it.
-  // The title travels with it too, into the queue's search box. The lane alone can still be
-  // thousands of rows deep, and the opened panel says nothing about where in that list its card
-  // is; seeding the search leaves one title on screen beside its own reasoning, and the chip
-  // above the list says what was searched and clears in one click. The year goes with the title
-  // because the row prints it -- and because the search now understands one (`list_candidates`).
+  // The lane travels with the jump. Review's queue has three lanes, and this row already
+  // knows which one the title is in. That's the fate printed beside it, derived server-side
+  // the same override-aware way the queue itself filters. Sending only the id would open the
+  // panel over whichever lane the queue happened to be showing, so a "Left to decide" title
+  // could open its reasoning above a Condemned list it isn't even in.
+  //
+  // The title travels with it too, into the queue's search box. A lane alone can still be
+  // thousands of rows deep, and the panel says nothing about where its card sits in that
+  // list. Seeding the search leaves one title on screen beside its own reasoning, and the
+  // chip above the list names what was searched and clears in one click. The year comes with
+  // the title because the row prints it, and the search now understands a year too
+  // (`list_candidates`).
   const opener = (t: PersonTitle): (() => void) | null => {
     const term = titleWithYear(t.title, t.year);
     if (t.item_id != null) return () => onOpenItem(t.item_id as number, t.verdict, term);
@@ -345,9 +349,9 @@ export function ScalesPanel({
             )}
           </div>
         </div>
-        {/* The span every figure above and every row below is counted over. The board renders
-            the same line, but on a phone this panel is a sheet OVER the board (`main.split
-            .why`), so the board's copy is not on screen to borrow. */}
+        {/* The date range every figure above and every row below is counted over. The board
+            renders the same line, but on a phone this panel sits as a sheet over the board
+            (`main.split .why`), so the board's copy is not on screen to reuse. */}
         {note && <p className="fair-horizon muted">{note}</p>}
       </section>
 

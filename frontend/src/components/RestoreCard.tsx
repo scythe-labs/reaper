@@ -2,22 +2,22 @@
 //
 // Restore from a backup: choose a file, confirm with the admin password, restart to finish.
 //
-// It lives here rather than inside Settings because it is now reached from two places. Settings
-// is the one an operator finds later; the other is the first-run wizard's Connect step, where
-// restoring is the *alternative* to adding services one at a time and so belongs beside them
-// rather than four screens further on, at the end of a setup the restore is about to overwrite
-// (#385). `RestoreCard` is the Settings card, chrome and all; `RestoreFlow` is the same flow
-// with no chrome, for a modal that draws its own heading.
+// It lives in its own file rather than inside Settings because it is reached from two places.
+// Settings is the one an operator finds later. The other is the first-run wizard's Connect
+// step, where restoring is the *alternative* to adding services one at a time, so it belongs
+// beside them rather than four screens further on, at the end of a setup the restore is about
+// to overwrite. `RestoreCard` is the Settings card, chrome and all. `RestoreFlow` is the same
+// flow with no chrome, for a modal that draws its own heading.
 //
 // **The wizard cannot offer it first.** `POST /api/settings/backup/restore/confirm` refuses
 // outright without an admin password ("Set an admin password first. It's what confirms a
 // restore."), and the wizard's opening step is what creates one. That is a constraint on where
 // the door can go, not an accident of layout.
 //
-// **The password is typed once.** Where the caller already holds it -- the wizard does, from
-// its first step -- it passes it in and the box is replaced by a sentence naming which password
-// will be used. The backend's check is untouched: the same string reaches `restoreConfirm`
-// either way. A held password that the server then rejects falls back to the box rather than
+// **The password is typed once.** Where the caller already holds it, the wizard does from its
+// first step, it passes it in and the box is replaced by a sentence naming which password will
+// be used. The backend's check is untouched: the same string reaches `restoreConfirm` either
+// way. A held password that the server then rejects falls back to the box rather than
 // dead-ending, because the operator has no other way to correct it from here.
 
 import { useQueryClient } from "@tanstack/react-query";
@@ -38,20 +38,19 @@ import { since } from "../format";
 import i18next from "../i18n";
 import { Notice } from "./Notice";
 
-/** What an armed restore says, in one place because it is said twice: the warn notice on the card
- *  and the sentence spoken into the live region when the confirm lands. Two constants rather than
- *  one so the notice can bold the lead without the announcement inheriting markup -- and so
- *  neither copy can be reworded without the other (rule 144).
+/** What an armed restore says, in one place because it is said twice: the warn notice on the
+ *  card and the sentence spoken into the live region when the confirm lands. Two constants
+ *  rather than one so the notice can bold the lead without the announcement inheriting markup,
+ *  and so neither copy can be reworded without the other.
  *
- *  It used to instruct -- "Restart Reaper's container to finish" -- because that was the only way
- *  to finish. `Restart now` is under it now, so the sentence says what is true and the button says
- *  what to do (#386). */
+ *  The sentence states what is true (the swap is staged), and the `Restart now` button under
+ *  it says what to do about it. */
 export const restoreArmedLead = () => i18next.t("backup.restore.armedLead");
 export const restoreArmedRest = () => i18next.t("backup.restore.armedRest");
 
 /** The same pair for the state after `Restart now` is pressed. It claims only what the server
- *  accepted -- the stop -- and never that Reaper is back, which this page cannot see: the
- *  connection it would ask over is the one about to go (rule 85). */
+ *  accepted, the stop, and never that Reaper is back, which this page cannot see: the
+ *  connection it would ask over is the one about to go. */
 export const restoreStoppingLead = () => i18next.t("backup.restore.stoppingLead");
 export const restoreStoppingRest = () => i18next.t("backup.restore.stoppingRest");
 
@@ -79,17 +78,17 @@ export function RestoreCard(props: RestoreProps) {
   );
 }
 
-// The restore flow: choose a backup file, confirm with the admin password, then restart to finish.
-// A restore never happens live -- the upload is validated and staged, the password arms the swap,
-// and preflight does the swap on the next boot before migrations. Three states: idle (choose a
-// file), chosen (a validated summary + password), and armed (a restore is staged and waiting for
-// Reaper to restart). `armed` is server state (the READY marker), so it survives a reload and shows
-// even if this browser never did the confirm.
+// The restore flow: choose a backup file, confirm with the admin password, then restart to
+// finish. A restore never happens live: the upload is validated and staged, the password arms
+// the swap, and preflight does the swap on the next boot before migrations. Three states: idle
+// (choose a file), chosen (a validated summary + password), and armed (a restore is staged and
+// waiting for Reaper to restart). `armed` is server state (the READY marker), so it survives a
+// reload and shows even if this browser never did the confirm.
 //
-// The armed state has a fourth on top of it, `stopping`, which is not server state and cannot be:
-// it says the server accepted a stop, and the read that would confirm anything more is the one the
-// stop ends. It does not survive a reload, and does not need to -- a reload after Reaper came back
-// finds no armed restore at all, because the swap has happened.
+// The armed state has a fourth on top of it, `stopping`, which is not server state and cannot
+// be: it says the server accepted a stop, and the read that would confirm anything more is the
+// one the stop ends. It does not survive a reload, and does not need to: a reload after Reaper
+// comes back finds no armed restore at all, because the swap has already happened.
 //
 // No heading and no container of its own, so a modal can draw them: `RestoreCard` above adds
 // the Settings chrome, and `SetupRestoreModal` lets `ModalShell` carry the title. Both render
@@ -105,23 +104,23 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [preparing, setPreparing] = useState(false);
-  // A held password the SERVER rejected. It cannot normally be wrong -- the wizard set it a
-  // minute ago -- but "cannot normally" is not a state to dead-end on: the only correction from
-  // inside this flow is the box, so a refusal gives the box back rather than leaving the
-  // operator pressing Restore against a string they cannot see or change.
+  // A held password the SERVER rejected. It should not normally be wrong, since the wizard set
+  // it a minute ago, but "should not normally" is not a state to dead-end on: the only
+  // correction from inside this flow is the box, so a refusal gives the box back rather than
+  // leaving the operator pressing Restore against a string they cannot see or change.
   const [heldRejected, setHeldRejected] = useState(false);
   // The server took the stop. Local, not server state: the one read that could confirm it is the
   // one the stop is about to end, so this is what THIS browser was told, and it says only that.
   const [stopping, setStopping] = useState(false);
   const useHeld = heldPassword != null && heldPassword !== "" && !heldRejected;
-  // Pressing Restore replaces this whole card with the restart prompt, two hops later: the staged
-  // summary is dropped first, then the refetch flips `armed`. Focus lands on "Cancel restore" --
-  // and it stays `disabled` until `busy` clears in the `finally`, one commit after it mounts, which
-  // is why the move waits on being actable rather than on being present (#173).
+  // Pressing Restore replaces this whole card with the restart prompt, two hops later: the
+  // staged summary is dropped first, then the refetch flips `armed`. Focus lands on "Cancel
+  // restore", and it stays `disabled` until `busy` clears in the `finally`, one commit after it
+  // mounts, which is why the move waits on being actable rather than on being present.
   //
-  // Not on "Restart now", though that is the continuation an operator wants: a programmatic focus
-  // move puts the control under whatever key is pressed next, and one of these two stops the app.
-  // The reversible one takes the landing.
+  // Not on "Restart now", though that is the continuation an operator wants: a programmatic
+  // focus move puts the control under whatever key is pressed next, and one of these two stops
+  // the app. The reversible one takes the landing.
   const afterArm = useSuccessorFocus();
   // ...and the same hop again when "Restart now" replaces itself with the stopping state, where
   // "Reload" is the only control left.
@@ -153,9 +152,9 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
   };
 
   // The admin password belongs to the summary it was typed against, so it goes whenever that
-  // summary does: here, and on a failed confirm below. Dropping the summary alone unmounted
-  // the field while the password stayed in state, and refilled it against a different backup
-  // once the next file staged (S-5).
+  // summary does: here, and on a failed confirm below. Dropping the summary alone would
+  // unmount the field while the password stayed in state, and refill it against a different
+  // backup once the next file staged.
   const choose = async (file: File) => {
     setError(null);
     setSummary(null);
@@ -172,8 +171,8 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
       setSummary(reviewed);
     } catch (err) {
       setFileName(null);
-      // Each of this card's three failures states its own outcome, because one shared lead-in was
-      // wrong for two of them (#178). Nothing was staged here: the file never got read.
+      // Each of this card's three failures states its own outcome, because one shared lead-in
+      // would be wrong for two of them. Nothing was staged here: the file never got read.
       setError(
         err instanceof Error
           ? t("backup.restore.chooseFailed", { message: describeError(err) })
@@ -212,9 +211,9 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
     try {
       await confirming;
       // Said here rather than after the refetch, because THIS is what armed it: the server has
-      // staged the swap whether or not the read that redraws the card lands. It was the one
-      // outcome in this panel with no signal at all -- the card simply became a different card,
-      // which is an absence, and the operator hears nothing when a full restore is armed (#173).
+      // staged the swap whether or not the read that redraws the card lands. Without this, the
+      // only signal would be the card becoming a different card, which is silent, and the
+      // operator would hear nothing when a full restore is armed.
       announce(`${restoreArmedLead()} ${restoreArmedRest()}`);
       // The confirm armed the swap; refetch so `armed` flips on and this card shows the
       // restart prompt. Drop the staged summary from local state either way.
@@ -239,16 +238,16 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
     }
   };
 
-  // The last step of a restore, as a button rather than as a shell command in another window
-  // (#386). The server refuses unless a restore is armed and unless a reap is in flight, so both
-  // of this card's ways to be told "no" arrive as an error on the notice below.
+  // The last step of a restore, as a button rather than as a shell command in another window.
+  // The server refuses unless a restore is armed and unless a reap is in flight, so both of
+  // this card's ways to be told "no" arrive as an error on the notice below.
   const restartNow = async () => {
     setError(null);
     setBusy(true);
     try {
       await api.restoreRestart();
-      // Said on the 200, which is the whole of what settled: the server took the stop. Whether it
-      // comes back is not this page's to know or to claim (rule 85).
+      // Said on the 200, which is the whole of what settled: the server took the stop. Whether
+      // it comes back is not this page's to know or to claim.
       setStopping(true);
       announce(`${restoreStoppingLead()} ${restoreStoppingRest()}`);
     } catch (err) {
@@ -266,20 +265,20 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
 
   // `token` scopes the discard to the staging this card is showing. `Remove` on a reviewed
   // summary has one and passes it, so it discards the file named on the card and never one a
-  // second card staged since (#387); the armed Cancel has no summary, so it passes nothing and
+  // second card staged since. The armed Cancel has no summary, so it passes nothing and
   // discards whatever is there, which is what "cancel this restore" has to mean when the thing
   // being canceled was armed from somewhere else entirely.
   //
   // **An unscoped discard asks the server what it is about to discard.** `armed` is a cached
-  // read nothing refreshes from another client -- the query sets no `refetchInterval` and
-  // `main.tsx` turns `refetchOnWindowFocus` off app-wide -- so this card can still be drawing
-  // the armed branch long after that restore was canceled somewhere else and a fresh archive
-  // staged in its place. Sending then destroys the new one and leaves the card that staged it
-  // holding a reviewed summary with nothing behind it, which is #387 reached through the one
-  // discard a token cannot scope. So the same server read the unmount reclaim does, in the
-  // moment before the send: not armed any more means there is nothing here to cancel, and the
-  // card redraws as whatever is true now. The sub-second window after the read is not closed
-  // by this and is not claimed to be.
+  // read nothing refreshes from another client: the query sets no `refetchInterval`, and
+  // `main.tsx` turns `refetchOnWindowFocus` off app-wide, so this card can still be drawing the
+  // armed branch long after that restore was canceled somewhere else and a fresh archive
+  // staged in its place. Sending an unscoped cancel then would destroy the new one and leave
+  // the card that staged it holding a reviewed summary with nothing behind it, the same
+  // failure an unscoped discard causes through the one path a token cannot scope. So the same
+  // server read the unmount reclaim does runs again, in the moment before the send: not armed
+  // any more means there is nothing here to cancel, and the card redraws as whatever is true
+  // now. The sub-second window after the read is not closed by this and is not claimed to be.
   const cancel = async (token?: string) => {
     setBusy(true);
     setError(null);
@@ -306,23 +305,23 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
     }
   };
 
-  // What this card would LOSE, reported up through `BackupPanel` to `Settings` so leaving the
-  // section can stop and ask first. It is the costliest draft in Settings by some way: the archive
-  // is already uploaded and staged on the SERVER, and the admin password was typed against that
-  // exact file.
+  // What this card would lose, reported up through `BackupPanel` to `Settings` so leaving the
+  // section can stop and ask first. It is the costliest draft in Settings by some way: the
+  // archive is already uploaded and staged on the SERVER, and the admin password was typed
+  // against that exact file.
   //
-  // Rule 146: declared above the `armed` early return, and false inside it. An armed restore is
-  // server state that survives a reload, this browser, and this card -- there is nothing here to
-  // lose, and the card in that branch offers its own Cancel. Reporting a draft there would demand
-  // a discard for a decision already stored. The password is not read separately because it
-  // cannot outlive the summary: every path that drops one drops the other (`choose`, `reset`, and
-  // the failed confirm), which is S-5's fix and is what keeps this signal to one fact.
+  // Declared above the `armed` early return, and false inside it. An armed restore is server
+  // state that survives a reload, this browser, and this card, so there is nothing here to
+  // lose, and the card in that branch offers its own Cancel. Reporting a draft there would
+  // demand a discard for a decision already stored. The password is not read separately
+  // because it cannot outlive the summary: every path that drops one drops the other
+  // (`choose`, `reset`, and the failed confirm), which keeps this signal to one fact.
   //
-  // `preparing` is the other half of the same fact, and reading `summary` alone missed it: the
-  // upload is already on its way to the server while the card still shows "Checking <file>", so a
-  // switch during that window left with no confirm at all and landed a staged archive nobody
-  // could see. Rule 146 asks what the parent is told while this component renders "loading" --
-  // this is that answer.
+  // `preparing` is the other half of the same fact, and reading `summary` alone would miss it:
+  // the upload is already on its way to the server while the card still shows "Checking
+  // <file>", so leaving during that window with `preparing` unreported would report no draft
+  // at all, while a staged archive lands on the server with nobody able to see it. This is
+  // what the parent is told while this component renders "loading".
   const staged = !armed && (summary !== null || preparing);
   useEffect(() => {
     onDirtyChange?.(staged);
@@ -333,20 +332,20 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
   // ever clears it: an un-armed stage has no surface anywhere in the app, so it would sit there
   // until the next prepare replaced it. Leaving takes it with us.
   //
-  // Deliberately its own effect with `[]` deps, unlike the report above, because this one SENDS
+  // Deliberately its own effect with `[]` deps, unlike the report above, because this one sends
   // something: hung off `onDirtyChange` it would re-run whenever that prop changed identity and
-  // cancel a staged restore while the card was still on screen. It reads `stagedRef` for the same
-  // reason -- the guard has to be the value at unmount, not at mount.
+  // cancel a staged restore while the card was still on screen. It reads `stagedRef` for the
+  // same reason: the guard has to be the value at unmount, not at mount.
   //
   // **It reclaims what THIS card staged, never whatever is staged.** A tokenless cancel is an
-  // unscoped discard, and two of these cards can be live at once -- Settings in one tab, the
-  // wizard's restore door in another -- each holding its own reviewed summary while only the
+  // unscoped discard, and two of these cards can be live at once: Settings in one tab, the
+  // wizard's restore door in another, each holding its own reviewed summary while only the
   // later stage survives on the server, since `stage_upload` replaces the staging directory
-  // rather than adding to it. The earlier card leaving at any later moment then discarded the
-  // other's archive, and that operator was left looking at a validated summary whose Restore
-  // had nothing behind it (#387). So the cancel carries the token minted for our own staging,
-  // and the server discards nothing when it no longer matches. Rule 73 binds the *arm* to the
-  // content that was reviewed; this is the same binding on the discard.
+  // rather than adding to it. An unscoped cancel from the earlier card would discard the
+  // other's archive, leaving that operator looking at a validated summary whose Restore has
+  // nothing behind it. So the cancel carries the token minted for our own staging, and the
+  // server discards nothing when it no longer matches. This is the same binding on the
+  // discard that the arm has on the content that was reviewed.
   //
   // `restore_cancel` discards a staged OR ARMED restore (`api/backup.py:restore_cancel`), so the
   // three ways this can send a cancel it should not are each held off explicitly:
@@ -383,7 +382,7 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
         await confirmRef.current?.catch(() => {});
         // No token, nothing to reclaim BY: the only send left would be the unscoped one this
         // guard exists to stop. Reached from a confirm we waited on that succeeded and dropped
-        // the summary, and from a cancel that had just cleared one -- in both, `stagedRef` is a
+        // the summary, and from a cancel that had just cleared one. In both, `stagedRef` is a
         // render behind and says yes while there is nothing of ours left to reclaim. Returning
         // leaves whatever is on the server for the surface that owns it, which is the direction
         // that loses nothing.
@@ -426,8 +425,8 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
       <>
         {/* `standing`: `armed` is the server's READY marker, so this card is what Backup looks
             like on every visit until Cancel or a restart, not a reply to anything pressed here.
-            The press that arms it is already covered -- `confirm` announces these same two
-            sentences and moves focus onto Cancel -- so the flag takes away a repeat, never the
+            The press that arms it is already covered: `confirm` announces these same two
+            sentences and moves focus onto Cancel, so the flag takes away a repeat, never the
             only signal. The `stopping` twin above is the opposite: `stopping` is local state set
             by Restart now, so it answers a press and stays an alert. */}
         <Notice tone="warn" className="restore-armed" as="div" standing>
@@ -461,10 +460,10 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
         {/* Only the wizard needs telling what happens next, because only there is the rest of
             setup about to be overwritten by what is now staged. */}
         {heldPassword != null && <p className="help">{t("backup.restore.wizardHelp")}</p>}
-        {/* The armed card had no failure surface at all, so a Cancel that failed set a sentence
-            nothing rendered and the operator watched the button re-enable and nothing else. Both
-            of its buttons can be refused, so the notice lives here as well as on the form below
-            (rule 17/36). */}
+        {/* Both of this card's buttons, Cancel and Restart now, can be refused, so the notice
+            lives here as well as on the form below. Without it, a failed Cancel would set an
+            error sentence nothing renders, and the operator would watch the button re-enable
+            with no explanation. */}
         {error && <Notice tone="error">{error}</Notice>}
       </>
     );
@@ -544,8 +543,8 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
               <div className="verdict-ok">
                 {/* Decorative here, unlike the test badge: both branches of the sentence below
                     say the verdict in words, so the glyph would only interrupt it with a stray
-                    character. Hidden rather than given a text twin (rule 144 -- a second copy
-                    of a claim that gates a restore is the copy that goes wrong). */}
+                    character. Hidden rather than given a text twin: a second copy of a claim
+                    that gates a restore is the copy that goes wrong. */}
                 <span className="dot" aria-hidden="true">
                   ✓
                 </span>
@@ -595,9 +594,8 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
               {busy ? t("backup.restore.restoringButton") : t("backup.restore.restoreButton")}
             </button>
           </div>
-          {/* Read before arming, and a sibling of the armed pair above (rule 144): it named the
-              container back when a shell command was the only way to finish, so it now says the
-              same thing the armed card does, in the same words, one state early. */}
+          {/* Read before arming, and a sibling of the armed pair above: it says the same thing
+              the armed card does, in the same words, one state early. */}
           <p className="help restore-when">{t("backup.restore.whenHelp")}</p>
 
           {/* `standing`, same as the download warning above: part of the restore card whenever
@@ -609,9 +607,9 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
       )}
 
       {/* The lead-in belongs to whichever step failed, so it is written where the failure is
-          caught (`choose`, `restore`, `cancel`) rather than here. One lead for all three said a
-          restore had not started when the real news was an unreadable file, or a staged archive
-          still sitting on the server (#178). */}
+          caught (`choose`, `restore`, `cancel`) rather than here. One shared lead for all three
+          would say a restore had not started even when the real news is an unreadable file, or
+          a staged archive still sitting on the server. */}
       {error && <Notice tone="error">{error}</Notice>}
     </>
   );

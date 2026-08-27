@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The one switch. Every on/off STATE in the product renders as this control, so the
+// The one switch. Every on/off state in the product renders as this control, so the
 // meaning is learned once: a switch changes how Reaper behaves, right now. Checkboxes
 // remain only where the user is picking items from a list (filters, bulk selection),
 // which is a different gesture and should look like one.
@@ -22,9 +22,9 @@ export function Switch({
    *  visible label does not reach the input element. */
   ariaLabel?: string;
   /** The policy warning(s) this switch is the fix for, so the complaint reaches a reader
-   *  standing ON the control instead of only as text rendered beside it (#174's shape).
-   *  `QuantityInput` and `Segmented` already take this; the switch needed it once a warning
-   *  anchored on one (#224). */
+   *  standing on the control instead of only as text rendered beside it. `QuantityInput`
+   *  and `Segmented` already take this. The switch needed it once a warning anchored on
+   *  one. */
   describedBy?: string | undefined;
   /** This switch takes its own row out of the list when it is turned off, so
    *  `useRemovalFocus` can find where to leave focus once the row it was standing on is

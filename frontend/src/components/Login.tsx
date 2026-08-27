@@ -2,9 +2,9 @@
 //
 // The front door. Nothing else in the app renders until someone gets through it.
 //
-// Two ways in, weighted deliberately. Plex is the prominent path -- it is how the
-// owner proves they own *this* server, which is the whole authorization story --
-// so it is the big button. Local login is the fallback for when plex.tv is down or
+// Two ways in, weighted deliberately. Plex is the prominent path. It is how the
+// owner proves they own *this* server, which is the whole authorization story, so
+// it is the big button. Local login is the fallback for when plex.tv is down or
 // you are locked out, so it lives in a sheet that slides up from the bottom only
 // when asked for. On a fresh install the same Plex button does setup: the first
 // owner to sign in claims the server.
@@ -31,9 +31,9 @@ function PlexGlyph() {
  *
  *  We ask the backend for a PIN, open the plex.tv auth page in a popup, and then
  *  poll the backend until the user approves it there. The browser never sees a
- *  Plex token -- the backend polls plex.tv and does the ownership check; we only
- *  learn "ok" or "why not". The polling itself is the shared flow in PlexPin.tsx,
- *  which the Settings link panel drives too. */
+ *  Plex token. The backend polls plex.tv and does the ownership check, and we
+ *  only learn "ok" or "why not". The polling itself is the shared flow in
+ *  PlexPin.tsx, which the Settings link panel drives too. */
 function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void }) {
   const { t } = useTranslation();
   const [phase, setPhase] = useState<"idle" | "waiting" | "choose" | "error">("idle");
@@ -47,9 +47,9 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
     // sign-in stays valid while the picker is up, and the pick carries the answer.
     //
     // The announcement that goes with it is `usePlexPinPoll`'s (`chooseServerSaid`), not this
-    // handler's. It was hand-written into both callers (rule 144), and the pair had already been
-    // out of step once: Settings announced the picker and this screen said nothing (#177, rule
-    // 72). The hook now speaks for every caller, so this one only has to move itself.
+    // handler's. Hand-writing it into both callers risks the two drifting out of step, one
+    // announcing the picker while the other says nothing. The hook speaks for every caller
+    // instead, so this one only has to move itself.
     onChooseServer: () => setPhase("choose"),
     onTimedOut: () => {
       setPhase("error");
@@ -67,16 +67,16 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
     try {
       const { pin_id, auth_url } = await api.plexStart();
       setAuthUrl(auth_url);
-      // noopener, matching PlexPanel.startLink. Without it plex.tv gets a `window.opener`
-      // handle to the window this page is running in and can navigate it -- to a look-alike
-      // of the very page that takes the operator's Reaper password (S-4). The window is
-      // sized here only as a hint; noopener is what matters.
+      // noopener, matching PlexPanel.startLink. Without it, plex.tv gets a `window.opener`
+      // handle to the window this page is running in and can navigate it to a look-alike of
+      // the very page that takes the operator's Reaper password. The window is sized here
+      // only as a hint. noopener is what matters.
       //
       // noopener also means window.open returns null, so this page holds nothing to close
       // the window with. It does not need to: `auth_url` carries a forwardUrl back to
       // Reaper's own /plex-done.html, and that page closes the window it is loaded in. A
-      // script-opened window may close ITSELF with no opener, so keeping plex.tv off this
-      // page and closing the window it opened are not the trade they were taken for (#372).
+      // script-opened window can close itself with no opener, so using noopener here costs
+      // nothing: the two are independent, not a trade-off.
       window.open(auth_url, "_blank", "width=620,height=760,noopener");
       pin.begin(pin_id);
     } catch (e) {
@@ -100,9 +100,9 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
           <strong>{t("plex.waitingForPlex")}</strong>
           {/* Once the sign-in is approved, the wait can continue for a second reason: the
               server itself isn't answering yet. Say which one it is, so a longer wait
-              doesn't read as a hang. Reaper keeps polling either way; the sign-in stays
-              good. Worded the same as the Settings panel's copy -- literally the same
-              catalog key (rule 144), so a reword of one is a reword of both. */}
+              doesn't read as a hang. Reaper keeps polling either way, and the sign-in stays
+              good. This is worded the same as the Settings panel's copy, literally the same
+              catalog key, so a reword of one is a reword of both. */}
           <p className="muted">
             {pin.retrying ?? (
               <Trans
@@ -173,7 +173,6 @@ function LocalSheet({
   const sheetRef = useRef<HTMLDivElement | null>(null);
   const invoker = useRef<HTMLElement | null>(null);
 
-  // Close on Escape while the sheet is open.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -234,16 +233,14 @@ function LocalSheet({
       >
         <div className="sheet-grip" aria-hidden="true" />
         <h2>{t("login.localSheet.heading")}</h2>
-        {/* The guarantee is only claimed where it holds. It used to be stated flat, directly
-            above the notice saying no local account existed -- a promise and its own denial,
-            one under the other, on a fresh Plex-only install (#382). What makes it true now is
-            the wizard's mandatory password step, whose `set_password` creates a local admin
-            where there is none; `auth.admins.LastAdminError` is what then keeps it true. Three
-            branches, not two: while the context is still loading Reaper does not yet know
-            which install this is, so it says only what the account is for. Three whole
-            sentences in the catalog, not one stem with a bolted-on tail, because each is a
-            complete claim a translator sentences on its own (rule 144, the SafetyBanner
-            precedent). */}
+        {/* The guarantee is only claimed where it holds, never stated flat above a notice
+            that could contradict it on a fresh Plex-only install. What makes it true is the
+            wizard's mandatory password step, whose `set_password` creates a local admin
+            where there is none. `auth.admins.LastAdminError` is what then keeps it true. This
+            has three branches, not two: while the context is still loading, Reaper does not
+            yet know which install this is, so it says only what the account is for. These are
+            three whole sentences in the catalog, not one stem with a bolted-on tail, because
+            each is a complete claim a translator can sentence on its own. */}
         <p className="muted sheet-blurb">
           {!ctx
             ? t("login.localSheet.blurbLoading")
@@ -264,15 +261,15 @@ function LocalSheet({
                 every local admin, not one by name), so the choice is free and a free choice
                 is one the operator should not have to stop and make.
 
-                "Docker and snap installs" is not hedging: the Windows and macOS bundles are one
-                PyInstaller executable built from `packaging/pyinstaller/entry.py`, which runs the
-                launcher and nothing else, so `reaper-admin` is not on those machines at all and
-                an unqualified sentence sent half the operators after a command they do not have
-                (rule 25, #433). Its siblings carry the same qualification (`main.py`'s boot
-                warning and the 409 from `api/auth.py` when a recovery code finds no admin), and
-                two deliberately do not: `cli.py`'s lockout warning is printed BY `reaper-admin`,
-                so its reader demonstrably has it, and the manual's first-run callout already
-                says "On a Docker install" (rule 72, swept). */}
+                "Docker and snap installs" is not hedging. The Windows and macOS bundles are
+                one PyInstaller executable built from `packaging/pyinstaller/entry.py`, which
+                runs the launcher and nothing else, so `reaper-admin` is not on those machines
+                at all, and an unqualified sentence would send half the operators after a
+                command they do not have. Its siblings carry the same qualification
+                (`main.py`'s boot warning and the 409 from `api/auth.py` when a recovery code
+                finds no admin). Two deliberately do not: `cli.py`'s lockout warning is
+                printed by `reaper-admin` itself, so its reader demonstrably has it, and the
+                manual's first-run callout already says "On a Docker install". */}
             <Trans i18nKey="login.localSheet.noLocalYetNotice" components={{ code: <code /> }} />
           </Notice>
         ) : (
@@ -341,24 +338,23 @@ function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
 
   return (
     // `main`, not a div: the sign-in screen is a whole page and had no landmark on it at all,
-    // so a screen reader user navigating by landmarks had nothing to jump to. Its twin below is
-    // the same fix (rule 72). Every rule for these two is written against the class, so this
-    // changes the accessibility tree and nothing on screen.
+    // so a screen reader user navigating by landmarks had nothing to jump to. Its twin below
+    // is the same fix. Every rule for these two is written against the class, so this changes
+    // the accessibility tree and nothing on screen.
     <main className="auth-card">
       <BrandBadge className="brand-badge" />
       <h1 className="brand-word">{t("login.recovery.heading")}</h1>
       <p className="auth-tagline">{t("login.recovery.tagline")}</p>
-      {/* The console, NOT "its log": mint_recovery_token prints the banner deliberately
+      {/* The console, not "its log": mint_recovery_token prints the banner deliberately
           (auth/recovery.py), so the code never reaches structlog, the in-app Logs tab, or
           the log files that tab downloads. Sending a locked-out operator to Settings ->
-          Logs to find it left them concluding recovery was broken (U-11).
+          Logs to find it would leave them concluding recovery was broken.
 
-          The file is named FIRST because it is the only one of the two that exists on every
-          install: a windowed Windows build and a Finder-launched .app have no console for the
-          banner to reach (#433). "without the old password" is the promise this screen used to
-          make and could not keep -- see `api/settings.py`'s admin-password route, which is what
-          makes it true. Its siblings are `auth/recovery.py`'s banner and the locked-out page
-          in the manual (rule 144). */}
+          The file is named first because it is the only one of the two that exists on every
+          install: a windowed Windows build and a Finder-launched .app have no console for
+          the banner to reach. The claim "without the old password" is true because of
+          `api/settings.py`'s admin-password route. Its siblings are `auth/recovery.py`'s
+          banner and the locked-out page in the manual. */}
       <p className="auth-note">
         <Trans i18nKey="login.recovery.note" components={{ code: <code /> }} />
       </p>
@@ -410,11 +406,11 @@ export function Login() {
           <h1 className="brand-word">Reaper</h1>
           {/* The one tagline, "Grave decisions, clearly explained": the words the masthead
               shows once you are in (App.tsx), and the ones the README, the manual's site
-              header and the API's own description carry. This card had wording of its own
-              and was the only surface that did, which is why it drifted alone.
-              `TAGLINE_SITES` in tests/test_repo_hygiene.py is the guard, and it reads this
-              file's raw source for that exact English sentence -- quoted above, on purpose,
-              now that the rendered copy itself lives in the catalog under `shell.app.brandTagline`, the one key both mastheads read. */}
+              header, and the API's own description carry. This card's rendered copy now
+              lives in the catalog under `shell.app.brandTagline`, the one key both mastheads
+              read. `TAGLINE_SITES` in tests/test_repo_hygiene.py guards this by reading this
+              file's raw source for that exact English sentence, quoted above on purpose,
+              rather than reading the catalog. */}
           <p className="auth-tagline">{t("shell.app.brandTagline")}</p>
           <p className="auth-note">
             {setup ? t("login.authNoteSetup") : t("login.authNoteSignIn")}

@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The top-of-page safety banners. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* ---- banners ------------------------------------------------------------- */
+ * The top-of-page safety banners. See `../index.css` for how this file fits into the
+ * stylesheet's load order. */
 
 .banner {
   display: flex;
@@ -23,7 +22,7 @@
 }
 /* Soft-surface tones shared by the top-of-page banner and the Settings safety panel, so a
    color tweak lands in both instead of silently diverging. The banner sets its own text
-   color; the safety panel inherits. */
+   color. The safety panel inherits it. */
 .banner-safe,
 .safety-state.safe {
   background: var(--protect-soft);
@@ -50,11 +49,12 @@
 .banner-unknown {
   color: var(--text);
 }
-/* Recovery mode: deletion is held off, and the operator cannot clear it from the UI. The
-   shared amber, not a fourth tone -- `--unknown` is this stylesheet's one "attention, and
-   not the normal state" ink (rule 18), and the sentence carries the difference between not
-   being able to look and having deliberately opened a door. Green would be wrong for the
-   same reason it is wrong on `.banner-unknown`: this is a state to leave, not to rest in. */
+/* Recovery mode: deletion is held off, and the operator cannot clear it from the UI. It uses
+   the shared amber, not a fourth color: `--unknown` is this stylesheet's one color for
+   "needs attention, not the normal state". The banner text itself says whether the app
+   could not check, or the operator turned protection off on purpose. Green would be wrong
+   here for the same reason it is wrong on `.banner-unknown`: this state is meant to be
+   temporary. */
 .banner-recovery {
   background: var(--unknown-soft);
   border-color: color-mix(in srgb, var(--unknown) 45%, transparent);
@@ -63,8 +63,9 @@
   background: var(--unknown);
   color: var(--unknown);
 }
-/* The fallback tone when the safety regime can't be read at all (the health fetch failed).
-   Amber, like every other "we could not look" state -- it must never read as "safe". */
+/* The fallback tone for when the safety state can't be read at all (the health fetch
+   failed). It uses amber, like every other "could not check" state, so it never reads as
+   "safe". */
 .banner-unknown {
   background: var(--unknown-soft);
   border-color: color-mix(in srgb, var(--unknown) 45%, transparent);
@@ -98,8 +99,8 @@
   color: var(--muted);
   font-size: var(--text-sm);
 }
-/* Each row's two pills stay together when the row wraps -- "Plex 2" and "Tautulli 2" name
-   the same Plex entry, and splitting them across lines pairs each with the wrong number. */
+/* Each row's two pills stay together when the row wraps. "Plex 2" and "Tautulli 2" name the
+   same Plex entry, and splitting them across lines would pair each with the wrong number. */
 .candidate-group {
   display: inline-flex;
   align-items: center;

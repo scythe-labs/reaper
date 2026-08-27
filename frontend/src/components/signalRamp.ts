@@ -3,35 +3,31 @@
 // The line a signal is measured against, said once.
 //
 // Every built-in signal is a ramp: nothing below one bound, all of its points at the other,
-// a straight line between. Until now the app never said where either bound was -- the policy
-// card offered "up to 10 points" with no hint of what earns them, and a panel row printed
-// "0  IMDb 6.4" with nothing connecting the two numbers (#410).
+// a straight line between. Two surfaces state where those bounds are: the policy card
+// ("up to 10 points") and a panel row ("0  IMDb 6.4"). Both read this module rather than
+// spelling a bound themselves, so the same sentence about what the app does is never
+// written twice by two authors reading different halves of the code.
 //
-// TWO surfaces state that fact now, and rule 144 is about exactly this pair: one sentence
-// about what the app does, written in two places by two authors reading different halves of
-// the code, drifts in the reassuring direction. So both read this module, and neither
-// spells a bound itself.
-//
-// **Nothing here recomputes a score.** The panel row is handed the points it earned and the
+// Nothing here recomputes a score. The panel row is handed the points it earned and the
 // weight it could have earned, both from the engine, so it states arithmetic rather than
-// performing it; the policy card describes the stored bounds and nothing else. A frontend
+// performing it. The policy card describes the stored bounds and nothing else. A frontend
 // copy of `signals._ramp` would be a second scoring implementation free to disagree with the
-// first (rule 3/22's spirit), and the place it would disagree is a number printed beside the
-// control an operator tunes deletions with.
+// first, and the place it would disagree is a number printed beside the control an operator
+// tunes deletions with.
 
-// SWEPT (rule 72). Three things on the Policy page are ramps, and only one of them read
-// backwards. The built-in signals here phrased their bound as where pressure STARTS ("pays
-// nothing at or above 6.0"), with no word for which way it ran, so raising the number made
-// the rule harsher while sounding more generous. The other two already name their direction
-// and are correct as they stand: a graded rule of the operator's own reads "Size on disk: the
-// higher it is (from 20 GB to 80 GB)" and a graded keep reads "the more, the safer (full
-// effect at 80 GB)" (`PolicyRuleEditors.describeCondemn`, and the keeps list beside it).
+// Three things on the Policy page are ramps. The built-in signals here must never phrase
+// their bound as where pressure starts ("pays nothing at or above 6.0"), with no word for
+// which way it runs, because that makes raising the number sound more generous while the
+// rule actually gets harsher. The other two name their direction and read correctly: a
+// graded rule of the operator's own reads "Size on disk: the higher it is (from 20 GB to 80
+// GB)" and a graded keep reads "the more, the safer (full effect at 80 GB)"
+// (`PolicyRuleEditors.describeCondemn`, and the keeps list beside it).
 //
-// They do NOT get the strip, and that is a deferral rather than an oversight. Both are
+// They do not get the strip, and that is a deliberate choice, not an oversight. Both are
 // one-line summary rows in a list with a Remove button, not a card an operator tunes, and
-// their bounds come from the field vocabulary rather than from the table below -- so a strip
-// there is a different design question about a different surface, not this one applied twice.
-// The keep bars are not siblings at all: "keep well-rated titles: at least 7.5" is a
+// their bounds come from the field vocabulary rather than from the table below, so a strip
+// there is a different design question about a different surface, not this one applied
+// twice. The keep bars are not siblings at all: "keep well-rated titles: at least 7.5" is a
 // threshold, and it is where the phrasing below was borrowed from.
 
 import { humanDays } from "../format";
@@ -42,31 +38,31 @@ import i18next from "../i18n";
  *  `direct` ramps the value itself, so `floor` and `saturate_at` are independent and both
  *  are real controls.
  *
- *  `shortfall` measures how far BELOW `saturate_at` the value sits and then ramps THAT
+ *  `shortfall` measures how far below `saturate_at` the value sits and then ramps that
  *  between the same two bounds, which works out to depend on `saturate_at - floor` alone.
  *  The two stored numbers therefore carry one degree of freedom between them, and full
  *  points always land at zero whatever the pair. Measured against `evaluate_signal`:
  *  `(0, 60)`, `(10, 70)` and `(40, 100)` produce identical curves across the whole rating
- *  range. So a shortfall signal gets ONE box; a second would provably do nothing. */
+ *  range. So a shortfall signal gets one box. A second would provably do nothing. */
 export type RampShape = "direct" | "shortfall";
 
 interface RampUnits {
   shape: RampShape;
   /** A stored bound in the units the operator reads: `60` becomes `IMDb 6.0`. */
   say: (stored: number) => string;
-  /** The suffix its box wears, and the step that box moves in (rule 40). */
+  /** The suffix its box wears, and the step that box moves in. */
   unit: string;
   step: number;
   /** Whether this bound's unit is one the operator can change, and which family it is from.
    *
-   *  Rule 40 splits the two number controls on exactly this line: a CHANGEABLE unit is
-   *  `QuantityInput` with a picker, a FIXED one is `FixedQuantity` with a suffix. Days are
-   *  changeable and the dormancy gate two controls up already offers days/weeks/months/years
+   *  This splits the two number controls on exactly this line: a changeable unit is
+   *  `QuantityInput` with a picker, a fixed one is `FixedQuantity` with a suffix. Days are
+   *  changeable, and the dormancy gate two controls up already offers days/weeks/months/years
    *  for the same quantity, so a bound spelled "1825 days" beside a gate spelling the same
-   *  span "5 years" was the app disagreeing with itself about one unit.
+   *  span "5 years" would be the app disagreeing with itself about one unit.
    *
    *  A rating, a head count and a season's place have no larger unit to offer, so they stay
-   *  fixed. Naming the FAMILY rather than importing the unit list keeps this module free of
+   *  fixed. Naming the family rather than importing the unit list keeps this module free of
    *  the component it feeds. */
   unitKind: "time" | "size" | "fixed";
   /** How this signal names the thing being previewed: "A title rated", "A title untouched
@@ -85,7 +81,7 @@ interface RampUnits {
   /** The far bound's label, on the two-ended signals only. */
   farLabel?: string;
   /** The ends of the strip's scale, in the operator's words. `say(0)` cannot supply these:
-   *  it words a BOUND ("less than a day"), where this words an axis ("today"). */
+   *  it words a bound ("less than a day"), where this words an axis ("today"). */
   scaleFrom: string;
   scaleTo: string;
   /** The number an operator types is not always the number that is stored. */
@@ -94,42 +90,42 @@ interface RampUnits {
   /** The widest value this box can ever show, so it can be sized to hold exactly that.
    *
    *  A fixed box is wrong in both directions here: 3.6rem clipped "1825", and 5rem left
-   *  "6.0" floating in a box sized for four characters. Width is the one thing rule 40 lets
-   *  vary, so it varies with what the FIELD can hold rather than with a global guess. */
+   *  "6.0" floating in a box sized for four characters. Width is the one thing allowed to
+   *  vary here, and it varies with what the field can hold rather than with a global guess. */
   widest: string;
   /** The far end of the probe's track, in stored units. Wide enough that the whole ramp
    *  sits inside it with room past the point where it adds in full, so the flat top is
    *  visible rather than implied. */
   probeMax: number;
-  /** Convert a bound-unit value into the unit the probe's FACT is read in, where the two
-   *  differ. Only SIZE differs: its bounds are GB and `evaluate_signal` reads `size_bytes`.
+  /** Convert a bound-unit value into the unit the probe's fact is read in, where the two
+   *  differ. Only size differs: its bounds are GB and `evaluate_signal` reads `size_bytes`.
    *  Absent means the two agree, which is every other signal. */
   probeValue?: (bound: number) => number;
   /** Whether the watch mirror caps what this signal can ever read.
    *
-   *  Only dormancy is capped: a never-played title is measured from the LATER of its
+   *  Only dormancy is capped: a never-played title is measured from the later of its
    *  arrival and the mirror's edge, because Reaper will not claim a file sat untouched for
-   *  five years when it can see one. So the largest value this signal can present IS the
+   *  five years when it can see one. So the largest value this signal can present is the
    *  reach, and a far end past it can never be earned. The others read facts the mirror
    *  does not bound, and the watcher count's own shortfall has its own policy warning. */
   boundedByHistory?: boolean;
   /** The lowest value this field can actually take, where that is not zero.
    *
-   *  A ramp whose floor sits BELOW it adds something to every real item, and "nothing until
+   *  A ramp whose floor sits below it adds something to every real item, and "nothing until
    *  X" would then be false in the reassuring direction. `season_rank` ships
    *  floor 0 against a rank that starts at 1, so the newest season on disk already earns a
    *  sixth of the weight while the help text says older seasons carry more pressure than
-   *  the newest -- which reads as though the newest carries none. */
+   *  the newest, which reads as though the newest carries none. */
   first?: number;
 }
 
 const WHOLE = { step: 1, toStored: Math.round, fromStored: (v: number) => v };
 
 /** `RampUnits`, except `nearLabel`/`farLabel`/`lead`/`scaleFrom`/`scaleTo` hold a catalog key
- *  rather than English text -- `rampUnits()` below is the one place that resolves them, at CALL
- *  time, so a language change is picked up on the next render rather than frozen at whatever
- *  language was active when this module first loaded (the same reason `say` is a function and
- *  not a precomputed string). */
+ *  rather than English text. `rampUnits()` below is the one place that resolves them, at
+ *  call time, so a language change is picked up on the next render rather than frozen at
+ *  whatever language was active when this module first loaded (the same reason `say` is a
+ *  function and not a precomputed string). */
 type RampSpec = Omit<RampUnits, "nearLabel" | "farLabel" | "lead" | "scaleFrom" | "scaleTo"> & {
   nearLabel: string;
   farLabel?: string;
@@ -200,18 +196,18 @@ const RAMP_SPECS: Record<string, RampSpec> = {
     probeMax: 100,
     step: 0.1,
     // Stored in tenths because the policy body is integers-only: floats do not canonicalise,
-    // and an unstable hash would void approvals at random (the same reason coverage is bp).
+    // and an unstable hash would void approvals at random. Evidence coverage is stored as
+    // whole basis points for the same reason.
     toStored: (typed) => Math.round(typed * 10),
     fromStored: (stored) => stored / 10,
   },
   size: {
-    // GIGABYTES, not bytes, and this is the one entry where the bound's unit differs from
-    // the fact's. `_branch_signal` rescales `size_bytes` to GB before ramping it, so the
-    // stored `floor`/`saturate_at` the engine compares against are GB. This entry read them
-    // as bytes, so a 20 GB floor stored as 20000000000 was compared against a value that
-    // tops out in the thousands: the signal paid 0 at every file size that can exist, while
-    // its weight stayed in the score denominator (#417). `unitKind: "fixed"` follows -- there
-    // is one unit now, so rule 40 puts it in a suffix rather than a picker.
+    // Stored and compared in gigabytes, not bytes. This is the one entry where the bound's
+    // unit differs from the fact's: `_branch_signal` rescales `size_bytes` to GB before
+    // ramping it, so `floor` and `saturate_at` here must stay in GB or the signal would pay
+    // zero at every real file size while its weight stays in the score denominator.
+    // `unitKind: "fixed"` follows because there is one unit now, so this puts it in a
+    // suffix rather than a picker.
     unitKind: "fixed",
     nearLabel: "signals.ramp.size.nearLabel",
     farLabel: "signals.ramp.size.farLabel",
@@ -226,15 +222,15 @@ const RAMP_SPECS: Record<string, RampSpec> = {
     step: 1,
     toStored: (typed) => Math.round(typed),
     fromStored: (stored) => Math.round(stored),
-    // The probe sends a title's FACT, and the engine reads that one in bytes (`preview.READS`
-    // maps SIZE to `size_bytes`) before applying the same rescale. So this is the one signal
-    // whose probe value is not in the unit its bounds are.
+    // The probe sends a title's fact, and the engine reads that one in bytes
+    // (`preview.READS` maps `"size"` to `size_bytes`) before applying the same rescale. So
+    // this is the one signal whose probe value is not in the unit its bounds are.
     probeValue: (gb) => gb * 1e9,
   },
 };
 
 /** What the operator can set on this signal, or `null` where this module has nothing to
- *  say -- a rule of their own, or a signal id it does not know. Every label is resolved
+ *  say: a rule of their own, or a signal id it does not know. Every label is resolved
  *  through the catalog here, at call time, so every reader of this function's result gets
  *  the current language whatever the language was when the module first loaded. */
 export function rampUnits(id: string): RampUnits | null {
@@ -278,9 +274,9 @@ export function rampEnds(
 
 /** The two ends of the scale, in the operator's words.
  *
- *  The SECOND half of a row's line, and never rendered on its own: it says what each end of
- *  the scale is worth without naming what those points are points of, which is the job of the
- *  clause `rowRampSentence` puts in front of it.
+ *  The second half of a row's line, and never rendered on its own: it says what each end of
+ *  the scale is worth without naming what those points are points of, which is the job of
+ *  the clause `rowRampSentence` puts in front of it.
  *
  *  Reads as a pair either way round, because the shortfall signals run downward: "nothing at
  *  IMDb 6.0 or above, all 10 at IMDb 0.0". */
@@ -315,13 +311,13 @@ export function rampScale(
 
 /** The strip under a signal's bounds: where it charges, and how hard, drawn to scale.
  *
- *  It REPLACES the sentence that used to state the range, rather than joining it. "Nothing at
- *  IMDb 6.0 or above, all 10 at IMDb 0.0" is exactly what this draws, and keeping both said
+ *  This replaces stating the range as a sentence, rather than joining it: "Nothing at IMDb
+ *  6.0 or above, all 10 at IMDb 0.0" is exactly what this draws, and showing both would say
  *  one thing twice in two grammars.
  *
- *  It is what makes the direction visible. Dormancy charges more the further RIGHT a title
- *  sits and a rating charges more the further LEFT, which no shared sentence can carry
- *  without the operator holding two rules in their head; two strips leaning opposite ways
+ *  It is what makes the direction visible. Dormancy charges more the further right a title
+ *  sits, and a rating charges more the further left, which no shared sentence can carry
+ *  without the operator holding two rules in their head. Two strips leaning opposite ways
  *  need no holding at all.
  *
  *  Percentages of the track, so the caller only has to place them. `deepAt` is where the
@@ -334,7 +330,7 @@ export interface RampStrip {
   bar: number;
   /** Which end of the fill is at full strength. */
   deepEnd: "left" | "right";
-  /** Where the gradient reaches full strength, as a percentage of the TRACK. A direct ramp
+  /** Where the gradient reaches full strength, as a percentage of the track. A direct ramp
    *  saturates inside its fill and is flat-full from there to the end, so this is the only
    *  thing that puts "adds in full" where the operator can see it. */
   deepAt: number;
@@ -363,8 +359,8 @@ export function rampStrip(
       fillTo: bar,
       bar,
       deepEnd: "left",
-      // A shortfall adds most at zero, which IS the fill's outer edge, so the deep point and
-      // the edge coincide and the gradient has no flat region to draw.
+      // A shortfall adds most at zero, which is the fill's outer edge, so the deep point
+      // and the edge coincide and the gradient has no flat region to draw.
       deepAt: 0,
       scaleFrom: units.scaleFrom,
       scaleTo: units.scaleTo,
@@ -388,14 +384,13 @@ export function rampStrip(
  *
  *  A direct ramp adds its whole weight from `saturate_at` onward, so the picture has to go
  *  flat-full there and stay flat to the end of the track. Running one gradient edge to edge
- *  drew that flat top as a color still deepening: on the shipped movie dormancy (365 ->
- *  1825, track 3650) full red landed at ten years, and five years, where the signal already
- *  adds all 70, sat at under half strength. A CSS gradient holds its last stop's color to
- *  the end of the box, so placing that stop at `deepAt` is the whole fix. */
+ *  would draw that flat top as a color still deepening, well past the point where the signal
+ *  already adds its full weight. A CSS gradient holds its last stop's color to the end of
+ *  the box, so placing that stop at `deepAt` is the whole fix. */
 export function rampFill(strip: RampStrip): string {
   const faint = "color-mix(in srgb, var(--condemn) 6%, transparent)";
   const span = strip.fillTo - strip.fillFrom;
-  // A zero-width fill has no inside to place a stop in; either end reads the same.
+  // A zero-width fill has no inside to place a stop in. Either end reads the same.
   const within = span <= 0 ? 0 : ((strip.deepAt - strip.fillFrom) / span) * 100;
   const at = Math.round(Math.max(0, Math.min(100, within)) * 100) / 100;
   return strip.deepEnd === "left"
@@ -415,7 +410,7 @@ export function sayPoints(points: number): string {
 /** What the engine answered, in the pieces the card bolds.
  *
  *  Returned in parts rather than as one string so the two numbers can be picked out: the
- *  value being tried and what it earns are what the sentence is FOR, and running them
+ *  value being tried and what it earns are what the sentence is for, and running them
  *  together with the words makes an operator re-read a line they should take at a glance.
  *
  *  The points come from the server (`POST /api/policy/probe`), never from arithmetic here:
@@ -447,17 +442,17 @@ export function probeSaid(
 
 /** What this row did, then the scale it did it on, for the explanation panel.
  *
- *  The RESULT leads, because it is the question the row was opened to ask. It used to trail
- *  two clauses of scale, so the reader held "pays nothing at IMDb 6.0 or above" before
- *  reaching the one number the row is about; and the scale opened on the end where nothing
- *  happens, which is a negative to carry for no gain.
+ *  The result leads, because it is the question the row was opened to ask. Trailing it
+ *  behind two clauses of scale would make the reader hold "pays nothing at IMDb 6.0 or
+ *  above" before reaching the one number the row is about, and the scale would open on the
+ *  end where nothing happens, a negative to carry for no gain.
  *
  *  That lead is also the policy card's grammar, said the same way beside the control that
  *  sets these bounds ("A title rated IMDb 5.5 adds less than 1 of these 10 points",
- *  `probeSaid`). Rule 144: one rule described on two pages is two copies free to drift, and
- *  the drift is invisible because each page reads correct alone.
+ *  `probeSaid`). One rule described on two pages is two copies free to drift, and the drift
+ *  is invisible because each page reads correct alone.
  *
- *  `added` and `weight` both come from the stored explanation. This states them; it does
+ *  `added` and `weight` both come from the stored explanation. This states them. It does
  *  not check them, because the arithmetic that produced `added` ran in the engine against
  *  facts this side of the wire never sees. */
 export function rowRampSentence(

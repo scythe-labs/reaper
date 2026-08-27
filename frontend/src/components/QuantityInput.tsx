@@ -3,8 +3,8 @@
 // THE number-with-a-unit control, the only shape a quantity takes anywhere in the app.
 // Two variants share one chrome:
 //   - a unit picker ("500 [GB]", "2 [weeks]"): the value handed to the parent is always
-//     in the base unit (bytes, or days) — the dropdown is only how you say it. Pick the
-//     unit and type a round number; switching units keeps the same real value, just
+//     in the base unit (bytes, or days), and the dropdown is only how you say it. Pick the
+//     unit and type a round number. Switching units keeps the same real value, just
 //     shown differently.
 //   - a fixed suffix ("30 days", "3 people", "6.5 / 10"): the unit cannot change, so it
 //     renders as a quiet suffix inside the same box instead of a dropdown.
@@ -58,8 +58,8 @@ export const timeUnits = (): Unit[] => [
 
 /** How a unit is WORDED beside a given quantity, as against `label`, which is its name and
  *  its stored value. A dormancy floor of 365 days is drawn by `bestUnit` below as exactly 1
- *  of the largest unit it clears, so "1 years" was not an edge case but the shape every round
- *  policy default takes: 365, 30, 7 (#415). */
+ *  of the largest unit it clears, so "1 years" is not a rare edge case: every round policy
+ *  default takes this shape (365, 30, 7). */
 function wordedFor(unit: Unit, quantity: number): string {
   return quantity === 1 && unit.singular ? unit.singular : unit.label;
 }
@@ -72,9 +72,8 @@ function bestUnit(value: number, units: Unit[]): Unit {
 }
 
 /** How many decimals of its unit the box draws. Everything about the precision of this control
- *  derives from this one number -- the smallest value it can show, the rounding on the way out,
- *  and the cut on the way in -- rather than each site spelling "two decimals" its own way
- *  (rule 67). */
+ *  derives from this one number: the smallest value it can show, the rounding on the way out,
+ *  and the cut on the way in, rather than each site spelling "two decimals" its own way. */
 const SHOWN_DECIMALS = 2;
 
 /** The smallest positive number the box can draw in the unit it is showing: anything under this
@@ -83,31 +82,32 @@ const SHOWN_DECIMALS = 2;
  *  number carrying more decimals than it draws is `cutToShown`. */
 const SHOWN_MIN = 10 ** -SHOWN_DECIMALS;
 
-/** The smallest base value ANY of these units can draw at two decimals. A clamp stops
- *  here rather than at the current unit's own smallest step: flooring in the shown unit
- *  meant a byte cap typed as 0 in a TB box became 0.01 TB, ten gigabytes, a cap that
- *  permits real deletion where the operator asked for none. Rule 31 says a precision
- *  reduction on a field that can add deletion pressure takes the bound producing LESS
- *  pressure, so the floor drops to the smallest unit on offer and the box switches to it. */
+/** The smallest base value any of these units can draw at two decimals. A clamp stops here
+ *  rather than at the current unit's own smallest step: flooring in the shown unit would let
+ *  a byte cap typed as 0 in a TB box become 0.01 TB, ten gigabytes, a cap that permits real
+ *  deletion where the operator asked for none. A precision reduction on a field that can add
+ *  to the deletion score has to take the bound that adds less, so the floor drops to the
+ *  smallest unit on offer and the box switches to it. */
 function drawableFloor(units: Unit[]): number {
   return Math.min(...units.map((u) => u.factor)) * SHOWN_MIN;
 }
 
-/** Two decimals of the shown unit -- see SHOWN_MIN. */
+/** Two decimals of the shown unit, see SHOWN_MIN. */
 function trim(n: number): number {
   const scale = 10 ** SHOWN_DECIMALS;
   return Math.round(n * scale) / scale;
 }
 
 /** A typed number cut to the decimals the box actually draws, dropping the rest rather than
- *  rounding them. Typing 1.234 in a GB box used to emit 1_234_000_000 while the box redrew
- *  "1.23", so the cap in force was 4 MB above the one on screen, on the control whose whole
- *  job is to state a bound. Cutting rather than rounding is rule 31: `trim` rounds to nearest,
- *  which on 1.236 would raise the cap to 1.24 GB and permit deletion the operator never
- *  authorized. Every box here has a positive floor, so cutting toward zero is always downward.
+ *  rounding it. Typing 1.234 in a GB box without this would emit 1_234_000_000 while the box
+ *  redraws "1.23", so the cap in force would be 4 MB above the one on screen, on the control
+ *  whose whole job is to state a bound. Cutting rather than rounding matters because `trim`
+ *  rounds to nearest, and on 1.236 that would raise the cap to 1.24 GB and permit deletion the
+ *  operator never authorized. Every box here has a positive floor, so cutting toward zero is
+ *  always downward.
  *
  *  Both halves of this are binary floating point traps, and each one on its own turns a typed
- *  0.29 into a stored 0.28 -- this same defect pointing the other way, and a whole display step
+ *  0.29 into a stored 0.28, the same defect pointing the other way, and a whole display step
  *  wide rather than a hidden digit. Arithmetic cannot do it: `Math.floor(0.29 * 100) / 100` is
  *  0.28, because 0.29 * 100 is 28.999999999999996. Nor can the exact decimal text:
  *  `(0.29).toFixed(20)` is "0.28999999999999998002", which is the binary value and not the one
@@ -133,19 +133,19 @@ function fitsDecimals(n: number, decimals: number | undefined): boolean {
 
 /** Where a number lives while it is being typed.
  *
- * A box whose text is re-derived from the stored number on every render gets rewritten
- * under the caret: clear it to retype, the stored value reads the empty box as 0, writes
- * "0" back, and the digits typed next land after it -- select-all + "25" saves 125. So
- * while the box has focus it shows what was typed, nothing else, and the value only moves
- * when the text actually parses: an empty or half-finished box ("", "7.") says nothing and
- * leaves the stored number alone. Leaving the box is the commit -- it goes back to showing
- * the stored value, pulled into range if what was typed was out of it.
+ * A box whose text is re-derived from the stored number on every render gets rewritten under
+ * the caret: clear it to retype, the stored value reads the empty box as 0, writes "0" back,
+ * and the digits typed next land after it, so select-all + "25" saves 125. So while the box
+ * has focus it shows what was typed, nothing else, and the value only moves when the text
+ * actually parses: an empty or half-finished box ("", "7.") says nothing and leaves the
+ * stored number alone. Leaving the box is the commit: it goes back to showing the stored
+ * value, pulled into range if what was typed was out of it.
  *
- * `shown` and the emitted number are both in whatever unit the box displays; a caller that
+ * `shown` and the emitted number are both in whatever unit the box displays. A caller that
  * translates (QuantityInput's dropdown) translates on the way in and out.
  *
  * Exported for the handful of number boxes that carry no unit at all (a rank, a ramp bound),
- * which rule 40 leaves as plain boxes -- they still need this, and there is only one of it.
+ * which stay plain boxes. They still need this, and there is only one of it.
  */
 export function useTypedNumber(
   shown: string,
@@ -180,18 +180,18 @@ export function useTypedNumber(
       const n = Number(raw);
       if (!Number.isFinite(n)) return;
       // A number carrying more decimals than the field can hold is the same kind of text as
-      // "7." -- on the way to a value, not a value -- so it is left alone exactly the same way,
-      // and the box goes back to showing the stored number when it is left. Nothing is rounded,
-      // because rounding needs a direction and this control has no one direction: half its call
-      // sites are caps, where DOWN is the bound with less deletion pressure (rule 31), and half
-      // are protections, where down is the one with more. What it stores instead is the last
-      // number the operator actually typed in the field's own units.
+      // "7.": on the way to a value, not a value yet, so it is left alone the same way, and
+      // the box goes back to showing the stored number when it is left. Nothing is rounded,
+      // because rounding needs a direction and this control has no single one: half its call
+      // sites are caps, where a lower bound adds less to the deletion score, and half are
+      // protections, where a lower bound adds more. What it stores instead is the last number
+      // the operator actually typed, in the field's own units.
       //
       // Withholding is the whole fix. The browser will not do it: a bare `<input type=number>`
-      // has an implicit step of 1, and Chrome duly marks a typed 1.5 `stepMismatch` -- and then
-      // hands the change handler "1.5" regardless, because step is checked at form validation
-      // and this control never submits a form. Driven in Chrome 150; an explicit `step={1}`
-      // behaves identically, which is why this is not fixed with an attribute (#296).
+      // has an implicit step of 1, so Chrome marks a typed 1.5 `stepMismatch` and then hands
+      // the change handler "1.5" regardless, because step is checked at form validation and
+      // this control never submits a form. An explicit `step={1}` behaves identically, which
+      // is why this is not fixed with an attribute.
       if (!fitsDecimals(n, bounds.decimals)) return;
       emit(n);
     },
@@ -221,18 +221,18 @@ export function QuantityInput({
   min?: number;
   ariaLabel?: string;
   /** Ids of the message(s) explaining what is wrong with this box's value. Same contract as
-   *  `FixedQuantity`'s (rule 72); there is no unit id to join here, for the reason below. */
+   *  `FixedQuantity`'s. There is no unit id to join here, for the reason below. */
   describedBy?: string | undefined;
-  /** True while the form REFUSES this value -- the action the box feeds is disabled and the
+  /** True while the form refuses this value: the action the box feeds is disabled and the
    *  press is a no-op, as a backwards ramp disables Add. Not for a value that merely draws a
    *  warning: `aria-invalid` states a refusal, so a setting the app will accept must not carry
-   *  it. `FixedQuantity` has no such prop for exactly that reason (rule 72). */
+   *  it. `FixedQuantity` has no such prop for exactly that reason. */
   invalid?: boolean | undefined;
 }) {
   const { t } = useTranslation();
   const [unit, setUnit] = useState<Unit>(() => bestUnit(value, units));
 
-  // The unit follows a value replaced from outside -- Discard, a preset, a media-type
+  // The unit follows a value replaced from outside: Discard, a preset, a media-type
   // switch, the re-seed after a save. A grace box left on "months" would otherwise show a
   // staged 7 days as 0.23 months: right, and unreadable. Our own emits are remembered so
   // typing 500 in a GB box never jumps the box to TB mid-keystroke.
@@ -246,23 +246,24 @@ export function QuantityInput({
 
   const shown = String(trim(value / unit.factor));
   // The floor the box enforces. `min` is in BASE units and can sit below anything the SHOWN
-  // unit can draw: a 1-byte floor in a GB box clamped a typed 0 to 1 byte and rendered it as
-  // "0" -- a box reading zero over a stored value the sentence beside it called "1 B".
+  // unit can draw: a 1-byte floor in a GB box would clamp a typed 0 to 1 byte and render it as
+  // "0", a box reading zero over a stored value the sentence beside it calls "1 B".
   //
   // Two things fix that together, and only together. The floor never drops below what the
   // smallest unit can draw (`drawableFloor`), and when the committed value is too small for
-  // the CURRENT unit the box switches to one that can show it. Lifting the floor to the
-  // current unit alone was the wrong half: it made the display honest by raising the stored
-  // number, which on a deletion cap is the direction rule 31 forbids.
+  // the current unit the box switches to one that can show it. Raising the floor to the
+  // current unit alone would fix the display by raising the stored number, which on a
+  // deletion cap moves the wrong way: it would permit more deletion than the operator typed.
   const floor = Math.max(min, drawableFloor(units));
   const shownMin = floor / unit.factor;
-  // The number is cut to the decimals the box draws BEFORE it is scaled, so the box cannot
-  // keep precision it declines to show (`cutToShown`). Where 0.01 of the shown unit is a whole
-  // number of base units the two then agree exactly, which is every size unit -- 0.01 MB is
-  // 10,000 bytes. Where it is not, the base unit is the coarser grid and wins: 0.01 weeks is
-  // under a tenth of a day and `grace_days` is whole days, so the value settles on a day and
-  // the box redraws the conversion of it (9 days as "1.29 weeks"). That residual is the unit
-  // dropdown's own arithmetic, not kept precision, and picking "days" shows the value exactly.
+  // The number is cut to the decimals the box draws before it is scaled, so the box cannot
+  // keep precision it declines to show (`cutToShown`). Where 0.01 of the shown unit is a
+  // whole number of base units the two then agree exactly, which is every size unit: 0.01 MB
+  // is 10,000 bytes. Where it is not, the base unit is the coarser grid and wins: 0.01 weeks
+  // is under a tenth of a day and `grace_days` is whole days, so the value settles on a day
+  // and the box redraws the conversion of it (9 days as "1.29 weeks"). That residual is the
+  // unit dropdown's own arithmetic, not kept precision, and picking "days" shows the value
+  // exactly.
   const typed = useTypedNumber(
     shown,
     (n) => {
@@ -270,17 +271,17 @@ export function QuantityInput({
       mine.current = base;
       onChange(base);
     },
-    // No `decimals` here, unlike the fixed-suffix twin below (rule 72), and it is not a
-    // deferral. A fraction of the SHOWN unit is exactly what this box is for -- 0.5 GB is a real
-    // cap -- and the number it hands the parent is already whole in the BASE unit, because the
-    // emit above rounds it there. Its precision is bounded twice over by `cutToShown` and by
-    // that rounding, so there is no value it can emit that the field behind it cannot hold.
+    // No `decimals` here, unlike the fixed-suffix twin below, and it is not a deferral. A
+    // fraction of the shown unit is exactly what this box is for: 0.5 GB is a real cap, and the
+    // number it hands the parent is already whole in the base unit, because the emit above
+    // rounds it there. Its precision is bounded twice over, by `cutToShown` and by that
+    // rounding, so there is no value it can emit that the field behind it cannot hold.
     { min: shownMin },
   );
-  // The unit drops only on the way OUT of the box, never mid-keystroke. Switching inside the
-  // emit above moved the dropdown while someone was still typing: "0.5" passes through "0",
-  // which clamps to the floor, and the box jumped to the smallest unit under the caret. The
-  // commit is the only honest moment to restate a number in different words.
+  // The unit drops only on the way out of the box, never mid-keystroke. Switching inside the
+  // emit above would move the dropdown while someone was still typing: "0.5" passes through
+  // "0", which clamps to the floor, and the box would jump to the smallest unit under the
+  // caret. The commit is the only honest moment to restate a number in different words.
   const onBlur = () => {
     typed.onBlur();
     if (mine.current / unit.factor < SHOWN_MIN) setUnit(bestUnit(mine.current, units));
@@ -288,10 +289,10 @@ export function QuantityInput({
 
   return (
     <span className="qty">
-      {/* No unit description here, unlike FixedQuantity's twin below (rule 72). This variant's
-          unit is a real control standing next to the box: it names itself `${ariaLabel} unit`
-          and announces the unit as its own value, so the pairing is already reachable. Binding
-          the number to it as well would say the unit twice on the way through the pair. */}
+      {/* No unit description here, unlike FixedQuantity's twin below. This variant's unit is a
+          real control standing next to the box: it names itself `${ariaLabel} unit` and
+          announces the unit as its own value, so the pairing is already reachable. Binding the
+          number to it as well would say the unit twice on the way through the pair. */}
       <input
         type="number"
         min={shownMin}
@@ -315,8 +316,8 @@ export function QuantityInput({
         }}
       >
         {/* Worded from the drawn value, so the closed box reads "1 year" and not "1 years". A
-            native select has only one string per option -- what it shows closed IS the selected
-            option's text -- so the whole list inflects together and the open list reads
+            native select has only one string per option: what it shows closed is the selected
+            option's text, so the whole list inflects together and the open list reads
             "day, week, month, year" beside a 1. That is the coherent half of the choice:
             inflecting the selected one alone would leave the list mixed. The `value` stays the
             plural `label`, so what the change handler matches on never moves. */}
@@ -331,20 +332,20 @@ export function QuantityInput({
 }
 
 /** How many decimals the field behind a fixed-suffix box can hold, read off the box's own
- *  `step` so the two cannot disagree (rule 67) -- there is no second prop to keep in step with
- *  the first, and no call site has to restate in a `decimals` what it already said in a `step`.
+ *  `step` so the two cannot disagree. There is no second prop to keep in step with the first,
+ *  and no call site has to restate in a `decimals` what it already said in a `step`.
  *
  *  **No step means whole numbers**, which is not an invention: HTML already defines `step` as 1
- *  when it is absent, so `min={1} max={1000}` with nothing else declares integers, and the seven
- *  policy boxes written that way are all backed by an `int` in `engine/policy.py`.
+ *  when it is absent, so `min={1} max={1000}` with nothing else declares integers, and the
+ *  seven policy boxes written that way are all backed by an `int` in `engine/policy.py`.
  *
- *  `step` is read as a PRECISION, never as a ladder the value must land on. `min_votes` ships
- *  `step={100}` so the spinner moves in hundreds, and 250 is still a perfectly legal vote floor:
- *  snapping to the grid would rewrite the operator's own number, which is the deletion-path
- *  version of the bug this is fixing. Only the decimals are taken.
+ *  `step` is read as a precision, never as a ladder the value must land on. `min_votes` ships
+ *  `step={100}` so the spinner moves in hundreds, and 250 is still a perfectly legal vote
+ *  floor: snapping to the grid would rewrite the operator's own number. Only the decimals are
+ *  taken.
  *
- *  Exported for the two ramp bounds, which rule 40 leaves as plain boxes: they declare a `step`
- *  the same way and must read it the same way, rather than restating the tenths test twice. */
+ *  Exported for the two ramp bounds, which stay plain boxes: they declare a `step` the same
+ *  way and must read it the same way, rather than restating the tenths test twice. */
 export function decimalsOfStep(step: number | "any" | undefined): number | undefined {
   if (step === "any") return undefined;
   if (step === undefined) return 0;
@@ -382,19 +383,19 @@ export function FixedQuantity({
   width?: "narrow" | "regular";
   ariaLabel?: string;
   disabled?: boolean;
-  /** Ids of the message(s) explaining what is wrong with this box's value -- a policy warning
+  /** Ids of the message(s) explaining what is wrong with this box's value: a policy warning
    *  beside the control that fixes it. Joined with the unit below rather than replacing it:
    *  the number still needs its unit while it is also being complained about. */
   describedBy?: string | undefined;
-  // No `invalid` here, unlike `QuantityInput` above (rule 72). Every caller of this one is a
-  // policy control, and a policy warning of either severity still saves, so there is no state
-  // this box could honestly report as invalid.
+  // No `invalid` here, unlike `QuantityInput` above. Every caller of this one is a policy
+  // control, and a policy warning of either severity still saves, so there is no state this
+  // box could honestly report as invalid.
   /** For a box that opens focused, like the spare menu's custom length. */
   autoFocus?: boolean;
-  /** For a box that submits on Enter. Runs BEFORE the typing handler below sees the key, which
-   *  is what a submit needs -- and it is why this is a prop rather than something a caller can
-   *  reach past the component: the spare menu had rebuilt this box by hand to get it, and a
-   *  hand-built copy does not inherit the unit's accessible binding below. */
+  /** For a box that submits on Enter. Runs before the typing handler below sees the key, which
+   *  is what a submit needs. This is a prop rather than something a caller can reach past the
+   *  component, because a hand-built copy of this box would not inherit the unit's accessible
+   *  binding below, which is what the spare menu needs. */
   onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void;
 }) {
   const typed = useTypedNumber(String(value), onChange, {
@@ -402,21 +403,22 @@ export function FixedQuantity({
     max,
     decimals: decimalsOfStep(step),
   });
-  // The unit is the other half of the value, and it used to be `aria-hidden`, so the box
-  // announced "Points this rule adds, 12" for a number that means 12 points -- the unit was on
-  // screen and nowhere else. It is bound as the input's DESCRIPTION rather than folded into its
-  // name, for two reasons.
+  // The unit is the other half of the value, so it is bound as the input's description rather
+  // than folded into its name, for two reasons. Without this binding, the box announces the
+  // number alone ("Points this rule adds, 12") and the unit is visible nowhere else a screen
+  // reader can reach.
   //
   // A description is read after the value ("12, points"), which is the order the pairing is
-  // spoken in anyway; a name is read before it ("Points this rule adds in points, 12"), and
+  // spoken in anyway. A name is read before it ("Points this rule adds in points, 12"), and
   // eleven of the fifteen call sites already name their unit in `ariaLabel`, so composing one
-  // would make most of them stutter -- rule 21 binds a spoken string as hard as a printed one.
+  // would make most of them stutter, and a spoken string needs the same plain wording as a
+  // printed one.
   //
-  // And it points at the suffix ALREADY on screen, so the word exists once. Composing a name
+  // And it points at the suffix already on screen, so the word exists once. Composing a name
   // from a table of spoken units would mint a second copy that drifts from the visible one, on
-  // a control whose whole job is to pair a number with a unit (rule 144).
+  // a control whose whole job is to pair a number with a unit.
   //
-  // Every call site passes `ariaLabel`, so this never lands on an unnamed box; the description
+  // Every call site passes `ariaLabel`, so this never lands on an unnamed box. The description
   // is bound unconditionally because the suffix is never absent.
   const unitId = useId();
 

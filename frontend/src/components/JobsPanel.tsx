@@ -28,10 +28,10 @@ import { Notice } from "./Notice";
 
 const SCAN_ID = "scheduled_scan";
 
-/** The one upkeep job whose result a DIFFERENT query already renders: the About row, the
+/** The one upkeep job whose result a different query already renders: the About row, the
  *  version pill and the account chip's light all read `["update"]`. Named here so the row can
- *  refresh that query when the job finishes. The job LIST is still the server's (rule 66);
- *  this is a behavior hook on one id, like `SCAN_ID` above. */
+ *  refresh that query when the job finishes. The job list is still the server's. This is a
+ *  behavior hook on one id, like `SCAN_ID` above. */
 const UPDATE_CHECK_ID = "check_for_updates";
 
 interface JobMeta {
@@ -102,18 +102,18 @@ function scanPresets(): { label: string; cron: string | null }[] {
 /** The upkeep presets. The first is the job's own default, staggered off peak, so choosing it
  *  keeps the natural setting exactly what it was.
  *
- *  Its label is DESCRIBED from that cron rather than written here. It read "Every day" for
- *  every job, which was true of all four until the history sweep moved to every three days,
- *  and a hardcoded label beside a value it does not own is wrong the moment the value moves
- *  (rule 144). Describing it means the option cannot disagree with what picking it does. */
+ *  Its label is described from that cron rather than written here, so it can never say "Every
+ *  day" for a job whose default has moved to every three days, the way the history sweep's
+ *  did. A hardcoded label beside a value it does not own goes stale the moment the value
+ *  changes. Describing it means the option cannot disagree with what picking it does. */
 function maintenancePresets(defaultCron: string): { label: string; cron: string | null }[] {
   return [
     { label: i18next.t("jobs.presets.maintenanceOff"), cron: null },
     { label: describeCron(defaultCron), cron: defaultCron },
-    // Dropped when the default already IS one of these. A described label can equal a written
+    // Dropped when the default already is one of these. A described label can equal a written
     // one, where the old fixed "Every day" never could, and the pair would render as two
-    // identical options sharing a React key (rule 19). No shipped default collides today;
-    // this is here so the next one cannot.
+    // identical options sharing a React key. No shipped default collides today. This filter
+    // exists so the next one cannot.
     ...[
       { label: i18next.t("jobs.cron.everyNHours", { n: 12 }), cron: "0 */12 * * *" },
       { label: i18next.t("jobs.cron.everyNHours", { n: 6 }), cron: "0 */6 * * *" },
@@ -182,13 +182,13 @@ function describeCron(cron: string): string {
 }
 
 function scanScheduleText(job: ScheduledJob | undefined, failed: boolean): string {
-  // A failed load is not "still checking": say so, so the row doesn't claim to be checking
-  // forever after the schedule query errored (U-6). It only costs the schedule when there is no
-  // last good row to fall back on, though: React Query keeps the previous jobs and raises the
-  // failure beside them, so an undivided `failed` blanked this line while the sibling JobRows
-  // went on printing next-run times off that same held row, under a panel notice saying the rows
-  // are kept but stale. The panel's 1.5s self-poll reaches that state with nobody touching
-  // anything (rule 72: the same split `JobsPanel`'s own `StaleReadSlot` takes).
+  // A failed load is not "still checking". Say so, so the row doesn't claim to be checking
+  // forever after the schedule query errored. This only matters when there is no last good row
+  // to fall back on, though: React Query keeps the previous jobs and raises the failure beside
+  // them, so treating `failed` as one case would blank this line while the sibling JobRows went
+  // on printing next-run times off that same held row, under a panel notice saying the rows are
+  // kept but stale. The panel's 1.5s self-poll can reach that state with nobody touching
+  // anything. `JobsPanel`'s own `StaleReadSlot` takes the same split.
   if (failed && !job) return i18next.t("jobs.scan.scheduleUnknown");
   if (!job) return i18next.t("jobs.scan.scheduleChecking");
   if (job.cron === null) return i18next.t("jobs.scan.scheduleOff");
@@ -215,14 +215,14 @@ function ScheduleModal({
 }: {
   job: ScheduledJob;
   onClose: () => void;
-  /** Set by JobsPanel so its Back guard reads the same `canClose` the scrim, Escape and the ✕
-   *  read (B-11, rule 80). Written by `useBackCloseMirror`, which takes the whole predicate. */
+  /** Set by JobsPanel so its Back guard reads the same `canClose` the scrim, Escape, and the
+   *  close button read. Written by `useBackCloseMirror`, which takes the whole predicate. */
   blockCloseRef?: RefObject<boolean>;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   // The effective server time zone every timed job runs on, so the help names the real zone
-  // instead of guessing "UTC in Docker" (U-1, rule 86). Shares GeneralPanel's cache.
+  // instead of guessing "UTC in Docker". Shares GeneralPanel's cache.
   const zone = useGeneralSettings().data?.timezone;
   const meta = jobMeta(job.id);
   const presets =
@@ -238,8 +238,8 @@ function ScheduleModal({
   const save = useMutation({
     mutationFn: (cron: string | null) => api.saveJobSchedule(job.id, cron),
     onSuccess: () => {
-      // The modal closing was the entire success signal, the same shape `ServiceModal`'s save
-      // was fixed for -- and it takes the focused button with it.
+      // The modal closing is the entire success signal, the same shape `ServiceModal`'s save
+      // follows, and it takes the focused button with it.
       announce(t("jobs.schedule.savedAnnounce"));
       void queryClient.invalidateQueries({ queryKey: ["schedule"] });
       onClose();
@@ -247,11 +247,11 @@ function ScheduleModal({
     onError: (e) => setError(describeError(e)),
   });
 
-  /** Whether a dismissal is allowed, computed once and handed to every path that can dismiss:
-   *  a close mid-save unmounts the only place that failure is ever shown (B-11). */
+  /** Whether a dismissal is allowed, computed once and handed to every path that can dismiss.
+   *  A close mid-save would unmount the only place that failure is ever shown. */
   const canClose = !save.isPending;
 
-  // Up to JobsPanel's Back guard, whole rather than by term (rule 80).
+  // Up to JobsPanel's Back guard, whole rather than by term.
   useBackCloseMirror(blockCloseRef, canClose);
 
   const chosenCron =
@@ -285,8 +285,8 @@ function ScheduleModal({
             </span>
           )}
           {/* The clock times above run on the server's configured time zone, not this browser's.
-              Name the real zone so "2 AM" is not read as local time, and the operator is not left
-              to guess (U-1, rule 86). Falls back to the generic phrasing only while it loads. */}
+              Name the real zone so "2 AM" is not read as local time, leaving the operator to
+              guess. Falls back to the generic phrasing only while it loads. */}
           <span className="help">
             {zone ? t("jobs.schedule.zoneHelp", { zone }) : t("jobs.schedule.zoneHelpUnknown")}
           </span>
@@ -351,20 +351,21 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
   });
   const running = job.running || run.isPending;
   // The flash keys on the server's own running flag (which the mutation seeds optimistically),
-  // never on `run.isPending` -- that would fire a stale flash the instant the POST returns,
-  // before the job has even run. Compared with `!== null`, not truthiness: an empty (but
-  // present) result must still flash, unlike a job that has simply never run.
+  // never on `run.isPending`. Keying on `run.isPending` would fire a stale flash the instant
+  // the POST returns, before the job has even run. This compares with `!== null`, not
+  // truthiness, so an empty (but present) result still flashes, unlike a job that has simply
+  // never run.
   const lastResultText = jobResultText(job.last_result_reason);
   const flash = useJobFlash(
     job.running,
     lastResultText !== null ? { ok: job.last_ok !== false, text: lastResultText } : null,
   );
 
-  // A finished update check has replaced the answer `["update"]` holds, and that query is
-  // half an hour stale-free (updateStatus.ts) with nothing else to invalidate it -- so the
-  // row would flash "Reaper 2026.9.2 is out" while the version pill, the About row and the
-  // chip light all went on asserting the answer it just replaced (rule 79). Keyed on the same
-  // running -> done edge the flash watches, so it fires when the ANSWER changed rather than
+  // A finished update check replaces the answer `["update"]` holds, and that query stays fresh
+  // for half an hour (updateStatus.ts) with nothing else to invalidate it. Without this, the
+  // row would flash "Reaper 2026.9.2 is out" while the version pill, the About row, and the
+  // chip light all went on asserting the answer it just replaced. This keys on the same
+  // running-to-done edge the flash watches, so it fires when the answer changed rather than
   // when the button was pressed.
   const wasRunning = useRef(false);
   useEffect(() => {
@@ -437,8 +438,8 @@ function LeavingSoonRow({
 }: {
   onGoToPlex: () => void;
   /** The Jobs panel's stale-read decision. This row draws its own line only while it is the
-   *  only read that failed; when the panel's read failed too, the panel says it once, above
-   *  these rows (#198). */
+   *  only read that failed. When the panel's read failed too, the panel says it once, above
+   *  these rows. */
   plan: StaleReadPlan;
 }) {
   const { t } = useTranslation();
@@ -452,10 +453,10 @@ function LeavingSoonRow({
   // result is read straight off the mutation when it settles (unlike the polled upkeep jobs).
   // Called before the early returns below, so the hook order never changes.
   //
-  // Both halves are the server's, which words the pass once and stores that same sentence on
-  // the row below (rule 104). This used to re-derive them from `problems`, `applied` and the
-  // counts, and the flash then contradicted the row it sat on: with no libraries turned on it
-  // said the shelves had failed while the row rested green (#555).
+  // Both halves come from the server, which words the pass once and stores that same sentence
+  // on the row below. Re-deriving them instead from `problems`, `applied`, and the counts
+  // would let the flash contradict the row it sits on: with no libraries turned on, it would
+  // say the shelves had failed while the row rested green.
   const syncResult = runSync.data
     ? { ok: runSync.data.ok, text: jobResultText(runSync.data.result_reason) ?? "" }
     : runSync.error
@@ -464,8 +465,8 @@ function LeavingSoonRow({
   const flash = useJobFlash(runSync.isPending, syncResult);
 
   // One declaration behind both the row heading and the button's spoken name, so they cannot
-  // drift apart (rule 144). The name has to carry the visible words "Update now" first, and
-  // `title` already opens with the verb, so pasting the two together says "Update" twice.
+  // drift apart. The name has to carry the visible words "Update now" first, and `title`
+  // already opens with the verb, so pasting the two together would say "Update" twice.
   const shelf = t("jobs.leavingSoon.shelfName");
   const title = t("jobs.leavingSoon.title", { shelf });
   const desc = t("jobs.leavingSoon.desc");
@@ -481,13 +482,13 @@ function LeavingSoonRow({
       </div>
     );
   }
-  // Two states, not one (rule 17/36, and rule 72: the same split JobsPanel takes below). React
-  // Query keeps the last good row through a failed refetch and raises `isError` beside it, so the
-  // undivided test here threw that row away -- and the trigger was this row's OWN success path,
-  // since a finished "Update now" invalidates this query. One blinked refetch after a shelf
-  // update that WORKED reported the shelf status as unknown and took the "N added, M cleared"
-  // confirmation down with it, before it had ever painted. The never-loaded sentence stays for
-  // the read that really never landed, the only case it is true in.
+  // Two states, not one. React Query keeps the last good row through a failed refetch and
+  // raises `isError` beside it, so treating that as one case would throw the row away. The
+  // trigger can be this row's own success path, since a finished "Update now" invalidates this
+  // query: a blinked refetch right after a shelf update that worked would report the shelf
+  // status as unknown and take the "N added, M cleared" confirmation down with it before it
+  // ever painted. The never-loaded sentence stays only for a read that really never landed.
+  // `JobsPanel` takes the same split below.
   if (!ls.data) {
     return (
       <div className="jobrow">
@@ -503,17 +504,16 @@ function LeavingSoonRow({
   }
 
   const { enabled, last, last_skip: skip } = ls.data;
-  // The row is still the best answer there is, so it renders -- and says it could not be
+  // The row is still the best answer there is, so it renders. It also says it could not be
   // confirmed, above everything in the row the failed read could have changed.
   const stale = <StaleReadSlot plan={plan} slot={t("jobs.staleRead.shelfNoun")} inline />;
-  // A scan that skipped the shelf writes no pass, so this row re-read the last COMPLETED
-  // pass and answered for the scan with its green dot, its timestamp and its counts -- under
-  // a line reading "Runs after every scan". `after_scan` records the skip separately; prefer
-  // it only while it is actually newer, so a pass that later completes wins on its own
-  // timestamp with nothing to clear. Every clause of this is ScanRow's treatment of a
-  // scheduled scan that crashed and wrote no snapshot, at its sibling (rule 72). The
-  // comparison itself is shared with the Plex panel's status line (`shelfStatus.ts`), which
-  // is the other surface that has to make it.
+  // A scan that skips the shelf writes no pass, so without this, the row would answer for the
+  // scan with the last completed pass's green dot, timestamp, and counts, under a line reading
+  // "Runs after every scan". `after_scan` records the skip separately. This prefers it only
+  // while it is actually newer, so a pass that later completes wins on its own timestamp with
+  // nothing left to clear. This mirrors `ScanRow`'s treatment of a scheduled scan that crashed
+  // and wrote no snapshot. The comparison itself is shared with the Plex panel's status line
+  // (`shelfStatus.ts`), the other surface that has to make it.
   const currentSkip = shelfSkipIsCurrent(ls.data) ? skip : null;
 
   if (!enabled) {
@@ -562,9 +562,9 @@ function LeavingSoonRow({
           flash={flash}
         />
         {last && (
-          // The counts survive a skip, because a skipped pass wrote nothing: the shelf still
+          // The counts survive a skip, because a skipped pass wrote nothing. The shelf still
           // holds what the last completed pass put there, and these are the only true numbers
-          // anyone has. Past tense is the whole correction -- they stop reading as the outcome
+          // anyone has. Past tense is the whole correction: they no longer read as the outcome
           // of the most recent scan, which is the one thing about them that stopped being true.
           <div className="jobrow-meta">
             {currentSkip ? (
@@ -592,9 +592,9 @@ function LeavingSoonRow({
             )}
           </div>
         )}
-        {/* A rename the operator saved that no pass has carried across yet. Here, beside the
-            button that would carry it, because this row is where they can do something about
-            it -- the Plex panel says the same thing where they typed it (rule 104). */}
+        {/* A rename the operator saved that no pass has carried across yet. This shows here,
+            beside the button that would carry it, because this row is where they can do
+            something about it. The Plex panel says the same thing where they typed it. */}
         {shelfRenamePending(ls.data) && (
           <div className="jobrow-sched">
             {t("jobs.leavingSoon.renaming", { was: ls.data.applied_name })}
@@ -649,8 +649,8 @@ export function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
   });
   const [editing, setEditing] = useState<ScheduledJob | null>(null);
   // ScheduleModal owns the reasons a dismissal is refused and mirrors its whole `canClose` here,
-  // so Back refuses what the scrim, Escape and the ✕ refuse. Without this, Back would tear the
-  // modal down mid-save and drop the error it would have shown (B-11, rule 80).
+  // so Back refuses what the scrim, Escape and the close button refuse. Without this, Back
+  // would tear the modal down mid-save and drop the error it would have shown.
   const blockCloseRef = useRef(false);
   // Back closes the schedule editor instead of leaving Reaper, unless the modal says it can't.
   useBackGuard(
@@ -659,12 +659,12 @@ export function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
     () => !blockCloseRef.current,
   );
 
-  // The shelf row owns this read and renders inside this panel, so the panel has to know whether
-  // it failed to decide whether both lines collapse into one (#198). A second `useQuery` on the
-  // same key rather than a signal threaded up out of the row: React Query hands both observers
-  // the one cache entry, so there is no second request and no state to keep in step -- and the
-  // row's own early returns cannot leave a lifted flag asserting something its surface no longer
-  // shows, which is the trap rule 146 is about.
+  // The shelf row owns this read and renders inside this panel, so the panel has to know
+  // whether it failed, to decide whether both lines collapse into one. This is a second
+  // `useQuery` on the same key rather than a signal threaded up out of the row. React Query
+  // hands both observers the one cache entry, so there is no second request and no state to
+  // keep in step, and the row's own early returns cannot leave a lifted flag asserting
+  // something its surface no longer shows.
   const shelf = useQuery({
     queryKey: ["leaving-soon-settings"],
     queryFn: api.leavingSoonSettings,
@@ -685,22 +685,23 @@ export function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
 
       {schedule.isPending && <p className="muted">{t("jobs.panel.loadingJobs")}</p>}
       {/* The rows below render from the last good row either way (`schedule.data?.jobs ?? []`),
-          so a failed refetch already keeps them on screen -- only the sentence about them was
-          wrong, and it read worst here: every row carries a next-run time and a running flag,
-          and this query polls itself every 1.5s while anything runs, so it reaches the failed
-          state with the operator doing nothing at all. The never-loaded line stays for the read
-          that really never landed, which is the only case it is true in.
+          so a failed refetch already keeps them on screen. Only the sentence about them would
+          be wrong, and it would read worst here: every row carries a next-run time and a
+          running flag, and this query polls itself every 1.5s while anything runs, so it can
+          reach the failed state with the operator doing nothing at all. The never-loaded line
+          stays only for a read that really never landed.
 
-          ABOVE the rows, because the line says what's BELOW may be out of date and `.panel` is
-          plain block flow, so DOM order is reading order: sat after `.set-rows` it pointed at the
-          schedule editor and nothing else. Every other call site puts it over its content. */}
+          This sits above the rows, because the line says what is below may be out of date, and
+          `.panel` is plain block flow, so DOM order is reading order. Placed after `.set-rows`
+          instead, it would point at the schedule editor and nothing else. Every other call site
+          puts it over its content. */}
       {schedule.isError && !schedule.data && (
         <Notice tone="error">{t("jobs.panel.loadFailed")}</Notice>
       )}
       {/* Both reads on this panel say the same thing when they fail together, so they say it
-          once, here, above the rows (#198). Unlike Plex's four these are independent polls
-          that can fail apart, which is why the rule counts the lines that would draw rather
-          than grouping by invalidation: either one alone still speaks in its own words. */}
+          once, here, above the rows. Unlike Plex's four, these are independent polls that can
+          fail apart, which is why this counts the lines that would draw rather than grouping
+          by invalidation: either one alone still speaks in its own words. */}
       <StaleReadSlot plan={stale} slot={jobsNoun} />
 
       <div className="set-rows">

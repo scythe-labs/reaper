@@ -5,9 +5,8 @@
 // Both places do the same dance: ask the backend for a PIN, send the operator to plex.tv
 // to approve it, then poll the backend until it answers "ok", "this account owns several
 // servers, pick one", or nothing at all. Only the endpoint and what happens afterwards
-// differ, so the state machine (deadline, timer, the pick, the cancel) lives here once
-// and the two callers pass their own poll function and outcome handlers. It used to live
-// in both files, and the two copies had already drifted apart.
+// differ, so the state machine (deadline, timer, the pick, the cancel) lives here once,
+// and the two callers pass their own poll function and outcome handlers.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -18,19 +17,19 @@ import i18next from "../i18n";
 import { composeError } from "../why";
 
 /** The sentinel the connection select uses for "let me type one". Not a URI, so it can
- *  never collide with a discovered address. Shared by `PlexPanel` and `SetupPlexStep` so
- *  the two can't drift onto different values for the same meaning (rule 72). */
+ *  never collide with a discovered address. Shared by `PlexPanel` and `SetupPlexStep` so the
+ *  two never drift onto different values for the same meaning. */
 export const MANUAL_CONNECTION = "__manual__";
 
 /** The label a connection shows in the picker: where it goes, then how.
  *
  *  plex.direct hostnames embed the address as dashes ("192-168-20-73.abc….plex.direct"),
- *  which reads as noise; show the address itself and keep the certificate goodness as
- *  the "secure" tag. The full URI stays the option's value, so what is saved is exact.
+ *  which reads as noise. This shows the plain address instead, and reports the certificate
+ *  separately as the "secure" tag. The full URI stays the option's value, so what is saved
+ *  is exact.
  *
  *  Shared by `PlexPanel` and `SetupPlexStep` so an address reads the same in both places,
- *  through the same `plex.connectionKind.*` / `plex.connectionLabel.*` catalog keys
- *  (rule 72: it used to be two near-identical copies). */
+ *  through the same `plex.connectionKind.*` / `plex.connectionLabel.*` catalog keys. */
 export function connectionLabel(c: PlexResourceConnection): string {
   const kind = c.relay
     ? i18next.t("plex.connectionKind.relay")
@@ -47,21 +46,17 @@ export function connectionLabel(c: PlexResourceConnection): string {
 
 /** What the app says when a sign-in lands on the server picker.
  *
- *  The login screen and the Settings link panel both reach this state through this hook, and
- *  each said this sentence by hand in its own words (rule 144). They had already been out of
- *  step once: Settings announced the picker and the login screen said nothing (#177, rule 72).
- *
- *  Exported because `PlexPin.test.tsx` reads the two callers' source and fails by name in
- *  whichever one states it again.
+ *  The login screen and the Settings link panel both reach this state through this hook. Say
+ *  this sentence only here, never again in either caller: `PlexPin.test.tsx` reads both
+ *  callers' source and fails by name if either one states it again.
  *
  *  A function, not a constant: this module is in the eager bundle, so a string resolved in its
  *  body would stay English for the life of the page (`i18n-module-scope.test.ts`). */
 export const chooseServerSaid = () => i18next.t("plex.pin.chooseServerSaid");
 
-/** Poll every two seconds. The wait is a person staring at a browser tab, so the faster
- *  of the two intervals this replaced wins: two seconds still costs at most 150 requests
- *  to our own backend over the five-minute deadline, and both sign-in paths now feel the
- *  same. */
+/** Poll every two seconds. The wait is a person staring at a browser tab, so this favors
+ *  responsiveness: two seconds costs at most 150 requests to our own backend over the
+ *  five-minute deadline. */
 const POLL_MS = 2000;
 
 /** Give the wait a deadline. Without one, an operator who opens the approval page and
@@ -71,15 +66,14 @@ const DEADLINE_MS = 5 * 60 * 1000;
 
 /** What both poll endpoints answer with. */
 export interface PinPollResult {
-  /** `retrying` is a NON-final status, like `pending`: the sign-in was approved but the
-   *  Plex server did not answer this instant (it may be restarting). The backend keeps
-   *  the sign-in alive and answers this instead of an error, because this loop stops for
-   *  good on any thrown status -- which used to throw away a sign-in that was still
-   *  perfectly good and send the operator back through the whole approval round trip. */
+  /** `retrying` is a non-final status, like `pending`: the sign-in was approved but the Plex
+   *  server did not answer this instant (it may be restarting). The backend answers this
+   *  instead of throwing, because a thrown status would stop this loop for good and send the
+   *  operator back through the whole approval round trip for a sign-in that is still good. */
   status: "pending" | "retrying" | "ok" | "choose_server";
   servers: PlexServerChoice[] | null;
   /** Present only with status "retrying": why this poll couldn't finish yet, composed
-   *  through `why.ts`'s `composeError` (phase 8b). */
+   *  through `why.ts`'s `composeError`. */
   reason?: ReasonKey | null;
 }
 
@@ -117,11 +111,12 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
   const saidRef = useRef<string | null>(null);
 
   // Stopping the timer does not stop a request already in the air, so every poll carries the
-  // run it belongs to and a finished run ignores whatever lands late (B-11). Without this, two
-  // slow polls overlap: the second answers "ok" and signs the operator in, then the first
-  // rejects (the PIN is now consumed, or plex.tv rate-limited us) and paints "Plex sign-in
-  // failed" over a session that succeeded. Through `cancel` the mirror case signed the operator
-  // in after they pressed Cancel. `begin`, `stop` and `cancel` all bump the run.
+  // run it belongs to, and a finished run ignores whatever lands late. Without this, two slow
+  // polls could overlap: the second answers "ok" and signs the operator in, then the first
+  // rejects (the PIN is now consumed, or plex.tv rate-limited the request) and paints "Plex
+  // sign-in failed" over a session that actually succeeded. The mirror failure through `cancel`
+  // would sign the operator in after they pressed Cancel. `begin`, `stop`, and `cancel` all bump
+  // the run.
   const runRef = useRef(0);
   // One request at a time. A poll slower than the two-second tick would otherwise stack up
   // against plex.tv, and the pile is what makes the overlap above likely in the first place.
@@ -174,37 +169,37 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
               setRetrying(null);
               h.onOk(result);
             } else if (result.status === "choose_server") {
-              // The sign-in stays valid while the picker is up; stop polling and hold
-              // the list until the operator picks one.
+              // The sign-in stays valid while the picker is up. Stop polling and hold the list
+              // until the operator picks one.
               stop();
               setRetrying(null);
               setServers(result.servers ?? []);
-              // Said here for the same reason the retry reason above is: this is the one copy
-              // both sign-in paths share, so a third caller inherits the announcement instead
-              // of forgetting it (rule 72) -- which is not hypothetical, since the login screen
-              // is exactly the caller that forgot it. Told and NOT focused: the picker replaces
-              // the wait on a timer, so moving focus here is a steal rather than a recovery.
+              // Announces here, when a poll's answer moves to "choose_server", because this is
+              // the one copy both sign-in paths share, so a third caller inherits the
+              // announcement instead of forgetting it. Told and not focused: the picker
+              // replaces the wait on a timer, so moving focus here would steal it rather than
+              // recover it.
               announce(chooseServerSaid());
               h.onChooseServer?.(result.servers ?? []);
             } else {
-              // "pending" or "retrying" -- neither is final, so keep polling. Only
-              // "retrying" carries a reason; say it, so a longer-than-usual wait is
-              // explained rather than looking like a hang.
+              // "pending" or "retrying": neither is final, so keep polling. Only "retrying"
+              // carries a reason. Say it, so a longer-than-usual wait is explained rather than
+              // looking like a hang.
               const reason =
                 result.status === "retrying" && result.reason ? composeError(result.reason) : null;
               setRetrying(reason);
-              // And say it by ear as well. Every transition in this flow is driven by the
-              // two-second poll rather than by the operator, so this paragraph swaps its text
-              // with nobody touching anything: on screen it changed, by ear it did not (#177).
+              // Also says it out loud, for two reasons. Every transition in this flow is driven
+              // by the two-second poll rather than by the operator, so this paragraph can change
+              // with nobody touching anything: it changes on screen, but a screen reader would
+              // not otherwise notice. And this hook is the one copy both sign-in paths share, so
+              // announcing it here means a third caller inherits the announcement instead of
+              // forgetting it. The paragraph this replaces holds a link, so announcing just the
+              // reason text avoids turning that whole paragraph into a live region with
+              // interactive content inside it.
               //
-              // Announced from the hook and not from either caller's markup, for two reasons.
-              // This is the one copy both sign-in paths share, so a third caller inherits the
-              // announcement instead of forgetting it (rule 72). And the paragraph it replaces
-              // holds a link, so making that a live region would put interactive content inside
-              // one -- the shape #177 filed against the queue's nudge.
-              //
-              // Only on a CHANGE: the poll repeats the same reason every two seconds, and a
-              // region restating it would talk over everything else on the page.
+              // Announces only when the reason text actually changes: the poll repeats the same
+              // reason every two seconds, and re-announcing it unchanged would talk over
+              // everything else on the page.
               if (reason !== null && reason !== saidRef.current) announce(reason);
               saidRef.current = reason;
             }
@@ -223,8 +218,8 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
     [stop],
   );
 
-  /** The operator picked a server. One immediate poll usually finishes the job; a
-   *  "pending" answer (plex.tv asking us to slow down) falls back to polling. */
+  /** The operator picked a server. One immediate poll usually finishes the job. A "pending"
+   *  answer, plex.tv asking us to slow down, falls back to polling. */
   const pick = useCallback(
     async (machineId: string) => {
       const pinId = pinRef.current;
@@ -242,8 +237,9 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
           h.onOk(result);
         } else if (result.status === "choose_server") {
           setServers(result.servers ?? []);
-          // The pick can land back on the picker (an account whose server list changed under
-          // it), and that arrives the same way: on an answer, not on a press.
+          // Announces here too: the pick can land back on the picker, when the account's
+          // server list changed while it was being read, and that arrives the same way as the
+          // first time, on an answer rather than on a press.
           announce(chooseServerSaid());
           h.onChooseServer?.(result.servers ?? []);
         } else {

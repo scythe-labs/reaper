@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The policy workspace: everything that shapes Reaper's decision, on one page, in the
-// order Reaper decides it -- what flags a title, what is always kept, how fast a reap
+// order Reaper decides it: what flags a title, what is always kept, how fast a reap
 // may go, and whether deletion is allowed at all. The live simulator sits beside it.
 //
 // The design principle: **the knob and its blast radius sit in the same viewport.**
-// Move the threshold, and the count, the byte total and the histogram move with it --
+// Move the threshold, and the count, the byte total and the histogram move with it,
 // instantly, with zero API calls, because the last snapshot's scores are re-decided in
 // the database rather than the library being re-read.
 //
@@ -14,8 +14,8 @@
 // exact for the threshold and the coverage floor, and **wrong for everything else**:
 // change a signal weight or a protection, and the stored scores were produced by the
 // old ones. The server detects this and refuses to answer. This component must then
-// refuse to *show* anything -- because a stale count would look exactly as
-// authoritative as a live one, and the owner would act on it.
+// refuse to *show* anything, because a stale count would look exactly as authoritative
+// as a live one, and the owner would act on it.
 //
 // A dangerous number that looks trustworthy is worse than no number at all.
 //
@@ -94,7 +94,7 @@ export function warningId(anchor: WarningAnchorId | "unanchored", i: number): st
 /** What a control at `anchor` points `aria-describedby` at: every warning currently rendered
  *  there, in order.
  *
- *  `undefined` when there are none, and that is not a tidiness choice -- `WarnBlock` renders
+ *  `undefined` when there are none, and that is not a tidiness choice: `WarnBlock` renders
  *  nothing at all when the list is empty, so a fixed id would be a reference to an element not
  *  in the document. Readers treat a dangling `aria-describedby` inconsistently, and the one
  *  behavior they share is that the operator learns nothing from it.
@@ -114,13 +114,13 @@ export function warningsDescribing(
   return ids.length === 0 ? undefined : ids.join(" ");
 }
 
-// No `aria-invalid` companion to the above, deliberately. A policy warning of EITHER severity
+// No `aria-invalid` companion to the above, deliberately. A policy warning of either severity
 // leaves the policy saveable: `policyBlocked` below is a 422 from body validation plus the
 // points budget, `severity` reaches nothing else, and the save route never inspects. ARIA 1.2
 // defines `aria-invalid` as a value the application does not accept, so flagging a legal
-// setting states a refusal that will not happen -- on a slider whose whole job is choosing an
-// aggressive threshold on purpose. The warning still reaches the operator as the control's
-// description, which is what #174 asked for.
+// setting would state a refusal that will not happen, on a slider whose whole job is choosing
+// an aggressive threshold on purpose. The warning still reaches the operator as the control's
+// description.
 
 /** Inline warnings for one control group, rendered beside the control that fixes them.
  *  Renders nothing when the group has nothing to say. */
@@ -130,7 +130,7 @@ function WarnBlock({
 }: {
   /** Which anchor this block is rendering, so each notice can carry the id the control that
    *  fixes it points at. Required rather than optional: a block with no anchor emits no ids,
-   *  and the control beside it would then describe itself with nothing (#174). */
+   *  and the control beside it would then describe itself with nothing. */
   anchor: WarningAnchorId | "unanchored";
   warnings: PolicyWarning[];
 }) {
@@ -141,7 +141,7 @@ function WarnBlock({
         // `standing`, not announced: these re-render on every debounced validate as the
         // operator types, so an alert per keystroke would talk over them continuously. The
         // right mechanism is `aria-describedby` from each field to its own warning, which is
-        // what the `id` below now makes possible -- the field speaks it when the operator
+        // what the `id` below now makes possible: the field speaks it when the operator
         // reaches the control, instead of the page interrupting them mid-keystroke.
         <Notice
           tone={w.severity === "danger" ? "error" : "warn"}
@@ -150,10 +150,10 @@ function WarnBlock({
           id={warningId(anchor, i)}
           // Field and reason do not separate these. Two protect conditions on the same
           // movie-only field in a TV policy produce byte-identical warnings, because the
-          // producer has no name to put in them -- `ConditionSpec` carries a field, an
+          // producer has no name to put in them: `ConditionSpec` carries a field, an
           // operator and a value, and nothing an operator titled. The position within this
           // already-filtered list is the only thing left that differs, and it is stable
-          // across a render since the list is derived, never reordered (rule 19).
+          // across a render since the list is derived, never reordered.
           key={`${w.field}:${w.reason.k}:${i}`}
         >
           {composeIn("warning", w.reason)}
@@ -165,19 +165,18 @@ function WarnBlock({
 
 /** The field name the server gives a warning about ONE setting of ONE protection.
  *  `engine/policy_warnings.py` builds every member of this family as
- *  `f"gates.{gate}.{setting}"`, where
- *  the setting is a field of the gate row itself -- which is why the suffix is typed off
- *  `GateSetting` rather than spelled out here: the shape both ends already share is the
- *  declaration, so a suffix the server cannot send does not compile (rule 144).
+ *  `f"gates.{gate}.{setting}"`, where the setting is a field of the gate row itself. That is
+ *  why the suffix is typed off `GateSetting` rather than spelled out here: the shape both
+ *  ends already share is the declaration, so a suffix the server cannot send does not compile.
  *
  *  Generic over the gate id on purpose. Four of these arrive today, one per protection, and a
- *  fifth protection warning about any of the three settings binds here with no change;
- *  anything this cannot reach still renders in the `gates` block under the list. */
+ *  fifth protection warning about any of the three settings binds here with no change.
+ *  Anything this cannot reach still renders in the `gates` block under the list. */
 function gateWarningField(gate: string, setting: keyof Omit<GateSetting, "gate">): string {
   return `gates.${gate}.${setting}`;
 }
 
-/** One protection: a switch, a plain-English label and help, and -- where it has one -- a
+/** One protection: a switch, a plain-English label and help, and, where it has one, a
  *  threshold in the units a person thinks in. */
 function GateRow({
   gate,
@@ -197,22 +196,23 @@ function GateRow({
   warnings: PolicyWarning[];
 }) {
   const { t } = useTranslation();
-  // Sibling of the simulator's spared-by row (rule 72), and the two fallbacks deliberately
-  // DIFFER. There, an id appears once in a tally, so `unnamedGateLabel` reads correctly:
-  // "Another protection, 7". Here it names a switch, and two ids this build has no copy for
-  // would draw two controls carrying one name and no help, leaving the operator unable to
-  // tell which protection they were turning off -- so the label stays per-id. Prefer a
-  // title-cased slug the operator can at least tell apart over rule 21's nicer sentence,
-  // because a control has to be identifiable before it can be plain.
+  // Sibling of the simulator's spared-by row, and the two fallbacks deliberately differ.
+  // There, an id appears once in a tally, so `unnamedGateLabel` reads correctly: "Another
+  // protection, 7". Here it names a switch, and two ids this build has no copy for would draw
+  // two controls carrying one name and no help, leaving the operator unable to tell which
+  // protection they were turning off, so the label stays per-id. A title-cased slug the
+  // operator can at least tell apart is chosen over a nicer generic sentence, because a
+  // control has to be identifiable before it can be plain.
   // Unreachable for every id the engine has (`gateMeta` covers all of `GateId`), and the SPA
   // ships inside the server's own image, so reaching this at all needs a browser holding a
-  // stale bundle against a newer server. Rule 66's fallback, not a surface anyone should meet.
+  // stale bundle against a newer server. This is a fallback for an id the browser has never
+  // heard of, not a surface anyone should meet.
   const meta = gateMeta()[gate.gate] ?? { label: titleCase(gate.gate), help: "" };
   // What this row's boxes point `aria-describedby` at. The block rendering these sits under
-  // the whole list, so reaching one meant browsing the page in document order: a keyboard
-  // operator moving control to control never met it (#189). Every gate warning the server
+  // the whole list, so reaching one by browsing the page in document order would mean a
+  // keyboard operator moving control to control never met it. Every gate warning the server
   // sends names one setting of one protection, so each lands on exactly the box that fixes
-  // it -- rule 42's sentence, delivered to a reader standing on the control.
+  // it, delivered to a reader standing on the control.
   const describes = (setting: keyof Omit<GateSetting, "gate">) =>
     warningsDescribing("gates", warnings, [gateWarningField(gate.gate, setting)]);
 
@@ -223,17 +223,17 @@ function GateRow({
           checked={gate.enabled}
           // The only switch in the product that removes its own row, so it is the only one
           // that has to say where focus goes afterwards. Sibling of `RatingFloorRow`'s bar
-          // removal 280 lines below, which wears the same marker for the same reason
-          // (rule 72): activating a control that unmounts itself drops focus to `<body>` and
-          // the next Tab restarts at the top of a form this long (#173).
+          // removal further below, which wears the same marker for the same reason:
+          // activating a control that unmounts itself would drop focus to `<body>`, and the
+          // next Tab would restart at the top of a form this long.
           removesRow={meta.retired}
           // Turning a RETIRED row off takes it out of the body rather than storing it off,
           // because there is nothing to store: the save boundary refuses the id in either
-          // position, so `{...gate, enabled: false}` left the page unsavable and the notice
-          // below naming an exit that did not work (#627). Every live protection keeps the
-          // ordinary two-position switch, and `meta.retired` is exactly the server's
-          // "no policy row can carry this id" -- `tests/test_api_type_mirror.py` pins the two
-          // sets against each other, both directions.
+          // position, so `{...gate, enabled: false}` would leave the page unsavable, with the
+          // notice below naming an exit that does not work. Every live protection keeps the
+          // ordinary two-position switch, and `meta.retired` is exactly the server's "no
+          // policy row can carry this id": `tests/test_api_type_mirror.py` pins the two sets
+          // against each other, both directions.
           onChange={(enabled) =>
             meta.retired && !enabled ? onRemove() : onChange({ ...gate, enabled })
           }
@@ -243,13 +243,13 @@ function GateRow({
       </label>
       {meta.help && <p className="help rule-help">{meta.help}</p>}
 
-      {/* A retired gate only reaches this list when the loader could NOT convert it -- the list
-          it names is gone -- and `scan_runner.build_gates` then refuses every scan over it
-          (`ScanConfigError`). The row rendered through the ordinary path with a live-sounding
-          label and no warning, so the one switch that was stopping every scan looked like an
-          ordinary healthy protection. Said beside that switch, which is what fixes it
-          (rules 25, 42). The sentence says what the switch now does, since the row leaves the
-          page on that click and nothing else on screen would account for it. */}
+      {/* A retired gate only reaches this list when the loader could not convert it: the list
+          it names is gone, and `scan_runner.build_gates` then refuses every scan over it
+          (`ScanConfigError`). Without this notice, the row would render through the ordinary
+          path with a live-sounding label, and the one switch stopping every scan would look
+          like an ordinary healthy protection. Said beside that switch, which is what fixes
+          it. The sentence says what the switch now does, since the row leaves the page on
+          that click and nothing else on screen would account for it. */}
       {meta.retired && gate.enabled && (
         <Notice tone="warn" inline>
           {t("policyEditor.gateRow.retiredNotice")}
@@ -284,10 +284,10 @@ function GateRow({
         </div>
       )}
       {/* The look-back window, for the gates that count activity inside one. The server
-          already warns when it is set under 30 days and advises a year, and until this
-          control existed that warning named a value with no control anywhere on the page
-          (U-9). Same picker as the dormancy row, and its own help directly beneath it, so
-          "recently" is defined where it is set (rule 45). */}
+          already warns when it is set under 30 days and advises a year, so without this
+          control, that warning would name a value with no control anywhere on the page. Same
+          picker as the dormancy row, and its own help directly beneath it, so "recently" is
+          defined where it is set. */}
       {gate.enabled && meta.window && (
         <>
           <div className="rule-control">
@@ -335,7 +335,7 @@ const RATING_ORDER: RatingSource[] = [
 ];
 
 /** The source's display name, read at call time (not a frozen module constant) so a language
- *  change is picked up the next time the editor opens -- same shape as `jobMeta` in
+ *  change is picked up the next time the editor opens, same shape as `jobMeta` in
  *  `JobsPanel.tsx`: each source gets its own literal `t()` call, since a computed key is
  *  unreadable to the missing-key gate. */
 function ratingSourceLabel(source: RatingSource): string {
@@ -375,10 +375,10 @@ function describeBar(rule: RatingRule): string {
  *  `f"keep_rating_rules.{source}.{setting}"`, the same shape as the `gates.` family above and
  *  for the same reason: the source keys the row uniquely, because `PolicyBody` refuses two
  *  rules on one source. The suffix is typed off `RatingRule` so a setting the server cannot
- *  send does not compile (rule 144).
+ *  send does not compile.
  *
  *  Generic over the source and the setting on purpose. Three warnings arrive today, all about
- *  `floor`; one about a vote floor would bind here with no change. The card's own complaint,
+ *  `floor`. One about a vote floor would bind here with no change. The card's own complaint,
  *  which is about no bars existing at all, is not in this family and stays on the block. */
 function ratingWarningField(source: string, setting: keyof Omit<RatingRule, "source">): string {
   return `keep_rating_rules.${source}.${setting}`;
@@ -404,10 +404,10 @@ function RatingBarRow({
   const { t } = useTranslation();
   const meta = RATING_META[rule.source];
   const label = ratingSourceLabel(rule.source);
-  // What this row's boxes point `aria-describedby` at. The block rendering these sits under the
-  // whole list of bars, so reaching one meant browsing the card in document order (#189). The
-  // filter is what keeps a complaint about IMDb off the Rotten Tomatoes row -- the worry the
-  // issue was filed on, answered by the field rather than by a grouping decision.
+  // What this row's boxes point `aria-describedby` at. The block rendering these sits under
+  // the whole list of bars, so reaching one by browsing the card in document order would be
+  // slow. The filter is what keeps a complaint about IMDb off the Rotten Tomatoes row,
+  // answered by the field rather than by a grouping decision.
   const describes = (setting: keyof Omit<RatingRule, "source">) =>
     warningsDescribing("keep_rating_rules", warnings, [ratingWarningField(rule.source, setting)]);
   return (
@@ -489,9 +489,9 @@ function RatingFloorRow({
   match: "any" | "all";
   mediaType: "movie" | "tv";
   /** Every warning the `keep_rating_rules` anchor claims: the card's own, plus one per bar.
-   *  Read twice below, by the block under the list and by each row in it, from this ONE array
-   *  -- `warningsDescribing` numbers ids by position within it, so the two ends must never be
-   *  handed different lists (#189).
+   *  Read twice below, by the block under the list and by each row in it, from this ONE array,
+   *  since `warningsDescribing` numbers ids by position within it, so the two ends must never
+   *  be handed different lists.
    *
    *  `PolicyWarning`, not a structural subset of it: the looser type is what let this card
    *  render its own copy of `WarnBlock`'s markup, since the value it held could not be handed
@@ -520,9 +520,9 @@ function RatingFloorRow({
       ? t("policyEditor.ratingFloor.emptySummary")
       : t("policyEditor.ratingFloor.summary", { bars: rules.map(describeBar).join(joiner) });
 
-  // The same shape as the keep-tag chips 290 lines above, on the same ~1,900-line form: the ✕
-  // removes the row it lives in, so without this focus falls to `<body>` and the next Tab
-  // restarts at the top (#173). Missed in that sweep and caught by a rule 72 pass over it.
+  // The same shape as the keep-tag chips above, on this same long form: the ✕ removes the row
+  // it lives in, so without this, focus would fall to `<body>` and the next Tab would restart
+  // at the top.
   const addSourceRef = useRef<HTMLSelectElement>(null);
   const bars = useRemovalFocus(addSourceRef);
 
@@ -583,9 +583,9 @@ function RatingFloorRow({
               />
             )}
           </div>
-          {/* Through the shared component, not a second copy of its markup (rule 18). This
-              one keyed on the bare message, so it carried the duplicate-key defect in a
-              worse form than the original and would not have been swept with it. */}
+          {/* Through the shared component, not a second copy of its markup. A second copy
+              keyed on the bare message would risk its own duplicate-key defect, separate
+              from this shared component and easy to miss in a future sweep. */}
           {warnings.length > 0 ? (
             <WarnBlock anchor="keep_rating_rules" warnings={warnings} />
           ) : (
@@ -698,7 +698,7 @@ function SignalRow({
             <span className="muted">{t("policyEditor.signalRow.off")}</span>
           ) : (
             // Points, not a share, and no second number beside it: removal weights total
-            // exactly 100, so the weight IS what it adds. "up to" is not hedging -- a
+            // exactly 100, so the weight IS what it adds. "up to" is not hedging: a
             // signal ramps, and adds its full number only at the far end of its range.
             <Trans
               i18nKey="policyEditor.signalRow.upToPoints"
@@ -740,24 +740,24 @@ function SignalRow({
 
 /** Where a signal starts earning its points and where it earns all of them.
  *
- *  This was set and never shown. "Up to 10 points" is unreadable without it -- ten points on
- *  a library of well-rated titles is ten points that can never be earned, and the panel row
- *  underneath said `0  IMDb 6.4` with nothing naming the 6.0 it fell short of (#410).
+ *  Without this, "Up to 10 points" is unreadable: ten points on a library of well-rated
+ *  titles is ten points that can never be earned, and the panel row underneath would say
+ *  `0  IMDb 6.4` with nothing naming the 6.0 it fell short of.
  *
  *  **One box or two, decided by the signal's shape, and the difference is arithmetic rather
- *  than taste.** A shortfall signal ramps how far BELOW its bound a value sits, which works
+ *  than taste.** A shortfall signal ramps how far below its bound a value sits, which works
  *  out to depend on `saturate_at - floor` alone: measured against `evaluate_signal`, the
  *  pairs (0,60), (10,70) and (40,100) score identically at every rating, and full points
  *  always land at zero. A second box there would be a control that provably does nothing, so
- *  editing writes the gap back as `floor: 0` -- one canonical spelling of the same curve.
+ *  editing writes the gap back as `floor: 0`, one canonical spelling of the same curve.
  *
  *  Hidden at weight 0 rather than disabled, matching the gates: a signal worth no points has
- *  no range worth reading (rule 41). */
+ *  no range worth reading. */
 /** How wide a ramp box has to be, as the custom property `14-policy-editor.css` reads.
  *
- *  One declaration for a value the TSX and the stylesheet must agree on (rule 67): the
- *  component knows what the field can hold, the stylesheet knows the chrome it holds it in,
- *  and neither can size the box alone. */
+ *  One declaration for a value the TSX and the stylesheet must agree on: the component knows
+ *  what the field can hold, the stylesheet knows the chrome it holds it in, and neither can
+ *  size the box alone. */
 function rampBoxWidth(widest: string): CSSProperties {
   return { "--ramp-chars": widest.length } as CSSProperties;
 }
@@ -781,10 +781,10 @@ function SignalRamp({
   const strip = rampStrip(signal.signal, signal.floor, signal.saturate_at);
   if (!units) return null;
 
-  // Two controls, split on rule 40's line: a changeable unit gets the picker, a fixed one
-  // gets the suffix box. `QuantityInput` stores and returns the BASE value -- days, bytes --
-  // which is what the policy body holds, so nothing is converted on the way through; it just
-  // draws 1825 as "5 years" and hands 1825 back.
+  // Two controls: a changeable unit gets the picker, a fixed one gets the suffix box.
+  // `QuantityInput` stores and returns the base value, days, bytes, which is what the policy
+  // body holds, so nothing is converted on the way through. It just draws 1825 as "5 years"
+  // and hands 1825 back.
   //
   // `max` is spread rather than passed, because `exactOptionalPropertyTypes` treats an
   // explicit `undefined` as a value and refuses it.
@@ -811,8 +811,8 @@ function SignalRamp({
         suffix={units.unit}
         step={units.step}
         // The standard width, not `narrow`. Narrow is 3.6rem, and a dormancy far end is four
-        // digits plus the browser's spinner: "1825" came out clipped to "182". No new size
-        // either way (rule 40) -- this is the other one that already exists.
+        // digits plus the browser's spinner: "1825" would clip to "182". No new size either
+        // way, since this is the other size that already exists.
         min={bounds.min ?? 0}
         {...(bounds.max === undefined ? {} : { max: bounds.max })}
         ariaLabel={ariaLabel}
@@ -890,7 +890,7 @@ function SignalRamp({
               type="button"
               className="link-btn"
               // The visible text is the same on every signal, so on its own it announces as
-              // three identical buttons with nothing to tell them apart -- the failure the
+              // three identical buttons with nothing to tell them apart, the failure the
               // threshold-naming test above this file's fixtures exists for. The name leads
               // with the visible text, so it still satisfies label-in-name for anyone
               // speaking it, and adds the signal it belongs to.
@@ -912,14 +912,13 @@ function SignalRamp({
           One lighter panel around the pair, so the card reads as settings first and
           consequences second rather than as six alternating rows.
 
-          The example keeps its bold numbers but loses its own fill -- inside the panel a
+          The example keeps its bold numbers but loses its own fill: inside the panel a
           second gray box on a gray box just draws a border nobody needs. */}
       <div className="ramp-shows">
-        {/* The range, drawn rather than restated. This REPLACES the sentence that used to sit
-            here: it said the same thing the picture says, and two grammars for one fact is
-            the restatement rule 144 is about. What the picture adds is the direction -- a
-            rating charges leftward and dormancy rightward, and no shared sentence carries
-            that without the operator holding both rules in their head. */}
+        {/* The range, drawn rather than restated: a picture and a sentence saying the same
+            thing would be two grammars for one fact. What the picture adds is the direction: a
+            rating charges leftward and dormancy rightward, and no shared sentence carries that
+            without the operator holding both rules in their head. */}
         {strip && (
           <div className="ramp-strip" aria-hidden="true">
             <div className="ramp-strip-track">
@@ -949,18 +948,17 @@ function SignalRamp({
  *
  *  The number comes from `POST /api/policy/probe`, which runs the same `evaluate_signal` a
  *  scan runs. Computing it here instead would be a second scorer sitting beside the control
- *  that tunes deletions, free to drift from the one that decides and reading as
- *  authoritative while it did (rule 3/22).
+ *  that tunes deletions, free to drift from the one that decides and reading as authoritative
+ *  while it did.
  *
- *  **There is no slider.** It had one, and a second range control under a weight slider
- *  reads as another setting: the operator sees two tracks and no way to tell which one
- *  changes their policy. The value is chosen instead, and the sentence re-asks the engine
- *  as the range above is edited, which is where "live" belongs -- the answer moves when the
- *  thing it is about moves.
+ *  **There is no slider.** A second range control under a weight slider would read as another
+ *  setting: the operator would see two tracks and no way to tell which one changes their
+ *  policy. The value is chosen instead, and the sentence re-asks the engine as the range above
+ *  is edited, which is where "live" belongs: the answer moves when the thing it is about moves.
  *
- *  All three states render (rule 17/36). A preview that showed a stale number while the next
- *  was in flight, or fell silent when the read failed, would be a confident answer to a
- *  question nobody answered -- which is the whole failure this card exists to fix. */
+ *  All three states render explicitly. A preview that showed a stale number while the next was
+ *  in flight, or fell silent when the read failed, would be a confident answer to a question
+ *  nobody answered, which is the whole failure this card exists to fix. */
 function SignalProbe({ signal, reachDays }: { signal: SignalSetting; reachDays: number | null }) {
   const { t } = useTranslation();
   const units = rampUnits(signal.signal);
@@ -970,7 +968,7 @@ function SignalProbe({ signal, reachDays }: { signal: SignalSetting; reachDays: 
   //
   // The dormancy ramp opened at the watch mirror's edge instead, and it was wrong whenever
   // the history was deep. That signal cannot read past the edge, so the edge is the most a
-  // title can present -- but a mirror reaching 8 years against a far end of 5 puts it past
+  // title can present, but a mirror reaching 8 years against a far end of 5 puts it past
   // the point the signal already adds in full, and the example froze at "70 of these 70
   // points" no matter what either box said.
   //
@@ -1039,16 +1037,16 @@ function SignalProbe({ signal, reachDays }: { signal: SignalSetting; reachDays: 
 }
 
 /** Live advisory beside the keep-last input: how many shows a keep-last-N value fully
- *  protects, computed from the last scan's season shape -- no re-scan, since the shape does
+ *  protects, computed from the last scan's season shape. No re-scan, since the shape does
  *  not depend on the keep-last value.
  *
  *  It takes the SCOPE too, because the floor does. "Requested only" narrows the set this
  *  floor acts on to the shows someone asked for, plus every show Reaper cannot tell about
  *  (season_scan._keep_last_applies keeps those on purpose: Unknown counts as "might be
- *  requested"). That set is not derivable from the frozen snapshot -- it needs the live
- *  request index -- so under that scope the figure is stated as the upper bound it is,
- *  rather than printed as though the scope were off (U-7, rules 53/30). An upper bound also
- *  cannot assert "you have protected everything", so the warning styling stops there. */
+ *  requested"). That set is not derivable from the frozen snapshot, since it needs the live
+ *  request index, so under that scope the figure is stated as the upper bound it is, rather
+ *  than printed as though the scope were off. An upper bound also cannot assert "you have
+ *  protected everything", so the warning styling stops there. */
 function SeasonAdvisory({ keepLast, scope }: { keepLast: number; scope: "all" | "requested" }) {
   const { data } = useQuery({ queryKey: ["season-shape"], queryFn: () => api.seasonShape() });
   if (!data || data.total_shows === 0) return null;
@@ -1084,14 +1082,14 @@ function SeasonAdvisory({ keepLast, scope }: { keepLast: number; scope: "all" | 
  *  all belongs at the top where no scroll position can hide it.
  *
  *  Keyed on the server's ids and consulted with a fallback, so an id this file does not know
- *  still renders a sentence rather than nothing (rule 66). It is only the sentence that can
- *  be missing: `dirty` counts `repairs` and never reads this map, so an unknown repair still
- *  raises the savebar. That split is what makes the limbo in #516 unreachable.
+ *  still renders a sentence rather than nothing. It is only the sentence that can be missing:
+ *  `dirty` counts `repairs` and never reads this map, so an unknown repair still raises the
+ *  savebar, so the operator is never left with a dirty page and no explanation.
  *
  *  The backend's twin is `_REPAIR_CHECKS` in `src/reaper/services/scan_runner.py`, which
  *  writes the same repair into the incomplete-scan notice. One repair, two sentences, in two
- *  trees (rule 144) -- `tests/test_policy_repairs.py` walks `PolicyRepair` against both and
- *  names whichever file is missing a member. */
+ *  trees: `tests/test_policy_repairs.py` walks `PolicyRepair` against both and names
+ *  whichever file is missing a member. */
 type RepairNotice = {
   tone: "error" | "warn";
   where: "top" | "savebar";
@@ -1105,7 +1103,7 @@ export const REPAIR_NOTICES: Record<string, RepairNotice> = {
 };
 
 /** The repair's sentence, read from the catalog at call time rather than baked into the
- *  frozen table above -- same shape as `jobMeta` in `JobsPanel.tsx`, and for the same
+ *  frozen table above, same shape as `jobMeta` in `JobsPanel.tsx`, and for the same
  *  reason: a language change is picked up the next render. Falls back to the one sentence
  *  true of every repair this build does not recognize, so a server newer than this bundle
  *  still tells the operator why the page is dirty and what clears it. */
@@ -1124,7 +1122,7 @@ function repairText(id: string): string {
   }
 }
 
-/** What an id this build does not know renders as -- the one thing true of every repair. */
+/** What an id this build does not know renders as: the one thing true of every repair. */
 const UNKNOWN_REPAIR: RepairNotice = { tone: "warn", where: "top" };
 
 const SECTION_IDS = ["flags", "kept", "pace", "deletion"] as const;
@@ -1132,7 +1130,7 @@ export type PolicySectionId = (typeof SECTION_IDS)[number];
 type SectionId = PolicySectionId;
 
 /** The section's nav-rail and heading text, read at call time rather than baked into a
- *  frozen table -- same shape as `jobMeta` in `JobsPanel.tsx`. Both the rail button and the
+ *  frozen table, same shape as `jobMeta` in `JobsPanel.tsx`. Both the rail button and the
  *  section's own `<h3>` name the same section, so they share this one declaration. */
 function sectionLabel(id: SectionId): string {
   switch (id) {
@@ -1158,15 +1156,15 @@ export type WarningAnchor = {
   /** Named by the `warningsAt(...)` call that renders it, so the claim and the render read
    *  from this one declaration rather than from two copies of the same field list. */
   readonly id: string;
-  /** The fields claimed exactly -- and the fields the test probes this anchor with, which is
+  /** The fields claimed exactly, and the fields the test probes this anchor with, which is
    *  why a claim cannot go unprobed: it is one list, not two. */
   readonly fields: readonly string[];
   /** Claimed as a family as well: any field starting with this. `fields` then holds one real
    *  member of the family, since a probe has to be a field the server could actually send.
    *
    *  The family is open, so it is the one shape whose fields cannot all be listed here, and
-   *  `PolicyEditor.warnings.test.tsx`'s binding table is allowed to name more of it than `fields` does
-   *  -- every member it names must still be one this anchor claims. */
+   *  `PolicyEditor.warnings.test.tsx`'s binding table is allowed to name more of it than `fields` does,
+   *  but every member it names must still be one this anchor claims. */
   readonly prefix?: string;
   /** The mount condition this anchor's `WarnBlock` sits under, where it has one. */
   readonly guard?: WarningGuard;
@@ -1177,8 +1175,8 @@ const ANCHORS = [
   { id: "gates", fields: ["gates.server_popularity.window_days"], prefix: "gates." },
   // Mixed, the way `keep_last` is: the bare field is the card's own complaint (the protection
   // is on with no sources), and the family under it is one bar each. Only the family binds to
-  // a control -- the card-level one names two remedies and there is no single box to point it
-  // at, which is where `PolicyEditor.warnings.test.tsx`'s `unbound` says so out loud (#189).
+  // a control, since the card-level one names two remedies with no single box to point it at,
+  // which is where `PolicyEditor.warnings.test.tsx`'s `unbound` says so out loud.
   {
     id: "keep_rating_rules",
     fields: ["keep_rating_rules", "keep_rating_rules.imdb.floor"],
@@ -1187,9 +1185,9 @@ const ANCHORS = [
   },
   // `flag_keep_conflicts` rides this anchor rather than earning its own: this block is the
   // last thing in the season card, directly under that switch's row, so the warning about
-  // shows older than the watch mirror (#224) already renders beside the control its help text
-  // offers as the other way out. Its only mount condition is `tv`, the same one, so one guard
-  // still names it exactly.
+  // shows older than the watch mirror already renders beside the control its help text offers
+  // as the other way out. Its only mount condition is `tv`, the same one, so one guard still
+  // names it exactly.
   {
     id: "keep_last",
     fields: ["keep_last_seasons", "keep_last_scope", "flag_keep_conflicts"],
@@ -1198,14 +1196,14 @@ const ANCHORS = [
   // Its block sits inside the mid-binge row but OUTSIDE that row's `keep_in_progress`
   // subtree, so `tv` is the only mount condition it has and one guard names it exactly.
   //
-  // Nesting it under the switch too would have been expressible -- `guardsHeld` folds a
-  // conjunction into one boolean, which is what `ratingGate` already does for an anchor under
-  // two conditions (issue #200 was closed as refuted on precisely that). It is not done
-  // because it would buy nothing here and costs the operator something: the server sends this
-  // field only while the protection is on, since a guard that is off is holding no seasons,
-  // so the extra condition can never discriminate -- and a claim that narrow drops the warning
-  // to the catch-all if the backend ever widens, printing "lower this" at the foot of the page
-  // instead of beside the box. Claiming on `tv` alone keeps it in the card either way.
+  // Nesting it under the switch too would be expressible: `guardsHeld` folds a conjunction
+  // into one boolean, which is what `ratingGate` already does for an anchor under two
+  // conditions. It is not done because it would buy nothing here and costs the operator
+  // something: the server sends this field only while the protection is on, since a guard
+  // that is off is holding no seasons, so the extra condition could never discriminate, and a
+  // claim that narrow would drop the warning to the catch-all if the backend ever widens,
+  // printing "lower this" at the foot of the page instead of beside the box. Claiming on `tv`
+  // alone keeps it in the card either way.
   { id: "in_progress", fields: ["in_progress_hold_days"], guard: "tv" },
   { id: "signals", fields: ["signals"] },
   { id: "custom_condemn", fields: ["custom_condemn"] },
@@ -1215,32 +1213,28 @@ const ANCHORS = [
 
 /** Where each policy warning renders.
  *
- *  A warning renders beside the control that fixes it (rule 42): each anchor claims the
- *  fields whose fix lives at one place on the page, and anything no anchor claims lands in
- *  the bottom catch-all stack, so a warning field is never silently dropped.
+ *  A warning renders beside the control that fixes it: each anchor claims the fields whose
+ *  fix lives at one place on the page, and anything no anchor claims lands in the bottom
+ *  catch-all stack, so a warning field is never silently dropped.
  *
- *  Claiming is therefore a promise to RENDER, and it is exactly what excludes a field from
+ *  Claiming is therefore a promise to render, and it is exactly what excludes a field from
  *  the catch-all. An anchor whose `WarnBlock` sits inside a conditional subtree takes its
- *  warning off the page altogether on the branch that subtree does not mount -- not down to
- *  the bottom, which is what the sentence above promises. `max_unmeasured_per_run` did that
- *  through a failed profile read, losing the one warning about a setting that lets deletions
- *  past the size caps (#145). So an anchor under a mount condition names it as its `guard`
- *  and claims only while it holds.
+ *  warning off the page altogether on the branch that subtree does not mount, not down to the
+ *  bottom, which is what the sentence above promises. A mount condition that is not named as
+ *  a `guard` risks exactly that: losing a warning through a branch nobody checked. So an
+ *  anchor under a mount condition names it as its `guard` and claims only while it holds.
  *
  *  This is data, and exported, because reconciling an anchor against its renderer is a test's
- *  job: `PolicyEditor.warnings.test.tsx` walks THIS list, drives one warning per claimed field through
- *  the page in the state each guard requires, and fails when one renders nowhere -- an anchor
- *  added with no `warningsAt` call site, or a `WarnBlock` deleted from under one. That walk
- *  was a hand-mirrored copy of this list, which could not see a new anchor at all, and before
- *  that a count in a comment that went stale at seven against eight.
+ *  job: `PolicyEditor.warnings.test.tsx` walks THIS list, drives one warning per claimed field
+ *  through the page in the state each guard requires, and fails when one renders nowhere: an
+ *  anchor added with no `warningsAt` call site, or a `WarnBlock` deleted from under one.
  *
- *  It also drives every anchor through every branch it does NOT name, which is what catches
- *  the `guard` that was never declared -- the omission #145 actually was. Naming a guard is
- *  therefore checked both ways round, so neither adding a mount condition nor forgetting to
- *  is a silent change (#167).
+ *  It also drives every anchor through every branch it does NOT name, which is what catches a
+ *  `guard` that should have been declared but was not. Naming a guard is therefore checked
+ *  both ways round, so neither adding a mount condition nor forgetting to is a silent change.
  *
  *  Two bounds on that, both real: the walk does not check WHICH control a warning landed
- *  beside, only that the claim reached the page; and `guard` is one condition, not a set, so
+ *  beside, only that the claim reached the page, and `guard` is one condition, not a set, so
  *  a `WarnBlock` nested under two of them cannot be declared here and is not covered by
  *  either direction. Put one under a second mount condition and it needs this type widened
  *  and the test's states composed, not a second anchor. */
@@ -1287,12 +1281,12 @@ function rewatchRangeLabel(lo: number, hi: number | null): string {
 }
 
 /** Why the ladder or the echo cannot show a real number right now, or `null` when the fit
- *  is ready to read (rule 17: a fit that cannot be read says so beside the control, never a
- *  silent absence). Shared by both, so the two cannot describe the same failure two ways.
+ *  is ready to read. A fit that cannot be read says so beside the control, never a silent
+ *  absence. Shared by both, so the two cannot describe the same failure two ways.
  *
- *  No reload advice on the error branch (#195): this sits inside an editor whose savebar
- *  may be holding unsaved policy edits, and a reload takes them with no ask -- the same
- *  reason the caps-and-grace read below states its own failure bare. */
+ *  No reload advice on the error branch: this sits inside an editor whose savebar may be
+ *  holding unsaved policy edits, and a reload takes them with no ask, the same reason the
+ *  caps-and-grace read below states its own failure bare. */
 function rewatchFitStatus(
   fit: RewatchOddsFit | undefined,
   isPending: boolean,
@@ -1310,9 +1304,9 @@ function rewatchFitStatus(
 }
 
 /** The library's own fitted rewatch ladder, read before the operator decides where to set
- *  the percentage below it. Not itself a sub-control (rule 41): it renders whenever the fit
- *  has something to show, switch on or off, since it is what the operator reads BEFORE
- *  turning the hold on. */
+ *  the percentage below it. Not itself a sub-control: it renders whenever the fit has
+ *  something to show, switch on or off, since it is what the operator reads BEFORE turning
+ *  the hold on. */
 function RewatchLadder({
   fit,
   isPending,
@@ -1350,11 +1344,11 @@ function rewatchEchoSentence(
   thresholdPct: number,
   mediaType: "movie" | "tv",
 ): string {
-  // Every clearing block counts, not just the leading run: the gate fires per block, and
-  // the merge only makes point RATES monotone -- an upper bound can invert across blocks
-  // of very different cohort sizes, and an echo that stopped at the first miss would then
-  // undercount what the gate actually protects (rule 62's class: the number beside a
-  // control derives from the same set the server acts on).
+  // Every clearing block counts, not just the leading run: the gate fires per block, and the
+  // merge only makes point RATES monotone. An upper bound can invert across blocks of very
+  // different cohort sizes, so an echo that stopped at the first miss would undercount what
+  // the gate actually protects. The number beside a control has to derive from the same set
+  // the server acts on.
   const sorted = [...fit.blocks].sort((a, b) => a.lo_days - b.lo_days);
   const cleared = sorted.filter((block) => block.upper_bound_pct >= thresholdPct);
   const protectedItems = cleared.reduce((sum, block) => sum + block.items, 0);
@@ -1396,7 +1390,7 @@ function rewatchEchoSentence(
  *  re-decides locally for `condemnAt`, so dragging the slider costs nothing.
  *
  *  `null` covers every state with nothing to say: no curve yet, still loading, or a failed
- *  read (`curve` undefined), and no scan at all (`"no_scan"`) -- this is a readout, not a
+ *  read (`curve` undefined), and no scan at all (`"no_scan"`). This is a readout, not a
  *  setting, so those states render nothing rather than a locked or error notice, and the
  *  slider keeps working exactly as it does without this sentence.
  *
@@ -1436,9 +1430,9 @@ export function PolicyEditor({
    *  is what separates an instruction to SCROLL from the report of where the page is scrolled to.
    *  A jump can arrive with this page already mounted: the safety banner is on every screen. */
   focus?: { section: PolicySectionId; nonce: number } | null;
-  /** Which policy is being edited. Movies and TV are tuned separately -- keep-last-N seasons and
-   *  season rank only make sense for TV -- so this decides both the controls the page draws and
-   *  the numbers in them. Owned by `App` for the same reason `section` is: it is half of where
+  /** Which policy is being edited. Movies and TV are tuned separately, since keep-last-N seasons
+   *  and season rank only make sense for TV, so this decides both the controls the page draws
+   *  and the numbers in them. Owned by `App` for the same reason `section` is: it is half of where
    *  the operator is, and a URL naming only the other half reopens the page with the wrong
    *  numbers on it. */
   mediaType: "movie" | "tv";
@@ -1454,17 +1448,17 @@ export function PolicyEditor({
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  // Save and Discard both unmount the bar holding the pressed button (#173). Declared here,
-  // above the `if (!draft)` return further down, because a hook below an early return is a
-  // different hook order on the renders that take it (rule 146).
+  // Save and Discard both unmount the bar holding the pressed button, so this hook is
+  // declared here, above the `if (!draft)` return further down, because a hook below an
+  // early return would give a different hook order on the renders that take it.
   const bar = useSavebarFocus();
   // Where focus lands when a leftover protection's switch removes its own row. Declared with
-  // the other focus hooks for rule 146's reason, and the fallback is Save because it is the
+  // the other focus hooks for the same reason, and the fallback is Save because it is the
   // only place it CAN be: `useRemovalFocus` looks for the marked control that took the removed
   // one's index, and only a retired row wears the marker, so the marked set is always empty
   // afterwards and the fallback is the whole answer here rather than an edge case. Save is the
-  // right target anyway -- the removal is a draft edit and pressing it is what makes the edit
-  // real, which is the same "stable neighbour and the only thing left to do" the hook's own
+  // right target anyway, since the removal is a draft edit and pressing it is what makes the
+  // edit real, the same "stable neighbour and the only thing left to do" the hook's own
   // add-a-row fallbacks are. It is mounted whenever this can fire: the body that carries a
   // leftover always arrives with a repair, and `dirty` counts repairs.
   const saveRef = useRef<HTMLButtonElement>(null);
@@ -1474,11 +1468,11 @@ export function PolicyEditor({
     queryFn: () => api.policy(mediaType),
   });
 
-  // The rewatch card's own fitted ladder and consequence echo (#554 stage 2), on both
-  // lanes: the hold half below now renders for TV too, since a TV body carries its own
-  // rewatch_odds gate row the same way a movie body does. Keyed and refetched on
-  // `mediaType` so a lane switch never shows the other lane's fit. Independent of `draft`
-  // -- it reads the last scan's frozen numbers, not anything a save would change.
+  // The rewatch card's own fitted ladder and consequence echo, on both lanes: the hold half
+  // below renders for TV too, since a TV body carries its own rewatch_odds gate row the same
+  // way a movie body does. Keyed and refetched on `mediaType` so a lane switch never shows the
+  // other lane's fit. Independent of `draft`, since it reads the last scan's frozen numbers,
+  // not anything a save would change.
   const {
     data: rewatchFit,
     isPending: rewatchFitPending,
@@ -1499,7 +1493,7 @@ export function PolicyEditor({
   }, [saved, draft]);
 
   // The delete-threshold slider's consequence sentence, read once per media type and
-  // re-decided locally for every position the operator drags to -- no debounce, since
+  // re-decided locally for every position the operator drags to. No debounce, since
   // `condemnConsequenceSentence` below just indexes the fetched rows. `isPending` and
   // `isError` are deliberately not read: this is a readout, not a setting, so a loading or
   // failed fetch renders nothing rather than a locked or error state, exactly like an
@@ -1510,8 +1504,8 @@ export function PolicyEditor({
   });
 
   // Pace and limits: a SEPARATE draft with a separate save. Un-hashed on the server, so
-  // changing a cap never voids a pending approval -- and deliberately media-type
-  // independent, so the Movies/TV toggle never re-seeds it.
+  // changing a cap never voids a pending approval, and deliberately media-type independent,
+  // so the Movies/TV toggle never re-seeds it.
   const { data: savedPace, isError: paceFailed } = useQuery({
     queryKey: ["profile"],
     queryFn: api.profile,
@@ -1540,11 +1534,11 @@ export function PolicyEditor({
   });
   // `settings_recovered` forces dirty for the same reason `fell_back` does on the policy half
   // (see the comment on `dirty` below): the caps on screen are the shipped starting ones, not
-  // what is stored, and the recovery notice tells the operator a scan will remove nothing until
-  // they check these and save. Without this the savebar never appeared, so there was no Save to
-  // press and the only way out was to change some value deliberately -- restoring the intended
-  // caps and saving them was impossible (B-6). Discard cannot clear it, which is right: there is
-  // no stored profile to go back to.
+  // what is stored, and the recovery notice tells the operator a scan will remove nothing
+  // until they check these and save. Without this, the savebar would never appear, so there
+  // would be no Save to press, and the only way out would be changing some value deliberately,
+  // with no way to restore the intended caps and save them. Discard cannot clear it, which is
+  // right: there is no stored profile to go back to.
   const paceDirty = useMemo(
     () =>
       pace !== null &&
@@ -1554,13 +1548,13 @@ export function PolicyEditor({
   );
 
   // Debounce the draft the simulator/validator run against, so dragging a slider fires one
-  // request when you stop -- not one per pixel. Combined with keepPreviousData below, this is
+  // request when you stop, not one per pixel. Combined with keepPreviousData below, this is
   // what stops the outcome box flickering while you adjust a weight.
   const [debounced, setDebounced] = useState<PolicyBody | null>(null);
   // The unknown-size allowance rides along on the same timer. It is not part of the policy at
-  // all -- it lives on the profile -- but its warning is anchored beneath the box that sets it,
-  // so the validator has to see the DRAFTED value or that warning describes something else
-  // (B-26). One timer, so dragging either the policy or this fires one request when you stop.
+  // all, since it lives on the profile, but its warning is anchored beneath the box that sets
+  // it, so the validator has to see the drafted value or that warning would describe something
+  // else. One timer, so dragging either the policy or this fires one request when you stop.
   const draftedUnmeasured = pace?.max_unmeasured_per_run ?? null;
   const [debouncedUnmeasured, setDebouncedUnmeasured] = useState<number | null>(null);
   useEffect(() => {
@@ -1584,13 +1578,13 @@ export function PolicyEditor({
 
   // Is the body those numbers describe actually an edit? The panel simulates on mount, before
   // anything has been touched, so "no title changes" on its own cannot tell the operator's
-  // inert edit from their untouched policy -- and the second reading would be the panel calling
+  // inert edit from their untouched policy, and the second reading would be the panel calling
   // a rule useless on the evidence of nobody having tried it yet.
   //
   // Against `debounced` rather than `draft`, so the sentence cannot lead its own figures by the
   // debounce and flip under a keystroke nothing has simulated yet. Raw JSON.stringify compares
-  // canonical forms for the same reason `dirty` below may (rule 39): the draft is re-seeded from
-  // the server's own response after each save. `dirty`'s forced `repairs` term is deliberately
+  // canonical forms for the same reason `dirty` below may: the draft is re-seeded from the
+  // server's own response after each save. `dirty`'s forced `repairs` term is deliberately
   // absent here: a repair is a reason to show a savebar, never evidence a rule was changed.
   const simulatedIsEdited = useMemo(
     () =>
@@ -1603,11 +1597,11 @@ export function PolicyEditor({
   // `debounced` is the body the REQUEST was made from, which is not the body the numbers on
   // screen came from: `keepPreviousData` keeps the previous answer rendered, `status` reads
   // "success" throughout, and this memo recomputes in the same commit the query key changes.
-  // So for one round trip -- 305 to 366 ms measured, and `docs/LEARNINGS.md` projects seconds
-  // on a large library -- `edited` described the new draft while `simulation` still answered
-  // the old one. The untouched policy always returns `changed_titles === 0`, so the FIRST edit
-  // of a session met "Your changes leave every title as it is." before anything had scored it.
-  // Rule 85: the claim waits for the answer it is about.
+  // So for one round trip (305 to 366 ms measured, and `docs/LEARNINGS.md` projects seconds on
+  // a large library), `edited` would describe the new draft while `simulation` still answered
+  // the old one. The untouched policy always returns `changed_titles === 0`, so without this,
+  // the FIRST edit of a session would meet "Your changes leave every title as it is." before
+  // anything had scored it. The claim waits for the answer it is about.
   const simulationIsSettled = !isPlaceholderData;
 
   // validatePolicy 422s when the policy is *provably* invalid (e.g. a dormancy floor under
@@ -1622,7 +1616,7 @@ export function PolicyEditor({
   });
 
   // Where these land is `WARNING_ANCHORS` above, which also says why claiming a field is a
-  // promise to render it (rules 42, 7/24).
+  // promise to render it.
   const allWarnings = useMemo(() => validation?.warnings ?? [], [validation]);
   // Which guards hold this render. The mount condition each one names is a checked fact, not
   // a claim about itself: the walk in `PolicyEditor.warnings.test.tsx` drives every guard both ways
@@ -1647,20 +1641,18 @@ export function PolicyEditor({
   const unanchoredWarnings = allWarnings.filter(
     (w) => !anchors.some((a) => anchorClaims(a, w.field)),
   );
-  // Read twice -- by the block under the protections list, and by every row in it, since each
+  // Read twice: by the block under the protections list, and by every row in it, since each
   // row's boxes describe themselves from the same list the block renders. One call, so the two
-  // ends cannot be handed different positions to number ids from (#189).
+  // ends cannot be handed different positions to number ids from.
   const gateWarnings = warningsAt("gates");
 
   // A background scan, so the "Scan now" button in the stale notice actually does something.
   const scanState = useScanStatus();
   const scanning = scanState?.running ?? false;
-  // No running->stopped effect here. This panel used to carry its own copy, invalidating
-  // `simulate`, `snapshot` and `validate` off its own ref -- the first two already refreshed by
-  // the shell's `useScanSettled`, and the third refreshed ONLY here, which is what let
-  // `SCAN_SETTLED_KEYS` claim to be the single place while missing a key that reads from the
-  // scan (#205, rule 79). All three are in that list now, the shell cannot be unmounted by a
-  // scan, and both read the same `["scanStatus"]` cache, so the transition is the same one.
+  // No running->stopped effect here. `simulate`, `snapshot` and `validate` all belong in the
+  // shell's `SCAN_SETTLED_KEYS` list, not in a second copy owned by this panel: the shell
+  // cannot be unmounted by a scan, and both read the same `["scanStatus"]` cache, so the
+  // transition is the same one either way.
 
   // A mutation, not a fire-and-forget async onClick: a "Scan now" that fails must say so
   // in the stale notice, or the button appears to do nothing at all.
@@ -1668,15 +1660,16 @@ export function PolicyEditor({
     mutationFn: () => api.startScan(),
     onSuccess: (started) => {
       queryClient.setQueryData(["scanStatus"], started);
-      // The press swaps the notice for a progress bar, which is a visual change and nothing else:
-      // the failure path speaks (`Notice` owns `role="alert"`) and the success path did not, so a
-      // scan that started and one that did nothing sounded alike (#173). Both sentences come from
-      // the panel that also shows them, since a reader lands on that heading in the next breath
-      // and one fact written in two files drifts (rule 144).
+      // The press swaps the notice for a progress bar, which is a visual change and nothing
+      // else. The failure path speaks (`Notice` owns `role="alert"`), so this announce call
+      // gives the success path the same spoken confirmation. Both sentences come from the
+      // panel that also shows them, since a reader lands on that heading in the next breath
+      // and one fact written in two files can drift.
       //
-      // It branches because the two cases are not the same news. When a scan was already running,
-      // the bar the operator is now watching belongs to a scan that started BEFORE they saved, so
-      // "rescanning to apply your changes" would be wrong about the one thing it claims (#177).
+      // It branches because the two cases are not the same news. When a scan was already
+      // running, the bar the operator is now watching belongs to a scan that started BEFORE
+      // they saved, so "rescanning to apply your changes" would be wrong about the one thing
+      // it claims.
       announce(started.followup_queued ? rescanQueuedLead() : `${rescanHeading()}.`);
     },
   });
@@ -1688,10 +1681,10 @@ export function PolicyEditor({
       // showing when the response lands: a mid-flight Movies/TV toggle must not write
       // one type's policy into the other type's cache.
       const savedType = policy.body.media_type === "tv" ? "tv" : "movie";
-      // The savebar unmounting is the only thing that used to happen here, and an operator
-      // using a screen reader cannot perceive an absence: no message, then a lost focus point.
-      // Named for the half that saved, because the other half saves separately and its own
-      // sentence follows. On the server's answer, never on the press (rule 85).
+      // Without this, the savebar unmounting would be the only signal, and an operator using
+      // a screen reader cannot perceive an absence: no message, then a lost focus point. Named
+      // for the half that saved, because the other half saves separately and its own sentence
+      // follows. Said on the server's answer, never on the press.
       announce(
         savedType === "tv"
           ? t("policyEditor.announce.tvPolicySaved")
@@ -1707,20 +1700,17 @@ export function PolicyEditor({
       // Settings -> Lists derives each row's "how Policy uses it" line from the active policy
       // server-side, so a save that softened or removed a list's keep rule changes that answer
       // with no client-side signal. Global `staleTime` is 30s and focus refetching is off, so
-      // without this the operator edits a rule here, walks back, and reads "Keeps every title
-      // on it" for a list nothing now protects with (rule 79).
+      // without this the operator would edit a rule here, walk back, and read "Keeps every
+      // title on it" for a list nothing now protects with.
       void queryClient.invalidateQueries({ queryKey: ["lists-configured"] });
       // The threshold curve reads the saved coverage floor server-side, so a save moves the
       // consequence sentence at save time, before the rescan below lands. `useScanSettled`
-      // covers the scan half; this covers the save half (rule 79).
+      // covers the scan half. This covers the save half.
       void queryClient.invalidateQueries({ queryKey: ["threshold-curve"] });
       // Apply the saved policy to the review queue by re-scanning in the background. The
-      // queue and the simulator read the last snapshot's stored verdicts, which were
-      // produced by the OLD policy; a rescan re-scores the library under the new one, and the
-      // shell's `useScanSettled` refreshes the simulator and queue when it lands. That used to
-      // read "the running->stopped effect above", which this panel carried until its copy was
-      // folded into `SCAN_SETTLED_KEYS` -- so the file told a reader to look 36 lines up for an
-      // effect the line up there says outright is gone.
+      // queue and the simulator read the last snapshot's stored verdicts, which were produced
+      // by the OLD policy. A rescan re-scores the library under the new one, and the shell's
+      // `useScanSettled` refreshes the simulator and queue when it lands.
       // Idempotent server-side: if a scan is already running this just follows it.
       startScan.mutate();
     },
@@ -1730,11 +1720,10 @@ export function PolicyEditor({
   // is stored and the savebar has to offer the Save that replaces it.
   //
   // One term for every repair, and it counts rather than naming: a repair kind the server
-  // adds raises the savebar here on the day it ships, before anyone writes copy for it. The
-  // shape this replaced named three of the four, so a body whose list protections had been
-  // converted opened CLEAN -- the page held no Save, while every scan degraded telling the
-  // operator to go and press it (#516). Discard cannot clear it, which is right: the stored
-  // body is the one that does not load.
+  // adds raises the savebar here on the day it ships, before anyone writes copy for it.
+  // Naming repairs one by one instead would leave a body with an unnamed repair opening
+  // clean, with no Save, while every scan degrades telling the operator to go and press it.
+  // Discard cannot clear it, which is right: the stored body is the one that does not load.
   const repairs = useMemo(() => saved?.repairs ?? [], [saved]);
   const dirty = useMemo(
     () =>
@@ -1772,8 +1761,8 @@ export function PolicyEditor({
   //
   // The confirm stays HERE while the value it commits lives in `App`: `dirty` is this
   // component's, and the draft it guards is too. `App` is handed the switch only once the
-  // operator has said the edits can go, so the address bar cannot name a policy that is not on
-  // screen (rule 146).
+  // operator has said the edits can go, so the address bar cannot name a policy that is not
+  // on screen.
   const confirmSwitch = useSwitchConfirm(mediaType, dirty, onMediaTypeChange);
 
   // Section jump targets for the rail. Memoized (the refs themselves are stable) so the
@@ -1786,12 +1775,12 @@ export function PolicyEditor({
     () => ({ flags: flagsRef, kept: keptRef, pace: paceRef, deletion: deletionRef }),
     [],
   );
-  // A rail click and a cross-page jump both STATE a section. The spy below measures one, and the
-  // two disagree wherever a click lands on the last screenful: scrolling to "Pace and limits"
-  // reaches the end of the document, and that is the same position as scrolling down to read
-  // Deletion. The rects are identical, so the spy cannot tell them apart and it overwrote the
-  // click, marking a section nobody asked for (#795). What was stated holds until the page moves
-  // again, which is the one thing that does separate the two.
+  // A rail click and a cross-page jump both STATE a section. The spy below measures one, and
+  // the two disagree wherever a click lands on the last screenful: scrolling to "Pace and
+  // limits" reaches the end of the document, and that is the same position as scrolling down
+  // to read Deletion. The rects are identical, so the spy cannot tell them apart on its own,
+  // and would overwrite the click with a section nobody asked for. What was stated holds until
+  // the page moves again, which is the one thing that does separate the two.
   // The position a click or a jump left the page at. Which section it named is already in
   // `section`, so only the position is kept.
   const statedAt = useRef<number | null>(null);
@@ -1821,23 +1810,23 @@ export function PolicyEditor({
   }, [focus, sectionRefs, draft, goToSection]);
 
   // The rail states the section being READ, which is what its aria-current="page" claims.
-  // Until this effect existed that claim only held for someone who had clicked the rail:
-  // scrolling down to Deletion and arming left it marking "What flags a title" as current,
-  // for sighted and assistive readers alike (U-18, rule 24).
+  // Without this effect, that claim would only hold for someone who had clicked the rail:
+  // scrolling down to Deletion and arming would leave it marking "What flags a title" as
+  // current, for sighted and assistive readers alike.
   //
-  // The line a heading has to reach is the offset the rail's own jumps land on, read back
-  // off the computed scroll-margin-top the stylesheet puts on .policy-section -- one
-  // declaration, so a jump and the highlight can never drift, and the phone's taller
-  // wrapped rail is handled for free (rule 67).
+  // The line a heading has to reach is the offset the rail's own jumps land on, read back off
+  // the computed scroll-margin-top the stylesheet puts on .policy-section. One declaration, so
+  // a jump and the highlight can never drift, and the phone's taller wrapped rail is handled
+  // for free.
   //
   // A scroll listener rather than an IntersectionObserver, deliberately: an observer only
   // fires when a heading CROSSES the line, and the last section's heading never can. The
-  // document ends first, so Deletion -- the section that arms a removal, and the one this
-  // finding named -- would have stayed unmarkable. Measuring from positions has no such
-  // dead zone. The cost is four rect reads, at most once a frame, and only while this page
-  // is mounted; an unchanged section is a React state bail-out, not a re-render. That still
-  // holds now the section lives in `App`: a scroll frame that reports the section already on
-  // screen hands the same value to the same setter, and React drops it without rendering.
+  // document ends first, so Deletion, the section that arms a removal, would have stayed
+  // unmarkable. Measuring from positions has no such dead zone. The cost is four rect reads,
+  // at most once a frame, and only while this page is mounted. An unchanged section is a
+  // React state bail-out, not a re-render. That still holds now the section lives in `App`:
+  // a scroll frame that reports the section already on screen hands the same value to the
+  // same setter, and React drops it without rendering.
   //
   // `section` is deliberately not a dependency below. A dependency re-registers the listeners,
   // and registering runs `pick` again, which on a page too short to scroll answers "the first
@@ -1882,8 +1871,8 @@ export function PolicyEditor({
 
     let frame = 0;
     const onScroll = () => {
-      // Scroll fires far faster than the rail can change, so coalesce to one measurement
-      // per frame -- and never read layout inside the event itself.
+      // Scroll fires far faster than the rail can change, so coalesce to one measurement per
+      // frame, and never read layout inside the event itself.
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
@@ -1917,9 +1906,10 @@ export function PolicyEditor({
   // Dividing by the built-ins alone would overstate every built-in signal's share and leave
   // the owner's rules looking like they cost the score nothing.
   // Not memoized, and cannot be: everything from here down runs after the `if (!draft)` return
-  // above, where a hook would change the hook order between renders. Each is a single pass over
-  // a list of at most a dozen weights, so the cost that mattered was the RE-RENDER these fed,
-  // and that is what the split into PolicyRuleEditors and policyPresets addresses (R-2).
+  // above, where a hook would change the hook order between renders. Each is a single pass
+  // over a list of at most a dozen weights, so the cost that mattered was the re-render these
+  // fed, which is what splitting PolicyRuleEditors and policyPresets into their own modules
+  // addresses.
   const builtInWeight = draft.signals.reduce((sum, s) => sum + s.weight, 0);
   const yourWeight = draft.custom_condemn.reduce((sum, c) => sum + c.weight, 0);
   const totalWeight = builtInWeight + yourWeight;
@@ -1936,12 +1926,12 @@ export function PolicyEditor({
       : null;
   const validatorDown = invalidError !== null && invalidMessage === null;
 
-  // The savebar saves two INDEPENDENT things, so a problem in one must not hold the other
-  // (PR-7). Pace and limits are un-hashed and are not part of the policy at all -- this file's
-  // header is explicit that tightening a cap never voids an approval -- yet a policy off the
-  // 100-point budget used to disable the one Save button, so a grace-period edit could not be
-  // written until an unrelated weight was fixed. One save affordance still (rule 43): the
-  // button writes whichever halves are actually savable, and says which one it is leaving.
+  // The savebar saves two INDEPENDENT things, so a problem in one must not hold the other.
+  // Pace and limits are un-hashed and are not part of the policy at all, since this file's
+  // header is explicit that tightening a cap never voids an approval, so a policy off the
+  // 100-point budget must not disable the Save button for a grace-period edit too. One save
+  // affordance still: the button writes whichever halves are actually savable, and says
+  // which one it is leaving.
   const policyBlocked = dirty && (Boolean(invalidMessage) || pointsLeft !== 0);
   const willSavePolicy = dirty && !policyBlocked;
   const willSavePace = paceDirty;
@@ -1952,10 +1942,10 @@ export function PolicyEditor({
   // bar saying one thing. Points are named first when both are true, because that meter is the
   // one right beside this.
   //
-  // The 422 clause quotes the notice's own heading rather than pointing anywhere. It used to send
-  // the operator to "the top of this page" for a notice that renders near the bottom of the second
-  // section, and a direction that survives one layout change is worth less than the words already
-  // on screen (#178).
+  // The 422 clause quotes the notice's own heading rather than pointing anywhere: a phrase
+  // like "the top of this page" for a notice that renders near the bottom of the second
+  // section would need updating on every layout change, where the words already on screen do
+  // not.
   const policyHeldBecause =
     pointsLeft !== 0
       ? t("policyEditor.savebar.becausePoints")
@@ -1966,8 +1956,8 @@ export function PolicyEditor({
   const otherKind =
     mediaType === "tv" ? t("policyEditor.mediaKind.movie") : t("policyEditor.mediaKind.tv");
 
-  // The rewatch card's lane-dependent copy. `bar` also serves as the screen reader's
-  // label (rule 21: capitalization has no screen-reader function).
+  // The rewatch card's lane-dependent copy. `bar` also serves as the screen reader's label,
+  // since capitalization has no screen-reader function.
   const rewatchCopy = {
     name: t("policyEditor.rewatchCopy.name", { mediaType }),
     help: t("policyEditor.rewatchCopy.help", { mediaType }),
@@ -2015,18 +2005,17 @@ export function PolicyEditor({
     // "Untouched", never "played": this gate's clock runs from the last play only when
     // there IS one, and otherwise from the day the file arrived (engine/dormancy.py's
     // reference_instant). It therefore keeps titles nobody has ever played, so a clause
-    // saying "played in the last N" was false about exactly the items it protects most --
-    // the same claim the review queue's chip used to make, on the sentence this comment
-    // block below calls the one an operator scans before arming (rules 21/72).
+    // saying "played in the last N" would be false about exactly the items it protects most,
+    // on the sentence an operator scans before arming.
     dormancy
       ? t("policyEditor.intent.unwatchedLessThan", { span: humanDays(dormancy.threshold) })
       : null,
   ].filter((c): c is string => c !== null);
-  // TV's protections are built the same way, and for the same reason: every clause is
-  // pushed only when its own switch is on. The line used to assert two of them flat, so
-  // a policy with the season floor at 0 and mid-binge holding turned OFF still read
-  // "always keeps the newest 0 seasons of a show and anyone's mid-binge" -- both false,
-  // on the sentence an operator scans before arming (U-3, rules 53/61).
+  // TV's protections are built the same way, and for the same reason: every clause is pushed
+  // only when its own switch is on. Asserting a clause unconditionally would read "always
+  // keeps the newest 0 seasons of a show and anyone's mid-binge" for a policy with the season
+  // floor at 0 and mid-binge holding turned off, both false, on the sentence an operator scans
+  // before arming.
   //
   // The gate clauses above are deliberately NOT folded in here: they read as conditions
   // ("keeps anything watched by 3+ people") and these read as things ("keeps the newest 2
@@ -2041,12 +2030,12 @@ export function PolicyEditor({
   ].filter((c): c is string => c !== null);
   // Branch on the caps switch: with caps off the executor skips the per-run and rolling
   // checks entirely, so claiming a hard "at most N per run" here would contradict the
-  // caps-off warning below and the run itself (B-2). The switch does not touch the grace
-  // countdown, which is a notice rather than a hold either way (services/grace.py).
+  // caps-off warning below and the run itself. The switch does not touch the grace countdown,
+  // which is a notice rather than a hold either way (services/grace.py).
   // A failed profile read says nothing about caps at all. The neutral "within your caps"
   // wording covers the still-LOADING case only: asserting caps are in force while the section
-  // below says "Couldn't load these settings" is the contradiction B-29 names, on the one
-  // sentence an operator reads before arming (rules 53/65).
+  // below says "Couldn't load these settings" would be a contradiction, on the one sentence
+  // an operator reads before arming.
   const paceClause = paceFailed
     ? null
     : !pace
@@ -2065,7 +2054,7 @@ export function PolicyEditor({
     <section className="editor">
       <div className="editor-controls">
         {/* The context band: which policy you're editing, colored by the arr that runs
-            it -- Radarr (gold) for movies, Sonarr (blue) for TV, reusing the Settings
+            it, Radarr (gold) for movies, Sonarr (blue) for TV, reusing the Settings
             service-badge tokens. The switch lives inside it so there's never any doubt
             which policy the controls below belong to, and the blurb sits under the title. */}
         <div className={`policy-context ${mediaType === "tv" ? "tv" : "movie"}`}>
@@ -2184,7 +2173,7 @@ export function PolicyEditor({
           <div className="intent-row">
             <span className="muted intent-label">{t("policyEditor.starting.label")}</span>
             {/* Hand-tuned drafts match no preset, so "custom" matches no option and no
-                pill reads as active -- the same honesty the badge has always had. */}
+                pill reads as active, the same honesty the badge has always had. */}
             <Segmented
               value={preset ?? "custom"}
               onChange={(id) => {
@@ -2227,18 +2216,19 @@ export function PolicyEditor({
             min={1}
             max={100}
             // The wrapping <label> encloses the help paragraph too, so without this the name is
-            // the label AND the help run together -- read out in full on every value change, of
+            // the label AND the help run together, read out in full on every value change, of
             // the one control that sets the score a title is condemned at. The signal sliders
             // above already name themselves this way.
             aria-label={t("policyEditor.flags.condemnAtLabel")}
-            // The warning about this threshold is rendered directly below and was reachable
-            // only by leaving the slider to go looking for it (#174).
+            // The warning about this threshold is rendered directly below, and this binding
+            // makes it reachable from the slider instead of requiring the operator to go
+            // looking for it.
             aria-describedby={warningsDescribing("condemn_at", warningsAt("condemn_at"))}
             value={draft.condemn_at}
             onChange={(e) => update({ condemn_at: Number(e.target.value) })}
           />
           <span className="help">{t("policyEditor.flags.condemnAtHelp")}</span>
-          {/* What the current position means, off this server's own history -- a readout, not
+          {/* What the current position means, off this server's own history: a readout, not
               a setting, so it renders nothing while the curve has nothing to say (no scan yet,
               still loading, or a failed read) rather than a locked or error state. */}
           {condemnConsequence && <p className="condemn-consequence">{condemnConsequence}</p>}
@@ -2255,8 +2245,8 @@ export function PolicyEditor({
             min={0}
             max={10000}
             step={500}
-            // Same reason as the threshold slider above (rule 72): the wrapping <label> takes in
-            // the help text, so the name was the whole paragraph.
+            // Same reason as the threshold slider above: the wrapping <label> takes in the
+            // help text, so without this the name would be the whole paragraph.
             aria-label={t("policyEditor.flags.coverageFloorLabel")}
             value={draft.coverage_floor_bp}
             onChange={(e) => update({ coverage_floor_bp: Number(e.target.value) })}
@@ -2392,9 +2382,9 @@ export function PolicyEditor({
                     width="narrow"
                     ariaLabel={t("policyEditor.season.keepNewestAriaLabel")}
                     // This anchor's block serves two controls, so each takes only the warnings
-                    // about its own field. Handed the whole list, this box spoke the complaint
-                    // about the scope control below -- a sentence ending "or switch this to
-                    // 'All shows'", where "this" resolves to a box offering no such option.
+                    // about its own field. Handed the whole list, this box would speak the
+                    // complaint about the scope control below, a sentence ending "or switch this
+                    // to 'All shows'", where "this" resolves to a box offering no such option.
                     describedBy={warningsDescribing("keep_last", warningsAt("keep_last"), [
                       "keep_last_seasons",
                     ])}
@@ -2456,13 +2446,13 @@ export function PolicyEditor({
                         suffix={t("policyEditor.units.days")}
                         min={0}
                         // Matches `PolicyIn`'s ceiling, so the box clamps instead of the
-                        // save coming back 422 (rule 131). Far past any watch history: 0
-                        // is what "hold forever" is spelled as.
+                        // save coming back 422. Far past any watch history: 0 is what "hold
+                        // forever" is spelled as.
                         max={36500}
                         width="narrow"
                         ariaLabel={t("policyEditor.season.holdDaysAriaLabel")}
                         // One anchor, one field, one box: this is the control the warning's
-                        // remedy names, so it takes the whole list unfiltered (#174).
+                        // remedy names, so it takes the whole list unfiltered.
                         describedBy={warningsDescribing("in_progress", warningsAt("in_progress"))}
                         onChange={(v) => update({ in_progress_hold_days: Math.max(0, v) })}
                       />
@@ -2486,7 +2476,7 @@ export function PolicyEditor({
                   </>
                 )}
                 {/* Outside the subtree above on purpose: one mount condition, so the anchor
-                    can declare it (rule 42). */}
+                    can declare it. */}
                 <WarnBlock anchor="in_progress" warnings={warningsAt("in_progress")} />
               </li>
 
@@ -2511,13 +2501,13 @@ export function PolicyEditor({
                       update({ protect_incomplete_seasons })
                     }
                   />
-                  {/* Sonarr reports one thing here -- it wants episodes it does not have
+                  {/* Sonarr reports one thing here: it wants episodes it does not have
                       (`wanted_episode_count > episode_file_count`, see
-                      `clients/sonarr_stats.py`) -- and an active download and an ended show
+                      `clients/sonarr_stats.py`), and an active download and an ended show
                       permanently short one aired episode look identical in it. So the switch
                       is named for what was seen, and the help text names both causes rather
-                      than promising a download is under way (rule 21, and rule 72 with
-                      `services/season_pruning.py`'s reason for the same check). */}
+                      than promising a download is under way. `services/season_pruning.py`
+                      gives the same reasoning for the same check. */}
                   <span className="rule-name">{t("policyEditor.season.incompleteLabel")}</span>
                 </label>
                 <p className="help rule-help">{t("policyEditor.season.incompleteHelp")}</p>
@@ -2528,9 +2518,9 @@ export function PolicyEditor({
                   <Switch
                     checked={draft.flag_keep_conflicts}
                     onChange={(flag_keep_conflicts) => update({ flag_keep_conflicts })}
-                    // The warning about shows older than the watch mirror (#224) is anchored
-                    // here, and this is the control it is about. Scoped to its own field so
-                    // this switch does not also speak the seasons box's complaint.
+                    // The warning about shows older than the watch mirror is anchored here,
+                    // and this is the control it is about. Scoped to its own field so this
+                    // switch does not also speak the seasons box's complaint.
                     describedBy={warningsDescribing("keep_last", warningsAt("keep_last"), [
                       "flag_keep_conflicts",
                     ])}
@@ -2601,10 +2591,8 @@ export function PolicyEditor({
             </>
           )}
 
-          {/* The hold, stage 2's opt-in hard companion (#554): the grouped card's second
-              half, on both lanes now -- same grammar as movies, per "Approved with the
-              mockups, 2026-08-13" in docs/history/REWATCH_PLAN.md. Wired to draft.gates the
-              same way RatingFloorRow is above, by index. */}
+          {/* The hold: the grouped card's second half, on both lanes, with the same grammar
+              as movies. Wired to draft.gates the same way RatingFloorRow is above, by index. */}
           {(() => {
             const gi = draft.gates.findIndex((g) => g.gate === "rewatch_odds");
             const hold = gi >= 0 ? draft.gates[gi] : undefined;
@@ -2682,13 +2670,13 @@ export function PolicyEditor({
 
         {/* A validation failure is an ERROR (red): this policy cannot be saved as-is.
 
-            `standing` on both of these, for the reason `WarnBlock` above already gives and by
-            rule 72, since all three read the same query: `["validate", debounced]` is keyed on
-            the draft, so it refires as the operator types and this text changes inside the
-            region rather than mounting once. Neither answers a press -- Save is disabled while
-            `invalidMessage` holds, so there is no refused press for the red one to be the reply
-            to. The savebar below says which halves it will write, and the failures that answer
-            an actual Save are its own, further down, and stay alerts. */}
+            `standing` on both of these, for the reason `WarnBlock` above already gives: all
+            three read the same query, `["validate", debounced]` keyed on the draft, so it
+            refires as the operator types and this text changes inside the region rather than
+            mounting once. Neither answers a press, since Save is disabled while
+            `invalidMessage` holds, so there is no refused press for the red one to be the
+            reply to. The savebar below says which halves it will write, and the failures that
+            answer an actual Save are its own, further down, and stay alerts. */}
         {invalidMessage && (
           <Notice tone="error" standing>
             <strong>{t("policyEditor.validation.cantSaveThisPrefix")}</strong> {invalidMessage}
@@ -2735,7 +2723,7 @@ export function PolicyEditor({
 
         {pace === null ? (
           paceFailed ? (
-            // No reload advice (#195): this sits inside an editor whose savebar may be holding
+            // No reload advice: this sits inside an editor whose savebar may be holding
             // unsaved policy edits, and a reload takes them with no ask.
             <Notice tone="error">{t("policyEditor.load.failedNoReload")}</Notice>
           ) : (
@@ -2752,7 +2740,7 @@ export function PolicyEditor({
             </label>
             <p className="help pace-approval-help">{t("policyEditor.pace.limitHelp")}</p>
             {/* `standing`: seeded from the stored profile, so it paints on load whenever caps are
-                saved off, and after that it follows the Switch directly above it -- a control
+                saved off, and after that it follows the Switch directly above it, a control
                 whose own state already says which way it went. */}
             {!pace.caps_enabled && (
               <Notice tone="warn" inline standing>
@@ -2763,7 +2751,7 @@ export function PolicyEditor({
             {/* The four caps as a 2x2 matrix: titles / disk freed down the side, per run /
                 per 30 days across the top. The headers carry what four labels and four help
                 lines used to, and the fixed grid tracks keep the boxes lined up. Hidden,
-                not disabled, while the caps are off -- the same gates-are-hidden grammar the
+                not disabled, while the caps are off, the same gates-are-hidden grammar the
                 rest of the editor uses. */}
             {pace.caps_enabled && (
               <>
@@ -2852,8 +2840,8 @@ export function PolicyEditor({
                 />
                 {/* The clause about deleting is the only one an operator reads BEFORE
                     raising this, since the server's warning fires once it is already above
-                    zero. Without it the help explained a keep and the control did the
-                    opposite (#688). */}
+                    zero. Without it, the help would describe a keep while the control does
+                    the opposite. */}
                 <span className="help">{t("policyEditor.pace.unmeasuredHelp")}</span>
                 <WarnBlock
                   anchor="max_unmeasured_per_run"
@@ -2876,8 +2864,8 @@ export function PolicyEditor({
         <p className="blurb">{t("policyEditor.deletion.blurb")}</p>
         <DeletionToggle />
 
-        {/* THE save bar: one place to save whatever is dirty -- the policy draft, the pace
-            draft, or both (a preset stages both). Pinned to the viewport bottom while it
+        {/* THE save bar: one place to save whatever is dirty (the policy draft, the pace
+            draft, or both, since a preset stages both). Pinned to the viewport bottom while it
             has something to say, so Save is never a scroll away from the edit. */}
         {(dirty || paceDirty) && (
           <div className="savebar">
@@ -2893,7 +2881,7 @@ export function PolicyEditor({
               </strong>
               <br />
               {/* What Save will ACTUALLY write, not what is merely dirty: a held-back policy
-                  half must not be described as applying on the next scan (PR-7). */}
+                  half must not be described as applying on the next scan. */}
               {willSavePolicy && willSavePace
                 ? `${appliesOnNextScan()} ${t("policyEditor.savebar.paceAppliesImmediately")}`
                 : willSavePolicy
@@ -2957,7 +2945,7 @@ export function PolicyEditor({
               className="primary"
               ref={saveRef}
               // Enabled when EITHER half can be written. A blocked policy no longer holds
-              // pace and limits hostage (PR-7); the line above says which half is waiting.
+              // pace and limits hostage. The line above says which half is waiting.
               disabled={(!willSavePolicy && !willSavePace) || saving}
               onClick={() => {
                 bar.leaving();
@@ -3024,5 +3012,5 @@ export function PolicyEditor({
 }
 
 // Re-exported so the preset helpers keep their old import path while callers and tests move
-// over to ./policyPresets, which now owns them (R-2).
+// over to ./policyPresets, which now owns them.
 export { weightsMatchMix } from "./policyPresets";

@@ -1,18 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The one way anything in the app opens the in-app docs. It lived inside `PolicyEditor.tsx`
-// while that page was the only caller, and moved here when the scan notice became the second
-// one: a copied button is what rule 18 and rule 72 are about, and its two styles (`.doc-help`,
-// `.doc-learn`) were already in the shared stylesheet rather than in a policy-editor block.
+// The one way anything in the app opens the in-app docs. A second caller copying this button
+// would duplicate it instead of sharing it, so it lives here rather than inside any one
+// page. Its two styles (`.doc-help`, `.doc-learn`) live in the shared stylesheet rather than
+// in a policy-editor block.
 
 import type { ReactNode } from "react";
 
 import { useDocs } from "./DocsContext";
 import { getDoc } from "./registry";
 
-/** The question mark that rides in a `.doc-help` button. Shared for the same reason the button
- *  is: it was inline JSX at the policy editor's Help, and the second caller would have copied
- *  eleven lines of path data to match it. */
+/** The question mark that rides in a `.doc-help` button. Shared for the same reason the
+ *  button is shared: a second caller would otherwise copy this SVG's path data to match it. */
 export function HelpIcon() {
   return (
     <svg
@@ -61,7 +60,7 @@ export function DocLink({
  *  opening an empty modal is worse than no button.
  *
  *  Its label is the page's own title rather than a phrase written here, so the button and the
- *  thing it opens cannot disagree (rule 66). */
+ *  thing it opens cannot disagree. */
 export function DegradedDocLink({ doc }: { doc: string | null }) {
   const page = doc ? getDoc(doc) : undefined;
   if (!page) return null;

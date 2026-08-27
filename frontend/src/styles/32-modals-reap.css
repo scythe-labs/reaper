@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The modal shell, the reap sheet, the reap bar and its result. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* --- Modals: the shared shell (ModalShell.tsx), then the reap sheet ---------------------- */
+ * The modal shell, the reap sheet, the reap bar and its result. See `../index.css` for how
+ * this file fits into the stylesheet's load order. */
+/* Modals: the shared shell (ModalShell.tsx), then the reap sheet. */
 .modal-scrim {
   position: fixed;
   inset: 0;
@@ -18,16 +18,16 @@
   width: min(560px, 100%);
   /* dvh, not vh: on mobile browsers vh resolves to the toolbar-hidden viewport, so a
      centered delete-confirm modal could push its actions off-screen. dvh tracks the actually
-     visible area -- matching the .why mobile sheet fix. */
+     visible area, matching the .why mobile sheet fix. */
   max-height: 88dvh;
   /* Scroll only on the block axis. A too-wide child (a long root-folder path in the service
      editor's .plex-map-grid) must never make the panel pan sideways on touch. Content is sized
-     to fit, so this clips nothing; it forecloses the horizontal float for good. (.docs-modal
+     to fit, so this clips nothing. It just rules out a sideways scroll entirely. (.docs-modal
      sets its own overflow and is unaffected.) */
   overflow-x: hidden;
   overflow-y: auto;
-  /* The panel is the scroll container; keep a boundary scroll from chaining out to the
-     page behind the scrim (which ModalShell also freezes while the modal is up). */
+  /* The panel is the scroll container. This keeps a boundary scroll from chaining out to
+     the page behind the scrim (which ModalShell also freezes while the modal is up). */
   overscroll-behavior: contain;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -74,8 +74,7 @@
 .dry-ok {
   margin: 0.8rem 0 0.2rem;
   /* The "dry run passed" line is a positive/protect result, so it uses the same
-   * theme-aware success token as every other green in the app -- the old --spare
-   * variable was never defined and silently fell back to an off-theme literal. */
+   * theme-aware success token as every other green in the app. */
   color: var(--protect);
   font-size: var(--text-base);
 }
@@ -110,13 +109,12 @@
   font-size: var(--text-lg);
   box-sizing: border-box;
 }
-/* The red border alone is NOT the focus indicator. This selector is 0-2-0, so it outranks
-   the global :focus-visible ring (0-1-0), and the `outline: none` that used to sit here
-   left a keyboard operator no visible focus at all on the one field that arms a real
-   removal. It now wears the control standard's own ring (see the top of this file), in the
-   accent rather than the red, so it reads as focus against the border rather than merging
-   with it (U-4, agent rule 18: every `outline: none` ships its replacement in the same
-   change). */
+/* The red border alone is not the focus indicator. This selector is 0-2-0, so it outranks
+   the global :focus-visible ring (0-1-0), which would otherwise leave a keyboard operator
+   with no visible focus at all on the one field that arms a real removal. This rule wears
+   the control standard's own ring (see the top of this file) in the accent rather than the
+   red, so focus reads clearly against the border instead of merging with it. Any
+   `outline: none` on this field must ship its replacement focus ring in the same change. */
 .reap-confirm-input:focus {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
@@ -133,10 +131,10 @@
   margin: var(--space-lg) var(--space-3xl);
 }
 
-/* --- A running reap: live progress and the graceful Stop -----------------------------------
-   Stop follows the keep-first grammar: it is the SAFE action ("keep the rest"), so it wears
-   the green protect invite like Spare, never red -- red means delete everywhere else. Fixed
-   width so "Stop" -> "Stopping…" never resizes it. */
+/* A running reap: live progress and the graceful Stop. Stop follows the keep-first grammar:
+   it is the safe action ("keep the rest"), so it wears the green protect invite like Spare,
+   never red, since red means delete everywhere else. Fixed width so "Stop" -> "Stopping…"
+   never resizes it. */
 .stop-btn {
   min-width: 8.2rem;
   border-color: var(--protect);
@@ -162,9 +160,9 @@
   color: var(--muted);
 }
 /* The reap indicator's own spinner: it rides the parent's currentColor (red while deleting,
-   gray while stopping), so it is SCOPED to .reap-running. An unscoped `.spinner` here would
+   gray while stopping), so it is scoped to .reap-running. An unscoped `.spinner` here would
    redefine the shared spinner (top of file) and silently clobber .spinner-lg / .spinner-xl
-   everywhere -- a naming collision, not a second spinner. */
+   everywhere: a naming collision, not a second spinner. */
 .reap-running .spinner {
   flex: none;
   width: 14px;
@@ -205,8 +203,8 @@
   transition: width 0.4s var(--ease);
 }
 
-/* --- The app-wide reap bar: Stop and the count on every screen, so a run you navigated away
-   from is still stoppable. Armed (red) tone like the safety banner. -------------------------- */
+/* The app-wide reap bar: Stop and the count on every screen, so a run you navigated away
+   from is still stoppable. Armed (red) tone like the safety banner. */
 .reap-bar {
   position: relative;
   overflow: hidden;
@@ -274,9 +272,8 @@
   background: var(--condemn);
   transition: width 0.4s var(--ease);
 }
-/* Only what this file declares. `.spinner` and `.why-loading` used to be stopped from here
-   too, far from the rules that start them -- see the note in 06-spinner.css for what that
-   cost. */
+/* Only what this file declares. `.spinner` and `.why-loading` each stop beside their own
+   rule instead. See the note in 06-spinner.css for why. */
 @media (prefers-reduced-motion: reduce) {
   .reap-running .spinner {
     animation: none;
@@ -287,7 +284,7 @@
   }
 }
 
-/* --- The reap result: a per-item checklist, like the why-panel's ticks ------------------- */
+/* The reap result: a per-item checklist, like the why-panel's ticks. */
 .reap-result {
   margin-top: var(--space-3xl);
   padding-top: var(--space-3xl);
@@ -332,8 +329,8 @@
   display: block;
   font-weight: var(--weight-semi);
   margin-bottom: var(--space-sm);
-  /* The title, or the media key when there is no title -- a machine key with nothing to break
-     on, on the screen that confirms a deletion (rule 139). */
+  /* The title, or the media key when there is no title: a machine key with nothing to break
+     on, on the screen that confirms a deletion. */
   overflow-wrap: anywhere;
 }
 .reap-checks {
@@ -361,10 +358,9 @@
   color: var(--condemn);
 }
 
-/* ---- the what-changed modal (About) ------------------------------------------ */
-/* GitHub release notes are arbitrary markdown from outside the app: hold their type
-   to the app's scale, keep every heading below the modal's own h2, and give the long
-   unbroken PR URLs a break opportunity (rule 139). */
+/* The what-changed modal (About). GitHub release notes are arbitrary markdown from outside
+   the app: hold their type to the app's scale, keep every heading below the modal's own h2,
+   and give the long unbroken PR URLs a break opportunity. */
 .changes-notes {
   font-size: var(--text-md);
   overflow-wrap: anywhere;

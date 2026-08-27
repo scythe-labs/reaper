@@ -7,10 +7,10 @@
 //     their place and raise a nudge they can act on;
 //   - otherwise refresh quietly.
 //
-// Everything is derived from one fact -- "the list is behind the newest scan" -- so ANY
-// refetch that pulls the latest snapshot (a hand override, a filter change, Show latest)
-// clears the whole thing on its own. There is no dismiss flag the app has to remember to
-// reset, which is the bug the derived shape exists to prevent.
+// Everything is derived from one fact, "the list is behind the newest scan", so any refetch
+// that pulls the latest snapshot (a hand override, a filter change, Show latest) clears the
+// whole thing on its own. There is no dismiss flag the app has to remember to reset, so
+// nothing here can be left stale by mistake.
 
 import { useEffect, useRef, useState } from "react";
 
@@ -36,8 +36,8 @@ export function useReviewFreshness(opts: {
    *  that settles when those refetches have finished, which is how a failed silent refresh is
    *  told from one still in flight (see the note on the second effect below). */
   onSilentRefresh: () => void | Promise<unknown>;
-  /** Fired once when a SILENT refresh's swap has actually landed (behind -> caught up), so the
-   *  caller confirms it (a toast) only after it happened, never at issuance (rule 85). */
+  /** Fired once when a silent refresh's swap has actually landed (behind -> caught up), so
+   *  the caller confirms it (a toast) only after it happened, never at issuance. */
   onSilentCaughtUp?: () => void;
 }): ReviewFreshness {
   const { viewSnapshotId, latestSnapshotId } = opts;
@@ -48,8 +48,8 @@ export function useReviewFreshness(opts: {
   const [dismissed, setDismissed] = useState(false);
 
   // The decision inputs are read lazily through refs so the effect depends only on the
-  // snapshot ids -- a scroll (which changes isBusy) must not re-run it and re-decide a scan
-  // we already handled, and a fresh onSilentRefresh identity each render must not either.
+  // snapshot ids. A scroll (which changes isBusy) must not re-run it and re-decide a scan we
+  // already handled, and a fresh onSilentRefresh identity each render must not either.
   const busyRef = useRef(opts.isBusy);
   busyRef.current = opts.isBusy;
   const refreshRef = useRef(opts.onSilentRefresh);
@@ -62,25 +62,26 @@ export function useReviewFreshness(opts: {
   // caught-up confirmation (behind -> false) or, if its refetch settles without catching up,
   // a raised nudge.
   const awaitingSilent = useRef(false);
-  // Which silent refresh has SETTLED -- the signal the effect below waits for. It used to watch
-  // the list's `isFetching` flag go true and then false instead, which only worked if a render
-  // happened to be committed during the fetch: a refetch that rejected in the same microtask
-  // flush never showed up as fetching at all, and the nudge silently never came (found when the
-  // queue stopped re-rendering so freely, P-1/P-7). What the refresh returns settles exactly
-  // when its work is done, whatever the render schedule.
+  // `settledId` is which silent refresh has settled, the signal the effect below waits for.
+  // Watching the list's `isFetching` flag instead would only work if a render happened to be
+  // committed during the fetch: a refetch that rejects in the same microtask flush never
+  // shows up as fetching at all, so the nudge would silently never come. What the refresh
+  // returns settles exactly when its work is done, whatever the render schedule.
   //
   // Each refresh carries its own id, and the effect below acts only on the settle of the one
-  // still in flight. A bare monotonic tick compared against 0 protected only the FIRST refresh
-  // of a mount: on the second, the tick was already past 0, so the nudge went up in the very
-  // commit that issued the refresh -- and since that arm also clears `awaitingSilent`, the
-  // caught-up confirmation could never fire again for the rest of the session (B-2).
+  // still in flight. A bare monotonic tick compared against 0 would only protect the first
+  // refresh of a mount: on the second, the tick would already be past 0, so the nudge would
+  // go up in the very commit that issued the refresh, and since that arm also clears
+  // `awaitingSilent`, the caught-up confirmation could never fire again for the rest of the
+  // session.
   const silentId = useRef(0);
   const [settledId, setSettledId] = useState(0);
 
   useEffect(() => {
     if (!behind) {
-      // The list caught up (any refetch to the latest snapshot). If a silent refresh was waiting
-      // on exactly this, confirm the swap now -- only now (rule 85). Then reset for the next scan.
+      // The list caught up (any refetch to the latest snapshot). If a silent refresh was
+      // waiting on exactly this, confirm the swap now, only now. Then reset for the next
+      // scan.
       if (awaitingSilent.current) {
         awaitingSilent.current = false;
         caughtUpRef.current?.();
@@ -99,26 +100,25 @@ export function useReviewFreshness(opts: {
       const id = ++silentId.current;
       void Promise.resolve(refreshRef.current())
         .then(() => setSettledId(id))
-        // A refresh that REJECTS has settled too, and settled without catching up, so it takes
-        // the same path: the effect below sees the list still behind and raises the nudge,
-        // rather than leaving the reviewer on a stale list with nothing to press. Today's
-        // caller cannot reject (query-core swallows each query's failure), but the declared
-        // return type invites one that can.
+        // A refresh that rejects has settled too, and settled without catching up, so it
+        // takes the same path: the effect below sees the list still behind and raises the
+        // nudge, rather than leaving the reviewer on a stale list with nothing to press.
+        // Today's caller cannot reject (query-core swallows each query's failure), but the
+        // declared return type invites one that can.
         .catch(() => setSettledId(id));
     }
   }, [behind, latestSnapshotId]);
 
-  // A silent refresh whose refetch went and finished while the list is STILL behind never caught
-  // up (a network blip): raise the nudge rather than leave the list silently stale -- the
-  // reviewer is idle, so the bar is theirs to act on (PR-5).
+  // A silent refresh whose refetch finished while the list is still behind never caught up (a
+  // network blip): raise the nudge rather than leave the list silently stale. The reviewer is
+  // idle, so the bar is theirs to act on.
   //
   // `behind` is a dependency as well as a guard, so a swap landing after this fires still
-  // reaches the effect above and CLEARS the nudge. It does not also confirm the catch-up: this
-  // effect has already set `awaitingSilent` false, which is the flag that gate reads, so the
-  // toast is skipped for a refresh whose settle is observed a commit before its swap. Clearing
-  // is the part that matters -- the operator is not left with a stale nudge -- and a missing
-  // toast on that ordering is the cost. Said plainly here because the previous wording claimed
-  // a confirmation this cannot produce.
+  // reaches the effect above and clears the nudge. It does not also confirm the catch-up:
+  // this effect has already set `awaitingSilent` false, which is the flag that gate reads, so
+  // the toast is skipped for a refresh whose settle is observed a commit before its swap.
+  // Clearing the nudge is what matters, so the operator is not left staring at a stale one;
+  // missing that one toast is the acceptable cost.
   useEffect(() => {
     // Only the refresh currently in flight: an id that has not caught up to the one just issued
     // is either the starting value or an earlier refresh's, and neither says anything about this

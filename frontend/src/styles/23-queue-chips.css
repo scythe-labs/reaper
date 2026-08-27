@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The chip family every card wears, and the season strip. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* chips -- one family, one rhythm. Every chip is 1.35rem tall (square chips radius 5px,
+ * The chip family every card wears, and the season strip. See `../index.css` for how this
+ * file fits into the stylesheet's load order. */
+/* Chips: one family, one rhythm. Every chip is 1.35rem tall (square chips radius 5px,
    sentence chips a full pill) with one type scale, so mixed rows sit on a single line
    and the same-looking pieces measure the same everywhere they appear. */
 .chip {
@@ -17,7 +17,7 @@
   color: var(--muted);
   white-space: nowrap;
 }
-/* Carries a portal handle, so it wraps rather than holding the chip's line -- see the rule it
+/* Carries a portal handle, so it wraps rather than holding the chip's line. See the rule it
    shares with .lib-chip below, which is where the height and wrapping come from. */
 .chip-requested {
   background: var(--accent-soft);
@@ -31,27 +31,29 @@
   background: var(--media-movie-soft);
   color: var(--media-movie);
 }
-/* THE FOUR HAND-DECISION TONES, and the three families that wear them: the score badge
-   (.score-*, based in 11-queue-chrome.css), the card chip (.chip-*) and the status pill
-   (.status-*). `handFate` picks the tone (components/reviewFate.ts, rule 49) and all three
-   families render it, so each tone is one rule with three selectors. Written out three times it
-   was three places to change one color.
+/* The four hand-decision tones, and the three families that wear them: the score badge
+   (.score-*, based in 11-queue-chrome.css), the card chip (.chip-*), and the status pill
+   (.status-*). `handFate` picks the tone (components/reviewFate.ts) and all three families
+   render it, so each tone is one rule with three selectors. Writing it out three times
+   would mean three places to change one color instead of one.
 
-   Hand decisions wear SOLID: outlined means Reaper's verdict, filled means yours.
+   Hand decisions are filled solid: an outline means Reaper's verdict, a fill means yours.
 
-   The two DASHED tones are the decisions nothing has acted on yet, and neither may go solid. A
-   reap the engine can't honor yet is dashed red: still the reap you chose, but hollow so it never
-   reads as a done removal, and no longer the amber that means "left for you to decide". Its
-   keep-direction twin is a hand spare whose clock has PASSED. Not the solid spare (that means
-   "you chose this and it holds") and not a scan verdict either, because only a scan realizes a
-   spare's expiry -- until then the planner, the ledger and the executor all still read it and
-   the file really is kept. See handFate's "spare-expired".
+   The two dashed tones are decisions nothing has acted on yet, and neither may go solid. A
+   reap the engine can't honor yet is dashed red: still the reap you chose, but hollow, so it
+   never reads as a done removal, and no longer the amber that means "left for you to
+   decide". Its keep-direction twin is a hand spare whose clock has passed. It is not the
+   solid spare (that means "you chose this and it holds"), and not a scan verdict either,
+   because only a scan realizes a spare's expiry. Until then, the planner, the ledger, and
+   the executor all still read it, and the file really is kept. See handFate's
+   "spare-expired".
 
-   The season strip wears the same four and is NOT in these rules. Its square is the one surface
-   carrying a scan-verdict class and an override class at once, so its override rules have to sit
-   after .strip-condemn and friends to win, and they carry a heavier dash and a `box-shadow: none`
-   to cancel the verdict's inset ring. `styles-hand-fate.test.ts` pins that order, and pins that
-   these four rules stay one apiece. */
+   The season strip wears the same four colors, but is not covered by these rules. Its
+   square is the one surface carrying a scan-verdict class and an override class at once, so
+   its override rules have to sit after .strip-condemn and friends to win, and they carry a
+   heavier dash and a `box-shadow: none` to cancel the verdict's inset ring.
+   `styles-hand-fate.test.ts` pins that order, and pins that these four rules each stay
+   declared exactly once. */
 .score-reap,
 .chip-hand-reap,
 .status-hand-reap {
@@ -78,9 +80,9 @@
   color: var(--condemn);
   border: 1px dashed var(--condemn);
 }
-/* "We could not check" -- amber, and dashed so it never reads as a settled answer at a
+/* "Could not check": amber, and dashed so it never reads as a settled answer at a
  * glance. Same pairing the unchecked protections and .sig-unreadable use, for the same
- * reason: "we could not look" must not look like "we looked and it was fine". */
+ * reason: "could not check" must never look like "checked, and it was fine". */
 .chip-unchecked {
   background: var(--unknown-soft);
   color: var(--unknown);
@@ -108,8 +110,8 @@
   opacity: 0.75;
 }
 
-/* The Plex library (section) an item lives in. Quiet, neutral metadata on the facts line --
-   the res-badge family, deliberately not a verdict color: which library a file is in is a
+/* The Plex library (section) an item lives in. Quiet, neutral metadata on the facts line:
+   the res-badge family, deliberately not a verdict color. Which library a file is in is a
    fact about where it lives, never an argument for its fate. The leading glyph is sized down
    to sit inside the chip. */
 .lib-chip {
@@ -133,14 +135,14 @@
   color: var(--faint);
 }
 
-/* The collection chip: navigation, never protection (#816's fence -- this is display only, no
-   gate or signal ever reads it). Quiet, like the library chip beside it, so it shares the chip
-   family's own 1.35rem rhythm rather than the taller Spare/Reap button chrome. Split in two
-   when the item is in more than one collection: the name navigates (once #816 phase 5 wires
-   it), the caret opens the rest. One collection wears no caret -- `.coll-chip-only` rounds
-   both corners of the lone button since there is no second half to round the other one.
-   The split anatomy is `OverrideControls`' `.ov-split` / `.split-main` / `.split-caret`, sized
-   down for this quieter family instead of reused outright. */
+/* The collection chip is display only: no gate or signal ever reads it, so it can only
+   navigate, never protect a file. Quiet, like the library chip beside it, so it shares the
+   chip family's own 1.35rem rhythm rather than the taller Spare/Reap button chrome. Split in
+   two when the item is in more than one collection: the name will navigate once that link is
+   wired up, and the caret opens the rest. One collection wears no caret: `.coll-chip-only`
+   rounds both corners of the lone button, since there is no second half to round the other
+   one. The split anatomy is `OverrideControls`' `.ov-split` / `.split-main` / `.split-caret`,
+   sized down for this quieter family instead of reused outright. */
 .coll-chip {
   position: relative;
   display: inline-flex;
@@ -182,25 +184,26 @@
   border-radius: 0 5px 5px 0;
 }
 /* Finishing the opt-out the two rules above start. They drop `button`'s border and fill at
-   rest, but `button:hover` in 04-buttons.css repaints whichever half the pointer is over
+   rest, but `button:hover` in 04-buttons.css repaints whichever half the pointer is over with
    `--hover`, an opaque fill sitting on top of the chip's own. That is what lit the name and
-   left the caret dark. Written as a descendant of `.coll-chip` to match that rule's
-   specificity exactly and declared after it, rather than out-specifying it, which is the part
-   that stays true if either side is edited later. */
+   left the caret dark. This rule is written as a descendant of `.coll-chip`, to match that
+   rule's specificity exactly, and is declared after it rather than out-specifying it. That is
+   the part that stays correct if either side is edited later. */
 .coll-chip button:hover,
 .coll-chip button:active {
   background: transparent;
 }
-/* THE LIT STATE BELONGS TO THE CHIP, never to one half of it. The two halves are the only
-   buttons inside it, so `button` names them both, and the fill, the border, the divider and the
-   glyph all light together. Lighting the half under the pointer was the reported defect: the
-   name went accent and the caret sat dark inside an already-accent border.
+/* The lit state belongs to the whole chip, never to one half of it. The two halves are the
+   only buttons inside it, so `button` names them both, and the fill, the border, the
+   divider, and the glyph all light together. Lighting only the half under the pointer would
+   read wrong: the name would go accent while the caret sat dark inside an already-accent
+   border.
 
-   Two triggers, deliberately not one selector list. `:active` is every device, and it is the
-   ONLY one a tap ever matches, since `:focus-visible` below is keyboard-only in Safari.
-   `:hover` is pointer-only because a touch screen keeps it on the last element TAPPED, which
-   left the chip lit long after the tap that opened the collection. Every other `:hover` in this
-   stylesheet has the same shape and no guard (#818). */
+   Two triggers, deliberately not one selector list. `:active` covers every device, and it is
+   the only one a tap ever matches, since `:focus-visible` below is keyboard-only in Safari.
+   `:hover` is pointer-only, because a touch screen keeps it on the last element tapped,
+   which would leave the chip lit long after the tap that opened the collection. Every other
+   `:hover` in this stylesheet has the same shape, with no such guard. */
 .coll-chip:has(button:active) {
   background: var(--accent-soft);
   border-color: var(--accent);
@@ -223,10 +226,11 @@
     border-inline-start-color: var(--accent);
   }
 }
-/* The ring wraps the WHOLE chip, from either half. Drawn on the inner button it landed inside
-   the chip's own 1px border (`outline-offset: -2px`), so it read as a second edge crowded into
-   the first, and on a split chip it ringed the name and left the caret outside the selection
-   it belongs to. The chip is one control with two targets, so the selection is the chip. */
+/* The ring wraps the whole chip, from either half. Drawn on the inner button instead, it
+   would land inside the chip's own 1px border (`outline-offset: -2px`) and read as a second
+   edge crowded into the first. On a split chip it would ring only the name and leave the
+   caret outside the selection it belongs to. The chip is one control with two targets, so
+   the selection is the chip. */
 .coll-chip:has(.coll-chip-main:focus-visible),
 .coll-chip:has(.coll-chip-caret:focus-visible) {
   outline: 2px solid var(--accent);
@@ -285,7 +289,7 @@
   overflow-wrap: anywhere;
 }
 /* Plex's own member count, right of the name (the approved mockup). Absent rather than "0" for
-   a collection the picker's `sizes` map never reported -- see `CollectionChip`'s doc on why. */
+   a collection the picker's `sizes` map never reported. See `CollectionChip`'s doc for why. */
 .coll-pop-n {
   flex: none;
   color: var(--muted);
@@ -294,18 +298,18 @@
 }
 
 /* The three chips holding text from outside the app: a portal handle, the name the operator
- * gave a library on their own Plex server, and a Plex collection's name. All three were nowrap
- * over a fixed 1.35rem, so a value too long for its row painted past the card (rule 139).
+ * gave a library on their own Plex server, and a Plex collection's name. All three were
+ * nowrap over a fixed 1.35rem, so a value too long for its row painted past the card.
  *
- * The chip family's rhythm is that fixed height -- every chip the same, so mixed rows sit on one
- * line. Turning it into a FLOOR keeps that exactly: an ordinary value still measures 1.35rem and
- * nothing about any row changes. Only a value that cannot fit takes a second line, which is the
- * case where the alternative was painting out of the box entirely.
+ * The chip family's rhythm is that fixed height: every chip the same, so mixed rows sit on
+ * one line. Turning it into a floor keeps that exactly: an ordinary value still measures
+ * 1.35rem and nothing about any row changes. Only a value that cannot fit takes a second
+ * line, which is the case where the alternative was painting out of the box entirely.
  *
- * One rule for all three, deliberately: they are each other's sibling under rule 72, and the
- * first pair being fixed apart is how #219 and #220 came to exist. `.coll-chip-main` only, not
- * the wrapping `.coll-chip` or its caret: the caret stays the family's fixed square, and
- * `align-items: stretch` on the wrapper carries a wrapped name's extra height to it for free. */
+ * One rule for all three, deliberately: they are each other's siblings, and a fix applied to
+ * only one of them drifts out of sync with the rest. `.coll-chip-main` only, not the wrapping
+ * `.coll-chip` or its caret: the caret stays the family's fixed square, and `align-items:
+ * stretch` on the wrapper carries a wrapped name's extra height to it for free. */
 .chip-requested,
 .lib-chip,
 .coll-chip-main {
@@ -316,7 +320,7 @@
   overflow-wrap: anywhere;
 }
 
-/* How long the item has sat unwatched -- the strongest reason most items are here, so it
+/* How long the item has sat unwatched: the strongest reason most items are here, so it
    wears the shared amber "attention" tone and reads at a glance. */
 .dormant-pill {
   display: inline-flex;
@@ -336,7 +340,7 @@
 
 /* The one status chip a Sanctuary or Limbo card wears: green "kept because", gray
    "nothing to act on", amber outline "deliberately left for you to decide". The chip is
-   the deciding fact; the full sentences live in the panel. */
+   the deciding fact. The full sentences live in the panel. */
 .status-chip {
   display: inline-block;
   align-self: flex-start;
@@ -354,9 +358,9 @@
   white-space: nowrap;
 }
 /* The non-truncating member. The chip truncates because the queue's cards give it a fixed
-   column; outside that column there is no column to protect, and an ellipsis there would be
-   rule 139's failure -- two chips whose labels differ only in the tail truncate alike. Used
-   by Settings, Lists, whose row wraps instead. */
+   column. Outside that column there is no column to protect, and an ellipsis there would
+   make two chips whose labels differ only in the tail truncate to the same text. Settings
+   and Lists use this instead, where the row wraps. */
 .status-chip.status-chip-wrap {
   max-width: none;
   overflow: visible;
@@ -375,19 +379,19 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--unknown) 55%, transparent);
 }
 /* A protection Reaper is holding the file under, with how long is left. Outlined for the
-   family's own reason: filled is the owner's decision, outlined is Reaper's. Green rather
-   than the amber above, because the file IS kept and amber means only "left for you to
-   decide". Outlined in the same channel `.status-look` uses -- an inset ring, not a border --
-   so the chip's height and padding stay the family's 1.35rem rhythm.
+   family's own reason: a fill is the owner's decision, an outline is Reaper's. Green rather
+   than the amber above, because the file is kept and amber means only "left for you to
+   decide". Outlined in the same channel `.status-look` uses, an inset ring rather than a
+   border, so the chip's height and padding stay the family's 1.35rem rhythm.
 
-   Only a protection with an EXPIRY wears it (`api.review._came_back_chip`, which says why).
-   A protection re-decided next scan has nothing to count down. */
+   Only a protection with an expiry wears it (`api.review._came_back_chip` says why). A
+   protection re-decided next scan has nothing to count down. */
 .status-held {
   color: var(--protect);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--protect) 55%, transparent);
 }
-/* Filled amber, where `.status-look` is outlined. Outlined means "left for you to decide";
-   this one states a condition that is simply wrong and wants attention -- Settings, Lists
+/* Filled amber, where `.status-look` is outlined. Outlined means "left for you to decide".
+   This one states a condition that is simply wrong and wants attention. Settings and Lists
    wears it for a protection whose last check is too old to trust. */
 .status-warn {
   color: var(--unknown);
@@ -404,7 +408,7 @@
    decision you made. */
 
 /* The season strip: one square per season of the show, colored by its lane across the
-   WHOLE snapshot -- kept and condemned side by side without expanding anything. A hand
+   whole snapshot, kept and condemned side by side without expanding anything. A hand
    override draws a ring in its color. */
 .season-strip {
   display: flex;
@@ -412,11 +416,11 @@
   gap: 0.375rem;
   margin: 0.1rem 0;
 }
-/* The one member of the 1.35rem chip rhythm above that is a real button, and the only per-season
-   open target on a phone. At that height it was 21.6px with 6px between squares -- under SC
-   2.5.8 and too tight for the spacing exception -- so it takes --tap-min instead and is
-   deliberately 2.4px taller than the chips it sits among. A chip is a label and reads at rest;
-   this is a thing a finger has to land on. */
+/* The one member of the 1.35rem chip rhythm above that is a real button, and the only
+   per-season open target on a phone. At that height it measured 21.6px with 6px between
+   squares, under WCAG 2.2 SC 2.5.8 and too tight for the spacing exception, so it takes
+   --tap-min instead and is deliberately 2.4px taller than the chips it sits among. A chip is
+   a label and reads at rest. This is a thing a finger has to land on. */
 .strip-sq {
   min-width: 1.65rem;
   height: var(--tap-min);
@@ -431,7 +435,7 @@
   font-size: var(--text-xs);
   font-weight: var(--weight-bold);
   font-variant-numeric: tabular-nums;
-  /* Each square opens its season's reasoning; the ring (transparent until hover/focus)
+  /* Each square opens its season's reasoning. The ring (transparent until hover/focus)
      is reserved up front so hovering never nudges the strip's layout. */
   cursor: pointer;
   appearance: none;
@@ -440,14 +444,14 @@
   transition: color 0.1s ease;
 }
 /* Hovering a square is how you open one season. macOS Safari has a compositing bug that
-   drops a strip square's FILL to dark on hover inside a card (we moved the spared `opacity`
-   off the strip, but it can still happen), so the hover is built to SURVIVE that rather than
-   fight it: the number switches to the theme's bright text with a `--bg`-colored halo -- which
-   stays readable on the green/red fill AND on a dropped-dark square, in either theme -- under
-   an accent outline for the ring. Only `color`, `text-shadow`, and `outline` change: there is
-   no `background` or `box-shadow` for Safari to drop, and no `transform`/`filter` (their own
-   Safari hazard). `--text` is readable on `--bg` by definition, so the dropped case is covered
-   for free. */
+   drops a strip square's fill to dark on hover inside a card (moving the spared `opacity`
+   off the strip helped, but the bug can still happen elsewhere), so the hover is built to
+   survive that instead of fighting it. The number switches to the theme's bright text with a
+   `--bg`-colored halo, which stays readable on the green/red fill and on a dropped-dark
+   square, in either theme, under an accent outline for the ring. Only `color`,
+   `text-shadow`, and `outline` change: there is no `background` or `box-shadow` for Safari
+   to drop, and no `transform`/`filter`, which are their own Safari hazard. `--text` is
+   readable on `--bg` by definition, so the dropped case is covered for free. */
 .strip-sq:hover {
   color: var(--text);
   text-shadow:
@@ -458,8 +462,8 @@
   outline-offset: 1px;
 }
 /* The held reap's scythe: a hand ask Reaper can't honor yet, marked so the square still
-   reads as YOURS -- the strip has no resting OverrideMark the way a movie card does. The
-   surface-colored halo lifts it off the dashed-red square and any neighbor. */
+   reads as your decision. The strip has no resting OverrideMark the way a movie card does.
+   The surface-colored halo lifts it off the dashed-red square and any neighbor. */
 .strip-mark {
   position: absolute;
   top: -3px;
@@ -479,7 +483,7 @@
   height: 0.52rem;
 }
 /* Keyboard focus matches the hover so tabbing through the strip reads as clearly as a
-   pointer does -- the same bright number + halo, and an accent ring set a touch wider. */
+   pointer does: the same bright number plus halo, and an accent ring set a touch wider. */
 .strip-sq:focus-visible {
   color: var(--text);
   text-shadow:
@@ -502,19 +506,19 @@
   color: var(--muted);
   background: var(--surface-2);
 }
-/* A hand override paints the square SOLID -- "you chose this" reads at a glance next
-   to the outlined scan verdicts. A reap the engine can't honor yet (someone streaming, or a
-   protection that could not be checked) is the exception: not solid, dashed red with a
-   scythe, because the file is held. */
+/* A hand override paints the square solid, so "you chose this" reads at a glance next to
+   the outlined scan verdicts. A reap the engine can't honor yet (someone streaming, or a
+   protection that could not be checked) is the exception: dashed red with a scythe instead
+   of solid, because the file is held. */
 .strip-ov-spare {
   color: var(--protect-soft);
   background: var(--protect);
   box-shadow: none;
 }
-/* A spare whose clock has passed: still green (the file is still kept -- only a scan realizes
-   the expiry), but hollow and dashed, because the decision keeping it has run out. Declared
-   after the scan-verdict bases (.strip-abstain and friends) so it wins the square's base color,
-   exactly as .strip-ov-reap-refused does. */
+/* A spare whose clock has passed: still green, since the file is still kept and only a scan
+   realizes the expiry, but hollow and dashed, because the decision keeping it has run out.
+   Declared after the scan-verdict bases (.strip-abstain and friends) so it wins the square's
+   base color, exactly as .strip-ov-reap-refused does. */
 .strip-ov-spare-expired {
   color: var(--protect);
   background: var(--protect-soft);
@@ -526,10 +530,10 @@
   background: var(--condemn);
   box-shadow: none;
 }
-/* A reap the engine can't honor yet is NOT solid -- the file is not going anywhere. It is
-   dashed red (with the scythe corner-mark above): still the reap you chose, but hollow and
-   dashed so it never reads as a done removal, and no longer the amber that means "left for
-   you to decide". Defined after .strip-abstain so it wins over the square's scan-verdict
+/* A reap the engine can't honor yet is dashed red (with the scythe corner-mark above), never
+   solid, because the file is not going anywhere. It is still the reap you chose, but hollow
+   and dashed so it never reads as a done removal, and no longer the amber that means "left
+   for you to decide". Defined after .strip-abstain so it wins over the square's scan-verdict
    base. */
 .strip-ov-reap-refused {
   color: var(--condemn);
@@ -538,17 +542,19 @@
   box-shadow: none;
 }
 
-/* Windows High Contrast replaces every author color with a system one and forces `box-shadow`
-   to `none`. Every square above is told apart by its FILL, and .strip-condemn's only other cue
-   is an inset shadow -- so in that mode a run of seasons rendered as identical blank squares,
-   and "would be removed" and "kept" looked the same on the surface that decides which files go.
-   A screen-reader operator was never affected: each square carries `aria-label="Open <name>,
-   <lane>"` with the lane in words. This is for the sighted operator who has High Contrast on.
+/* Windows High Contrast replaces every author color with a system one and forces
+   `box-shadow` to `none`. Every square above is told apart by its fill, and
+   .strip-condemn's only other cue is an inset shadow. Without this rule, a run of seasons
+   would render as identical blank squares in that mode, and "would be removed" and "kept"
+   would look the same on the surface that decides which files go. A screen-reader operator
+   is never affected: each square carries `aria-label="Open <name>, <lane>"` with the lane in
+   words. This rule is for the sighted operator who has High Contrast on.
 
-   Border STYLE survives forced colors, so that is the channel. The two hand-override states
-   already wore `dashed` for their own reason and keep it, which leaves the scan verdicts to
-   take solid, dotted and none. `forced-color-adjust: none` is deliberately NOT used: the point
-   is to work WITH the operator's palette, not to reassert ours over it. */
+   Border style survives forced colors, so that is the channel used here. The two
+   hand-override states already wore `dashed` for their own reason and keep it, which leaves
+   the scan verdicts to take solid, dotted, and none. `forced-color-adjust: none` is
+   deliberately not used: the point is to work with the operator's palette, instead of
+   reasserting the app's own colors over it. */
 @media (forced-colors: active) {
   .strip-sq {
     border: 2px solid;
@@ -565,8 +571,8 @@
   .strip-abstain {
     border-style: none;
   }
-  /* Held, not settled -- the same "noted, but nothing has happened yet" the dashes carry in
-     color. */
+  /* Held, not settled: the same "noted, but nothing has happened yet" meaning the dashes
+     carry in color. */
   .strip-ov-spare-expired,
   .strip-ov-reap-refused {
     border-style: dashed;

@@ -1,15 +1,14 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The masthead and its section rail. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* ---- masthead ------------------------------------------------------------ */
+ * The masthead and its section rail. See `../index.css` for how this file fits into the
+ * stylesheet's load order. */
 
 .masthead {
   display: flex;
   align-items: center;
   gap: var(--space-3xl);
-  /* The brand and the user menu keep this gap above the border; .views alone gives it back with
-     a negative margin, so only the rail touches the rule its cut is drawn on (.views, below). */
+  /* The brand and the user menu keep this gap above the border. .views cancels it with a
+     negative margin, so only the rail touches the border its cut is drawn on (see .views below). */
   padding: 0.35rem 0 var(--masthead-pad-b);
   border-bottom: 1px solid var(--border);
 }
@@ -20,11 +19,11 @@
   gap: var(--space-lg);
   min-width: 0;
 }
-/* The mark's figure is the page's own text color and its EYES are the raw --accent, drawn by
-   BrandMark itself. Two consequences worth stating: the figure needs no contrast exception
-   because it is --text, and the eyes keep the raw --accent rather than --accent-text because a
-   logotype is the one graphic WCAG exempts from a contrast ratio. Everything a person READS in
-   the accent uses --accent-text (see the token). */
+/* BrandMark draws the mark's figure in the page's own text color, and its eyes in the raw
+   --accent. The figure needs no contrast exception, since it is already --text. The eyes keep
+   the raw --accent instead of --accent-text, because a logotype is the one graphic WCAG
+   exempts from a contrast ratio. Everything a person reads in the accent elsewhere uses
+   --accent-text instead (see that token). */
 .brand-mark {
   width: 34px;
   height: 34px;
@@ -50,14 +49,14 @@
 }
 
 /* One pill segmented-control track, shared by the review queue's list switcher (.tabs) and the
-   policy media toggle (.segmented). Consolidated so a radius or surface change lands on both
-   instead of drifting apart.
+   policy media toggle (.segmented). A radius or surface change here lands on both, so they
+   never drift apart.
 
-   The masthead section nav (.views) rode this too and deliberately no longer does. The track
-   says one thing in this app -- pick a view of the same set -- and moving to another part of the
-   app is not that verb. Sharing it put two <nav>s in identical chrome one above the other on the
-   review screen, where the top one leaves the page and the bottom one filters the list. .views
-   is the rail below instead. */
+   The masthead section nav (.views) does not use this track: it means "pick a view of the
+   same set," and moving to a different part of the app is a different action. Sharing chrome
+   between them would put two <nav>s that look identical, stacked on the review screen, where
+   the top one leaves the page and the bottom one filters the list. .views uses the rail
+   below instead. */
 .tabs,
 .segmented {
   display: flex;
@@ -67,12 +66,13 @@
   border-radius: var(--radius-pill);
 }
 
-/* The section rail. `align-self: stretch` + `align-items: flex-end` put every button's bottom edge
-   on the rail's own bottom edge, and the negative bottom margin cancels the masthead's padding so
-   that edge IS the 1px border -- making the active cut a segment OF that rule rather than a second
-   line floating above it. The masthead keeps its padding, so the brand and the user menu still sit
-   clear of the border; the rail is the one child that reaches it. The phone bar takes .views out of
-   the masthead entirely and resets this margin. */
+/* The section rail. `align-self: stretch` plus `align-items: flex-end` put every button's
+   bottom edge on the rail's own bottom edge. The negative bottom margin cancels the
+   masthead's padding, so that edge sits exactly on the 1px border, and the active cut reads
+   as a segment of that border rather than a second line floating above it. The masthead
+   keeps its own padding, so the brand and the user menu still sit clear of the border. The
+   rail is the one child that reaches it. The phone bar takes .views out of the masthead
+   entirely and resets this margin. */
 .views {
   display: flex;
   align-items: flex-end;
@@ -116,19 +116,19 @@
 .view-tab.active::before {
   transform: scaleX(1);
 }
-/* Reduced motion stops the slide; the cut still lands, it just arrives rather than travels.
-   Opacity fades in these files are deliberately left alone -- the preference is about motion,
-   and a fade moves nothing. */
+/* Reduced motion stops the slide. The cut still lands, it just arrives instead of travels.
+   Opacity fades elsewhere in these files stay untouched, because the preference is about
+   motion, and a fade moves nothing. */
 @media (prefers-reduced-motion: reduce) {
   .view-tab::before {
     transition: none;
   }
 }
-/* Reserve the active (600) width at every weight, so marking a section never widens it and
-   shoves its neighbors sideways -- the same strut, and the same reason, as `.tab[data-label]`
-   in `04-buttons.css`, whose comment enumerates every control carrying one. Byte-identical to
-   it on purpose, so keep the two in step. The phone bar drops it along with the labels
-   (`10-layout.css`). */
+/* Reserve the active (600) width at every weight, so marking a section active never widens it
+   and shoves its neighbors sideways. Same strut, same reason, as `.tab[data-label]` in
+   `04-buttons.css`, whose comment lists every control that carries one. This rule is
+   byte-identical to it on purpose, so keep the two in step. The phone bar drops it along with
+   the labels (`10-layout.css`). */
 .view-tab[data-label]::after {
   content: attr(data-label);
   display: block;
@@ -144,18 +144,18 @@
   position: relative;
   display: inline-block;
 }
-/* Sized here for all five icons at once, so the bar's icon size is one declaration (rule 67).
+/* Sized here for all five icons at once, so the bar's icon size is one declaration.
    Hidden on a wide screen, where the rail reads as words. 24px is where both iOS and Material
-   draw a tab icon, and it is what the taller bar has room for; the glyphs are drawn on a 16-unit
-   grid, so they scale to it cleanly. */
+   draw a tab icon, and it is what the taller bar has room for. The glyphs are drawn on a
+   16-unit grid, so they scale to it cleanly. */
 .view-ico {
   display: none;
   width: 24px;
   height: 24px;
 }
-/* Deletion armed, said as a mark on the one section that does it. `SafetyBanner` states the
-   same fact in words on every view, which is why this is aria-hidden in SectionNav.tsx. Amber is the
-   app's "we could not look" tone (--unknown), so a failed read never reads as disarmed. */
+/* Marks the one section where deletion is armed. SafetyBanner already states this fact in
+   words on every view, so SectionNav.tsx marks this dot aria-hidden. Amber is the app's color
+   for "could not check" (--unknown), so a failed read never looks the same as disarmed. */
 .view-armed {
   position: absolute;
   top: -1px;

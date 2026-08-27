@@ -1,23 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The wire types, mirrored from the response models. Not one file: they live across
-// reaper/api/ (schemas.py holds most, but the one route that deletes answers with
-// runs.py's ReapStatus) plus engine/policy.py and engine/explanation.py.
+// The wire types, mirrored from the response models. They live across several files:
+// reaper/api/schemas.py holds most of them, runs.py's ReapStatus answers the one route
+// that deletes, and engine/policy.py and engine/explanation.py hold the rest.
 //
-// Hand-written rather than generated, and this header used to say to generate them from
-// /openapi.json once they grew past this size. Measured at that size: the served document
-// carries one property description across 749, and the declarations below carry 679 lines
-// of comment. Almost every one of them says something no annotation holds -- when a field
-// is null and what to read instead, which of two spare expiries answers which question,
-// why a three-state field must never read as false. Generating deletes all 679 and there
-// is nothing to regenerate them from, so the answer is the guard rather than the codegen.
+// These types are hand-written rather than generated from /openapi.json. Most of the
+// field comments below record a fact no generated annotation would carry: when a field is
+// null and what to read instead, which of two spare expiries answers which question, and
+// why a three-state field must never read as false. Generating the types would delete
+// every one of those facts, with nothing to regenerate them from. This file keeps a test
+// instead of a generator.
 //
-// tests/test_api_type_mirror.py checks this file against those declarations and fails
-// naming the field, because hand-maintained meant nothing noticed when MatchOut gained
-// `by` and `merged_rating_keys` and this file did not (#260, #289). It compares field
-// names AND field types; the deliberate type differences are listed by name there, in
-// NARROWED and WIDENED. Optionality is not compared, and that file says why. A new type
-// with no server model is classified in that file, not ignored.
+// tests/test_api_type_mirror.py checks this file against the server declarations and
+// names the field that drifted when one side changes without the other. It compares
+// field names and field types. The deliberate type differences are listed by name in
+// that file's NARROWED and WIDENED sets; optionality is not compared, and that file
+// explains why. A new type with no server model is classified there too, never ignored.
 
 export type Verdict = "condemn" | "protect" | "abstain";
 
@@ -39,31 +37,31 @@ export interface Snapshot {
   /** How many condemned items have no size, and so sit outside the total above rather
    *  than inside it as zeros. Zero for a healthy library, and hidden at zero. */
   unknown_size_items: number;
-  /** Every collection this scan saw, name to Plex's own member count -- the collection
-   *  screen's header reads it for "N titles in this collection" beside the scan's own
-   *  count. Null when none were read, whether none exist or the read failed; the UI
-   *  omits that clause rather than guessing. Optional: most fixtures are not made to
-   *  carry it (#816 phase 5). */
+  /** Every collection this scan saw, mapped from its name to Plex's own member count.
+   *  The collection screen's header reads it for "N titles in this collection" beside
+   *  the scan's own count. Null when none were read, whether none exist or the read
+   *  failed. The UI omits that clause rather than guessing. Optional: most fixtures
+   *  do not carry it. */
   collection_sizes?: Record<string, number> | null;
 }
 
 /** The one short status chip a card wears, display-ready from the server. `kept`
  *  renders green (a protection fired), `quiet` gray (nothing to act on), `look`
- *  amber-outlined (deliberately left for the owner to decide), `held` green-outlined
- *  (a protection that EXPIRES, saying how long is left). Outlined is Reaper's decision
- *  and filled is the owner's; `held` is green rather than amber because the file is
- *  kept, and amber means only "left for you to decide". */
+ *  amber-outlined (left for the owner to decide), `held` green-outlined (a protection
+ *  that expires, saying how long is left). Filled marks the owner's own decision;
+ *  outlined marks Reaper's. `held` is green, not amber, because the file is kept:
+ *  amber means only "left for you to decide". */
 export interface Chip {
   tone: "kept" | "quiet" | "look" | "held";
-  /** The typed id plus raw params. The browser composes the chip's own text and its
-   *  standalone sentence from this, through `why.ts`'s `composeIn` (`StatusChip.tsx`'s
-   *  `StatusChip` and `chipWhy`) -- never a re-decision, and never English off the wire. */
+  /** The typed id plus its raw params. `why.ts`'s `composeIn` turns this into the
+   *  chip's text and its standalone sentence (`StatusChip.tsx`'s `StatusChip` and
+   *  `chipWhy`). The server never sends English for this field. */
   reason: ReasonKey;
 }
 
 /** One square of a show card's season strip: the lightest per-season mark, across
  *  every lane of the whole snapshot. `season` is null for a row whose key carried
- *  no season number -- shown unnumbered, never dropped. */
+ *  no season number; that row shows unnumbered rather than dropping out. */
 export interface GroupSeasonMark {
   /** The candidate id for this season, so clicking its square opens that season's own
    *  reasoning rather than the whole show's panel. */
@@ -71,21 +69,22 @@ export interface GroupSeasonMark {
   season: number | null;
   verdict: Verdict;
   override: Override | null;
-  /** For a "reap" override: whether the engine honors it (true paints the square solid
-   *  red) or can't yet, for a safety stop or a row Reaper can't identify (false paints it
-   *  dashed red with a scythe, "kept for now"). Null when there is no reap override. */
+  /** For a "reap" override: whether the engine honors it. True paints the square solid
+   *  red. False paints it dashed red with a scythe ("kept for now"), for a safety stop
+   *  or a row Reaper can't identify. Null when there is no reap override. */
   override_effective: boolean | null;
   /** The season's size on disk, so the card can state whole-show totals without a
-   *  second fetch. Null when nothing would report one, which is not zero. */
+   *  second fetch. Null when nothing could report one; that is not the same as zero. */
   size_bytes: number | null;
-  /** For a "spare" override: when it stops keeping this season (ISO), or null for a forever
-   *  spare. The square colors by the item's fate (rule 49), and a spare whose clock has passed
-   *  is a fate of its own -- still keeping the file until a scan realizes the expiry, so still
-   *  green, but dashed rather than solid because it is no longer a live decision. */
+  /** For a "spare" override: when it stops keeping this season (ISO), or null for a
+   *  forever spare. The square's color reads the item's fate, and a spare whose clock
+   *  has passed is a fate of its own: it still keeps the file until a scan notices the
+   *  expiry, so it stays green, but dashed rather than solid because it is no longer a
+   *  live decision. */
   spare_expires_at: string | null;
-  /** When the LAST spare covering this season stops keeping it, or null for a forever one.
-   *  What the square's COLOR reads; `spare_expires_at` above is the spare a control toggles.
-   *  See `Candidate.spare_covers_until`. */
+  /** When the last spare covering this season stops keeping it, or null for a forever
+   *  one. This is what the square's color actually reads; `spare_expires_at` above is
+   *  the spare a control toggles. See `Candidate.spare_covers_until`. */
   spare_covers_until: string | null;
 }
 
@@ -111,47 +110,54 @@ export interface Candidate {
   /** Canonical file resolution ("2160", "1080", ..., "sd") for the card's quality badge.
    *  Null hides the badge (TV seasons, unmatched items, rows from older scans). */
   video_resolution: string | null;
-  /** The Plex library (section) this item lives in, as the operator named it -- the show's
-   *  for a season. Drives the card/panel library chip and the library filter. Null when
-   *  unknown (unmatched, or a row from before this shipped); the chip is then hidden. */
+  /** The Plex library (section) this item lives in, as the operator named it. A season
+   *  reports its show's library. Drives the card and panel library chip, and the library
+   *  filter. Null when unknown (unmatched, or a row from before this field shipped); the
+   *  chip is then hidden. */
   library: string | null;
   /** The raw dormancy day count of a fresh row; the frontend composes the span. Null on a
    *  legacy row, which shows no amber pill. */
   dormant_days: number | null;
-  /** The one-line "why", drawn from the explanation: the protection keeping a spared item,
-   *  or the strongest reason a reaped one scored. What the card shows instead of a synopsis,
-   *  composed via `why.ts`. A row frozen before typed reasons carries a `legacy` key that
-   *  composes to its stored sentence verbatim; null only where the row has no reason at all. */
+  /** The one-line "why", drawn from the explanation: the protection keeping a spared
+   *  item, or the strongest reason a reaped one scored. The card shows this instead of
+   *  a synopsis, composed through `why.ts`. A row recorded before typed reasons carries
+   *  a `legacy` key that composes to its stored sentence exactly as written. Null only
+   *  where the row has no reason at all. */
   reason_key?: ReasonKey | null;
-  /** The manual decision *in effect* -- "spare", "reap", or null -- own or inherited from
-   *  the show. It colors the row's chip and score (the item's real fate). Set the moment they
-   *  click, so the card shows the pending intent before the next scan bakes it in. To decide
-   *  what a control can toggle, read `override_own`. */
+  /** The manual decision in effect: "spare", "reap", or null, whether set on this item
+   *  or inherited from its show. It decides the row's chip and score, the item's real
+   *  fate. It updates the moment the operator clicks, so the card shows the pending
+   *  intent before the next scan applies it. To decide what a control can toggle, read
+   *  `override_own` instead. */
   override: Override | null;
-  /** This item's OWN decision, ignoring one it inherits from its show -- what a Spare/Reap
-   *  control on this row toggles. Equals `override` for a movie. Null for a season kept only
-   *  because the whole show is spared; `show_override` then says why it is still kept. */
+  /** This item's own decision, ignoring any it inherits from its show. This is what a
+   *  Spare/Reap control on this row toggles. Equals `override` for a movie. Null for a
+   *  season kept only because the whole show is spared; `show_override` then says why
+   *  it is still kept. */
   override_own: Override | null;
-  /** The whole-show decision covering this season (its show's "spare"/"reap"), or null.
-   *  Drives the "kept because the whole show is spared" note beside a season's control. Always
-   *  null for a movie. */
+  /** The whole-show decision covering this season, its show's "spare"/"reap", or null.
+   *  Drives the "kept because the whole show is spared" note beside a season's control.
+   *  Always null for a movie. */
   show_override: Override | null;
-  /** For a "reap" override: whether the engine honors it -- it joins the counts, the
-   *  grace countdown and the next plan -- or refuses it (someone is watching right now,
-   *  or the file isn't managed). Null when there is no reap override. Red only on true. */
+  /** For a "reap" override: whether the engine honors it. True means it joins the
+   *  counts, the grace countdown and the next plan. False means the engine refuses it,
+   *  because someone is watching right now or the file isn't managed. Null when there
+   *  is no reap override. The row reads red only when true. */
   override_effective: boolean | null;
-  /** When the spare *in effect* on this item stops keeping it (ISO-8601). Read only when
-   *  `override` is "spare": null then means "kept for good", a value drives the "N days left"
-   *  countdown. A season with no spare of its own carries the show spare's expiry. */
+  /** When the spare in effect on this item stops keeping it (ISO-8601). Read only when
+   *  `override` is "spare": null then means "kept for good", and a value drives the
+   *  "N days left" countdown. A season with no spare of its own carries its show's
+   *  spare expiry. */
   spare_expires_at: string | null;
-  /** When the LAST spare covering this item stops keeping it, own or show, whichever runs
-   *  longer. Null for a forever one. The fate question, where `spare_expires_at` above is the
-   *  precedence question: that one names the spare a control toggles and clears (rule 50), this
-   *  one names when the file stops being kept, which is what a color or a sentence about its
-   *  fate must read (rules 49/61). They differ whenever both levels spare an item and the
-   *  higher-precedence spare runs out first: a season spared 10 days inside a show spared
-   *  forever is kept forever. A show set to REAP contributes no cover, so a season spare
-   *  lapsing under one still reads expired. Read only when `override` is "spare". */
+  /** When the last spare covering this item stops keeping it, whichever of its own
+   *  spare or its show's spare runs longer. Null for a forever one. `spare_expires_at`
+   *  above names the one spare a control toggles and clears; this field names when the
+   *  file actually stops being kept, which is what a color or a sentence about its fate
+   *  must read. The two differ whenever both levels spare an item and the
+   *  higher-precedence spare runs out first: a season spared 10 days inside a show
+   *  spared forever is kept forever. A show set to reap contributes no cover, so a
+   *  season spare lapsing under one still reads as expired. Read only when `override`
+   *  is "spare". */
   spare_covers_until: string | null;
   /** When the whole-show spare covering this season stops keeping it (ISO-8601). Read only
    *  when `show_override` is "spare"; null means a forever show-spare. Always null for a movie. */
@@ -161,23 +167,23 @@ export interface Candidate {
   chip: Chip | null;
   /** Which season this row is, for season rows. Null for movies and unparseable keys. */
   season_number: number | null;
-  /** Whether the show has finished. Null for a movie, where the question doesn't apply,
-   *  and on a row stored before this field existed -- both render nothing at all. */
+  /** Whether the show has finished. Null for a movie, where the question does not
+   *  apply, and for a row stored before this field existed. Both render nothing. */
   show_status: ShowStatus | null;
-  /** This item's Plex collection names (a season's are its SHOW's), sorted smallest
-   *  collection first -- `CollectionChip` takes element 0. Navigation only, never a verdict
-   *  input. Null means "not recorded for this scan" (no Plex configured, a failed
-   *  section read, a row from before this shipped), NOT "in no collection": render no
-   *  chip for null rather than an empty one. */
+  /** This item's Plex collection names (a season reports its show's), sorted smallest
+   *  collection first: `CollectionChip` takes element 0. Navigation only; it never
+   *  feeds the verdict. Null means "not recorded for this scan" (no Plex configured, a
+   *  failed section read, or a row from before this field shipped), not "in no
+   *  collection". Render no chip for null rather than an empty one. */
   collections: string[] | null;
-  /** Which of three search blocks this row matched: 0 exact title, 1 partial title/show,
-   *  2 collection-name only. Null outside a search. Optional: no component reads it yet
-   *  (#816 phase 3b; the divider that reads it is phase 5). */
+  /** Which of three search blocks this row matched: 0 exact title, 1 partial title or
+   *  show, 2 collection-name only. Null outside a search. Optional, since no component
+   *  reads it yet. */
   search_rank?: number | null;
-  /** For a `search_rank === 2` row, the collection name that matched -- not
-   *  `collections[0]`, which would show the smallest collection instead of the one the
-   *  search found. Null for a title match, and outside a search. Optional, same reason as
-   *  `search_rank`. */
+  /** For a `search_rank === 2` row, the collection name that matched. Read this field
+   *  instead of `collections[0]`, which would show the smallest collection rather than
+   *  the one the search found. Null for a title match, and outside a search. Optional,
+   *  for the same reason as `search_rank`. */
   matched_collection?: string | null;
 }
 
@@ -189,7 +195,8 @@ export type ShowStatus = "ended" | "continuing" | "unknown";
 export type Override = "spare" | "reap";
 
 /** One show, whole: the show-level header plus every season row in the latest
- *  snapshot regardless of verdict -- what the show panel and the expanded card read. */
+ *  snapshot, regardless of verdict. This is what the show panel and the expanded card
+ *  read. */
 export interface Group {
   group_key: string;
   title: string;
@@ -207,17 +214,20 @@ export interface Group {
    *  Drives the show panel's library chip. */
   library: string | null;
   chip: Chip | null;
-  /** The show's own decision (the show key's "spare"/"reap"), or null -- what the panel's
-   *  whole-show control toggles and what lights it. Never an aggregate of the seasons' own
-   *  decisions, which that control cannot clear. Null until the whole show is decided. */
+  /** The show's own decision, the show key's "spare"/"reap", or null. This is what the
+   *  panel's whole-show control toggles and lights. It is never an aggregate of the
+   *  seasons' own decisions, because that control cannot clear an aggregate. Null until
+   *  the whole show is decided. */
   show_override: Override | null;
-  /** When the whole-show spare stops keeping the show (ISO-8601), or null for a forever
-   *  spare. Read only when `show_override` is "spare" -- the panel's whole-show countdown. */
+  /** When the whole-show spare stops keeping the show (ISO-8601), or null for a
+   *  forever spare. Read only when `show_override` is "spare"; this drives the panel's
+   *  whole-show countdown. */
   show_spare_expires_at: string | null;
   links: Links;
-  /** Whether the show has finished, taken from whichever season rows carry it -- one
-   *  reading of the series is stamped onto every season in the same scan, so they cannot
-   *  disagree. Null only when no row carries it (a snapshot from before this field). */
+  /** Whether the show has finished, taken from whichever season rows carry it. One
+   *  reading of the series is stamped onto every season in the same scan, so they
+   *  cannot disagree. Null only when no row carries it, from a snapshot recorded before
+   *  this field existed. */
   show_status: ShowStatus | null;
   /** Every season, sorted by season number (unnumbered rows last). */
   seasons: Candidate[];
@@ -242,8 +252,8 @@ export interface GroupRollup {
   seasons: GroupSeasonMark[];
 }
 
-/** One page of candidates, plus the full-set totals the server measured before the page
- *  window -- what the queue header counts and sizes. */
+/** One page of candidates, plus the full-set totals the server measured before the
+ *  page window. The queue header uses these totals for its counts and sizes. */
 export interface CandidatePage {
   items: Candidate[];
   /** One entry per show with a row on this page. A show straddling two pages appears in
@@ -272,10 +282,11 @@ export interface CandidateQuery {
   media_type?: string;
   requested?: RequestedFilter;
   genre?: string;
-  /** Exact name match against a row's stored collection list -- genre's sibling, over
-   *  `collections_json` instead. Navigation only; never re-decides a verdict.
-   *  Spelled `| undefined`: a caller forwards `activeCollection ?? undefined` straight
-   *  through, and `exactOptionalPropertyTypes` counts an explicit `undefined` as a value. */
+  /** Exact name match against a row's stored collection list, over `collections_json`
+   *  instead of the genre field it otherwise mirrors. Navigation only; it never affects
+   *  the verdict. Spelled `| undefined` because a caller forwards `activeCollection ??
+   *  undefined` straight through, and `exactOptionalPropertyTypes` counts an explicit
+   *  `undefined` as a value. */
   collection?: string | undefined;
   library?: string;
   override?: OverrideFilter;
@@ -290,10 +301,10 @@ export interface CandidateQuery {
 export type SignalState = "adds" | "argues_keep" | "not_applicable" | "unreadable";
 
 /** A typed detail on the wire: the catalog key under `why.*` plus its raw params.
- *  `frontend/src/why.ts` composes it; params may nest further keys (a blocked check's
- *  cause, the rating gate's per-bar clauses). A row frozen before the conversion carries
- *  a `legacy` key wrapping its stored sentence, which composes to that sentence verbatim
- *  (docs/history/I18N_PLAN.md §5, #899). */
+ *  `frontend/src/why.ts` composes it into a sentence; params may nest further keys,
+ *  such as a blocked check's cause or the rating gate's per-bar clauses. A row recorded
+ *  before this format existed carries a `legacy` key wrapping its stored sentence,
+ *  which composes to that sentence exactly as written. */
 export interface ReasonKey {
   k: string;
   p?: Record<string, unknown> | null;
@@ -303,23 +314,24 @@ export interface SignalContribution {
   id: string;
   contribution: number;
   weight: number;
-  /** The row's detail, typed on a fresh row and a `legacy`-wrapped sentence on one frozen
-   *  before details were typed. Null only where the row has no detail to show at all. */
+  /** The row's detail: typed on a fresh row, and a `legacy`-wrapped sentence on one
+   *  recorded before details were typed. Null only where the row has no detail to show
+   *  at all. */
   detail_key?: ReasonKey | null;
   /** False means the input was Unknown. Its weight still counts in the denominator, so
-   *  an unevaluated signal drags the score DOWN, never up. */
+   *  an unevaluated signal can only lower the score, never raise it. */
   evaluated: boolean;
-  /** Optional: rows scored before this field existed carry none. Read a missing one as
-   *  `not_applicable`, never `argues_keep` -- claiming an old row argued for keeping,
-   *  when nothing recorded whether it did, overstates the case for keeping. */
+  /** Optional: a row scored before this field existed carries none. Read a missing
+   *  value as `not_applicable`, never as `argues_keep`. Claiming an old row argued for
+   *  keeping, when nothing recorded whether it did, overstates the case for keeping. */
   state?: SignalState | null;
   /** The ramp this row was scored against: no points below `floor`, all of them at
-   *  `saturate_at`. Frozen at scan time, because the live policy need not be the one this
-   *  score was computed under and a panel explaining a score with the wrong line is worse
-   *  than one that stays quiet.
+   *  `saturate_at`. Recorded at scan time, because the live policy may not be the one
+   *  this score was computed under, and a panel explaining a score with the wrong line
+   *  is worse than one that stays quiet.
    *
-   *  `null` in two cases the panel deliberately does not tell apart: a rule with no ramp (a
-   *  yes/no rule of your own either matched or did not), and a row frozen before these
+   *  `null` covers two cases the panel treats alike: a rule with no ramp (a yes/no rule
+   *  of your own either matched or did not), and a row recorded before these fields
    *  shipped. Both mean "no line to state", and both render the plain row. */
   floor?: number | null;
   saturate_at?: number | null;
@@ -327,153 +339,160 @@ export interface SignalContribution {
 
 export interface GateOutcome {
   gate: string;
-  /** The row's detail, typed on a fresh row and a `legacy`-wrapped sentence on one frozen
-   *  before details were typed. Null only where the row has no detail to show at all. */
+  /** The row's detail: typed on a fresh row, and a `legacy`-wrapped sentence on one
+   *  recorded before details were typed. Null only where the row has no detail to show
+   *  at all. */
   detail_key?: ReasonKey | null;
   /** Whether the comparison behind a hold is one Reaper actually made. Only the season
    *  keep-rule guard sets it, where a conflict can also mean "a count nobody could read"
-   *  or "a watch history too short to stand behind the counts" -- shapes that must never
-   *  be described as a comparison. A row scanned before the flag shipped carries neither
-   *  answer and must assert neither (rule 142).
+   *  or "a watch history too short to stand behind the counts". Those shapes must never
+   *  be described as a comparison. A row scanned before this flag shipped carries
+   *  neither answer and must assert neither.
    *
-   *  **`null` is that row, and it is what actually arrives.** The stored explanation has no
-   *  key, but the response always does: `GateOutcomeOut` defaults the field to `None` and
-   *  nothing sets `exclude_none`, so the server serializes it as `null`. The `?` is defense
-   *  against a shape the server does not emit -- never the case to branch on, and never the
-   *  case to test against. Both read as "names neither shape", never as `false`. */
+   *  `null` is exactly that row, and it is what actually arrives: the stored
+   *  explanation has no key, but the response always does, because `GateOutcomeOut`
+   *  defaults the field to `None` and nothing sets `exclude_none`, so the server
+   *  serializes it as `null`. The `?` defends against a shape the server does not emit;
+   *  it is never the case to branch on or test against. Both `undefined` and `null`
+   *  mean "names neither shape", never `false`. */
   defers_to_owner?: boolean | null;
-  /** Whether this block is a check that never ran, as against one that ran and left its
-   *  answer to the owner. Both are blocked and both abstain, so the list they arrive in
-   *  cannot tell them apart, and `keepRuleConflict` needs to: a keep-rule conflict is a
-   *  decision waiting for a person, while the same guard on a show Plex never resolved
-   *  asked nobody and belongs with the four Plex-dependent gates beside it.
+  /** Whether this block is a check that never ran, as against one that ran and left
+   *  its answer to the owner. Both are blocked and both abstain, so the list they
+   *  arrive in cannot tell them apart on its own, and `keepRuleConflict` needs to: a
+   *  keep-rule conflict is a decision waiting for a person, while the same guard
+   *  failing because a show's Plex data was never resolved asked nobody, and belongs
+   *  with the four Plex-dependent gates beside it.
    *
-   *  `null` is a row scanned before the flag shipped, and reads as "not this" -- before it,
-   *  the only season guard result reaching `protections_unknown` on an abstaining item was
-   *  a conflict, so the legacy reading is the correct one. Arrives as `null` rather than
-   *  absent for the reason `defers_to_owner` records above. */
+   *  `null` is a row scanned before this flag shipped, and reads as "not this": every
+   *  such row's only possible season-guard result in `protections_unknown` was a
+   *  conflict, so reading `null` as "not a conflict" is correct for that row. It
+   *  arrives as `null` rather than absent, for the same reason `defers_to_owner` above
+   *  does. */
   unestablishable?: boolean | null;
 }
 
-/** How the item was tied to its Plex library entry. The panel stays quiet on "matched" and
- *  shows a plain "kept to be safe" notice on the other two -- the only cases where the owner
- *  needs to know the file was kept because Reaper couldn't be sure what it was looking at. */
+/** How the item was tied to its Plex library entry. The panel stays quiet on
+ *  "matched" and shows a plain "kept to be safe" notice on the other two. Those are
+ *  the only cases where the owner needs to know the file was kept because Reaper
+ *  could not be sure what it was looking at. */
 export interface Match {
-  /** `ambiguous` and `conflicted` are NOT interchangeable, and the panel must not treat
-   *  them as one: ambiguous is several Plex rows answering to this item (a library really
-   *  holding more than one copy), conflicted is each kind of evidence naming a DIFFERENT
-   *  single row (Plex and the *arr describing one file differently, over a library that may
-   *  hold exactly one copy). Saying the first when it is the second sends the owner hunting
-   *  for a duplicate that is not there. */
+  /** `ambiguous` and `conflicted` are not interchangeable, and the panel must not
+   *  treat them as one. `ambiguous` means several Plex rows answer to this item, a
+   *  library really holding more than one copy. `conflicted` means each kind of
+   *  evidence names a different single row, Plex and the *arr describing one file
+   *  differently, over a library that may hold exactly one copy. Saying the first
+   *  when it is the second sends the owner hunting for a duplicate that is not there. */
   status: "matched" | "unmatched" | "ambiguous" | "conflicted" | null;
-  /** Which kind of evidence bound this item, e.g. `tmdb`. Audit vocabulary, so it is declared
-   *  here and deliberately not rendered: rule 21 keeps id kinds off the panel. It is typed so
-   *  the next reader of this file finds it instead of re-discovering the drift (#260). Null
-   *  when nothing bound this item, and on a record stored before this shipped. */
+  /** Which kind of evidence bound this item, for example `tmdb`. Audit vocabulary: it
+   *  is declared here but deliberately not rendered, since the panel keeps id kinds
+   *  off the screen. It is typed here so a future reader finds it directly. Null when
+   *  nothing bound this item, and for a record stored before this field shipped. */
   by: string | null;
   /** For the audit log, not shown to the owner: "Bound by TMDB id 1001", etc. */
   detail: string | null;
   rating_key: number | null;
-  /** Every Plex listing a merged bind covers, when one file is listed several times. Null on
-   *  an ordinary single-listing bind, and on a record stored before this shipped. Load-bearing
-   *  on the deletion path -- the executor re-reads this list, so the listings are protected
-   *  together -- which is why the panel says the count out loud. */
+  /** Every Plex listing a merged bind covers, when one file is listed several times.
+   *  Null on an ordinary single-listing bind, and on a record stored before this field
+   *  shipped. This list matters on the deletion path: the executor re-reads it, so all
+   *  the listings are protected together, which is why the panel states the count out
+   *  loud. */
   merged_rating_keys: number[] | null;
-  /** The Plex rows an abstain was choosing between, on `ambiguous` and `conflicted`. Null
-   *  outside those two states, and on a record stored before this shipped. The panel renders
-   *  `links.match_candidates` rather than these numbers; they are here so a reader can tell
-   *  how many there were without following the links. */
+  /** The Plex rows an abstain was choosing between, on `ambiguous` and `conflicted`.
+   *  Null outside those two states, and for a record stored before this field shipped.
+   *  The panel renders `links.match_candidates` rather than these numbers; they are
+   *  here so a reader can tell how many there were without following the links. */
   candidate_rating_keys: number[] | null;
 }
 
-/** A graded keep's contribution to the score -- points subtracted, and whether it could be
- *  evaluated (false means Unknown, which takes the FULL discount -- fail-closed toward keeping). */
+/** A graded keep's contribution to the score: points subtracted, and whether it could
+ *  be evaluated. False means Unknown, which takes the full discount, so the failure
+ *  favors keeping the file. */
 export interface KeepContribution {
   name: string;
   discount: number;
   max_discount: number;
-  /** The row's detail, typed on a fresh row and a `legacy`-wrapped sentence on one frozen
-   *  before details were typed, the same shape every explanation row carries. */
+  /** The row's detail: typed on a fresh row, and a `legacy`-wrapped sentence on one
+   *  recorded before details were typed, the same shape every explanation row carries. */
   detail_key?: ReasonKey | null;
   evaluated: boolean;
 }
 
-/** The Stage 2 rewatch-probability context (#554): what fraction of similarly-dormant
- *  titles got watched again, from the operator's own history. Display only -- no verdict
- *  input and no signal; the opt-in protective hold reads the frozen cohort facts directly,
- *  never this block.
+/** The rewatch-probability context: what fraction of similarly-dormant titles got
+ *  watched again, from the operator's own history. Display only. It feeds no verdict
+ *  and no signal; the opt-in protective hold reads the recorded cohort facts directly
+ *  instead of this block.
  *
- *  `n`/`k` are the block's pooled cohort size and watched-again count, `lo_days`/`hi_days`
- *  its half-open dormancy range (`hi_days` null on the open tail bucket). In the
- *  `"no_history"` state there is no usable block and those four carry a placeholder;
- *  render off `state` first and never them in that state. */
+ *  `n`/`k` are the block's pooled cohort size and watched-again count. `lo_days`/`hi_days`
+ *  is its half-open dormancy range (`hi_days` is null on the open tail bucket). In the
+ *  `"no_history"` state there is no usable block and those four fields carry a
+ *  placeholder; check `state` first and ignore them in that state. */
 export interface RewatchOdds {
   n: number;
   k: number;
   lo_days: number;
   hi_days: number | null;
   state: "measured" | "thin" | "no_history";
-  /** The Wilson 95% upper bound of `k`/`n`, as a whole percent -- the same figure the
-   *  rewatch protection itself compares against the operator's floor (#936), so this
-   *  display block never reads a smaller "probability" than the number that can keep the
-   *  file. `null` only for a row stored before this field shipped; the panel falls back to
-   *  `why.ts`'s `wilsonUpperPct(k, n)` rather than showing nothing. */
+  /** The Wilson 95% upper bound of `k`/`n`, as a whole percent. This is the same
+   *  figure the rewatch protection compares against the operator's floor, so this
+   *  display block never reads a smaller "probability" than the number that can keep
+   *  the file. `null` only for a row stored before this field shipped; the panel then
+   *  falls back to `why.ts`'s `wilsonUpperPct(k, n)` rather than showing nothing. */
   bound_pct: number | null;
 }
 
 export interface Explanation {
   score: number;
-  /** The condemnation subtotal before any keep discount. Optional so an item scored before
-   *  this shipped still parses, and nullable because that is what such a row arrives as:
-   *  `Explanation` defaults both to `None` and nothing sets `exclude_none`, so the server
-   *  sends `null` rather than omitting the key. `WhyPanel` already reads them that way
-   *  (`base_score != null`, `keep_discount ?? 0`); only the type disagreed. */
+  /** The score subtotal before any keep discount is applied. Optional so an item
+   *  scored before this field shipped still parses, and nullable because that is what
+   *  such a row arrives as: `Explanation` defaults both fields to `None` and nothing
+   *  sets `exclude_none`, so the server sends `null` rather than omitting the key.
+   *  `WhyPanel` already reads them that way (`base_score != null`, `keep_discount ??
+   *  0`); only the type disagreed. */
   base_score?: number | null;
   keep_discount?: number | null;
-  /** The score the item had to beat. Null only when the stored explanation could not be
-   *  read and the server sent the degraded fallback: the panel omits its "your threshold
-   *  is N" clause rather than print a number that is not the operator's setting. */
+  /** The score the item had to beat. Null only when the stored explanation could not
+   *  be read and the server sent a fallback value instead: the panel omits its "your
+   *  threshold is N" clause rather than print a number that is not the operator's
+   *  setting. */
   threshold: number | null;
   coverage: number;
-  /** The share of scoring weight that had to be readable before Reaper would judge this, in
-   *  basis points (5000 = 50%). Frozen beside `threshold` so an abstain forced by the floor can
-   *  name the line coverage fell under. Null when the row could not be read or predates this
-   *  field: the panel drops the floor clause rather than read the live policy (rule 113). */
+  /** The share of evidence that had to be checkable before Reaper would judge this
+   *  item, in basis points (5000 = 50%). Recorded beside `threshold` so an abstain
+   *  forced by the floor can name the line coverage fell under. Null when the row
+   *  could not be read or predates this field: the panel then drops the floor clause
+   *  rather than read the live policy. */
   coverage_floor_bp: number | null;
-  /** Whether this title is held because the plays Reaper recorded earlier stopped being
-   *  readable. The panel offers the per-title escape on it, and on nothing else: the reason
-   *  text beside it is operator copy and will be reworded (rule 92).
+  /** Whether this title is held because the plays Reaper recorded earlier stopped
+   *  being readable. The panel offers the per-title escape only on this field.
    *
-   *  Three-state (rule 142), and only `true` may show the control. `false` is the positive
-   *  claim that the scan took a reading and it was honest. **`null` is "cannot tell"** -- a
-   *  row scanned before the key existed, or an item with no reading to judge -- and it is what
-   *  actually arrives for such a row: `Explanation` defaults the field to `None` and nothing
-   *  sets `exclude_none`, so the server serializes it as `null`. Both read as "cannot tell",
-   *  never as `false`, because offering to discard a watch record on a guess is the wrong
-   *  direction. */
+   *  Three-state, and only `true` may show the control. `false` is the positive claim
+   *  that the scan took a reading and it was honest. `null` means "cannot tell": a row
+   *  scanned before this field existed, or an item with no reading to judge. It is
+   *  what actually arrives for such a row, because `Explanation` defaults the field to
+   *  `None` and nothing sets `exclude_none`, so the server serializes it as `null`.
+   *  Both `undefined` and `null` mean "cannot tell", never `false`, because offering
+   *  to discard a watch record on a guess is the wrong direction. */
   watch_blind: boolean | null;
   signals: SignalContribution[];
   keeps?: KeepContribution[];
   /** Why it is being kept. */
   protections_fired: GateOutcome[];
-  /** Protections evaluated that did NOT fire -- with the actual numbers. */
+  /** Protections that were evaluated but did not fire, with the actual numbers. */
   protections_checked: GateOutcome[];
-  /** Protections that could not be checked. "We could not look" is not "we looked and
-   *  it was fine", and rendering them alike is the entire Deleterr failure class. */
+  /** Protections that could not be checked. "We could not look" is not the same as
+   *  "we looked and it was fine". Rendering them the same way is the exact mistake
+   *  Deleterr makes. */
   protections_unknown: GateOutcome[];
-  /** How it was tied to Plex. `null` when the row was never matched, or was scanned before
-   *  this field shipped -- both consumers already guard it, and mean nothing to show. */
+  /** How it was tied to Plex. `null` when the row was never matched, or was scanned
+   *  before this field shipped. Both cases already have guards in place, and both
+   *  mean nothing to show. */
   match: Match | null;
-  /** The Stage 2 rewatch-probability context (#554), movie lane only. `null` for a season
-   *  row (the fit is movie-only) and for a row stored before this field existed -- both
-   *  read as nothing to show. */
+  /** The rewatch-probability context, movie lane only. `null` for a season row,
+   *  since the fit is movie-only, and for a row stored before this field existed.
+   *  Both read as nothing to show. */
   rewatch_odds?: RewatchOdds | null;
 }
 
-/** Where the item can be opened. Each link is null when it can't be built (unmatched in
- *  Plex, instance removed, a row from an older scan); the panel hides a missing link,
- *  never renders a broken one. At most one of radarr/sonarr is set. The rating-site
- *  links back the chips in the ratings row; rotten_tomatoes is a title search. */
 /** One Plex row an abstain could not choose between, with the ways to open it. Reaper
  *  knows nothing about these rows but their keys, so the panel numbers them rather than
  *  naming them. */
@@ -483,6 +502,11 @@ export interface CandidateLink {
   tautulli: string | null;
 }
 
+/** Where the item can be opened. Each link is null when it cannot be built (unmatched
+ *  in Plex, instance removed, a row from an older scan). The panel hides a missing
+ *  link rather than rendering a broken one. At most one of radarr/sonarr is set. The
+ *  rating-site links back the chips in the ratings row; rotten_tomatoes is a title
+ *  search. */
 export interface Links {
   plex: string | null;
   tautulli: string | null;
@@ -494,9 +518,9 @@ export interface Links {
   rotten_tomatoes: string | null;
   trakt: string | null;
   /** The rows an abstain was choosing between; empty on every other item. `plex` and
-   *  `tautulli` above are built from the item's OWN rating key, which is null for exactly
-   *  these items, so without this the panel names a problem in Plex and offers no way to
-   *  open it. */
+   *  `tautulli` above are built from the item's own rating key, which is null for
+   *  exactly these items. Without this field the panel would name a problem in Plex
+   *  and offer no way to open it. */
   match_candidates?: CandidateLink[];
 }
 
@@ -515,9 +539,10 @@ export interface Ratings {
 
 export interface CandidateDetail extends Candidate {
   explanation: Explanation;
-  /** True when `explanation` is the server's degraded fallback rather than what the scan
-   *  stored. The panel says so, instead of rendering empty reason blocks that would read
-   *  as "nothing protected this" when the truth is that nothing could be read. */
+  /** True when `explanation` is a fallback value from the server rather than what the
+   *  scan stored. The panel says so, instead of rendering empty reason blocks that
+   *  would read as "nothing protected this" when the truth is that nothing could be
+   *  read. */
   explanation_unreadable?: boolean;
   links: Links;
   ratings: Ratings | null;
@@ -542,10 +567,11 @@ export interface SignalSetting {
 
 /** Try one signal's settings against one value.
  *
- *  `kind` is a discriminator, not decoration: a second probe -- what a keep rule would
- *  discount, what a graded rule of your own would add -- joins this union and every client
- *  already sending `kind` keeps working. Inferring the shape from which fields turned up is
- *  what rule 142 exists to stop, and it is far cheaper to type before the format ships. */
+ *  `kind` is a discriminator, not decoration. When a second probe joins this union,
+ *  such as what a keep rule would discount or what a graded rule of your own would
+ *  add, every client already sending `kind` keeps working. Typing the discriminator
+ *  before the format ships is far cheaper than inferring the shape later from which
+ *  fields turned up. */
 export interface SignalProbe {
   kind: "signal";
   signal: string;
@@ -562,9 +588,9 @@ export type PolicyProbe = SignalProbe;
 
 /** One answer, the same shape for every probe kind, so a new kind needs no new rendering. */
 export interface PolicyProbeResult {
-  /** What the rule moves the score by, in its own direction. The only field: the engine's
-   *  own wording used to ride beside it and nothing rendered it, because `signalRamp.ts`
-   *  words both the editor's sentence and the panel's row. */
+  /** What the rule moves the score by, in its own direction. This is the only field:
+   *  `signalRamp.ts` composes both the editor's sentence and the panel's row from it,
+   *  so no separate wording field is needed. */
   points: number;
 }
 
@@ -594,13 +620,14 @@ export type CustomCondemn =
       floor: number;
     };
 
-/** A user-authored graded "lean toward keeping" -- a subtractive discount, fail-closed. */
+/** A user-authored graded "lean toward keeping": a subtractive discount, fail-closed. */
 export interface GradedKeep {
   name: string;
   field: string;
-  /** For a membership field (`on_list`): which list, by name. That keep is FLAT -- on the
-   *  list takes the full `max_discount`, off it takes none -- so the ramp fields are inert
-   *  (send floor 0, saturate_at 1). Null or absent for every numeric field. */
+  /** For a membership field (`on_list`): which list, by name. That keep is flat: being
+   *  on the list takes the full `max_discount`, being off it takes none, so the ramp
+   *  fields are inert (send floor 0, saturate_at 1). Null or absent for every numeric
+   *  field. */
   value?: string | null;
   max_discount: number;
   floor: number;
@@ -613,18 +640,19 @@ export interface GradedKeep {
 export type RatingSource =
   "imdb" | "tmdb" | "rotten_tomatoes_critic" | "rotten_tomatoes_audience" | "metacritic";
 
-/** One "keep it if it clears this bar" rule. `floor` is in tenths (7.5 -> 75), and reads
- *  the same for a percentage source (75% -> 75). `min_votes` only bites on sources that
- *  count votes (IMDb, TMDb); it is 0 for the percentage sources. */
+/** One "keep it if it clears this bar" rule. `floor` is in tenths (7.5 -> 75), and
+ *  reads the same for a percentage source (75% -> 75). `min_votes` only applies on
+ *  sources that count votes (IMDb, TMDb); it is 0 for the percentage sources. */
 export interface RatingRule {
   source: RatingSource;
   floor: number;
   min_votes: number;
 }
 
-/** The built-in rewatch keep's name, as it arrives on `KeepContribution.name`. Mirrors
- *  `engine/signals.py`'s `REWATCH_KEEP`; a mirror test pins the two together later.
- *  Declared beside `PolicyBody` because that is where the keep's own four fields live. */
+/** The built-in rewatch keep's name, as it arrives on `KeepContribution.name`.
+ *  Mirrors `engine/signals.py`'s `REWATCH_KEEP`, and a mirror test pins the two
+ *  together. Declared beside `PolicyBody` because that is where the keep's own four
+ *  fields live. */
 export const REWATCH_KEEP = "rewatch_habit";
 
 export interface PolicyBody {
@@ -663,8 +691,8 @@ export interface SeasonShape {
   season_counts: Record<number, number>;
 }
 
-/** One measured rung of the fitted rewatch ladder (#554 stage 2): a merged dormancy block
- *  from the latest scan's fit, aggregated across every movie candidate that landed in it. */
+/** One measured rung of the fitted rewatch ladder: a merged dormancy block from the
+ *  latest scan's fit, aggregated across every movie candidate that landed in it. */
 export interface RewatchOddsBlock {
   lo_days: number;
   hi_days: number | null;
@@ -735,21 +763,23 @@ export interface ThresholdCurveNoScan {
 export type ThresholdCurve =
   ThresholdCurveMeasured | ThresholdCurveCountsOnly | ThresholdCurveNoScan;
 
-/** What a vocabulary field's value IS, which decides how it is typed, stored and read back
- *  (`engine/fields.py`'s `FieldType`). Two of the six convert. A size is typed in GB and stored
- *  in bytes, a rating is typed as 7.5 and stored as 75. Days are typed and stored alike.
+/** What a vocabulary field's value is, which decides how it is typed, stored and read
+ *  back (`engine/fields.py`'s `FieldType`). Two of the six convert: a size is typed in
+ *  GB and stored in bytes, a rating is typed as 7.5 and stored as 75. Days are typed
+ *  and stored alike.
  *
- *  It was a bare `string` here, so a member added on the server was a value the browser had no
- *  name for and no way to notice. `test_api_type_mirror.py` notices now. Its failure names every
- *  site in `PolicyRuleEditors.tsx` that dispatches on this value, and not one of them is
- *  exhaustive: a member none handles takes a fall-through arm rather than failing. The list
- *  lives there and not here, so the two cannot drift (rule 144). */
+ *  Typing this as a union rather than a bare `string` lets `test_api_type_mirror.py`
+ *  catch a member the server adds that this file does not yet know about. Its failure
+ *  names every site in `PolicyRuleEditors.tsx` that dispatches on this value, and none
+ *  of them is exhaustive: a member none handles takes a fall-through arm rather than
+ *  failing. That list of sites lives in that test file, not here, so the two stay in
+ *  step. */
 export type FieldType = "days" | "bytes" | "count" | "rating_tenths" | "bool" | "text";
 
-/** One field the owner may write a protect condition about (from the vocabulary endpoint).
- *  The label, help paragraph and unit are not on the wire: the browser reads them from the
- *  catalog by this key (`why.field.<key>`, `policyRules.fieldHelp.<key>`,
- *  `policyRules.fieldUnit.<key>`), #868 phase 4. */
+/** One field the owner may write a protect condition about, from the vocabulary
+ *  endpoint. The label, help paragraph and unit are not on the wire: the browser reads
+ *  them from the catalog by this key (`why.field.<key>`, `policyRules.fieldHelp.<key>`,
+ *  `policyRules.fieldUnit.<key>`). */
 export interface VocabField {
   key: string;
   type: FieldType;
@@ -769,40 +799,39 @@ export interface PolicyWarning {
 export interface Policy {
   policy_hash: string;
   name: string;
-  /** The shipped bounds for this media type's signals, so a changed one can be put back.
+  /** The shipped bounds for this media type's signals, so a changed one can be put
+   *  back. Sent from the server rather than copied into this file, so the number the
+   *  scorer actually reads is declared in one place.
    *
-   *  Making the ramp editable made it losable: nothing said what 1825 had been, and the
-   *  presets restore weights only. Sent rather than copied into this file, so the number the
-   *  scorer reads is declared once.
-   *
-   *  Weights ride along and the editor ignores them: removal weights must total exactly 100,
-   *  so restoring one on its own would break the budget the save bar enforces. */
+   *  Weights ride along, and the editor ignores them: removal weights must total
+   *  exactly 100, so restoring one on its own would break the budget the save bar
+   *  enforces. */
   default_signals?: SignalSetting[];
-  /** How far back your watch history goes, for the editor to say beside the controls it
-   *  bounds. A never-played title is measured from the later of its arrival and this edge,
-   *  so this IS the largest dormancy anything can present: a ramp whose far end sits past
-   *  it can never pay in full. `null` when the scan did not record it, which the editor
-   *  renders as not knowing rather than as no history at all. */
+  /** How far back your watch history goes, for the editor to display beside the
+   *  controls it bounds. A never-played title is measured from the later of its
+   *  arrival and this edge, so this is the largest dormancy anything can present: a
+   *  ramp whose far end sits past it can never pay out in full. `null` when the scan
+   *  did not record it, which the editor renders as not knowing rather than as no
+   *  history at all. */
   history_reach_days?: number | null;
   body: PolicyBody;
   warnings: PolicyWarning[];
-  /** Every way this body had to be repaired to load it, so it is NOT what is stored.
+  /** Every way this body had to be repaired to load it. It is not what is stored.
    *
-   *  The editor reads the LENGTH of this to open dirty, and the copy per member separately.
-   *  That split is the point: a repair the server reports raises a savebar whether or not
-   *  anyone wrote a sentence for it, so the operator always has the Save the degraded scan
-   *  is telling them to press. Three booleans lived here before and the fourth repair only
-   *  ever reached the backend, which left a scan degraded with no way out (#516). */
+   *  The editor reads the length of this list to open dirty, and reads the copy per
+   *  member separately. That split matters: a repair the server reports raises the
+   *  save bar whether or not anyone wrote a sentence for it, so the operator always
+   *  has a Save button to press when the stored policy needed a repair. */
   repairs?: PolicyRepair[];
 }
 
 /** One way the server had to change a stored policy body to load it.
  *
  *  Mirrors `PolicyRepair` in `src/reaper/engine/policy_migrations.py`, which is the
- *  declaration; a
- *  member the server adds and this union has not is handled rather than assumed away
- *  (`REPAIR_NOTICES` in `PolicyEditor.tsx`, rule 66). Widened to `string` on purpose so an
- *  unknown id is a value TypeScript admits exists, not a cast. */
+ *  real declaration. A member the server adds that this union does not yet list is
+ *  handled rather than assumed away (`REPAIR_NOTICES` in `PolicyEditor.tsx`). Widened
+ *  to `string` on purpose, so an unknown id is a value TypeScript admits exists, not a
+ *  cast. */
 export type PolicyRepair =
   "rescaled" | "fell_back" | "rating_rules_restored" | "lists_migrated" | (string & {});
 
@@ -832,7 +861,7 @@ export interface Simulation {
   /** Which refusal this is. Null exactly when `exact`. */
   stale_kind: SimStale | null;
   /** The catalog id for the refusal, composed under `policySim.staleReason.<id>` by
-   *  `PolicySimulator.tsx`'s `StaleNotice` (`composeIn`, docs/history/I18N_PLAN.md §5). */
+   *  `PolicySimulator.tsx`'s `StaleNotice` (`composeIn`). */
   stale_reason: ReasonKey | null;
   condemned: number;
   protected: number;
@@ -842,17 +871,16 @@ export interface Simulation {
   unknown_size_items: number;
   newly_condemned: number;
   no_longer_condemned: number;
-  /** How many titles the LAST SCAN flags -- the stored verdicts with overrides applied, which
-   *  is what the panel's compare line names. Not the saved policy: saving starts a scan rather
-   *  than being one, so the two differ until it finishes and keep differing if it fails. The
-   *  panel used to reconstruct this from the two deltas above, which is sound only while both
-   *  count every way into and out of the removal list -- and it printed the draft's own count
-   *  on both sides of the compare line the moment `no_longer_condemned` missed condemn ->
-   *  protect. The server counts it per row regardless. */
+  /** How many titles the last scan flags: the stored verdicts with overrides applied,
+   *  which is what the panel's compare line names. Not the saved policy: saving starts
+   *  a scan rather than being one, so the two differ until it finishes, and keep
+   *  differing if the scan fails. The server counts this per row directly rather than
+   *  the panel reconstructing it from the two deltas below, since that reconstruction
+   *  only works while both deltas count every way into and out of the removal list. */
   condemned_before: number;
-  /** Titles this draft puts in a different lane than the one they are in now. A superset of
-   *  the two deltas above, which cannot see a protection edit moving a title between spared
-   *  and not judged -- the move that made a working panel read as a broken one (#488). */
+  /** Titles this draft puts in a different lane than the one they are in now. This is
+   *  a superset of the two deltas above, which cannot see a protection edit that moves
+   *  a title between spared and not judged. */
   changed_titles: number;
   histogram: number[];
   /** Populated only when exact; empty on a stale refusal, like every count above. */
@@ -876,9 +904,10 @@ export interface ActionStep {
   body: Record<string, unknown> | null;
   state: string;
   is_canary: boolean;
-  /** Why this step failed or was skipped, as a typed reason: `null` on a step that has not
-   *  run or that succeeded. Compose with `composeError` (`why.ts`); a `legacy` key composes
-   *  to the sentence a row written before #899 stored verbatim (rule 96). */
+  /** Why this step failed or was skipped, as a typed reason: `null` on a step that has
+   *  not run or that succeeded. Compose with `composeError` (`why.ts`); a `legacy` key
+   *  composes to the sentence a row recorded before typed reasons existed, exactly as
+   *  written. */
   error_reason: ReasonKey | null;
 }
 
@@ -892,10 +921,10 @@ export interface Run {
   /** How many condemned items this plan left out because nothing would report their
    *  size. The plan is smaller than the queue implied, and this is what says so. */
   held_back_unknown_size: number;
-  /** How many journal rows this run holds in total. `steps` below is a window, so anything
-   *  counting rows reads THIS: `steps.length` is the size of the page, never the size of the
-   *  plan. Not `item_count` either, which counts deduplicated candidates, and a season is
-   *  three steps sharing one key. */
+  /** How many journal rows this run holds in total. `steps` below is a window, so
+   *  anything counting rows should read this field: `steps.length` is the size of the
+   *  page, never the size of the plan. `item_count` is not it either, since that counts
+   *  deduplicated candidates, and a season is three steps sharing one key. */
   step_count: number;
   /** The first page of the journal, not all of it. `api.runSteps` serves any window. */
   steps: ActionStep[];
@@ -911,22 +940,23 @@ export interface RunSteps {
   offset: number;
 }
 
-/** One line of the run history: the stored row, and nothing derived. A past plan's counts,
- *  totals and phrase are all re-derived from today's overrides, which costs a whole snapshot's
- *  candidates per run and, for a finished run, describes a plan that never existed -- so the
- *  list carries none of them and opening a row fetches the full `Run` (P-3). */
+/** One line of the run history: the stored row, and nothing derived. A past plan's
+ *  counts, totals and phrase would all have to be re-derived from today's overrides,
+ *  which costs a whole snapshot's candidates per run and, for a finished run,
+ *  describes a plan that never existed. So the list carries none of them, and opening
+ *  a row fetches the full `Run` instead. */
 export interface RunSummary {
   id: number;
   state: string;
   approved_at: string;
   /** Why the run stopped early, as a typed reason: `null` on a run that did not abort.
-   *  Thawed the same way `ActionStep.error_reason` is. */
+   *  Read back from storage the same way `ActionStep.error_reason` is. */
   aborted_reason: ReasonKey | null;
 }
 
 export interface RunCheck {
-  /** The live reason the executor recorded this checklist line with, as a typed reason.
-   *  Always present -- a check without one would have nothing to render. */
+  /** The live reason the executor recorded this checklist line with, as a typed
+   *  reason. Always present, since a check without one would have nothing to render. */
   label_reason: ReasonKey;
   ok: boolean;
 }
@@ -940,8 +970,9 @@ export interface RunOutcome {
    *  present, the same way `RunCheck.label_reason` is. */
   detail_reason: ReasonKey;
   checks: RunCheck[];
-  /** True when this item was the run's canary -- the smallest item, executed (or, in a dry
-   *  run, proven) first. The same fact `ActionStep.is_canary` carries for the step table. */
+  /** True when this item was the run's canary: the smallest item, executed (or, in a
+   *  dry run, proven) first. The same fact `ActionStep.is_canary` carries for the step
+   *  table. */
   is_canary: boolean;
 }
 
@@ -998,9 +1029,10 @@ export interface ProfileSettings {
   /** How many items with no size one run may delete. 0, the default, means never: the GB
    *  caps cannot bound them, so this count is the only bound there is. */
   max_unmeasured_per_run: number;
-  /** Read-only (GET). True when the stored settings couldn't be read and these are the
-   *  shipped defaults, which can be looser than what was saved. The Pace page shows a
-   *  recovery notice; a scan degrades until the operator saves again. Absent/ignored on save. */
+  /** Read-only (GET). True when the stored settings could not be read and these are
+   *  the shipped defaults, which can be looser than what was saved. The Pace page
+   *  shows a recovery notice, and a scan runs degraded (untrusted, so nothing can be
+   *  deleted from it) until the operator saves again. Absent or ignored on save. */
   settings_recovered?: boolean;
 }
 
@@ -1021,28 +1053,23 @@ export interface SignalCount {
   count: number;
 }
 
-/** What Plex would remove besides the files a reap deletes.
- *
- *  Reaper's end-of-run purge empties a library's WHOLE trash, not just the part this run
- *  caused, so anything already in there loses its watch history, ratings and collections
- *  too. Those items sit on both sides of the executor's before/after count, so its gate
- *  cannot see them. No file on disk is affected either way.
- */
 /** One protection list, and whether it is still protecting anything.
  *
- *  `state` is decided on the server so this screen and the degraded-scan notice cannot tell
- *  the operator two different stories about the same failed check (rule 144). `item_count`
- *  is what the stored copy still covers: a `failing` list above zero went on protecting
- *  those titles, because a failed refresh leaves the previous membership in place.
+ *  `state` is decided on the server, so this screen and the degraded-scan notice
+ *  cannot tell the operator two different stories about the same failed check.
+ *  `item_count` is what the stored copy still covers: a `failing` list above zero went
+ *  on protecting those titles, because a failed refresh leaves the previous membership
+ *  in place.
  *
- *  `name` comes from Plex or an *arr, so a surface rendering it wraps (rule 139).
+ *  `name` comes from Plex or an *arr, so a surface rendering it wraps.
  */
 export interface ProtectionList {
-  /** The stable key rows are keyed on. Never shown: a display name can collide (rule 63). */
+  /** The stable key rows are keyed on. Never shown, because a display name can collide. */
   slug: string;
   name: string;
-  /** Which family this belongs to. The panel groups on it: one protection, not one row per
-   *  *arr instance. Never derived in the component -- the slug spellings live server-side. */
+  /** Which family this belongs to. The panel groups on it: one protection, not one
+   *  row per *arr instance. Never derived in the component, since the slug spellings
+   *  live server-side. */
   source: "arr_tag" | "plex_collection" | "plex_watchlist" | "imdb";
   state: "working" | "stale" | "failing" | "never_checked";
   item_count: number;
@@ -1050,11 +1077,12 @@ export interface ProtectionList {
   last_checked_at: string | null;
   /** What the last failed check said, from the service that refused. Null when none did. */
   error: string | null;
-  /** Which `ListConfig` this membership was synced for, so the panel can put Edit and Check
-   *  now on the row without working out from a slug which definition made it. Several rows
-   *  share one id (a tag list is synced once per *arr instance); it is null for a row stored
-   *  before its definition existed, which the next successful check re-homes. Derived on the
-   *  server, beside the slug spellings -- never parsed here (rule 63). */
+  /** Which `ListConfig` this membership was synced for, so the panel can put Edit and
+   *  Check now on the row without working out from a slug which definition made it.
+   *  Several rows share one id, since a tag list is synced once per *arr instance. It
+   *  is null for a row stored before its definition existed, and the next successful
+   *  check re-homes it. Derived on the server, beside the slug spellings, never parsed
+   *  here. */
   list_id: number | null;
   /** A tag list's per-tag counts from the last good check, by the operator's own spelling of
    *  each tag. Null for every other source, and for a row that has not synced since the
@@ -1064,18 +1092,19 @@ export interface ProtectionList {
    *  operator named the instance on Settings; null for every other source. */
   server: string | null;
   /** Which media types this row's stored members span. Empty until the first sync. The
-   *  panel compares it against the types a keep rule names (`policy_use`) so a rule covering
-   *  one side of a mixed list reads as partial cover, not full (#533). */
+   *  panel compares it against the types a keep rule names (`policy_use`), so a rule
+   *  covering one side of a mixed list reads as partial cover, not full. */
   media_types: ("movie" | "tv")[];
 }
 
-/** The settings one list source needs. A union in practice, kept as one optional-field shape
- *  because that is what crosses the wire and what `list_config._clean_config` validates: it
- *  reads only the keys its own source defines and refuses a shape that could never match.
+/** The settings one list source needs. A union in practice, kept as one
+ *  optional-field shape because that is what crosses the wire and what
+ *  `list_config._clean_config` validates: it reads only the keys its own source
+ *  defines and refuses a shape that could never match.
  *
- *  A type alias rather than an interface, so it stays out of the wire-type mirror's walk --
- *  the server side is a bare `dict[str, Any]` for the same reason the validation is per
- *  source rather than per model. */
+ *  A type alias rather than an interface, so it stays out of the wire-type mirror's
+ *  walk. The server side is a bare `dict[str, Any]` for the same reason: the
+ *  validation is per source rather than per model. */
 export type ListConfigBody = {
   /** `plex_collection`: which library to look in, and which collection inside it. */
   library?: string;
@@ -1099,27 +1128,28 @@ export interface ListPolicyUse {
   points: number | null;
 }
 
-/** One list DEFINITION: what the operator named and where it points.
+/** One list definition: what the operator named and where it points.
  *
- *  The other half of `ProtectionList`, which is what that definition is currently protecting.
- *  They are two tables on purpose -- a definition lives in `reaper.db` and is not rebuildable
- *  from anything, membership is a mirror of somebody else's data in the cache -- and they are
- *  joined on `ProtectionList.list_id`. A definition exists from the moment it is saved; its
- *  membership does not exist until a sync has run, so a new list has a row here and none there.
+ *  The other half of `ProtectionList`, which is what that definition is currently
+ *  protecting. They are two tables on purpose. A definition lives in `reaper.db` and
+ *  is not rebuildable from anything; membership is a mirror of somebody else's data in
+ *  the cache. The two join on `ProtectionList.list_id`. A definition exists from the
+ *  moment it is saved; its membership does not exist until a sync has run, so a new
+ *  list has a row here and none there.
  */
 export interface ListConfig {
   id: number;
-  /** The operator's own words, so a surface rendering it wraps (rule 139). */
+  /** The operator's own words, so a surface rendering it wraps. */
   name: string;
   source: "arr_tag" | "plex_collection" | "plex_watchlist" | "imdb";
   config: ListConfigBody;
   /** How the policies use this list right now: one entry per keep rule naming it. */
   policy_use: ListPolicyUse[];
-  /** The media types a keep rule on this list can be authored for: the set the Policy picker
-   *  offers it on (`policy_migrations.authorable_media_scope`, #549). A Plex collection takes its library's
-   *  kind and a watchlist both, known before any sync; a tag or IMDb list is known only once a
-   *  sync has read it. Empty means offer on neither: the type is unknown, so a rule could keep
-   *  nothing. */
+  /** The media types a keep rule on this list can be authored for: the set the Policy
+   *  picker offers it on (`policy_migrations.authorable_media_scope`). A Plex
+   *  collection takes its library's kind, and a watchlist takes both, known before any
+   *  sync; a tag or IMDb list is known only once a sync has read it. Empty means offer
+   *  on neither, since the type is unknown and a rule could then keep nothing. */
   authorable_media: ("movie" | "tv")[];
 }
 
@@ -1132,21 +1162,29 @@ export interface ListSyncResult {
   /** Set when Plex could not be reached at all, so no collection row carries an error
    *  explaining why it was not checked. Null when Plex answered or none is linked. The
    *  catalog id plus Plex's own error text as a raw `error` param, composed under
-   *  `lists.plexError` by `ListsPanel.tsx` (docs/history/I18N_PLAN.md §5). */
+   *  `lists.plexError` by `ListsPanel.tsx`. */
   plex_error_reason: ReasonKey | null;
 }
 
+/** What Plex would remove besides the files a reap deletes.
+ *
+ *  Reaper's end-of-run purge empties a library's whole trash, not just the part this
+ *  run caused, so anything already in there loses its watch history, ratings and
+ *  collections too. Those items sit on both sides of the executor's before/after
+ *  count, so its gate cannot see them. No file on disk is affected either way.
+ */
 export interface PlexTrash {
   /** False when no Plex server is linked, in which case nothing purges. */
   configured: boolean;
-  /** Items in the trash across the libraries included in scans. A FLOOR: it counts only
-   *  the libraries that answered, so read it with `sections_unreadable`. */
+  /** Items in the trash across the libraries included in scans. A floor: it counts
+   *  only the libraries that answered, so read it together with `sections_unreadable`. */
   trashed: number;
   /** Libraries whose trash could not be counted. Nonzero means `trashed` is incomplete,
    *  and the page warns rather than reading silence as zero. */
   sections_unreadable: number;
-  /** Plex's own server-wide "empty trash after every scan" preference, which ships ON.
-   *  When true Plex purges the trash itself, outside Reaper's interlock. Null if unread. */
+  /** Plex's own server-wide "empty trash after every scan" preference, which ships on.
+   *  When true, Plex purges the trash itself, outside Reaper's interlock. Null if
+   *  unread. */
   empties_after_scan: boolean | null;
 }
 
@@ -1156,13 +1194,15 @@ export interface ReapBreakdown {
   policy_condemned: number;
   policy_condemned_bytes: number;
   hand_spared: number;
-  /** The share of `hand_spared` a scan would hand back to policy: TITLES kept out of the plan
-   *  by a spare whose clock has already passed. They are still being kept -- only a scan
-   *  realizes a spare's expiry -- so they are absent from the plan with nothing else on the
-   *  page to explain it. One notice when nonzero.
+  /** The share of `hand_spared` a scan would hand back to policy: titles kept out of
+   *  the plan by a spare whose clock has already passed. They are still being kept,
+   *  since only a scan notices a spare's expiry, so they are absent from the plan with
+   *  nothing else on the page to explain it. The page shows one notice when this is
+   *  nonzero.
    *
-   *  Titles, not spares: one whole-show spare can be holding several condemned seasons. A
-   *  title another spare still covers is not counted, since a scan would not release it. */
+   *  This counts titles, not spares: one whole-show spare can be holding several
+   *  condemned seasons. A title another spare still covers is not counted, since a
+   *  scan would not release it. */
   spares_expired: number;
   hand_reaped: number;
   hand_reaped_bytes: number;
@@ -1184,30 +1224,30 @@ export interface ReapBreakdown {
 }
 
 export interface LeavingSoonResult {
-  /** Whether the pass did what it set out to do. Preview is not a failure; no library
-   *  turned on, or one that failed, is. */
+  /** Whether the pass did what it set out to do. Running in preview is not a failure.
+   *  No library turned on, or one that failed, is. */
   ok: boolean;
-  /** The typed reason describing this pass, the same one stored on the Jobs row in the
-   *  same breath. Compose it with `jobResultText` (`JobStatus.tsx`); never word one here
-   *  (#555). */
+  /** The typed reason describing this pass, the same one stored on the Jobs row at
+   *  the same time. Compose it with `jobResultText` (`JobStatus.tsx`); never write
+   *  English for it here. */
   result_reason: ReasonKey;
-  // `problems` was dropped with its server field: nothing here ever rendered it, and
-  // `result_reason` now names the libraries that failed. See `LeavingSoonOut` for the whole
-  // reason.
+  // No `problems` field: `result_reason` names the libraries that failed. See
+  // `LeavingSoonOut` for the whole reason.
 }
 
 export interface WatchEvidence {
   /** How many titles Reaper holds a watch record for. */
   titles: number;
-  /** How many items the LAST scan found had plays it could no longer read.
-   *  `null` when no scan has recorded it, either because none has run or because the newest
-   *  one predates the count. Render that as "not recorded", never as zero: a scan that did
-   *  not count is not a scan that counted none.
+  /** How many items the last scan found had plays it could no longer read. `null`
+   *  when no scan has recorded it, either because none has run or because the newest
+   *  one predates the count. Render that as "not recorded", never as zero: a scan
+   *  that did not count is not a scan that counted none.
    *
-   *  **Do not render this as items held back or kept.** It counts what was measured, not what
-   *  was decided, and the hold it usually causes comes from three gates the operator can each
-   *  switch off. "Held back" is also this app's phrase for an item with no readable size. See
-   *  `watchEvidenceStatus` in `PlexPanel.tsx`, which is the one place this number is worded. */
+   *  Never render this as items held back or kept. It counts what was measured, not
+   *  what was decided, and the hold it usually causes comes from three gates the
+   *  operator can each switch off. "Held back" is also this app's phrase for an item
+   *  with no readable size. See `watchEvidenceStatus` in `PlexPanel.tsx`, which is the
+   *  one place this number is worded. */
   held_back: number | null;
 }
 
@@ -1228,20 +1268,20 @@ export interface LeavingSoonSettings {
      *  one turned on to update. Never false merely because it ran in preview (unarmed). */
     ok: boolean;
     /** The pass's own typed reason, composed under `jobs.result.*` with `jobResultText`
-     *  (`JobStatus.tsx`). Never worded here (#555). */
+     *  (`JobStatus.tsx`). Never written as English here. */
     result_reason: ReasonKey;
   } | null;
   /** A scan that finished without updating the shelf, and why. Reported beside `last`
-   *  rather than replacing it: a skipped pass writes nothing to Plex, so the last completed
-   *  pass's counts are still what is on the shelf. Nothing clears this, so the reader
-   *  prefers it only while it is newer than `last` -- exactly how `ScanRow` treats a
-   *  scheduled scan that crashed. */
+   *  rather than replacing it: a skipped pass writes nothing to Plex, so the last
+   *  completed pass's counts are still what is on the shelf. Nothing clears this
+   *  field, so the reader prefers it only while it is newer than `last`, the same way
+   *  `ScanRow` treats a scheduled scan that crashed. */
   last_skip: {
     at: string;
-    /** Why, as a typed reason (phase 8b): composed through `why.ts`'s `composeIn("error",
-     *  ...)`, trailing the exact time on the row's last-run line. A row written before this
-     *  conversion carries `{k: "legacy", p: {text}}`, which composes to its stored text
-     *  the same way `why.ts` already handles a legacy `Reason`. */
+    /** Why, as a typed reason: composed through `why.ts`'s `composeIn("error", ...)`,
+     *  trailing the exact time on the row's last-run line. A row written before this
+     *  format existed carries `{k: "legacy", p: {text}}`, which composes to its
+     *  stored text the same way `why.ts` handles any other legacy reason. */
     result_reason: ReasonKey;
   } | null;
 }
@@ -1296,10 +1336,11 @@ export interface ReleaseChange {
 
 /** Whether a newer Reaper exists, on this build's channel: a release build follows
  *  published releases, everything else follows the dev branch. `update_available` is
- *  three-state -- `null` when the check is off, unreachable, or the versions cannot be
- *  ordered -- and the surfaces render that as nothing: the check informs, never gates.
- *  `changes` lists every release newer than the running one, newest first; empty
- *  unless `update_available` is true, and always empty on the dev channel. */
+ *  three-state. It is `null` when the check is off, unreachable, or the versions
+ *  cannot be ordered, and the surfaces render that as nothing: the check informs,
+ *  never gates. `changes` lists every release newer than the running one, newest
+ *  first. It is empty unless `update_available` is true, and always empty on the dev
+ *  channel. */
 export interface Update {
   channel: "release" | "dev";
   enabled: boolean;
@@ -1312,8 +1353,7 @@ export interface Update {
 }
 
 /** Which screens the review queue opens a show's season list on by default. Mirrors
- *  `app_settings.ExpandSeasonsMode`; "both" is what the on/off switch this replaced meant
- *  when it was on. */
+ *  `app_settings.ExpandSeasonsMode`. "both" means expanded on every screen. */
 export type ExpandSeasonsMode = "off" | "desktop" | "both" | "mobile";
 
 /** The desktop build's own knobs, present only when Reaper runs as the Mac or Windows
@@ -1415,10 +1455,10 @@ export interface PersonTitle {
   watched_by_them: number;
   /** `condemn` (reclaimable), `protect` (kept), or `abstain` (left to decide).
    *
-   *  Already override-aware (rule 77), so this is the lane the review queue would file the
-   *  title under, not just what the scan first said -- which is what lets the row open it on
-   *  the tab it lives on. Typed as the `Verdict` union rather than a bare string for the same
-   *  reason `Candidate.verdict` is: a jump routes on it. */
+   *  This already accounts for overrides, so it is the lane the review queue would
+   *  file the title under, not just what the scan first said. That is what lets the
+   *  row open it on the tab it lives on. Typed as the `Verdict` union rather than a
+   *  bare string for the same reason `Candidate.verdict` is: a jump routes on it. */
   verdict: Verdict;
   /** Exactly one of `item_id` / `group_key` is set: a movie or lone season opens its own
    *  card, a show its group. */
@@ -1429,11 +1469,12 @@ export interface PersonTitle {
   poster_url: string | null;
 }
 
-/** One requested title the last scan didn't include, for the "not in the last scan" panel.
- *  Merged by title across co-requesters, and classified so the panel can say why. */
+/** One requested title the last scan did not include, for the "not in the last scan"
+ *  panel. Merged by title across co-requesters, and classified so the panel can say
+ *  why. */
 export interface UnmatchedRequest {
-  /** The display name. `null` when it couldn't be looked up (no id, or the lookup failed);
-   *  the row then shows a generic label from the type and date, never an id. */
+  /** The display name. `null` when it could not be looked up (no id, or the lookup
+   *  failed). The row then shows a generic label from the type and date, never an id. */
   title: string | null;
   year: number | null;
   /** `movie` | `tv`. The row reads it as "Movie" / "Series". */
@@ -1468,8 +1509,8 @@ export interface PersonDetail {
    *  `watched_by_them` are counted with no lower time bound, so a zero is a lower bound
    *  against this span; `null` is an empty mirror, where no watch figure means anything. */
   horizon_at: string | null;
-  /** The requester's page on their request portal, or `null` when it can't be built. The
-   *  panel links the name to it, and shows plain text otherwise. */
+  /** The requester's page on their request portal, or `null` when it cannot be built.
+   *  The panel links the name to it, and shows plain text otherwise. */
   profile_url: string | null;
 }
 
@@ -1516,7 +1557,7 @@ export interface AuthUser {
   thumb_url: string | null;
   /** This session was opened with a recovery code, so Settings, Security accepts a new
    *  admin password without the current one. False on every ordinary sign-in. Read it
-   *  only to LOOSEN a requirement, never to grant anything: the server decides, and it
+   *  only to loosen a requirement, never to grant one: the server decides, and it
    *  re-checks the session's own mark on the request. */
   via_recovery: boolean;
 }
@@ -1544,9 +1585,10 @@ export interface PlexPoll {
   setup: boolean;
   /** Present only with status "choose_server". */
   servers: PlexServerChoice[] | null;
-  /** Present only with status "retrying": why this poll couldn't finish yet, composed
-   *  through `why.ts`'s `composeIn("error", ...)` the same as any other coded refusal
-   *  (phase 8b). The sign-in is still good, so the browser keeps polling instead of failing. */
+  /** Present only with status "retrying": why this poll could not finish yet,
+   *  composed through `why.ts`'s `composeIn("error", ...)` the same as any other coded
+   *  refusal. The sign-in is still good, so the browser keeps polling instead of
+   *  failing. */
   reason?: ReasonKey | null;
 }
 
@@ -1576,10 +1618,10 @@ export interface SetupStatus {
 
 /** The four services Reaper connects to, mirroring `InstanceKind` in `db/models.py`.
  *
- *  Every kind reaches the DOM as a class name (`kind-radarr`, `conn-badge kind-sonarr`) and the
- *  stylesheet defines exactly these four, so a widened string here does not fail loudly -- it
- *  emits a class with no rule and the badge renders unstyled, losing the fill-and-ink pair that
- *  tells the services apart. */
+ *  Every kind reaches the DOM as a class name (`kind-radarr`, `conn-badge
+ *  kind-sonarr`), and the stylesheet defines exactly these four. A widened string
+ *  here does not fail loudly: it emits a class with no rule, and the badge renders
+ *  unstyled, losing the fill-and-ink pair that tells the services apart. */
 export type InstanceKind = "radarr" | "sonarr" | "tautulli" | "seerr";
 
 export interface Instance {
@@ -1593,8 +1635,9 @@ export interface Instance {
   enabled: boolean;
   verify_tls: boolean;
   /** When Reaper deletes through this instance, ask the *arr to add an import (list)
-   *  exclusion so a list can't re-add and re-download the title. Off by default. Wired for
-   *  Radarr movie deletes; stored-but-inert on Sonarr (it prunes seasons, not whole shows). */
+   *  exclusion so a list cannot re-add and re-download the title. Off by default.
+   *  Wired for Radarr movie deletes; stored but inert on Sonarr, since it prunes
+   *  seasons, not whole shows. */
   add_import_exclusion: boolean;
   /** HD/4K split-library map: each root folder path this instance manages, to the Plex library
    *  it lands in. When a title is in two libraries, the copy in the mapped library is bound.
@@ -1610,11 +1653,10 @@ export interface Instance {
   last_error: string | null;
 }
 
-/** The verdict on a saved-instance connection test. `detail_reason` used to be a bare
- *  `detail: string`, an *arr/Seerr integration's own connectivity text with no fixed
- *  vocabulary to catalog -- it has one now, the same move that gave the Discord webhook
- *  test its own typed `DiscordTest` below. A failure carries `explain_failure`'s own
- *  `error.instance.*` code; a pass carries a `services.test.*` id `ServiceModal.tsx`'s own
+/** The verdict on a saved-instance connection test. `detail_reason` is a typed
+ *  reason, the same move that gave the Discord webhook test its own typed
+ *  `DiscordTest` below. A failure carries `explain_failure`'s own `error.instance.*`
+ *  code; a pass carries a `services.test.*` id that `ServiceModal.tsx`'s own
  *  `testDetailText` composes. What a pre-save probe additionally reads is on
  *  `InstanceProbe`. */
 export interface InstanceTest {
@@ -1631,18 +1673,18 @@ export interface InstanceTest {
 export interface InstanceProbe extends InstanceTest {
   root_folders: RootFolder[];
   seerr_services: SeerrService[];
-  /** Why the list above is empty, when the read FAILED rather than there being nothing to map.
-   *  `null` means the read landed, so an empty list really is nothing to map. The catalog id
-   *  plus the integration's own plain-language text as a raw `error` param, composed under
-   *  `services.modal.mapError` by `ServiceModal.tsx` (docs/history/I18N_PLAN.md §5). */
+  /** Why the list above is empty, when the read failed rather than there being
+   *  nothing to map. `null` means the read landed, so an empty list really is nothing
+   *  to map. The catalog id plus the integration's own plain-language text as a raw
+   *  `error` param, composed under `services.modal.mapError` by `ServiceModal.tsx`. */
   map_error_reason: ReasonKey | null;
 }
 
-/** The verdict on a Discord webhook test: exactly three fixed outcomes, so `reason` is typed
- *  rather than the `InstanceTest`/`InstanceProbe` shape's free-form `detail` (rule 25's
- *  reasoning extended). `DiscordModal.tsx` and `NotificationsPanel.tsx` compose
- *  `services.discord.testResult.<id>` into the same `{ok, detail, version}` shape `TestBadge`
- *  and `testSentence` already render (docs/history/I18N_PLAN.md §5). */
+/** The verdict on a Discord webhook test: exactly three fixed outcomes, so `reason`
+ *  is typed rather than the `InstanceTest`/`InstanceProbe` shape's free-form `detail`.
+ *  `DiscordModal.tsx` and `NotificationsPanel.tsx` compose
+ *  `services.discord.testResult.<id>` into the same `{ok, detail, version}` shape that
+ *  `TestBadge` and `testSentence` already render. */
 export interface DiscordTest {
   ok: boolean;
   reason: ReasonKey;
@@ -1685,9 +1727,10 @@ export interface PlexLinkPoll {
   server: PlexStatus | null;
   /** Present only with status "choose_server". */
   servers: PlexServerChoice[] | null;
-  /** Present only with status "retrying": why this poll couldn't finish yet, composed
-   *  through `why.ts`'s `composeIn("error", ...)` the same as any other coded refusal
-   *  (phase 8b). The sign-in is still good, so the browser keeps polling instead of failing. */
+  /** Present only with status "retrying": why this poll could not finish yet,
+   *  composed through `why.ts`'s `composeIn("error", ...)` the same as any other coded
+   *  refusal. The sign-in is still good, so the browser keeps polling instead of
+   *  failing. */
   reason?: ReasonKey | null;
 }
 
@@ -1700,10 +1743,10 @@ export interface ScheduledJob {
   next_run_at: string | null;
   /** Whether the job is executing right this moment. */
   running: boolean;
-  /** The last completion of this job: when it finished (ISO), whether it succeeded, and a
-   *  typed reason. All `null` for a job that has never run. For the scan, a SUCCESSFUL run
-   *  is read from the latest snapshot instead (see ScanRow); these fields are populated for
-   *  the scan only when a scheduled run crashed outright. */
+  /** The last completion of this job: when it finished (ISO), whether it succeeded,
+   *  and a typed reason. All `null` for a job that has never run. For the scan, a
+   *  successful run is read from the latest snapshot instead (see ScanRow); these
+   *  fields are populated for the scan only when a scheduled run crashed outright. */
   last_run_at: string | null;
   last_ok: boolean | null;
   /** Composed under `jobs.result.*` with `jobResultText` (`JobStatus.tsx`). */
@@ -1725,8 +1768,9 @@ export interface Safety {
 }
 
 export interface Notifications {
-  /** Whether a Discord webhook is stored. The URL itself is a write-only credential and is
-   *  never returned -- exactly like an instance API key, only its presence is reported. */
+  /** Whether a Discord webhook is stored. The URL itself is a write-only credential
+   *  and is never returned, exactly like an instance API key: only its presence is
+   *  reported. */
   has_webhook: boolean;
 }
 
@@ -1746,7 +1790,7 @@ export interface BackupInfo {
 /** What an uploaded backup turned out to be, once Reaper accepted it. Shown so the
  *  operator can confirm before restoring. */
 export interface RestoreSummary {
-  /** The Reaper version that wrote the backup, or null if the file didn't say. */
+  /** The Reaper version that wrote the backup, or null if the file did not say. */
   app_version: string | null;
   /** When the backup was taken (ISO 8601, UTC), or null. */
   created_at: string | null;
@@ -1787,10 +1831,11 @@ export class ApiError extends Error {
     message: string,
     /** The refusal's catalog id (`error.<area>.<name>`), or one of the three
      *  `error.transport.*` ids this client sets itself when the body carried no coded
-     *  reason at all. `null` for a body this build has no code for (an older server, or a
-     *  refusal this catalog does not carry yet) -- `message` is still the right thing to
-     *  show. Null whenever `items` is non-null: a 422 list's own codes ride there instead,
-     *  one per field, since a single top-level code cannot speak for several. */
+     *  reason at all. `null` for a body this build has no code for, such as an older
+     *  server or a refusal this catalog does not carry yet: `message` is still the
+     *  right thing to show. Null whenever `items` is non-null, since a 422 list's own
+     *  codes ride there instead, one per field, because a single top-level code cannot
+     *  speak for several. */
     readonly code: string | null = null,
     /** The raw params `code` composes with (`why.ts`'s `composeIn` derives `field_label`
      *  etc. from these the same way it does for a `Reason`). Empty when `code` is null. */
@@ -1805,22 +1850,23 @@ export class ApiError extends Error {
   }
 }
 
-/** What a failed response means for the ApiError to carry: the English `message` every
- *  caller has always read, plus the coded reason(s) behind it (phase 8b) for `describeError`
+/** What a failed response means for the ApiError to carry: the English `message`
+ *  every caller has always read, plus the coded reason behind it, for `describeError`
  *  (`errors.ts`) to compose in the operator's own language.
  *
  *  `detail` is a string for HTTPException and a list of {loc, msg} for a validation
- *  failure. The domain's refusals arrive as the latter, and they are the most useful
- *  messages in the product ("a vote floor of 0 makes the rating floor meaningless") --
- *  so it would be a shame to render them as "[object Object]".
+ *  failure. The domain's refusals arrive as the latter, and they carry the most
+ *  useful messages in the product (for example, "a vote floor of 0 makes the rating
+ *  floor meaningless"), so it would be a shame to render them as "[object Object]".
  *
- *  When there is no detail at all there is nothing of Reaper's to say, and what comes back
- *  is not Reaper's: a reverse proxy during a container restart answers with its own HTML
- *  and no `detail`. Every component renders `describeError(error)`, so the old fallback
- *  put a bare "Request failed (502)." across the review queue, the reap sheet and every
- *  settings panel (U-14, rule 21). The status still goes to the console, where whoever is
- *  debugging can read it. These three fallbacks are coded too (`error.transport.*`), so a
- *  translated build reads them the same way as every other refusal. */
+ *  When there is no detail at all there is nothing of Reaper's to say, and what comes
+ *  back is not Reaper's: a reverse proxy during a container restart answers with its
+ *  own HTML and no `detail`. Every component renders `describeError(error)`, so a
+ *  plain "Request failed (502)." would otherwise show across the review queue, the
+ *  reap sheet and every settings panel. The status still goes to the console, where
+ *  whoever is debugging can read it. These three fallbacks are coded too
+ *  (`error.transport.*`), so a translated build reads them the same way as every
+ *  other refusal. */
 function parseFailure(
   status: number,
   body: unknown,
@@ -1891,15 +1937,17 @@ function noteAuthFailure(status: number, path: string): void {
   if (status === 401 && !path.startsWith("/api/auth/")) onUnauthorized?.();
 }
 
-/** Read a success body, with a malformed one reported as an ApiError like every other failure.
+/** Read a success body, with a malformed one reported as an ApiError like every
+ *  other failure.
  *
- *  Empty is fine: every endpoint returns JSON today, but the client is hand-maintained, and the
- *  day someone adds a 204 or an empty-body 200 this should resolve cleanly rather than throw
- *  "Unexpected end of JSON input". Unparseable is NOT fine, and is not hypothetical: a
- *  forward-auth proxy whose sign-in has expired answers 200 with an HTML login page, so
- *  `response.ok` is true and the parse throws a raw SyntaxError -- which is not an ApiError, so
- *  it falls past every `instanceof` branch in the app and surfaces to the operator as parser
- *  jargon about an unexpected token. */
+ *  Empty is fine: every endpoint returns JSON today, but the client is
+ *  hand-maintained, and the day someone adds a 204 or an empty-body 200 this should
+ *  resolve cleanly rather than throw "Unexpected end of JSON input". Unparseable is
+ *  not fine, and is not hypothetical: a forward-auth proxy whose sign-in has expired
+ *  answers 200 with an HTML login page, so `response.ok` is true and the parse throws
+ *  a raw SyntaxError. That is not an ApiError, so it falls past every `instanceof`
+ *  branch in the app and surfaces to the operator as parser jargon about an
+ *  unexpected token. */
 async function parseBody<T>(response: Response): Promise<T> {
   if (response.status === 204) return undefined as T;
   const text = await response.text();
@@ -1924,14 +1972,12 @@ async function throwIfFailed(response: Response, path: string): Promise<void> {
   throw new ApiError(response.status, failure.message, failure.code, failure.params, failure.items);
 }
 
-/** EVERY request the app makes goes through here: the CSRF header, the session hook, and the
- *  error mapping, in one place, returning the raw Response for the few callers that need more
- *  than a parsed body: the two downloads want a blob, and the restore upload sends a file
- *  rather than the JSON body `request` names.
+/** Every request the app makes goes through here: the CSRF header, the session
+ *  hook, and the error mapping, in one place. It returns the raw Response for the few
+ *  callers that need more than a parsed body: the two downloads want a blob, and the
+ *  restore upload sends a file rather than the JSON body `request` names.
  *
- *  Four call sites used to hand-roll this `fetch` -- so the wrapper only looked like a choke
- *  point, and a cross-cutting change landed on three quarters of the surface. They had already
- *  drifted (R-3). Anything that must hold for all traffic -- a retry, a timeout, a header --
+ *  Anything that must hold for all traffic, such as a retry, a timeout, or a header,
  *  belongs here and nowhere else. */
 async function fetchApi(path: string, init?: RequestInit): Promise<Response> {
   const response = await fetch(path, {
@@ -1980,15 +2026,16 @@ const del = <T>(path: string): Promise<T> => request<T>(path, { method: "DELETE"
 
 /** Where plex.tv should send the sign-in window once the operator is done with it.
  *
- *  That page closes the window, which is the only way Reaper can: the window is opened
- *  with `noopener` so plex.tv cannot reach the page holding the operator's Reaper
- *  password, and that also means `window.open` hands back nothing to close it with. A
- *  script-opened window may still close itself (#372).
+ *  That page closes the window, which is the only way Reaper can: the window is
+ *  opened with `noopener` so plex.tv cannot reach the page holding the operator's
+ *  Reaper password, and that also means `window.open` hands back nothing to close it
+ *  with. A script-opened window may still close itself.
  *
- *  The browser has to name its own origin because the server cannot: Vite's dev proxy and
- *  any reverse proxy rewrite `Host`, so a URL built server-side points at an address the
- *  operator is not on. It sends the origin only and the backend appends the path, so both
- *  Plex start routes forward to the same place without either caller restating it. */
+ *  The browser has to name its own origin because the server cannot: Vite's dev proxy
+ *  and any reverse proxy rewrite `Host`, so a URL built server-side points at an
+ *  address the operator is not on. It sends the origin only, and the backend appends
+ *  the path, so both Plex start routes forward to the same place without either
+ *  caller restating it. */
 const plexForward = () => ({ forward_origin: window.location.origin });
 
 export const api = {
@@ -1998,8 +2045,8 @@ export const api = {
    *  count and byte total without loading them all. Paged because a library runs to
    *  thousands of protected titles. */
   candidates: async (
-    // "any" is every stored lane at once -- what makes the collection screen cross-lane
-    // (#816 phase 5): a title's siblings show up whatever fate each one got.
+    // "any" is every stored lane at once. This is what makes the collection screen
+    // cross-lane: a title's siblings show up whatever fate each one got.
     verdict: Verdict | "any",
     q: CandidateQuery = {},
     limit = 100,
@@ -2019,13 +2066,13 @@ export const api = {
     params.set("offset", String(offset));
 
     const page = await request<CandidatePage>(`/api/candidates?${params.toString()}`);
-    // `parseBody` reads a 200 with no body as `undefined`, which is right for the calls that
-    // expect nothing back and wrong here: this is the one read whose consumer holds a LIST of
-    // pages and indexes into each, so the queue reaches `undefined.items` and dies with a
-    // TypeError no `instanceof ApiError` branch can see. Saying it plainly here puts the same
-    // failure on the queue's own error branch. The old hand-assembly defaulted the body to
-    // `[]`, which did not crash and was worse: it drew "nothing to review" over a read that
-    // never landed.
+    // `parseBody` reads a 200 with no body as `undefined`, which is right for calls
+    // that expect nothing back and wrong here: this is the one read whose consumer
+    // holds a list of pages and indexes into each, so the queue would reach
+    // `undefined.items` and die with a TypeError no `instanceof ApiError` branch can
+    // see. Throwing plainly here puts the same failure on the queue's own error
+    // branch instead. Defaulting the body to `[]` would be worse: it would draw
+    // "nothing to review" over a read that never landed.
     if (!page) {
       throw new ApiError(
         502,
@@ -2087,14 +2134,9 @@ export const api = {
   testSavedInstance: (id: number) => post<InstanceTest>(`/api/settings/instances/${id}/test`, {}),
 
   plexStatus: () => request<PlexStatus>("/api/settings/plex"),
-  /** Save one or both Plex settings. A PATCH: a field left out is left alone, so a control
-   *  sends what it changes and nothing else.
-   *
-   *  It took `(web_url, verify_tls)` and sent both fields always, which meant the
-   *  certificate switch had to supply an address -- and the only one it had was the
-   *  browser's cached status row, so it wrote that back over whatever was stored (#204).
-   *  `web_url: ""` still resets the address to the hosted Plex Web default; omitting it is
-   *  now how a caller says nothing about it. */
+  /** Save one or both Plex settings. A PATCH: a field left out is left alone, so a
+   *  control sends what it changes and nothing else. `web_url: ""` resets the address
+   *  to the hosted Plex Web default; omitting the field says nothing about it. */
   setPlexSettings: (patch: { web_url?: string; verify_tls?: boolean }) =>
     put<PlexStatus>("/api/settings/plex", patch),
   plexLinkStart: () => post<PlexLinkStart>("/api/settings/plex/link/start", plexForward()),
@@ -2128,12 +2170,12 @@ export const api = {
    *  restore: it withdraws a protection from every title at once. */
   resetWatchEvidence: (password: string) =>
     post<{ forgotten: number }>("/api/settings/watch-evidence/reset", { password }),
-  /** The narrow twin of the reset: forget what was recorded for ONE title, so the next scan
-   *  judges it on the plays it can see today. Answers whether a record existed. Removing one
-   *  deletes nothing and approves nothing. No password, because the blast radius is the one
-   *  title named in the path -- the gate above is priced on losing every record at once. The
-   *  key is a media key, which carries colons, so it is encoded like every other path-borne
-   *  key here. */
+  /** The narrow twin of the reset: forget what was recorded for one title, so the
+   *  next scan judges it on the plays it can see today. Answers whether a record
+   *  existed. Removing one deletes nothing and approves nothing. No password is
+   *  needed, because the blast radius is the one title named in the path, and the
+   *  gate above is priced for losing every record at once. The key is a media key,
+   *  which carries colons, so it is encoded like every other path-borne key here. */
   forgetWatchEvidenceFor: (media_key: string) =>
     del<{ removed: boolean }>(`/api/settings/watch-evidence/${encodeURIComponent(media_key)}`),
 
@@ -2269,10 +2311,11 @@ export const api = {
   /** The season-count distribution from the latest snapshot, for the keep-last advisory.
    *  Independent of the current keep-last value, so it needs no re-scan. */
   seasonShape: () => request<SeasonShape>("/api/snapshot/season-shape"),
-  /** The latest scan's fitted rewatch ladder (#554 stage 2), for the rewatch card's ladder
-   *  and consequence echo. Aggregated server-side from the stored explanation blocks, never
-   *  refit here, so the page states exactly what the gate will actually compare. Movies and
-   *  TV seasons carry their own fit, so the ladder never mixes the two lanes. */
+  /** The latest scan's fitted rewatch ladder, for the rewatch card's ladder and
+   *  consequence echo. Aggregated server-side from the stored explanation blocks,
+   *  never refit here, so the page states exactly what the gate will actually
+   *  compare. Movies and TV seasons carry their own fit, so the ladder never mixes
+   *  the two lanes. */
   rewatchOddsFit: (mediaType: "movie" | "tv") =>
     request<RewatchOddsFit>(`/api/policy/rewatch-odds?media_type=${mediaType}`),
   /** The whole score-to-consequence curve behind the delete-threshold slider, from the
@@ -2292,12 +2335,14 @@ export const api = {
    *  table's own paging will read when it is built. */
   runSteps: (id: number, offset = 0, limit = 50) =>
     request<RunSteps>(`/api/runs/${id}/steps?offset=${offset}&limit=${limit}`),
-  /** Build a plan, over an explicitly named set. `"all"` covers the whole condemned set; an
-   *  array reaps just those items -- the safe path for a first, hand-picked deletion.
+  /** Build a plan, over an explicitly named set. `"all"` covers the whole condemned
+   *  set; an array reaps just those items, the safe path for a first, hand-picked
+   *  deletion.
    *
-   *  "All" has to be spelled, never implied: the route reads an omitted `media_keys` as the
-   *  whole condemned set, so a selection that filtered down to nothing must not be able to
-   *  fall through into it. An empty array throws here rather than widening the request. */
+   *  "All" has to be spelled out, never implied: the route reads an omitted
+   *  `media_keys` as the whole condemned set, so a selection that filtered down to
+   *  nothing must not be able to fall through into it. An empty array throws here
+   *  rather than widening the request. */
   createRun: (target: "all" | string[]) => {
     if (target !== "all" && target.length === 0) {
       throw new Error("Nothing is selected, so there is nothing to reap.");
@@ -2305,10 +2350,10 @@ export const api = {
     return post<Run>("/api/runs", target === "all" ? {} : { media_keys: target });
   },
   dryRun: (id: number) => post<RunReport>(`/api/runs/${id}/dry-run`, {}),
-  /** Start a real reap. Requires deletion armed on the host and the exact content-bound
-   *  confirmation phrase -- the server recomputes and refuses anything else. The reap then
-   *  runs detached; this returns the initial status, and the report lands on the status
-   *  (poll `reapStatus`) when the run ends. */
+  /** Start a real reap. Requires deletion armed on the host and the exact
+   *  content-bound confirmation phrase, which the server recomputes and refuses
+   *  anything else. The reap then runs detached. This returns the initial status, and
+   *  the report lands on the status (poll `reapStatus`) when the run ends. */
   executeRun: (id: number, confirmationPhrase: string) =>
     post<ReapStatus>(`/api/runs/${id}/execute`, { confirmation_phrase: confirmationPhrase }),
   /** The running (or last) reap's progress. Polled while a reap runs, and read once on load
@@ -2332,33 +2377,29 @@ export const api = {
   plexTrash: () => request<PlexTrash>("/api/reap/plex-trash"),
   /** What each list is currently protecting. Membership, from the cache. */
   lists: () => request<ProtectionList[]>("/api/lists"),
-  /** What each list IS. Definitions, from `reaper.db`. Joined to the above on `list_id`. */
+  /** What each list is. Definitions, from `reaper.db`. Joined to the above on `list_id`. */
   listConfigs: () => request<ListConfig[]>("/api/lists/configured"),
   addList: (name: string, source: ListConfig["source"], config: ListConfigBody) =>
     post<ListConfig>("/api/lists/configured", { name, source, config }),
-  /** An edit. Both fields optional and omitted means "leave it" (rule 1). */
+  /** An edit. Both fields are optional, and omitting one means "leave it". */
   editList: (id: number, body: { name?: string; config?: ListConfigBody }) =>
     request<ListConfig>(`/api/lists/configured/${id}`, {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
   removeList: (id: number) => del<void>(`/api/lists/configured/${id}`),
-  /** Check lists now: one definition, or (with none named) all of them. The same pass a
-   *  scan runs. Slow by nature -- it reads every *arr and Plex once. */
+  /** Check lists now: one definition, or, with none named, all of them. The same
+   *  pass a scan runs. Slow by nature, since it reads every *arr and Plex once. */
   syncLists: (target: { list_id?: number } = {}) => post<ListSyncResult>("/api/lists/sync", target),
   syncLeavingSoon: () => post<LeavingSoonResult>("/api/leaving-soon/sync", {}),
 
-  // The keep list has one pair of methods, `override` / `clearOverride` below, and now one
-  // pair of routes behind them. `whitelist`, `spare` and `unspare` used to sit here too,
-  // uncalled by anything: three more ways to write the same safety-adjacent row, with nothing
-  // to tell a reader which one the app actually used (rule 38, R-6). The methods went first
-  // and the routes stayed served; both are gone now, so there is one way to write the row.
-  // Neither survivor is reachable by an API key: `_API_KEY_WRITES` admits scanning, planning,
-  // the policy and the profile. This line offered the lane all three, and #326 was filed
-  // against the refusal that mistake implied.
-  /** Override a verdict by hand -- spare (keep) or reap (force onto the list). A show's
-   *  media_key covers all its seasons. `spareDays` is how long a spare keeps it: 0 = forever,
-   *  a positive count that many days; ignored for a reap. */
+  // The keep list has one pair of methods, `override` / `clearOverride` below, and one
+  // pair of routes behind them: one way to write this safety-adjacent row. Neither is
+  // reachable by an API key: `_API_KEY_WRITES` admits only scanning, planning, the
+  // policy and the profile.
+  /** Override a verdict by hand: spare (keep) or reap (force onto the list). A
+   *  show's media_key covers all its seasons. `spareDays` is how long a spare keeps
+   *  it: 0 means forever, a positive count that many days. Ignored for a reap. */
   override: (media_key: string, decision: Override, note?: string, spareDays = 0) =>
     post<WhitelistEntry>("/api/override", {
       media_key,
@@ -2366,8 +2407,8 @@ export const api = {
       note: note ?? null,
       spare_days: spareDays,
     }),
-  /** Clear any override (spare or reap). Does not delete anything -- the item is judged by
-   *  the policy again on the next scan. */
+  /** Clear any override (spare or reap). This does not delete anything: the item is
+   *  judged by the policy again on the next scan. */
   clearOverride: (media_key: string) =>
     request<{ removed: boolean }>(`/api/override/${encodeURIComponent(media_key)}`, {
       method: "DELETE",

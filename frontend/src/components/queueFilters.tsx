@@ -2,9 +2,8 @@
 //
 // The review queue's filters: what can be filtered on, and what this device remembers per tab.
 //
-// Lifted out of ReviewQueue.tsx, which held the whole filter subsystem alongside the fate
-// primitives, both card shapes and the queue container (R-1). Nothing here renders; the
-// toolbar that draws these lives with the queue.
+// Split out of ReviewQueue.tsx into its own module. Nothing here renders; the toolbar that
+// draws these lives with the queue.
 
 import type { ReactNode } from "react";
 import type { OverrideFilter, RequestedFilter, SortKey, SortOrder } from "../api";
@@ -42,9 +41,9 @@ export const sorts = (): { value: SortKey; label: string }[] => [
 
 /** One filterable dimension of the review queue: a queue-filter field paired with a value
  *  list, a label and an icon. The ＋ Filter menu and the active-filter chips are built from
- *  these, so adding a future filter is one more entry here -- never another toolbar control.
+ *  these, so adding a future filter is one more entry here, never another toolbar control.
  *  `defaultValue` is the field's "off" value: a filter is active when its value differs from
- *  it, and clearing resets to it. Sort is deliberately not a dimension -- it orders the list
+ *  it, and clearing resets to it. Sort is deliberately not a dimension: it orders the list
  *  and hides nothing, so it is never a removable chip. */
 export interface FilterDimension {
   id: string;
@@ -81,7 +80,7 @@ export const DEFAULT_FILTERS: QueueFilters = {
 
 export const filtersKey = (verdict: string) => `reaper.queue.filters.${verdict}`;
 
-/** One filter set from outside the app -- this device's storage, or a link -- sanitized field by
+/** One filter set from outside the app, this device's storage or a link, sanitized field by
  *  field: an unknown or outgrown value falls back to that field's default instead of poisoning
  *  the whole set. Every fallback shows MORE than the value it rejected, which is the direction
  *  an unreadable filter has to resolve in: a narrower list reads as the whole library. */

@@ -9,11 +9,9 @@
 //
 // It lives here, above `components/`, because it is read from two screens that are otherwise
 // unrelated: the wizard's last step, where the operator is being told they are finished, and
-// the Reap page, where they are standing in front of the button. Both used to say nothing at
-// all -- the only place the requirement appeared was the 409 that fires after the whole
-// confirmation phrase has been typed (#383) -- and two hand-written copies of a refusal are
-// exactly the pair rule 144 says will drift, because each is written by someone reading the
-// other screen.
+// the Reap page, where they are standing in front of the button. Writing the refusal sentence
+// twice, once per screen, would give each writer only their own screen to read, and the two
+// copies would drift.
 //
 // The sentences are deliberately the wording the Plex step already uses ("checks nobody is
 // watching ... runs through Plex"), so the constraint reads the same wherever it is met.
@@ -39,10 +37,8 @@ export interface ReapBlocker {
  *  self-consistent and nothing more: the expected side is a hand-written copy of the Python, in
  *  the same file as the assertion. The tie to the server is
  *  `tests/test_repo_hygiene.py::test_the_frontend_reap_blockers_read_the_fields_the_server_builds_reap_ready_from`,
- *  which parses `reap_ready` out of `src/reaper/api/setup.py` and fails if the fields read below
- *  are not exactly its conjuncts. Adding one there and not here is what that catches, and it
- *  went uncaught until it was tried: the claim that it could not was written here first
- *  (rule 144).
+ *  which parses `reap_ready` out of `src/reaper/api/setup.py` and fails if the fields read
+ *  below are not exactly its conjuncts. Adding one there and not here is what that catches.
  */
 export function reapBlockers(setup: SetupStatus): ReapBlocker[] {
   const blockers: ReapBlocker[] = [];

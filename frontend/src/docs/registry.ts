@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The docs index. To add a page: write a content file, import it, and add it to DOCS. Its
-// group decides which heading it files under; GROUP_ORDER decides the order those headings
+// group decides which heading it files under. GROUP_ORDER decides the order those headings
 // appear. That is the whole extension surface for in-app help.
 //
 // DOCS is the English manual, and English is the one locale imported statically: the manual

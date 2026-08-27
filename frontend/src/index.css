@@ -1,33 +1,31 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Semantic classes, not utilities. The point of this file is that the *visual* language
+ * Semantic classes, not utilities. The point of this file is that the visual language
  * carries meaning the copy would otherwise have to repeat:
  *
- *   - condemn is red, protect is green, abstain is gray;
- *   - a protection that FIRED and one that was merely CHECKED look different;
- *   - a protection that could NOT BE CHECKED looks different again — amber, dashed —
- *     because "we could not look" is not "we looked and it was fine", and rendering
+ *   - condemn is red, protect is green, abstain is gray
+ *   - a protection that fired and one that was merely checked look different
+ *   - a protection that could not be checked looks different again (amber, dashed),
+ *     because "could not check" does not mean "checked, and it was fine". Rendering
  *     them alike is the exact bug that gets libraries deleted during an API outage.
  *
  * Viewport heights are always `dvh`, never `vh`. On a mobile browser `vh` resolves to the
  * toolbar-hidden viewport, so a box sized in `vh` can reach past the part of the screen you
- * can actually see — pushing a modal's actions off the bottom. The mismatch has been found
- * and fixed three separate times now (`.why`, then `.log-console` and `.docs-index`, U-16),
- * each time inside a container the stylesheet already sized in `dvh`, so viewport-units.test.ts
- * holds the line: no bare `vh` in any of the files below.
+ * can actually see, pushing a modal's actions off the bottom. This mismatch has recurred
+ * more than once (`.why`, `.log-console`, `.docs-index`), each time inside a container the
+ * stylesheet already sized in `dvh`, so viewport-units.test.ts holds the line: no bare `vh`
+ * in any of the files below.
  *
  * Nothing here is loaded from a CDN. The app ships with the container.
  *
- * ---------------------------------------------------------------------------------------
- *
- * THE ORDER BELOW IS LOAD-BEARING, and reordering these lines is a silent visual change.
+ * The order below is load-bearing, and reordering these lines is a silent visual change.
  * Nothing here is layered (`@layer`) or scoped, so a conflict between two rules of equal
- * specificity is settled by which one the browser reads second — and eighteen places in
- * these files carry a comment saying so. Two of them cross a file boundary: `main.split
- * .why` is declared in 10-layout and again in 12-why-panel, where the second must stay
- * later; and 21-queue-cards extends a `:hover` selector whose other halves are declared
- * back in 18-scales. Vite inlines these imports in the order written, so this list IS the
- * cascade. Add a file at the position its rules belong at, never at the end for tidiness.
+ * specificity is settled by which one the browser reads second, and many places in these
+ * files carry a comment saying so. Two of them cross a file boundary: `main.split .why` is
+ * declared in 10-layout and again in 12-why-panel, where the second must stay later. And
+ * 21-queue-cards extends a `:hover` selector whose other halves are declared back in
+ * 18-scales. Vite inlines these imports in the order written, so this list is the cascade.
+ * Add a file at the position its rules belong at, never at the end for tidiness.
  */
 
 @import "./styles/00-tokens.css";

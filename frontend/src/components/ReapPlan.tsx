@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The reap plan: build it, read every step, dry-run it, and — through the confirmation
-// sheet — execute it.
+// The reap plan: build it, read every step, dry-run it, and, through the confirmation sheet,
+// execute it.
 //
 // This is where the owner sees exactly what Reaper *would* do, down to the literal HTTP
-// request each deletion would issue. Building a plan and dry-running it delete nothing; the
+// request each deletion would issue. Building a plan and dry-running it delete nothing. The
 // dry run walks every interlock and sends nothing. Executing goes through ReapConfirm, which
 // requires deletion armed on the host and the exact typed confirmation phrase before it
-// deletes. While deletion is off the Execute button is disabled outright, with the shortest
-// path to the switch beside it — the server would refuse anyway; the UI just stops inviting
+// deletes. While deletion is off, the Execute button is disabled outright, with the shortest
+// path to the switch beside it: the server would refuse anyway, so the UI just stops inviting
 // a click that must fail. A plan built here covers the whole condemned set (capped); to reap
 // a hand-picked few, select them in the review queue and use "Reap now".
 //
-// The same courtesy is now extended to the *other* thing the server refuses on: a run without
-// Plex or Tautulli, whose 409 used to be the only place in the app that requirement was
-// written down, and which fired after the confirmation phrase had already been typed (#383).
+// The same courtesy extends to the other thing the server refuses on: a run without Plex or
+// Tautulli. The server's own refusal states that requirement too, but only after the
+// confirmation phrase has already been typed, so this page states it earlier, beside Execute.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -34,10 +34,10 @@ import { ReapConfirm } from "./ReapConfirm";
 import { Notice } from "./Notice";
 
 /** A stored run state, in the words the rest of the app uses for it. "Stopped", never
- *  "aborted" -- one word for one mechanism, the same as the reap bar and the report above
- *  (U-15). An unknown state (an older or newer build) reads through unchanged rather than
- *  being hidden. A plain function, not a component, so it reads the catalog through the
- *  shared `i18next` instance rather than the `useTranslation` hook (docs/history/I18N_PLAN.md §3). */
+ *  "aborted": one word for one mechanism, the same as the reap bar and the report above. An
+ *  unknown state (an older or newer build) reads through unchanged rather than being hidden.
+ *  A plain function, not a component, so it reads the catalog through the shared `i18next`
+ *  instance rather than the `useTranslation` hook. */
 function runState(state: string): string {
   if (state === "planned") return i18next.t("reapPlan.runState.notRun");
   if (state === "executing") return i18next.t("reapPlan.runState.running");
@@ -46,11 +46,11 @@ function runState(state: string): string {
   return state;
 }
 
-/** A stored step kind, said as the outcome it performs (#851). The literal request the
- *  page's blurb promises is whole in the Request column beside this cell, so the kind is
- *  free to be plain words (rule 21); an unknown kind (an older or newer build) reads
- *  through unchanged, the same contract as `runState` above. `test_api_type_mirror.py`
- *  holds these four to the kinds the planner emits, both directions. */
+/** A stored step kind, said as the outcome it performs. The literal request the page's blurb
+ *  promises is whole in the Request column beside this cell, so the kind is free to be plain
+ *  words. An unknown kind (an older or newer build) reads through unchanged, the same
+ *  contract as `runState` above. `test_api_type_mirror.py` holds these four to the kinds the
+ *  planner emits, both directions. */
 function stepKind(kind: string): string {
   if (kind === "radarr_delete") return i18next.t("reapPlan.steps.kind.radarrDelete");
   if (kind === "sonarr_unmonitor") return i18next.t("reapPlan.steps.kind.sonarrUnmonitor");
@@ -77,12 +77,12 @@ function stepState(state: string): string {
 const LIST_CAP = 50;
 
 function Steps({ run }: { run: Run }) {
-  // A first cleanup of 500 items is 1500 rows, each with a path and a stringified body, and
-  // the table used to render every one of them synchronously -- on plan build, and again on
-  // every history-row click (P-9). The first 50 are the ones that matter: the plan is ordered
-  // smallest first, so step 0 is the canary the whole run turns on.
+  // A first cleanup of 500 items is 1500 rows, each with a path and a stringified body:
+  // rendering all of them synchronously, on plan build and again on every history-row click,
+  // does not scale. The first 50 are the ones that matter: the plan is ordered smallest
+  // first, so step 0 is the canary the whole run turns on.
   //
-  // The server now sends that window rather than the whole journal, so the slice below is a
+  // The server sends that window rather than the whole journal, so the slice below is a
   // second bound on a list already bounded, kept because `LIST_CAP` is what THIS table draws
   // and the two are not the same decision. `more` reads `step_count`, never `steps.length`:
   // the response no longer carries the rows it is counting, so subtracting the page from
@@ -97,10 +97,10 @@ function Steps({ run }: { run: Run }) {
     // of pushing the whole page sideways.
     //
     // And nothing inside the table is focusable, so that sideways scroll could not be reached
-    // from a keyboard at all (WCAG 2.1.1, #177): no cell to tab onto and carry it with.
-    // `tabIndex={0}` makes the wrapper its own stop, named so it is worth stopping on. Same
-    // sweep as `.docs-content`, `.log-console`, `.dryrun-outcomes` and `docs/DocBody.tsx`'s
-    // two (rule 72).
+    // from a keyboard at all (WCAG 2.1.1): no cell to tab onto and carry it with. `tabIndex={0}`
+    // makes the wrapper its own stop, named so it is worth stopping on. `.docs-content`,
+    // `.log-console`, `.dryrun-outcomes` and `docs/DocBody.tsx`'s two wrappers use the same
+    // pattern.
     <div
       className="table-scroll"
       tabIndex={0}
@@ -112,8 +112,8 @@ function Steps({ run }: { run: Run }) {
           <tr>
             {/* `scope` explicitly, on the journalled record of what a run will send. A
                 single-row `<thead>` is one browsers infer reliably, so the real-world harm is
-                low -- but inferring is not the same as being told, and this is the table an
-                operator reads to decide (#177). `docs/DocBody.tsx` is the twin (rule 72). */}
+                low, but inferring is not the same as being told, and this is the table an
+                operator reads to decide. `docs/DocBody.tsx` uses the same pattern. */}
             <th scope="col">{t("reapPlan.steps.headers.ordinal")}</th>
             <th scope="col">{t("reapPlan.steps.headers.action")}</th>
             <th scope="col">{t("reapPlan.steps.headers.request")}</th>
@@ -142,10 +142,9 @@ function Steps({ run }: { run: Run }) {
               {/* The stored reason sits under the state it explains, not in a column of its
                   own: this table already has a wider minimum than a phone (see .table-scroll
                   above) and a fifth column would push it further, for a cell that is empty on
-                  every step that went fine. `error` is already operator copy -- the executor
-                  writes one sentence and shows the same one live -- so the only thing new here
-                  is that it survives a restart, which is exactly when the live copy is gone
-                  and the table used to say "failed" and nothing else (#260). */}
+                  every step that went fine. `error` is already operator copy: the executor
+                  writes one sentence and shows the same one live, so the only thing new here
+                  is that it survives a restart, which is exactly when the live copy is gone. */}
               <td className="muted">
                 {stepState(step.state)}
                 {step.error_reason && (
@@ -166,8 +165,8 @@ function Steps({ run }: { run: Run }) {
 function Report({ report }: { report: RunReport }) {
   const { t } = useTranslation();
   // "stopped", not "aborted": one word for one mechanism. The docs say caps stop the whole
-  // run, and the app-wide reap bar already reports this exact state as "Stopped." (`ReapBar.tsx`).
-  // "Abort" was operator vocabulary nowhere else in the product (U-15).
+  // run, and the app-wide reap bar already reports this exact state as "Stopped."
+  // (`ReapBar.tsx`). "Abort" is operator vocabulary nowhere else in the product.
   if (report.state === "aborted") {
     return (
       <div className="sim sim-info">
@@ -178,13 +177,13 @@ function Report({ report }: { report: RunReport }) {
   }
   return (
     <div className="sim">
-      {/* What the practice run PROVED, which is the only thing an operator can act on. It
-          used to lead with "N souls were actually reaped", a number that is zero by
-          construction here and so says nothing, and then called the per-item outcomes
-          "steps" -- a plan of 3 seasons read "3 steps were walked" over the 9 journalled
-          steps in the table below it (I-1). The two branches are separate whole messages
-          (docs/history/I18N_PLAN.md §3, SafetyBanner precedent), never a shared stem: word order is
-          the translator's to choose. */}
+      {/* What the practice run proved, which is the only thing an operator can act on. It
+          never leads with "N souls were actually reaped": that number is zero by
+          construction here, since nothing was deleted, and would say nothing. It also never
+          calls the per-item outcomes "steps": a plan of 3 seasons has 9 journalled steps in
+          the table below, so "steps" would count the wrong thing. The two branches below are
+          separate whole messages, never a shared stem, so word order stays the translator's
+          to choose. */}
       <p className="blurb">
         {report.skipped > 0 ? (
           <Trans
@@ -203,19 +202,19 @@ function Report({ report }: { report: RunReport }) {
           />
         )}
       </p>
-      {/* Every row is text, so this list scrolls with nothing to tab onto (WCAG 2.1.1, #177).
+      {/* Every row is text, so this list scrolls with nothing to tab onto (WCAG 2.1.1).
           `tabIndex={0}` on the list itself keeps its `listitem`s intact where a wrapper with
-          `role="region"` would not, and it is named for what it holds. Same sweep as the plan
-          table above (rule 72). */}
+          `role="region"` would not, and it is named for what it holds. The plan table above
+          uses the same pattern. */}
       <ul className="dryrun-outcomes" tabIndex={0} aria-label={t("reapPlan.report.outcomesLabel")}>
         {report.outcomes.slice(0, LIST_CAP).map((o) => (
           // One outcome per item, never more: executor._run_deletes records exactly one
           // StepOutcome per delete, so the item's own key is unique among siblings.
           <li key={o.media_key}>
             {/* Decoration: every row in this list is a pass, so the tick adds nothing a
-                  reader needs and lands mid-sentence as a stray character (#177). Where a
-                  list can hold BOTH outcomes -- the reap report's per-item checks -- the
-                  glyph is hidden and a word carries it instead (#170). */}
+                  reader needs and lands mid-sentence as a stray character. Where a list can
+                  hold both outcomes, the reap report's per-item checks, the glyph is hidden
+                  and a word carries it instead. */}
             <span className="gate-mark" aria-hidden="true">
               ✓
             </span>
@@ -322,14 +321,14 @@ export function ReapPlan({
   const degraded = latestSnapshot?.degraded === true;
 
   // Whether a real run could go ahead at all. Without Plex or Tautulli the execute route
-  // refuses with a 409 (`api/runs._preflight_refusal`), and until this was read here the ONLY
-  // place that requirement appeared was inside the refusal -- which lands after the operator
-  // has picked what to delete, armed the host and typed the whole confirmation phrase (#383).
-  // The refusal is correct and stays; this is the same fact, four steps earlier.
+  // refuses with a 409 (`api/runs._preflight_refusal`), which otherwise is the only place
+  // that requirement appears, and it lands after the operator has picked what to delete,
+  // armed the host and typed the whole confirmation phrase. The refusal is correct and
+  // stays; this is the same fact, four steps earlier.
   const setup = useQuery({ queryKey: ["setup"], queryFn: api.setupStatus });
-  // Shared with the wizard's finish panel, so the two screens cannot come to describe the same
-  // refusal differently (rule 144). Empty on a read we could not make -- the branch below says
-  // so out loud rather than letting silence read as "nothing is missing" (rule 17/36).
+  // Shared with the wizard's finish panel, so the two screens cannot come to describe the
+  // same refusal differently. Empty on a read we could not make: the branch below says so out
+  // loud rather than letting silence read as "nothing is missing".
   const blockers = setup.data ? reapBlockers(setup.data) : [];
 
   return (
@@ -353,13 +352,13 @@ export function ReapPlan({
         // true before the page loads and stays true until a clean scan replaces it. Its other
         // route in is `useScanSettled` invalidating that key off the shell's 15s poll, which a
         // scheduled scan reaches with nothing pressed. `ScanBar` says the same thing about the
-        // same field and moves with it (rule 72).
+        // same field and moves with it.
         <Notice tone="warn" standing as="div" className="notice-doc">
           <span>
-            {/* The stored reason is server-composed operator copy, already English (§5/§6 of
-                docs/history/I18N_PLAN.md), so it rides through as a value rather than being reworded
-                here. `?? ""` keeps a null reason from interpolating as the literal text
-                "null" -- the original JSX simply skipped rendering it. */}
+            {/* The stored reason is server-composed operator copy, already English, so it
+                rides through as a value rather than being reworded here. `?? ""` keeps a null
+                reason from interpolating as the literal text "null" instead of rendering
+                nothing. */}
             <Trans
               i18nKey="reapPlan.degraded.notice"
               values={{ reason: latestSnapshot?.degraded_reason ?? "" }}
@@ -367,7 +366,7 @@ export function ReapPlan({
             />
           </span>
           {/* Nothing renders for a degradation with no page, which is most of them. `ScanBar`
-              carries the same pair (rule 72). */}
+              carries the same pair. */}
           <DegradedDocLink doc={latestSnapshot?.degraded_doc ?? null} />
         </Notice>
       )}
@@ -376,10 +375,11 @@ export function ReapPlan({
 
       {plan.error && <Notice tone="error">{describeError(plan.error)}</Notice>}
 
-      {/* A plan is asked for but not in hand. Never render nothing here: the whole block below
-          -- phrase, count, Execute, steps -- hangs off this one query, so a failed fetch used to
-          unmount all of it silently and a click on a history row simply looked like it did
-          nothing. Same two branches, same words, as the reap sheet's loader (App.tsx, rule 36). */}
+      {/* A plan is asked for but not in hand. Never render nothing here: the whole block
+          below (phrase, count, Execute, steps) hangs off this one query, so a failed fetch
+          with nothing rendered would unmount all of it silently, and a click on a history row
+          would look like it did nothing. Same two branches, same words, as the reap sheet's
+          loader (App.tsx). */}
       {runId != null &&
         !run &&
         (runPending ? (
@@ -440,13 +440,13 @@ export function ReapPlan({
                 />
               </Notice>
             )}
-            {/* The check is in flight, so there is nothing to warn about yet. This used to be the
-                pending branch of the notice below, which made the first thing that notice said
-                "Warning: Checking whether this plan came from the latest scan…" -- a severity
-                claim over a spinner caption, and then a second utterance when the query settled
-                and swapped its own children in place. A loading affordance is markup and speaks
-                only once the wait has been one (#332, `useSlowWait`), so it is the page's plain
-                help line here, the same one the plan loader above uses. */}
+            {/* The check is in flight, so there is nothing to warn about yet. A warn-tone
+                notice here would put "Warning: Checking whether this plan came from the
+                latest scan…" on screen, a severity claim over a spinner caption, followed by a
+                second utterance once the query settles and the notice's children swap in
+                place. A loading affordance is markup and speaks only once the wait has been
+                one (`useSlowWait`), so this stays the page's plain help line, the same one the
+                plan loader above uses. */}
             {staleUnknown && snapshot.isPending && (
               <p className="help">{t("reapPlan.summary.staleCheckPending")}</p>
             )}
@@ -469,9 +469,8 @@ export function ReapPlan({
               </Notice>
             )}
             {/* Above Execute, because that is the button the refusal fires from. The Plex one
-                carries the way to fix it (rule 42); the others are fixed from Settings →
-                Connections, which the notice names rather than links, since this page has no
-                jump to it. */}
+                carries the way to fix it. The others are fixed from Settings → Connections,
+                which the notice names rather than links, since this page has no jump to it. */}
             {blockers.map((b) => (
               <Notice key={b.key} tone="warn">
                 {b.sentence}
@@ -524,8 +523,8 @@ export function ReapPlan({
         </>
       )}
 
-      {/* No onDone: what a finished reap invalidates -- this run, the history, the queue, the
-          ledger -- is refreshed by the app-wide reap bar, which cannot be closed mid-run. */}
+      {/* No onDone: what a finished reap invalidates (this run, the history, the queue, the
+          ledger) is refreshed by the app-wide reap bar, which cannot be closed mid-run. */}
       {confirming && run && <ReapConfirm run={run} onClose={() => setConfirming(false)} />}
 
       {history && history.length > 0 && (
@@ -539,9 +538,9 @@ export function ReapPlan({
               const open = runId === r.id;
               return (
                 <li key={r.id} className={open ? "open" : undefined}>
-                  {/* Only the id: the row carries no plan of its own, so opening one asks
-                      the server for it (the ["run", id] query above). A list that came with
-                      every plan in full cost a whole snapshot's candidates per row (P-3). */}
+                  {/* Only the id: the row carries no plan of its own, so opening one asks the
+                      server for it (the ["run", id] query above). A list that came with every
+                      plan in full would cost a whole snapshot's candidates per row. */}
                   <button
                     className="link"
                     onClick={() => setRunId(r.id)}
@@ -555,7 +554,7 @@ export function ReapPlan({
                     {/* The stored reason, under the state it explains, in the step table's
                         `.step-why` box. Its only surface: the report panel is dry-run state
                         and the reap sheet reads the in-memory status, so a reload leaves
-                        "stopped" and nothing else (#342). */}
+                        "stopped" and nothing else. */}
                     {r.aborted_reason && (
                       <span className="step-why">{composeError(r.aborted_reason)}</span>
                     )}

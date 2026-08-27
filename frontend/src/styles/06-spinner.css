@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The loading ring, every size. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* ---- spinner ------------------------------------------------------------- */
+ * The loading ring, every size. See `../index.css` for how this file fits into the
+ * stylesheet's load order. */
 
 .spinner {
   display: inline-block;
@@ -34,15 +33,12 @@
   }
 }
 
-/* Reduced motion is honored HERE, beside the animation it stops, and that placement is the
-   point. This block used to live in 32-modals-reap.css, twenty-six files from the rule it
-   covered, along with the one stopping .why-loading in 12-why-panel.css. Nothing at either
-   declaration said it was covered, so the next author to add a spinner -- .fair-refresh in
-   18-scales.css -- read an uncovered infinite animation, copied it, and shipped the one
-   animation in the app that ignored the preference entirely.
+/* Reduced motion is honored here, beside the animation it stops, on purpose. Nothing about
+   this class says elsewhere that it needs a reduced-motion override, so a new animation
+   stays uncovered unless its own file stops it the same way.
 
-   `spin` is shared, so a second consumer inherits nothing from this: stop it beside its own
-   rule, the way 18-scales.css now does. */
+   `spin` is shared, so a second consumer of it inherits nothing from this rule. Stop it
+   beside that consumer's own rule instead. */
 @media (prefers-reduced-motion: reduce) {
   .spinner {
     animation: none;
