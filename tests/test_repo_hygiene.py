@@ -1192,8 +1192,8 @@ def _selects_processes_by_pattern(line: str) -> bool:
 
 
 #: ``docker-entrypoint.sh``, ``scripts/dev-local.sh``, ``scripts/log-instructions-loaded.sh``,
-#: ``scripts/try-image.sh``.
-_EXPECTED_SHELL_SCRIPTS = 4
+#: ``scripts/try-image.sh``, ``scripts/worktree-setup.sh``.
+_EXPECTED_SHELL_SCRIPTS = 5
 #: Both in ``dev-local.sh``'s ``stop_all``: the TERM sweep, and the KILL for a survivor of it.
 #: Pinned separately from the script count because the walk and the ban cover different
 #: populations: a script that drops out of the walk is absent from both, so a single figure

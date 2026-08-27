@@ -98,8 +98,8 @@ Requires [uv](https://docs.astral.sh/uv/) and Python 3.13 or newer.
 git clone https://github.com/scythe-labs/reaper.git
 cd reaper
 
-uv venv && source .venv/bin/activate
-uv pip install -e ".[dev]"
+scripts/worktree-setup.sh       # .venv with the dev extras, frontend/node_modules from the lockfile
+source .venv/bin/activate
 
 cp .env.example .env.local      # no key needed; one is generated on first boot
 
@@ -112,11 +112,15 @@ Preflight runs first, and before migrations, exactly as `docker-entrypoint.sh` o
 Skip it and a restore staged in the UI is never applied, so the banner asks for a restart
 that cannot finish however many times it is given one (#381).
 
+Run the same script in every new worktree. It is safe to re-run, and it is the whole setup
+an agent needs before the gates run. A worktree gets no `.env.local` of its own:
+`scripts/dev-local.sh` reads the main checkout's, since that file holds the key for the
+shared `data/`.
+
 The web interface is a separate dev server that proxies to it:
 
 ```bash
 cd frontend
-npm install
 npm run dev          # http://localhost:5173, proxies /api to the app on :8420
 ```
 
