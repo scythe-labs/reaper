@@ -2,7 +2,10 @@
 <html lang="en" dir="ltr">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover is what makes iOS report real env(safe-area-inset-*) values in the
+         installed app; without it every inset reads 0 and the bottom bar sits under the home
+         indicator. The stylesheet consumes the insets (styles/10-layout.css and siblings). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <!-- The color a browser paints its own chrome with. Safari 15 to 18, Chrome and Edge on
          Android, and an installed PWA read this tag. Safari 26 parses it and ignores the

@@ -65,6 +65,11 @@ main.split {
   .app {
     /* Scroll the end of a list out from under the bar. */
     padding-bottom: calc(var(--navbar-h) + env(safe-area-inset-bottom, 0px) + 1rem);
+    /* viewport-fit=cover (index.html) lets landscape content run under a phone's notch;
+       these insets keep it out, on top of the base padding (01-base.css). Zero in
+       portrait, so nothing else moves. */
+    padding-inline: calc(var(--space-4xl) + env(safe-area-inset-left, 0px))
+      calc(var(--space-4xl) + env(safe-area-inset-right, 0px));
   }
   .views {
     position: fixed;
@@ -78,6 +83,8 @@ main.split {
     gap: 0;
     margin: 0;
     padding-bottom: env(safe-area-inset-bottom, 0px);
+    /* Same notch clearance as .app above, for the bar's tabs in landscape. */
+    padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
     background: var(--surface);
     border-top: 1px solid var(--border);
   }
