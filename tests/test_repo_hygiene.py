@@ -3816,11 +3816,6 @@ _QUERY_FAILURE_HANDLES = {
     # mixing two real counts beside a false one, in the same `.error` text the queue's own
     # never-loaded branch already uses.
     "frontend/src/components/ReviewQueue.tsx": 6,
-    # Four render branches, plus two in the save handler. Those two ask a different question,
-    # "may I prune against this list": a failed read there means the list is merely out of
-    # date, and pruning against it would delete a stored mapping nothing confirmed is gone.
-    # The render branches beside them already keep their grid and say it may be stale, which
-    # is why `.data` alone could not answer this.
     # Moved out of App.tsx with the component rather than added: the banner's amber "we could
     # not look" branch is the same handle it always had, now in its own module so the wizard
     # states the regime from the same declaration.
@@ -3831,6 +3826,12 @@ _QUERY_FAILURE_HANDLES = {
     # empty while the sync that would fill it fails is the ordinary answer when Plex is not
     # linked at all. Consulting only the query would state as fact that the server holds no
     # libraries of this kind, about a server nobody reached.
+    #
+    # The save handler reads two of those lists a second time, to answer a different question.
+    # "May I prune against this list" is what it asks. A failed read there means the list is
+    # merely out of date, and pruning against it would delete a stored mapping nothing
+    # confirmed is gone. The render branches beside them already keep their grid and say it
+    # may be stale, which is why `.data` alone could not answer this.
     "frontend/src/components/ServiceModal.tsx": 7,
     "frontend/src/components/ServicesPanel.tsx": 1,
     "frontend/src/components/SetupConnectStep.tsx": 1,
