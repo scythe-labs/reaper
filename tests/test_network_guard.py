@@ -1,18 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The suite reaches no network, and this is what makes that a fact rather than a claim.
+"""Proves the suite reaches no real network, instead of only asserting that it does not.
 
-``tests/conftest.py`` said "no network" for long enough that seven tests were resolving a
-real hostname behind the sentence, on every run, for as long as anyone had been reading it
-(rule 7/24). The guard those seven now sit behind is in ``conftest``; the reconciliation of
-what it sees is here.
+The guard that blocks outbound network calls lives in ``tests/conftest.py``. This file
+reconciles what that guard actually catches.
 
-**A guard that fires on nothing has zero false positives too**, which is the failure mode
-this file is written against. The obvious hook point is ``connect()``, and measured, the
-suite's own outbound traffic never reaches it: name resolution fails first, so a
-``connect``-only guard would report a clean suite while watching a call nobody makes. So
-the tests below drive the guard through the real stack rather than through ``socket``
-directly, and the population it allows is written out and driven member by member
-(rule 145).
+A guard that fires on nothing has zero false positives too, which is the failure mode this
+file is written against. Hooking only ``connect()`` looks like it should work, but measured,
+the suite's own outbound traffic never reaches it: name resolution fails first, so a
+``connect``-only guard would report a clean suite while watching a call nobody makes. So the
+tests below drive the guard through the real stack rather than calling ``socket`` directly,
+and the set of hosts it allows is written out and tested one host at a time.
 """
 
 from __future__ import annotations
@@ -53,17 +50,16 @@ _THIS_TEST = "test_a_refusal_is_written_down_even_when_something_catches_it"
 #: The other test that asserts its own recorded attempt verbatim.
 _OWNER_TEST = "test_a_refusal_on_a_worker_thread_is_blamed_on_the_test_that_started_it"
 
-#: Every exit the guard is installed on, each driven below. `getaddrinfo` is where all of this
-#: suite's outbound traffic actually goes; the five siblings answer the same question through
-#: the same resolver and every one of them escaped the first version of this guard; `connect`
-#: and `connect_ex` are for the address that never needs resolving; `sendto` and `sendmsg` are
-#: for UDP, which reaches a host with neither a lookup nor a connect and really did put bytes
-#: on the wire while unhooked.
+#: Every exit the guard installs on, each driven below. `getaddrinfo` is where all of this
+#: suite's outbound traffic actually goes. The five resolver siblings answer the same
+#: question through the same resolver, so they need the same coverage. `connect` and
+#: `connect_ex` cover an address that never needs resolving. `sendto` and `sendmsg` cover
+#: UDP, which can reach a host with neither a lookup nor a connect call.
 #:
-#: **A count of hooks INSTALLED is not a count of what is covered**, which is why
-#: `_REFUSED_THROUGH` and `_ALLOWED_THROUGH` exist: every entry point that reads the allowlist
-#: is driven with a refused host AND an allowed one, so narrowing the check inside any one of
-#: them cannot leave this file green (rule 145).
+#: A count of hooks INSTALLED is not a count of what is covered. `_REFUSED_THROUGH` and
+#: `_ALLOWED_THROUGH` exist because every entry point that reads the allowlist has to be
+#: driven with a refused host and an allowed one, so narrowing the check inside any one of
+#: them cannot leave this file green.
 _HOOKS = 10
 
 
@@ -83,12 +79,12 @@ def _hook_state() -> dict[str, bool]:
 
 
 def test_the_guard_is_installed_process_wide_rather_than_per_test() -> None:
-    """It goes on in ``pytest_configure``, and the scoping is the reason.
+    """The guard installs in ``pytest_configure``, which covers every fixture scope.
 
     A fixture cannot cover this. ``_hermetic`` is function-scoped, so anything higher-scoped
-    is set up before it -- and the one session-scoped fixture in the suite boots an app, which
-    is exactly the setup a network guard would want to be watching. Installing at configure
-    time means there is no window at all.
+    runs before it, including the one session-scoped fixture that boots the app, which is
+    exactly the setup a network guard needs to watch. Installing at configure time means
+    there is no window before the guard is active.
     """
     installed = _hook_state()
     assert sum(installed.values()) == _HOOKS, (
@@ -99,9 +95,9 @@ def test_the_guard_is_installed_process_wide_rather_than_per_test() -> None:
     )
 
 
-#: Every entry point that refuses a host, as (label, call). Driven against an address that must
-#: be refused, and again against each allowlist member, which is what covers the case a hook
-#: count cannot: a check narrowed inside one of them while the others stay right.
+#: Every entry point that refuses a host, as (label, call). Each is driven against an address
+#: that must be refused, and again against each allowlist member. That second pass is what
+#: catches a check narrowed inside one entry point while the others stay correct.
 _REFUSED_THROUGH: dict[str, Callable[[Any], object]] = {
     "getaddrinfo": lambda host: socket.getaddrinfo(host, 443),
     "gethostbyname": lambda host: socket.gethostbyname(host),
@@ -130,11 +126,10 @@ def _udp() -> socket.socket:
 def test_every_entry_point_refuses_a_host_off_the_loopback(entry: str) -> None:
     """Each hook, driven with an address it must refuse.
 
-    `getfqdn` is the reason this is a sweep rather than one call: it swallows its own errors
-    and returns the name unchanged, so it would have gone on answering forever without ever
-    looking like a failure. All five resolver siblings escaped the first version of this guard,
-    and `sendto` put five bytes on the wire, because only `getaddrinfo` and the two `connect`
-    forms were hooked (rule 72 -- the siblings of the thing you fixed).
+    `getfqdn` is the reason this is a sweep rather than one call. It swallows its own errors
+    and returns the name unchanged, so a broken hook here would go on answering forever
+    without ever looking like a failure. Testing every entry point individually is what
+    catches a hook that is missing while the others are in place.
     """
     with pytest.raises(NetworkReached):
         _REFUSED_THROUGH[entry](UNREACHABLE_IP)
@@ -148,11 +143,11 @@ def test_a_name_lookup_off_the_loopback_is_refused() -> None:
 
 
 def test_a_connection_to_a_literal_address_is_refused_without_any_lookup() -> None:
-    """The case ``getaddrinfo`` never sees: an address that needs no resolving.
+    """A literal address needs no name resolution, so ``getaddrinfo`` never sees it.
 
-    Nothing in the suite does this today, which is precisely why it is driven here. A hook
-    count reconciled against calls the suite happens to make would leave this one uncovered
-    and read as complete.
+    Nothing in the suite makes this kind of call today, which is exactly why it is tested
+    here. A hook count reconciled only against calls the suite happens to make would leave
+    this case uncovered while still reading as complete.
     """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         with pytest.raises(NetworkReached, match=UNREACHABLE_IP):
@@ -164,18 +159,18 @@ def test_a_connection_to_a_literal_address_is_refused_without_any_lookup() -> No
 
 @pytest.mark.parametrize("host", sorted(_LOOPBACK_HOSTS, key=repr))
 def test_every_allowed_host_really_is_allowed(host: str | None) -> None:
-    """Each member of the allowlist, driven.
+    """Drives one allowlist member per test.
 
-    The set is the population this guard is reconciled against, and a set-equality assertion
-    over it would not tell a member the guard allows from one it refuses (rule 145). A wildcard
+    A set-equality assertion over the whole allowlist would not tell a member the guard
+    allows from one it refuses, so each member is driven individually. A wildcard
     (``0.0.0.0``, ``::``, ``None``, ``""``) is a listener rather than a destination, which is
     why it is on the list at all.
 
-    **What is asserted is that the guard let the call through, not that the call succeeded**,
-    and the two come apart on ``""``: glibc raises ``gaierror`` for an empty host where macOS
-    resolves it to the loopback. Either answer is the real resolver answering, which is the
-    whole claim. A refusal is a ``NetworkReached``, which is not caught here and fails the
-    test on the spot.
+    This asserts that the guard let the call through, not that the call succeeded. The two
+    come apart on ``""``, where glibc raises ``gaierror`` for an empty host but macOS
+    resolves it to the loopback. Either answer means the real resolver ran, which is the
+    whole claim here. A refusal raises ``NetworkReached``, which is not caught in this test
+    and fails it on the spot.
     """
     with contextlib.suppress(socket.gaierror):
         socket.getaddrinfo(host, 0, type=socket.SOCK_STREAM)
@@ -184,15 +179,18 @@ def test_every_allowed_host_really_is_allowed(host: str | None) -> None:
 
 @pytest.mark.parametrize("entry", ["connect", "connect_ex", "sendto", "sendmsg"])
 def test_the_allowlist_is_read_the_same_way_by_the_socket_hooks(entry: str) -> None:
-    """The allowlist reaches `connect`, `connect_ex` and `sendto`, not `getaddrinfo` alone.
+    """The allowlist is read the same way by `connect`, `connect_ex`, `sendto`, and
+    `sendmsg`, not by `getaddrinfo` alone.
 
-    This is the gap a hook count leaves open. `_HOOKS` says nine entry points are installed and
-    the test above drives seven allowlist members, but only through `getaddrinfo` -- so
-    narrowing the check inside `connect` to, say, `127.0.0.1` alone left every assertion in
-    this file green while the guard refused a loopback address a test was entitled to use.
+    This closes a gap a hook count alone leaves open. `_HOOKS` counts ten entry points as
+    installed, and the earlier test drives seven allowlist members, but only through
+    `getaddrinfo`. Narrowing the check inside `connect` to, say, `127.0.0.1` alone would
+    leave every assertion in that file green while the guard refused a loopback address a
+    test was entitled to use.
 
-    Driven on `127.0.0.1` because it is the one member every hook can actually be handed: the
-    wildcards are bind addresses and a lookup form, not somewhere to send a packet.
+    This is driven on `127.0.0.1` because it is the one member every hook can actually be
+    handed: the wildcards are bind addresses or a lookup-only form, not something to send a
+    packet to.
     """
     with contextlib.suppress(OSError):
         _REFUSED_THROUGH[entry]("127.0.0.1")
@@ -200,7 +198,7 @@ def test_the_allowlist_is_read_the_same_way_by_the_socket_hooks(entry: str) -> N
 
 
 def test_the_allowlist_is_the_loopback_and_the_wildcard_and_nothing_else() -> None:
-    """Written out here so widening it is a two-file edit somebody has to mean."""
+    """The allowlist is written out here, so widening it takes a deliberate two-file edit."""
     written_out_here = frozenset(
         {None, "", "localhost", "127.0.0.1", "::1", "0.0.0.0", "::"}  # noqa: S104 -- not a bind
     )
@@ -212,11 +210,11 @@ def test_the_allowlist_is_the_loopback_and_the_wildcard_and_nothing_else() -> No
 
 
 def test_a_unix_socketpair_is_not_touched() -> None:
-    """The 4,046-strong population a naive guard breaks.
+    """A Unix socketpair used for asyncio's self-pipe is not something the guard touches.
 
-    Every ``TestClient`` block builds an asyncio loop self-pipe on a worker thread, and the
-    suite made 2,023 of them the last time this was counted. They reach nobody, so the guard
-    hooks neither ``socket()`` nor ``bind()`` and never sees one.
+    Every ``TestClient`` block builds one of these on a worker thread. They reach no host,
+    so the guard, which only hooks name resolution and the send and connect calls, never
+    sees them.
     """
     left, right = socket.socketpair()
     with left, right:
@@ -226,17 +224,17 @@ def test_a_unix_socketpair_is_not_touched() -> None:
 
 
 async def test_the_guard_sits_on_the_path_the_suite_s_real_traffic_takes() -> None:
-    """Driven through plexapi, which is where the seven live violations were.
+    """Drives the guard through plexapi's real request path, not through a stub.
 
-    This is the anti-vacuity test, and the only one here that would notice the guard being
-    hooked somewhere real code does not pass through. ``PlexClient._connect`` builds a
-    plexapi server, which is ``requests`` over ``urllib3`` over ``socket.getaddrinfo`` -- a
-    stack ``respx`` does not intercept, because respx is an httpx transport.
+    This is the one test here that would notice the guard being hooked somewhere real code
+    does not pass through. ``PlexClient._connect`` builds a plexapi server, which sends
+    requests through ``requests`` over ``urllib3`` over ``socket.getaddrinfo``, a stack
+    ``respx`` does not intercept, because respx is an httpx transport.
 
-    **What comes out is ``NetworkReached`` and not ``PlexError``**, and that is the second
-    proof in the same call. ``_connect`` maps every ``Exception`` to ``PlexError`` so its
-    callers have one error to handle; a guard raising an ordinary exception would be
-    converted right there and the refusal would read as an unreachable server.
+    What comes out is ``NetworkReached``, not ``PlexError``, which is a second proof in the
+    same call. ``_connect`` maps every ``Exception`` to ``PlexError`` so its callers have one
+    error to handle. A guard that raised an ordinary exception would be converted right
+    there, and the refusal would read as an unreachable server instead of a blocked call.
     """
     client = PlexClient(
         f"https://{UNREACHABLE}:32400",
@@ -253,13 +251,13 @@ async def test_the_guard_sits_on_the_path_the_suite_s_real_traffic_takes() -> No
 
 
 def test_a_refusal_is_written_down_even_when_something_catches_it() -> None:
-    """The teardown half, which is what covers a caller that catches ``BaseException``.
+    """The teardown check that also catches a caller that swallows the exception.
 
-    ``NetworkReached`` off ``Exception`` handles the broad-but-ordinary catches, and there
-    are two of them on the path above. It does not handle a bare ``except:``, an exception
-    swallowed on a thread nobody joins, or a future whose result is never read. So the
-    attempt is recorded before it is raised, and ``_no_network`` fails the test in teardown
-    on anything left in the list -- which is the assertion that cannot be caught at all.
+    ``NetworkReached`` inherits from ``Exception``, which covers a normal, broad catch, and
+    there are two of those on the path above. It does not cover a bare ``except:``, an
+    exception swallowed on a thread nobody joins, or a future whose result is never read.
+    For those cases, the attempt is recorded before it is raised, and ``_no_network`` fails
+    the test in teardown on anything left in the list. That check cannot be caught at all.
     """
     with contextlib.suppress(BaseException):
         socket.getaddrinfo(UNREACHABLE, 443)
@@ -283,11 +281,11 @@ def test_an_address_the_guard_cannot_parse_is_refused_rather_than_raised_through
 ) -> None:
     """An address shape the guard does not recognize fails closed, like everything here.
 
-    Two ways this went the other way. An unhashable address (`["192.0.2.1", 80]`) raised
-    `TypeError` straight out of the guard -- a crash where a refusal belongs, and one that
-    reads as a bug in the test rather than as a blocked call. And a bare `str`/`bytes` was
-    mapped to `None`, which is on the allowlist: a second, silent AF_UNIX exemption stacked
-    on the explicit family check, allowing anything spelled that way whatever its family.
+    This guards two specific failure shapes. An unhashable address (`["192.0.2.1", 80]`)
+    must not raise `TypeError` out of the guard itself, since a crash there reads as a bug
+    in the test rather than as a blocked call. A bare `str` or `bytes` address must not be
+    silently mapped to `None`, because `None` is on the allowlist, and mapping to it would
+    exempt anything spelled that way from the family check.
     """
     with (
         socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock,
@@ -298,16 +296,17 @@ def test_an_address_the_guard_cannot_parse_is_refused_rather_than_raised_through
 
 
 async def test_a_refusal_on_a_worker_thread_is_blamed_on_the_test_that_started_it() -> None:
-    """`_network_attempts` outlives the test, so what it records has to name an owner.
+    """`_network_attempts` outlives the test, so each entry has to name its own owner.
 
-    A refusal is written down before it is raised, and the list is read in teardown -- so an
-    attempt made on a thread that outlives its test lands in the NEXT test's teardown. Recorded
-    against whatever test was running at the time, that reads as a red run pointing at innocent
-    code, which is the worst shape a guard can fail in.
+    A refusal is written down before it is raised, and the list is read in teardown.
+    Without an owner, an attempt made on a thread that outlives its test would land in the
+    NEXT test's teardown, recorded against whatever test happened to be running. That would
+    read as a failure in innocent code, the worst shape a guard can fail in.
 
-    The owner is a `ContextVar`, and `asyncio.to_thread` copies the context, so the worker below
-    is attributed here rather than to the thread it happens to run on. A bare `threading.Thread`
-    inherits no context and reads the default instead, which is honest rather than wrong.
+    The owner is a `ContextVar`, and `asyncio.to_thread` copies the context, so the worker
+    below is attributed to the test that started it, not to the thread it happens to run on.
+    A bare `threading.Thread` inherits no context and reads the default owner instead, which
+    is honest rather than wrong.
     """
 
     def dial() -> None:

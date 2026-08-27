@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The Leaving Soon shelf reconcile.
 
-The shelf should track the grace set exactly, per library: movies appear on their movie
-library's shelf when they enter grace and come off when they leave it; seasons do the
-same in their TV library. The reconcile is pure and gets pinned directly; the per-library
-orchestration is driven against a fake Plex client, so none of it needs a server -- the
-real adapter's live behavior is the separate, supervised verification step.
+The shelf should track the grace set exactly, per library. Movies appear on their movie
+library's shelf when they enter grace and come off when they leave it, and seasons do the
+same in their TV library. The reconcile is pure and gets pinned directly. The per-library
+orchestration is driven against a fake Plex client, so none of it needs a server. The real
+adapter's live behavior is the separate, supervised verification step.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from reaper.services.leaving_soon import (
 )
 
 NOW = utcnow()
-#: What every test that is not about renaming holds: the shipped name, already on the server.
+#: Every test that is not about renaming uses the shipped name, already on the server.
 SHELF = ShelfName(DEFAULT_LEAVING_SOON_NAME, DEFAULT_LEAVING_SOON_NAME)
 
 
@@ -75,19 +75,19 @@ class _FakePlex:
         other: dict[int, tuple[str, set[int]]] | None = None,
     ) -> None:
         self._section_items = section_items
-        #: What the collection and the labels on this server are CALLED. One name for the
+        #: What the collection and the labels on this server are called. One name for the
         #: whole server, as in the real thing. A reconcile looking under any other name finds
         #: nothing, which is what makes a rename test mean something.
         self.name = name
-        # collection state per section key; a section absent has no collection yet.
+        # Collection state per section key. A section absent has no collection yet.
         self.collections = dict(collections or {})
         self.labeled = {k: set(v) for k, v in (labeled or {}).items()}
         self.calls: list[tuple[str, object]] = []
-        #: A collection in the section that is NOT Reaper's shelf: the operator's own, under
+        #: A collection in the section that is not Reaper's shelf, the operator's own, under
         #: a name of its own. Only a rename onto that name can see it.
         self.other = {k: (n, set(v)) for k, (n, v) in (other or {}).items()}
-        # collection rating keys are distinct from section keys to catch conflation:
-        # collection key = section key + 9000, and a non-shelf collection + 8000.
+        # Collection rating keys are distinct from section keys, to catch conflation.
+        # Collection key = section key + 9000, and a non-shelf collection is + 8000.
         self._ckey = {k: k + 9000 for k in section_items}
 
     async def section_rating_keys(self, section_key: int, *, kind: str) -> set[int]:
@@ -131,15 +131,15 @@ class _FakePlex:
     ) -> None:
         assert normalize_label(name) == normalize_label(self.name)
         self.calls.append(("collection_remove", tuple(rating_keys)))
-        # The real client resolves the section by key; here we detach the keys from whichever
-        # section's collection holds them.
+        # The real client resolves the section by key. This fake detaches the keys from
+        # whichever section's collection holds them instead.
         for members in self.collections.values():
             members -= set(rating_keys)
 
     async def rename_collection(self, collection_key: int, name: str) -> None:
         self.calls.append(("collection_rename", (collection_key, name)))
-        # In place, so the members ride along untouched -- the property the real client's
-        # editTitle buys and the reason the shelf is not dropped and rebuilt.
+        # In place, so the members ride along untouched. That is the property the real
+        # client's editTitle buys, and the reason the shelf is not dropped and rebuilt.
         self.name = name
 
     async def delete_collection(self, collection_key: int) -> None:
@@ -198,19 +198,19 @@ def _pass(*outcomes: ShelfOutcome) -> LeavingSoonResult:
 
 
 class TestTheSummary:
-    """The one typed reason every surface reports this pass with (rule 104).
+    """The one typed reason every surface reports this pass with.
 
-    Written here and nowhere else: the stored Jobs row, the "Update now" response and the
-    Plex panel's status line all compose this id under ``jobs.result.*``, so the four
-    branches and their ORDER are the whole contract. The order is what #555 was: the route
-    named the no-libraries case after the row had already been stored as a preview. Phase
-    11a stopped composing English here at all -- the id and raw params are the server's
-    whole say; the sentence is the browser's (``why.ts``'s ``composeIn``).
+    This is composed here and nowhere else. The stored Jobs row, the "Update now" response,
+    and the Plex panel's status line all build this id under ``jobs.result.*``, so the four
+    branches and their order are the whole contract. Getting the order wrong means one of
+    those surfaces reports the wrong reason. The id and raw parameters are the only thing the
+    server decides. The sentence itself is composed in the browser (``why.ts``'s
+    ``composeIn``).
     """
 
     def test_nothing_turned_on_is_reported_as_itself_not_as_preview(self) -> None:
-        # The bug's exact state. `applied` is false with no outcomes, so a ladder that asks
-        # about preview first calls a misconfiguration a successful dry run.
+        # `applied` is false with no outcomes. A ladder that checks for preview first would
+        # misread this exact state as a misconfiguration succeeding as a dry run.
         result = _pass()
         assert result.applied is False
         assert result.summary == Reason("shelf_no_libraries")
@@ -222,10 +222,9 @@ class TestTheSummary:
         assert result.ok is False
 
     def test_the_failing_library_is_named_and_the_working_one_is_not(self) -> None:
-        """The sentence used to be "Some shelves didn't update", so one unreachable library
-        out of several read exactly like all of them failing, and no surface carried the
-        detail: the per-library list was on the wire but nothing rendered it. Naming them is
-        the whole answer the operator gets, so it has to name the right ones."""
+        """Naming the failing library is the whole answer the operator gets, so it has to
+        name the right one. A generic "some shelves didn't update" message would make one
+        unreachable library out of several read exactly like all of them failing."""
         result = _pass(
             _outcome(added=4),
             _outcome(applied=False, error="connection refused", title="Kids TV"),
@@ -241,16 +240,17 @@ class TestTheSummary:
         assert result.summary == Reason("shelf_failed", {"libraries": "Kids TV, Movies"})
 
     def test_the_raw_cause_stays_out_of_the_reason(self) -> None:
-        """``str(exc)`` is stack-shaped and rule 21 keeps it off the screen. It survives in
-        the ``leaving_soon.problems`` log event, which is where a raw cause belongs -- the
-        ``libraries`` param names sections, never the exception text, so an equality check
-        against the exact reason is the proof rather than a substring search."""
+        """``str(exc)`` reads like an internal error, not something to show an operator, so
+        it stays out of the reason shown on screen. It survives in the
+        ``leaving_soon.problems`` log event instead, which is where a raw cause belongs. The
+        ``libraries`` parameter names sections, never the exception text, so an equality
+        check against the exact reason proves that rather than a substring search."""
         result = _pass(_outcome(applied=False, error="HTTPStatusError: 502 Bad Gateway"))
         assert result.summary == Reason("shelf_failed", {"libraries": "Movies"})
 
     def test_a_preview_is_not_a_failure(self) -> None:
-        # Read-only with no opt-in: computed, announced, and deliberately not written. The
-        # tick stays green, and the reason says why nothing moved in Plex.
+        # Read-only with no opt-in. The result is computed and announced but never written.
+        # The tick stays green, and the reason says why nothing moved in Plex.
         result = _pass(_outcome(added=3, applied=False))
         assert result.summary == Reason("shelf_preview")
         assert result.ok is True
@@ -261,9 +261,9 @@ class TestTheSummary:
         assert result.ok is True
 
     def test_the_counts_are_raw_numbers_not_pre_formatted(self) -> None:
-        # Grouping used to happen here (Python's `:,` format); the browser renders these
-        # under jobs.result.shelf_updated with `{added, number}`/`{removed, number}` now, so
-        # the server's job is only to pass the raw counts through unformatted.
+        # The browser renders these counts under jobs.result.shelf_updated with
+        # `{added, number}`/`{removed, number}`, so the server's job is only to pass the raw
+        # counts through unformatted.
         result = _pass(_outcome(added=1200, removed=25))
         assert result.summary == Reason("shelf_updated", {"added": 1200, "removed": 25})
 
@@ -316,9 +316,9 @@ class TestSyncSection:
         assert plex.calls == []  # nothing written
 
     async def test_it_removes_before_it_adds(self) -> None:
-        """Remove first, then add: the shelf never briefly over-covers if a later add
-        fails partway. Item 8 stays on the shelf, so this is a partial detach (batch
-        removeCollection), not a whole-collection drop."""
+        """Remove first, then add. That way, the shelf never briefly over-covers if a later
+        add fails partway. Item 8 stays on the shelf, so this exercises a partial detach
+        (batch removeCollection), not a whole-collection drop."""
         plex = _FakePlex(
             section_items={10: {1, 8, 9}},
             collections={10: {8, 9}},
@@ -339,7 +339,7 @@ class TestSyncSection:
         assert plex.collections[10] == {1, 8}  # 9 detached, 1 added, 8 stayed
 
     async def test_a_full_clear_drops_the_whole_collection(self) -> None:
-        """Nothing stays in grace, so the shelf is emptied by ONE whole-collection delete,
+        """Nothing stays in grace, so the shelf is emptied by one whole-collection delete,
         never a detach per member."""
         plex = _FakePlex(
             section_items={10: {7, 8, 9}},
@@ -361,9 +361,9 @@ class TestSyncSection:
         assert 10 not in plex.collections  # collection gone
 
     async def test_a_total_swap_drops_then_recreates(self) -> None:
-        """The whole current membership leaves AND a fresh set arrives (a list replaced
-        from another tool): drop the collection whole, then recreate it from the new set --
-        never detach the old members one by one."""
+        """The whole current membership leaves and a fresh set arrives, as if a list were
+        replaced from another tool. This drops the collection whole, then recreates it from
+        the new set, rather than detaching the old members one by one."""
         plex = _FakePlex(
             section_items={10: {1, 2, 8, 9}},
             collections={10: {8, 9}},  # the stale, externally-set membership
@@ -399,9 +399,10 @@ class TestSyncSection:
         assert ("create", (10, (1, 2))) in plex.calls
 
     async def test_a_matching_shelf_writes_nothing_and_still_counts_as_applied(self) -> None:
-        """Found live: a library whose shelf already matched reported applied=False,
-        which made a fully-written pass across several libraries claim "preview only".
-        Nothing to write plus permission to write IS the applied state."""
+        """A library whose shelf already matches must still report ``applied=True``, not
+        False. Reporting False there would make a fully-written pass across several
+        libraries claim "preview only" for the ones that already matched. Nothing left to
+        write plus permission to write is what applied means."""
         plex = _FakePlex(
             section_items={10: {1}},
             collections={10: {1}},
@@ -421,9 +422,9 @@ class TestSyncSection:
         assert outcome.applied is True
 
     async def test_an_empty_library_counts_as_applied_alongside_a_written_one(self) -> None:
-        """The aggregate: one movie library takes writes, one TV library has nothing in
-        grace. The pass wrote everything it should -- it must report applied, not
-        preview."""
+        """One movie library takes writes, and one TV library has nothing in grace. The pass
+        wrote everything it should, so it must report applied, not preview, across the whole
+        aggregate."""
         plex = _FakePlex(section_items={10: {1}, 20: set()})
         outcomes = await sync_shelves(
             plex,  # type: ignore[arg-type]
@@ -448,9 +449,9 @@ class TestRenamingTheShelf:
     """
 
     async def test_the_collection_is_retitled_and_keeps_its_members(self) -> None:
-        """Re-titled, never dropped and rebuilt: the rating key survives, so a poster or a
-        pin on the Plex Home screen survives with it. Nothing is added or detached here --
-        the same three titles are on the shelf before and after."""
+        """This must retitle the collection, never drop and rebuild it. The rating key
+        survives, so a poster or a Plex Home screen pin survives with it. Nothing is added or
+        detached here. The same three titles are on the shelf before and after."""
         plex = _FakePlex(
             section_items={10: {1, 2, 3}},
             collections={10: {1, 2, 3}},
@@ -493,9 +494,9 @@ class TestRenamingTheShelf:
         assert ("label_add", ((1, 2), "Last chance")) in plex.calls
 
     async def test_an_empty_shelf_still_loses_the_old_label(self) -> None:
-        """Nothing is in grace, so every plan is a no-op under the new name and the write
-        block used to be skipped outright. The old label is still on two titles, and only a
-        pass that reads the OLD name can see them."""
+        """Nothing is in grace, so every plan is a no-op under the new name. The write step
+        must still run under the old name, because the old label is still on two titles, and
+        only a pass that reads the old name can see them."""
         plex = _FakePlex(section_items={10: {1, 2}}, labeled={10: {1, 2}})
         await sync_section(
             plex,  # type: ignore[arg-type]
@@ -577,8 +578,8 @@ class TestRenamingTheShelf:
     async def test_clearing_the_shelf_drops_it_instead_of_renaming_it(self) -> None:
         """Turning the shelf off during an outstanding rename. Every member is leaving, so
         the collection goes in one request. Re-titling something this pass is about to
-        delete is a wasted round trip, and the label still has to come off under the OLD
-        name or it stays on every title forever."""
+        delete is a wasted round trip, and the label still has to come off under the old
+        name, or it stays on every title forever."""
         plex = _FakePlex(section_items={10: {1, 2}}, collections={10: {1, 2}}, labeled={10: {1, 2}})
         await sync_section(
             plex,  # type: ignore[arg-type]
@@ -599,7 +600,7 @@ class TestRenamingTheShelf:
 class TestSyncShelves:
     async def test_movies_and_seasons_go_to_their_own_libraries(self) -> None:
         """A movie key must never enter a TV library's reconcile, nor a season a movie
-        library's -- each library's shelf holds only what lives in it."""
+        library's reconcile. Each library's shelf holds only what lives in it."""
         plex = _FakePlex(section_items={10: {1}, 20: {700}})
         outcomes = await sync_shelves(
             plex,  # type: ignore[arg-type]
@@ -663,8 +664,9 @@ class TestAnnounce:
         assert announced == {1, 2, 700}
 
     async def test_items_plex_never_matched_are_skipped(self) -> None:
-        """No rating key means Plex cannot address it; the announced set is keyed on
-        rating keys, so it cannot be tracked either. Discord silence over spam."""
+        """No rating key means Plex cannot address the item. The announced set is keyed on
+        rating keys too, so an unmatched item cannot be tracked either. Staying silent is
+        better than spamming Discord with a title nobody can confirm."""
         report = _report([_item(1), _item(None, title="Unmatched")])
         notifier = _FakeNotifier()
         _notified, announced = await announce_new(
@@ -705,4 +707,4 @@ class TestAnnounce:
             report,
             already_announced=set(),
         )
-        assert announced == set()  # retried on the next pass, not silently dropped
+        assert announced == set()  # retried on the next pass

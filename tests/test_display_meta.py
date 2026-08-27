@@ -1,18 +1,19 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Display metadata and deep links: frozen presentation fields, never verdict inputs.
+"""Display metadata and deep links. These are frozen presentation fields, never verdict
+inputs.
 
-Covers the three pure layers the why-panel's new header rests on:
+Covers the three pure layers the why-panel's header rests on:
 
-* ``normalize_resolution`` -- Plex first, *arr quality-name parse as fallback, and
-  ``None`` (badge hidden) for anything unrecognizable.
-* ``build_ratings_json`` / ``parse_ratings_json`` -- the frozen ratings row. The IMDb
-  entry must be the dataset's (the number the score used); Plex fills the rest; the
-  *arr fills what Plex did not know. Ints only, both ways.
-* ``deep_links.build_links`` -- every missing coordinate degrades that ONE link to
-  ``None``; a link is hidden, never guessed or broken.
+* ``normalize_resolution``: Plex first, *arr quality-name parse as fallback, and ``None``
+  (badge hidden) for anything unrecognizable.
+* ``build_ratings_json`` / ``parse_ratings_json``: the frozen ratings row. The IMDb entry
+  must be the dataset's, since that is the number the score used. Plex fills the rest, and
+  the *arr fills what Plex did not know. Ints only, both ways.
+* ``deep_links.build_links``: every missing coordinate degrades that *one* link to
+  ``None``. A link is hidden, never guessed or broken.
 
-Plus the sweep's reload-storm guard: ``library_guid_index`` may read only attributes a
-plexapi listing row actually carries -- an attribute outside that set would trigger
+Plus the sweep's reload-storm guard. ``library_guid_index`` may read only attributes a
+plexapi listing row actually carries. An attribute outside that set would trigger
 plexapi's implicit per-item reload (one HTTP call per library item), which the strict
 stub turns into a loud failure.
 """
@@ -64,8 +65,8 @@ class TestBuildRatingsJson:
     DATASET = ImdbRating(tconst="tt0000001", average_rating=5.9, num_votes=35_072)
 
     def test_dataset_imdb_outranks_every_other_imdb(self) -> None:
-        """The row must show the number the score used -- a Plex or Radarr IMDb value
-        that disagrees with the dataset must lose."""
+        """The row must show the number the score used. A Plex or Radarr IMDb value that
+        disagrees with the dataset must lose."""
         stored = parse_ratings_json(
             build_ratings_json(
                 self.DATASET,
@@ -121,8 +122,8 @@ class TestBuildRatingsJson:
         assert stored == {}
 
     def test_trakt_is_frozen_for_the_ratings_row(self) -> None:
-        # Radarr's ratings object carries a Trakt score for essentially every movie
-        # (measured: ~99% coverage), and the why-panel now shows it.
+        # Radarr's ratings object carries a Trakt score for almost every movie (about 99%
+        # coverage, measured), and the why-panel now shows it.
         stored = parse_ratings_json(
             build_ratings_json(None, arr_ratings=[_rating(RatingSource.TRAKT, 7.7)])
         )
@@ -174,10 +175,10 @@ class TestBuildLinks:
         )
 
     def test_an_abstain_offers_a_link_to_each_row_it_could_not_choose_between(self) -> None:
-        """An abstain has NO rating key of its own, so every link built from one is
-        ``None`` -- which left the panel naming a problem in the operator's Plex and
-        offering nothing to open. Carrying the candidate keys is the fix, built through
-        the same two helpers so they cannot drift from the item's own links."""
+        """An abstain has *no* rating key of its own, so every link built from one is
+        ``None``. That left the panel naming a problem in the operator's Plex and offering
+        nothing to open. Carrying the candidate keys is the fix, built through the same
+        two helpers so they cannot drift from the item's own links."""
         kwargs = {**self.KWARGS, "plex_rating_key": None, "candidate_rating_keys": [555, 777]}
         links = build_links("radarr:2:1542", **kwargs)
         assert links.plex is None and links.tautulli is None  # the state that motivated it
@@ -206,8 +207,8 @@ class TestBuildLinks:
 
     def test_a_candidate_link_reaches_the_wire_as_its_own_object(self) -> None:
         """``api/review.py``'s ``_deep_links`` builds ``LinksOut`` off the whole
-        ``DeepLinks`` record, so the nested tuple is converted by the model rather than by a
-        comprehension at the route. Nothing covered that: both places ``test_api.py``
+        ``DeepLinks`` record, so the nested tuple is converted by the model rather than by
+        a comprehension at the route. Nothing covered that. Both places ``test_api.py``
         asserts the served ``links`` dict whole are rows whose ``match_candidates`` is
         empty, for two different reasons."""
         kwargs = {**self.KWARGS, "plex_rating_key": None, "candidate_rating_keys": [555]}
@@ -348,10 +349,10 @@ class _StrictServer:
     """Serves canned containers and counts every request.
 
     The sweep parses the container XML directly, so listing metadata can only come from
-    what the listing carried, plus ONE deliberate batched metadata read per 100 items
+    what the listing carried, plus *one* deliberate batched metadata read per 100 items
     (for the Rating children and show folders). Any regression back toward per-item
-    fetches (the reload storm plexapi's object walk silently produced, measured at one
-    HTTP request per title on a real library) shows up here as extra queries."""
+    fetches, the kind plexapi's object walk can silently produce (one HTTP request per
+    title on a real library), shows up here as extra queries."""
 
     def __init__(self) -> None:
         self.queries: list[str] = []
@@ -394,6 +395,6 @@ async def test_the_sweep_reads_only_listing_attributes() -> None:
     }
     # No media on this listing -> no resolution, and the badge stays hidden.
     assert item.video_resolution is None
-    # One item, TWO requests: the listing plus one batched metadata read (Rating
+    # One item, *two* requests: the listing plus one batched metadata read (Rating
     # children ride it at 100 items per call). Never a hidden per-item reload.
     assert len(server.queries) == 2

@@ -2,41 +2,42 @@
 """The browser's copy of the wire types is checked against the server's declarations.
 
 ``frontend/src/api.ts`` is a hand-maintained mirror of the response models, and nothing
-checked the two agreed. Rule 103 is the standing requirement -- a hardcoded list that mirrors
-the model set carries a drift guard -- and this is the largest such mirror in the tree.
+checked the two agreed. A hardcoded list that mirrors a model set needs a drift guard, and
+this is the largest such mirror in the tree.
 
-**What got through, and why nothing noticed.** ``MatchOut`` gained ``by`` and
-``merged_rating_keys``; the TS ``Match`` carried neither, and ``merged_rating_keys`` is
-load-bearing on the deletion path -- ``executor._plex_keys`` re-reads it so every listing of a
-merged bind is protected together, and the panel states the count so the operator can see that
-interlock's own input. The boundary is crossed by hand at two hops on some paths (an ORM row, a
-service dataclass, then the wire model) and each hop is a separate edit, so nothing announces a
-field that stopped at one of them.
+What got through, and why nothing noticed. ``MatchOut`` gained ``by`` and
+``merged_rating_keys``, but the TS ``Match`` carried neither. ``merged_rating_keys`` is
+load-bearing on the deletion path: ``executor._plex_keys`` re-reads it so every listing of
+a merged bind is protected together, and the panel states the count so the operator can
+see that interlock's own input. The boundary is crossed by hand at two hops on some paths
+(an ORM row, a service dataclass, then the wire model), and each hop is a separate edit, so
+nothing announces a field that stopped at one of them.
 
-**This is a pin, not a repair (rule 118).** That drift was fixed by hand before this landed, so
-the guard is green on arrival and fails the moment someone drops a field again, rather than
-proving anything about today.
+This is a pin, not a repair. That drift was fixed by hand before this landed, so the guard
+is green on arrival and fails the moment someone drops a field again, rather than proving
+anything about today.
 
-**It compares field names and field types. Optionality it does not compare, and that is now a
-measurement rather than a bound.** The server's ``required`` list describes what a REQUEST may
-leave out; every model here is a response, and a response model with a default still serializes
-its field, so 210 members read "optional" on the server while the route sends every one. The
-browser's ``?`` is a third fact again: several fields carry it because no component reads them
-and the fixtures are not made to carry them. Nothing true is on both sides of that comparison,
-so the ``?`` is dropped on both and the type beside it is what gets checked.
+It compares field names and field types. It does not compare optionality, and that gap is
+now measured rather than assumed. The server's ``required`` list describes what a
+*request* may leave out. Every model here is a response, and a response model with a
+default still serializes its field, so many members read "optional" on the server while
+the route sends every one. The browser's ``?`` is a third fact again: several fields carry
+it because no component reads them and the fixtures are not made to carry them. Nothing
+true is on both sides of that comparison, so the ``?`` is dropped on both and the type
+beside it is what gets checked.
 
-Names alone was the bound until W4.2, on the argument that comparing types would flag eight
-pairs on day one and train the next author to silence the guard. Measured, it flags 42 across
-749 members in four classes, three of which are deliberate and named in ``NARROWED`` and
-``WIDENED`` below, and one of which was a live inaccuracy: three members typed non-null against
-a server that sends ``null``. **Nested inline objects are still compared at their top level
-only**: TS spells ``LeavingSoonSettings.last`` as an inline object where the server declares a
-whole ``LeavingSoonLastOut``, so ``last`` is compared and its members are not.
+Comparing only names looked sufficient at first, on the argument that comparing types
+would flag a handful of pairs and train the next author to silence the guard. Measured, it
+flagged far more, in four classes. Three are deliberate and named in ``NARROWED`` and
+``WIDENED`` below, and one was a live inaccuracy: some members were typed non-null against
+a server that sends ``null``. Nested inline objects are still compared at their top level
+only. TS spells ``LeavingSoonSettings.last`` as an inline object where the server declares
+a whole ``LeavingSoonLastOut``, so ``last`` is compared and its members are not.
 
-**The last class in this file checks the hop before that one**, service record to wire model,
-for the routes that build the model off the record instead of naming every field. It is here
-because it is the same failure at the previous hop, and the two hops are what the paragraph
-above says nothing announces.
+The last class in this file checks the hop before that one, service record to wire model,
+for the routes that build the model off the record instead of naming every field. It is
+here because it is the same failure at the previous hop, and the two hops are what the
+paragraph above says nothing announces.
 """
 
 from __future__ import annotations
@@ -77,31 +78,36 @@ from reaper.services.restore import RestoreSummary
 REPO = Path(__file__).resolve().parents[1]
 API_TS = REPO / "frontend" / "src" / "api.ts"
 
-#: The modules whose Pydantic models the browser mirrors. ``api.*`` is the wire layer, and the
-#: two engine modules the browser also mirrors directly are kept in a second bucket, so a name
-#: living in both is a pairing question rather than a clash -- ``ALIAS`` is where those are
-#: written down. This used to name ``PolicyBody``/``ProfileSettings`` as existing in both; the
-#: wire spells them ``PolicyBodyOut`` and ``ProfileSettingsIO``, so no name is shared today.
+#: The modules whose Pydantic models the browser mirrors. ``api.*`` is the wire layer, and
+#: the two engine modules the browser also mirrors directly are kept in a second bucket, so
+#: a name living in both is a pairing question rather than a clash. ``ALIAS`` is where those
+#: are written down. This used to name ``PolicyBody``/``ProfileSettings`` as existing in
+#: both. The wire spells them ``PolicyBodyOut`` and ``ProfileSettingsIO``, so no name is
+#: shared today.
 WIRE_PACKAGE = "reaper.api."
 INNER_MODULES = ("reaper.engine.policy", "reaper.engine.explanation")
 
-#: Reconciled by hand against the tree: 133 under ``reaper.api.*`` and 17 across the two engine
-#: modules (+1 for ``RewatchOddsOut``, #554 stage 2, mirrored in the browser as ``RewatchOdds``;
-#: +2 more for the same stage's ``RewatchOddsFitOut``/``RewatchOddsBlockOut``, the Policy page's
-#: ladder-and-echo payload, mirrored as ``RewatchOddsFit``/``RewatchOddsBlock``; +1 more for
-#: #868 phase 5's ``DiscordTestOut``, split off ``TestOut`` for the Discord webhook test's
-#: typed reason; -1 for ``NotificationLanguageIn``, gone with the route it bodied -- the
-#: language is one setting now and rides ``GeneralSettingsIn``; +5 more under ``reaper.api.*``
-#: for the delete-threshold slider's consequence sentence, replacing the retired ratio
-#: resolver's four models with the whole curve's own: ``ThresholdCurveMeasuredRowOut``,
-#: ``ThresholdCurveMeasuredOut``, ``ThresholdCurveCountsOnlyRowOut``,
-#: ``ThresholdCurveCountsOnlyOut`` and ``ThresholdCurveNoScanOut``). It is here because the
-#: collision assertion below is flag-shaped, and a flag cannot see a member that left the walk
-#: (rule 145).
+#: Reconciled by hand against the tree: 133 under ``reaper.api.*`` and 17 across the two
+#: engine modules.
+#:
+#: ``RewatchOddsOut`` adds 1, mirrored in the browser as ``RewatchOdds``.
+#: ``RewatchOddsFitOut``/``RewatchOddsBlockOut`` add 2 more, the Policy page's
+#: ladder-and-echo payload, mirrored as ``RewatchOddsFit``/``RewatchOddsBlock``.
+#: ``DiscordTestOut`` adds 1 more, split off ``TestOut`` for the Discord webhook test's
+#: typed reason. ``NotificationLanguageIn`` subtracts 1, gone with the route it bodied,
+#: since the language is one setting now and rides ``GeneralSettingsIn``. The
+#: delete-threshold slider's consequence sentence adds 5 more under ``reaper.api.*``,
+#: replacing the retired ratio resolver's four models with the whole curve's own:
+#: ``ThresholdCurveMeasuredRowOut``, ``ThresholdCurveMeasuredOut``,
+#: ``ThresholdCurveCountsOnlyRowOut``, ``ThresholdCurveCountsOnlyOut`` and
+#: ``ThresholdCurveNoScanOut``.
+#:
+#: This count is here because the collision assertion below is flag-shaped, and a flag
+#: cannot see a member that left the walk.
 _EXPECTED_SERVER_MODELS = 150
 
-#: Browser types whose server counterpart is spelled differently. Each is a real pair -- the
-#: field sets are compared -- and the rename is the only reason a suffix rule cannot find it.
+#: Browser types whose server counterpart is spelled differently. Each is a real pair, the
+#: field sets are compared, and the rename is the only reason a suffix rule cannot find it.
 ALIAS = {
     # The wire body the policy editor posts. The server calls the request model ``PolicyIn``
     # and keeps ``engine.policy.PolicyBody`` (which carries schema_version/scorer_version and
@@ -114,7 +120,7 @@ ALIAS = {
     "VocabField": "FieldOut",
     "GradedKeep": "GradedKeepSpec",
     "RatingRule": "RatingRuleSpec",
-    # The probe's answer. The server suffixes its response models ``Out``; the browser
+    # The probe's answer. The server suffixes its response models ``Out``. The browser
     # names this one for what it is rather than for which direction it travels, because the
     # editor reads it as a result and never posts it.
     "PolicyProbeResult": "PolicyProbeOut",
@@ -123,58 +129,61 @@ ALIAS = {
     "ListSyncResult": "ListSyncOut",
 }
 
-#: Browser types with no server declaration to mirror, classified rather than silenced
-#: (rule 103). If one of these gains a server counterpart it must move out of this list.
+#: Browser types with no server declaration to mirror, classified rather than silenced.
+#: If one of these gains a server counterpart it must move out of this list.
 CLIENT_ONLY = {
     # The query the browser sends as URL parameters, not a body any model validates.
     "CandidateQuery",
-    # One item of a 422 validation list's `code`/`params`/`msg` triple (phase 8b): the
+    # One item of a 422 validation list's `code`/`params`/`msg` triple. This is the
     # browser's own name for `api.errors.validation_error_items`'s wire shape, which is a
     # list of dicts the server builds inline rather than a model with a name to pair against.
     "ApiErrorItem",
 }
 
-#: Reconciled by hand against the tree (rule 145). ``grep -c '^export interface'`` on api.ts is
-#: the first number; a walk that silently stopped collecting would drop below it while every
-#: name-comparison below still passed, because a type absent from the walk is absent from both
-#: halves of the comparison.
+#: Reconciled by hand against the tree. ``grep -c '^export interface'`` on api.ts is the
+#: first number. A walk that silently stopped collecting would drop below it while every
+#: name-comparison below still passed, because a type absent from the walk is absent from
+#: both halves of the comparison.
 # Both +2, for the policy probe's request and its answer: `SignalProbe` pairs with
 # `SignalProbeIn` on the suffix rule, and `PolicyProbeResult` needed the ALIAS entry above.
-# The third new name, `PolicyProbe`, is a type alias rather than an interface and is counted
-# by neither walk -- which is the reason these two numbers are reconciled against the tree
+# The third new name, `PolicyProbe`, is a type alias rather than an interface and is
+# counted by neither walk, which is why these two numbers are reconciled against the tree
 # separately instead of one being derived from the other.
 # Both +1 again for the desktop build's Settings group: `DesktopSettings` pairs with
 # `DesktopSettingsOut` on the suffix rule.
-# Both +1 again for Settings -> Lists (#475): `ProtectionList` pairs with `ProtectionListOut`
-# on the same suffix rule.
-# Both +2 again for the rest of that screen: `ListConfig` (the list DEFINITIONS the operator
-# edits) pairs with `ListConfigOut` on the suffix rule, and `ListSyncResult` with `ListSyncOut`
-# through the ALIAS entry above. The third new name, `ListConfigBody`, is a type alias rather
-# than an interface and is counted by neither walk -- the same case the `PolicyProbe` note
-# above describes, and the reason these two numbers are reconciled against the tree separately.
-# Both +1 again for W8-5's split of the connection test: `InstanceProbe` pairs with
+# Both +1 again for Settings -> Lists: `ProtectionList` pairs with `ProtectionListOut` on
+# the same suffix rule.
+# Both +2 again for the rest of that screen: `ListConfig` (the list definitions the
+# operator edits) pairs with `ListConfigOut` on the suffix rule, and `ListSyncResult` with
+# `ListSyncOut` through the ALIAS entry above. The third new name, `ListConfigBody`, is a
+# type alias rather than an interface and is counted by neither walk, the same case the
+# `PolicyProbe` note above describes.
+# Both +1 again for a split of the connection test: `InstanceProbe` pairs with
 # `InstanceProbeOut` on the suffix rule, and needs no ALIAS entry. `InstanceTest` keeps its
 # own ALIAS to `TestOut`, and both sides narrow to the same three fields. The `TestVerdict`
 # alias it replaced was an `export type` and was counted by neither walk.
-# Both +1 again for W8-2's steps window: `RunSteps` pairs with `RunStepsOut` on the suffix
-# rule. It is its own route rather than query parameters on the run detail, so it is its own
-# type rather than a widened `Run`.
-# PAIRS alone +1 for W8-1's candidates envelope: `CandidatePage` was the browser's own
+# Both +1 again for the run detail's steps window: `RunSteps` pairs with `RunStepsOut` on
+# the suffix rule. It is its own route rather than query parameters on the run detail, so
+# it is its own type rather than a widened `Run`.
+# PAIRS alone +1 for the candidates envelope: `CandidatePage` was the browser's own
 # assembly of a bare list plus four response headers and sat in CLIENT_ONLY above. It is a
 # served model now, `CandidatePageOut`, pairing on the suffix rule, so it left that set
 # without being a new interface.
-# Both +1 again for the second half of W8-1: `GroupRollup` pairs with `GroupRollupOut` on the
+# Both +1 again for the show-level rollup: `GroupRollup` pairs with `GroupRollupOut` on the
 # suffix rule. It is the show-level rollup that used to be four fields on every season row.
-# Both +3 again for #554 stage 2's frontend step: `RewatchOdds` pairs with `RewatchOddsOut`,
-# `RewatchOddsFit` with `RewatchOddsFitOut`, and `RewatchOddsBlock` with `RewatchOddsBlockOut`,
-# all three on the plain suffix rule with no ALIAS entry needed.
-# Both +1 again for #868 phase 5: `DiscordTest` pairs with the new `DiscordTestOut` on the
-# suffix rule, split off `TestOut` because the Discord webhook test now sends a typed reason
-# where the *arr/Seerr connection test still sends free English (docs/history/I18N_PLAN.md §5).
-# INTERFACES alone +1 for phase 8b: `ApiErrorItem` is new and sits in CLIENT_ONLY above --
-# the 422 list it describes is a plain list of dicts server-side, not a named model to pair.
-# INTERFACES alone -1 for the i18n legacy-layer cleanup: `Progress` had no reader anywhere in
-# the tree and no server model to sit in CLIENT_ONLY for, so it was deleted rather than kept.
+# Both +3 again for the rewatch-odds frontend step: `RewatchOdds` pairs with
+# `RewatchOddsOut`, `RewatchOddsFit` with `RewatchOddsFitOut`, and `RewatchOddsBlock` with
+# `RewatchOddsBlockOut`, all three on the plain suffix rule with no ALIAS entry needed.
+# Both +1 again for the Discord test reason: `DiscordTest` pairs with the new
+# `DiscordTestOut` on the suffix rule, split off `TestOut` because the Discord webhook test
+# now sends a typed reason where the *arr/Seerr connection test still sends free English
+# (docs/history/I18N_PLAN.md §5).
+# INTERFACES alone +1 for the validation error list: `ApiErrorItem` is new and sits in
+# CLIENT_ONLY above. The 422 list it describes is a plain list of dicts server-side, not a
+# named model to pair.
+# INTERFACES alone -1 for the i18n legacy-layer cleanup: `Progress` had no reader anywhere
+# in the tree and no server model to sit in CLIENT_ONLY for, so it was deleted rather than
+# kept.
 # Both +5 for the delete-threshold slider's consequence sentence: `ThresholdCurveMeasuredRow`,
 # `ThresholdCurveMeasured`, `ThresholdCurveCountsOnlyRow`, `ThresholdCurveCountsOnly` and
 # `ThresholdCurveNoScan` each pair with their `...Out` server model on the suffix rule (the
@@ -205,17 +214,17 @@ def _strip_comments(source: str) -> str:
 def _declarations(source: str) -> dict[str, tuple[dict[str, str], list[str]]]:
     """Every ``export interface`` in ``source`` as ``name -> (own members, base names)``.
 
-    A member maps to the text of its type, whitespace collapsed, so the same walk answers both
-    the name comparison and the type one. The ``?`` is dropped rather than recorded: what it
-    means here is not what it means on the server, so nothing below compares optionality, and
-    ``TestTheTwoCopiesAgreeOnTypes`` says why.
+    A member maps to the text of its type, whitespace collapsed, so the same walk answers
+    both the name comparison and the type one. The ``?`` is dropped rather than recorded.
+    What it means here is not what it means on the server, so nothing below compares
+    optionality, and ``TestTheTwoCopiesAgreeOnTypes`` says why.
 
-    Brace-depth aware on purpose (rule 147). Anchoring on the delimiter that one spelling
-    happens to put there -- a two-space indent, a quote after ``:`` -- reads the plain
-    declarations and silently skips the messy ones, and this file has four messy spellings:
-    a member's inline nested object, a union of object literals, a trailing ``//`` after a
-    field, and doc comments between every pair of fields. A member ends at the first ``;`` at
-    depth zero, so a nested object contributes its own name and none of its members.
+    This is brace-depth aware on purpose. Anchoring on the delimiter that one spelling
+    happens to put there, a two-space indent, a quote after ``:``, reads the plain
+    declarations and silently skips the messy ones. This file has four messy spellings: a
+    member's inline nested object, a union of object literals, a trailing ``//`` after a
+    field, and doc comments between every pair of fields. A member ends at the first ``;``
+    at depth zero, so a nested object contributes its own name and none of its members.
     """
     text = _strip_comments(source)
 
@@ -251,14 +260,14 @@ def _type_aliases(source: str) -> dict[str, str]:
     """Every ``export type NAME = ...;`` in ``source``, as its right-hand side.
 
     The 17 of them are the browser's enums, and the interface walk above is blind to all of
-    them -- they are not interfaces, and a member typed ``Verdict`` reads as one opaque word.
+    them. They are not interfaces, and a member typed ``Verdict`` reads as one opaque word.
     Expanding them is what lets a member's type be compared against the server's literals
     rather than against a name the server never heard.
 
-    Depth-aware for the same reason the interface walk is (rule 147): two of the seventeen are
+    This is depth-aware for the same reason the interface walk is. Two of the seventeen are
     object literals whose own members end in ``;``, so an alias read to its first semicolon
-    stops in the middle of ``ListConfigBody`` and of ``CustomCondemn``'s first arm and reports
-    a truncated type as the whole one.
+    stops in the middle of ``ListConfigBody`` and of ``CustomCondemn``'s first arm and
+    reports a truncated type as the whole one.
     """
     text = _strip_comments(source)
     found: dict[str, str] = {}
@@ -277,9 +286,9 @@ def _with_inherited(
     """One interface's fields including everything it extends.
 
     ``CandidateDetail extends Candidate`` and ``InstanceProbe extends InstanceTest`` are the
-    two cases today, and resolving them is not optional: Pydantic reports inherited fields on
-    the subclass, so leaving TS unresolved reports every parent field as server-only and buries
-    a real difference in the noise.
+    two cases today, and resolving them is not optional. Pydantic reports inherited fields
+    on the subclass, so leaving TS unresolved reports every parent field as server-only and
+    buries a real difference in the noise.
     """
     fields, bases = declarations[name]
     resolved = set(fields)
@@ -302,9 +311,9 @@ def _member_types(
     return resolved
 
 
-#: Python annotations that render as one TypeScript word. ``datetime`` is a string on the wire
-#: because that is what Pydantic serializes it as, and the browser types those members
-#: ``string``; comparing the annotation itself would flag every timestamp in the tree.
+#: Python annotations that render as one TypeScript word. ``datetime`` is a string on the
+#: wire because that is what Pydantic serializes it as, and the browser types those members
+#: ``string``. Comparing the annotation itself would flag every timestamp in the tree.
 _PRIMITIVES: dict[object, str] = {
     str: "string",
     int: "number",
@@ -325,14 +334,15 @@ _PRIMITIVES: dict[object, str] = {
 def _as_typescript(annotation: object, depth: int = 0) -> str:
     """One Pydantic annotation as the TypeScript the browser would have to write for it.
 
-    Rendered from ``model_fields`` rather than from the OpenAPI document, which is the source
-    the name comparison above already reads. The document was measured against this and loses
-    two things the comparison needs: ``dict[str, int]`` erases to a bare ``object`` there, and
-    a field with a default drops out of ``required`` even though the route always sends it, so
-    six members would compare as unrelated and 210 as optional-versus-required against a
-    document that is describing request validation rather than what a response carries.
+    Rendered from ``model_fields`` rather than from the OpenAPI document, which is the
+    source the name comparison above already reads. The document was measured against this
+    and loses two things the comparison needs. ``dict[str, int]`` erases to a bare
+    ``object`` there, and a field with a default drops out of ``required`` even though the
+    route always sends it, so many members would compare as unrelated or as
+    optional-versus-required against a document that is describing request validation
+    rather than what a response carries.
 
-    Bounded (rule 147) to the constructs ``reaper.api.*`` and the two engine modules actually
+    This is bounded to the constructs ``reaper.api.*`` and the two engine modules actually
     annotate with. Anything past ``depth`` or outside the table renders ``unknown``, which
     compares as "the server declares nothing here" rather than as a mismatch.
     """
@@ -378,9 +388,9 @@ def _server_models() -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str
     the name comparison and the type one. ``_as_typescript`` says why the annotations are read
     rather than the served document.
 
-    ``model_fields`` rather than the OpenAPI document: it already includes inherited fields,
-    and it covers models no route publishes -- ``PolicyIn`` is nested inside ``PolicyOut``
-    rather than returned, and the browser mirrors it as its own type.
+    ``model_fields`` is used rather than the OpenAPI document because it already includes
+    inherited fields, and it covers models no route publishes. ``PolicyIn`` is nested
+    inside ``PolicyOut`` rather than returned, and the browser mirrors it as its own type.
     """
     wire: dict[str, dict[str, str]] = {}
     inner: dict[str, dict[str, str]] = {}
@@ -397,7 +407,7 @@ def _server_models() -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str
                 and value is not BaseModel
                 and value.__module__ == module_name
             ):
-                # Keyed per BUCKET, because only a same-bucket collision masks: ``wire``
+                # Keyed per *bucket*, because only a same-bucket collision masks. ``wire``
                 # and ``inner`` are separate dicts, so an engine model sharing a name with a
                 # wire model overwrites nothing. Keying on the name alone would forbid the
                 # engine/wire pairing ``ALIAS`` exists to describe.
@@ -472,13 +482,13 @@ def server_tables(
 
 
 class TestTheParserReadsEveryFormThisTreeUses:
-    """Rule 147: a guard that scans source text is bounded by the syntax it can parse.
+    """A guard that scans source text is bounded by the syntax it can parse.
 
     The spellings accepted are written out here and driven, rather than asserted about in a
-    comment. Each block below is a form that really occurs in ``api.ts``; the two that would
-    defeat a line-oriented matcher are the six-space members of a union of object literals
-    (not an interface, so deliberately not collected) and a member whose type is an inline
-    object, whose OWN members must not be mistaken for the outer type's.
+    comment. Each block below is a form that really occurs in ``api.ts``. The two that
+    would defeat a line-oriented matcher are the six-space members of a union of object
+    literals (not an interface, so deliberately not collected) and a member whose type is
+    an inline object, whose *own* members must not be mistaken for the outer type's.
     """
 
     SAMPLE = """
@@ -595,8 +605,8 @@ class TestTheWalkCoversThePopulationItClaims:
     def test_it_finds_every_exported_interface_in_the_file(
         self, browser_types: dict[str, set[str]]
     ) -> None:
-        """Rule 145. The declarations are counted straight out of the text as well, so a walk
-        that stopped collecting fails here rather than passing every comparison below on a
+        """The declarations are counted straight out of the text as well, so a walk that
+        stopped collecting fails here rather than passing every comparison below on a
         population that quietly shrank."""
         declared = len(
             [
@@ -613,8 +623,8 @@ class TestTheWalkCoversThePopulationItClaims:
 
     def test_no_collected_type_is_empty(self, browser_types: dict[str, set[str]]) -> None:
         """A brace-matching bug reads a type as having no members, and an empty set matches
-        nothing while flagging every server field -- loud. An empty set on BOTH sides would be
-        silent, which is what this catches."""
+        nothing while flagging every server field, loud. An empty set on *both* sides would
+        be silent, which is what this catches."""
         empty = sorted(name for name, fields in browser_types.items() if not fields)
         assert empty == [], f"parsed with no fields, so the parser is broken on them: {empty}"
 
@@ -625,8 +635,8 @@ class TestEveryBrowserTypeIsPairedOrClassified:
         browser_types: dict[str, set[str]],
         server_tables: tuple[dict[str, set[str]], dict[str, set[str]]],
     ) -> None:
-        """Rule 103's last sentence: a member the guard flags is classified in writing, not
-        silenced. A new browser type with no server model has to be argued into CLIENT_ONLY."""
+        """A member the guard flags is classified in writing, not silenced. A new browser
+        type with no server model has to be argued into CLIENT_ONLY."""
         wire, inner = server_tables
         unpaired = {name for name in browser_types if _pair(name, wire, inner) is None}
 
@@ -653,13 +663,14 @@ _BRACKETS = {"{": "}", "<": ">", "(": ")", "[": "]"}
 def _union_members(text: str) -> frozenset[str]:
     """One TypeScript type as its top-level union members.
 
-    ``Record<string, A | B>`` and ``{ a: X | null }`` are one member each, so the split counts
-    depth rather than splitting on every ``|`` (rule 147). A leading ``|`` is the wrapped
+    ``Record<string, A | B>`` and ``{ a: X | null }`` are one member each, so the split
+    counts depth rather than splitting on every ``|``. A leading ``|`` is the wrapped
     spelling and contributes nothing.
 
     A member that is itself a parenthesized union is flattened into this one, because
-    ``("spare" | "reap") | null`` names three things and not two. ``_expanded`` adds that pair
-    when an alias standing for a union lands in an array position, where it is load-bearing.
+    ``("spare" | "reap") | null`` names three things and not two. ``_expanded`` adds that
+    pair when an alias standing for a union lands in an array position, where it is
+    load-bearing.
     """
     parts, buffer, depth = [], "", 0
     for char in text:
@@ -742,9 +753,10 @@ def _element(text: str) -> str:
 def _covers(declared: str, narrower: str) -> bool:
     """Whether the server's ``declared`` member admits the browser's ``narrower`` one.
 
-    ``str`` admits any string literal, and that is the whole of the narrowing class below: the
-    wire models type ``verdict`` as a bare ``str`` on purpose, so the browser's three-literal
-    union is a subset of what the server may send rather than a contradiction of it.
+    ``str`` admits any string literal, and that is the whole of the narrowing class below.
+    The wire models type ``verdict`` as a bare ``str`` on purpose, so the browser's
+    three-literal union is a subset of what the server may send rather than a contradiction
+    of it.
     """
     if declared == narrower:
         return True
@@ -762,9 +774,9 @@ def _covers(declared: str, narrower: str) -> bool:
     if declared == "boolean":
         return narrower in ("true", "false")
     # A member the browser spells as an inline object pairs with the model the server named
-    # for it, and neither side is read past its top level -- so this holds in both directions
-    # rather than reading as a narrowing. LeavingSoonSettings.last and .last_skip are the two
-    # cases; the file docstring carries the bound.
+    # for it, and neither side is read past its top level, so this holds in both directions
+    # rather than reading as a narrowing. LeavingSoonSettings.last and .last_skip are the
+    # two cases. The file docstring carries the bound.
     return (declared.isidentifier() and narrower.startswith("{")) or (
         narrower.isidentifier() and declared.startswith("{")
     )
@@ -774,20 +786,21 @@ def _within(inner: frozenset[str], outer: frozenset[str]) -> bool:
     return all(any(_covers(one, member) for one in outer) for member in inner)
 
 
-#: Members where the browser's type is a strict subset of the server's, which is safe in the
-#: direction that matters: the browser refuses a value the server could send rather than
-#: passing one the server would reject. Every entry today is one shape -- the wire model types
-#: the field as a bare ``str`` and the browser closes it to the literals it dispatches on.
+#: Members where the browser's type is a strict subset of the server's, which is safe in
+#: the direction that matters. The browser refuses a value the server could send rather
+#: than passing one the server would reject. Every entry today is one shape. The wire model
+#: types the field as a bare ``str`` and the browser closes it to the literals it dispatches
+#: on.
 #:
-#: **The bare ``str`` is deliberate on the server and stays.** ``verdict`` and ``override``
-#: are ``Literal`` types in ``engine.verdict``, but the wire models validate rows read back
-#: out of the database, where nothing constrains the column -- no CHECK, and no migration ever
-#: wrote an out-of-set value. Narrowing the wire model turns a legacy value from "renders
-#: oddly" into a 500 on the review queue, which fails in the operator's face rather than
-#: toward keeping the file.
+#: The bare ``str`` is deliberate on the server and stays. ``verdict`` and ``override`` are
+#: ``Literal`` types in ``engine.verdict``, but the wire models validate rows read back out
+#: of the database, where nothing constrains the column. There is no CHECK constraint, and
+#: no migration ever wrote an out-of-set value. Narrowing the wire model turns a legacy
+#: value from "renders oddly" into a 500 on the review queue, which fails in the operator's
+#: face rather than toward keeping the file.
 #:
-#: A member listed here is not a bug. A member NOT listed here is, which is why this is a set
-#: and not a count (rule 145): swapping one narrowing for another keeps a count whole.
+#: A member listed here is not a bug. A member *not* listed here is, which is why this is a
+#: set and not a count. Swapping one narrowing for another keeps a count whole.
 NARROWED: set[str] = {
     "Candidate.override",
     "Candidate.override_own",
@@ -816,18 +829,18 @@ NARROWED: set[str] = {
     "WhitelistEntry.decision",
 }
 
-#: Members where the browser's type is a strict superset of the server's: the server declares
-#: a ``Literal`` or an enum and the browser types the field ``string``. Nothing crashes on one
-#: -- the browser accepts everything the server can send -- but the compiler stops helping.
+#: Members where the browser's type is a strict superset of the server's. The server
+#: declares a ``Literal`` or an enum and the browser types the field ``string``. Nothing
+#: crashes on one, since the browser accepts everything the server can send, but the
+#: compiler stops helping.
 #:
-#: ``Policy.repairs`` is the deliberate one, and ``api.ts`` says why beside it: the union ends
-#: in ``(string & {})`` so an id this build has never heard of is a value TypeScript admits
-#: exists rather than a cast, which is what lets ``PolicyEditor``'s fallback handle it. The
-#: other six carry no such argument. They are the plain ``string`` the field was first written
-#: as, and each is one place ``docs/history/SIMPLIFICATION_PLAN.md``'s 4.3 has left to do
-#: -- ``GateId``
-#: already exists as a union in ``components/policyMeta.ts``, so ``GateSetting.gate`` is the
-#: cheapest of them.
+#: ``Policy.repairs`` is the deliberate one, and ``api.ts`` says why beside it. The union
+#: ends in ``(string & {})`` so an id this build has never heard of is a value TypeScript
+#: admits exists rather than a cast, which is what lets ``PolicyEditor``'s fallback handle
+#: it. The other six carry no such argument. They are the plain ``string`` the field was
+#: first written as, and each is one place ``docs/history/SIMPLIFICATION_PLAN.md``'s 4.3
+#: has left to do. ``GateId`` already exists as a union in ``components/policyMeta.ts``, so
+#: ``GateSetting.gate`` is the cheapest of them.
 WIDENED: set[str] = {
     "Condition.op",
     "GateSetting.gate",
@@ -838,35 +851,37 @@ WIDENED: set[str] = {
     "Vocabulary.lane",
 }
 
-#: Phase 8a (#870-880's continuation) typed the *server* side of every refusal,
-#: `PlexPollOut.reason` and its Settings-link sibling `PlexLinkPollOut.reason` among them, ahead
-#: of the browser: composing the sentence needed `ui.json`'s `error.*` namespace, which did not
-#: exist yet. Phase 8b added that namespace, updated `api.ts` to `ReasonKey | null` for both
-#: members, and composed the retrying text from it in the same change, so this is empty now --
-#: kept declared, rather than deleted along with the loop that reads it, so a future conversion
-#: needing the same temporary two-sided-change shape has a named place to add its members.
+#: An earlier change typed the *server* side of every refusal, `PlexPollOut.reason` and its
+#: Settings-link sibling `PlexLinkPollOut.reason` among them, ahead of the browser.
+#: Composing the sentence needed `ui.json`'s `error.*` namespace, which did not exist yet. A
+#: later change added that namespace, updated `api.ts` to `ReasonKey | null` for both
+#: members, and composed the retrying text from it in the same change, so this set is empty
+#: now. It stays declared, rather than being deleted along with the loop that reads it, so a
+#: future conversion needing the same temporary two-sided-change shape has a named place to
+#: add its members.
 PENDING_PHASE_8B: set[str] = set()
 
 
 class TestTheTwoCopiesAgreeOnTypes:
-    """The second half of the guard: the two copies agree about what is IN each field.
+    """The second half of the guard. The two copies agree about what is *in* each field.
 
-    Names were all this file compared until now, and the reason given was that comparing types
-    would flag eight pairs on day one. Measured, it flags 42 across 749 members, and they sort
-    into four classes rather than one, three of which are worth naming and one of which was a
-    live inaccuracy. The two sets above hold the deliberate ones by name.
+    Names were all this file compared until now, and the reason given was that comparing
+    types would flag only a handful of pairs on day one. Measured, it flagged many more,
+    and they sort into four classes rather than one, three of which are worth naming and
+    one of which was a live inaccuracy. The two sets above hold the deliberate ones by name.
 
-    **Optionality is still not compared, and that is now a measurement rather than a bound.**
-    The server's ``required`` list describes what a REQUEST may omit; every model here is a
-    response, and a response model with a default still serializes the field, so 210 members
-    read "optional" on the server while the route sends every one of them. The browser's ``?``
-    is a different fact again -- several fields carry it because no component reads them and
-    the fixtures are not made to carry them. There is no true reference to compare against, so
-    the ``?`` is dropped on both sides and the type beside it is what is checked.
+    Optionality is still not compared, and that gap is now measured rather than assumed.
+    The server's ``required`` list describes what a *request* may omit. Every model here is
+    a response, and a response model with a default still serializes the field, so many
+    members read "optional" on the server while the route sends every one of them. The
+    browser's ``?`` is a different fact again, since several fields carry it because no
+    component reads them and the fixtures are not made to carry them. There is no true
+    reference to compare against, so the ``?`` is dropped on both sides and the type beside
+    it is what is checked.
 
-    **Dropping a ``null`` is the one narrowing that is never allowed**, and it has its own
-    test. A component reading ``x.foo`` on a value the server sends as ``null`` throws where a
-    component switching on an unexpected string takes a fall-through arm.
+    Dropping a ``null`` is the one narrowing that is never allowed, and it has its own
+    test. A component reading ``x.foo`` on a value the server sends as ``null`` throws
+    where a component switching on an unexpected string takes a fall-through arm.
     """
 
     def _diff(
@@ -899,7 +914,7 @@ class TestTheTwoCopiesAgreeOnTypes:
         browser_member_types: dict[str, dict[str, str]],
         server_member_types: tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]],
     ) -> None:
-        """The guard itself. Rule 144: the message names the file to edit."""
+        """The guard itself. The message names the file to edit."""
         unrelated: list[str] = []
         for member, (written, declared, mine, theirs) in self._diff(
             browser_member_types, server_member_types
@@ -927,9 +942,9 @@ class TestTheTwoCopiesAgreeOnTypes:
 
         ``Explanation.match`` was typed ``Match`` against a server ``MatchOut | None``, and
         ``base_score``/``keep_discount`` were ``number`` against ``float | None``. All three
-        read as non-null to the compiler while the server really sends ``null``, and all three
-        were already guarded at every call site -- the code knew, the declaration did not, so
-        the next reader of one was the one who would find out.
+        read as non-null to the compiler while the server really sends ``null``, and all
+        three were already guarded at every call site. The code knew, the declaration did
+        not, so the next reader of one was the one who would find out.
         """
         dropped: list[str] = []
         for member, (written, declared, mine, theirs) in self._diff(
@@ -950,9 +965,9 @@ class TestTheTwoCopiesAgreeOnTypes:
         browser_member_types: dict[str, dict[str, str]],
         server_member_types: tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]],
     ) -> None:
-        """Rule 103's last sentence, at the member level: a difference the guard tolerates is
-        written down, not silenced. This is also the walk's population statement (rule 145) --
-        a swap that keeps the total would pass a count and fails here."""
+        """At the member level, a difference the guard tolerates is written down, not
+        silenced. This is also the walk's population statement. A swap that keeps the total
+        would pass a count and fails here."""
         narrowed, widened = set(), set()
         for member, (_written, _declared, mine, theirs) in self._diff(
             browser_member_types, server_member_types
@@ -980,8 +995,8 @@ class TestTheTwoCopiesAgree:
         browser_types: dict[str, set[str]],
         server_tables: tuple[dict[str, set[str]], dict[str, set[str]]],
     ) -> None:
-        """The guard itself. Rule 144: the message names the file to edit, because a comment
-        asking the next author to remember does nothing."""
+        """The guard itself. The message names the file to edit, because a comment asking
+        the next author to remember does nothing."""
         wire, inner = server_tables
         drifted: list[str] = []
         for name in sorted(browser_types):
@@ -1021,19 +1036,19 @@ class TestEverySimulatorRefusalReachesThePanel:
 
     ``api.schemas.SimStale`` is what the route sends. The browser mirrors it as a string
     union in ``api.ts``, and ``PolicySimulator.tsx`` gives each member a heading through a
-    ``Record<SimStale, string>`` -- which ``tsc`` already keeps complete, so a member missing
-    a heading cannot compile. What nothing checks is the step before it: a member added on
-    the server and never added to the union. TypeScript is perfectly happy with a union that
-    is missing a value it will be handed at runtime, and the panel would then fall back to
-    the general heading for a refusal that has its own remedy.
+    ``Record<SimStale, string>``, which ``tsc`` already keeps complete, so a member missing
+    a heading cannot compile. What nothing checks is the step before it. A member added on
+    the server and never added to the union leaves TypeScript perfectly happy with a union
+    that is missing a value it will be handed at runtime, and the panel would then fall
+    back to the general heading for a refusal that has its own remedy.
 
-    The class above compares field NAMES between paired models and cannot see this: the two
-    sides agree that ``stale_kind`` exists, and disagree about what may be in it.
+    The class above compares field *names* between paired models and cannot see this. The
+    two sides agree that ``stale_kind`` exists, and disagree about what may be in it.
 
-    Bounded per rule 147: this reads the union however it is spaced, but only while it is
-    spelled as quoted literals in one ``export type SimStale = ...`` declaration. The count
-    is pinned against the enum so a declaration this matcher stops finding fails loudly
-    rather than silently matching nothing.
+    This reads the union however it is spaced, but only while it is spelled as quoted
+    literals in one ``export type SimStale = ...`` declaration. The count is pinned against
+    the enum so a declaration this matcher stops finding fails loudly rather than silently
+    matching nothing.
     """
 
     UNION = re.compile(r"export type SimStale\s*=\s*([^;]+);")
@@ -1058,11 +1073,11 @@ class TestEverySimulatorRefusalReachesThePanel:
         )
 
     def test_the_panel_gives_each_one_a_heading(self) -> None:
-        """The `Record<SimStale, string>` is the real guard; this pins that it still exists.
+        """The `Record<SimStale, string>` is the real guard. This pins that it still exists.
 
         A future author swapping the record for a lookup with a default would take the
-        compile-time completeness away without anything failing, which is the shape rule 118
-        is about: the guard would be gone and its proof would still read green.
+        compile-time completeness away without anything failing. The guard would be gone
+        and its proof would still read green.
         """
         panel = (REPO / "frontend" / "src" / "components" / "PolicySimulator.tsx").read_text(
             encoding="utf-8"
@@ -1080,16 +1095,17 @@ class TestTheCentralVocabularyIsOneDeclaration:
     they were declared in TypeScript and passed around Python as a bare ``str``.
 
     Neither is covered by the field comparison above. That walk pairs ``export interface``
-    declarations and compares field NAMES; these two are ``export type`` unions, so both sides
-    agree that ``verdict`` exists and neither notices that they disagree about what may be in
-    it. That is the same hole ``SimStale`` above is written for, at the two names it would cost
-    the most: a verdict the browser does not know renders with no ``.score-*`` class at all,
-    because ``ReviewQueue.tsx`` interpolates the value straight into a class name.
+    declarations and compares field *names*. These two are ``export type`` unions, so both
+    sides agree that ``verdict`` exists and neither notices that they disagree about what
+    may be in it. That is the same hole ``SimStale`` above is written for, at the two names
+    it would cost the most. A verdict the browser does not know renders with no
+    ``.score-*`` class at all, because ``ReviewQueue.tsx`` interpolates the value straight
+    into a class name.
 
-    Bounded per rule 147: read however the union is spaced, but only while it is one
-    ``export type NAME = ...;`` statement of quoted literals. The member count is pinned as
-    well as the membership, so a declaration this stops finding fails loudly rather than
-    quietly matching nothing (rule 145).
+    This reads however the union is spaced, but only while it is one
+    ``export type NAME = ...;`` statement of quoted literals. The member count is pinned
+    as well as the membership, so a declaration this stops finding fails loudly rather
+    than quietly matching nothing.
     """
 
     def _declared(self, name: str) -> set[str]:
@@ -1132,8 +1148,8 @@ class TestTheCentralVocabularyIsOneDeclaration:
         has no name for reaches the ladders below and takes a fall-through arm, which at
         ``coerceValue`` means the typed number stored raw.
 
-        This message is the one place those sites are listed, and ``api.ts`` points here rather
-        than restating them (rule 144).
+        This message is the one place those sites are listed, and ``api.ts`` points here
+        rather than restating them.
         """
         from reaper.engine.fields import FieldType
 
@@ -1152,8 +1168,8 @@ class TestTheCentralVocabularyIsOneDeclaration:
         assert len(server) == 6
 
     def test_the_request_model_reads_the_declaration_rather_than_restating_it(self) -> None:
-        """Rule 131. ``OverrideIn.decision`` used to spell the pair itself, which is a second
-        copy of the vocabulary sitting one import away from the first."""
+        """``OverrideIn.decision`` used to spell the pair itself, which is a second copy of
+        the vocabulary sitting one import away from the first."""
         from reaper.api.schemas import OverrideIn
         from reaper.engine.verdict import Override
 
@@ -1163,9 +1179,9 @@ class TestTheCentralVocabularyIsOneDeclaration:
 
 
 class TestTheRewatchKeepNameIsOneDeclaration:
-    """The built-in rewatch keep's name is typed twice (rule 144). ``engine/signals.py``'s
-    ``REWATCH_KEEP`` is the field ``evaluate_keep`` special-cases and the row name the stored
-    explanation carries; ``frontend/src/api.ts``'s ``REWATCH_KEEP`` mirrors it so
+    """The built-in rewatch keep's name is typed twice. ``engine/signals.py``'s
+    ``REWATCH_KEEP`` is the field ``evaluate_keep`` special-cases and the row name the
+    stored explanation carries. ``frontend/src/api.ts``'s ``REWATCH_KEEP`` mirrors it so
     ``WhyPanel.tsx`` can suppress the "Your rule" tag on the built-in row without a second
     hardcoded string. A drift here renders the built-in row tagged as if the operator wrote
     it, or leaves an operator's own rule of the same name silently untagged.
@@ -1194,28 +1210,28 @@ class TestEveryGateIdHasOperatorCopy:
 
     ``gateMeta`` (``frontend/src/components/policyMeta.ts``) is the browser's one
     declaration of what each protection is called. The policy simulator's "Why titles were
-    spared" list reads it by id, and until #551 an id it lacked fell through to a
-    ``titleCase`` of the slug -- so "Season Progression" and "Custom", both of which fire on
-    ordinary scans, were the reasons shown beside a count in the panel an operator reads
-    while deciding what to delete (rule 21).
+    spared" list reads it by id. An id it lacked used to fall through to a ``titleCase`` of
+    the slug, so "Season Progression" and "Custom", both of which fire on ordinary scans,
+    were the reasons shown beside a count in the panel an operator reads while deciding
+    what to delete.
 
-    ``tsc`` now keeps that map complete against a ``GateId`` union declared beside it, which
-    is the real guard: a gate added to the engine with no copy cannot compile. **This pins
-    the two things the compiler cannot see** -- that the union still says what the enum
-    says, and that the ``satisfies`` clause enforcing completeness is still there. Both are
-    rule 118's shape: without them the guard could be deleted and its proof stay green.
+    ``tsc`` now keeps that map complete against a ``GateId`` union declared beside it,
+    which is the real guard. A gate added to the engine with no copy cannot compile. This
+    pins the two things the compiler cannot see, that the union still says what the enum
+    says, and that the ``satisfies`` clause enforcing completeness is still there. Without
+    either, the guard could be deleted and its proof stay green.
 
-    **The one sibling copy, named here rather than guarded** (rule 144): ``api/review.py``'s
-    ``_kept_reason`` turns the same ids into the review queue's chip. It is deliberately not
-    covered, because its own fallback is the id ``kept.unknown``, whose catalog entry
-    (``chip.sentence.kept.unknown``) composes "A protection applies." -- vague, but a
+    The one sibling copy, named here rather than guarded: ``api/review.py``'s
+    ``_kept_reason`` turns the same ids into the review queue's chip. It is deliberately
+    not covered, because its own fallback is the id ``kept.unknown``, whose catalog entry
+    (``chip.sentence.kept.unknown``) composes "A protection applies." That is vague, but a
     sentence, never a slug. Swap that fallback for anything id-shaped and it needs a guard
     of its own.
 
-    Bounded per rule 147: the union is read however it is spaced and wrapped, but only while
-    it is spelled as quoted literals in one ``export type GateId = ...;`` statement. A
-    declaration this matcher stops finding asserts rather than matching nothing, and the set
-    comparison against the enum is the pin -- a partially-read union fails it.
+    This reads the union however it is spaced and wrapped, but only while it is spelled as
+    quoted literals in one ``export type GateId = ...;`` statement. A declaration this
+    matcher stops finding asserts rather than matching nothing, and the set comparison
+    against the enum is the pin. A partially-read union fails it.
     """
 
     POLICY_META_TS = REPO / "frontend" / "src" / "components" / "policyMeta.ts"
@@ -1249,8 +1265,8 @@ class TestEveryGateIdHasOperatorCopy:
 
         A future author swapping it for a plain annotation would take that away with
         nothing failing. The hand-spare id is generated from the server's own constant
-        rather than typed here (rule 144): the browser keys copy on what ``api/simulate.py``
-        tallies under, and the two spellings must be one fact.
+        rather than typed here. The browser keys copy on what ``api/simulate.py`` tallies
+        under, and the two spellings must be one fact.
         """
         from reaper.api.simulate import HAND_SPARE_TALLY_ID
 
@@ -1267,9 +1283,9 @@ class TestEveryGateIdHasOperatorCopy:
         """Every id ``gateMeta`` marks ``retired``.
 
         Comments are stripped first, and each entry is read brace-depth aware, so
-        ``server_popularity``'s nested ``window`` object is part of its entry rather than an
-        entry of its own (rule 147). A file this stops finding entries in fails the set
-        comparison below rather than matching nothing.
+        ``server_popularity``'s nested ``window`` object is part of its entry rather than
+        an entry of its own. A file this stops finding entries in fails the set comparison
+        below rather than matching nothing.
         """
         text = _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub("", self._source()))
         start = text.find("export function gateMeta")
@@ -1290,14 +1306,15 @@ class TestEveryGateIdHasOperatorCopy:
     def test_the_browser_marks_exactly_the_ids_no_policy_row_can_carry(self) -> None:
         """``retired`` is the browser's copy of ``POLICY_AUTHORABLE_GATES``, inverted.
 
-        It stopped being decoration in #627. ``PolicyEditor``'s protection switch reads it to
-        decide that turning a row OFF removes the row, because a policy carrying one of these
-        ids is refused by the save boundary in either position -- so the two sets drifting
-        breaks the page in whichever direction they drift: a live protection whose switch
-        deletes its own row, or a leftover whose switch writes a body that cannot be saved.
+        This stopped being decoration once ``PolicyEditor``'s protection switch started
+        reading it to decide that turning a row *off* removes the row, because a policy
+        carrying one of these ids is refused by the save boundary in either position. So
+        the two sets drifting breaks the page in whichever direction they drift. A live
+        protection whose switch deletes its own row, or a leftover whose switch writes a
+        body that cannot be saved.
 
-        ``hand_spare`` is excluded because it is not a gate at all: ``api/simulate.py`` tallies
-        hand spares under it and no policy body can carry it.
+        ``hand_spare`` is excluded because it is not a gate at all. ``api/simulate.py``
+        tallies hand spares under it and no policy body can carry it.
         """
         from reaper.api.simulate import HAND_SPARE_TALLY_ID
         from reaper.engine.gates import POLICY_AUTHORABLE_GATES, GateId
@@ -1314,8 +1331,8 @@ class TestEveryGateIdHasOperatorCopy:
         )
 
 
-#: The wire models built by ``model_validate(record, from_attributes=True)`` off a service
-#: record rather than field by field (W5-4), each paired with the record it reads. Seven
+#: The wire models built by ``model_validate(record, from_attributes=True)`` off a
+#: service record rather than field by field, each paired with the record it reads. Seven
 #: pairs over six call sites: ``SignalCountOut`` and ``CandidateLinkOut`` are validated
 #: inside their parent, and ``SeerrServiceOut`` is built at two routes.
 COLLAPSED_PAIRS = (
@@ -1330,12 +1347,13 @@ COLLAPSED_PAIRS = (
 
 
 #: The call sites, reconciled by hand against the pair table above. Seven pairs over six
-#: sites: two models validate inside their parent, and ``SeerrServiceOut`` builds at two routes.
+#: sites: two models validate inside their parent, and ``SeerrServiceOut`` builds at two
+#: routes.
 #:
-#: Keyed on the ENCLOSING FUNCTION rather than the line, which is the same key
-#: ``_MEMBERSHIP_INVENTORY`` uses in ``test_repo_hygiene.py`` and for the same reason: a line
-#: number moves whenever anything above it does, so a list of them fails on somebody else's
-#: unrelated diff. A function name moves only when this site does.
+#: Keyed on the *enclosing function* rather than the line, which is the same key
+#: ``_MEMBERSHIP_INVENTORY`` uses in ``test_repo_hygiene.py`` and for the same reason. A
+#: line number moves whenever anything above it does, so a list of them fails on somebody
+#: else's unrelated diff. A function name moves only when this site does.
 _COLLAPSE_SITES = [
     "src/reaper/api/backup.py::restore_prepare",
     "src/reaper/api/breakdown.py::get_reap_breakdown",
@@ -1347,13 +1365,13 @@ _COLLAPSE_SITES = [
 
 
 class TestAWireModelReadsOnlyFieldsItsRecordCarries:
-    """The other half of this file's mirror: the hop from a service record to the wire model,
-    where a field list used to be transcribed by hand at the route.
+    """The other half of this file's mirror. This is the hop from a service record to the
+    wire model, where a field list used to be transcribed by hand at the route.
 
-    ``from_attributes`` selects by the WIRE model's field list, so a wire field the record
-    does not carry fails at request time when it is required, and is filled from its own
-    default when it is not -- which is the silent half. The hand-written constructor raised
-    ``AttributeError`` for both. This restores the loud answer, before a request.
+    ``from_attributes`` selects by the *wire* model's field list, so a wire field the
+    record does not carry fails at request time when it is required, and is filled from
+    its own default when it is not, which is the silent half. The hand-written constructor
+    raised ``AttributeError`` for both. This restores the loud answer, before a request.
     """
 
     @pytest.mark.parametrize(
@@ -1371,21 +1389,21 @@ class TestAWireModelReadsOnlyFieldsItsRecordCarries:
         )
 
     def test_every_collapsed_site_is_in_the_table_above(self) -> None:
-        """A table nothing reconciles cannot see a site that never joined it (rule 145).
+        """A table nothing reconciles cannot see a site that never joined it.
 
         It walks the AST rather than the text, which is what makes it immune to the two
-        things a matcher of this shape usually misses (rule 147): the call spelled over
+        things a matcher of this shape usually misses. That is the call spelled over
         several lines, and a docstring that names the keyword without calling anything.
 
-        **One spelling it still cannot see**, stated rather than implied: a model setting
+        One spelling it still cannot see, stated rather than implied. A model setting
         ``model_config = ConfigDict(from_attributes=True)`` and then calling a bare
         ``model_validate`` is the same collapse. No model in the tree does that, and a site
         written that way is added to the pair table by hand.
 
-        The assertion is the site LIST, not its length, so swapping one collapse for another
-        cannot hold the number still while ``COLLAPSED_PAIRS`` goes stale. A site at module
-        level rather than inside a function is invisible to the walk and would have nothing
-        to key on; none exists, and one would have no route to serve.
+        The assertion is the site *list*, not its length, so swapping one collapse for
+        another cannot hold the number still while ``COLLAPSED_PAIRS`` goes stale. A site at
+        module level rather than inside a function is invisible to the walk and would have
+        nothing to key on. None exists, and one would have no route to serve.
         """
         sites = []
         for path in sorted((REPO / "src" / "reaper" / "api").rglob("*.py")):
@@ -1411,15 +1429,15 @@ class TestEveryPlanStepIdHasOperatorCopy:
     """The plan table's kind and state cells read plain words, held to the server's sets.
 
     ``stepKind``/``stepState`` (``frontend/src/components/ReapPlan.tsx``) turn stored step
-    ids into copy, with the raw id as the unknown-id fallback (#851). Rule 66: that
-    fallback is exactly what makes a missing member silent, so both maps are pinned here,
-    both directions. The literal request the page promises lives whole in the Request
-    column, which is what freed these cells to be copy.
+    ids into copy, with the raw id as the unknown-id fallback. That fallback is exactly
+    what makes a missing member silent, so both maps are pinned here, both directions. The
+    literal request the page promises lives whole in the Request column, which is what
+    freed these cells to be copy.
 
-    ``StepState`` is an enum and mirrors directly. The kinds have no enum: the planner's
+    ``StepState`` is an enum and mirrors directly. The kinds have no enum. The planner's
     ``kind="..."`` literals are the declaration, parsed as source the way the jobs-page
-    guard reads ``JobsPanel`` (rule 147: quoted literals only, and a spelling either
-    matcher stops finding asserts rather than matching nothing).
+    guard reads ``JobsPanel``. Both matchers accept quoted literals only, and a spelling
+    either one stops finding asserts rather than matching nothing.
     """
 
     REAP_PLAN_TSX = REPO / "frontend" / "src" / "components" / "ReapPlan.tsx"

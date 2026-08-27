@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The history sweep is the one upkeep job that does not run daily, and both halves of how that
 // reads to the operator are computed rather than written down. Its cron says "every 3 days", a
-// shape `describeCron` had no arm for and would otherwise print raw; and the preset that puts
-// it back to the default takes its LABEL from that same function, after reading "Every day" for
-// every job regardless of what picking it did (rule 144).
+// shape `describeCron` needs an arm for or it would print the raw cron string; and the preset
+// that puts it back to the default takes its label from that same function, rather than
+// hardcoding "Every day" for every job regardless of what picking it actually does.
 //
 // Both are pinned against the server's real default (`DEFAULT_MAINTENANCE_CRONS` in
 // services/scheduler.py). A fixture inventing its own cron would prove the formatter works on
-// a shape we do not ship (rule 141).
+// a shape Reaper does not ship.
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -89,8 +89,8 @@ describe("the history sweep's schedule, as the operator reads it", () => {
     expect(within(select).getByRole("option", { name: /Every 3 days at 5:00 AM/ })).toHaveValue(
       SWEEP_DEFAULT,
     );
-    // The label this replaced. It was true of the other three jobs and false here, which is
-    // exactly the drift a written-down label cannot avoid.
+    // A hardcoded "Every day" label would be true of the other three jobs and false here,
+    // which is exactly the drift a written-down label cannot avoid.
     expect(within(select).queryByRole("option", { name: "Every day" })).not.toBeInTheDocument();
 
     // The schedule editor open over the panel, which is the state this file is the only one

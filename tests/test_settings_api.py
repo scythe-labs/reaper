@@ -1,14 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The configuration surface: instances, safety, schedule, setup status.
+"""Tests the configuration surface: instances, safety, schedule, setup status.
 
-These are the routes a first-run install lives on -- adding the services Reaper reads
-from, seeing what is left to set up, and turning deletion on and off. The load-bearing
-properties, each pinned here:
+These are the routes a first-run install lives on: adding the services Reaper reads from,
+seeing what is left to set up, and turning deletion on and off. The properties pinned here:
 
-* an API key goes in encrypted and never comes back out;
-* a fresh install starts read-only, and the asymmetry holds: turning deletion ON needs
-  the admin password, turning it OFF needs nothing;
-* the setup status tells the wizard exactly what is still missing.
+* An API key goes in encrypted and never comes back out.
+* A fresh install starts read-only. Turning deletion on needs the admin password. Turning
+  it off needs nothing.
+* The setup status tells the wizard exactly what is still missing.
 """
 
 from __future__ import annotations
@@ -57,8 +56,8 @@ def _make(tmp_path: Path, **overrides: object) -> Settings:
 def _add_snapshot(client: TestClient) -> None:
     """Put one Snapshot row in, so ``has_scanned`` is true.
 
-    The setup status only asks whether any snapshot exists, so this is the smallest row that
-    satisfies it rather than a scored one -- nothing here reads its contents.
+    The setup status only asks whether any snapshot exists, so this is the smallest row
+    that satisfies it rather than a scored one. Nothing here reads its contents.
     """
     settings: Settings = client.app.state.settings  # type: ignore[attr-defined]
     engine = sa_create_engine(settings.sync_database_url)
@@ -144,9 +143,9 @@ class TestInstancesCrud:
         assert clash.status_code == 409
 
     def test_a_second_tautulli_is_refused(self, client: TestClient) -> None:
-        """Tautulli is a singleton: it mirrors one Plex's watch history and Reaper connects
-        to one Plex, so a second (even under a different name and URL) is a 409, never a
-        second row the scan would silently ignore."""
+        """Tautulli is a singleton. It mirrors one Plex's watch history, and Reaper
+        connects to one Plex, so a second one, even under a different name and URL, gets
+        a 409, never a second row the scan would silently ignore."""
         first = client.post(
             "/api/settings/instances",
             json={
@@ -207,9 +206,10 @@ class TestInstancesCrud:
     def test_renaming_into_an_existing_name_is_a_conflict_not_a_not_found(
         self, client: TestClient
     ) -> None:
-        """Two instances exist; renaming the second onto the first's name is a 409
-        (a well-formed request that collides), never a 404 (which reads as 'no such
-        instance' and misleads the caller into thinking the target vanished)."""
+        """Two instances exist. Renaming the second onto the first's name is a 409, a
+        well-formed request that collides, never a 404, which reads as "no such instance"
+        and misleads the caller into thinking the target vanished.
+        """
         base = {"kind": "radarr", "base_url": "http://a.local", "api_key": "k"}
         assert (
             client.post("/api/settings/instances", json={**base, "name": "HD"}).status_code == 200
@@ -227,14 +227,16 @@ class TestInstancesCrud:
     def test_every_route_answers_the_status_the_error_class_declares(
         self, client: TestClient
     ) -> None:
-        """The three reads that had no status test, on both arms each.
+        """Covers the three reads on both arms: a missing instance, and a real instance of
+        the wrong kind.
 
-        ``services.instances`` declares one status per subclass and the routes read it off the
-        exception, so the mapping is one fact -- but a fact stated once is still worth driving,
-        because nothing else here would notice the declaration itself going wrong. A missing
-        instance is 404 on all three; a real instance of the wrong kind is 422, since the
-        request named something that exists and asked it for a thing that kind does not have.
-        Neither arm reaches the network: both refuse before a client is constructed.
+        ``services.instances`` declares one status per exception subclass, and the routes
+        read it off the exception, so the mapping is one fact. But a fact stated once is
+        still worth driving, since nothing else here would notice the declaration itself
+        going wrong. A missing instance is 404 on all three. A real instance of the wrong
+        kind is 422, since the request named something that exists and asked it for a
+        thing that kind does not have. Neither arm reaches the network. Both refuse before
+        a client is constructed.
         """
         tautulli = client.post(
             "/api/settings/instances",
@@ -291,9 +293,10 @@ class TestInstancesCrud:
     def test_certificate_checking_defaults_on_and_survives_unrelated_updates(
         self, client: TestClient
     ) -> None:
-        """``verify_tls`` is on unless the operator turns it off, an explicit off
-        round-trips, and an update that never mentions it leaves the choice alone --
-        omitted must mean "unchanged", never "back to the default"."""
+        """``verify_tls`` is on unless the operator turns it off. An explicit off
+        round-trips, and an update that never mentions it leaves the choice alone. Omitted
+        must mean "unchanged", never "back to the default".
+        """
         created = client.post(
             "/api/settings/instances",
             json={"kind": "radarr", "name": "HD", "base_url": "https://a.local", "api_key": "k"},
@@ -326,9 +329,10 @@ class TestInstancesCrud:
         assert off_again["verify_tls"] is False
 
     def test_the_redownload_block_defaults_off_and_round_trips(self, client: TestClient) -> None:
-        """``add_import_exclusion`` is off unless the operator turns it on, an explicit on
-        round-trips, and an update that never mentions it leaves the choice alone --
-        omitted must mean "unchanged", never "back to the default"."""
+        """``add_import_exclusion`` is off unless the operator turns it on. An explicit on
+        round-trips, and an update that never mentions it leaves the choice alone. Omitted
+        must mean "unchanged", never "back to the default".
+        """
         created = client.post(
             "/api/settings/instances",
             json={"kind": "radarr", "name": "HD", "base_url": "https://a.local", "api_key": "k"},
@@ -356,9 +360,10 @@ class TestInstancesCrud:
         assert back_off["add_import_exclusion"] is False
 
     def test_external_url_is_optional_normalized_and_clearable(self, client: TestClient) -> None:
-        """The link address is null unless set, is normalized like base_url, survives an
-        unrelated update, and a blank string clears it back to null (links fall back to
-        base_url) -- while omitting it leaves the stored value alone."""
+        """The link address is null unless set. It is normalized like base_url, survives
+        an unrelated update, and a blank string clears it back to null, since links fall
+        back to base_url. Omitting it leaves the stored value alone.
+        """
         bare = client.post(
             "/api/settings/instances",
             json={"kind": "radarr", "name": "HD", "base_url": "http://a.local", "api_key": "k"},
@@ -392,10 +397,11 @@ class TestInstancesCrud:
         assert cleared["external_url"] is None  # blank clears to null
 
     def test_external_url_must_be_a_full_web_address(self, client: TestClient) -> None:
-        """S-5: the link address is rendered into an href for every signed-in user, so a
-        scheme-less paste or a non-http scheme is refused at the edge like every sibling URL
-        field -- never stored verbatim. A blank still clears; an update with a bad value
-        changes nothing."""
+        """The link address is rendered into an href for every signed-in user, so a
+        scheme-less paste or a non-http scheme is refused at the edge like every sibling
+        URL field, never stored verbatim. A blank still clears. An update with a bad value
+        changes nothing.
+        """
         # A scheme-less host:port paste is refused on create.
         scheme_less = client.post(
             "/api/settings/instances",
@@ -448,21 +454,20 @@ class TestInstancesCrud:
         [
             "radarr.local:7878",  # a scheme-less host:port paste, the shape an operator types
             "javascript:alert(1)",  # a scheme, but not one anything here may dial
-            "http://",  # a scheme and no host: what the Plex startswith pair used to admit
+            "http://",  # a scheme with no host at all
             "not a url",
         ],
     )
     def test_the_service_address_must_be_a_full_web_address(
         self, client: TestClient, address: str
     ) -> None:
-        """#255: ``base_url`` is where every Reaper request for this service goes, and it
-        reached storage checked only for being non-empty while its own sibling field
-        ``external_url`` was validated. So a scheme-less address saved with no complaint and
-        surfaced much later as a connection or scan failure, far from the box that was wrong.
-        Rule 84: one shared check, at the edge, for every URL an operator types.
+        """``base_url`` is where every Reaper request for this service goes, so a
+        scheme-less address must never reach storage. Saved with no complaint, it would
+        surface much later as a connection or scan failure, far from the box that was
+        wrong. This is one shared check, at the edge, for every URL an operator types.
 
-        The refused values are spelled out rather than derived from the validator's branches
-        (rule 119), and each one is a shape that used to be accepted.
+        The refused values are spelled out directly rather than derived from the
+        validator's own branches.
         """
         on_create = client.post(
             "/api/settings/instances",
@@ -484,17 +489,17 @@ class TestInstancesCrud:
 
 
 class TestTheApiPathIsStoredAndUnreachable:
-    """`Instance.api_path_prefix` feeds the *arr clients and no route reads or writes it (#274).
+    """`Instance.api_path_prefix` feeds the *arr clients, and no route reads or writes it.
 
-    The column is real work: the scan and Test Connection both hand it to the client, so the two
-    always probe the same path. But it has only ever held its default, because nothing can set
-    it. It used to cross the wire anyway, typed in the SPA and read by no component -- and an
-    unwritable field on the wire is rule 25's blocker rather than a placeholder, since the only
-    thing it can ever tell an operator is a constant.
+    The column is real work: the scan and Test Connection both hand it to the client, so
+    the two always probe the same path. But it has only ever held its default, because
+    nothing can set it. An unwritable field on the wire would only ever tell an operator a
+    constant, which is a blocker, not a placeholder.
 
-    Retiring the column would need a migration and the baseline is frozen, so the column stayed
-    and the wire went. Both halves are pinned here: putting the field back on the response
-    without also adding a writer fails, and so does a writer that lands without a surface.
+    Retiring the column would need a migration, and the baseline is frozen, so the column
+    stays and the wire stays off. Both halves are pinned here: putting the field back on
+    the response without also adding a writer fails, and so does a writer that lands
+    without a surface.
     """
 
     def test_the_instance_response_does_not_carry_the_api_path(self, client: TestClient) -> None:
@@ -516,11 +521,13 @@ class TestTheApiPathIsStoredAndUnreachable:
     def test_no_route_can_write_the_api_path(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Offered to create AND update, then read back through the value the client actually
-        receives rather than off the column, so a writer landing on either route fails here.
+        """Offered to create AND update, then read back through the value the client
+        actually receives rather than off the column, so a writer landing on either route
+        fails here.
 
-        `/api/v9` is the discriminating value (rule 141): the assertion below is the shipped
-        default, which only holds because neither route stored what was offered.
+        `/api/v9` is the value that would prove a writer exists. The assertion below is
+        the shipped default, which only holds because neither route stored what was
+        offered.
         """
         made = client.post(
             "/api/settings/instances",
@@ -563,8 +570,9 @@ class TestTheApiPathIsStoredAndUnreachable:
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The route has no instance-less pass to read folders on, so it cannot answer the
-        mapping fields and its published shape must not say it may. Nothing in either tree
-        asserted this body before, so a narrowing that went the wrong way had no guard."""
+        mapping fields, and its published shape must not say it may. This body was never
+        asserted before, so a narrowing that went the wrong way had no guard.
+        """
         made = client.post(
             "/api/settings/instances",
             json={
@@ -594,12 +602,13 @@ class TestTheApiPathIsStoredAndUnreachable:
 
 
 class TestTheStoredTestResultDescribesWhatWasTested:
-    """A connection test's outcome is stored on the instance row and rendered as the service
-    card's badge, so it must describe the credentials in force -- not the ones it was computed
-    from before an edit (#264, rule 85's family, one layer below #178's frontend half).
+    """A connection test's outcome is stored on the instance row and rendered as the
+    service card's badge, so it must describe the credentials in force, not the ones it
+    was computed from before an edit.
 
-    The green direction is the one that matters: a stale "Reached" tells the operator Reaper can
-    reach the app it deletes *through* when nothing has checked the address now configured.
+    The green direction is the one that matters. A stale "Reached" tells the operator
+    Reaper can reach the app it deletes through, when nothing has checked the address now
+    configured.
     """
 
     @staticmethod
@@ -634,8 +643,8 @@ class TestTheStoredTestResultDescribesWhatWasTested:
         ).json()
         self._pass_a_test(client, monkeypatch, made["id"])
         stored = self._row(client, made["id"])
-        # The precondition, asserted rather than assumed: without a stored pass to clear, every
-        # case below would hold on an empty row and prove nothing (rule 118).
+        # This precondition is asserted, not assumed. Without a stored pass to clear,
+        # every case below would hold on an empty row and prove nothing.
         assert stored["last_ok_at"] is not None
         assert stored["detected_version"] == "4.0.1"
         return made
@@ -655,8 +664,9 @@ class TestTheStoredTestResultDescribesWhatWasTested:
         what_changed: str,
         edit: dict[str, object],
     ) -> None:
-        """Each of the three inputs ``test_saved_instance`` computes its answer from, driven on
-        its own: nothing cleared these columns, and the only writer was a real test."""
+        """Each of the three inputs ``test_saved_instance`` computes its answer from,
+        driven on its own. Nothing cleared these columns except a real test.
+        """
         made = self._saved_and_tested(client, monkeypatch)
 
         assert client.put(f"/api/settings/instances/{made['id']}", json=edit).status_code == 200
@@ -670,9 +680,11 @@ class TestTheStoredTestResultDescribesWhatWasTested:
     def test_an_edit_that_changes_nothing_tested_keeps_the_outcome(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The discriminating case: a rename, and a save that resends the SAME address, both
-        keep the pass. Without this the clearing above is indistinguishable from clearing on
-        every update, which would leave no service card able to show a result at all."""
+        """The discriminating case. A rename, and a save that resends the same address,
+        both keep the pass. Without this, the clearing above would be indistinguishable
+        from clearing on every update, which would leave no service card able to show a
+        result at all.
+        """
         made = self._saved_and_tested(client, monkeypatch)
 
         renamed = client.put(f"/api/settings/instances/{made['id']}", json={"name": "4K"})
@@ -690,8 +702,10 @@ class TestTheStoredTestResultDescribesWhatWasTested:
     def test_a_stored_failure_is_cleared_by_the_same_edit(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Both directions, because the badge renders ``last_error`` ahead of ``last_ok_at``: a
-        failure left behind would blame the new address for the old one's refusal."""
+        """Both directions, because the badge renders ``last_error`` ahead of
+        ``last_ok_at``. A failure left behind would blame the new address for the old
+        one's refusal.
+        """
         made = client.post(
             "/api/settings/instances",
             json={"kind": "radarr", "name": "HD", "base_url": "http://a.local", "api_key": "k"},
@@ -721,9 +735,10 @@ class TestTheStoredTestResultDescribesWhatWasTested:
 
 
 class TestConnectionTestsHonorTheTlsChoice:
-    """The TLS choice must reach the client that actually dials out -- the stored
+    """The TLS choice must reach the client that actually dials out. The stored
     ``verify_tls`` for a saved instance, and the checkbox value sent with the request
-    for the pre-save test on the add form."""
+    for the pre-save test on the add form.
+    """
 
     async def test_test_connection_builds_its_client_with_the_given_verify(
         self, monkeypatch: pytest.MonkeyPatch
@@ -812,10 +827,10 @@ class TestConnectionTestsHonorTheTlsChoice:
 
         monkeypatch.setattr(instances_service, "test_connection", fake_test)
 
-        # A passing test goes on to read the folder list, so this arm has to be stubbed too or
-        # the route really dials ``a.local``. It passed anyway -- the connect failure is caught
-        # into ``map_error_reason`` -- but on nothing better than that host not resolving here
-        # (rule 119). Its three siblings below already carry this.
+        # A passing test goes on to read the folder list, so this arm has to be stubbed
+        # too, or the route really dials ``a.local``. It would pass anyway, since the
+        # connect failure is caught into ``map_error_reason``, but on nothing better than
+        # that host not resolving here. Its three siblings below already carry this.
         async def folders(
             *_a: object, **_k: object
         ) -> list[instances_service.RootFolderSuggestion]:
@@ -897,7 +912,7 @@ class TestSafety:
             json={"password": "brandnew12345", "current_password": "not-it"},
         )
         assert wrong.status_code == 403
-        # The original password still arms deletion: nothing was changed.
+        # The original password still arms deletion. Nothing was changed.
         armed = client.put(
             "/api/settings/safety", json={"enabled": True, "password": TEST_PASSWORD}
         )
@@ -906,11 +921,12 @@ class TestSafety:
     def test_with_no_admin_password_set_arming_points_at_the_password_step(
         self, client: TestClient
     ) -> None:
-        """Not a 403: a Plex-only install has nothing to type, so "that didn't match" would
-        send the operator to guess at a password that does not exist. Deletion stays off.
+        """This answers 400, not 403. A Plex-only install has nothing to type, so "that
+        didn't match" would send the operator to guess at a password that does not exist.
+        Deletion stays off.
 
-        One of three routes refusing this way, and the last of the three to get a test for it
-        (rule 72): the restore confirm and the watch-record reset carry the same pair.
+        This is one of three routes refusing this way, and the last of the three to get a
+        test for it. The restore confirm and the watch-record reset carry the same pair.
         """
         clear_admin_password(client)
 
@@ -939,10 +955,10 @@ class TestSafety:
 class TestTheAdminPasswordGate:
     """The one gate four routes ask through: ``deps.require_admin_password``.
 
-    Arming deletion, changing the arming password, forgetting the watch record and confirming
-    a restore all call it. The two tests those routes already had cover one gate each; these
-    cover the properties that only exist because it is ONE function, and that a fifth caller
-    would otherwise have to re-derive by hand (rule 11/98, rule 118).
+    Arming deletion, changing the arming password, forgetting the watch record, and
+    confirming a restore all call it. The tests those routes already had cover one gate
+    each. These cover the properties that only exist because it is one function, which a
+    fifth caller would otherwise have to re-derive by hand.
     """
 
     def test_repeated_wrong_current_passwords_are_locked_out(self, client: TestClient) -> None:
@@ -970,11 +986,11 @@ class TestTheAdminPasswordGate:
     ) -> None:
         """The success path resets both keys, so a near-miss costs the operator nothing.
 
-        Four wrong attempts sit one under the threshold. If the success cleared neither key,
-        or only the per-IP one, the fifth wrong attempt below would be a 429. It is a 403, so
-        the count restarted on both. Written because this is the step an extraction drops
-        without any other test noticing: every existing throttle test stops at the lockout and
-        never comes back through a success (rule 118).
+        Four wrong attempts sit one under the threshold. If the success cleared neither
+        key, or only the per-IP one, the fifth wrong attempt below would be a 429. It is a
+        403, so the count restarted on both. This is written because it is the step an
+        extraction could drop without any other test noticing. Every existing throttle
+        test stops at the lockout and never comes back through a success.
         """
         for n in range(4):
             assert (
@@ -997,13 +1013,14 @@ class TestTheAdminPasswordGate:
             ), f"attempt {n} after a success was throttled, so the success cleared nothing"
 
     def test_a_busy_argon2_gate_is_not_a_wrong_password(self, client: TestClient) -> None:
-        """Rule 11/98's hardest clause: a full gate answers 503 and must never register as a
-        failed attempt, or the load-shedding defense becomes the lockout.
+        """A full gate answers 503, and it must never register as a failed attempt, or the
+        load-shedding defense becomes the lockout.
 
-        Asserted black-box, because ``Throttle._buckets`` is private and reading it would pin
-        the implementation rather than the behavior. Four real failures sit one under the
-        threshold of five. If a 503 counted it would be the fifth, and the next wrong password
-        would come back 429. It comes back 403, so none of the three counted.
+        This is asserted black-box, because ``Throttle._buckets`` is private and reading
+        it would pin the implementation rather than the behavior. Four real failures sit
+        one under the threshold of five. If a 503 counted, it would be the fifth, and the
+        next wrong password would come back 429. It comes back 403, so none of the three
+        counted.
         """
         for n in range(4):
             assert (
@@ -1117,7 +1134,7 @@ class TestSetupStatus:
         assert status["complete"] is False  # ready, but no scan has run yet
 
     def test_a_sonarr_and_tautulli_also_make_it_scan_ready(self, client: TestClient) -> None:
-        """A TV-only deployment is a real deployment: Sonarr counts as the library
+        """A TV-only deployment is a real deployment. Sonarr counts as the library
         source exactly like Radarr does."""
         for kind, name in [("sonarr", "TV"), ("tautulli", "T")]:
             client.post(
@@ -1137,22 +1154,24 @@ class TestSetupStatus:
         assert client.get("/api/setup/status").json()["scan_ready"] is False
 
     def test_has_password_reports_whether_a_local_account_exists(self, client: TestClient) -> None:
-        """The wizard derives which step it is on from this, so it must track the real state.
+        """The wizard derives which step it is on from this, so it must track the real
+        state.
 
-        The seeded admin has a password; nulling the hash is the Plex-only install, where the
-        owner claimed the server over OAuth and no local account was ever created.
+        The seeded admin has a password. Nulling the hash simulates the Plex-only install,
+        where the owner claimed the server over OAuth and no local account was ever
+        created.
         """
         assert client.get("/api/setup/status").json()["has_password"] is True
         clear_admin_password(client)
         assert client.get("/api/setup/status").json()["has_password"] is False
 
     def test_setup_is_not_complete_without_a_password(self, client: TestClient) -> None:
-        """Scan-ready and scanned is no longer enough on its own.
+        """Being scan-ready and scanned is not enough on its own.
 
-        Isolated deliberately: everything else `complete` asks for is satisfied here, so the
-        only thing holding it False is the missing password. Without this the wizard would
-        wave through an install with no local account, no way to arm deletion and no way to
-        confirm a restore -- which is the state that made the password step worth having.
+        This is isolated deliberately. Everything else `complete` asks for is satisfied
+        here, so the only thing holding it False is the missing password. Without this,
+        the wizard would wave through an install with no local account, no way to arm
+        deletion, and no way to confirm a restore.
         """
         for kind, name in [("radarr", "HD"), ("tautulli", "T")]:
             client.post(
@@ -1172,11 +1191,11 @@ class TestSetupStatus:
         assert after["complete"] is False
 
     def test_scan_ready_without_plex_is_not_reap_ready(self, client: TestClient) -> None:
-        """The state #383 is about: everything a scan needs, and a reap still refused.
+        """Everything a scan needs is present, and a reap is still refused.
 
-        This install finishes the wizard -- ``complete`` is deliberately blind to Plex,
-        because Plex is optional for a scan -- so the only thing that can tell the operator
-        their first real run will be turned away is ``reap_ready``.
+        This install finishes the wizard, since ``complete`` is deliberately blind to
+        Plex, because Plex is optional for a scan. So the only thing that can tell the
+        operator their first real run will be turned away is ``reap_ready``.
         """
         _make_scan_ready(client)
         _add_snapshot(client)
@@ -1215,11 +1234,12 @@ class TestSetupStatus:
     ) -> None:
         """``reap_ready`` is only worth publishing if it predicts the actual refusal.
 
-        Rule 144: the sentence "you cannot reap without this" is now written in three
-        places -- ``api.runs._preflight_refusal``, ``services.executor.execute``'s backstop,
-        and this field, which the wizard and the Reap page both read. So the field is pinned
-        against the refusal itself rather than against a transcription of it: a gateway
-        missing either client refuses, and a setup missing the same thing is not reap-ready.
+        The sentence "you cannot reap without this" is written in three places:
+        ``api.runs._preflight_refusal``, ``services.executor.execute``'s backstop, and this
+        field, which the wizard and the Reap page both read. So the field is pinned
+        against the refusal itself rather than against a transcription of it. A gateway
+        missing either client refuses, and a setup missing the same thing is not
+        reap-ready.
         """
         from reaper.api.runs import _preflight_refusal
         from reaper.services.executor import ReapGateway
@@ -1259,10 +1279,10 @@ class TestSchedule:
             "check_for_updates",
         } <= (by_id.keys())
         # The update check reaches the operator's Jobs page through the same route as the
-        # rest, on its own schedule and armed out of the box: the whole point is that an
-        # install nobody opens still checks (#464), which a listed-but-unscheduled row would
-        # not do. This is the wiring end to end -- a real app boot, a real scheduler holding
-        # the app's own UpdateChecker, and the payload the page renders.
+        # rest, on its own schedule and armed out of the box. The whole point is that an
+        # install nobody opens still checks, which a listed-but-unscheduled row would not
+        # do. This is the wiring end to end: a real app boot, a real scheduler holding the
+        # app's own UpdateChecker, and the payload the page renders.
         assert by_id["check_for_updates"]["cron"] == "15 4 * * *"
         assert by_id["check_for_updates"]["next_run_at"] is not None
         assert by_id["scheduled_scan"]["cron"] is None  # no automatic scan by default
@@ -1307,15 +1327,17 @@ class TestSchedule:
         client: TestClient,
         async_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        """A row written before phase 11a carries a bare English phrase under ``"result"``
-        instead of a wire-encoded reason. Rule 96: an old row must still read, thawed as
-        ``Reason("legacy", {"text": ...})`` exactly as ``engine.reason.from_wire`` already
-        does for a bare stored string -- it just stops composing through the catalog. Written
-        straight into storage rather than through ``set_job_last_run``, which only ever
-        writes the new shape now: the point is a value an OLDER build left behind.
+        """A row written by an older build carries a bare English phrase under
+        ``"result"`` instead of a wire-encoded reason. An old row must still read back as
+        ``Reason("legacy", {"text": ...})``, exactly as ``engine.reason.from_wire`` already
+        does for a bare stored string. It just stops composing through the catalog. This
+        writes straight into storage rather than through ``set_job_last_run``, which only
+        ever writes the new shape now, since the point is to simulate a value an older
+        build left behind.
 
-        ``async_factory`` shares the same on-disk database as ``client`` (both are built off
-        the same ``settings`` fixture), so a commit through it is visible to the route.
+        ``async_factory`` shares the same on-disk database as ``client``, since both are
+        built off the same ``settings`` fixture, so a commit through it is visible to the
+        route.
         """
         from reaper.services import app_settings
 
@@ -1373,33 +1395,32 @@ class TestSchedule:
     def test_both_job_families_refuse_a_bad_cron_in_the_one_declared_sentence(
         self, client: TestClient
     ) -> None:
-        """The scan arm and the upkeep arm answer a cron the scheduler will not take with the
-        same words, and those words are ``MESSAGES["error.settings.bad_cron"]`` with its slot
-        filled. Both arms raise the same code (``refuse(422, "error.settings.bad_cron", ...)``)
-        rather than spelling English out, so a reword of the one catalog template moves both
-        (phase 8a; this used to guard a shared ``_BAD_CRON`` constant each arm formatted by
-        hand, the same shape one level up).
+        """The scan arm and the upkeep arm answer a cron the scheduler will not take with
+        the same words, and those words are ``MESSAGES["error.settings.bad_cron"]`` with
+        its slot filled. Both arms raise the same code
+        (``refuse(422, "error.settings.bad_cron", ...)``) rather than spelling English
+        out, so a reword of the one catalog template moves both.
 
-        **Three mutations, one assertion each, and none of the three catches another.** Do not
-        collapse them:
+        **Three mutations, one assertion each, and none of the three catches another.** Do
+        not collapse them:
 
         - *An arm is reworded.* Caught by ``startswith``/``endswith``. This is the only one the
           first version of this test caught.
         - *An arm re-inlines the sentence verbatim.* Caught by the source count alone. Both
           copies render identically, which is what the dedup means, so no assertion over a
           response can ever see it.
-        - *An arm raises the template unformatted.* Caught by the ``{reason}`` assertion alone.
-          The raw template starts and ends with the very halves being compared, and its literal
-          ``{reason}`` is long enough to satisfy the length bound, so every other check here
-          passes while the placeholder ships to the operator (rule 21).
+        - *An arm raises the template unformatted.* Caught by the ``{reason}`` assertion
+          alone. The raw template starts and ends with the very halves being compared, and
+          its literal ``{reason}`` is long enough to satisfy the length bound, so every
+          other check here passes while the placeholder ships to the operator.
 
-        Every expectation is derived from the declaration, so none of this restates the sentence.
+        Every expectation is derived from the declaration, so none of this restates the
+        sentence.
         """
         prefix, suffix = reaper.refusal.MESSAGES["error.settings.bad_cron"].split("{reason}")
 
-        # Rule 144, and rule 147's caution about what a text scan can see: `prefix` is the
-        # declaration's own first half, so a re-inlined f-string anywhere in the tree is a
-        # second hit however the rest of it was reworded.
+        # `prefix` is the declaration's own first half, so a re-inlined f-string anywhere
+        # in the tree is a second hit however the rest of it was reworded.
         package = Path(reaper.refusal.__file__).parent
         copies = sum(f.read_text(encoding="utf-8").count(prefix) for f in package.rglob("*.py"))
         assert copies == 1, (
@@ -1419,8 +1440,10 @@ class TestSchedule:
             assert len(detail) > len(prefix) + len(suffix), (job_id, detail)
 
     def test_saving_one_upkeep_job_leaves_the_others_untouched(self, client: TestClient) -> None:
-        """Each job's schedule is its own stored row, so saving one never drops another. The
-        old shared-dict read-modify-write could last-write-wins a concurrent save away (B-12)."""
+        """Each job's schedule is its own stored row, so saving one never drops another. A
+        shared-dict read-modify-write could otherwise let a concurrent save overwrite
+        another one entirely.
+        """
         client.put("/api/settings/jobs/refresh_ratings/schedule", json={"cron": "0 6 * * *"})
         client.put("/api/settings/jobs/refresh_curated_lists/schedule", json={"cron": None})
         resp = client.put(
@@ -1436,8 +1459,8 @@ class TestSchedule:
 class TestRunJob:
     def test_a_known_maintenance_job_can_be_run_now(self, client: TestClient) -> None:
         # Pause the scheduler first so "run now" moves the job's next-run without actually
-        # firing the real, network-touching job inside the test. The endpoint's job is only to
-        # nudge the schedule; the work itself is APScheduler's, tested nowhere near here.
+        # firing the real, network-touching job inside the test. The endpoint's job is only
+        # to nudge the schedule. The work itself is APScheduler's, tested nowhere near here.
         client.app.state.scheduler.pause()  # type: ignore[attr-defined]
         resp = client.post("/api/settings/jobs/refresh_curated_lists/run", json={})
         assert resp.status_code == 200, resp.text
@@ -1447,13 +1470,13 @@ class TestRunJob:
         assert client.post("/api/settings/jobs/not_a_job/run", json={}).status_code == 404
 
     def test_the_scan_is_not_runnable_here(self, client: TestClient) -> None:
-        # The library scan runs through the streaming /api/scan endpoint (so the UI can show
-        # progress), never this fire-and-forget one -- it is deliberately not on the list.
+        # The library scan runs through the streaming /api/scan endpoint, so the UI can
+        # show progress, never this fire-and-forget one. It is deliberately not on the list.
         assert client.post("/api/settings/jobs/scheduled_scan/run", json={}).status_code == 404
 
     def test_a_turned_off_job_can_still_be_run_now(self, client: TestClient) -> None:
-        # Turning a job off removes it from the scheduler, but "run now" must still work --
-        # it runs once without turning the schedule back on. Pause first so the real,
+        # Turning a job off removes it from the scheduler, but "run now" must still work.
+        # It runs once without turning the schedule back on. Pause first so the real,
         # network-touching work never fires inside the test.
         client.put("/api/settings/jobs/refresh_curated_lists/schedule", json={"cron": None})
         client.app.state.scheduler.pause()  # type: ignore[attr-defined]
@@ -1464,8 +1487,9 @@ class TestRunJob:
 
 class TestPoster:
     def test_no_tautulli_means_a_404_not_a_crash(self, client: TestClient) -> None:
-        """With nothing to fetch artwork from, the poster route 404s and the card falls back
-        to a placeholder -- it never 500s."""
+        """With nothing to fetch artwork from, the poster route 404s and the card falls
+        back to a placeholder. It never 500s.
+        """
         assert client.get("/api/poster/123").status_code == 404
 
 
@@ -1503,10 +1527,10 @@ class TestPlexStatus:
     def test_the_web_address_must_be_a_full_web_address(
         self, client: TestClient, address: str
     ) -> None:
-        """This field checked ``startswith("http://")`` and nothing else, so a bare scheme with
-        no host behind it passed where every sibling URL setting refused it (#255). Rule 84: one
-        shared check, so all four of these are refused here for the same reason they are refused
-        on a service address."""
+        """A bare scheme with no host behind it must never pass, the same way it is
+        refused for every sibling URL setting. All four of these are refused here for the
+        same reason they are refused on a service address.
+        """
         refused = client.put("/api/settings/plex", json={"web_url": address})
         assert refused.status_code == 422, refused.text
         # Nothing was stored, so links still point at the hosted default.
@@ -1542,12 +1566,13 @@ class TestPlexLinkChoice:
     def _plex_server_unreachable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A finished link fires a library autosync, and that one goes over plexapi.
 
-        `httpx2_mock` covers httpx. plexapi speaks `requests`, so nothing here mocked it and
-        seven of these tests really resolved the connection host on every run -- swallowed by
-        `_sync_libraries_after_link`, which catches every exception because its docstring
-        promises a sign-in never strands on a failed library refresh. The outcome pinned below
-        is the one those runs already had, minus the name lookup: `PlexClient._connect` maps
-        any failure to `PlexError`, which is what an unreachable server produced.
+        `httpx2_mock` covers httpx, but plexapi speaks `requests`, which `respx` does not
+        intercept. Without this fixture, every test in this class would let the autosync
+        try a real DNS lookup on the connection host. `_sync_libraries_after_link` catches
+        every exception, since its docstring promises a sign-in never strands on a failed
+        library refresh, so those lookups would fail silently rather than break the test.
+        This fixture stubs `PlexClient._connect` to raise `PlexError` directly, the same
+        outcome an unreachable server produces, without the real network round trip.
         """
 
         async def _unreachable(_self: PlexClient) -> NoReturn:
@@ -1605,14 +1630,15 @@ class TestPlexLinkChoice:
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch, httpx2_mock: respx.Router
     ) -> None:
         """Linking with the certificate check off must (a) probe the server without
-        verification -- a self-signed HTTPS Plex is unreachable otherwise -- and (b)
+        verification, since a self-signed HTTPS Plex is unreachable otherwise, and (b)
         store the choice on the server row, where every later client reads it. Flipping
-        it back on afterwards is a plain settings edit."""
+        it back on afterward is a plain settings edit.
+        """
         from reaper.services import plex_link
 
         captured: dict[str, object] = {}
-        # Through `plex_link` for the same reason the spy is installed there: the module
-        # under test reads this name, and rebinding any other copy patches nothing.
+        # The spy is installed through `plex_link` because the module under test reads
+        # this name, and rebinding any other copy patches nothing.
         real_probe = plex_link.probe_connection  # type: ignore[attr-defined]
 
         async def spying_probe(
@@ -1640,7 +1666,7 @@ class TestPlexLinkChoice:
         assert captured["verify"] is False
         assert client.get("/api/settings/plex").json()["verify_tls"] is False
 
-        # Only the field being changed, which is what the switch sends (#204).
+        # Only the field being changed, which is what the switch sends.
         flipped = client.put("/api/settings/plex", json={"verify_tls": True})
         assert flipped.status_code == 200
         assert flipped.json()["verify_tls"] is True
@@ -1648,14 +1674,15 @@ class TestPlexLinkChoice:
     def test_saving_one_plex_setting_leaves_the_other_alone(
         self, client: TestClient, httpx2_mock: respx.Router
     ) -> None:
-        """The route is a patch, and `web_url` needs three states to be one.
+        """The route is a patch, and `web_url` needs three states to be one: omitted,
+        explicitly blank, and a real value.
 
-        It had two: `str = ""` could not tell "I am not changing the address" from "reset it
-        to the hosted default", so every caller wrote the address whether it meant to or
-        not. The certificate switch in the browser was such a caller and filled the field
-        from a CACHED status row, so flipping a setting about certificates reverted an
-        address that had moved since -- silently, and every "open in Plex" link in the app
-        then pointed at plex.tv (#204). Rule 1: omitted is not the same as empty.
+        `str = ""` could not tell "I am not changing the address" from "reset it to the
+        hosted default", so every caller would write the address whether it meant to or
+        not. A caller that only means to flip the certificate switch, filling the field
+        from a cached status row, would then silently revert an address that had moved
+        since, and every "open in Plex" link in the app would point at plex.tv. Omitted
+        must never mean the same thing as empty.
         """
         self._mock_plextv(httpx2_mock)
         start = client.post("/api/settings/plex/link/start").json()
@@ -1684,14 +1711,15 @@ class TestPlexLinkChoice:
         assert reset.json()["web_url"] == "https://app.plex.tv"
 
     def test_the_patch_contract_is_published_where_someone_can_read_it(self) -> None:
-        """The empty string is the one way back to the hosted default, so it must publish.
+        """The empty string is the one way back to the hosted default, so it must be
+        published somewhere a caller can read it.
 
-        ``PlexUpdateIn``'s per-field docstrings do NOT reach the schema: Pydantic harvests
+        ``PlexUpdateIn``'s per-field docstrings do not reach the schema. Pydantic harvests
         those only under ``use_attribute_docstrings``, which this tree does not set (see
-        ``api/schemas.py``). So a contract written beside a field documents this file alone,
-        and moving the reset sentence down there emptied the published description while
-        every test still passed. One fact, two copies, so both are checked and each failure
-        names the other (rule 144).
+        ``api/schemas.py``). So a contract written beside a field only documents this
+        file, not the published schema. One fact needs two copies, the class docstring
+        and the route description, so both are checked here, and each failure names the
+        other.
         """
         described = PlexUpdateIn.model_json_schema().get("description", "")
         # Words, not a phrase, so a rewording that keeps the fact still passes. Both are absent
@@ -1713,17 +1741,17 @@ class TestPlexLinkChoice:
     ) -> None:
         """The operator approves the sign-in at the instant their server is restarting.
 
-        ``poll_link`` deliberately keeps the pending sign-in for this case, but the route
-        used to answer 400 -- and the browser stops polling for good on any thrown status,
-        so the preserved sign-in was never re-polled and the whole approval round trip had
-        to be redone. It is a non-final status now, and the same sign-in finishes once the
-        server answers.
+        ``poll_link`` deliberately keeps the pending sign-in for this case. It answers with
+        a non-final "retrying" status rather than an error, since the browser stops
+        polling for good on any thrown status, which would strand the pending sign-in and
+        force the whole approval round trip to be redone. The same sign-in finishes once
+        the server answers.
         """
         self._mock_plextv(httpx2_mock)
-        # The server is down, then it comes back. Driven by a flag rather than a fixed
-        # list of responses: one probe may legitimately make several attempts (the shared
-        # client retries a transient transport error), and this scenario is "the server is
-        # not answering yet", not "it refuses exactly once".
+        # The server is down, then it comes back. This is driven by a flag rather than a
+        # fixed list of responses, since one probe may legitimately make several attempts
+        # (the shared client retries a transient transport error), and this scenario is
+        # "the server is not answering yet", not "it refuses exactly once".
         server_down = {"value": True}
 
         def identity(request: object) -> httpx.Response:
@@ -1740,8 +1768,8 @@ class TestPlexLinkChoice:
         )
         assert blip.status_code == 200, blip.text
         assert blip.json()["status"] == "retrying"
-        # And it carries why, as a typed reason (phase 8a's second wave), so a longer wait
-        # reads as a wait rather than a hang once the frontend composes it (phase 8b).
+        # And it carries why, as a typed reason, so a longer wait reads as a wait rather
+        # than a hang once the frontend composes it.
         reason = blip.json()["reason"]
         assert reason["k"] == "error.plex.link_unreachable"
         assert reason["p"] == {"name": "Attic", "count": 1}
@@ -1794,13 +1822,14 @@ class TestPlexLinkChoice:
     def test_a_typed_address_belonging_to_another_server_is_refused(
         self, client: TestClient, httpx2_mock: respx.Router
     ) -> None:
-        """The manual address box takes any host on the network, and the old probe only
-        asked whether *something* answered. Saving a neighbor's Plex would have pointed
-        Reaper's Leaving Soon writes and its Never-Reap read at a library nobody asked it
-        to touch, with the UI still naming the linked server (B-10)."""
+        """The manual address box takes any host on the network, so the probe must
+        confirm which server answered, not merely that something did. Saving a
+        neighbor's Plex would point Reaper's Leaving Soon writes and its Never-Reap read
+        at a library nobody asked it to touch, with the UI still naming the linked server.
+        """
         self._link_machine_b(client, httpx2_mock)
 
-        # Something answers at the typed address -- it is simply not the linked server.
+        # Something answers at the typed address. It is simply not the linked server.
         httpx2_mock.get("https://192.0.2.50:32400/identity").mock(
             return_value=httpx.Response(
                 200, json={"MediaContainer": {"machineIdentifier": "machine-a"}}
@@ -1813,7 +1842,7 @@ class TestPlexLinkChoice:
         refused_body = refused.json()
         assert refused_body["code"] == "error.plex.connection_wrong_server"
         assert "a different Plex server" in refused_body["detail"]
-        # Nothing was written: the stored address is still the one linking found.
+        # Nothing was written. The stored address is still the one linking found.
         assert (
             client.get("/api/settings/plex").json()["connection_uri"]
             == "https://x.plex.direct:32400"
@@ -1857,15 +1886,14 @@ class TestPlexLinkChoice:
 
 
 class TestPlexLibrarySync:
-    """The library refresh on a server that answers, which nothing had ever driven (#584).
+    """Drives the library refresh on a server that actually answers, since nothing else
+    exercises the merge logic directly.
 
-    Every route into ``_sync_libraries`` reached it through a failure. ``video_sections``
-    builds a plexapi server and plexapi speaks ``requests``, which ``respx`` does not
-    intercept, so the seven ``TestPlexLinkChoice`` tests fired the autosync at a real name
-    lookup and had it fail; ``_sync_libraries_after_link`` catches every exception on purpose,
-    so the suite stayed green. This drives the merge instead, which is the part with logic in
-    it: an operator's off stays off, a new library arrives on, and one that left the server
-    drops out.
+    ``video_sections`` builds a plexapi server, and plexapi speaks ``requests``, which
+    ``respx`` does not intercept. ``_sync_libraries_after_link`` catches every exception on
+    purpose, so a class that only exercises it through a failure would never run the merge
+    itself. This drives the merge directly: an operator's off stays off, a new library
+    arrives on, and one that left the server drops out.
     """
 
     @pytest.fixture
@@ -1895,10 +1923,10 @@ class TestPlexLibrarySync:
     ) -> list[str]:
         """Answer ``video_sections`` instead of raising, and record that it was asked.
 
-        Stubbed at ``video_sections`` rather than at ``_connect``: the layer under it is
-        plexapi's synchronous ``library.sections()``, and standing that up would be testing
-        plexapi. The list it returns is the client's own ``PlexSection``, which is the type
-        ``_sync_libraries`` reads.
+        This is stubbed at ``video_sections`` rather than at ``_connect``, since the layer
+        under it is plexapi's synchronous ``library.sections()``, and standing that up
+        would be testing plexapi. The list it returns is the client's own ``PlexSection``,
+        which is the type ``_sync_libraries`` reads.
         """
         asked: list[str] = []
 
@@ -1941,18 +1969,18 @@ class TestPlexLibrarySync:
         assert again.status_code == 200, again.text
         assert [(lib["key"], lib["enabled"]) for lib in again.json()] == [
             (2, True),  # untouched
-            (5, False),  # the operator turned it off; a refresh must not turn it back on
+            (5, False),  # the operator turned it off, a refresh must not turn it back on
             (12, True),  # new since the last sync
         ]
-        # Dropped, not left behind enabled: a library that is gone from the server would
+        # Dropped, not left behind enabled. A library that is gone from the server would
         # otherwise keep a stored `enabled` row nothing can ever reach to turn off.
         assert 9 not in {lib["key"] for lib in again.json()}
 
     def test_the_sync_route_answers_502_for_an_unreachable_server(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch, linked: None
     ) -> None:
-        """The arm the suite already had, kept beside the one it did not: the route maps
-        ``PlexError`` rather than letting it reach the operator as a 500."""
+        """The route maps ``PlexError`` rather than letting it reach the operator as a
+        500."""
 
         async def _boom(_self: PlexClient) -> NoReturn:
             raise PlexError("no route to host")
@@ -1971,12 +1999,12 @@ class TestPlexLibrarySync:
     async def test_the_autosync_after_a_link_stores_the_libraries(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch, linked: None
     ) -> None:
-        """The other route in, and the one that carried the swallowed failure.
+        """The other route into the sync logic, alongside ``video_sections``.
 
         ``_sync_libraries_after_link`` returns nothing and reports nothing, so the only
-        evidence it did its job is the stored list afterwards. Driving it through the route
+        evidence it did its job is the stored list afterward. Driving it through the route
         would mean standing up the whole plex.tv link flow again, which
-        ``TestPlexLinkChoice`` already pins; this calls the function the way both link
+        ``TestPlexLinkChoice`` already pins. This calls the function the way both link
         endpoints do.
         """
         from reaper.api.plex import _sync_libraries_after_link
@@ -1994,8 +2022,10 @@ class TestPlexLibrarySync:
     async def test_a_failed_autosync_never_strands_the_sign_in(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch, linked: None
     ) -> None:
-        """The promise in its docstring, which is why the failure above was silent. It has
-        to keep holding, so it is pinned rather than left as prose (rule 7/24)."""
+        """The promise in ``_sync_libraries_after_link``'s own docstring: a failure here
+        must never surface as an error. It has to keep holding, so it is pinned here
+        rather than left as prose alone.
+        """
         from reaper.api.plex import _sync_libraries_after_link
 
         async def _boom(_self: PlexClient) -> NoReturn:
@@ -2012,10 +2042,10 @@ class TestPlexLibrarySync:
 class TestConnectionTestCarriesTheMapping:
     """A passing test hands back what the connection still has to map.
 
-    The add form gates Save on this call, and an instance that is not saved yet has no id, so
-    there is no second question to ask: whatever the operator must decide has to arrive on the
-    pass itself. Before this, the folder map only ever appeared on a service that was already
-    saved -- which is never where a first-run operator is.
+    The add form gates Save on this call, and an instance that is not saved yet has no id,
+    so there is no second question to ask. Whatever the operator must decide has to arrive
+    on the pass itself, since the folder map would otherwise only ever appear on a service
+    that is already saved, which is never where a first-run operator is.
     """
 
     def _pass(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2057,7 +2087,7 @@ class TestConnectionTestCarriesTheMapping:
     def test_a_failed_test_reads_nothing_to_map(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Nothing was reached, so there is nothing to have read -- and no probe is attempted."""
+        """Nothing was reached, so there is nothing to have read, and no probe is attempted."""
 
         async def bad(*_a: object, **_k: object) -> instances_service.TestResult:
             return instances_service.TestResult(
@@ -2082,10 +2112,11 @@ class TestConnectionTestCarriesTheMapping:
     def test_an_unreadable_folder_list_is_said_apart_from_an_empty_one(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The credentials really were proved, so the test still passes -- but the empty list
-        must not read as "this instance has no folders", which is a claim nobody checked
-        (rule 93). The two states are told apart by ``map_error_reason``, never by the empty
-        list."""
+        """The credentials really were proved, so the test still passes. But the empty
+        list must not read as "this instance has no folders", which is a claim nobody
+        checked. The two states are told apart by ``map_error_reason``, never by the empty
+        list.
+        """
         self._pass(monkeypatch)
 
         async def boom(*_a: object, **_k: object) -> list[instances_service.RootFolderSuggestion]:
@@ -2097,14 +2128,14 @@ class TestConnectionTestCarriesTheMapping:
             json={"kind": "radarr", "base_url": "http://r.local:7878", "api_key": "k"},
         ).json()
 
-        # A folder list that could not be read never turns a reachable service into a failed
-        # test: refusing the save over it would strand an *arr that answers /system/status but
-        # not /rootfolder.
+        # A folder list that could not be read never turns a reachable service into a
+        # failed test. Refusing the save over it would strand an *arr that answers
+        # /system/status but not /rootfolder.
         assert body["ok"] is True
         assert body["root_folders"] == []
-        # Plain language, not the raw exception. Pasting `str(exc)` put "radarr: connection
-        # reset" in front of someone trying to get a URL and a key right -- the exact string
-        # shape `explain_failure` exists to prevent, on the one path that had not been given it.
+        # Plain language, not the raw exception. Pasting `str(exc)` would put "radarr:
+        # connection reset" in front of someone trying to get a URL and a key right. This
+        # is the exact string shape `explain_failure` exists to prevent.
         reason = body["map_error_reason"]
         assert reason["k"] == "mapError"
         explained = instances_service.explain_failure(
@@ -2196,9 +2227,10 @@ class TestCreateStoresTheMapping:
     def test_a_new_arr_is_created_with_the_map_made_on_the_add_form(
         self, client: TestClient
     ) -> None:
-        """The mapping is made before the save now, so it has to survive the create. Sent only
-        on the update route, a first Radarr's HD/4K map was silently dropped and the operator
-        had to reopen the service and make it again."""
+        """The mapping is made before the save now, so it has to survive the create. If it
+        were sent only on the update route, a first Radarr's HD/4K map would be silently
+        dropped, and the operator would have to reopen the service and make it again.
+        """
         created = client.post(
             "/api/settings/instances",
             json={
@@ -2224,8 +2256,8 @@ class TestCreateStoresTheMapping:
 
 
 class TestTheDiscordTestRouteSendsATypedReason:
-    """``POST /api/settings/notifications/test``'s three outcomes, docs/history/
-    I18N_PLAN.md §5: the server sends an id, never a sentence."""
+    """``POST /api/settings/notifications/test``'s three outcomes. The server sends an id,
+    never a sentence."""
 
     WEBHOOK = "https://discord.com/api/webhooks/123/token-is-a-secret"
 
@@ -2264,7 +2296,7 @@ _DISCORD_TEST_RESULT_IDS: frozenset[str] = frozenset({"posted", "failed", "not_c
 
 class TestTheDiscordTestResultVocabulary:
     """Every id ``test_notifications`` can emit, under ``services.discord.testResult.*``,
-    both directions (rule 145's shape, modeled on ``test_review_chips.TestTheChipVocabulary``).
+    checked both directions, modeled on ``test_review_chips.TestTheChipVocabulary``.
     """
 
     def test_the_id_population_is_pinned(self) -> None:
@@ -2282,8 +2314,9 @@ class TestTheDiscordTestResultVocabulary:
 
 
 class TestTheMapErrorVocabulary:
-    """``test_new_instance``'s one Plex-couldn't-map reason, both directions (rule 145's
-    shape, scaled to a population of one id, the sibling of ``lists.py``'s ``plexError``)."""
+    """``test_new_instance``'s one Plex-couldn't-map reason, checked both directions. A
+    population of one id, the sibling of ``lists.py``'s ``plexError``.
+    """
 
     def test_the_id_has_a_catalog_entry(self) -> None:
         assert "mapError" in catalog("services.modal")

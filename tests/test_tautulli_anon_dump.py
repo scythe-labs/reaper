@@ -279,8 +279,8 @@ class TestAgreementWithHistorySync:
 
     def test_history_is_asked_for_ungrouped(self, dump_tool: Any, tmp_path: Path) -> None:
         # Tautulli groups consecutive plays of the same item unless told not to, and the
-        # default is what a caller that says nothing gets. Measured against a live instance:
-        # 309,013 rows came back where it held 425,983. Those folded rows ARE the rewatches
+        # default is what a caller that says nothing gets. On a real library, grouping
+        # folds away a large share of rows. Those folded rows ARE the rewatches
         # (``services.rewatch.viewing_count`` clusters plays into viewings itself), so a
         # grouped dump reports a habitual rewatcher as a single viewing.
         sent: list[Any] = []
@@ -306,9 +306,9 @@ class TestAgreementWithHistorySync:
 
 class TestWhatTheLibraryNoLongerHolds:
     def test_a_play_of_a_vanished_item_is_counted(self, dump_tool: Any) -> None:
-        # 39% of watched movies and 46% of watched shows were already gone from the first
-        # real library this ran against. A dump that did not say so would read as though
-        # every play it carries is about something still on disk.
+        # A real library commonly has watched items no longer on disk. A dump that did
+        # not say so would read as though every play it carries is about something still
+        # on disk.
         items = [{"token": "kept", "type": "movie"}, {"token": "show_kept", "type": "show"}]
         plays = [
             {"item": "kept", "type": "movie", "show": None},

@@ -88,8 +88,8 @@ class TestBuildSourcesGate:
     async def test_every_seerr_is_built_not_just_the_first(
         self, env: tuple[async_sessionmaker[AsyncSession], Settings, SecretBox]
     ) -> None:
-        """Seerr is multi-instance: two portals must both be built into the list, so the
-        scan reads every request, not just the first portal's."""
+        """Seerr supports multiple instances. Both portals must land in the built list,
+        so the scan reads every request across all portals, not just the first one's."""
         factory, settings, box = env
         await _add(factory, box, InstanceKind.RADARR, "hd")
         await _add(factory, box, InstanceKind.TAUTULLI, "t")
@@ -115,8 +115,9 @@ class TestBuildSourcesGate:
     async def test_no_tautulli_is_refused(
         self, env: tuple[async_sessionmaker[AsyncSession], Settings, SecretBox]
     ) -> None:
-        """Without watch history every item's dormancy is Unknown, and Unknown never
-        condemns -- a scan without Tautulli would judge nothing. Refuse it plainly."""
+        """Without watch history, every item's dormancy is Unknown, and an Unknown value
+        never leads to deletion. A scan without Tautulli would judge nothing, so it is
+        refused instead."""
         factory, settings, box = env
         await _add(factory, box, InstanceKind.SONARR, "tv")
 
@@ -127,10 +128,10 @@ class TestBuildSourcesGate:
     async def test_a_list_check_does_not_carry_the_scan_s_preconditions(
         self, env: tuple[async_sessionmaker[AsyncSession], Settings, SecretBox]
     ) -> None:
-        """Refreshing a protection list reads the *arr and Plex and nothing else, so an
-        install with no Tautulli was refused a check of its Plex collection in words about
-        scans and watch history: a requirement of an action the operator did not take
-        (rule 21). The Tautulli slot comes back None and every other source is built."""
+        """Refreshing a protection list only reads the *arr apps and Plex, so it must not
+        fail for a missing Tautulli. Failing it with a scan's wording, which talks about
+        watch history, would blame the operator for a requirement of an action they never
+        took. The Tautulli slot comes back None here, and every other source still builds."""
         factory, settings, box = env
         await _add(factory, box, InstanceKind.RADARR, "movies")
 

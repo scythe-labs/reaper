@@ -5,16 +5,15 @@
 // appIconSvg at the default accent, produced by `npm run icons`. This guards them against
 // drift.
 //
-// The previous version of this file checked only each PNG's width and height, and said in its
-// own comment that it caught a forgotten re-rasterization. It did not: a redraw of the mark
-// never changes a PNG's dimensions, so all five would have sailed through carrying the old
-// picture while favicon.svg alone was updated (PR9, rule 68). What closes that is the source
-// hash in icons.generated.json: the generator records the sha256 of the exact SVG string each
-// asset was rasterized from, and the check below re-derives that string from the CURRENT
-// appIconSvg. Change the mark without regenerating and every stale asset fails by name.
+// Checking only each PNG's width and height would not catch a forgotten re-rasterization: a
+// redraw of the mark never changes a PNG's dimensions, so a stale picture could sail through
+// unchanged while favicon.svg alone was updated. What closes that gap is the source hash in
+// icons.generated.json: the generator records the sha256 of the exact SVG string each asset
+// was rasterized from, and the check below re-derives that string from the CURRENT appIconSvg.
+// Change the mark without regenerating and every stale asset fails by name.
 //
 // The rasterizer is deliberately not invoked here. Re-rendering to compare pixels would make
-// the suite depend on resvg producing byte-identical output on every machine and version; the
+// the suite depend on resvg producing byte-identical output on every machine and version. The
 // recorded hashes are committed alongside the files they describe, so the test needs nothing
 // but fs and crypto.
 import { type BinaryLike, createHash } from "node:crypto";
@@ -47,9 +46,9 @@ function pngSize(name: string): { width: number; height: number } {
 describe("the flattened mark", () => {
   // ./dissolve.generated.ts is the finished shape, flattened from the recipe in ./dissolve.ts
   // by scripts/gen-mark.mjs. Nothing composes the recipe at render time any more, so an edit to
-  // the recipe that is not regenerated ships a mark that no longer matches its own source --
-  // and it ships silently, because both files are individually valid. Rule 68: a generated
-  // asset is covered by a drift test, and this is that asset's.
+  // the recipe that is not regenerated ships a mark that no longer matches its own source, and
+  // it ships silently, because both files are individually valid. A generated asset needs a
+  // drift test, and this is that asset's.
   //
   // The generator is re-run rather than its output re-parsed, so this compares geometry to the
   // recipe it claims to come from rather than to a second copy of itself.
@@ -68,25 +67,26 @@ describe("the flattened mark", () => {
   }, 60_000);
 
   // The mark draws on the DEFAULT nonzero rule, and the blocks depend on it: they overlap on
-  // purpose, and evenodd would turn every overlap into a hole. Nothing needs evenodd any more --
-  // the cowl opening is a notch in the silhouette's one contour rather than a hole beside it --
-  // so a fill rule reappearing here means someone split that contour back apart.
+  // purpose, and evenodd would turn every overlap into a hole. Nothing needs evenodd any more,
+  // since the cowl opening is a notch in the silhouette's one contour rather than a hole beside
+  // it, so a fill rule reappearing here means someone split that contour back apart.
   it("draws on the default fill rule", () => {
     expect(appIconSvg(DEFAULT_ACCENT)).not.toContain("fill-rule");
   });
 
-  // The cut is where the mark used to seam, in both directions at once. The cowl opening's
-  // bottom edge lay exactly on the hood's, and two coincident edges under evenodd can be painted
-  // as a faint LIGHT line across an opening that is empty; the two blocks below the cut abutted
-  // the hood from a second path, and two shapes antialiased separately then composited leave a
-  // DARK one. Both showed only where the cut fell between device pixels, which is why this
-  // sweeps widths instead of picking one, and why it reads a rendering rather than the `d`
-  // string: what seams is the rasterization, and the path text looked reasonable throughout.
+  // The cut is where the mark can seam, in both directions at once. The cowl opening's bottom
+  // edge lies exactly on the hood's, and two coincident edges under evenodd can paint as a
+  // faint light line across an opening that is empty. The two blocks below the cut abut the
+  // hood from a second path, and two shapes antialiased separately then composited can leave a
+  // dark line instead. Both only show where the cut falls between device pixels, which is why
+  // this sweeps widths instead of picking one, and why it reads a rendering rather than the `d`
+  // string: what seams is the rasterization, not the path text.
   //
-  // Mutation-checked against the two-path geometry this replaced, which fails it at four of
-  // these eight widths. The other four land the cut on a pixel boundary and seam either way;
-  // which four that is belongs to the geometry, so all eight stay and the sampled-pixel counts
-  // are asserted -- a box that rounds down to nothing passes every assertion made about it.
+  // Mutation-checked against the two-path geometry this replaced: that geometry fails this test
+  // at four of these eight widths. The other four land the cut on a pixel boundary and seam
+  // either way. Which four that is belongs to the geometry, so all eight stay, and the
+  // sampled-pixel counts are asserted, since a box that rounds down to nothing would pass every
+  // assertion made about it.
   it("draws no seam where the figure crosses the cut", () => {
     const svg = appIconSvg(DEFAULT_ACCENT);
     const red = (hex: string) => parseInt(hex.slice(1, 3), 16);
@@ -144,9 +144,9 @@ describe("app icon", () => {
     // Both eyes, and nothing else, are painted in the passed color.
     expect(svg.match(/#ff0000/g)).toHaveLength(2);
     // The shell and figure are absent from the accent's influence entirely. Read from the
-    // drawing rather than transcribed: these two literals sat here as "#14161C" and "#EDE7DA",
-    // so recoloring the figure failed HERE, in a test about the accent, naming a color it was
-    // never about (rule 119).
+    // constants (`DISSOLVE_INK`, `DISSOLVE_BONE`) rather than transcribed as literal hex codes,
+    // so recoloring the figure fails here, in a test about the accent, rather than in a test
+    // that was never about that color.
     expect(svg).toContain(DISSOLVE_INK);
     expect(svg).toContain(DISSOLVE_BONE);
     expect(DISSOLVE_BONE).not.toBe(DISSOLVE_INK);
@@ -161,9 +161,8 @@ describe("app icon", () => {
   });
 
   it("every committed asset was generated from the CURRENT drawing", () => {
-    // The check the old size assertion only claimed to make. If the mark is edited and
-    // `npm run icons` is not re-run, the re-derived source no longer hashes to what the
-    // manifest recorded, and each stale asset fails here by name.
+    // If the mark is edited and `npm run icons` is not re-run, the re-derived source no longer
+    // hashes to what the manifest recorded, and each stale asset fails here by name.
     expect(manifest.assets.length).toBeGreaterThan(0);
     for (const asset of manifest.assets) {
       const source = appIconSvg(DEFAULT_ACCENT, { radius: asset.radius });
@@ -184,9 +183,9 @@ describe("app icon", () => {
   });
 
   it("the manifest covers every icon the app actually references", () => {
-    // Rule 103: the generator's asset list is a hardcoded set, so something has to fail when
-    // an icon is added to index.html or the web manifest and not to the generator. Referencing
-    // a file nobody generates is how a 404 favicon ships.
+    // The generator's asset list is a hardcoded set, so something has to fail when an icon is
+    // added to index.html or the web manifest and not to the generator. Referencing a file
+    // nobody generates is how a 404 favicon ships.
     const html = readFileSync(join(frontendDir, "index.html"), "utf8");
     const webmanifest = readFileSync(join(publicDir, "site.webmanifest"), "utf8");
 

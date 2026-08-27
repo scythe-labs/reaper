@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The pure logic in ``scripts/abandonment_signal_measure.py``: the abandoned/control
-split, the dormancy-age band boundaries, and the pooled-lift math the stop gate reads
-(rule 119: agreement tests call the real function, never a transcribed copy)."""
+split, the dormancy-age band boundaries, and the pooled-lift math the stop gate reads.
+These tests call the real function directly, never a transcribed copy."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-# scripts/ is not on mypy's checked path (test_delete_threshold_ratio_measure.py's own
-# precedent: scripts/ is not part of the `mypy src/reaper tests/` gate).
+# scripts/ is not on mypy's checked path. test_delete_threshold_ratio_measure.py sets the
+# same precedent, since `mypy src/reaper tests/` does not include scripts/ either.
 import abandonment_signal_measure as measure  # type: ignore[import-not-found]
 
 
@@ -27,8 +27,8 @@ def test_classify_title_splits_abandoned_from_completed_only() -> None:
 
 
 def test_classify_title_excludes_a_mixed_history() -> None:
-    # Both an abandoned and a completed play before the cutoff: neither an honest
-    # abandoned-only title nor an honest completed-only control.
+    # Both an abandoned and a completed play happened before the cutoff. That title counts
+    # as neither an honest abandoned-only title nor an honest completed-only control.
     assert (
         measure.classify_title(has_abandoned=True, has_qualified=True, has_play_before=True) is None
     )

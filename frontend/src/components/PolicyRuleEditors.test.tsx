@@ -34,7 +34,7 @@ vi.mock("../api", async (importOriginal) => ({
 }));
 
 /** A field's label, read the way the component does now: off the real catalog by key, not
- *  the wire (#868 phase 4). The vocabulary fixtures below carry no English. */
+ *  the wire. The vocabulary fixtures below carry no English. */
 const label = (key: string): string => i18next.t(`why.field.${key}`);
 
 const GENRE: VocabField = {
@@ -57,8 +57,8 @@ async function openTheSuggester() {
     <RemoveRulesEditor condemn={[]} onCondemn={() => {}} mediaType="movie" />,
   );
 
-  // Rule 137: the picker is a <select>, whose accessible name does not change while the
-  // vocabulary loads, so it cannot gate itself -- wait for it to be enabled, not for the page.
+  // The picker is a <select>, whose accessible name does not change while the vocabulary
+  // loads, so it cannot gate itself. Wait for it to be enabled, not for the page.
   const picker = screen.getByRole("combobox", { name: "Field" });
   await waitFor(() => expect(picker).toBeEnabled());
   await waitFor(() =>
@@ -74,9 +74,9 @@ async function openTheSuggester() {
   return { user, box, container };
 }
 
-/** Held across the file and cleared per test. `vi.spyOn` hands back the EXISTING spy when the
+/** Held across the file and cleared per test. `vi.spyOn` hands back the existing spy when the
  *  property is already one, so a spy created fresh inside each test carries the previous
- *  tests' calls with it -- which reads as the component scrolling when it did not, in exactly
+ *  tests' calls with it. That reads as the component scrolling when it did not, in exactly
  *  the case below that asserts it did not. There is no `restoreMocks` in vitest.config.ts. */
 let scrollIntoView: MockInstance<Element["scrollIntoView"]>;
 
@@ -89,7 +89,7 @@ beforeEach(() => {
 
 /** A list definition as the picker reads it (`/api/lists/configured`). `authorable_media` is
  *  the server's authoritative scope: the policies a keep rule on this list may protect. Empty
- *  means offer on neither -- the type is not known (an unsynced tag), #549. */
+ *  means offer on neither, because the type is not known yet (an unsynced list). */
 function listCfg(
   id: number,
   name: string,
@@ -101,18 +101,17 @@ function listCfg(
 
 describe("arrowing through the value suggester", () => {
   it("scrolls the option it just marked into view", async () => {
-    // The defect (#333): the popup is a 14rem scroll container holding roughly seven options,
-    // and arrowing marked an option without moving the list, so past the seventh the operator
-    // was choosing a value they could not see. `aria-activedescendant` moved and nothing else
-    // did.
+    // The popup is a 14rem scroll container holding roughly seven options. Arrowing past the
+    // seventh must move the list, or the operator ends up choosing a value they cannot see
+    // while `aria-activedescendant` moves and nothing else does.
     const { user } = await openTheSuggester();
 
     await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}");
 
     expect(optionNamed("value-02")).toHaveAttribute("aria-selected", "true");
     expect(scrollIntoView).toHaveBeenCalled();
-    // "nearest" is the option that leaves an already-visible row where it is; "start" would
-    // jerk the pane on every single press. Instant, so no `behavior` key at all.
+    // "nearest" is the option that leaves an already-visible row where it is. "start" would
+    // jerk the pane on every single press. This is instant, so no `behavior` key at all.
     expect(scrollIntoView.mock.calls.at(-1)?.[0]).toEqual({ block: "nearest" });
     expect(scrollIntoView.mock.instances.at(-1)).toBe(optionNamed("value-02"));
   });
@@ -142,9 +141,9 @@ describe("arrowing through the value suggester", () => {
 
   it("does not scroll when the pointer is what moved the mark", async () => {
     // `onMouseEnter` sets the same `highlight` the arrow keys do, so scrolling on every change
-    // would drag the list out from under the pointer that is aiming at it -- the row under the
-    // cursor moves away mid-hover, and the operator clicks whatever slid into its place. Only
-    // a keyboard step scrolls, which is the guard `ReviewQueue.tsx` reached for first.
+    // would drag the list out from under the pointer that is aiming at it. The row under the
+    // cursor would move away mid-hover, and the operator would click whatever slid into its
+    // place. Only a keyboard step scrolls, matching the guard `ReviewQueue.tsx` uses.
     const { user } = await openTheSuggester();
     scrollIntoView.mockClear();
 
@@ -317,7 +316,7 @@ describe("a lean keep rule on a list", () => {
 
 /** Choose the membership field, once the vocabulary that offers it has landed. user-event
  *  reports a select with no matching option as a no-op, so acting a turn early does nothing
- *  and fails later on a state the no-op never produced (rule 137). */
+ *  and fails later on a state the no-op never produced. */
 async function pickTheListField(user: ReturnType<typeof userEvent.setup>) {
   await waitFor(() =>
     expect(screen.getByRole("option", { name: label("on_list") })).toBeInTheDocument(),
@@ -326,9 +325,9 @@ async function pickTheListField(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("one list, one keep rule", () => {
-  // Both strengths were offered whatever rules already existed, so a list could be kept
-  // outright AND leaned on. The outright rule decides the item alone, so the lean could never
-  // change an outcome, and the operator was tuning points that could not matter (#510).
+  // A list must not be offered at both strengths at once: an outright rule decides the item
+  // alone, so a lean on the same list could never change the outcome, leaving the operator
+  // tuning points that cannot matter.
   beforeEach(() => {
     apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [ON_LIST, VOTES] });
     apiMock.listConfigs.mockResolvedValue([
@@ -358,8 +357,9 @@ describe("one list, one keep rule", () => {
   });
 
   it("does not offer a list a lean already names either, so the lean cannot double", async () => {
-    // Two leans on one list both evaluate and `score()` subtracts the sum, so 15 points twice
-    // is 30 off -- and `uniqueName` suffixed the second so the body validated.
+    // Two leans on one list would both evaluate, and `score()` subtracts their sum, so 15
+    // points twice would be 30 off, even though `uniqueName` suffixes the second one so the
+    // body still validates.
     const { user } = renderKeepEditor({
       keeps: [
         {
@@ -382,8 +382,9 @@ describe("one list, one keep rule", () => {
   });
 
   it("matches the stored rule against the list name the way the scan does", async () => {
-    // Case-folded on both sides (rule 88): a rule stored as the operator typed it then still
-    // names the list the scan will match, so offering it again would compose the pair.
+    // Matched case-insensitively on both sides: a rule stored exactly as the operator typed it
+    // still names the list the scan will match, so offering it again would let the operator add
+    // a second, duplicate rule.
     const { user } = renderKeepEditor({
       conditions: [{ field: "on_list", op: "eq", value: "never reap" }],
     });
@@ -395,8 +396,8 @@ describe("one list, one keep rule", () => {
   });
 
   it("says why the picker is empty when every list already has a rule", async () => {
-    // Distinct from "you have no lists yet", which sends the operator to add one they do not
-    // need, and from a failed read, which is not their doing at all (rules 17/36).
+    // Distinct from "you have no lists yet", which would send the operator to add a list they
+    // do not need, and from a failed read, which is not their doing at all.
     const { user } = renderKeepEditor({
       conditions: [
         { field: "on_list", op: "eq", value: "Never Reap" },
@@ -462,10 +463,9 @@ const DORMANCY: VocabField = {
  *  operator typed, with its unit. A stored value rendering as anything else means one of the
  *  two directions is wrong, and only one of them writes the policy.
  *
- *  The rating reads `7.5/10`, no space. It said `7.5 /10` until #726, and this expectation is
- *  where that was seen: the string had to be written with the space for the test to pass. Every
- *  other unit in the vocabulary is a word and keeps its space; `/10` is the one that is
- *  punctuation, and the three rows here are what hold both halves of that rule at once. */
+ *  The rating reads `7.5/10`, with no space. Every other unit in the vocabulary is a word and
+ *  keeps its space; `/10` is the one that is punctuation, and the three rows here hold both
+ *  halves of that rule at once. */
 const CONVERSIONS = [
   { field: SIZE, typed: "50", stored: 50_000_000_000, reads: "50 GB" },
   { field: RATING, typed: "7.5", stored: 75, reads: "7.5/10" },
@@ -482,8 +482,8 @@ describe("a rule on a field whose stored units are not its typed ones", () => {
     async ({ field, typed, stored }) => {
       const { onConditions, user } = renderKeepEditor();
 
-      // Rule 137: the picker's name holds still while the vocabulary loads, so it cannot gate
-      // itself and `selectOptions` against the empty list is a silent no-op.
+      // The picker's name holds still while the vocabulary loads, so it cannot gate itself, and
+      // `selectOptions` against the empty list is a silent no-op.
       const picker = screen.getByRole("combobox", { name: "Field" });
       await waitFor(() =>
         expect(screen.getByRole("option", { name: label(field.key) })).toBeInTheDocument(),
@@ -496,7 +496,7 @@ describe("a rule on a field whose stored units are not its typed ones", () => {
       await user.type(box, typed);
 
       // Add gates itself on the value, so it is actable only once the typing has landed in
-      // state. Rule 137 again, at the control that emits the rule.
+      // state, the same wait as the control above.
       const add = screen.getByRole("button", { name: "Add rule" });
       await waitFor(() => expect(add).toBeEnabled());
       await user.click(add);
@@ -518,9 +518,9 @@ describe("a rule on a field whose stored units are not its typed ones", () => {
 });
 
 describe("the list picker filtered to what the server says it may protect", () => {
-  // #549: `authorable_media` is the server's authoritative scope. A Movies policy offers a list
-  // whose scope includes "movie" -- a movie or both-type list, or a synced-but-empty one the
-  // operator may fill -- and hides a shows-only list and an unsynced one whose type is unknown.
+  // `authorable_media` is the server's authoritative scope. A Movies policy offers a list whose
+  // scope includes "movie": a movie or both-type list, or a synced-but-empty one the operator
+  // may fill. It hides a shows-only list and an unsynced one whose type is unknown.
   beforeEach(() => {
     apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [ON_LIST, VOTES] });
     apiMock.listConfigs.mockResolvedValue([

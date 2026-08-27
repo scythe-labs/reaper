@@ -6,8 +6,7 @@
 // the app opens the modal to it, the generator turns it into a path -- so a typo is not a
 // broken link on one screen, it is a different wrong thing on each. In the app the button
 // opens an empty modal; in the manual the path 404s. Neither shows up in a type error, and
-// prose asking authors to check ids does nothing, so this is the gate instead (rule 72's
-// "write the gate" clause).
+// prose asking authors to check ids does nothing, so this is the gate instead.
 //
 // Every manual the build ships is read, not only the English one: a translator respelling
 // `(doc-id#section)` is the same dead link. Targets resolve against English, because

@@ -1,18 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The surfaces #190 found still testing a bare `isError`, one describe each. React Query keeps
-// the last good value through a failed refetch and raises the failure beside it, so a branch that
-// asks only "did the read fail" either REPLACES content the app is still holding or CONTRADICTS
-// content it is still drawing. Both shapes are here.
+// Each surface below still branched on a bare `isError`, one describe each. React Query keeps
+// the last good value through a failed refetch and raises the failure beside it, so a branch
+// that only asks "did the read fail" either replaces content the app is still holding, or
+// contradicts content it is still drawing. Both shapes are covered here.
 //
-// Every one is pinned in BOTH directions, and both matter: the never-loaded arm is the reason
-// these branches exist, and a "fix" that showed the stale line in both cases -- or that simply
-// deleted the `isError` test -- passes a one-sided test while breaking the case the branch was
-// written for (#140, #166, rule 118). So each surface gets two its: one that blinks a
-// successful read and demands the content survive, one that fails the FIRST read and demands the
-// failure sentence.
+// Each surface gets two tests, and both matter: one blinks a successful read and demands the
+// content survive, one fails the FIRST read and demands the failure sentence. The never-loaded
+// case is the reason these branches exist at all, so a change that showed the stale line in
+// both cases, or that simply deleted the never-loaded test, would pass one test while breaking
+// the case the branch was written for.
 //
-// `AppStaleRead.test.tsx`, `SettingsStaleRead.test.tsx` and the describe appended to
-// `PlexPanel.test.tsx` are the same pass over the setup gates and the settings panels.
+// `AppStaleRead.test.tsx`, `SettingsStaleRead.test.tsx`, and the describe appended to
+// `PlexPanel.test.tsx` cover the same pattern over the setup gates and the settings panels.
 import { render, screen, waitFor } from "@testing-library/react";
 import type { QueryClient } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
@@ -55,26 +54,27 @@ vi.mock("../api", async (importOriginal) => ({
   api: apiMock,
 }));
 
-// Rule 135: the reads each tree makes that no test here names -- the unmeasured allowance, the
-// queue's expand/spare preferences, and the filter menus' seen-values call, which goes through an
-// arrow and so cannot trip the missing-queryFn gate.
+// Seeds the reads each tree makes that no test here names: the unmeasured allowance, the
+// queue's expand/spare preferences, and the filter menus' seen-values call, which goes through
+// an arrow function and so cannot trip the missing-queryFn gate.
 beforeEach(() => {
   vi.clearAllMocks();
   apiMock.profile.mockResolvedValue(DEFAULT_PROFILE);
   apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
   apiMock.scanStatus.mockResolvedValue(IDLE_SCAN);
   apiMock.vocabularyValues.mockResolvedValue({ field: "", values: [] });
-  // Every card's collection picker reads this unconditionally now (#816 phase 4/5).
+  // Every card's collection picker reads this unconditionally.
   apiMock.latestSnapshot.mockResolvedValue(DEFAULT_SNAPSHOT);
 });
 
 /** The shared sentence with any noun in it. `what` is the one thing a caller varies, so each
- *  surface below also asserts its own noun: the loose form cannot tell a supplied noun from the
- *  component's default, and deleting `what` would leave a loose assertion green (rule 141). */
+ *  surface below also asserts its own noun. The loose form alone cannot tell a supplied noun
+ *  from the component's default, and deleting `what` from the tree would leave a loose
+ *  assertion still passing. */
 const STALE_ANY = /Couldn't check .* just now/;
 
-// Rule 144: the sentence is written once, in StaleReadNotice.tsx. Naming the siblings in the
-// failure message costs one line, where a comment asking a future author to remember does nothing.
+// The sentence is written once, in StaleReadNotice.tsx. Naming the siblings in the failure
+// message costs one line, where a comment asking a future author to remember does nothing.
 const WHAT_HINT =
   "The stale line is StaleReadNotice.tsx, which owns the wording; `what` is the noun each " +
   "caller supplies. Callers added by #190: NotInScanPanel (the last scan), Fairness (Scales), " +
@@ -91,7 +91,7 @@ function renderWithClient(ui: ReactElement): QueryClient {
 
 /** Rejects the next call of `fn`, invalidates `key`, and waits for the refetch to have landed.
  *  Waiting on the call count rather than on the DOM keeps the assertions that follow from
- *  passing before the failure has arrived (rule 137). */
+ *  passing before the failure has actually arrived. */
 async function blink(
   client: QueryClient,
   fn: { mock: { calls: unknown[] } } & ReturnType<typeof vi.fn>,
@@ -105,11 +105,10 @@ async function blink(
 
 /** Whether `first` comes before `second` in reading order.
  *
- *  The shared sentence ends "so what's BELOW may be out of date", which is a claim about
- *  placement and not only about wording: a caller that emits it after its content points the
- *  operator at whatever follows instead. `JobsPanel.tsx` moved the jobs line above its rows for
- *  this reason and states that every other call site does the same, so that sentence is only
- *  true while something checks it. */
+ *  The shared sentence ends "so what's BELOW may be out of date," which is a claim about
+ *  placement, not only about wording: a caller that renders it after its content would point
+ *  the operator at whatever follows instead. `JobsPanel.tsx` keeps its jobs line above its rows
+ *  for this reason, and this check is what keeps that claim true. */
 const PLACEMENT_HINT =
   "The stale line must render ABOVE the content it describes -- it says what's below may be " +
   "out of date. See the note on the jobs line in JobsPanel.tsx.";
@@ -211,8 +210,8 @@ describe("the Scales board through a failed refetch", () => {
   });
 
   it("says neither in the exception's own words", async () => {
-    // Rule 21: the sentence used to end in `error.message`, an upstream exception string read by
-    // an operator deciding what to delete.
+    // The sentence never ends in `error.message`. An upstream exception string is not something
+    // an operator deciding what to delete should have to read.
     apiMock.fairness.mockRejectedValue(new Error("ECONNREFUSED 10.0.0.9:5055"));
     renderWithClient(<Fairness />);
 
@@ -289,7 +288,7 @@ describe("the service editor's mapping grid through a failed refetch", () => {
 
     const stale = await screen.findByText(STALE_ANY);
     expect(stale, WHAT_HINT).toHaveTextContent(/Couldn't check this instance's folders just now/);
-    // The row, and the select that maps it, are what the warning used to take away.
+    // The row, and the select that maps it, are what the warning must not take away.
     expect(screen.getByText("/media/tv")).toBeInTheDocument();
     expect(
       screen.getByRole("combobox", { name: "Plex library for /media/tv" }),
@@ -305,7 +304,7 @@ describe("the service editor's mapping grid through a failed refetch", () => {
 
     const stale = await screen.findByText(STALE_ANY);
     expect(stale, WHAT_HINT).toHaveTextContent(/Couldn't check your Plex libraries just now/);
-    // "couldn't read your Plex libraries" sat here beside a picker still full of them.
+    // "couldn't read your Plex libraries" would otherwise sit beside a picker still full of them.
     const option = screen.getByRole("option", { name: "TV" });
     expect(option).toBeInTheDocument();
     expect(screen.queryByText(/couldn't read your Plex libraries/i)).toBeNull();
@@ -325,10 +324,10 @@ describe("the service editor's mapping grid through a failed refetch", () => {
     expect(screen.queryByText(STALE_ANY)).toBeNull();
   });
 
-  // The third state, and the one the first division missed: a list that landed EMPTY is not the
-  // never-landed arm, because `[]` is truthy and `!rootFolders.data` is false. It fell through to
-  // "This instance reports no root folders to map." -- a positive claim about the instance, made
-  // from a read that had just failed, with no warning of any kind on screen.
+  // The third state: a list that landed empty is not the never-landed case, because `[]` is
+  // truthy and `!rootFolders.data` is false. Without this guard it would fall through to "This
+  // instance reports no root folders to map," a positive claim about the instance made from a
+  // read that had just failed, with no warning of any kind on screen.
   it("keeps the empty answer and says the folder read may be out of date", async () => {
     apiMock.instanceRootFolders.mockResolvedValue([]);
     apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
@@ -345,16 +344,16 @@ describe("the service editor's mapping grid through a failed refetch", () => {
     const stale = await screen.findByText(STALE_ANY);
     expect(stale, WHAT_HINT).toHaveTextContent(/Couldn't check this instance's folders just now/);
     expect(screen.getByText("This instance reports no root folders to map.")).toBeInTheDocument();
-    // Still not the never-landed sentence: this list DID land, and said there were none.
+    // Still not the never-landed sentence. This list did land, and said there were none.
     expect(screen.queryByText(/Reaper couldn't read this instance's folders/)).toBeNull();
   });
 });
 
 // --- the service editor's requested-by grid -------------------------------------------------
 //
-// The seerr half of the same modal. Its two divisions were shipped with no case at all: reverting
-// both to a bare `.error` left the whole suite green, while `WHAT_HINT` above already named them
-// as covered here (rule 132).
+// The seerr half of the same modal. Reverting both branches to a bare `.error` still leaves the
+// whole suite green here without this coverage, even though `WHAT_HINT` above already names
+// them as covered.
 
 const SERVICES: SeerrService[] = [
   { service_id: 0, kind: "sonarr", name: "Shows", is_4k: false, suggested_instance_id: null },
@@ -396,8 +395,8 @@ describe("the service editor's requested-by grid through a failed refetch", () =
     expect(screen.queryByText(STALE_ANY)).toBeNull();
   });
 
-  // `arrInstances` carries the only nontrivial predicate in the sweep -- `.some(...)` over the
-  // service list decides staleness, `.every(...)` decides unreadable -- and had no case at all.
+  // `arrInstances` carries the only nontrivial predicate in the sweep: `.some(...)` over the
+  // service list decides staleness, `.every(...)` decides unreadable.
   it("keeps the connection options and says that read may be out of date", async () => {
     const client = renderSeerrModal();
     expect(await screen.findByRole("option", { name: "Main" })).toBeInTheDocument();
@@ -576,7 +575,7 @@ describe("the review queue through a failed refetch", () => {
 
     expect(await screen.findByText("Couldn't load your review queue.")).toBeInTheDocument();
     expect(screen.queryByText(STALE_ANY)).toBeNull();
-    // Rule 21 again: this one printed `error.message` straight onto the page.
+    // This one would otherwise print `error.message` straight onto the page.
     expect(screen.queryByText(/ECONNREFUSED/)).toBeNull();
   });
 });
@@ -593,9 +592,9 @@ describe("the expanded season list through a failed refetch", () => {
 
     const stale = await screen.findByText(STALE_ANY);
     expect(stale, WHAT_HINT).toHaveTextContent(/Couldn't check the seasons just now/);
-    // Rule 42: the review surfaces speak in their own note grammar, not in `.notice`.
+    // The review surfaces speak in their own note style here, not in `.notice`.
     expect(stale).toHaveClass("season-list-note");
-    // The rows, each with its own Spare, are what the red line used to replace.
+    // The rows, each with its own Spare, are what the red line must not replace.
     expect(screen.getByText("Season 3")).toBeInTheDocument();
     expect(screen.queryByText(/Couldn't load the seasons/)).toBeNull();
   });
@@ -613,9 +612,9 @@ describe("the expanded season list through a failed refetch", () => {
 
 // --- the add-a-rule form ------------------------------------------------------------------
 
-/** A real condemn field, movie lane, that no built-in signal filters out of the composer. It
- *  was an invented `runtime_minutes` of type `"int"`, and `VocabField.type` typed as `string`
- *  is what let a type the server cannot serve sit in a fixture (rule 119). */
+/** A real condemn field, movie lane, that no built-in signal filters out of the composer.
+ *  `VocabField.type` is typed as `string`, so a fixture can otherwise carry a field type the
+ *  server can never actually serve without anything catching it. */
 const VOCAB: Vocabulary = {
   lane: "condemn",
   fields: [
@@ -635,8 +634,8 @@ describe("the add-a-rule form through a failed refetch", () => {
     );
     expect(await screen.findByRole("option", { name: "Age since release" })).toBeInTheDocument();
 
-    // `SetupWizard` fires a bare `invalidateQueries()`, so every key refetches: this arrives
-    // without the operator touching the policy page at all.
+    // `SetupWizard` fires a bare `invalidateQueries()`, so every key refetches. This arrives
+    // even though the operator never touched the policy page at all.
     await blink(client, apiMock.vocabulary, ["vocabulary"]);
 
     expect(screen.getByRole("option", { name: "Age since release" })).toBeInTheDocument();

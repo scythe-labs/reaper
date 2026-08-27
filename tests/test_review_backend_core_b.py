@@ -1,16 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Regressions from the backend-core-B review pass.
-
-Two clusters of behavior the review pinned:
+"""Discord notifications and the Leaving Soon announcer: two behaviors pinned here.
 
 * **Discord is DB-backed and unbreakable.** The webhook lives in the database,
-  Fernet-encrypted like an instance API key, seeded once from the environment; and the
-  notifier's guarantee -- *nothing here raises into a scan, a plan, or a run* -- must hold
-  even for a malformed URL (``httpx2.InvalidURL`` is not an ``HTTPError``) and must honor a
-  429 rather than dropping the warning.
+  Fernet-encrypted like an instance API key, and seeded once from the environment. The
+  notifier must never raise into a scan, a plan, or a run, even for a malformed URL
+  (``httpx2.InvalidURL`` is not an ``HTTPError``), and it must honor a 429 instead of
+  dropping the warning.
 * **The Leaving Soon heads-up is idempotent.** In the default read-only install the Plex
-  label is never written, so the label diff cannot be the "what is new" signal -- a
-  persisted announced-set is, or every repeated sync re-spams the same titles.
+  label is never written, so the label diff cannot be the "what is new" signal. A persisted
+  announced-set is that signal instead, or every repeated sync would re-spam the same
+  titles.
 """
 
 from __future__ import annotations
@@ -78,8 +77,8 @@ class TestDiscordWebhookStorage:
     async def test_env_webhook_is_seeded_into_the_db_once(
         self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        """REAPER_DISCORD_WEBHOOK is a first-boot seed: read once, it lands in the DB so the
-        database is the source of truth thereafter."""
+        """REAPER_DISCORD_WEBHOOK is a first-boot seed. Read once, it lands in the DB, so
+        the database is the source of truth after that."""
         box = _box()
         seeded = _settings(discord_webhook=WEBHOOK)
         async with async_factory() as session:
@@ -104,8 +103,8 @@ class TestDiscordWebhookStorage:
     async def test_an_undecryptable_stored_webhook_reads_as_absent(
         self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        """A stored webhook that will not decrypt (the secret key changed) must never raise
-        into a scan -- it is treated as absent and can be re-entered."""
+        """A stored webhook that will not decrypt, because the secret key changed, must
+        never raise into a scan. It is treated as absent and can be re-entered."""
         async with async_factory() as session:
             await app_settings.set_discord_webhook(session, _box(), WEBHOOK)
             await session.commit()
@@ -116,7 +115,7 @@ class TestDiscordWebhookStorage:
     async def test_an_undecryptable_stored_webhook_reads_as_not_configured(
         self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        """The has-check must agree with the send path: a stored webhook that no longer
+        """The has-check must agree with the send path. A stored webhook that no longer
         decrypts is skipped by every send, so the UI must not report it as configured."""
         async with async_factory() as session:
             await app_settings.set_discord_webhook(session, _box(), WEBHOOK)
@@ -145,7 +144,7 @@ class TestBuildNotifier:
 
 
 # ---------------------------------------------------------------------------
-# The notifier cannot break a run: not on a malformed URL, not on a 429
+# The notifier must survive both a malformed URL and a 429 without breaking a run
 # ---------------------------------------------------------------------------
 
 
@@ -153,7 +152,7 @@ class TestNotifierNeverRaises:
     async def test_a_malformed_url_returns_false_and_does_not_raise(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """An embedded newline makes httpx2 raise InvalidURL, which is NOT an HTTPError. It
+        """An embedded newline makes httpx2 raise InvalidURL, which is not an HTTPError. It
         must still be swallowed, and the URL must not be logged."""
         notifier = DiscordNotifier("https://discord.com/api/webhooks/1/tok\nen-is-secret")
         assert await notifier.post(Embed(title="hi", description="x")) is False
@@ -163,9 +162,9 @@ class TestNotifierNeverRaises:
     async def test_a_429_with_retry_after_is_retried_and_can_succeed(
         self, httpx2_mock: respx.Router
     ) -> None:
-        # discord.py is on httpx2; its mock is the httpx2_mock Router (respx cannot see an
-        # httpx2 client). The mocked responses stay httpx.Response -- respx's own currency,
-        # which the plugin hands to the httpx2 client.
+        # discord.py runs on httpx2, and its mock is the httpx2_mock Router. respx cannot
+        # see an httpx2 client directly. The mocked responses stay httpx.Response, respx's
+        # own type, which the plugin hands to the httpx2 client.
         route = httpx2_mock.post(WEBHOOK).mock(
             side_effect=[
                 httpx.Response(429, headers={"Retry-After": "0"}),
@@ -187,7 +186,7 @@ class TestNotifierNeverRaises:
 
 
 # ---------------------------------------------------------------------------
-# Leaving Soon: the announce is idempotent even when the label is never written
+# The Leaving Soon announce is idempotent even when the label is never written
 # ---------------------------------------------------------------------------
 
 NOW = utcnow()
@@ -228,9 +227,10 @@ class _CountingNotifier:
 
 
 class TestIdempotentAnnounce:
-    """The announce is driven by the grace set and the persisted announced-set alone --
-    never by the Plex mark diff, which in the default read-only install never shrinks
-    (nothing is written), so it would re-spam the same titles on every pass."""
+    """The announce is driven by the grace set and the persisted announced-set alone, never
+    by the Plex mark diff. In the default read-only install nothing is written, so that
+    diff never shrinks, and using it would re-spam the same titles on every pass.
+    """
 
     async def test_repeated_passes_announce_each_title_once(self) -> None:
         report = _report([_item(1, title="A"), _item(2, title="B")])
@@ -244,7 +244,7 @@ class TestIdempotentAnnounce:
         assert sorted(notifier.calls[0]) == ["A", "B"]
 
         # Second pass, same grace set, nothing written to Plex in between. The previously
-        # announced set is fed back in -- there must be no second announce.
+        # announced set is fed back in, and there must be no second announce.
         notified, announced = await announce_new(
             notifier,  # type: ignore[arg-type]
             report,
@@ -264,7 +264,8 @@ class TestIdempotentAnnounce:
         )
         assert set(a1) == {1}
 
-        # It leaves grace (watched/spared): the announced set is pruned so it does not linger.
+        # It leaves grace, watched or spared, and the announced set is pruned so it does
+        # not linger.
         _n2, a2 = await announce_new(
             notifier,  # type: ignore[arg-type]
             _report([]),
@@ -278,7 +279,7 @@ class TestIdempotentAnnounce:
             _report([_item(1, title="A")]),
             already_announced=set(a2),
         )
-        assert list(notifier.calls) == [["A"], ["A"]]  # two announces, once each spell
+        assert list(notifier.calls) == [["A"], ["A"]]  # two announces, one per time in grace
         assert set(a3) == {1}
 
     async def test_a_failed_announce_is_not_recorded_so_it_retries(self) -> None:
@@ -292,5 +293,6 @@ class TestIdempotentAnnounce:
             already_announced=set(),
         )
         assert notified is False
-        # Not marked announced: a later pass will try again rather than swallow the warning.
+        # Not marked announced, so a later pass tries again instead of swallowing the
+        # warning.
         assert set(announced) == set()

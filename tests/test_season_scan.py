@@ -2,12 +2,12 @@
 """The TV/season scan path.
 
 Season pruning deletes whole seasons, so this half of the scan is held to the same
-standard as the movie half and one extra: because a season must be resolved to its own
-Plex rating key before its watch history can be read, every test here is really asking
+standard as the movie half, plus one more. A season must be resolved to its own Plex
+rating key before its watch history can be read, so every test here is really asking
 whether an *uncertain* resolution can lead to a deletion. The answer, everywhere, must be
-no -- a season we cannot see is judged, at worst, ABSTAIN, never CONDEMN.
+no. A season Reaper cannot see is judged, at worst, ABSTAIN, never condemn.
 
-The load-bearing test is ``TestNothingUnseenIsCondemned``: it runs an unresolved season
+The load-bearing test is ``TestNothingUnseenIsCondemned``. It runs an unresolved season
 through the real default policy and asserts the verdict cannot be "condemn".
 """
 
@@ -55,10 +55,9 @@ GB = 1024**3
 def _season_policy(**edits: Any) -> season_evidence.SeasonPolicy:
     """The shipped TV policy's nine season settings, with whichever ones a test varies.
 
-    Built through the real ``from_body`` off ``DEFAULT_TV_POLICY`` rather than spelled out,
-    so the settings a test does not vary are the shipped values and not a second copy of
-    them (rule 119). ``season_scan.gather`` held that copy as seven keyword defaults until
-    it took the carrier.
+    This is built through the real ``from_body`` off ``DEFAULT_TV_POLICY`` rather than
+    spelled out, so the settings a test does not vary are the shipped values, not a second
+    copy of them.
     """
     return replace(season_evidence.SeasonPolicy.from_body(DEFAULT_TV_POLICY), **edits)
 
@@ -113,14 +112,17 @@ class TestKeys:
 
 
 class TestSeasonRequester:
-    """B-10: the season-precise tvdb key outranks the show-level Plex rating key, so two people
-    who asked for different seasons attribute to their own season, not a blurred "A + 1 other"."""
+    """The season-precise tvdb key outranks the show-level Plex rating key, so two people
+    who asked for different seasons attribute to their own season, not a blurred "A + 1
+    other".
+    """
 
     def test_different_seasons_attribute_to_their_own_requester(self) -> None:
         tvdb = 81189
         show_rk = 500
-        # build_map files: each requested season under its season key, and BOTH requesters under
-        # the show-level rating key (Seerr stores a TV request's ratingKey at the show level).
+        # build_map files each requested season under its season key, and files both
+        # requesters under the show-level rating key too, since Seerr stores a TV
+        # request's ratingKey at the show level.
         requested = {
             requested_by.season_key(tvdb, 1) or "": "Alice",
             requested_by.season_key(tvdb, 2) or "": "Bob",
@@ -146,8 +148,8 @@ class TestSeasonRequester:
         assert s2 == "Bob"
 
     def test_the_show_rating_key_still_beats_the_whole_show_union(self) -> None:
-        # A whole-show request has no season key, so the rating-key tier (copy precision) still
-        # wins over the loose tvdb union.
+        # A whole-show request has no season key, so the rating-key tier, being more
+        # specific, still wins over the loose tvdb union.
         tvdb = 81189
         requested = {
             requested_by.rating_key_key(500) or "": "Alice",
@@ -179,14 +181,15 @@ class TestSeasonRequester:
 class TestParseSeasons:
     def test_an_entry_without_statistics_is_dropped_not_guessed(self) -> None:
         """A season Sonarr cannot describe is left out entirely rather than defaulted to
-        zeros -- zeros would read as an empty season and quietly drop it from protection."""
+        zeros. Zeros would read as an empty season and quietly drop it from protection.
+        """
         series = {"seasons": [_season_payload(1), {"seasonNumber": 2}]}
         seasons = season_scan.parse_seasons(series)
         assert [s.season_number for s in seasons] == [1]
 
 
 # ---------------------------------------------------------------------------
-# Airing detection -- conservative on purpose
+# Airing detection, conservative on purpose
 # ---------------------------------------------------------------------------
 
 
@@ -208,15 +211,15 @@ class TestAiring:
 
 
 # ---------------------------------------------------------------------------
-# The show join -- the one place a wrong answer could delete the wrong thing
+# The show join, the one place a wrong answer could delete the wrong thing
 # ---------------------------------------------------------------------------
 
 
 class TestTheShowJoin:
-    """The Sonarr series -> Plex show join now runs through the one shared resolver
+    """The Sonarr series to Plex show join runs through the one shared resolver
     (``identity.resolve_show``). These cases carry no external id, so they exercise the
-    title+year backstop -- the exact behavior the old ``match_show`` guaranteed, preserved
-    now that there is a single implementation (see ``test_identity.py`` for the id tiers)."""
+    title+year backstop. See ``test_identity.py`` for the id tiers.
+    """
 
     def _index(self, *items: tuple[int, str, int | None]) -> identity.PlexIndex:
         return identity.PlexIndex.build(
@@ -243,15 +246,18 @@ class TestTheShowJoin:
 
     def test_a_duplicate_title_with_no_year_refuses_to_guess(self) -> None:
         """The wrong show join reads the wrong show's watch history and could condemn a
-        season people are watching. With nothing to disambiguate on, refuse -> the season
-        goes Unknown and abstains, rather than being matched to a coin-flip."""
+        season people are watching. With nothing to disambiguate on, this refuses. The
+        season goes Unknown and abstains, rather than being matched arbitrarily.
+        """
         index = self._index((1, "The Office", 2001), (2, "The Office", 2005))
         assert self._match(index, "The Office", None) is None
 
     def test_a_lone_title_match_with_a_conflicting_year_is_refused(self) -> None:
-        """The US series is scanned but the ONLY Plex show with that title is the UK one
-        (the US show is indexed under a different title). A single title hit is not a safe
-        join when the known years disagree -- binding would read the UK show's history."""
+        """The US series is scanned, but the only Plex show with that title is the UK one,
+        since the US show is indexed under a different title. A single title hit is not a
+        safe join when the known years disagree, because binding would read the UK show's
+        history.
+        """
         index = self._index((1, "The Office", 2001))
         assert self._match(index, "The Office", 2005) is None
 
@@ -259,7 +265,7 @@ class TestTheShowJoin:
         assert self._match(self._index((1, "The Office", 2005)), "The Office", 2005) == 1
 
     def test_a_lone_title_match_binds_when_a_year_is_missing(self) -> None:
-        """Plex often has no year; a title-only join stays as safe as the movie path's."""
+        """Plex often has no year. A title-only join stays as safe as the movie path's."""
         assert self._match(self._index((1, "The Office", None)), "The Office", 2005) == 1
 
 
@@ -278,9 +284,10 @@ class TestResolveSeasonKeys:
         assert result[1].added_at is not None
 
     async def test_a_duplicated_season_number_is_dropped_not_guessed(self) -> None:
-        """Two 'Season 2' items (a split/mis-scanned library) is ambiguous. Binding to one
-        risks reading an empty duplicate's history for a watched season, so the season is
-        dropped entirely -> no Plex key -> Unknown facts -> abstain."""
+        """Two "Season 2" items, from a split or mis-scanned library, are ambiguous.
+        Binding to one risks reading an empty duplicate's history for a watched season, so
+        the season is dropped entirely -> no Plex key -> Unknown facts -> abstain.
+        """
         client = self._FakeChildren(
             [
                 {"media_index": 1, "rating_key": 101},
@@ -323,28 +330,26 @@ class TestSeasonsFromRows:
 def _hand_reap(result: GateResult) -> str:
     """What a hand reap does to a season carrying this one guard result.
 
-    Through the path the queue's Reap button actually takes: the guard result is FROZEN by
-    the real writer (``snapshot._explain``) and re-read by
-    ``condemned.reap_override_verdict_decoded``, which is what every read-side consumer
-    calls (``snapshot.effective_fate`` routes a hand reap through it rather than deciding
-    live). Scored 0 against a threshold of 100, so nothing but the override can condemn.
+    This follows the path the queue's Reap button actually takes. The guard result is
+    frozen by the real writer (``snapshot._explain``) and re-read by
+    ``condemned.reap_override_verdict_decoded``, which every read-side consumer calls
+    (``snapshot.effective_fate`` routes a hand reap through it rather than deciding live).
+    It is scored 0 against a threshold of 100, so nothing but the override can condemn it.
 
-    **This answer is CONSTANT for this gate, and that is the point rather than a gap
-    (rule 118).** ``season_progression`` is in neither ``STRUCTURAL_GATES`` nor any
-    remaining hold, so every shape the guard can emit -- all 16 combinations of outcome x
-    blocked x defers_to_owner x detail -- condemns under a hand reap. Measured. So the
-    callers below do NOT lean on this line to tell their shapes apart; each asserts the
-    typed ``defers_to_owner`` and the detail, which do vary. What this line pins is the
-    guarantee itself: **no season-guard shape may ever refuse the operator's own hand
-    again**, which is exactly what the reversal bought and exactly what a future change
-    re-adding a hold would break.
+    **This answer stays constant for this gate, and that is deliberate, not a gap.**
+    ``season_progression`` is in neither ``STRUCTURAL_GATES`` nor any remaining hold, so
+    every shape the guard can emit, all 16 combinations of outcome, blocked,
+    defers_to_owner, and detail, condemns under a hand reap. The callers below do not lean
+    on this line to tell their shapes apart. Each asserts the typed ``defers_to_owner`` and
+    the detail instead, which do vary. What this line pins is the guarantee itself.
+    **No season-guard shape may ever refuse the operator's own hand.** A future change that
+    re-adds a hold would break that guarantee.
 
-    It goes through the freeze because that is the only way a hand reap is decided:
+    This goes through the freeze because that is the only way a hand reap is decided.
     ``effective_fate`` routes every one of them through ``condemned`` off the frozen
-    explanation, and ``snapshot._verdict`` takes no override at all. It used to take one and
-    no caller ever passed it, so asserting through that parameter proved nothing about
-    production; it is gone. Going through ``_explain`` also makes these assertions cover the
-    writer: a field the writer stops emitting changes the answer here.
+    explanation, and ``snapshot._verdict`` takes no override at all. Going through
+    ``_explain`` also makes these assertions cover the writer, since a field the writer
+    stops emitting changes the answer here.
     """
     policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 100})
     frozen = json.loads(
@@ -362,9 +367,10 @@ class TestGuardResult:
         assert result.outcome == PROTECT
 
     def test_a_keep_rule_conflict_blocks_rather_than_condemns(self) -> None:
-        """The old season is the good one: prunable by rank, but far more watched than a
-        season the rule keeps. That is not a delete to make unattended -- it blocks, which
-        forces the whole item to ABSTAIN and sends it to a human."""
+        """The old season is the good one. It is prunable by rank, but far more watched
+        than a season the rule keeps. That is not a delete to make unattended, so it
+        blocks, which forces the whole item to ABSTAIN and sends it to a human.
+        """
         plan = plan_series_prune(
             series_title="S",
             seasons=[_season(n) for n in range(1, 5)],
@@ -388,13 +394,14 @@ class TestGuardResult:
         assert result.blocked is False
 
     def test_a_conflict_that_made_the_comparison_defers_to_the_owner(self) -> None:
-        """Season 1 was watched 40 times against Season 4's once: the comparison WAS made
-        and the keep rule lost it. That is the deliberate "you decide" flag, and a hand reap
-        is the decision it asked for.
+        """Season 1 was watched 40 times against Season 4's once. The comparison was made,
+        and the keep rule lost it. That is the deliberate "you decide" flag, and a hand
+        reap is the decision it asked for.
 
-        The flag no longer decides the reap -- no block does -- but it still picks the chip
-        the operator reads (``api.review._chip``), which is why it is still produced and
-        still asserted here. It is the one shape whose chip names the comparison."""
+        The flag no longer decides the reap, a block does that now, but it still picks the
+        chip the operator reads (``api.review._chip``), which is why it is still produced
+        and still asserted here. It is the one shape whose chip names the comparison.
+        """
         plan = plan_series_prune(
             series_title="S",
             seasons=[_season(n) for n in range(1, 5)],
@@ -409,17 +416,14 @@ class TestGuardResult:
         assert _hand_reap(result) == "condemn"
 
     def test_a_conflict_whose_comparison_failed_is_flagged_as_refused(self) -> None:
-        """The other arm, and the one that shipped broken: Season 4 is kept by the rule but
-        is on disk without ever being resolved in Plex, so nobody could read who watched it
-        (``kept_watchers=None``). ``_detect_conflicts`` still raises the conflict rather than
-        letting an unread number clear a protection, and the season still goes to a human.
+        """Season 4 is kept by the rule but is on disk without ever being resolved in
+        Plex, so nobody could read who watched it (``kept_watchers=None``).
+        ``_detect_conflicts`` still raises the conflict instead of letting an unread
+        number clear a protection, and the season still goes to a human.
 
-        What this arm used to carry was the hold on the hand reap, and the arm meant to
-        catch it tested ``detail.startswith("could not check")`` while the message opens with
-        the watcher count -- so the Reap button released the season anyway. The hold is gone
-        by decision, not by accident, so what is pinned now is the wording trap itself: the
-        message does not carry the retired prefix, the typed flag says which shape this is,
-        and neither one moves the verdict."""
+        The typed ``defers_to_owner`` flag, not the wording of the message, is what marks
+        this shape as refused rather than deferred. Neither one moves the verdict.
+        """
         plan = plan_series_prune(
             series_title="S",
             seasons=[_season(n) for n in range(1, 5)],
@@ -435,18 +439,17 @@ class TestGuardResult:
         assert _hand_reap(result) == "condemn"
 
     def test_a_readable_conflict_does_not_mask_a_refused_one_on_the_same_season(self) -> None:
-        """One pruned season carries a conflict per kept season, so both shapes at once --
-        and reading only the first let a readable comparison mask a refused one, releasing
-        the hand reap that #84 exists to hold. Shipped defaults, and the benign cause
-        ``_detect_conflicts`` calls the commonest: Season 5 is on disk but not yet resolved
-        in Plex, so it is kept AND unreadable while Seasons 1 and 4 read fine.
+        """One pruned season carries a conflict per kept season, so more than one shape
+        can be true at once. Reading only the first conflict would let a readable
+        comparison mask a refused one. Season 5 is on disk but not yet resolved in Plex,
+        so it is kept and unreadable, while Seasons 1 and 4 read fine.
 
-        The flag answers for EVERY comparison behind the block, so one refusal decides it,
-        and the message follows the flag: the operator is shown the season nobody could read
-        rather than the one that happened to sort first. What the flag decides is now the
-        chip rather than the reap, and the precedence matters more for that, not less -- a
-        first-match read would tell them Reaper made a comparison it refused to make, on the
-        card they are deciding from."""
+        The flag answers for every comparison behind the block, so one refusal decides it,
+        and the message follows the flag. The operator is shown the season nobody could
+        read, not the one that happened to sort first. A first-match read would tell them
+        Reaper made a comparison it actually refused to make, on the card they are
+        deciding from.
+        """
         plan = plan_series_prune(
             series_title="S",
             seasons=[_season(n) for n in range(1, 6)],
@@ -454,7 +457,7 @@ class TestGuardResult:
             keep_first_season=True,
             watchers_by_season={1: 0, 2: 9, 3: 1, 4: 2, 5: None},
         )
-        # The premise, asserted rather than assumed: a readable conflict really does come
+        # The premise, asserted rather than assumed. A readable conflict really does come
         # first for this season, so a first-match read would report "compared" and release.
         season_2 = [c for c in plan.conflicts if c.pruned_season == 2]
         assert [c.kept_watchers for c in season_2] == [0, 2, None]
@@ -467,16 +470,18 @@ class TestGuardResult:
         assert "could not check who watched Season 5" in reason_text(result.detail)
 
     def test_a_conflict_the_mirror_could_not_settle_is_flagged_as_refused(self) -> None:
-        """The third shape. Season 1 was watched before Tautulli was installed, so its count
-        is a lower bound and no comparison against it can be made. That is ``Unknown``, not
-        a decision (rule 93), so it joins the unreadable arm rather than the deliberate "you
-        decide" one -- the reading the mid-binge hold takes when the reach cannot establish
-        who is part-way through. Reading only ``kept_watchers is None`` would have grouped
-        it with the settled shape and claimed, on the card, that a comparison had been made.
+        """The third shape. Season 1 was watched before Tautulli was installed, so its
+        count is a lower bound and no comparison against it can be made. That is
+        ``Unknown``, not a decision, so it joins the unreadable arm rather than the
+        deliberate "you decide" one, the reading the mid-binge hold takes when the reach
+        cannot establish who is part-way through. Reading only ``kept_watchers is None``
+        would have grouped it with the settled shape and claimed, on the card, that a
+        comparison had been made.
 
-        The flag no longer changes the verdict -- the item still goes to a human, who may
-        still say remove it -- only what they are told, which is why the two Unknown shapes
-        are kept apart from the settled one."""
+        The flag no longer changes the verdict. The item still goes to a human, who may
+        still say remove it. It only changes what they are told, which is why the two
+        Unknown shapes are kept apart from the settled one.
+        """
         plan = plan_series_prune(
             series_title="S",
             seasons=[_season(n) for n in range(1, 5)],
@@ -493,10 +498,12 @@ class TestGuardResult:
         assert _hand_reap(result) == "condemn"
 
     def test_a_settleable_conflict_is_not_masked_by_one_the_mirror_refused(self) -> None:
-        """Same precedence the unreadable arm gets, for the same reason: one pruned season
-        carries a conflict per kept season, so a comparison Reaper DID make can sort ahead of
-        one it could not. The refusal decides the flag and the message, or a first-match read
-        would report "compared" and release the reap on a season nothing established."""
+        """This gets the same precedence as the unreadable arm, for the same reason. One
+        pruned season carries a conflict per kept season, so a comparison Reaper did make
+        can sort ahead of one it could not. The refusal decides the flag and the message,
+        or a first-match read would report "compared" and release the reap on a season
+        nothing established.
+        """
         plan = plan_series_prune(
             series_title="S",
             seasons=[_season(n) for n in range(1, 5)],
@@ -505,7 +512,7 @@ class TestGuardResult:
             watchers_by_season={1: 9, 2: 0, 3: 1, 4: 2},
             shortfall_by_season={4: legacy("your watch history only goes back 12 months")},
         )
-        # The premise, asserted rather than assumed: the made comparison really does come
+        # The premise, asserted rather than assumed. The made comparison really does come
         # first for this season.
         assert [c.shortfall for c in plan.conflicts if c.pruned_season == 1] == [
             None,
@@ -529,8 +536,9 @@ def _facts(**over: Any) -> Any:
         "season": _season(3, size=8 * GB),
         "rank": 2,
         "plex_rating_key": 700,
-        # No ledger row: the ordinary state of a season Reaper has not bound before, and
-        # what every case here that is not about #553 wants.
+        # No ledger row. This is the ordinary state of a season Reaper has not bound
+        # before, and what most cases here want unless a test is specifically about that
+        # ledger row.
         "seen": None,
         "season_added_at": utcnow() - timedelta(days=4000),
         "horizon": utcnow() - timedelta(days=4000),
@@ -545,7 +553,8 @@ def _facts(**over: Any) -> Any:
         "whitelisted": False,
         "curated": [],
         # The show carried an IMDb id, so a missing rating means "looked up, unrated".
-        # Override to False for the other case: no id, so we never asked.
+        # Override to False for the other case, where there is no id, so nothing was ever
+        # asked.
         "rating_looked_up": True,
     }
     base.update(over)
@@ -553,27 +562,29 @@ def _facts(**over: Any) -> Any:
 
 
 class TestSeasonsRecordTheHistoryReachToo:
-    """Rule 72: the movie builder's fix lands on its twin in the same change.
+    """The movie and season builders must behave identically here, in the same change.
 
-    Both lanes count watchers out of the same ``watch_event`` mirror over the same
-    policy window, so both need to say how far back that mirror reaches or
+    Both lanes count watchers out of the same watch-history table over the same policy
+    window, so both need to say how far back that table reaches, or
     ``ServerPopularityGate`` (shared by both) blocks every season forever. See
     ``test_fact_layer_states.TestTheScanRecordsHowFarBackItsHistoryReaches``.
     """
 
     def test_the_season_builder_records_the_reach_it_was_given(self) -> None:
-        """Given, not measured: the reach is sampled once per scan on
-        ``snapshot.ScanContext`` so the two lanes cannot freeze different values, and this
-        builder's job is only to carry it onto the season's own Facts."""
+        """This value is given, not measured. The reach is sampled once per scan on
+        ``snapshot.ScanContext``, so the two lanes cannot freeze different values, and
+        this builder's job is only to carry it onto the season's own Facts.
+        """
         facts = _facts(horizon=utcnow() - timedelta(days=200), reach_days=200)
 
         assert facts.history_reach_days == Known(value=200, source="tautulli")
 
     def test_an_unresolved_season_still_records_it(self) -> None:
-        """The reach is a property of the mirror, not of the season, so it is known even
-        for a season whose own watch facts are not. Were it to ride on the rating key,
-        every unmatched season would block on the reach instead of on the honest
-        "Plex has not matched this" the watch facts already carry."""
+        """The reach is a property of the watch-history table, not of the season, so it
+        is known even for a season whose own watch facts are not. If it rode on the rating
+        key instead, every unmatched season would block on the reach rather than on the
+        honest "Plex has not matched this" that the watch facts already carry.
+        """
         facts = _facts(plex_rating_key=None, horizon=utcnow() - timedelta(days=200), reach_days=200)
 
         assert facts.history_reach_days == Known(value=200, source="tautulli")
@@ -581,20 +592,22 @@ class TestSeasonsRecordTheHistoryReachToo:
 
 class TestBuildSeasonFacts:
     def test_an_unresolved_season_has_unknown_watch_facts(self) -> None:
-        """No Plex rating key means no history to read. Dormancy, popularity and streaming
-        all go Unknown -- and Unknown, through the gates, protects."""
+        """No Plex rating key means no history to read. Dormancy, popularity, and
+        streaming all go Unknown, and Unknown, through the gates, protects.
+        """
         facts = _facts(plex_rating_key=None)
         assert isinstance(facts.days_observed_unwatched, Unknown)
         assert isinstance(facts.distinct_watchers, Unknown)
         assert isinstance(facts.is_streaming_now, Unknown)
 
     def test_an_ambiguous_show_gets_the_honest_unknown_reason(self) -> None:
-        """An AMBIGUOUS show (two Plex items share its id) is not "unmatched" -- Plex has
+        """An AMBIGUOUS show (two Plex items share its id) is not "unmatched". Plex has
         it, more than once. The Unknown reason must tell that story, or the why-panel
-        claims the show couldn't be found when the opposite is true."""
+        claims the show couldn't be found when the opposite is true.
+        """
         facts = _facts(plex_rating_key=None, show_match_status=identity.MatchStatus.AMBIGUOUS)
         assert isinstance(facts.days_observed_unwatched, Unknown)
-        # Shared with the movie lane now (rule 72): the same base id, media-selected.
+        # Shared with the movie lane. The same base id, media-selected.
         assert facts.days_observed_unwatched.reason == Reason(
             "cause.plex_ambiguous", {"mediaType": "season"}
         )
@@ -608,7 +621,8 @@ class TestBuildSeasonFacts:
     def test_a_season_unmatched_within_a_matched_show_is_warned(self) -> None:
         """The show bound to Plex but this season did not, so it abstains and shows only
         as kept-to-be-safe. A warning names it so "why is this season kept" is answerable
-        from the log: the season-level twin of the movie and show miss."""
+        from the log. This is the season-level twin of the movie and show miss.
+        """
         with capture_logs() as logs:
             _facts(plex_rating_key=None, show_match_status=identity.MatchStatus.MATCHED)
 
@@ -627,16 +641,19 @@ class TestBuildSeasonFacts:
             assert [e for e in logs if e["event"] == "scan.plex_unmatched"] == []
 
     def test_a_matched_season_is_not_warned(self) -> None:
-        """A season that binds to Plex is silent: the warning fires only on a real miss."""
+        """A season that binds to Plex stays silent. The warning fires only on a real
+        miss."""
         with capture_logs() as logs:
             _facts(plex_rating_key=700, show_match_status=identity.MatchStatus.MATCHED)
 
         assert [e for e in logs if e["event"] == "scan.plex_unmatched"] == []
 
     def test_a_matched_season_with_no_arrival_date_is_warned(self) -> None:
-        """Matched to a Plex season, but no added-at and no plays: dormancy is Unknown, so
-        it abstains and shows only as kept-to-be-safe. A warning names it, the same as the
-        movie path. A distinct event from the unmatched case: this season DID bind."""
+        """Matched to a Plex season, but with no added-at and no plays, dormancy is
+        Unknown, so it abstains and shows only as kept-to-be-safe. A warning names it, the
+        same as the movie path. This is a distinct event from the unmatched case, because
+        this season did bind.
+        """
         with capture_logs() as logs:
             facts = _facts(plex_rating_key=700, last_played=None, season_added_at=None)
 
@@ -656,15 +673,16 @@ class TestBuildSeasonFacts:
         assert facts.is_streaming_now.value is True
 
     def test_streaming_is_unknown_when_activity_could_not_be_read(self) -> None:
-        """Even a resolved season goes Unknown-streaming if we could not read sessions:
-        not being able to look is never the same as nobody watching."""
+        """Even a resolved season goes Unknown-streaming if sessions could not be read.
+        Not being able to look is never the same as nobody watching."""
         facts = _facts(plex_rating_key=700, activity_degraded=True)
         assert isinstance(facts.is_streaming_now, Unknown)
 
     def test_a_season_of_a_show_we_looked_up_and_found_unrated_is_absent(self) -> None:
-        """There is no free per-season IMDb rating; Sonarr's ratings are flat TVDB. A
-        show we could look up and did not find is Absent: unrated, so a rating keep
-        does not hold it."""
+        """There is no free per-season IMDb rating. Sonarr's ratings are flat TVDB. A
+        show that could be looked up and was not found is Absent, meaning unrated, so a
+        rating keep does not hold it.
+        """
         facts = _facts()
         assert isinstance(facts.imdb_rating_tenths, Absent)
 
@@ -682,10 +700,12 @@ class TestBuildSeasonFacts:
 
     def test_a_special_with_no_rank_is_absent_not_unknown(self) -> None:
         """rank_seasons deliberately leaves specials out of the ranking, so a special
-        reaches here with rank=None. That is Absent: we looked, and it genuinely has no
-        rank slot. Recording it as Unknown claimed Sonarr could not be read and made the
-        SEASON_RANK signal say "could not tell which season this is", dragging the special's
-        coverage down for a rank it was never meant to have."""
+        reaches here with rank=None. That is Absent, meaning the rank was looked up and
+        it genuinely has no rank slot. Recording it as Unknown would claim Sonarr could
+        not be read, and would make the SEASON_RANK signal say "could not tell which
+        season this is", dragging the special's coverage down for a rank it was never
+        meant to have.
+        """
         facts = _facts(rank=None)
         assert isinstance(facts.season_rank, Absent)
 
@@ -698,16 +718,20 @@ class TestBuildSeasonFacts:
         assert isinstance(facts.size_bytes, Known) and facts.size_bytes.value == 8 * GB
 
     def test_a_season_whose_size_sonarr_did_not_report_is_unknown(self) -> None:
-        """The mirror of the movie case. As Known(0) it reads as a real measurement:
-        maximum pressure on a size signal, and any "keep large files" rule silently
-        stops holding the season. See tests/test_fact_layer_states.py."""
+        """The counterpart of the movie case. As Known(0) it would read as a real
+        measurement, the maximum pressure a size signal can apply, and any "keep large
+        files" rule would silently stop holding the season. See
+        tests/test_fact_layer_states.py.
+        """
         facts = _facts(season=_season(3, size=None))
         assert isinstance(facts.size_bytes, Unknown)
 
     def test_dormancy_is_measured_from_the_seasons_own_arrival(self) -> None:
-        """A season backfilled into an old show arrived recently. Dormancy must count from
-        the season's OWN added date, not the show's -- using the show's would read a
-        just-added season as decades dormant and condemn a file nobody could have watched."""
+        """A season backfilled into an old show arrived recently. Dormancy must count
+        from the season's own added date, not the show's. Using the show's date would read
+        a just-added season as decades dormant and condemn a file nobody could have
+        watched.
+        """
         facts = _facts(
             season_added_at=utcnow() - timedelta(days=5),  # files landed 5 days ago
             horizon=utcnow() - timedelta(days=4000),  # mature install
@@ -717,20 +741,21 @@ class TestBuildSeasonFacts:
         assert facts.days_observed_unwatched.value < 30
 
     def test_a_resolved_season_with_no_arrival_date_is_unknown_dormancy(self) -> None:
-        """A season with neither an arrival date nor a play has its dormancy Unknown -- never a
-        Known dormancy fabricated from the horizon. Unknown then forces the dormancy gates to
-        protect. Both inputs are pinned absent deliberately: a play alone is enough to measure
-        from, which is what the next test covers."""
+        """A season with neither an arrival date nor a play has its dormancy Unknown,
+        never a Known dormancy fabricated from the horizon. Unknown then forces the
+        dormancy gates to protect. Both inputs are pinned absent deliberately, because a
+        play alone is enough to measure from, which is what the next test covers.
+        """
         facts = _facts(season_added_at=None, last_played=None)
         assert isinstance(facts.days_observed_unwatched, Unknown)
 
     def test_a_season_carries_whatever_rewatch_observations_it_is_given(self) -> None:
-        """The builder no longer hardcodes the show's rewatch pair (#554 TV): it is a
-        pass-through, exactly like ``show_ended`` -- ``_judge_series`` computes the real
-        Known/Absent/Unknown once per show and hands it in ready-made
-        (``TestShowLevelRewatchFacts`` covers that computation end to end). A caller that
-        supplies neither still gets the fail-closed ``Absent`` default, which is what a raw
-        call with nothing to report should read as."""
+        """The builder is a pass-through for the show's rewatch pair, exactly like
+        ``show_ended``. ``_judge_series`` computes the real Known/Absent/Unknown once per
+        show and hands it in ready-made (``TestShowLevelRewatchFacts`` covers that
+        computation end to end). A caller that supplies neither still gets the fail-closed
+        ``Absent`` default, which is what a raw call with nothing to report should read as.
+        """
         viewings = Known(value=3, source="tautulli")
         last_play_days = Known(value=17, source="tautulli")
         facts = _facts(
@@ -744,20 +769,20 @@ class TestBuildSeasonFacts:
         assert isinstance(defaulted.rewatch_last_play_days, Absent)
 
     def test_no_arrival_date_but_a_play_measures_from_the_play(self) -> None:
-        """The state neither lane had a test for (#257), on the lane that got it right.
+        """This pins the case where an arrival date is missing but a play exists.
 
-        Both existing no-arrival-date tests pin `last_played=None`, so the divergence they
-        were meant to cover was invisible: this lane measured from the play while the movie
-        lane discarded it and abstained. Dormancy IS days since the last play, so the play
-        alone is a real measurement -- and the number must come from the play, not the horizon,
-        which is 4000 days back in this fixture and would read as far more pressure.
+        Dormancy is days since the last play, so a play alone is a real measurement, and
+        the number must come from the play, not the horizon. The horizon in this fixture
+        is 4000 days back, so measuring from it instead would read as far more pressure
+        than the play actually supports.
         """
         facts = _facts(season_added_at=None, last_played=utcnow() - timedelta(days=12))
 
         assert isinstance(facts.days_observed_unwatched, Known)
-        # A range, not an equality: production samples its own `utcnow()`, and comparing two
-        # samples of the clock it reads is rule 133's flake. 4000 is what the horizon would
-        # give, so this discriminates the play from the fallback by three orders of magnitude.
+        # A range, not an equality. Production samples its own `utcnow()`, and comparing
+        # two samples of the same clock is a source of flaky failures. 4000 is what the
+        # horizon would give, so this discriminates the play from the fallback by three
+        # orders of magnitude.
         assert 11 <= facts.days_observed_unwatched.value <= 13
 
 
@@ -793,8 +818,9 @@ class TestNothingUnseenIsCondemned:
         assert _judge(facts, clean) == "abstain"
 
     def test_a_seen_dormant_unwatched_season_can_be_condemned(self) -> None:
-        """The other side of the guarantee: when the evidence is real and the guards allow
-        it, a season IS condemnable -- otherwise the whole path would be inert."""
+        """The other side of the guarantee. When the evidence is real and the guards
+        allow it, a season is condemnable, or the whole path would be inert.
+        """
         facts = _facts(plex_rating_key=700, last_played=None, watchers_window=0)
         clean = season_evidence.guard_result(
             plan_series_prune(
@@ -816,11 +842,12 @@ class TestNothingUnseenIsCondemned:
         assert _judge(facts, protect) == "protect"
 
     def test_a_freshly_backfilled_season_of_an_old_show_is_not_condemned(self) -> None:
-        """The critical regression. A mature install (horizon ~4y ago); an old show whose
-        MIDDLE season the operator just backfilled (files landed 5 days ago, never played).
-        keep-last/keep-first protect the newest and first seasons by NUMBER -- not this
-        middle season -- so only the dormancy discipline stands between it and a wrongful
-        condemn. It must read as freshly arrived, not decades dormant."""
+        """A mature install with a horizon about 4 years back, and an old show whose
+        middle season the operator just backfilled. Its files landed 5 days ago and were
+        never played. keep-last and keep-first protect the newest and first seasons by
+        number, not this middle season, so only the dormancy discipline stands between it
+        and a wrongful condemn. It must read as freshly arrived, not decades dormant.
+        """
         facts = _facts(
             plex_rating_key=700,
             season_added_at=utcnow() - timedelta(days=5),
@@ -841,8 +868,10 @@ class TestNothingUnseenIsCondemned:
         assert _judge(facts, clean) != "condemn"
 
     def test_a_resolved_season_with_unknown_arrival_abstains(self) -> None:
-        """A season resolved in Plex but whose arrival date could not be read must abstain,
-        not be condemned off the horizon -- the exact fail-open the movie path guards."""
+        """A season resolved in Plex but whose arrival date could not be read must
+        abstain, not be condemned off the horizon. This is the exact fail-open the movie
+        path guards against.
+        """
         facts = _facts(
             plex_rating_key=700,
             season_added_at=None,
@@ -863,7 +892,7 @@ class TestNothingUnseenIsCondemned:
 
 
 # ---------------------------------------------------------------------------
-# Per-season watch statistics, against a real mirror
+# Per-season watch statistics, against a real watch-history table
 # ---------------------------------------------------------------------------
 
 
@@ -887,7 +916,8 @@ async def _episode(
     status: float | None = 1.0,
     percent_complete: int = 100,
 ) -> None:
-    """``status=None`` is the row Tautulli never told us the completion of."""
+    """``status=None`` is a row where Tautulli never reported whether the episode
+    finished."""
     when = int((utcnow() - timedelta(days=days_ago)).timestamp())
     async with engine.begin() as conn:
         await conn.execute(
@@ -911,8 +941,9 @@ async def _episode(
 
 
 class TestTheCacheIsRebuiltNotMigrated:
-    """Cache tables are never migrated -- the Alembic baseline says so, and they are
-    rebuildable by definition. A stale shape is dropped and recreated, not patched."""
+    """Cache tables are never migrated. The Alembic baseline says so, and they are
+    rebuildable by definition. A stale shape is dropped and recreated, not patched.
+    """
 
     async def test_a_stale_table_is_rebuilt_and_the_new_shape_holds_unknowns(
         self, cache_engine: AsyncEngine
@@ -959,10 +990,12 @@ class TestTheCacheIsRebuiltNotMigrated:
     async def test_the_not_null_shape_a_real_upgrade_carries_is_rebuilt(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """The shape an actually-upgraded install has: all ten columns, in order, with the
-        old `watched_status REAL NOT NULL`. Nothing about the *names* changed, so a check
-        that compared names alone left this table in place and the next sync died on the
-        first unreported completion. The rebuild has to fire on nullability."""
+        """The shape an actually-upgraded install has. All ten columns are in order, with
+        the old `watched_status REAL NOT NULL`. The column names alone did not change, so
+        a check that compares names alone would leave this table in place and the next
+        sync would die on the first unreported completion. The rebuild has to fire on
+        nullability instead.
+        """
         async with cache_engine.begin() as conn:
             await conn.execute(text("DROP TABLE watch_event"))
             await conn.execute(
@@ -1008,17 +1041,17 @@ class TestTheCacheIsRebuiltNotMigrated:
 
 class TestSeasonWatchStats:
     async def test_a_never_synced_cache_reads_as_no_plays(self, tmp_path: Path) -> None:
-        """The schema guard both siblings carry (rule 72), against the state needing it.
+        """The schema guard against a cache that was never synced at all.
 
-        The `cache_engine` fixture runs `ensure_schema` itself, so every other test in this
-        class meets a table that already exists; this one takes a raw cache. Without the
-        guard the read raises `no such table: watch_event`, nothing catches it, and the whole
-        scan aborts on a technical string (rule 21) instead of reading no plays.
+        The `cache_engine` fixture runs `ensure_schema` itself, so every other test in
+        this class meets a table that already exists. This one takes a raw cache instead.
+        Without the guard, the read raises `no such table: watch_event`, nothing catches
+        it, and the whole scan aborts on a technical error instead of reading no plays.
 
-        Reading no plays is not itself what keeps the file: an empty mirror resolves the
-        horizon to `utcnow()`, so a season with an arrival date reads Known ZERO days
-        dormant. `snapshot.scan` degrades the whole snapshot un-plannably on that mirror,
-        which is the actual hold.
+        Reading no plays is not itself what keeps the file safe. An empty watch-history
+        table resolves the horizon to `utcnow()`, so a season with an arrival date reads
+        Known zero days dormant. `snapshot.scan` degrades the whole snapshot un-plannably
+        on that empty table, which is the actual protection.
         """
         settings = Settings(data_dir=tmp_path, secret_key="test-key")
         engine = create_cache_engine(settings)
@@ -1055,8 +1088,9 @@ class TestSeasonWatchStats:
     async def test_a_users_latest_play_per_season_is_collected(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """Two plays under one season keep the newer timestamp -- the mid-binge expiry
-        judges a viewer by their most recent activity, never their first."""
+        """Two plays under one season keep the newer timestamp. The mid-binge expiry
+        judges a viewer by their most recent activity, never their first.
+        """
         await _episode(cache_engine, season_key=706, user_id=1, days_ago=300, episode=1)
         await _episode(cache_engine, season_key=706, user_id=1, days_ago=5, episode=2)
         stats = await season_scan.season_watch_stats(cache_engine, {706}, window_days=365)
@@ -1069,12 +1103,12 @@ class TestSeasonWatchStats:
     ) -> None:
         """The fail-open this closes, at the level it actually lives.
 
-        Episodes 1-3 are recorded complete; 4-10 were played but Tautulli never said
-        whether they finished. Reading those as "not completed" puts the viewer at
-        episode 3, so `sequential_protections` calls them still-on-this-season and the
-        NEXT season -- the one they are actually about to watch -- loses its protection.
-        The default lookahead is 0, so nothing else covers it. Position must read as
-        unknown, which drops the guard to season level.
+        Episodes 1-3 are recorded complete. Episodes 4-10 were played, but Tautulli never
+        said whether they finished. Reading those as "not completed" puts the viewer at
+        episode 3, so `sequential_protections` calls them still on this season, and the
+        next season, the one they are actually about to watch, loses its protection. The
+        default lookahead is 0, so nothing else covers it. Position must read as unknown,
+        which drops the guard to season level.
         """
         for ep in (1, 2, 3):
             await _episode(cache_engine, season_key=710, user_id=1, episode=ep)
@@ -1103,10 +1137,10 @@ class TestSeasonWatchStats:
         assert stats.user_season_progress[1][711] == 9
 
     async def test_a_genuine_zero_still_means_not_finished(self, cache_engine: AsyncEngine) -> None:
-        """0.0 is a real answer ("started it, did not finish") and must keep behaving as
-        one. It is where the line sits after #825 moved the three middle values across:
-        Tautulli reporting a viewer 25%, 50% or 75% through an episode says they are AT it,
-        while 0 says they are not, so only 0 leaves the position exact."""
+        """0.0 is a real answer, "started it, did not finish", and must keep behaving as
+        one. Tautulli reporting a viewer 25%, 50%, or 75% through an episode says they are
+        still at it, while 0 says they are not, so only 0 leaves the position exact.
+        """
         await _episode(cache_engine, season_key=712, user_id=1, episode=3)
         await _episode(cache_engine, season_key=712, user_id=1, episode=4, status=0.0)
 
@@ -1117,13 +1151,15 @@ class TestSeasonWatchStats:
 
 class TestProgressByUser:
     def test_progress_is_scoped_to_this_show(self) -> None:
-        """A user's progress in another series must not leak in: only this show's season
-        keys are consulted, mapped to season numbers with their completed-episode positions."""
+        """A user's progress in another series must not leak in. Only this show's season
+        keys are consulted, mapped to season numbers with their completed-episode
+        positions.
+        """
         stats = season_scan.SeasonWatchStats(
             user_season_keys={7: {701, 702, 999}},
             user_season_progress={7: {701: 4, 702: 9}},
         )
-        # 701 -> season 2, 702 -> season 3; 999 belongs to another show and is ignored.
+        # 701 -> season 2, 702 -> season 3. 999 belongs to another show and is ignored.
         this_show = {701: 2, 702: 3}
         assert season_scan._progress_by_user(stats, this_show) == {"7": {2: 4, 3: 9}}
 
@@ -1143,12 +1179,13 @@ class TestLastWatchedByUser:
             user_season_keys={7: {701, 702, 999}},
             user_season_last={7: {701: old, 702: new, 999: elsewhere}},
         )
-        # 999 is another show: its recency must not keep this show's hold alive.
+        # 999 is another show. Its recency must not keep this show's hold alive.
         assert season_scan._last_watched_by_user(stats, {701: 2, 702: 3}) == {"7": new}
 
     def test_any_unreadable_timestamp_means_unknown(self) -> None:
-        """One readable-old and one unreadable play: the unreadable one could be recent,
-        so the viewer's whole-show recency is None and their hold stays."""
+        """One readable-old and one unreadable play. The unreadable one could be recent,
+        so the viewer's whole-show recency is None and their hold stays.
+        """
         old = datetime(2025, 1, 1, tzinfo=UTC)
         stats = season_scan.SeasonWatchStats(
             user_season_keys={7: {701, 702}},
@@ -1170,9 +1207,10 @@ def _degrade_sink() -> tuple[list[str], Any]:
 async def _seed_ratings(engine: AsyncEngine, ratings: dict[str, tuple[float, int]]) -> None:
     """A fresh, non-stale IMDb dataset holding exactly ``{imdb id: (score, votes)}``.
 
-    Without it ``gather`` degrades the snapshot on the ratings read, and a degraded scan
-    abstains on everything -- which would let a test asserting "not condemned" pass for a
-    reason it never meant to check (rule 118)."""
+    Without it, ``gather`` degrades the snapshot on the ratings read, and a degraded scan
+    abstains on everything. That would let a test asserting "not condemned" pass for a
+    reason it never meant to check.
+    """
     async with engine.begin() as conn:
         await conn.execute(
             text(
@@ -1224,9 +1262,11 @@ def _season_rows(children: dict[int, list[dict[str, Any]]]) -> dict[int, list[Pl
 
 
 class _FakePlexGuids:
-    """A stand-in for the plexapi sweeps: the GUID index (rating_key -> PlexItem) and the
-    season index (show rating_key -> its season rows). ``seasons`` empty means the sweep
-    found nothing, which sends every show to the per-show Tautulli fallback."""
+    """A stand-in for the plexapi sweeps. It provides the GUID index (rating_key ->
+    PlexItem) and the season index (show rating_key -> its season rows). ``seasons``
+    empty means the sweep found nothing, which sends every show to the per-show Tautulli
+    fallback.
+    """
 
     def __init__(
         self,
@@ -1292,10 +1332,11 @@ class TestGatherEndToEnd:
         )
 
         by_key = {j.media_key: j for j in judgments}
-        # Season 3 is prunable (outside keep-last 2, not the first): resolved to its Plex key.
+        # Season 3 is prunable (outside keep-last 2, not the first), and resolves to its
+        # Plex key.
         assert "sonarr:1:42:3" in by_key
         assert by_key["sonarr:1:42:3"].plex_rating_key == 903
-        # The card poster comes from the SHOW's key (900), never the season's -- a season
+        # The card poster comes from the show's key (900), never the season's. A season
         # often has no poster of its own, so the season key would 404 to a placeholder.
         assert by_key["sonarr:1:42:3"].poster_rating_key == 900
         # The first and last-two seasons are protected, and emitted so the panel shows why.
@@ -1305,10 +1346,11 @@ class TestGatherEndToEnd:
     async def test_a_show_the_sweep_missed_falls_back_to_the_per_show_read(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """The season sweep is present but returns nothing for this show (a partial sweep, or
-        a show the sweep could not place). Resolution must fall back to the per-show Tautulli
-        read rather than lose the season -- the belt-and-suspenders that keeps S2 unable to
-        resolve LESS than the path it replaced."""
+        """The season sweep is present but returns nothing for this show, either from a
+        partial sweep or a show the sweep could not place. Resolution must fall back to
+        the per-show Tautulli read instead of losing the season, so this path can resolve
+        at least as much as the one it replaced.
+        """
         series = [
             {
                 "id": 42,
@@ -1365,10 +1407,11 @@ class TestGatherEndToEnd:
     async def test_a_raising_season_sweep_falls_back_per_show_and_does_not_degrade(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """library_season_index RAISING (not returning empty) hits the ``except PlexError``
-        branch: the whole library falls back to the per-show read rather than degrading, since
-        the same data is reachable one show at a time (I-2). The empty-dict path above exercises
-        different code than this except."""
+        """library_season_index raising, rather than returning empty, hits the ``except
+        PlexError`` branch. The whole library falls back to the per-show read instead of
+        degrading, since the same data is reachable one show at a time. The empty-dict
+        path above exercises different code than this except.
+        """
         series = [
             {
                 "id": 42,
@@ -1418,16 +1461,18 @@ class TestGatherEndToEnd:
         )
 
         by_key = {j.media_key: j for j in judgments}
-        # Season 3 resolves via the per-show fallback, and the raise did not degrade the scan
-        # (it logs a warning and falls back; the only degradations here are unrelated).
+        # Season 3 resolves via the per-show fallback, and the raise did not degrade the
+        # scan. It logs a warning and falls back instead. The only degradations here are
+        # unrelated.
         assert by_key["sonarr:1:42:3"].plex_rating_key == 903
         assert not any("sweep" in r.lower() or "season" in r.lower() for r in reasons)
 
     async def test_episodes_are_not_fetched_when_keep_in_progress_is_off(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """With mid-binge protection off, ``season_final_episode`` is never consulted, so the
-        whole Sonarr episodes() fan-out is skipped (I-2). Skipping only ever keeps more."""
+        """With mid-binge protection off, ``season_final_episode`` is never consulted, so
+        the whole Sonarr episodes() fan-out is skipped. Skipping only ever keeps more.
+        """
         series = [
             {
                 "id": 42,
@@ -1470,7 +1515,8 @@ class TestGatherEndToEnd:
         assert sonarr.episodes_called == []  # the fan-out was skipped
         assert "sonarr:1:42:3" in {j.media_key for j in off}  # seasons still resolve
 
-        # Companion: with the guard ON, the fan-out runs, so the skip above is a real branch.
+        # With the guard on instead, the fan-out runs, confirming the skip above is a real
+        # branch.
         sonarr_on = FakeSonarr(
             series_rows=series, episode_rows={42: [{"seasonNumber": 3, "episodeNumber": 8}]}
         )
@@ -1551,8 +1597,8 @@ class TestGatherEndToEnd:
                     files=(identity.PlexFile("duplicated show (2160p)"),),
                 ),
             },
-            # The season sweep carries both copies' seasons; the 4K copy (900) is the one the
-            # folder name binds this Sonarr to, so its keys are the ones that resolve.
+            # The season sweep carries both copies' seasons. The 4K copy (900) is the one
+            # the folder name binds this Sonarr to, so its keys are the ones that resolve.
             seasons=_season_rows(
                 {
                     800: [{"media_index": n, "rating_key": 800 + n} for n in range(1, 6)],
@@ -1589,10 +1635,11 @@ class TestGatherEndToEnd:
     async def test_plex_supplies_the_rating_and_poster_when_sonarr_cannot(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """Sonarr has no imdbId (common for reality/recent shows), but the show matches Plex
-        by tvdb and Plex carries the imdb id. The rating comes through on the Plex id, and
-        the card poster uses the show's key -- so neither the rating nor the poster is lost
-        to a Sonarr/TVDB metadata gap."""
+        """Sonarr has no imdbId (common for reality/recent shows), but the show matches
+        Plex by tvdb, and Plex carries the imdb id. The rating comes through on the Plex
+        id, and the card poster uses the show's key, so neither the rating nor the poster
+        is lost to a Sonarr/TVDB metadata gap.
+        """
         await _seed_ratings(cache_engine, {"tt7777": (7.1, 38)})
         series = [
             {
@@ -1601,7 +1648,7 @@ class TestGatherEndToEnd:
                 "year": 2020,
                 "status": "ended",
                 "ended": True,
-                "tvdbId": 4242,  # matches Plex by tvdb; NO imdbId from Sonarr
+                "tvdbId": 4242,  # matches Plex by tvdb, no imdbId from Sonarr
                 "tmdbId": 999,
                 "titleSlug": "reality-show",
                 "seasons": [_season_payload(n) for n in range(1, 6)],
@@ -1665,20 +1712,21 @@ class TestGatherEndToEnd:
         # Poster uses the show's key (800), not the season's (803).
         assert pruned.poster_rating_key == 800
         assert pruned.plex_rating_key == 803
-        # The show's display metadata is inherited by every season row: the Sonarr web
-        # coordinate, certification, runtime, and a ratings row whose IMDb entry is the
-        # SAME dataset number the scoring signal froze (never a second source).
+        # The show's display metadata is inherited by every season row. This covers the
+        # Sonarr web coordinate, certification, runtime, and a ratings row whose IMDb
+        # entry is the same dataset number the scoring signal froze, never a second
+        # source.
         assert pruned.title_slug == "reality-show"
-        # Outbound-link coordinates: the show's tmdb id, and the imdb id resolved the
-        # same way the rating was (Sonarr had none, so the Plex-matched one serves).
+        # Outbound-link coordinates. The show's tmdb id, and the imdb id resolved the
+        # same way the rating was, since Sonarr had none, so the Plex-matched one serves.
         assert pruned.tmdb_id == 999
         assert pruned.imdb_id == "tt7777"
         # Sonarr's native tvdb id rides onto every season row too, so Scales can join a
-        # request to this show even when it has no tmdb id (services.fairness; rule 29).
+        # request to this show even when it has no tmdb id (services.fairness).
         assert pruned.tvdb_id == 4242
         assert pruned.content_rating == "TV-PG"
         assert pruned.runtime_minutes == 50
-        # The show's ended-ness is a show-level fact too: one reading of the series,
+        # The show's ended-ness is a show-level fact too. It is one reading of the series,
         # stamped onto every season row so the card can state it without a second fetch.
         assert pruned.show_status == "ended"
         assert pruned.ratings_json is not None
@@ -1692,8 +1740,9 @@ class TestGatherEndToEnd:
     ) -> None:
         """The membership lookup must pass every id the show carries. A show with no
         imdbId in Sonarr (common) whose keep tag was stored under its tvdb id must still
-        read whitelisted -- an explicitly-set protection that fails open on the deletion
-        path is the worst possible failure."""
+        read whitelisted. An explicitly-set protection that fails open on the deletion
+        path is the worst possible failure.
+        """
         series = [
             {
                 "id": 77,
@@ -1701,7 +1750,7 @@ class TestGatherEndToEnd:
                 "year": 2018,
                 "status": "ended",
                 "ended": True,
-                "tvdbId": 5150,  # NO imdbId from Sonarr
+                "tvdbId": 5150,  # no imdbId from Sonarr
                 "seasons": [_season_payload(n) for n in range(1, 6)],
             }
         ]
@@ -1748,16 +1797,18 @@ class TestGatherEndToEnd:
     async def test_sonarrs_unknown_id_sentinel_does_not_shadow_the_one_plex_matched(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """Sonarr's ``tt0000000`` "unknown" sentinel must not stand in for the imdb id Plex
-        matched. A sentinel is truthy, so before the ids were cleaned at the write the show's
-        membership lookup ran under an id no keep row carries, and the row stored under the
-        real one was not found. The show owns every season beneath it, so one shadowed id
-        un-protects the whole series at once, which is why this is pinned end to end rather
-        than left to the hygiene gate: that gate reads the source for an ``ExternalIds.of``
-        call and would stay green if the lookup were re-pointed at the raw payload.
+        """Sonarr's ``tt0000000`` "unknown" sentinel must not stand in for the imdb id
+        Plex matched. The sentinel is truthy, so if the ids were not cleaned before the
+        membership lookup, the lookup would run under an id no keep row carries, and the
+        row stored under the real id would go unfound. The show owns every season beneath
+        it, so one shadowed id would un-protect the whole series at once. This is pinned
+        end to end rather than left to the hygiene gate, because that gate only reads the
+        source for an ``ExternalIds.of`` call and would stay green even if the lookup were
+        re-pointed at the raw payload.
 
-        The keep row is stored under imdb ALONE on purpose. Give it a tvdb id as well and the
-        lookup finds it by tvdb whatever the imdb arm does, and the test stops discriminating.
+        The keep row is stored under imdb alone, on purpose. Giving it a tvdb id as well
+        would let the lookup find it by tvdb regardless of what the imdb arm does, and the
+        test would stop discriminating.
         """
         series = [
             {
@@ -1840,9 +1891,10 @@ class TestGatherEndToEnd:
     async def test_an_unmatched_series_yields_unresolved_seasons(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """Plex has not matched the show. Its prunable seasons still appear -- so the owner
-        learns Plex failed to match them -- but with no Plex key and Unknown facts, so they
-        can only abstain."""
+        """Plex has not matched the show. Its prunable seasons still appear, so the owner
+        learns Plex failed to match them, but with no Plex key and Unknown facts, so they
+        can only abstain.
+        """
         series = [
             {
                 "id": 7,
@@ -1879,8 +1931,9 @@ class TestGatherEndToEnd:
     async def test_a_fully_protected_short_show_is_surfaced_as_kept(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """A show with no prunable season is NOT dropped: it is gathered and surfaced as kept,
-        every season protected by its guard, so content is never hidden from the UI."""
+        """A show with no prunable season is not dropped. It is gathered and surfaced as
+        kept, every season protected by its guard, so content is never hidden from the UI.
+        """
         series = [
             {
                 "id": 9,
@@ -1896,9 +1949,9 @@ class TestGatherEndToEnd:
             sonarrs=[_source(FakeSonarr(series_rows=series))],
             tautulli=show_library([]),
             # Deep enough to span the default hold, so the two keep floors this test is
-            # about are what hold these seasons. At reach 0 the mid-binge guard is
-            # un-establishable and holds EVERY season on its own, which made the assertion
-            # below pass with both floors deleted (rule 141).
+            # about are what hold these seasons. At reach 0, the mid-binge guard cannot be
+            # established and holds every season on its own, which would make the
+            # assertion below pass even with both floors removed.
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
             active_rating_keys=set(),
@@ -1917,9 +1970,11 @@ class TestGatherEndToEnd:
         assert all(j.guard_result.outcome is PROTECT for j in judgments)
 
     async def test_a_candidate_show_logs_its_decision(self, cache_engine: AsyncEngine) -> None:
-        """Every scanned series emits one greppable decision line. A show with a prunable
-        season records outcome=candidate, the prunable season numbers, and the raw per-season
-        file counts Sonarr reported -- the record an operator greps by title."""
+        """Every scanned series emits one greppable decision line. A show with a
+        prunable season records outcome=candidate, the prunable season numbers, and the
+        raw per-season file counts Sonarr reported. This is the record an operator greps
+        by title.
+        """
         series = [
             {
                 "id": 42,
@@ -1966,9 +2021,10 @@ class TestGatherEndToEnd:
     async def test_a_fully_protected_show_logs_the_keep_reasons(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """A show with nothing prunable is dropped from the queue, but its decision line names
-        outcome=fully_protected and why each on-disk season is kept -- so "why isn't my show in
-        review" is answerable without re-running the scan."""
+        """A show with nothing prunable is dropped from the queue, but its decision line
+        names outcome=fully_protected and why each on-disk season is kept. That makes "why
+        isn't my show in review" answerable without re-running the scan.
+        """
         series = [
             {
                 "id": 9,
@@ -2008,21 +2064,24 @@ class TestGatherEndToEnd:
     async def test_a_shallow_mirror_holds_every_season_of_a_prunable_show(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """The reach reaches the mid-binge guard, not only the watcher counts (rule 140).
+        """The reach affects the mid-binge guard too, not only the watcher counts.
 
-        The same show under the same policy twice, differing only in how far back the watch
-        mirror goes. Past the hold, the middle seasons are candidates. Short of it, a viewer
-        whose plays all predate the horizon leaves no rows, so "nobody is part-way through"
-        is a claim the history cannot support and every season is held instead.
+        The same show under the same policy runs twice, differing only in how far back the
+        watch history goes. Past the hold, the middle seasons are candidates. Short of it,
+        a viewer whose plays all predate the horizon leaves no rows, so "nobody is
+        part-way through" is a claim the history cannot support, and every season is held
+        instead.
 
-        The reaches straddle the *stated* 200-day hold, not the 180-day default, so a call
-        site that hardcoded the default (or dropped the reach altogether) fails here (rule
-        141): at reach 190 the default would still read as establishable.
+        The two reach values straddle the *stated* 200-day hold, not the 180-day default,
+        so a call site that hardcoded the default, or dropped the reach argument
+        altogether, fails here. At reach 190, the default would still read as
+        establishable.
 
-        The show is BOUND in Plex, and every season with it, so the mirror's depth is the
-        only thing that moves. Left unbound, the guard has no rating key to read a place in
-        the show from and blocks for that instead (#486) -- which is a true sentence about a
-        fixture that never meant to say it, and would let a broken reach pass here.
+        The show is bound in Plex, and every season with it, so the watch history's depth
+        is the only thing that moves between the two runs. Left unbound, the guard would
+        have no rating key to read a place in the show from and would block for that
+        reason instead, a true sentence about a fixture that never meant to say it, which
+        would let a broken reach pass here undetected.
         """
         series = [
             {
@@ -2044,7 +2103,7 @@ class TestGatherEndToEnd:
                 ids=identity.ExternalIds.of(imdb="tt0011"),
             )
         }
-        # Inside the SHALLOWER of the two reaches, so no watcher count is a lower bound in
+        # Inside the shallower of the two reaches, so no watcher count is a lower bound in
         # either run and the keep-conflict detector stays out of a test about the hold.
         arrived = str(int((utcnow() - timedelta(days=100)).timestamp()))
         sweep = {
@@ -2100,37 +2159,37 @@ class TestGatherEndToEnd:
             if j.media_key in {"sonarr:1:11:2", "sonarr:1:11:3"}
         } == {"Your watch history is too short to tell who's part-way through."}
 
-        # ...and BLOCKED, not merely protecting. A plain PROTECT on this gate does not hold
-        # a hand reap (`verdict.STRUCTURAL_GATES` carries neither), while the keep-rule
-        # conflict this blanket hold displaces did -- so without the block, closing #95
-        # would have made a season a hand reap was refused on into one it deletes.
+        # ...and blocked, not merely protecting. A plain PROTECT on this gate does not
+        # hold a hand reap (`verdict.STRUCTURAL_GATES` carries neither), while the
+        # keep-rule conflict this blanket hold displaces does. Without the block, a season
+        # a hand reap was refused on could become one it deletes.
         blocked = {j.media_key for j in shallow if j.guard_result.blocked}
         assert blocked == {"sonarr:1:11:2", "sonarr:1:11:3"}
         assert not any(j.guard_result.defers_to_owner for j in shallow)
-        # Narrow on purpose: seasons 1, 4 and 5 are held by protections that genuinely
-        # FIRED (earliest season, keep-last), and a definite keep must stay definite. A fix
-        # that blocked every kept season would fail here.
+        # Narrow on purpose. Seasons 1, 4, and 5 are held by protections that genuinely
+        # fired (earliest season, keep-last), and a definite keep must stay definite.
+        # Blocking every kept season here would be wrong, and would fail this assertion.
         assert all(j.guard_result.outcome is PROTECT for j in shallow)
-        # Nothing in the deep arm is blocked: with the mirror spanning the hold there is
-        # no unanswered question to hold anything on.
+        # Nothing in the deep arm is blocked. With the watch history spanning the hold,
+        # there is no unanswered question to hold anything on.
         assert not any(j.guard_result.blocked for j in deep)
 
     async def test_a_season_plex_never_resolved_holds_the_one_its_viewer_is_up_to(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """#472, end to end and against the real default policy.
+        """This runs end to end against the real default policy.
 
-        A viewer finished Season 3 yesterday, so the mid-binge guard should hold Season 4 --
-        the season they are about to watch. Season 3's plays are filed under its own Plex key,
-        so the guard can only see them if that key was resolved. The two runs differ by one
-        thing: a second "Season 3" item in the Plex sweep, which ``seasons_from_rows`` drops
-        as ambiguous (a split or mis-scanned library emits these).
+        A viewer finished Season 3 yesterday, so the mid-binge guard should hold Season 4,
+        the season they are about to watch. Season 3's plays are filed under its own Plex
+        key, so the guard can only see them if that key was resolved. The two runs differ
+        by one thing: a second "Season 3" item in the Plex sweep, which
+        ``seasons_from_rows`` drops as ambiguous (a split or mis-scanned library produces
+        these).
 
-        Season 3 itself is safe either way -- with no key its own facts are Unknown and it
-        abstains. Its SIBLINGS are the loss: they resolved, they carry fully readable facts,
-        and they condemn at full confidence on a viewer nothing can see. Before the fix
-        Season 4 came out condemned with the guard reporting "checked: prunable", which is
-        rule 93's failure -- a panel asserting a check that never ran.
+        Season 3 itself is safe either way. With no key, its own facts are Unknown and it
+        abstains. Its siblings are the ones at risk: they resolved, they carry fully
+        readable facts, and they would condemn at full confidence on a viewer nothing can
+        see, unless the guard also holds them on the same unresolved key.
         """
         await _seed_ratings(cache_engine, {"tt0472": (5.5, 400)})
         # Five completed episodes of Season 3: she has finished it and is up to Season 4.
@@ -2163,17 +2222,18 @@ class TestGatherEndToEnd:
                 ids=identity.ExternalIds.of(imdb="tt0472"),
             )
         }
-        # Arrived 2000 days ago: past the 1095-day dormancy floor, so an unwatched season here
-        # really is condemnable, and inside the 4000-day reach, so no watcher count is a lower
-        # bound and the keep-rule conflict detector stays out of the way. Both halves matter --
-        # either one left these seasons abstaining for a reason the test does not mean to check.
+        # Arrived 2000 days ago, past the 1095-day dormancy floor, so an unwatched season
+        # here really is condemnable, and inside the 4000-day reach, so no watcher count is
+        # a lower bound and the keep-rule conflict detector stays out of the way. Both
+        # halves matter. Either one alone would leave these seasons abstaining for a reason
+        # the test does not mean to check.
         arrived = str(int((utcnow() - timedelta(days=2000)).timestamp()))
         clean = {
             900: [
                 {"media_index": n, "rating_key": 900 + n, "added_at": arrived} for n in range(1, 6)
             ]
         }
-        # The same list, plus a second "Season 3" -- so season 3 alone loses its key.
+        # The same list, plus a second "Season 3", so season 3 alone loses its key.
         split = {900: [*clean[900], {"media_index": 3, "rating_key": 9903, "added_at": arrived}]}
 
         async def _run(sweep: dict[int, list[dict[str, Any]]]) -> dict[str, Any]:
@@ -2214,11 +2274,9 @@ class TestGatherEndToEnd:
         assert season_4.guard_result.outcome is PROTECT
         assert reason_text(season_4.guard_result.detail) == "a viewer is part-way through the show"
         assert _judge(season_4.facts, season_4.guard_result) == "protect"
-        # ...and the siblings ARE condemnable evidence-wise, so the run below is not passing
-        # on some unrelated abstain (rule 141).
-        # ...and the siblings really are condemnable on their own evidence, so "not condemned"
-        # below is a statement about the fix rather than about some unrelated abstain the
-        # fixture happened to produce (rule 141).
+        # ...and the siblings really are condemnable on their own evidence, so "not
+        # condemned" below is a statement about the guard, not about some unrelated
+        # abstain the fixture happened to produce.
         assert _judge(control["sonarr:1:42:1"].facts, control["sonarr:1:42:1"].guard_result) == (
             "condemn"
         )
@@ -2231,17 +2289,18 @@ class TestGatherEndToEnd:
             assert reason_text(judgment.guard_result.detail) == (
                 "A season of this show isn't matched in Plex, so who's part-way through is unknown."
             )
-            # Blocked, not a plain keep: the guard could not be ANSWERED (rule 93), so the
-            # panel says "couldn't check" rather than green, and a hand reap still overrules.
+            # Blocked, not a plain keep. The guard could not be answered, so the panel
+            # says "couldn't check" rather than green, and a hand reap still overrules.
             assert judgment.guard_result.blocked is True
 
     async def test_a_failed_season_read_stops_the_show_asserting_nobody_is_watching(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """#472's own reproduction: ``resolve_season_keys`` raising, for a show that DID bind
-        to Plex. Returning an empty map is fail-closed for that show's own seasons -- they all
-        abstain on Unknown facts -- but it said nothing about the assertion the show then made
-        about viewer progress, and the mid-binge guard reported as checked and passed."""
+        """``resolve_season_keys`` raising, for a show that did bind to Plex. Returning an
+        empty map is fail-closed for that show's own seasons, since they all abstain on
+        Unknown facts, but it says nothing about the assertion the show then makes about
+        viewer progress, where the mid-binge guard must not report as checked and passed.
+        """
         await _seed_ratings(cache_engine, {"tt0472": (5.5, 400)})
         series = [
             {
@@ -2285,8 +2344,8 @@ class TestGatherEndToEnd:
                 },
                 section_types={3: "show"},
             ),
-            # The show binds to Plex; only its season list is unreadable, so the sweep is empty
-            # and every season falls to the per-show read that raises.
+            # The show binds to Plex. Only its season list is unreadable, so the sweep is
+            # empty and every season falls to the per-show read that raises.
             plex=_FakePlexGuids(plex_items, seasons={}),  # type: ignore[arg-type]
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
@@ -2314,18 +2373,20 @@ class TestGatherEndToEnd:
     async def test_a_show_plex_never_matched_at_all_is_left_alone(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """The deliberate boundary on #472's fix, pinned because it is the half a later author
-        would most reasonably widen.
+        """This is the deliberate boundary on the mid-binge hold, pinned because it is the
+        boundary a later author would most reasonably widen.
 
-        The hold fires only where the SHOW bound to Plex and some of its seasons did not,
+        The hold fires only where the show bound to Plex and some of its seasons did not,
         because that is the mix where a readable sibling exists to condemn on the hidden
-        viewer. Where nothing about the show resolved, every season already takes Unknown from
-        its own branch and abstains, so widening the hold to cover it would move a whole
-        population of unmatched shows out of the review queue and protect nothing further.
+        viewer. Where nothing about the show resolved, every season already takes Unknown
+        from its own branch and abstains, so widening the hold to cover it would move a
+        whole population of unmatched shows out of the review queue and protect nothing
+        further.
 
-        So nothing moves, and the guard says what it did instead of what it found (#486): the
-        check never ran, in the same words the season's four Plex-dependent gates use, so the
-        panel prints the cause once for all five rather than reporting a pass beside them.
+        So nothing moves, and the guard says what it did instead of what it found. The
+        check never ran, in the same words the season's four Plex-dependent gates use, so
+        the panel prints the cause once for all five rather than reporting a pass beside
+        them.
         """
         series = [
             {
@@ -2357,20 +2418,20 @@ class TestGatherEndToEnd:
         by_key = {j.media_key: j for j in judgments}
         assert by_key["sonarr:1:77:2"].plex_rating_key is None
         guard = by_key["sonarr:1:77:2"].guard_result
-        # ABSTAIN, never PROTECT: the season stays in the review queue's abstain lane, which
-        # is the whole reason the hold was scoped away from here.
+        # ABSTAIN, never PROTECT. The season stays in the review queue's abstain lane,
+        # which is the whole reason the hold was scoped away from here.
         assert guard.outcome is ABSTAIN
-        # Blocked and unestablishable, so the panel renders it amber under "left for you to
-        # decide" rather than green under "protections it cleared" (rule 93), and the panel's
-        # conflict branch skips it -- nothing was compared, so nothing is being handed over.
+        # Blocked and unestablishable, so the panel renders it amber under "left for you
+        # to decide" rather than green under "protections it cleared", and the panel's
+        # conflict branch skips it. Nothing was compared, so nothing is being handed over.
         assert guard.blocked
         assert guard.unestablishable
         assert not guard.defers_to_owner
-        # The cause is the one the season's own Unknown facts carry, character for character,
-        # which is what makes `WhyPanel.LeftForYou` group all five under one heading instead
-        # of opening a second box saying the same thing (rule 144). `guard_result` attaches
-        # the season `mediaType` to the bare id it froze; the fact builder attaches the same
-        # param directly (rule 72's one shared table, `gates.no_key_reason`).
+        # The cause is the one the season's own Unknown facts carry, character for
+        # character, which is what makes `WhyPanel.LeftForYou` group all five under one
+        # heading instead of opening a second box saying the same thing. `guard_result`
+        # attaches the season `mediaType` to the bare id it froze. The fact builder
+        # attaches the same param directly, off the one shared table, `gates.no_key_reason`.
         cause = season_evidence.no_key_reason(identity.MatchStatus.UNMATCHED)
         assert reason_flat(guard.detail) == (
             f"blocked[check=check.season_progress cause=cause.{cause}[mediaType=season]]"
@@ -2450,15 +2511,16 @@ class TestGatherEndToEnd:
 
 
 class TestShowLevelRewatchFacts:
-    """#554 TV: ``services.rewatch.show_rewatch_stats`` is read once per scan, and
-    ``_judge_series`` turns it into the show's ``rewatch_viewings``/``rewatch_last_play_days``
-    pair, stamped identically on every season of that show -- the same shape ``show_ended``
-    already carries. The cohort pair (``rewatch_cohort_n``/``rewatch_cohort_k``) is the
-    season lane's own Stage 2 fit now, off the TV curve ``gather`` fits once per scan
-    (``TestTheTVCohortFit`` below); a show whose current dormancy lands nowhere in that
-    curve reads ``Unknown`` with the shared reason, never ``Absent`` -- the season lane
-    always has an opinion about its own cohort now, even when that opinion is "cannot say"
-    (the same discipline ``rewatch_viewings``/``rewatch_last_play_days`` already follow).
+    """``services.rewatch.show_rewatch_stats`` is read once per scan, and
+    ``_judge_series`` turns it into the show's ``rewatch_viewings`` and
+    ``rewatch_last_play_days`` pair, stamped identically on every season of that show, the
+    same shape ``show_ended`` already carries. The cohort pair (``rewatch_cohort_n`` and
+    ``rewatch_cohort_k``) is the season lane's own Stage 2 fit, off the TV curve
+    ``gather`` fits once per scan (``TestTheTVCohortFit`` below). A show whose current
+    dormancy lands nowhere in that curve reads ``Unknown`` with the shared reason, never
+    ``Absent``. The season lane always has an opinion about its own cohort, even when that
+    opinion is "cannot say", the same discipline ``rewatch_viewings`` and
+    ``rewatch_last_play_days`` already follow.
     """
 
     async def test_a_show_with_replayed_episodes_is_known_on_every_season(
@@ -2482,7 +2544,7 @@ class TestShowLevelRewatchFacts:
                 900: [{"media_index": 1, "rating_key": 901}, {"media_index": 2, "rating_key": 902}]
             },
         )
-        # Two episodes, each played twice ~150 days apart: an older viewing and a later
+        # Two episodes, each played twice ~150 days apart. An older viewing and a later
         # replay of the same two episode keys (rewatch.replay_period_count's >= 1/4-overlap
         # floor), never a release-following binge.
         for days_ago, episode in ((200, 1), (195, 2), (50, 1), (45, 2)):
@@ -2516,15 +2578,16 @@ class TestShowLevelRewatchFacts:
 
         by_key = {j.media_key: j for j in judgments}
         s1, s2 = by_key["sonarr:1:1:1"].facts, by_key["sonarr:1:1:2"].facts
-        # 1 replay period, never a value the "no entry" fallback (0) would also produce
-        # (rule 141); last play is the more recent pair, 45 days back.
+        # 1 replay period, never a value the "no entry" fallback (0) would also produce.
+        # Last play is the more recent pair, 45 days back.
         assert s1.rewatch_viewings == Known(value=1, source="tautulli")
         assert s1.rewatch_last_play_days == Known(value=45, source="tautulli")
-        # Show-level: computed once and stamped as the same object on the show's other season.
+        # Show-level. Computed once and stamped as the same object on the show's other
+        # season.
         assert s2.rewatch_viewings is s1.rewatch_viewings
         assert s2.rewatch_last_play_days is s1.rewatch_last_play_days
         # This show is the only one in the whole scan and its season carries no added_at
-        # (``children`` above has none), so it contributes no training pair -- the fit is
+        # (``children`` above has none), so it contributes no training pair. The fit is
         # empty and no dormancy lands anywhere in it (``TestTheTVCohortFit`` below covers a
         # populated curve).
         assert s1.rewatch_cohort_n == Unknown(
@@ -2537,11 +2600,12 @@ class TestShowLevelRewatchFacts:
     async def test_a_resolved_show_with_no_qualified_plays_is_known_zero_and_absent(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """The show resolved and the mirror was read, but it holds nothing for this show: a
-        checked zero, not the failed read Unknown would claim (rule 93). It also has no
-        anchor at all for the Stage 2 cohort -- no play, and (like the sibling test above)
-        no season added_at -- so the cohort reads Unknown rather than Known, whatever the fit
-        found elsewhere."""
+        """The show resolved and the watch history was read, but it holds nothing for
+        this show. That is a checked zero, not the failed read Unknown would claim. It
+        also has no anchor at all for the Stage 2 cohort, no play, and, like the sibling
+        test above, no season added_at, so the cohort reads Unknown rather than Known,
+        whatever the fit found elsewhere.
+        """
         series = [
             {
                 "id": 2,
@@ -2593,8 +2657,9 @@ class TestShowLevelRewatchFacts:
     async def test_an_unresolved_show_is_unknown_on_both_rewatch_observations(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """No Plex show key means no key to look this show's plays up under -- a failed
-        look, never the checked absence the resolved cases above record (rule 93)."""
+        """No Plex show key means no key to look this show's plays up under. That is a
+        failed look, never the checked absence the resolved cases above record.
+        """
         series = [
             {
                 "id": 3,
@@ -2634,7 +2699,7 @@ class TestShowLevelRewatchFacts:
             "cause.plex_unmatched", {"mediaType": "season"}
         )
         # The cohort's Unknown carries the one shared reason (rewatch.NO_REWATCH_ESTIMATE_
-        # REASON), not the match-status reason above: every "nothing to show" cause reads
+        # REASON), not the match-status reason above. Every "nothing to show" cause reads
         # the same to the operator (services.snapshot.build_facts's own comment).
         assert facts.rewatch_cohort_n == Unknown(
             reason=rewatch.NO_REWATCH_ESTIMATE_REASON, source="tautulli"
@@ -2645,19 +2710,20 @@ class TestShowLevelRewatchFacts:
 
 
 class TestTheTVCohortFit:
-    """#554 TV, Stage 2: the TV curve ``gather`` fits off
-    ``services.rewatch.show_rewatch_outcomes`` (mirroring the movie lane's own fit in
-    ``snapshot.scan``), and the per-show cohort lookup ``_judge_series`` stamps off it."""
+    """Stage 2 for TV: the TV curve ``gather`` fits off
+    ``services.rewatch.show_rewatch_outcomes``, matching the movie lane's own fit in
+    ``snapshot.scan``, and the per-show cohort lookup ``_judge_series`` stamps off it.
+    """
 
     async def test_a_show_in_a_fitted_block_stamps_known_cohort_on_every_season(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """Two shows train the fit's (0, 365] block: Show A watched again inside the year,
-        Show B was not, so the pooled block is a distinguishable, non-default n=2/k=1 (rule
-        141) -- never the "no entry" zero a bug swallowing the fit could also produce. Show
-        A's own current dormancy (its most recent play) falls in that same block, so every
-        one of its seasons is stamped ``Known`` off it, sharing the identical object (``is``)
-        the way ``rewatch_viewings`` already does.
+        """Two shows train the fit's (0, 365] block. Show A was watched again inside the
+        year, and Show B was not, so the pooled block is a distinguishable, non-default
+        n=2/k=1, never the "no entry" zero a bug swallowing the fit could also produce.
+        Show A's own current dormancy (its most recent play) falls in that same block, so
+        every one of its seasons is stamped ``Known`` off it, sharing the identical object
+        (``is``) the way ``rewatch_viewings`` already does.
         """
         series = [
             {
@@ -2689,12 +2755,12 @@ class TestTheTVCohortFit:
         )
         # Show A: an old play (well before the year-back cutoff) trains the fit, and a
         # recent one both marks the training pair "watched again" and anchors its own
-        # current lookup at ~5 days dormant -- inside the (0, 365] block the training pairs
+        # current lookup at ~5 days dormant, inside the (0, 365] block the training pairs
         # populate.
         await _episode(cache_engine, season_key=911, user_id=1, show_key=910, days_ago=400)
         await _episode(cache_engine, season_key=911, user_id=1, show_key=910, days_ago=5, episode=2)
-        # Show B: the same old-play training anchor, never watched again -- the block's
-        # other member.
+        # Show B: the same old-play training anchor, never watched again. It is the
+        # block's other member.
         await _episode(cache_engine, season_key=921, user_id=2, show_key=920, days_ago=400)
         _reasons, degrade = _degrade_sink()
 
@@ -2728,9 +2794,9 @@ class TestTheTVCohortFit:
         assert s1.rewatch_block is s2.rewatch_block
         assert (s1.rewatch_block.n, s1.rewatch_block.k) == (2, 1)
 
-        # Pipeline-level (rule 5 of #554 TV): the season lane's Known cohort really reaches
-        # the stored explanation through the shared judge_facts/_explain path snapshot.scan
-        # uses for every season row, not just the in-memory Facts object.
+        # Pipeline-level. The season lane's Known cohort really reaches the stored
+        # explanation through the shared judge_facts/_explain path snapshot.scan uses for
+        # every season row, not just the in-memory Facts object.
         gates = build_gates(DEFAULT_TV_POLICY)
         signals = [
             SignalConfig(signal=s.signal, weight=s.weight, saturate_at=s.saturate_at, floor=s.floor)
@@ -2760,19 +2826,19 @@ class TestTheTVCohortFit:
     async def test_the_cohort_lookup_uses_the_any_play_anchor_not_the_qualified_one(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """The discriminating case: this show's only RECENT play is unqualified (low percent
-        complete), so the stage 1 keep's qualified ``rewatch_last_play_days`` reads its older
-        qualified play (~400 days back) -- but the Stage 2 cohort lookup must anchor on the
-        ANY-play last play (~5 days back, unqualified) exactly as
-        ``services.rewatch.show_rewatch_outcomes`` promises, or it reads the wrong dormancy
-        entirely.
+        """The discriminating case. This show's only recent play is unqualified (low
+        percent complete), so the stage 1 keep's qualified ``rewatch_last_play_days``
+        reads its older qualified play (~400 days back). The Stage 2 cohort lookup must
+        instead anchor on the any-play last play (~5 days back, unqualified), exactly as
+        ``services.rewatch.show_rewatch_outcomes`` promises, or it reads the wrong
+        dormancy entirely.
 
-        The fit is trained off this show's own old-play-to-recent-play pair, which lands in
-        the (0, 365] block. If the lookup mistakenly anchored on the qualified ~400-day play
-        instead, that dormancy falls in the DIFFERENT (365, 548] block -- which the fit never
-        populated -- and the cohort would read Unknown instead of Known. That divergence is
-        what makes this test discriminate the two anchors rather than merely re-assert the
-        cohort code path test 1 above already covers.
+        The fit is trained off this show's own old-play-to-recent-play pair, which lands
+        in the (0, 365] block. If the lookup mistakenly anchored on the qualified ~400-day
+        play instead, that dormancy would fall in the different (365, 548] block, which
+        the fit never populated, and the cohort would read Unknown instead of Known. That
+        divergence is what makes this test discriminate the two anchors, rather than
+        merely re-asserting the cohort code path the test above already covers.
         """
         series = [
             {
@@ -2788,12 +2854,13 @@ class TestTheTVCohortFit:
             rows=[{"rating_key": 930, "title": "Unqualified Recent Play Show", "year": 2013}],
             children={930: [{"media_index": 1, "rating_key": 931}]},
         )
-        # The older QUALIFIED play: what rewatch_last_play_days (stage 1) must read, and
-        # what trains the fit's (0, 365] block (~35 days before the year-back cutoff).
+        # The older qualified play. This is what rewatch_last_play_days (stage 1) must
+        # read, and what trains the fit's (0, 365] block (~35 days before the year-back
+        # cutoff).
         await _episode(cache_engine, season_key=931, user_id=1, show_key=930, days_ago=400)
-        # The newer play: low percent_complete, no watched_status, so `rewatch.qualifies`
-        # rejects it -- but Stage 2's any-play anchor counts it regardless (module docstring:
-        # "any user, any completion").
+        # The newer play has low percent_complete and no watched_status, so
+        # `rewatch.qualifies` rejects it. Stage 2's any-play anchor counts it regardless
+        # (module docstring: "any user, any completion").
         await _episode(
             cache_engine,
             season_key=931,
@@ -2825,11 +2892,11 @@ class TestTheTVCohortFit:
         )
 
         facts = next(j for j in judgments if j.media_key == "sonarr:1:20:1").facts
-        # Stage 1 stays on the older QUALIFIED play.
+        # Stage 1 stays on the older qualified play.
         assert facts.rewatch_last_play_days == Known(value=400, source="tautulli")
-        # Stage 2's cohort is Known -- only possible if the lookup anchored on the recent
-        # any-play (~5 days, inside the trained block), not the qualified ~400-day play
-        # (outside it, where the cohort would read Unknown).
+        # Stage 2's cohort is Known. This is only possible if the lookup anchored on the
+        # recent any-play (~5 days, inside the trained block), not the qualified ~400-day
+        # play (outside it, where the cohort would read Unknown).
         assert facts.rewatch_cohort_n == Known(value=1, source="tautulli")
         assert facts.rewatch_cohort_k == Known(value=1, source="tautulli")
 
@@ -2853,35 +2920,36 @@ class TestUserSeasonProgress:
     @pytest.mark.parametrize(
         ("plays", "why"),
         [
-            # Nothing completed at all: `max_ep is None`, so there is no position to name.
+            # Nothing completed at all. `max_ep is None`, so there is no position to name.
             ([(2, None)], "no completed episode"),
-            # Completed ep 1, then plays of ep 4 Tautulli never reported the completion of.
-            # They may be further on than the position says, so it is dropped rather than
-            # trusted low -- being wrong in that direction unprotects the season they are
-            # about to watch next.
+            # Completed ep 1, then plays of ep 4 Tautulli never reported the completion
+            # of. They may be further on than the position says, so it is dropped rather
+            # than trusted low. Being wrong in that direction unprotects the season they
+            # are about to watch next.
             ([(1, 1.0), (4, None)], "a later play whose completion is unknown"),
-            # The same reach, reported rather than missing: Tautulli quantizes
-            # `watched_status` against the operator's own threshold, so a play that stopped
-            # short arrives as 0.75 and not as NULL. It is still a play of episode 4 (#825).
+            # The same reach, reported rather than missing. Tautulli quantizes
+            # `watched_status` against the operator's own threshold, so a play that
+            # stopped short arrives as 0.75 and not as NULL. It is still a play of
+            # episode 4.
             ([(1, 1.0), (4, 0.75)], "a later play that stopped short of complete"),
         ],
     )
     async def test_a_dropped_position_holds_the_season_rather_than_clearing_it(
         self, cache_engine: AsyncEngine, plays: list[tuple[int, float | None]], why: str
     ) -> None:
-        """#470. ``season_watch_stats`` drops a progress row down two branches, and both are
-        locally keep-safe by intent. What makes them keep-safe *downstream* is an invariant
-        that lives in a different query and nothing pinned: the ``pairs`` read that fills
-        ``user_season_keys`` carries no ``media_index`` filter, so it is a strict superset of
-        the ``progress`` read. A viewer whose position was dropped is therefore still present
-        as a *touch*, ``_progress_by_user`` records them as ``None`` -- position unknown, not
-        absent -- and ``_anchor_positions`` fails closed on that and holds the season plus the
-        one after it (rule 93).
+        """``season_watch_stats`` drops a progress row down two branches, and both are
+        locally keep-safe by intent. What makes them keep-safe *downstream* is an
+        invariant that lives in a different query, with no test of its own. The
+        ``pairs`` read that fills ``user_season_keys`` carries no ``media_index`` filter,
+        so it is a strict superset of the ``progress`` read. A viewer whose position was
+        dropped is therefore still present as a *touch*. ``_progress_by_user`` records
+        them as ``None``, meaning position unknown, not absent, and ``_anchor_positions``
+        fails closed on that and holds the season plus the one after it.
 
         Narrowing ``pairs`` to match ``progress``'s filters would make the viewer vanish
         instead, and the mid-binge guard would then read a dropped position as "nobody is
-        part-way through". That change looks like a tidy-up and is a protection loss, which is
-        why the chain is asserted end to end here rather than at the query.
+        part-way through". That change looks like a tidy-up and is a protection loss,
+        which is why the chain is asserted end to end here rather than at the query.
         """
         for episode, status in plays:
             await _episode(cache_engine, season_key=903, user_id=7, episode=episode, status=status)
@@ -2890,7 +2958,7 @@ class TestUserSeasonProgress:
 
         key_to_number = {901: 1, 902: 2, 903: 3}
         progress = season_scan._progress_by_user(stats, key_to_number)
-        # Present, and Unknown -- the distinction the whole chain turns on.
+        # Present, and Unknown. This is the distinction the whole chain turns on.
         assert progress == {"7": {3: None}}
 
         plan = plan_series_prune(
@@ -2902,8 +2970,8 @@ class TestUserSeasonProgress:
             last_play_by_user=season_scan._last_play_by_user_season(stats, key_to_number),
             season_final_episode={1: 5, 2: 5, 3: 5, 4: 5},
         )
-        # Season 3 because she may still be on it, season 4 because she may have finished it:
-        # with the position unknown, `_anchor_positions` cannot tell and holds both.
+        # Season 3 because she may still be on it, season 4 because she may have finished
+        # it. With the position unknown, `_anchor_positions` cannot tell and holds both.
         assert plan.prunable == [1, 2]
         held = {p.season_number: reason_text(p.reason) for p in plan.protected}
         assert held[3] == "a viewer is part-way through the show"
@@ -2913,18 +2981,18 @@ class TestUserSeasonProgress:
     async def test_a_finale_that_stopped_short_still_holds_the_next_season(
         self, cache_engine: AsyncEngine, status: float
     ) -> None:
-        """#825. A viewer completed every episode but the last, and reached the last one
-        without finishing it. They are done with the season, and the next one is what they
-        start next.
+        """A viewer completed every episode but the last, and reached the last one
+        without finishing it. They are done with the season, and the next one is what
+        they start next.
 
-        Read as "still on season 3", the guard holds the season they have just finished and
-        releases the one they are about to start -- the protection pointed at the wrong
-        season, not merely missed, and the released one carries the old plays that let it
-        score. `watched_status` is quantized against the operator's own watched-percent
-        threshold, so it arrives as one of 0, 0.25, 0.5, 0.75 or 1, and matching the
-        unfinished plays on `IS NULL` alone left the three middle values raising neither
-        column. Swept rather than pinned at 0.75, so a fix that names one value fails
-        (rule 141).
+        Read as "still on season 3", the guard would hold the season they have just
+        finished and release the one they are about to start. That points the protection
+        at the wrong season, not merely missing it, and the released season carries the
+        old plays that let it score. `watched_status` is quantized against the operator's
+        own watched-percent threshold, so it arrives as one of 0, 0.25, 0.5, 0.75, or 1,
+        and matching unfinished plays on `IS NULL` alone would miss the three middle
+        values entirely. This sweeps all three rather than pinning just 0.75, so a fix
+        that only covers one value fails here.
         """
         for episode in range(1, 10):
             await _episode(cache_engine, season_key=913, user_id=7, episode=episode)

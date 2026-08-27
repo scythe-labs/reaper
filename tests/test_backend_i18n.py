@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""`reaper.i18n`'s backend catalog: the Discord webhook and the desktop launcher's tray
-and dialogs, the two operator-facing surfaces with no browser to compose a sentence in
-(docs/history/I18N_PLAN.md's catalog work, phase 10a).
+"""`reaper.i18n`'s backend catalog. This covers the Discord webhook and the desktop
+launcher's tray and dialogs, the two operator-facing surfaces with no browser to compose a
+sentence in.
 
-Four things pinned here, each named in its own class: the production ICU formatter proven
-against the exact fixtures `frontend/src/why.test.ts` pins for the real `ui.json` catalog
-(rule 119: this is what keeps `tests/_reasons.py`'s twin, which now imports the same
-formatter, honest against the frontend's own composer); the two-way agreement between
-`say(...)`'s literal call-site keys and `backend.json`'s leaves (rule 145); every catalog
-key carrying exactly one translator note (rule 145 again, the same shape
-`frontend/src/i18n-notes.test.ts` checks for `ui.json`); and the formatter's documented
-subset, both what it supports and what it degrades on rather than raising.
+Four things are pinned here, each named in its own class. The production ICU formatter is
+proven against the exact fixtures `frontend/src/why.test.ts` pins for the real `ui.json`
+catalog, which is what keeps `tests/_reasons.py`'s twin, which now imports the same
+formatter, honest against the frontend's own composer. There is a two-way agreement
+between `say(...)`'s literal call-site keys and `backend.json`'s leaves. Every catalog key
+carries exactly one translator note, the same shape `frontend/src/i18n-notes.test.ts`
+checks for `ui.json`. And the formatter's documented subset covers both what it supports
+and what it degrades on rather than raising.
 """
 
 from __future__ import annotations
@@ -36,17 +36,17 @@ BACKEND_CATALOG = SRC / "locales" / "en" / "backend.json"
 BACKEND_NOTES = SRC / "locales" / "en" / "backend.notes.json"
 UI_LOCALES = REPO / "frontend" / "src" / "locales"
 
-#: Every module that calls `say(...)` today. A future `notify.<agent>` module (the plan's
-#: own words for what comes after this one) joins this tuple in the same change that adds
-#: it, which is what keeps the two-way count below honest.
+#: Every module that calls `say(...)` today. A future `notify.<agent>` module joins this
+#: tuple in the same change that adds it, which is what keeps the two-way count below
+#: honest.
 _SAY_CALL_SITES = (
     SRC / "notify" / "discord.py",
     SRC / "api" / "settings.py",
     SRC / "launcher.py",
 )
 
-#: Rule 145: the population this file's two scanning guards claim to cover, reconciled by
-#: hand against `backend.json` -- 4 discord.leaving_soon.* keys, 2 discord.test.* keys, 3
+#: The population this file's two scanning guards claim to cover, reconciled by hand
+#: against `backend.json`: 4 discord.leaving_soon.* keys, 2 discord.test.* keys, 3
 #: launcher.tray.* keys, 3 launcher.dialog.* keys, 2 launcher.move.* keys.
 _EXPECTED_CATALOG_KEY_COUNT = 14
 
@@ -68,9 +68,9 @@ def _backend_catalog_leaves() -> dict[str, str]:
 
 
 def _say_call_keys(path: Path) -> set[str]:
-    """Every literal key passed as `say(...)`'s first argument in `path` (rule 147: this
-    matches the call shape by parsing the AST, not by a text pattern that a reformatted
-    call could slip past)."""
+    """Every literal key passed as `say(...)`'s first argument in `path`. This matches the
+    call shape by parsing the AST, not by a text pattern that a reformatted call could
+    slip past."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     keys: set[str] = set()
     for node in ast.walk(tree):
@@ -88,14 +88,14 @@ def _say_call_keys(path: Path) -> set[str]:
 
 class TestTheProductionIcuFormatterMatchesTheFrontendComposer:
     """`reaper.i18n.format_icu`, over the real `ui.json` catalog, rendering the exact
-    strings `frontend/src/why.test.ts` pins for the same message and params -- so the two
-    languages' composers are proven to agree, not merely to each read their own catalog
+    strings `frontend/src/why.test.ts` pins for the same message and params. This proves
+    the two languages' composers agree, not merely that each reads its own catalog
     without crashing."""
 
     def test_a_plural_count_with_an_already_derived_window(self) -> None:
         # why.test.ts, "pluralizes counts through the catalog's ICU, not the caller".
         # window_days_window is `format.ts`'s humanWindow output, passed through as a
-        # plain string -- computing it is that function's own twin's job, not this one's.
+        # plain string. Computing it is that function's own twin's job, not this one's.
         message = catalog_entry("popularity_watched")
         assert (
             format_icu(message, {"count": 1, "window_days_window": "year"})
@@ -121,9 +121,9 @@ class TestTheProductionIcuFormatterMatchesTheFrontendComposer:
 
 
 class TestTheFormatterSubset:
-    """What `format_icu` supports, and where the subset stops -- see its docstring in
+    """What `format_icu` supports, and where the subset stops. See its docstring in
     `reaper.i18n` for the full boundary. Every case here either renders correctly or
-    degrades quietly; none of them may raise, since `say` promises exactly that."""
+    degrades quietly. None of them may raise, since `say` promises exactly that."""
 
     def test_a_bare_interpolation(self) -> None:
         assert format_icu("{name} is here", {"name": "Reaper"}) == "Reaper is here"
@@ -137,7 +137,7 @@ class TestTheFormatterSubset:
         assert format_icu(message, {"media": "tv"}) == "a show"
 
     def test_a_plural_nested_inside_a_plural_keeps_its_own_hash(self) -> None:
-        # The bug `_replace_hash`'s own docstring names: a naive substitution before
+        # The bug `_replace_hash`'s own docstring names. A naive substitution before
         # recursing would clobber the inner plural's `#` with the outer count.
         message = "{a, plural, other {# outer {b, plural, other {# inner}}}}"
         assert format_icu(message, {"a": 2, "b": 5}) == "2 outer 5 inner"
@@ -147,7 +147,7 @@ class TestTheFormatterSubset:
         assert format_icu("two quotes '' make one", {}) == "two quotes ' make one"
 
     def test_a_plain_apostrophe_in_prose_is_not_an_escape(self) -> None:
-        # The regression this formatter's quote handling exists to avoid: real catalog
+        # The regression this formatter's quote handling exists to avoid. Real catalog
         # prose is full of contractions, and none of them sit next to {, } or #, so none
         # of them may start a quoted region (`launcher.dialog.port_in_use`'s "didn't" is
         # the catalog entry that surfaced this).
@@ -159,13 +159,15 @@ class TestTheFormatterSubset:
         assert format_icu("before '{ never closes", {}) == "before { never closes"
 
     def test_an_unrecognized_argument_kind_degrades_to_the_raw_value(self) -> None:
-        # date/time/duration are out of scope (module docstring): nothing shipped uses one,
-        # so this only has to not crash, which it proves by falling back to the raw value.
+        # date/time/duration are out of scope (see the module docstring). Nothing shipped
+        # uses one, so this only has to not crash, which it proves by falling back to the
+        # raw value.
         assert format_icu("{d, date}", {"d": "2026-01-01"}) == "2026-01-01"
 
     def test_selectordinal_has_no_non_english_category_table(self) -> None:
-        # Also out of scope: `tag` never changes which ordinal category `n` falls into.
-        # Still never raises -- it always resolves through English's four categories.
+        # Also out of scope. `tag` never changes which ordinal category `n` falls into.
+        # It still never raises, since it always resolves through English's four
+        # categories.
         message = "{n, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}"
         assert format_icu(message, {"n": 21}, tag="es") == "21st"
 
@@ -173,10 +175,10 @@ class TestTheFormatterSubset:
 class TestPluralRulesCoverEveryShippedUiTranslation:
     def test_every_shipped_ui_locale_has_a_backend_plural_rule(self) -> None:
         """A UI translation Weblate ships names a tag with no backend plural rule until
-        this table grows to match it -- pluralizing a Discord or launcher message in that
+        this table grows to match it. Pluralizing a Discord or launcher message in that
         language would silently take English's one/other split, which is wrong for a
-        language whose singular/plural boundary sits somewhere else (rule 145: a shipped
-        tag with no rule must fail this, not silently inherit English's)."""
+        language whose singular/plural boundary sits somewhere else. A shipped tag with
+        no rule must fail this test, not silently inherit English's."""
         shipped = {
             path.name
             for path in UI_LOCALES.iterdir()
@@ -189,9 +191,9 @@ class TestPluralRulesCoverEveryShippedUiTranslation:
         )
 
     def test_the_table_itself(self) -> None:
-        """Spot-checks, not a restatement of CLDR: the shape each rule has to get right at
-        n=0, n=1 and n=2, which is where en/de/es (one at n=1 only) and fr/pt (one at n=0
-        and n=1 too) actually differ."""
+        """Spot-checks, not a restatement of CLDR. This is the shape each rule has to get
+        right at n=0, n=1 and n=2, which is where en/de/es (one at n=1 only) and fr/pt
+        (one at n=0 and n=1 too) actually differ."""
         assert reaper_i18n.PLURAL_RULES["en"](1) == "one"
         assert reaper_i18n.PLURAL_RULES["en"](0) == "other"
         assert reaper_i18n.PLURAL_RULES["fr"](0) == "one"
@@ -202,11 +204,9 @@ class TestPluralRulesCoverEveryShippedUiTranslation:
 
 
 class TestSayCallSitesAgreeWithTheCatalogBothWays:
-    """Rule 145 (a scanning guard is proven against a reconciled count) and rule 147 (the
-    matcher is proven against what it should and should not collect): every literal key a
-    `say(...)` call names is a real `backend.json` leaf, and every leaf is called from
-    somewhere -- an orphan catalog entry is exactly as much a bug as a typo'd call site,
-    just invisible in the opposite direction."""
+    """Every literal key a `say(...)` call names must be a real `backend.json` leaf, and
+    every leaf must be called from somewhere. An orphan catalog entry is exactly as much a
+    bug as a typo'd call site, just invisible in the opposite direction."""
 
     def test_the_matcher_collects_a_call_and_ignores_a_non_literal_or_a_different_callee(
         self, tmp_path: Path
@@ -247,8 +247,8 @@ class TestSayCallSitesAgreeWithTheCatalogBothWays:
 
 class TestTranslatorNotes:
     """The same coverage `frontend/src/i18n-notes.test.ts` holds `ui.notes.json` to,
-    reduced to this catalog's simpler rule: every key gets a note (`backend.notes.json`
-    is small enough that there is no "required subset" to derive)."""
+    reduced to this catalog's simpler rule. Every key gets a note. `backend.notes.json`
+    is small enough that there is no "required subset" to derive."""
 
     def test_every_key_has_exactly_one_nonblank_note_and_no_note_is_orphaned(self) -> None:
         catalog_keys = set(_backend_catalog_leaves())
@@ -286,7 +286,7 @@ class TestCatalogLoading:
         overlay: dict[str, Any] = {"a": "", "nested": {"x": "X-translated"}, "extra": 4}
         merged = reaper_i18n._merge(base, overlay)
         # A blank overlay string, and a non-string/non-dict overlay value, both leave the
-        # English base showing through; a non-blank string and a nested dict both win.
+        # English base showing through. A non-blank string and a nested dict both win.
         assert merged == {"a": "A", "nested": {"x": "X-translated", "y": "Y"}}
 
     def test_say_falls_back_to_the_bare_key_and_warns_when_no_catalog_has_it(self) -> None:
@@ -298,8 +298,8 @@ class TestCatalogLoading:
     def test_say_never_raises_when_a_param_cannot_format(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """`int(float("nan"))` raises inside the selectordinal branch -- the one input this
-        subset's arithmetic cannot absorb quietly -- so this is what proves `say`'s
+        """`int(float("nan"))` raises inside the selectordinal branch, the one input this
+        subset's arithmetic cannot absorb quietly, so this is what proves `say`'s
         try/except is load-bearing rather than dead code."""
         monkeypatch.setattr(
             reaper_i18n,
@@ -321,15 +321,16 @@ class TestWhichLanguageANotificationIsWrittenIn:
     picker shows and what the app is painted in. `get_notification_language` clamps the same
     value to a tag this process holds a `backend.json` for, because `say` composes a
     notification here and a browser catalog ships a release ahead of this one. Reading the raw
-    value in `notify.discord` would post an untranslated embed under a tag claiming otherwise;
-    clamping it in the picker would show the operator a language they did not choose.
+    value in `notify.discord` would post an untranslated embed under a tag claiming
+    otherwise. Clamping it in the picker would show the operator a language they did not
+    choose.
     """
 
     async def test_the_picker_reads_back_exactly_what_was_stored(
         self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        # `de` on purpose: a tag with no shipped backend catalog, so this cannot pass by the
-        # clamp happening to agree (rule 141).
+        # `de` on purpose. It is a tag with no shipped backend catalog, so this cannot
+        # pass by the clamp happening to agree.
         assert "de" not in reaper_i18n.shipped_tags()
         async with async_factory() as session:
             await app_settings.set_language(session, "de")
@@ -345,8 +346,8 @@ class TestWhichLanguageANotificationIsWrittenIn:
     async def test_a_notification_uses_the_stored_tag_once_its_catalog_ships(
         self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        # Spanish, not English: English is the fallback, so a case pinning it could not tell a
-        # stored tag being read from the clamp firing (rule 141).
+        # Spanish, not English. English is the fallback, so a case pinning it could not
+        # tell a stored tag being read from the clamp firing.
         shipped = "es"
         assert shipped in reaper_i18n.shipped_tags()
         async with async_factory() as session:

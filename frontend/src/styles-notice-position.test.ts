@@ -3,12 +3,11 @@
 //
 // `.notice` is a shared primitive, so its rules load before the feature files.
 //
-// They were written in `16-simulator.css` and stayed there long after `.notice` stopped being a
-// simulator control, two thirds of the way down a 35-file load order (#779). Nothing was broken
-// while they sat there, because no other file declared a `.notice` rule to conflict with. That
-// is what makes the position worth pinning rather than leaving to whoever moves next: the first
-// `.notice` variant added to an earlier file would have lost at equal specificity, and a rule
-// losing on source order is invisible in a diff and invisible in a green suite.
+// A bare `.notice` rule declared in a later feature file would only work by accident: nothing
+// breaks as long as no earlier file declares a conflicting `.notice` rule, but the first
+// `.notice` variant added to an earlier file would lose at equal specificity. A rule losing on
+// source order is invisible in a diff and invisible in a green suite, which is why the position
+// is pinned here rather than left to whoever moves it next.
 
 import { describe, expect, it } from "vitest";
 
@@ -33,8 +32,8 @@ describe("the notice rules", () => {
   it("are declared in a shared-primitive file, never a feature file", () => {
     // A feature file narrowing the primitive is fine and is the point of the ordering:
     // `.savebar .notice` outranks the base rule on specificity and is meant to. What must not
-    // happen is a second BARE `.notice` rule, which wins or loses purely on which file loads
-    // last -- the failure this position exists to prevent.
+    // happen is a second bare `.notice` rule, which wins or loses purely on which file loads
+    // last. That is the failure this position exists to prevent.
     const strays = [...code.matchAll(RULE)].flatMap((m) => {
       const list = m[1] ?? "";
       const at = m.index + (m[0].length - m[0].trimStart().length);

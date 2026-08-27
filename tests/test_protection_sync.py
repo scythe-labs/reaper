@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Protection lists must be populated BEFORE a scan reads them.
+"""Protection lists must be populated before a scan reads them.
 
-The bug this closes: the list providers and the membership tables always existed, but
-nothing synced them at scan time. So the "Never Reap" collection, the reaper-keep tag
-and the IMDb Top 250 were silently empty, and an empty whitelist is a whitelist that
-does not protect -- a protection failing *open*, which is the worst direction.
+If nothing syncs the list providers into the membership tables at scan time, a list like the
+"Never Reap" collection, the reaper-keep tag, or the IMDb Top 250 reads as empty. An empty
+whitelist protects nothing, which is a protection failing open, the worst direction.
 
-These prove the orchestrator populates what a scan then reads, and that one failing
-source neither empties the others nor aborts the scan.
+These prove the orchestrator populates what a scan then reads, and that one failing source
+neither empties the others nor aborts the scan.
 """
 
 from __future__ import annotations
@@ -90,9 +89,9 @@ async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
 
 
 def _top250_payload(count: int = 250) -> list[dict[str, object]]:
-    # Numbered from 1, not 0: `tt0000000` is the "unknown id" sentinel every writer now filters
-    # (`identity._clean_imdb`), so a fixture starting at zero hands its first entry an id that
-    # is stored under nothing. Sibling of the same fixture in `test_lists.py` (#709).
+    # Numbered from 1, not 0. `tt0000000` is the "unknown id" sentinel every writer filters
+    # out (`identity._clean_imdb`), so a fixture starting at zero would hand its first entry
+    # an id that is stored under nothing. The same fixture also lives in `test_lists.py`.
     return [
         {"ImdbId": f"tt{i:07d}", "TmdbId": 1000 + i, "Title": f"Film {i}"}
         for i in range(1, count + 1)
@@ -114,7 +113,7 @@ class TestTheTop250IsPopulatedForAScan:
         self, engine: AsyncEngine, httpx2_mock: respx.Router
     ) -> None:
         """The end-to-end point: sync, then the membership a scan looks up is present.
-        Before this wiring, that lookup always came back empty."""
+        Without a sync, that lookup always comes back empty."""
         httpx2_mock.get(IMDB_TOP_250_URL).mock(
             return_value=httpx.Response(200, json=_top250_payload())
         )
@@ -130,8 +129,8 @@ class TestTheTop250IsPopulatedForAScan:
     ) -> None:
         """A disabled definition builds no provider, so its slug is outside the set the
         retire sweep is judged against and the stored membership is disabled. Without the
-        sweep the switch would be decoration: the list would go on protecting every title
-        it ever matched (rule 25)."""
+        sweep the switch would do nothing, and the list would go on protecting every title
+        it ever matched."""
         httpx2_mock.get(IMDB_TOP_250_URL).mock(
             return_value=httpx.Response(200, json=_top250_payload())
         )
@@ -152,10 +151,10 @@ class TestTheTop250IsPopulatedForAScan:
 
 
 class TestAnUnreadableRegistryBuildsNothingAndRetiresNothing:
-    """``definitions`` is three-state, and ``None`` is the one that matters: the registry
-    could not be READ, which is not the same fact as an operator having no lists (rule 1,
-    rule 93). Retiring on it would disable every list on the install because a table was
-    briefly unavailable."""
+    """``definitions`` is three-state, and ``None`` is the one that matters. It means the
+    registry could not be read, which is not the same fact as an operator having no lists.
+    Retiring on it would disable every list on the install because a table was briefly
+    unavailable."""
 
     async def test_none_leaves_every_stored_list_exactly_as_it_was(
         self, engine: AsyncEngine, httpx2_mock: respx.Router
@@ -174,8 +173,8 @@ class TestAnUnreadableRegistryBuildsNothingAndRetiresNothing:
     async def test_an_empty_registry_by_contrast_retires(
         self, engine: AsyncEngine, httpx2_mock: respx.Router
     ) -> None:
-        """The genuine "no lists" answer does retire -- the contrast that keeps the case
-        above from passing for a sweep that never runs at all."""
+        """The genuine "no lists" answer does retire. Without this contrast, the test above
+        would pass even for a sweep that never runs at all."""
         httpx2_mock.get(IMDB_TOP_250_URL).mock(
             return_value=httpx.Response(200, json=_top250_payload())
         )
@@ -191,11 +190,11 @@ class TestANarrowedPassSweepsOnlyTheListItChecked:
     """It reads one definition's output as the truth about that definition, which is what a
     pass over one definition knows, and never as the truth about a family.
 
-    Editing a list changes its slug -- a tag list's carries the match mode -- so the row the
-    edit superseded stays enabled under the same definition id. It goes on protecting, which
-    is harmless, and the Lists screen sums both rows into one "Protecting N titles" that is
-    roughly twice the real number, which is not: that count is read while deciding what may be
-    deleted.
+    Editing a list changes its slug, since a tag list's slug carries the match mode, so the
+    row the edit superseded stays enabled under the same definition id. The old row going on
+    protecting is harmless. Reporting it is not: the Lists screen sums both rows into one
+    "Protecting N titles" that is roughly twice the real number, and that count is read while
+    deciding what may be deleted.
     """
 
     @staticmethod
@@ -233,9 +232,9 @@ class TestANarrowedPassSweepsOnlyTheListItChecked:
     async def test_a_narrowed_pass_that_produced_nothing_retires_nothing(
         self, engine: AsyncEngine
     ) -> None:
-        """Rule 115. A Plex collection checked while Plex is unreachable builds no provider
-        and no slug, so the stored row is still the live protection and the sweep stands
-        down: the alternative unprotects every title on it over a network blip."""
+        """A Plex collection checked while Plex is unreachable builds no provider and no
+        slug, so the stored row is still the live protection and the sweep stands down. The
+        alternative would unprotect every title on it over a network blip."""
         await sync_protection_lists(
             engine, definitions=[_plex_list()], plex_server=_CollectionServer()
         )
@@ -251,8 +250,8 @@ class TestANarrowedPassSweepsOnlyTheListItChecked:
     async def test_a_narrowed_pass_whose_sync_failed_retires_nothing(
         self, engine: AsyncEngine
     ) -> None:
-        """Rule 115's other half: the slug that was meant to replace the stored row did not
-        land, so the stored row is still what is protecting."""
+        """The other half of the same rule: the slug that was meant to replace the stored
+        row did not land, so the stored row is still what is protecting."""
         await sync_protection_lists(
             engine, definitions=[_tag_list(("keep", "gold"), "any")], sonarrs=[self._sonarr()]
         )
@@ -270,8 +269,8 @@ class TestANarrowedPassSweepsOnlyTheListItChecked:
         self, engine: AsyncEngine, httpx2_mock: respx.Router
     ) -> None:
         """``only=`` produces one list's slugs, and a sweep reading that as the whole truth
-        about a family would disable every other list in it -- including, as here, a list
-        the registry no longer carries at all."""
+        about a family would disable every other list in it, including, as here, a list the
+        registry no longer carries at all."""
         httpx2_mock.get(IMDB_TOP_250_URL).mock(
             return_value=httpx.Response(200, json=_top250_payload())
         )
@@ -298,18 +297,17 @@ class TestANarrowedPassSweepsOnlyTheListItChecked:
 
 class TestAnEmptyCacheDoesNotCrashTheScan:
     """The cache database is rebuildable and can be empty on a fresh install. Reading it
-    before it has ever been synced must degrade gracefully -- 'no history yet' -- never crash
-    with 'no such table' a hundred frames deep in a scan. Found by clearing the cache and
-    scanning.
+    before it has ever been synced must degrade gracefully, reporting "no history yet" rather
+    than crashing with "no such table" deep inside a scan.
 
     Reading no plays is not itself the protection: an empty mirror resolves the horizon to
-    `utcnow()`, so an item with an arrival date reads Known ZERO days dormant. What holds is
-    `snapshot.scan` degrading the snapshot un-plannably on that mirror."""
+    `utcnow()`, so an item with an arrival date reads Known zero days dormant. What holds is
+    `snapshot.scan` degrading the snapshot so nothing can be planned from that mirror."""
 
     async def test_watch_stats_on_a_never_synced_cache_returns_empty(
         self, engine: AsyncEngine
     ) -> None:
-        # The table has never been created. This used to raise OperationalError.
+        # The table has never been created.
         last, window, all_time = await _watch_stats(engine, rating_keys={1, 2, 3}, window_days=365)
         assert last == {} and window == {} and all_time == {}
 
@@ -323,9 +321,9 @@ class TestOneFailingListDoesNotSinkTheScan:
     async def test_a_failed_fetch_is_recorded_not_raised(
         self, engine: AsyncEngine, httpx2_mock: respx.Router
     ) -> None:
-        """A protection source that errors must not abort the scan -- but the caller has
-        to be able to SEE it failed, so the scan can treat itself as degraded rather than
-        delete something the list would have saved."""
+        """A protection source that errors must not abort the scan. The caller still has
+        to be able to see that it failed, so the scan can treat itself as degraded rather
+        than delete something the list would have saved."""
         httpx2_mock.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(503))
 
         synced = await sync_protection_lists(engine, definitions=[IMDB])
@@ -338,7 +336,7 @@ class TestOneFailingListDoesNotSinkTheScan:
         self, engine: AsyncEngine, httpx2_mock: respx.Router
     ) -> None:
         """A short list would silently stop protecting the films that fell off it, so
-        the provider refuses it -- and the orchestrator records that refusal rather than
+        the provider refuses it. The orchestrator records that refusal rather than
         installing a half-empty whitelist."""
         httpx2_mock.get(IMDB_TOP_250_URL).mock(
             return_value=httpx.Response(200, json=_top250_payload(count=50))
@@ -415,11 +413,11 @@ class _WatchlistServer:
 class TestEachInstanceKeepsItsOwnKeepList:
     async def test_two_instances_of_one_service_both_protect(self, engine: AsyncEngine) -> None:
         """Two Sonarr instances, each with its own keep-tagged title, one tag definition.
-        The definition builds one provider PER INSTANCE and the slug carries the instance
-        id, so each instance syncs its OWN list. With a shared slug (the old shape), each
-        sync atomically replaced the other's membership: whichever ran last erased the
-        other instance's keep-tagged titles from the whitelist, silently -- a protection
-        failing open, in whichever order the syncs happened to finish."""
+        The definition must build one provider per instance, with the slug carrying the
+        instance id, so each instance syncs its own list. A slug shared between instances
+        would let each atomic sync replace the other's membership, so whichever ran last
+        would silently erase the other instance's keep-tagged titles from the whitelist, a
+        protection failing open."""
         first = SonarrSource(
             client=FakeSonarr(
                 tag_rows=[{"id": 1, "label": "keep"}],
@@ -450,11 +448,11 @@ class TestEachInstanceKeepsItsOwnKeepList:
 
 
 class TestAReplacedKeepListStopsProtecting:
-    """A stored list outlives the setting that created it: the slug carries the any/all
-    match, the instance id and the collection name, so changing any of them writes a NEW
-    list and leaves the old one enabled. Everything the old rule ever matched stayed
-    whitelisted forever, which means the tightening the operator saved never took effect
-    and the why-panel cited a keep rule that no longer exists."""
+    """A stored list outlives the setting that created it. The slug carries the any/all
+    match, the instance id, and the collection name, so changing any of them writes a new
+    list and leaves the old one enabled. Everything the old rule ever matched would stay
+    whitelisted forever, so a tightening the operator saved would never take effect, and
+    the why-panel would cite a keep rule that no longer exists."""
 
     @staticmethod
     def _sonarr() -> SonarrSource:
@@ -520,8 +518,9 @@ class TestAReplacedKeepListStopsProtecting:
         self, engine: AsyncEngine
     ) -> None:
         """The save boundary refuses an empty tag list, so this row can only be a stored
-        body edited by hand -- and it reads as "no tags configured", never as a sync of
-        everything or of nothing that leaves the old membership protecting."""
+        body edited by hand. It must read as "no tags configured", and retire the list,
+        rather than as a sync of everything, which would leave the old membership
+        protecting."""
         await sync_protection_lists(engine, definitions=[_tag_list()], sonarrs=[self._sonarr()])
         assert await memberships(engine, media_type="tv", tvdb_id=10)
 
@@ -619,13 +618,16 @@ class TestTheWatchlistFollowsThePlexRules:
 
 
 class TestLegacySlugsAreRehomedOnUpgrade:
-    """The upgrade path. Policy keep tags wrote slugs with no ``-list`` suffix. A definition
-    that alone claims such a row ADOPTS it before the pass (``lists.adopt_legacy``): the row
-    is renamed onto the definition's slug with its membership, so the operator's tagged
-    titles are one editable list before anything has been checked. Where adoption must stand
-    down -- two definitions could claim the row -- the sweep's contract holds: the legacy row
-    is retired exactly when its replacements actually synced (rule 115), never on a failed
-    sync that would withdraw the only membership still protecting."""
+    """The upgrade path. Policy keep tags wrote slugs with no ``-list`` suffix.
+
+    A definition that alone claims such a row adopts it before the pass
+    (``lists.adopt_legacy``): the row is renamed onto the definition's slug along with its
+    membership, so the operator's tagged titles are one editable list before anything has
+    been checked. When two definitions could claim the row, adoption stands down instead,
+    and the sweep's contract takes over: the legacy row is retired only once its replacements
+    actually synced, never on a failed sync that would withdraw the only membership still
+    protecting.
+    """
 
     @staticmethod
     def _sonarr_client() -> FakeSonarr:
@@ -658,7 +660,7 @@ class TestLegacySlugsAreRehomedOnUpgrade:
         self, engine: AsyncEngine
     ) -> None:
         """The adopted row already holds the legacy membership, and the atomic swap in
-        ``lists.sync`` leaves it exactly as the last good check left it -- so a failed
+        ``lists.sync`` leaves it exactly as the last good check left it. So a failed
         refresh right after the upgrade still protects every tagged title."""
         await self._store_legacy_row(engine)
 
@@ -672,15 +674,16 @@ class TestLegacySlugsAreRehomedOnUpgrade:
     async def test_a_coasting_adopted_row_is_matched_by_the_name_its_rule_spells(
         self, engine: AsyncEngine
     ) -> None:
-        """Membership surviving the failed refresh above is only half of the protection: the
-        keep rule spells the DEFINITION's name, and a legacy row carries no ``rule_name`` at
-        all, so ``matched_by`` falls back to a display name naming the server. The rule then
-        matches nothing while the row reads healthy and the scan stays executable -- every
-        tagged title unprotected, unannounced.
+        """Membership surviving the failed refresh above is only half of the protection.
 
-        The scan path pairs ``adopt_legacy`` with ``lists.sync_rule_names`` for that reason,
-        as both of ``api/lists.py``'s paths already did (rule 72). Driven through the failing
-        sync, because that is the branch where the fallback is what answers.
+        The keep rule spells the definition's name, and a legacy row carries no
+        ``rule_name`` at all, so ``matched_by`` falls back to a display name naming the
+        server. The rule then matches nothing while the row reads healthy and the scan stays
+        executable, so every tagged title stays unprotected with no warning shown.
+
+        The scan path pairs ``adopt_legacy`` with ``lists.sync_rule_names`` for that reason.
+        Driven through the failing sync, because that is the branch where the fallback is
+        what answers.
         """
         await self._store_legacy_row(engine)
 
@@ -689,7 +692,7 @@ class TestLegacySlugsAreRehomedOnUpgrade:
 
         held = await memberships(engine, media_type="tv", tvdb_id=10)
 
-        # "Tagged titles", never "Sonarr (hd) tag: keep" -- the spelling an on_list keep rule
+        # "Tagged titles", never "Sonarr (hd) tag: keep", the spelling an on_list keep rule
         # names the list by.
         assert [m.matched_by() for m in held] == [_tag_list().name]
 
@@ -697,8 +700,8 @@ class TestLegacySlugsAreRehomedOnUpgrade:
         self, engine: AsyncEngine
     ) -> None:
         """Two same-match definitions could each own the row, so adoption stands down and
-        the sweep takes over -- retired here, where both replacements landed, and the new
-        row carries the title on."""
+        the sweep takes over instead. It retires the legacy row here, where both
+        replacements landed, and the new row carries the title on."""
         legacy = await self._store_legacy_row(engine)
         source = SonarrSource(client=self._sonarr_client(), instance_id=1, name="hd")
         two = [_tag_list(), _tag_list(("gold",), "any", list_id=4)]
@@ -712,8 +715,8 @@ class TestLegacySlugsAreRehomedOnUpgrade:
     async def test_an_unclaimable_row_survives_a_failed_replacement_sync(
         self, engine: AsyncEngine
     ) -> None:
-        """Rule 115's second half. The failed slug itself is in ``current`` and safe from
-        the sweep; the row it was meant to REPLACE is not, and disabling that one on the
+        """The same rule again. The failed slug itself is in ``current`` and safe from the
+        sweep. The row it was meant to replace is not, and disabling that one on the
         strength of a sync that did not land is the fail-open this stands against."""
         legacy = await self._store_legacy_row(engine)
 

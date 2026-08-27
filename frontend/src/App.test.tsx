@@ -40,23 +40,22 @@ const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("./test/apiMock")).makeApiMock(),
 }));
 
-// Partial mock: ApiError and the types stay real, because ScanFreshness branches on a real
-// instance of it.
+// Only `api` is mocked. ApiError and the types stay real, because ScanFreshness branches on a
+// real instance of it.
 vi.mock("./api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./api")>()),
   api: apiMock,
 }));
 
-// Answered file-wide: UserMenu rides along in every shell mount, and rule 135's gate
-// cannot see a mock fn that exists and returns undefined. Describes that vary the
-// answer set their own value after their reset.
+// Answered here for every test, since UserMenu mounts on every shell render. Describes that
+// need a different answer set their own value after this reset.
 beforeEach(() => {
   apiMock.update.mockResolvedValue(DEFAULT_UPDATE);
-  // ReviewQueue's two filter suggesters read this, and every shell mount here renders the
-  // queue. Unanswered, both rendered their failed-read branch and 14 of the suite's 20
-  // undefined-reads came from this file alone (#704). Its own comment above is what the gate
-  // below could not enforce: an arrow-wrapped queryFn exists, so rule 135's collector sees a
-  // queryFn and says nothing.
+  // ReviewQueue's two filter suggesters call this, and every shell mount here renders the
+  // queue. Left unanswered, both filters would silently render their failed-read branch. The
+  // test suite's check for unanswered mocks cannot catch this one on its own, because the query
+  // function here is wrapped in an arrow function, so the check sees a function and stops
+  // looking.
   apiMock.vocabularyValues.mockResolvedValue(DEFAULT_FIELD_VALUES);
 });
 
@@ -138,13 +137,10 @@ describe("ScanFreshness", () => {
     await user.click(screen.getByRole("button", { name: /go to settings → jobs/i }));
     expect(onGoToJobs).toHaveBeenCalledTimes(1);
 
-    // The amber span opens on its own first word. It used to open on the period ENDING the
-    // neutral sentence before it, which took the warning's color and weight and painted a
-    // floating yellow dot a word ahead of the sentence it belonged to.
-    // "Warning: " first, which is `Notice`'s visually-hidden severity lead: this was a bare
-    // styled span, so amber was the only thing carrying severity, on the page approvals are
-    // made from (rules 18, 72). Then the sentence, and it says what an incomplete scan MEANS
-    // before it says where to go.
+    // The amber span starts on the warning sentence's own first word, not on the period that
+    // ends the sentence before it. The sentence begins with a visually hidden "Warning: " lead,
+    // which carries the severity, since color is the only other way this page shows severity.
+    // The sentence then says what an incomplete scan means before it says where to go.
     const warn = container.querySelector(".freshness-warn");
     expect(warn?.textContent?.trimStart()).toMatch(
       /^Warning: The last scan came back incomplete, so Reaper won't act on it\./,
@@ -210,7 +206,7 @@ describe("UserMenu", () => {
     expect(await screen.findByText(/couldn't sign you out/i)).toBeInTheDocument();
 
     // Disabling the focused button moves focus off it, and a click elsewhere is the other
-    // way the panel used to close. Neither may take the failure off screen.
+    // way to close the panel. Both must leave the failure visible.
     await person.click(document.body);
     expect(screen.getByText(/couldn't sign you out/i)).toBeInTheDocument();
   });
@@ -239,8 +235,8 @@ describe("UserMenu", () => {
     const person = userEvent.setup();
     renderMenu(goToAbout);
 
-    // The light itself is aria-hidden decoration; the words ride the chip's
-    // accessible name, which is the one contract a reader and this test share.
+    // The light itself is aria-hidden decoration. The words ride the chip's accessible name,
+    // which is the contract a screen reader and this test both rely on.
     const chip = await screen.findByRole("button", { name: /update available/i });
     await person.click(chip);
     await person.click(screen.getByRole("button", { name: "Update available" }));
@@ -252,8 +248,8 @@ describe("UserMenu", () => {
   it("stays plain while there is nothing newer to offer", async () => {
     const person = userEvent.setup();
     renderMenu();
-    // Settle the read first: an unanswered check must render exactly nothing, and
-    // asserting absence before the query lands would pass against the pending state.
+    // The read must settle first. An unanswered check must render nothing, so asserting
+    // absence before the query resolves would only prove the pending state.
     await waitFor(() => expect(apiMock.update).toHaveBeenCalled());
     await person.click(screen.getByRole("button", { name: /owner/i }));
     expect(screen.getByRole("button", { name: /sign out/i })).toBeInTheDocument();
@@ -271,10 +267,10 @@ function renderNav(view: "review" | "reap" = "review") {
   return renderWithProviders(<SectionNav view={view} onChange={() => {}} />);
 }
 
-/** The section nav is the one control that exists at every width, and under 900px it is drawn
- *  as icons alone. Everything below is about what survives losing the words: the names a screen
- *  reader still has, and the safety mark that must never read as "off" when it is really
- *  "couldn't tell". */
+/** The section nav is the one control that exists at every width. Under 900px it draws icons
+ *  alone, so these tests check what a screen reader still gets without the words, such as the
+ *  section names and the safety mark. That mark must never read as "off" when the real state is
+ *  "could not tell". */
 describe("SectionNav", () => {
   beforeEach(() => {
     apiMock.safety.mockReset();
@@ -314,9 +310,9 @@ describe("SectionNav", () => {
     expect(container.querySelector(".view-armed")).not.toBeInTheDocument();
   });
 
-  // No mark means "not armed", so falling through to no mark on a failed read would be the
-  // fail-open direction on a safety surface: an unreadable state has to look different from a
-  // known-safe one (rule 17/36), in the same amber the banner uses to say it could not look.
+  // No mark means the deletion switch is not armed. If a failed safety read also showed no
+  // mark, an unreadable state would look the same as a known-safe one. This test pins that a
+  // failed read draws the same amber the banner uses when it could not check.
   it("shows the unknown mark when the safety state cannot be read", async () => {
     apiMock.safety.mockRejectedValue(new ApiError(500, "boom"));
     const { container } = renderNav();
@@ -331,9 +327,9 @@ describe("SectionNav", () => {
   });
 });
 
-// The why panel's loading/error column is one of the six surfaces rendering WhyShell, so it owes
-// the same contract as the panel it stands in for: a name, and an Escape that works. Its loading
-// branch has no heading, so the lead line carries the name.
+// The why panel's loading and error column is one of six surfaces that render WhyShell, so it
+// must offer the same contract as the panel it stands in for, a name and a working Escape key.
+// Its loading branch has no heading, so the name comes from the lead line instead.
 describe("WhyPanelFallback", () => {
   it("names its failure branch", () => {
     render(<WhyPanelFallback error onClose={vi.fn()} />);
@@ -357,22 +353,23 @@ describe("WhyPanelFallback", () => {
 
 describe("the announcer's mount point", () => {
   // `announce()` writes to a module store that only speaks through the ONE `<Announcer />` the
-  // app root mounts, and nothing else in the suite renders `App` -- the two tests that call
-  // `announce` mount their own region. So deleting the line from `App` silenced every success
-  // sentence in the product with all 611 tests, lint and build still green. That is the whole
-  // feature resting on an unpinned line (#175, rule 118).
+  // app root mounts. Nothing else in the suite renders `App`, so the two tests that call
+  // `announce` elsewhere mount their own region. Removing this render call from `App` would
+  // silence every success sentence in the app while every other test kept passing, because
+  // nothing else checks that the mount is there.
   //
-  // Driven through the loading and logged-out branches because those are the two the gate can
-  // reach without the whole authed tree, and the claim at the render site is that the region is
-  // a sibling of EVERY branch (rule 72) -- one branch would not pin that.
+  // These tests use the loading and logged-out branches because those two do not need the
+  // whole authenticated tree to render. The render site claims the announcer region exists on
+  // every branch, so testing only one branch would not prove that claim.
   beforeEach(() => {
     apiMock.me.mockReset();
     apiMock.authContext.mockReset();
     apiMock.authContext.mockResolvedValue({ plex_configured: true, local_account: false });
   });
 
-  /** The live regions themselves: `role="status"` is not enough to find them, because the
-   *  loading branch's own wrapper carries it too. `aria-live` is what only these two have. */
+  /** The live regions the announcer writes to. `role="status"` alone is not enough to find
+   *  them, because the loading branch's own wrapper carries that role too. `aria-live` is the
+   *  attribute only these two elements have. */
   const regions = () =>
     screen.getAllByRole("status").filter((n) => n.getAttribute("aria-live") === "polite");
 
@@ -383,8 +380,9 @@ describe("the announcer's mount point", () => {
     await screen.findByText("Loading Reaper…");
     expect(regions()).toHaveLength(2);
 
-    // And they are reachable from the store, which is the half a presence check alone misses:
-    // a region rendered but never subscribed would satisfy the count and stay silent.
+    // They are also reachable from the store. A presence check alone would miss a region that
+    // renders but never subscribes, since that region would satisfy the count while staying
+    // silent.
     act(() => announce("Policy saved."));
     expect(regions().map((n) => n.textContent)).toContain("Policy saved.");
   });
@@ -400,9 +398,9 @@ describe("the announcer's mount point", () => {
 });
 
 describe("the app-wide reap bar", () => {
-  // The one Stop on every screen but the reap sheet, and the only sign of a deletion once the
-  // sheet is closed -- which is what it is designed for. It mounted, ran and reached its end,
-  // "Reap failed." included, in total silence (#170).
+  // This bar is the only Stop control visible outside the reap-confirm sheet, and the only sign
+  // a reap is running once that sheet is closed. It must announce progress, completion, and
+  // failure out loud.
   const idle = {
     running: false,
     run_id: null,
@@ -452,14 +450,14 @@ describe("the app-wide reap bar", () => {
   });
 
   it("keeps Stop out of the progressbar, so a reader can still halt the run", async () => {
-    // `progressbar` carries ARIA's Children Presentational: True. With the role on the bar's
-    // CONTAINER, View, Stop and the alert that reports a failed Stop were all pruned out of the
-    // accessibility tree -- a reader watching a live deletion heard the percentage and had no
-    // way to halt it. Same pruning `CardOpen` exists to undo on the queue's four cards, so the
-    // bar nearest deletion was the one sibling the sweep missed (rule 72).
+    // `progressbar`'s ARIA role implies Children Presentational: True. Putting that role on the
+    // bar's container prunes View, Stop, and the failed-Stop alert out of the accessibility
+    // tree, so a screen reader would hear the percentage with no way to reach Stop. `CardOpen`
+    // avoids the same pruning on the queue's four cards, and this bar is another place it
+    // applies.
     //
-    // RTL's role queries do not emulate the pruning, so asking for the Stop button proves
-    // nothing. What discriminates is whether the progressbar CONTAINS it.
+    // RTL's role queries do not emulate that pruning, so querying for the Stop button on its own
+    // proves nothing. The real test is whether the progressbar element contains it.
     renderBar();
 
     const bar = await screen.findByRole("progressbar", { name: "Reaping" });
@@ -507,8 +505,9 @@ describe("the app-wide reap bar", () => {
   });
 
   it("says nothing about a run that ended before this tab was open", async () => {
-    // News, not a recap. A page opened onto a finished run must not announce it as if it had
-    // just happened -- the same running-to-ended edge the cache invalidation keys on.
+    // This is news, not a recap. A page opened onto an already-finished run must not announce
+    // it as if it just happened. This is the same running-to-finished transition the cache
+    // invalidation keys on.
     const queryClient = testQueryClient();
     const finished = {
       ...idle,
@@ -533,19 +532,18 @@ describe("the app-wide reap bar", () => {
 });
 
 describe("the authenticated app's heading outline", () => {
-  // There was no `h1` at all: `App` rendered the brand as a `<span>` and every view opened at
-  // `h2`, so heading navigation (H, 1) had no top-level landing point. `Login.tsx` already used
-  // `<h1 className="brand-word">` -- the same class, promoted -- and the pattern was not carried
-  // into the shell (#177). A missing root, not a broken outline: no level is skipped below it.
+  // `App` renders the brand as an `<h1>`, the same class `Login.tsx` uses, so heading
+  // navigation (pressing H or 1) has a top-level landing point. No heading level is skipped
+  // below it.
   beforeEach(() => {
     apiMock.me.mockReset();
     apiMock.authContext.mockReset();
     apiMock.authContext.mockResolvedValue({ plex_configured: true, local_account: false });
   });
 
-  /** The whole authed shell, because the masthead exists nowhere else. Every read the tree makes
-   *  is answered, or rule 135's gate fails the run rather than letting a failed-read branch
-   *  render as if it were the app. */
+  /** Mounts the whole authenticated shell, because the masthead exists nowhere else. Every read
+   *  the tree makes is answered here, so a test suite check fails the run instead of letting a
+   *  failed read silently render in its place. */
   function mountTheShell() {
     apiMock.me.mockResolvedValue(user);
     apiMock.safety.mockResolvedValue(SAFETY);
@@ -574,9 +572,10 @@ describe("the authenticated app's heading outline", () => {
   });
 
   it("has no accessibility violations across the masthead, landmarks included", async () => {
-    // The section nav, the user menu and the status strip, which is the half of the shell no
-    // panel audit reaches. `pageLevel` because this IS the page: `region` only answers here and
-    // in the two sign-in screens, so the landmarks the shell owns are checked nowhere else.
+    // Checks the section nav, the user menu, and the status strip, the half of the shell no
+    // panel-level audit reaches. `pageLevel` is used because this is the whole page. The
+    // `region` landmark role is checked only here and on the two sign-in screens, so this is
+    // the only place the shell's own landmarks get checked.
     mountTheShell();
     await screen.findByRole("heading", { level: 1, name: "Reaper" });
     await expectNoA11yViolations(document.body, { pageLevel: true });
@@ -608,9 +607,10 @@ describe("the authenticated app's heading outline", () => {
     ],
   };
 
-  /** Their one title, and the fact the whole test turns on: it is on the ABSTAIN lane, which is
-   *  deliberately not the lane the queue opens on. A `condemn` here would agree with the default
-   *  tab, so a lane that never travelled would be indistinguishable from one that did (rule 141). */
+  /** Their one title. The fact this test turns on is that this title has the verdict `abstain`,
+   *  which is deliberately not the lane the queue opens on by default. A title with `condemn`
+   *  would agree with the default tab, so a bug that never actually changed the lane would look
+   *  identical to a passing test. */
   const personDetail: PersonDetail = {
     plex_id: 7,
     name: "marlow",
@@ -644,26 +644,28 @@ describe("the authenticated app's heading outline", () => {
     profile_url: null,
   };
 
-  // Opening a title from Scales means seeing it in Review -- and the queue there is one lane of
-  // three. Landing on whichever lane the operator last used put the title's panel above a list
-  // the title is not in, so the card they came to see was simply absent, and the two ways back to
-  // it (the scroll to the open card, the j/k step) both no-op off-lane. Driven through the real
-  // shell rather than the callback, because the lane, the selection and the view are three
-  // pieces of state set together and only the assembled app proves they agree.
+  // Opening a title from Scales must land on the Review lane that title is actually in, one of
+  // three lanes. Landing on whichever lane the operator last used could put the title's panel
+  // above a list that does not contain it, making the card the operator came to see absent,
+  // with no way back to it. This is driven through the real shell instead of a callback,
+  // because the lane, the selection, and the view are three separate pieces of state that only
+  // the assembled app proves stay in agreement.
   it("lands a Scales title on the lane it lives in, not the one the queue was left on", async () => {
     const person = userEvent.setup();
     mountTheShell();
-    // Set after the mount, which is safe and deliberate: all three of these reads are gated on
-    // state the operator has not reached yet (`enabled: view === "fairness"`, `scalesUser !== null`,
-    // `selectedId !== null`), so none of them has fired against the shell's own stubs.
+    // Set after the mount, on purpose. All three of these reads are gated on state the operator
+    // has not reached yet (`enabled: view === "fairness"`, `scalesUser !== null`,
+    // `selectedId !== null`), so none of them fires against the shell's own stubs before this
+    // point.
     apiMock.fairness.mockResolvedValue(scalesReport);
     apiMock.person.mockResolvedValue(personDetail);
-    // The panel's CONTENTS are WhyPanel's business and need a whole detail fixture to render;
-    // this test is about the list behind it, so the read is deliberately failed and the panel
-    // shows its fallback. Answered rather than left out, so rule 135's gate still means something.
+    // The panel's contents are WhyPanel's own concern and need a full detail fixture to render.
+    // This test is about the list behind it, so the read is deliberately made to fail and the
+    // panel shows its fallback. The mock is answered with a rejection rather than left unset, so
+    // the test suite's unanswered-mock check still means something here.
     apiMock.candidate.mockRejectedValue(new ApiError(503, "not this test's subject"));
 
-    // Where the operator starts: the queue's default lane, which is the one the title is NOT on.
+    // Where the operator starts is the queue's default lane, which is not the lane the title is on.
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Condemned" })).toHaveAttribute(
         "aria-current",
@@ -675,37 +677,41 @@ describe("the authenticated app's heading outline", () => {
     await person.click(await screen.findByRole("button", { name: /marlow/i }));
     await person.click(await screen.findByRole("button", { name: /Nightferry/i }));
 
-    // Review, on Limbo -- stated by the tab, and asked of the server, which is what actually
-    // decides the rows: the lane is a server-side filter, so a tab that merely looked right
-    // over a Condemned page would be the same bug wearing the right label.
+    // Checks Review on the Limbo lane, both as stated by the tab and as asked of the server,
+    // since the server decides which rows actually show. The lane is a server-side filter, so a
+    // tab that merely looked right while the server still returned the Condemned page would be
+    // the same bug with the right label on it.
     expect(await screen.findByRole("button", { name: "Review" })).toHaveAttribute(
       "aria-current",
       "page",
     );
     expect(screen.getByRole("button", { name: "Limbo" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("button", { name: "Condemned" })).not.toHaveAttribute("aria-current");
-    // Read the lane out of the call the queue actually made, rather than matching a whole
-    // argument list whose paging tail this test has no opinion about (rule 141).
+    // Reads the lane out of the actual API call the queue made, rather than matching a full
+    // argument list. This test has no opinion about the paging arguments.
     await waitFor(() => expect(apiMock.candidates.mock.calls.at(-1)?.[0]).toBe("abstain"));
   });
 
-  // The other half of that jump: it also seeds the queue's search box, and a seeded box is state
-  // the operator did not type. Backing out of the jump has to take it with them. Back restores
-  // the view through the raw setter and runs no handler at all, and the queue UNMOUNTS on the way
-  // out, taking its once-per-nonce ref with it, so the next mount reads the same focus again and
-  // seeds from a jump that was undone. Driven through the real shell for the same reason as the
-  // test above: the focus, the view and the queue's own state are set in three places and only
-  // the assembled app proves they agree. `AppFocus.test.tsx` is the same behavior on the Policy
-  // and Settings routes, whose views are stubbed there.
+  // The jump also seeds the queue's search box, and a seeded box holds state the operator never
+  // typed. Backing out of the jump must remove that state too. Back restores the previous view
+  // through a raw setter that runs no handler, and the queue unmounts on the way out, taking its
+  // once-per-mount ref with it. Without care, the next mount would read the same focus value
+  // again and re-seed the search box from a jump that was supposed to be undone. This is driven
+  // through the real shell for the same reason as the test above: the focus, the view, and the
+  // queue's own state are set in three separate places, and only the assembled app proves they
+  // stay in agreement. `AppFocus.test.tsx` checks the same behavior on the Policy and Settings
+  // routes, where those views are stubbed instead.
   it("takes the jump's search back out of the queue when the operator backs out of it", async () => {
-    // jsdom carries one session history across a whole file, and the test above ends with layers
-    // still open, so its teardown hands those entries back one deferred step at a time. Those are
-    // real popstates: arriving after this test's provider is up, they read as Back presses and eat
-    // the ones below. Drain them while nothing is listening, then clear the marker the provider's
-    // mount-time reconcile keys on, the same reset `backnav.test.tsx` does between its tests.
-    // The path is part of the reset now: `App` reads its section from it at mount (navUrl.ts),
-    // and those deferred steps land jsdom on whichever entry's URL, which is regularly another
-    // section's. Left alone, this test mounted on Scales and never found the Condemned tab.
+    // jsdom keeps one session history across the whole file. The test above ends with layers
+    // still open, so its teardown hands those history entries back one deferred step at a time.
+    // Those are real popstates. Arriving after this test's provider is up, they read as Back
+    // presses and consume the ones this test sends below. Drain them while nothing is
+    // listening, then clear the marker the provider's mount-time reconcile checks, the same
+    // reset `backnav.test.tsx` does between its own tests.
+    // The path is part of that reset too: `App` reads its section from the path at mount
+    // (navUrl.ts), and those deferred steps land jsdom on whichever entry's URL that happens to
+    // be, often another section's. Left alone, this test mounts on Scales and never finds the
+    // Condemned tab.
     for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0));
     history.replaceState(null, "", "/");
 
@@ -726,22 +732,23 @@ describe("the authenticated app's heading outline", () => {
     await person.click(await screen.findByRole("button", { name: /marlow/i }));
     await person.click(await screen.findByRole("button", { name: /Nightferry/i }));
 
-    // The jump landed and the box is seeded with the title as the queue prints it. Asserted so a
-    // regression that stopped seeding at all could never pass this test by the back door.
+    // Confirms the jump landed and the box is seeded with the title exactly as the queue prints
+    // it, so a regression that stops seeding entirely cannot pass this test unnoticed.
     const box = await screen.findByRole("searchbox", { name: /search titles/i });
     await waitFor(() => expect(box).toHaveValue("Nightferry 2021"));
 
-    // Leaving Scales took the person panel's Back layer with it (its condition names the view),
-    // and handing that entry back is a real `history.back()`. jsdom delivers its popstate on a
-    // later task and the provider swallows exactly one for it, so settle the tick first -- press
-    // Back before it lands and the press itself is what gets swallowed.
+    // Leaving Scales closes the person panel's Back layer along with it, since its open
+    // condition names the view. Handing that history entry back runs a real `history.back()`.
+    // jsdom delivers its popstate on a later task, and the provider swallows exactly one
+    // popstate for it, so this settles that tick first. Pressing Back before it lands would get
+    // the press itself swallowed instead.
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    // A Back press, once the sentinel is parked, arrives as a popstate -- the same way
-    // `backnav.test.tsx` drives one. Four of them unwind this jump: the why-panel, the jump
-    // itself (back to Scales), the person panel, and the nav step that left Review.
+    // Once the sentinel history entry is parked, a Back press arrives as a popstate, the same
+    // way `backnav.test.tsx` drives one. Four presses unwind this jump. They are the why panel,
+    // the jump itself back to Scales, the person panel, and the nav step that left Review.
     const back = async () => {
       await act(async () => {
         window.dispatchEvent(new PopStateEvent("popstate"));
@@ -752,8 +759,8 @@ describe("the authenticated app's heading outline", () => {
     await back();
     await back();
 
-    // Home again, on the list they started from: the lane they left, and an empty box with no
-    // chip over it. Without the fix the queue remounts still holding "Nightferry 2021".
+    // The operator ends up back on the list they started from, the same lane they left, with an
+    // empty search box and no chip over it.
     expect(await screen.findByRole("button", { name: "Review" })).toHaveAttribute(
       "aria-current",
       "page",

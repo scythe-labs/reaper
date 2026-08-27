@@ -1,18 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @vitest-environment node
 //
-// The manual's generator and its drift gate, deliberately the same file.
+// Generates the manual pages and checks them for drift in one file.
 //
-// `toMatchFileSnapshot` writes the page when run with `-u` (that is `npm run gen-manual`) and
+// `toMatchFileSnapshot` writes the page to disk when run with `-u` (`npm run gen-manual`), and
 // fails when the committed page no longer matches what the blocks produce. Generating and
-// checking through one call means the two cannot diverge, which is the failure a hand-written
-// generator paired with a hand-written checker eventually has: the checker is the thing nobody
-// updates. Rule 68 wants a committed, runnable generator and a drift test covering every
-// generated artifact; this is both, over all of DOCS rather than one page.
+// checking through the same call means the generator and the checker can never disagree with
+// each other, over every page in DOCS.
 //
-// `blockToMdx`'s switch is exhaustive with no default, so a block kind added to `blocks.ts`
-// fails to compile here before it can silently drop out of the manual. That is a stronger
-// guarantee than a test could give, and it is why no test below enumerates the kinds.
+// `blockToMdx`'s switch statement is exhaustive with no default case, so a new block kind added
+// to `blocks.ts` fails to compile here instead of silently dropping out of the manual. That
+// catches more than a test could, which is why no test below lists the block kinds by hand.
 
 import { describe, expect, it } from "vitest";
 import { DOCS } from "./registry";
@@ -32,8 +30,8 @@ describe("the manual is generated from the in-app docs", () => {
   );
 });
 
-// Rule 147: the escaper is a source-text matcher, so it is proven against the spellings it
-// accepts AND the ones it must leave alone, not only against the happy path.
+// Tests the escaper against both the text it must escape and the text it must leave alone,
+// not just the happy path.
 describe("MDX escaping", () => {
   const armingDoc = DOCS.find((d) => d.id === "arming");
 
@@ -55,9 +53,9 @@ describe("MDX escaping", () => {
     expect(out).toContain("\\{that\\}");
   });
 
-  // A quoted phrase in a step title is not hypothetical: understanding-policy ships one, and it
-  // is what the first site build died on. `title="… \"why\" …"` is invalid JSX, because a
-  // quote-delimited attribute has no backslash escape; the expression form is what parses.
+  // The "understanding-policy" doc has a step title with a quoted phrase, so this case is real.
+  // `title="… \"why\" …"` is invalid JSX: a quote-delimited attribute has no backslash escape.
+  // The expression form (`title={"..."}`) does parse.
   it("writes a title holding quotes as an expression, not a quoted literal", () => {
     const doc = {
       ...(armingDoc as NonNullable<typeof armingDoc>),
@@ -86,19 +84,20 @@ describe("MDX escaping", () => {
     body: [{ kind: "table" as const, head: ["A"], rows: [[cellText]] }],
   });
 
-  // A code span is the one place `escapeText` leaves a backslash alone, on purpose: MDX does not
-  // interpolate there and an escape would land on the operator's screen. A table cell then adds
-  // the pipe's escape on top, and the two only compose while the run before the pipe is even —
-  // the row is split into cells before the code span is parsed, and the splitter takes exactly
-  // one backslash. The counts below are measured against remark-gfm, not reasoned from the spec.
+  // `escapeText` leaves a backslash alone inside a code span on purpose, since MDX does not
+  // interpolate there and an escape would show up on the operator's screen. A table cell then
+  // escapes the pipe on top of that, and the two only combine correctly when the number of
+  // backslashes before the pipe is even. The row splits into cells before the code span is
+  // parsed, and the splitter consumes exactly one backslash. The counts below were measured
+  // against remark-gfm's actual behavior, not derived from the spec.
   it("carries an even run of backslashes before a pipe in a code span", () => {
     expect(docToMdx(tableDoc("`a|b`"))).toContain("| `a\\|b` |");
     expect(docToMdx(tableDoc("`a\\\\|b`"))).toContain("| `a\\\\\\|b` |");
   });
 
   it("refuses an odd run, which GFM cannot spell and which splits the row in two", () => {
-    // Emitted today as `a\\|b`, which the splitter reads as an escaped backslash followed by a
-    // bare pipe: two columns in a one-column table, published without a word.
+    // Emitted as `a\\|b`, which the splitter reads as an escaped backslash followed by a bare
+    // pipe. That splits a one-column table into two, with no warning.
     expect(() => docToMdx(tableDoc("`a\\|b`"))).toThrow(/odd run of backslashes/);
     expect(() => docToMdx(tableDoc("`a\\\\\\|b`"))).toThrow(/odd run of backslashes/);
   });

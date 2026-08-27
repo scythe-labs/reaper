@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @vitest-environment node
-// `reapBlockers` re-derives, for the sake of a sentence, a question the server already
-// answered as `reap_ready`. Two derivations of one fact is the shape that drifts, so the
-// agreement test at the bottom drives every combination of the fields both sides read and
-// asserts they never disagree -- against the payload's `reap_ready`, which is built here in
-// this file. That makes it a self-consistency check: what ties this module to the SERVER's
-// definition is the source-reading gate in `tests/test_repo_hygiene.py`, named at the bottom.
+// `reapBlockers` recomputes, in order to write a sentence, the same question the server already
+// answers as `reap_ready`. Computing one fact two ways is exactly how two sides drift apart, so
+// the test at the bottom drives every combination of the fields both sides read and checks they
+// never disagree.
+//
+// That test only proves the two sides agree with each other: `reap_ready` here is built by this
+// same file, not read from the server. The separate check in `tests/test_repo_hygiene.py`,
+// named at the bottom, is what confirms this file's fields still match the server's real
+// definition.
 import { describe, expect, it } from "vitest";
 import type { SetupStatus } from "./api";
 import { reapBlockers } from "./reapReadiness";
@@ -35,8 +38,8 @@ describe("reapBlockers", () => {
     const [only, ...rest] = reapBlockers({ ...READY, plex_linked: false, reap_ready: false });
     expect(rest).toEqual([]);
     expect(only?.key).toBe("plex");
-    // The outcome first, then the reason -- and the reason is the Plex step's own wording, so
-    // the constraint reads the same wherever the operator meets it.
+    // States the outcome first, then the reason. The reason uses the Plex step's own wording,
+    // so the same explanation reads the same wherever the operator sees it.
     expect(only?.sentence).toMatch(/^Reaper can't remove anything until Plex is connected\./);
     expect(only?.sentence).toContain("nobody is watching");
   });
@@ -76,8 +79,8 @@ describe("reapBlockers", () => {
     expect(reapBlockers(bare).map((b) => b.key)).toEqual(["password", "plex", "tautulli", "arr"]);
   });
 
-  // Every sentence is operator copy on a screen someone reads while deciding what to delete,
-  // so it obeys rule 21 here rather than at review time.
+  // Every sentence here is operator copy shown on a screen while someone decides what to
+  // delete, so this test checks its plain-language rules directly rather than at review time.
   it("writes every reason in plain language, with no em dash and no middot", () => {
     const bare: SetupStatus = {
       ...READY,
@@ -96,21 +99,21 @@ describe("reapBlockers", () => {
   });
 
   /** The agreement test. `reap_ready` is `has_password and scan_ready and plex_linked`, and
-   *  `scan_ready` is `(has_radarr or has_sonarr) and has_tautulli` -- both from
-   *  `api/setup.py`, both re-derived above so each conjunct can carry its own sentence.
+   *  `scan_ready` is `(has_radarr or has_sonarr) and has_tautulli`, both from `api/setup.py`
+   *  and both re-derived above so each condition can carry its own sentence.
    *
-   *  Rule 144: deriving the sentences from the same declaration is not available across the
-   *  wire. If the server's definition gains a conjunct and `reapReadiness.ts` does not, an
-   *  install lands on a Reap page with a live Execute button and no notice, and on a wizard
-   *  saying "You're all set" over a run that will be refused.
+   *  The frontend and the server cannot share one declaration across the network boundary. If
+   *  the server's definition gains a condition and `reapReadiness.ts` does not, an install
+   *  reaches the Reap page with a live Execute button and no warning, and the wizard says
+   *  "You're all set" about a run the server will actually refuse.
    *
-   *  **This test cannot catch that**, and used to say it could. `reap_ready` below is a hand
-   *  transcription of the Python, sitting in the same file as the assertion, so all 16
-   *  combinations prove is that the sentences agree with that transcription. The conjunct gets
-   *  caught by
+   *  This test alone cannot catch that: `reap_ready` below is a hand transcription of the
+   *  Python, in the same file as the assertions, so all 16 combinations only prove the
+   *  sentences agree with that transcription. Whether the transcription itself still matches
+   *  the server is checked separately by
    *  `tests/test_repo_hygiene.py::test_the_frontend_reap_blockers_read_the_fields_the_server_builds_reap_ready_from`,
-   *  which parses `src/reaper/api/setup.py`. Both are needed: that one checks the field SET,
-   *  this one checks each field turns into the right sentence.
+   *  which parses `src/reaper/api/setup.py`. Both checks are needed: that one confirms the set
+   *  of fields matches, this one confirms each field turns into the right sentence.
    */
   it("is empty exactly when the server says the install is reap-ready", () => {
     const bits = [false, true];
@@ -142,8 +145,8 @@ describe("reapBlockers", () => {
         }
       }
     }
-    // Pinned so a loop edited down to fewer dimensions cannot pass by covering less
-    // (rule 145): four booleans, every combination.
+    // Pinned at 16 so a loop edited down to fewer dimensions cannot pass while covering less:
+    // four booleans, every combination.
     expect(cases).toBe(16);
   });
 });

@@ -2,8 +2,8 @@
 """Raising the KDF cost without stranding anything, and the housekeeping beside it.
 
 Raising ``_SCRYPT_N`` is only safe if every derivation Reaper has ever written under stays
-readable, so the compatibility half is what most of this file pins (S-3). The rest covers
-the expired-session sweep (PR-13) and the sign-in poll's deadline (S2-2).
+readable, so the compatibility half is what most of this file pins. The rest covers the
+expired-session sweep and the sign-in poll's deadline.
 """
 
 from __future__ import annotations
@@ -31,9 +31,9 @@ SALT = b"0123456789abcdef"
 def _record(seen: list[int], cost: int, derived: bytes) -> bytes:
     """Note the scrypt cost that was used, and hand the key straight back.
 
-    `(seen.append(n), derived)[1]` said the same thing, but `append` returns None and mypy
-    reads the tuple's first element as that -- so the expression only looked like it had a
-    value. A named function says which half is the record and which is the answer.
+    `(seen.append(n), derived)[1]` would do the same thing, but `append` returns `None`,
+    and mypy reads the tuple's first element as that. The expression would only look like
+    it had a value. A named function says which half is the record and which is the answer.
     """
     seen.append(cost)
     return derived
@@ -48,18 +48,19 @@ def _legacy_box(n: int, *, salt: bytes | None) -> object:
 
 
 def test_the_cheap_kdf_derives_a_different_key_per_cost() -> None:
-    """The class below is vacuous unless two costs derive two keys, and cannot notice.
+    """The class below is vacuous unless two costs derive two keys, and cannot notice that
+    on its own.
 
-    ``tests/conftest.py`` replaces ``_derive_fernet_key`` with a cheap one for the session, so
-    everything here runs against the wrapper rather than against scrypt at 64 MiB. Every test
-    below reads "data written at the old cost still opens under the new one" -- which a wrapper
-    mapping every cost to ONE key satisfies by making the two costs the same key, silently.
-    Measured on a deliberately collapsing wrapper: 30 tests pass, and four of the six
-    compatibility tests prove nothing.
+    ``tests/conftest.py`` replaces ``_derive_fernet_key`` with a cheap one for the session,
+    so everything here runs against the wrapper rather than against real scrypt. Every test
+    below reads "data written at the old cost still opens under the new one", which a
+    wrapper mapping every cost to *one* key would satisfy by making the two costs the same
+    key, silently. Measured on a deliberately collapsing wrapper, most of the compatibility
+    tests prove nothing under it.
 
-    So the wrapper's injectivity is pinned here, beside the suite that leans on it (rule 145).
-    Against the real derivation this holds trivially, which is the point: it can only fail for
-    a harness that stopped standing in for it.
+    So the wrapper's injectivity is pinned here, beside the suite that leans on it. Against
+    the real derivation this holds trivially, which is the point. It can only fail for a
+    harness that stopped standing in for it.
     """
     assert crypto._derive_fernet_key("the-key", SALT) != crypto._derive_fernet_key(
         "the-key", SALT, 2**14
@@ -78,7 +79,8 @@ class TestTheRaisedCostStillOpensEverything:
         assert SecretBox("the-key", salt=SALT).decrypt(token) == "sonarr-api-key"
 
     def test_data_written_at_the_old_cost_without_a_salt_still_opens(self) -> None:
-        """An install from before the per-install salt: the fixed v1 salt AND the old cost."""
+        """An install from before the per-install salt. It carries both the fixed v1 salt
+        and the old cost."""
         old = _legacy_box(2**14, salt=None)
         token = old.encrypt(b"plex-token").decode("ascii")  # type: ignore[attr-defined]
         assert SecretBox("the-key", salt=SALT).decrypt(token) == "plex-token"
@@ -93,7 +95,7 @@ class TestTheRaisedCostStillOpensEverything:
         assert SecretBox("the-key", salt=SALT).decrypt(token) == "tautulli"
 
     def test_a_retired_key_at_the_old_cost_still_opens(self) -> None:
-        """Both dimensions at once: a rotated-away key AND a superseded cost."""
+        """Both dimensions at once. A rotated-away key and a superseded cost."""
         from cryptography.fernet import Fernet, MultiFernet
 
         old = MultiFernet([Fernet(crypto._derive_fernet_key("old-key", SALT, 2**14))])
@@ -101,9 +103,9 @@ class TestTheRaisedCostStillOpensEverything:
         assert SecretBox("new-key", "old-key", salt=SALT).decrypt(token) == "secret"
 
     def test_rotate_re_keys_an_old_token_to_the_current_derivation(self) -> None:
-        """``MultiFernet.rotate`` can only re-key a token one of its OWN fernets opens, and
-        the superseded derivations deliberately sit outside that set -- yet old tokens are
-        exactly the ones worth rotating."""
+        """``MultiFernet.rotate`` can only re-key a token one of its *own* fernets opens,
+        and the superseded derivations deliberately sit outside that set. Yet old tokens
+        are exactly the ones worth rotating."""
         old = _legacy_box(2**14, salt=SALT)
         token = old.encrypt(b"secret").decode("ascii")  # type: ignore[attr-defined]
 
@@ -111,13 +113,13 @@ class TestTheRaisedCostStillOpensEverything:
         fresh = box.rotate(token)
 
         assert box.decrypt(fresh) == "secret"
-        # The rotated token opens under the CURRENT derivation alone, so the old one has
+        # The rotated token opens under the *current* derivation alone, so the old one has
         # genuinely aged out of it rather than still being needed.
         current_only = _legacy_box(crypto._SCRYPT_N, salt=SALT)
         assert current_only.decrypt(fresh.encode("ascii")) == b"secret"  # type: ignore[attr-defined]
 
     def test_a_wrong_key_is_still_a_clear_error(self) -> None:
-        """The fallback must not turn a genuinely wrong key into something else: it is the
+        """The fallback must not turn a genuinely wrong key into something else. This is the
         message that tells an operator their REAPER_SECRET_KEY changed."""
         token = SecretBox("original", salt=SALT).encrypt("hunter2")
         with pytest.raises(ValueError, match="REAPER_SECRET_KEY"):
@@ -163,7 +165,7 @@ class TestTheCostIsPaidOnceAndOnlyWhenNeeded:
         assert box.decrypt(old.encrypt(b"y").decode("ascii")) == "y"  # type: ignore[attr-defined]
         assert built, "a miss must build the superseded set"
 
-        # And only once: a second old token reuses what the first one built.
+        # And only once. A second old token reuses what the first one built.
         built.clear()
         assert box.decrypt(old.encrypt(b"z").decode("ascii")) == "z"  # type: ignore[attr-defined]
         assert built == []
@@ -190,7 +192,7 @@ async def session(
 
 class TestExpiredSessionsAreSwept:
     """``resolve_session`` drops an expired row when its cookie is presented again, so a
-    device that is never opened again presented nothing and its row stayed forever (PR-13).
+    device that is never opened again presented nothing and its row stayed forever.
     """
 
     async def _seed(self, session: AsyncSession) -> AppUser:
@@ -257,14 +259,14 @@ class TestExpiredSessionsAreSwept:
         """`pending_plex_login` was the one table with a TTL and no scheduled sweeper.
 
         Its rows were dropped only inside `plex_link.start_pin`, which runs when somebody
-        starts ANOTHER PIN, so an abandoned sign-in on an install where nobody starts one
+        starts *another* pin, so an abandoned sign-in on an install where nobody starts one
         again sat there indefinitely. Its sibling `AuthSession` is the same shape and got a
-        job with the reasoning written down (#710, rule 129).
+        job, with the reasoning written down beside it.
 
-        Driven through the scheduler's job rather than through the two sweep functions:
-        those are already covered above and separately, and what this pins is that the ONE
-        firing reaches both, which is the thing the fix is. Both tables carry a live row
-        beside the expired one, so a job that emptied them wholesale would fail here.
+        This is driven through the scheduler's job rather than through the two sweep
+        functions. Those are already covered above and separately. What this pins is that
+        the *one* firing reaches both, which is the fix itself. Both tables carry a live
+        row beside the expired one, so a job that emptied them wholesale would fail here.
         """
         from reaper.db.models import PendingPlexLogin
         from reaper.services import scheduler
@@ -317,7 +319,7 @@ class TestExpiredSessionsAreSwept:
 class TestTheSignInPollHonorsItsDeadline:
     """``wait_for_pin`` checked its deadline only at the top of the loop, then slept for
     whatever a 429 named. A ``Retry-After`` of hours parked ``reaper-admin link-plex`` on a
-    sleep with the terminal stuck on "Waiting..." (S2-2)."""
+    sleep with the terminal stuck on "Waiting..."."""
 
     class _Client(plextv.PlexTvClient):
         """Inherits the real client so an override that stops matching it fails the build,
@@ -346,9 +348,9 @@ class TestTheSignInPollHonorsItsDeadline:
         """A day of ``Retry-After`` is capped to the backoff maximum, and the maximum is then
         clipped again to the twenty seconds the caller had left.
 
-        What the deadline is worth has to be read off the delay, not off elapsed time: an
-        unclipped sleep is instant here too, so a "it returned quickly" assertion held with
-        the clipping deleted (rule 118, #346).
+        What the deadline is worth has to be read off the delay, not off elapsed time. An
+        unclipped sleep is instant here too, so a "it returned quickly" assertion would
+        still hold even with the clipping deleted.
         """
         token, client = await self._run(86400.0, timeout=20.0)
         assert token is None
@@ -360,7 +362,7 @@ class TestTheSignInPollHonorsItsDeadline:
         assert plextv.PIN_RATE_LIMIT_BACKOFF <= plextv.PIN_RATE_LIMIT_MAX_BACKOFF
 
     async def test_a_bare_429_still_backs_off_and_keeps_polling(self, slept: list[float]) -> None:
-        """The reason the 429 arm exists at all: it means we polled too eagerly, not that
+        """The reason the 429 arm exists at all. It means we polled too eagerly, not that
         the sign-in failed, so it must keep going rather than abandon the flow. Twelve
         seconds of window is two full backoffs and the two seconds left of a third."""
         token, client = await self._run(None, timeout=12.0)

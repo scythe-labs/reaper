@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Multi-instance scanning, and the cache/state separation.
 
-Both are regression tests for bugs that shipped into a working, green, fully-tested
-build and were caught only by pointing it at a real library. Neither was visible from
-unit tests, because both were failures of *scope* rather than of logic.
+Both groups of tests guard against bugs that ordinary unit tests cannot see, because both
+are failures of *scope* rather than of logic: the arithmetic is right, but it runs over the
+wrong instance or the wrong database.
 """
 
 from __future__ import annotations
@@ -28,9 +28,9 @@ ADDED = from_epoch("1700000000")
 
 
 def _plex_index(*items: tuple[int, str]) -> identity.PlexIndex:
-    """A Plex movie index from ``(rating_key, title)`` pairs -- no external ids, so the
-    join here exercises the title+year backstop (the multi-instance behavior predates
-    id matching and must survive it unchanged)."""
+    """A Plex movie index from ``(rating_key, title)`` pairs. It carries no external ids,
+    so the join exercises the title-and-year backstop match, which the multi-instance
+    behavior must keep working alongside id matching."""
     return identity.PlexIndex.build(
         [
             identity.PlexItem(rating_key=rk, title=title, year=None, added_at=ADDED)
@@ -40,19 +40,20 @@ def _plex_index(*items: tuple[int, str]) -> identity.PlexIndex:
 
 
 class TestEveryInstanceIsScanned:
-    """A separate 4K Radarr alongside the HD one is a common setup.
+    """A separate 4K Radarr alongside an HD one is a common setup, and every instance of
+    a kind must be scanned, not just one.
 
-    An early version of the scan route did ``next(r for r in rows if RADARR)`` and
-    scanned whichever instance happened to come first -- a small fraction of the
-    library -- while reporting a clean, confident, non-degraded result.
+    Picking the first matching row instead (``next(r for r in rows if RADARR)``) would
+    scan only a small fraction of the library, while still reporting a clean, confident,
+    non-degraded result.
 
-    A silently-partial scan is worse than a failed one: the owner reviews a candidate
-    list they believe is complete, and nothing anywhere says otherwise.
+    A silently partial scan is worse than a failed one. The owner would review a
+    candidate list they believe is complete, with nothing anywhere saying otherwise.
     """
 
     def test_items_from_two_instances_are_distinct_rows(self) -> None:
-        """The same film in the HD and 4K instances is two rows -- correctly, because
-        they are two distinct FILES on disk, and deleting one must not delete the other."""
+        """The same film in the HD and 4K instances is two separate rows, because they
+        are two distinct files on disk, and deleting one must not delete the other."""
         movie = {
             "id": 42,
             "title": "Example Movie",
@@ -71,7 +72,7 @@ class TestEveryInstanceIsScanned:
         assert uhd[0].media_key == "radarr:2:42"
 
     def test_the_media_key_comes_from_the_arr_not_from_plex(self) -> None:
-        """Plex rating keys are NOT stable across library rebuilds or agent migrations.
+        """Plex rating keys change across a library rebuild or an agent migration.
         Keying candidates on one would silently orphan every grace clock the next time
         the owner rebuilt their library."""
         movie = {"id": 42, "title": "Example Movie", "hasFile": True, "sizeOnDisk": 1}
@@ -83,17 +84,19 @@ class TestEveryInstanceIsScanned:
         assert item.media_key.startswith("radarr:1:")
 
     def test_a_movie_with_no_file_is_skipped(self) -> None:
-        """Radarr tracks films it WANTS as well as films it has. There is nothing to
+        """Radarr tracks films it wants as well as films it has. There is nothing to
         reclaim from a film that was never downloaded."""
         wanted = {"id": 1, "title": "Not Yet Downloaded", "hasFile": False, "sizeOnDisk": 0}
 
         assert _raw_items([wanted], _plex_index(), instance_id=1) == []
 
     def test_a_movie_plex_has_not_matched_still_appears(self) -> None:
-        """It must not vanish. It appears with no rating key, which makes its dormancy
-        Unknown, and an Unknown dormancy blocks both dormancy gates so the item abstains and
-        is kept (a blocked hold, not a PROTECT -- `gates._blocked`). Dropping it silently
-        would be worse: the owner would never learn that Plex has failed to match it."""
+        """This item must still appear, even though Plex has not matched it. It appears
+        with no rating key, which makes its dormancy Unknown. An Unknown dormancy blocks
+        both dormancy gates, so the item abstains and is kept as a blocked hold
+        (``gates._blocked``), not as a PROTECT verdict. Dropping it silently would be
+        worse, since the owner would never learn that Plex failed to match it.
+        """
         movie = {"id": 7, "title": "Unmatched By Plex", "hasFile": True, "sizeOnDisk": 1}
 
         items = _raw_items([movie], _plex_index(), instance_id=1)
@@ -103,9 +106,10 @@ class TestEveryInstanceIsScanned:
         assert items[0].added_at is None
 
     def test_a_movie_plex_has_not_matched_is_warned(self) -> None:
-        """The owner asking "why isn't this in review" must find the answer in the log,
-        not only on the row's why-panel. It appears, but only as kept-to-be-safe, so a
-        warning names it and says Plex could not bind it."""
+        """When the owner asks "why isn't this in review," the answer must be in the log,
+        not only on the row's why panel. This item appears, but only as kept-to-be-safe,
+        so a warning names it and says Plex could not match it.
+        """
         movie = {"id": 7, "title": "Unmatched By Plex", "hasFile": True, "sizeOnDisk": 1}
 
         with capture_logs() as logs:
@@ -118,7 +122,7 @@ class TestEveryInstanceIsScanned:
         assert warned[0]["match_status"] == "unmatched"
 
     def test_a_matched_movie_is_not_warned(self) -> None:
-        """A clean bind stays quiet: the warning must fire only on a real match failure."""
+        """A clean match stays quiet. The warning must fire only on a real match failure."""
         movie = {"id": 42, "title": "Example Movie", "hasFile": True, "sizeOnDisk": 1}
 
         with capture_logs() as logs:
@@ -129,10 +133,10 @@ class TestEveryInstanceIsScanned:
 
 class TestCachesLiveInTheirOwnDatabase:
     """Tautulli's history and the IMDb dataset are large and take minutes to rebuild.
-    ``reaper.db`` is small, precious, and gets migrated, reset and restored.
+    ``reaper.db`` is small, and it gets migrated, reset, and restored often.
 
-    Keeping them in one file means a schema reset destroys hours of sync -- which is
-    exactly what happened during development, twice, before they were separated.
+    Keeping them in one file would mean a schema reset destroys hours of synced data,
+    which is why the two live in separate database files.
     """
 
     def test_the_two_databases_are_different_files(self, tmp_path: Path) -> None:
@@ -143,9 +147,10 @@ class TestCachesLiveInTheirOwnDatabase:
         assert "cache.db" in settings.cache_database_url
 
     def test_alembic_never_migrates_a_cache_table(self) -> None:
-        """A cache table once leaked into a migration -- autogenerate saw it in reaper.db
-        and helpfully proposed to create it. Migration 2 then failed on a fresh database,
-        because the table it wanted to create no longer belonged there at all."""
+        """Autogenerate can see a cache table in reaper.db and propose creating it in a
+        migration. That would fail against a fresh database, because the table it wants
+        to create does not belong in that database at all.
+        """
         import re
 
         versions = Path(__file__).parent.parent / "alembic" / "versions"
@@ -186,8 +191,9 @@ class TestRawItemShape:
 class TestScanClientsCarryTheTlsChoice:
     """``build_sources`` hands every client its own instance's ``verify_tls``. A dropped
     flag here would quietly ignore the operator's per-service certificate choice for a
-    whole scan: either failing against the self-signed server they explicitly allowed,
-    or, in the other direction, skipping verification somewhere they never asked."""
+    whole scan. That means either failing against a self-signed server they explicitly
+    allowed, or skipping verification somewhere they never asked for it.
+    """
 
     async def test_build_sources_passes_each_rows_own_choice(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

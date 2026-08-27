@@ -1,16 +1,18 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Phase 11a: a background job's outcome, and a scan's live step, both carry a typed reason.
+"""A background job's outcome, and a scan's live step, both carry a typed reason.
 
-Two catalogs, two producers, walked the same shape `test_repo_hygiene.py` walks the refusal
-catalog in (rule 145): every id a producer can emit is a key in the catalog, and every catalog
-key has a producer that can emit it. Both directions, both populations pinned, so a walk that
-quietly stopped reading part of a file cannot pass by agreeing with a catalog shrunk to match.
+Two catalogs, two producers, walked the same way `test_repo_hygiene.py` walks the refusal
+catalog: every id a producer can emit is a key in the catalog, and every catalog key has a
+producer that can emit it. Both directions are checked, and both populations are pinned, so a
+walk that quietly stopped reading part of a file cannot pass by agreeing with a catalog that
+shrank to match it.
 
-``jobs.result.*`` is `services.scheduler._record_run`'s ``result`` and
-`services.leaving_soon.LeavingSoonResult.summary`'s return value -- a bare id, composed by the
-browser under that namespace (`frontend/src/components/JobStatus.tsx`'s ``jobResultText``).
-``shell.scanBar.step.*`` is `services.snapshot.Progress`'s ``detail`` -- also a bare id,
-composed under that namespace by `frontend/src/components/ScanBar.tsx` and its siblings.
+``jobs.result.*`` comes from `services.scheduler._record_run`'s ``result`` and
+`services.leaving_soon.LeavingSoonResult.summary`'s return value. Both are a bare id, composed
+by the browser under that namespace (`frontend/src/components/JobStatus.tsx`'s
+``jobResultText``). ``shell.scanBar.step.*`` comes from `services.snapshot.Progress`'s
+``detail``, also a bare id, composed under that namespace by
+`frontend/src/components/ScanBar.tsx` and its siblings.
 """
 
 from __future__ import annotations
@@ -41,12 +43,14 @@ def _reason_literal_ids(node: ast.AST) -> dict[str, list[int]]:
 
 
 def _jobs_result_sites() -> dict[str, list[str]]:
-    """Every ``jobs.result.*`` id: every ``Reason(...)`` literal in the whole of
-    ``services/scheduler.py`` (every ``_record_run`` result there is a bare id under this
-    namespace; the file raises no coded refusal) plus every one inside
-    ``LeavingSoonResult.summary``'s own body. Scoped to that one method rather than the whole
-    of ``services/leaving_soon.py``, because ``_record_skip`` next door builds
-    ``error.leaving_soon.*`` reasons -- a different namespace this walk must not collect.
+    """Every ``jobs.result.*`` id, found from two places.
+
+    Every ``Reason(...)`` literal anywhere in ``services/scheduler.py`` counts, since every
+    ``_record_run`` result there is a bare id under this namespace and the file raises no
+    coded refusal. So does every one inside ``LeavingSoonResult.summary``'s own body. This is
+    scoped to that one method rather than the whole of ``services/leaving_soon.py``, because
+    ``_record_skip`` next door builds ``error.leaving_soon.*`` reasons, a different namespace
+    this walk must not collect.
     """
     sites: dict[str, list[str]] = {}
 
@@ -78,9 +82,10 @@ _EXPECTED_JOBS_RESULT_SITES = 26
 
 
 def test_every_job_result_reason_has_a_producer_and_a_catalog_entry() -> None:
-    """The two-way agreement rule 145 asks for, modeled on `test_repo_hygiene.py`'s
-    `test_every_refusal_code_has_a_raiser_and_a_catalog_entry`: every id a job outcome can
-    carry is a key under `jobs.result.*` in `ui.json`, and every key there has a producer.
+    """The same two-way agreement `test_repo_hygiene.py`'s
+    `test_every_refusal_code_has_a_raiser_and_a_catalog_entry` checks for the refusal catalog.
+    Every id a job outcome can carry is a key under `jobs.result.*` in `ui.json`, and every
+    key there has a producer.
     """
     sites = _jobs_result_sites()
     total = sum(len(v) for v in sites.values())
@@ -119,10 +124,11 @@ def _progress_detail_arg(call: ast.Call) -> ast.expr | None:
 
 
 def _scan_step_sites() -> dict[str, list[str]]:
-    """Every ``shell.scanBar.step.*`` id: the ``detail`` argument of every ``Progress(...)``
-    call in ``services/scan_runner.py`` and ``services/snapshot.py``, where that argument is
-    a literal ``Reason(...)`` call. The "complete" emit's bare ``None`` detail carries no id
-    and is correctly invisible to this walk -- it is not a producer of any catalog entry.
+    """Every ``shell.scanBar.step.*`` id, taken from the ``detail`` argument of every
+    ``Progress(...)`` call in ``services/scan_runner.py`` and ``services/snapshot.py`` where
+    that argument is a literal ``Reason(...)`` call. The "complete" emit's bare ``None``
+    detail carries no id, so this walk correctly never sees it as a producer of any catalog
+    entry.
     """
     sites: dict[str, list[str]] = {}
     for rel in ("services/scan_runner.py", "services/snapshot.py"):
@@ -152,7 +158,7 @@ _EXPECTED_SCAN_STEP_SITES = 11
 
 
 def test_every_scan_step_reason_has_a_producer_and_a_catalog_entry() -> None:
-    """The same two-way agreement for a scan's live step: every id a `Progress` emit can
+    """The same two-way agreement for a scan's live step. Every id a `Progress` emit can
     carry is a key under `shell.scanBar.step.*` in `ui.json`, and every key there has a
     producer."""
     sites = _scan_step_sites()

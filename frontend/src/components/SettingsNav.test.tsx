@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The settings shell has two forms of the same navigation: a rail of ten tabs on a wide screen,
-// one picker below NARROW_SCREEN_QUERY. jsdom has no `matchMedia`, so `useMediaQuery` reports
-// false and every other suite in this tree exercises the rail; the picker is only reachable with
-// the query stubbed, which is what these do. Only one of the two is ever rendered, so each test
-// also asserts the absence of the other -- a CSS-hidden twin would leave both in the tree.
+// and one picker below NARROW_SCREEN_QUERY. jsdom has no `matchMedia`, so `useMediaQuery`
+// reports false and every other suite in this tree exercises the rail. The picker is only
+// reachable with the query stubbed, which is what these tests do. Only one of the two is ever
+// rendered, so each test also checks that the other is absent, since a CSS-hidden twin would
+// leave both in the tree.
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,8 +32,8 @@ vi.mock("../api", async (importOriginal) => ({
 }));
 
 // The spec, written out rather than derived: these are the words an operator reads, so a rename
-// has to be typed here too. The test below reconciles the table with the declaration it mirrors --
-// deriving it instead would assert the rail against itself (rule 119).
+// has to be typed here too. The test below checks this table against the declaration it
+// mirrors. Deriving it instead would assert the rail against itself.
 const PANELS = [
   "General",
   "Services",
@@ -116,7 +117,7 @@ beforeEach(() => {
   apiMock.restoreCancel.mockResolvedValue({ ok: true });
 });
 
-// Rule 133: the stub is process-global, so it never outlives its own test.
+// The stub is process-global, so it must never outlive its own test.
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -127,8 +128,8 @@ afterEach(() => {
 function SettingsAt({ open, jumper = false }: { open: Panel; jumper?: boolean }) {
   const [panel, setPanel] = useState(open);
   // The user menu's update item, wired the way `App` wires it: it asks for About rather than
-  // setting it, so the confirm inside Settings gets to refuse (#794). Rendered only for the
-  // tests about that route, so the rail tests keep counting the rail's own buttons.
+  // setting it, so the confirm inside Settings gets to refuse. Rendered only for the tests
+  // about that route, so the rail tests keep counting the rail's own buttons.
   const [jump, setJump] = useState<{ panel: Panel; nonce: number } | null>(null);
   return (
     <>
@@ -147,8 +148,9 @@ function renderSettings(
   jumper = false,
 ) {
   // Seeded, not just mocked: the General panel renders its fields from this read, and a mocked
-  // answer lands a microtask later -- after a synchronous assertion, which would then be about
-  // the "Loading…" panel rather than the one an operator types into (rule 136).
+  // answer lands a microtask later, after a synchronous assertion would already have run. That
+  // assertion would then be about the "Loading…" panel rather than the one an operator types
+  // into.
   renderWithProviders(<SettingsAt open={initialPanel} jumper={jumper} />, {
     client: seedSettings(testQueryClient()),
   });
@@ -172,11 +174,10 @@ describe("the settings section navigation", () => {
   });
 
   it("mirrors the section list declared in Settings.tsx", () => {
-    // One set, two hand copies: this table and `panels` in Settings.tsx. A new section used to
-    // fail only here, on the labels, which reads as a rail bug -- while the thing that actually
-    // needed doing was classifying the new section in the switch guard, and the suite went green
-    // again the moment a label was appended (#156). `dirtyPanels` is a total record now, so the
-    // compiler owns that half; this owns the label half and names the other one (rules 103, 144).
+    // One set, two hand copies: this table and `panels` in Settings.tsx. A new section can
+    // fail only here, on the labels, while still needing to be classified in the switch guard
+    // in `dirtyPanels`. The compiler enforces that classification; this test enforces the label
+    // list and names the other place a new section must be updated.
     expect(
       declaredPanels().map((p) => p.label),
       "Settings.tsx's `panels` changed. Update this table, and classify the section in " +
@@ -206,7 +207,7 @@ describe("the settings section navigation", () => {
 
     const picker = (await screen.findByLabelText("Settings section")) as HTMLSelectElement;
     expect([...picker.options].map((o) => o.textContent)).toEqual(PANELS);
-    // It names where you are, which is the job the rail's active tab was doing.
+    // It names where you are, the same job the rail's active tab does.
     expect(picker.value).toBe("about");
     expect(document.querySelector(".settings-nav")).toBeNull();
   });
@@ -216,7 +217,7 @@ describe("the settings section navigation", () => {
     const person = renderSettings();
 
     const picker = await screen.findByLabelText("Settings section");
-    // Rule 137: user-event reports a disabled target as success, so act only once it is usable.
+    // user-event reports a disabled target as success, so act on it only once it is usable.
     await waitFor(() => expect(picker).toBeEnabled());
     await person.selectOptions(picker, "security");
 
@@ -226,17 +227,18 @@ describe("the settings section navigation", () => {
 });
 
 describe("leaving General with something unsaved", () => {
-  // The save bar holds up to six fields at once and switching section unmounts the panel holding
-  // them. Both ways of switching have to stop and ask, which is why the picker is tested here
-  // too: fixing one call site and leaving its twin is rule 72's failure.
+  // The save bar can hold up to six fields at once, and switching section unmounts the panel
+  // holding them. Both ways of switching must stop and ask, which is why the picker is tested
+  // here too: fixing one call site and leaving its twin unfixed would still lose the operator's
+  // edits.
   const warning = () => document.querySelector(".notice-warn");
   const heading = () => screen.getByRole("heading", { level: 2 }).textContent;
 
   async function typeADraft(person: ReturnType<typeof userEvent.setup>) {
     const url = await screen.findByLabelText("Application URL");
-    // One edit, not twenty-six keystrokes: what this family needs is a draft in the box, and
-    // paying a panel re-render per character is what put these six tests within a few hundred
-    // milliseconds of the 5000ms timeout on a loaded runner (`src/test/forms.ts`).
+    // One edit, not many keystrokes: what this family needs is a draft in the box, and typing
+    // one character at a time forces a panel re-render per character, which is what `fill` in
+    // `src/test/forms.ts` avoids.
     await fill(person, url, "https://reaper.example.com");
     // The bar is the definition of a draft, so wait for it rather than for the edit.
     await waitFor(() => expect(document.querySelector(".savebar")).not.toBeNull());
@@ -312,9 +314,9 @@ describe("leaving General with something unsaved", () => {
     expect(await screen.findByRole("heading", { name: "Security" })).toBeInTheDocument();
   });
 
-  // The third way in, and the one that went around this confirm entirely: the user menu's update
-  // item is outside Settings, so it asked `App` for a panel and `App` set it. Everything typed
-  // went with the panel that unmounted, on a press that says nothing about settings at all (#794).
+  // A third way in: the user menu's update item lives outside Settings, so it asks `App` for a
+  // panel rather than Settings itself. Anything typed in the open panel must not be lost by
+  // that press, since the click itself says nothing about settings.
   it("holds a jump from outside the page, the same as a rail click", async () => {
     stubMatchMedia(false);
     const person = renderSettings("general", true);
@@ -354,9 +356,8 @@ describe("leaving General with something unsaved", () => {
   });
 
   it("stops warning once the draft is discarded", async () => {
-    // The notice exists only because there are edits to lose. `PolicyEditor` shipped this bug in
-    // its own copy: the warning survived a Discard and went on offering to throw away changes
-    // that no longer existed.
+    // The notice must exist only while there are edits to lose. Once a Discard clears them, the
+    // warning must not go on offering to throw away changes that no longer exist.
     stubMatchMedia(false);
     const person = renderSettings("general");
     await typeADraft(person);
@@ -371,16 +372,18 @@ describe("leaving General with something unsaved", () => {
 });
 
 describe("leaving Plex or Notifications with something unsaved", () => {
-  // The guard first landed on General alone, and these two kept typed drafts behind their own
-  // inline Saves -- so the app asked on one panel and threw the draft away without a word on the
-  // next two (rule 72). Driven through the real shell rather than against the panels' props,
-  // because what broke was the wiring between them, which a prop-level test cannot see.
+  // Plex and Notifications each keep their typed drafts behind their own inline Save button,
+  // so the same unsaved-edits guard must cover them too, or the app would ask on one panel and
+  // silently drop a draft on these two. Driven through the real shell rather than against the
+  // panels' props, since what the guard depends on is the wiring between them, which a
+  // prop-level test cannot see.
   //
   // Scoped to the notice that names a switch, because the Plex panel raises a `.notice-warn` of
   // its own against this fixture: `plexResources` answers with an empty server list while the
-  // status says linked, so the linked server reads as missing. A bare `.notice-warn` lookup would
-  // pass on that one. Name the notice this fixture really renders, not a plausible one -- the
-  // certificate warning is absent here, since `plexStatus` returns `verify_tls: true`.
+  // status says linked, so the linked server reads as missing. A bare `.notice-warn` lookup
+  // would pass against that one instead. Name the notice this fixture actually renders, not a
+  // plausible one. The certificate warning is absent here, since `plexStatus` returns
+  // `verify_tls: true`.
   const switchNotice = () =>
     [...document.querySelectorAll(".notice-warn")].find((n) =>
       n.textContent?.includes("Switching to"),
@@ -434,8 +437,8 @@ describe("leaving Plex or Notifications with something unsaved", () => {
     stubMatchMedia(false);
     const person = renderSettings("plex");
     // No accessible label on this row (a `.set-label` span, not a `<label>`), so it is reached
-    // the way an operator sees it. Rule 137: the panel early-returns "Loading…" until the status
-    // read lands, so wait for the box to be usable rather than for the page.
+    // the way an operator sees it. The panel early-returns "Loading…" until the status read
+    // lands, so wait for the box to be usable rather than for the page.
     const box = await screen.findByPlaceholderText(SAVED_WEB_URL);
     await fill(person, box, "https://plex.example.net");
 
@@ -477,10 +480,10 @@ describe("leaving Plex or Notifications with something unsaved", () => {
 });
 
 describe("leaving Security or Backup with something unsaved", () => {
-  // The last two panels the guard did not reach, and the two that needed a hop the other three
-  // did not: their drafts live in a CHILD component (`AdminPasswordForm`, `RestoreCard`), so the
-  // signal is declared there and reported up through the panel. Driven through the real shell,
-  // because what was broken is the wiring between them.
+  // Security and Backup's drafts live in a CHILD component (`AdminPasswordForm`,
+  // `RestoreCard`), so the unsaved-edits signal is declared there and reported up through the
+  // panel. Driven through the real shell, since what this guard depends on is the wiring
+  // between the child and the panel.
   const switchNotice = () =>
     [...document.querySelectorAll(".notice-warn")].find((n) =>
       n.textContent?.includes("Switching to"),
@@ -537,8 +540,8 @@ describe("leaving Security or Backup with something unsaved", () => {
 
   it("says what leaving Backup costs in Backup's own terms", async () => {
     // The shared sentence would be false here twice over: what is waiting is an uploaded file
-    // rather than a setting, and leaving does not merely forget it -- the card cancels the staged
-    // upload on its way out, which is the next test.
+    // rather than a setting, and leaving does not merely forget it. The card cancels the staged
+    // upload on its way out, which the next test checks.
     stubMatchMedia(false);
     const person = renderSettings("backup");
     await stageABackup();
@@ -552,14 +555,14 @@ describe("leaving Security or Backup with something unsaved", () => {
   });
 
   it("holds the switch while the upload is still going", async () => {
-    // The window between dropping the file and the summary arriving, which reading the summary
-    // alone reported as nothing to lose. It is the costliest exit of the lot: the archive is
-    // already on its way, so it lands after the card is gone, and an un-armed stage has no surface
-    // anywhere in the app to reach it from.
+    // This is the window between dropping the file and the summary arriving. Checking the
+    // summary alone would say there is nothing to lose here, which is wrong: the archive is
+    // already on its way to the server, and once the card is gone an un-armed stage has no
+    // surface anywhere in the app to reach it from.
     stubMatchMedia(false);
     // Left pending for the whole test, so the moment being asserted is the one the operator is
-    // actually in: the file is uploading and no summary exists yet. Resolving it afterwards would
-    // settle state after the last act() and is what rule 136 fails the run over.
+    // actually in: the file is uploading and no summary exists yet. Resolving it afterwards
+    // would settle state after the last act(), which fails the run.
     apiMock.restorePrepare.mockReturnValue(new Promise(() => {}));
     const person = renderSettings("backup");
     const input = await waitFor(() => {
@@ -603,9 +606,9 @@ describe("leaving Security or Backup with something unsaved", () => {
   });
 
   it("switches straight through past an ARMED restore, and leaves it armed", async () => {
-    // Rule 146: an armed restore is server state that outlives this card, this browser and this
-    // section, so there is nothing here to lose and the guard must not fire. The card in that
-    // branch carries its own Cancel; holding the switch would demand a discard for a decision
+    // An armed restore is server state that outlives this card, this browser and this section,
+    // so there is nothing here to lose and the guard must not fire. The card in that branch
+    // carries its own Cancel button. Holding the switch would demand a discard for a decision
     // already stored, and sending the cancel would undo it.
     apiMock.backupInfo.mockResolvedValue({
       reaper_db_bytes: 1024,

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// One class, three sites: a connection-test badge must describe the credentials it was actually
-// computed from, never whatever is in the boxes now (rule 85). `setTest` was write-only at every
-// one of them -- called on a result and cleared, at most, by a save or a fresh press -- so editing
-// the thing that was tested left the badge standing (#178).
+// One class, three sites: a connection-test badge must describe the credentials it was
+// actually computed from, never whatever is in the boxes now. `setTest` is write-only at every
+// one of them, called on a result and cleared, at most, by a save or a fresh press, so editing
+// the thing that was tested must clear the badge too.
 //
 // The population is three, and `ServiceModal`'s is pinned in ServiceModal.test.tsx ("what the
 // connection badge vouches for") because that form owns the Test button. This file drives the two
@@ -10,8 +10,7 @@
 // row rather than from a form:
 //   - the saved service card, whose address changes underneath it when the modal saves;
 //   - the Discord row, whose URL box is editable right beside the badge.
-// Fix one of these and leave a sibling and the class is half-closed with no test saying so, which
-// is what rule 72 is for.
+// Fixing one of these and leaving a sibling leaves the class half-closed with no test saying so.
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -38,7 +37,7 @@ const PASSED = {
   version: "4.0.1",
 };
 // The Discord webhook test sends a typed reason rather than `PASSED`'s free-form `detail`
-// (docs/history/I18N_PLAN.md §5); composed by NotificationsPanel into "Posted a test
+// (docs/history/I18N_PLAN.md §5). NotificationsPanel composes it into "Posted a test
 // message to your Discord channel." (`services.discord.testResult.posted`).
 const DISCORD_PASSED = { ok: true, reason: { k: "posted" }, version: "4.0.1" };
 
@@ -58,7 +57,7 @@ function sonarr(overrides: Partial<Instance> = {}): Instance {
     detected_version: null,
     // Never tested server-side, so the card has no stored result to fall back to and the badge on
     // screen can only be the local one. A `last_ok_at` here would answer in its place and the
-    // assertions could not tell the two apart (rule 141).
+    // assertions could not tell the two apart.
     last_ok_at: null,
     last_error: null,
     ...overrides,
@@ -150,11 +149,11 @@ describe("the badge on the Discord row", () => {
 
 describe("where a keyboard operator lands when a service card removes itself", () => {
   // The Confirm remove button is inside the card it destroys, so the card unmounts a refetch later
-  // and takes it along: focus falls to `<body>` and the next Tab restarts at the top of Settings
-  // (#173). The successor cannot live in the card, which is why the section above owns the move.
+  // and takes it along: focus falls to `<body>` and the next Tab restarts at the top of Settings.
+  // The successor cannot live in the card, which is why the section above owns the move.
   //
-  // Driven through a SINGLETON kind on purpose. Tautulli hides its Add button while its one card
-  // exists, so the target is not merely off-screen at press time -- it does not exist, and only
+  // Driven through a singleton kind on purpose. Tautulli hides its Add button while its one card
+  // exists, so the target is not merely off-screen at press time, it does not exist, and only
   // mounts because `canAdd` flips in the same refetch that removes the card. A non-singleton kind
   // has the Add button up all along and cannot tell a hook that waits from one that does not.
   function tautulli(): Instance {

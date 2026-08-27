@@ -5,11 +5,11 @@ The Logs tab is downloadable, and the file under ``data/logs`` outlives the proc
 anything that lands there is as good as published to whoever can read the volume. Two
 properties are pinned here:
 
-* **Nothing arrives unscrubbed.** A credential can arrive three ways -- in a query string,
-  in a Discord webhook's URL PATH, or inside a rendered traceback -- and the traceback is
-  the one that used to get through on both the stdlib and structlog paths (S2-1, S-2).
-* **The files are owner-only from creation**, not merely inside an owner-only directory,
-  which is all the comment used to be true about (S-6).
+* **Nothing arrives unscrubbed.** A credential can arrive three ways: in a query string, in a
+  Discord webhook's URL path, or inside a rendered traceback. All three must be scrubbed on
+  both the stdlib and structlog logging paths.
+* **The log file is owner-only from the moment it is created**, not just placed inside a
+  directory that is owner-only.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ import structlog
 from reaper import logbuffer
 from reaper.logging import REDACTED, _redact_str, _RingHandler, configure_logging, redact_secrets
 
-#: A stand-in Discord webhook. The id is public (it names the channel); the segment after
+#: A stand-in Discord webhook. The id is public (it names the channel). The segment after
 #: it is the credential, and it is the only part that must disappear.
 WEBHOOK = "https://discord.com/api/webhooks/123456789/AAAAsecret-token-BBBB"
 TOKEN_SEGMENT = "AAAAsecret-token-BBBB"
@@ -77,14 +77,15 @@ class TestTheStdlibBridgeScrubs:
         self._emit(f"POST {WEBHOOK} failed")
         text = _ring_text()
         assert TOKEN_SEGMENT not in text
-        # The channel id survives: it is what makes the line diagnosable at all.
+        # The channel id survives. It is what makes the line diagnosable at all.
         assert "123456789" in text
 
     def test_an_exception_record_yields_one_scrubbed_copy_of_the_message(self) -> None:
-        """The handler sets no formatter, so ``self.format(record)`` used to fall back to
-        "%(message)s" -- re-rendering the message UNREDACTED under the redacted one. Every
-        stdlib record with exc_info therefore wrote its credential to disk in the clear,
-        and showed the operator every exception line twice (S2-1)."""
+        """Every stdlib record with ``exc_info`` must come out scrubbed exactly once. The
+        handler sets no formatter, so a caller that skipped scrubbing the fallback would see
+        ``self.format(record)`` render the raw message a second time under
+        ``"%(message)s"``, putting the credential back in the clear and printing the
+        exception line twice."""
         try:
             raise ValueError("boom")
         except ValueError as exc:
@@ -97,8 +98,9 @@ class TestTheStdlibBridgeScrubs:
         assert "ValueError: boom" in text
 
     def test_the_traceback_itself_is_scrubbed(self) -> None:
-        """The more reachable half of the same leak: an HTTP error's str() carries the
-        request URL, so the credential is in the TRACEBACK even when the message is clean.
+        """The more reachable half of the same leak. An HTTP error's ``str()`` carries the
+        request URL, so the credential ends up in the traceback even when the message itself
+        is clean.
         """
         try:
             raise RuntimeError(f"Server error '500' for url '{QS_URL}'")
@@ -113,8 +115,8 @@ class TestTheStdlibBridgeScrubs:
 class TestTheStructlogPipelineScrubs:
     def test_a_rendered_traceback_is_scrubbed(self, tmp_path: Path) -> None:
         """``format_exc_info`` renders the traceback into the event dict, so the scrubber
-        has to run AFTER it. Ordered the other way -- as it was -- the traceback was born
-        after the only thing that would have cleaned it (the S2-1 twin)."""
+        must run after it in the processor chain. Run the other way, the traceback would be
+        created after the one step that could clean it."""
         configure_logging(level="INFO")
         log = structlog.get_logger("test")
         try:
@@ -127,8 +129,8 @@ class TestTheStructlogPipelineScrubs:
         assert "call.failed" in text
 
     def test_a_webhook_url_under_a_neutral_key_is_scrubbed(self) -> None:
-        """Key-name matching only catches a webhook logged under a name we listed. Under a
-        plain ``url=`` it took the path pattern to catch it (S-2)."""
+        """Key-name matching only catches a webhook logged under a name this module lists. A
+        plain ``url=`` key needs the path pattern instead to catch the credential."""
         out = redact_secrets(None, "warning", {"event": "notify.failed", "url": WEBHOOK})
         assert TOKEN_SEGMENT not in str(out["url"])
         assert REDACTED in str(out["url"])
@@ -156,9 +158,10 @@ class TestTheScrubberLeavesOrdinaryTextAlone:
 
 class TestTheLogFileIsOwnerOnly:
     def test_the_file_is_created_owner_only(self, tmp_path: Path) -> None:
-        """The comment claimed owner-only-from-creation while only the DIRECTORY was
-        chmod'd; ``RotatingFileHandler`` takes no mode, so the file itself was born 0644
-        under a normal umask (S-6). The DEBUG trail carries per-item deletion reasoning."""
+        """``RotatingFileHandler`` takes no mode argument, so without an explicit chmod the
+        log file would be created at the default 0644 under a normal umask. The file itself
+        must be owner-only from the moment it is created, not just the directory holding
+        it."""
         old_umask = os.umask(0o022)  # the typical default, made explicit
         try:
             logbuffer.configure_file_logging(tmp_path)

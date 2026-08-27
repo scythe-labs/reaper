@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The show panel is where a whole-show Spare or Reap gets made. What is load-bearing here:
-//   - a show carries BOTH buttons, because a whole-show reap covers the seasons the scan
-//     kept, unlike a condemned movie where reap is a no-op -- but Reap falls away once every
-//     season is already condemned;
-//   - the decision acts on the show's group key, and a failed save says so.
+// The show panel is where a whole-show Spare or Reap gets made.
+//   - A show carries both buttons, because a whole-show reap covers the seasons the scan kept,
+//     unlike a condemned movie where reap does nothing. Reap disappears once every season is
+//     already condemned.
+//   - The decision acts on the show's group key, and a failed save says so.
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -36,8 +36,8 @@ const NO_LINKS: Links = {
   match_candidates: [],
 };
 
-/** A row frozen before details were typed: the stored sentence wrapped as the one legacy
- *  reason, composed verbatim (docs/history/I18N_PLAN.md §5, #899). */
+/** A row saved before details were tracked separately: the stored sentence is wrapped as the
+ *  one legacy reason and shown verbatim. */
 function legacy(text: string): ReasonKey {
   return { k: "legacy", p: { text } };
 }
@@ -109,7 +109,7 @@ function renderPanel(g: Group, onOpenSeason: (id: number, lane: Verdict) => void
 beforeEach(() => {
   vi.clearAllMocks();
   // The Spare control reads the default spare length (["general-settings"]) on its own, so the
-  // mock has to answer it or the panel renders a failed read. Rule 135.
+  // mock has to answer it or the panel renders a failed read.
   apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
 });
 
@@ -157,16 +157,16 @@ describe("the show panel's whole-show buttons", () => {
   });
 });
 
-// Opening a season from here crosses lanes as often as not: this list carries every season the
-// show has, whatever Reaper decided, while the queue behind the panel is showing one of the three.
-// So the row hands over the lane the season is really in, and the caller lands the operator on it.
-// A raw `season.verdict` read is a different answer the moment a hand decision is on the season,
-// and getting it wrong reopens the bug this closes -- a panel open above a list its subject is not
-// in, with no card to scroll to and no j/k step that reaches it.
+// This list carries every season a show has, whatever the scan decided, while the queue behind
+// the panel shows only one of the three lanes at a time. So opening a season from here often
+// crosses lanes: the row must hand over the lane the season is really in, not read
+// `season.verdict` directly, since a hand decision can put a season on a different lane than
+// its scan verdict. Getting this wrong opens a season panel above a list the season is not
+// actually in, with no card to scroll to and no keyboard step that reaches it.
 describe("the show panel's jump into a season", () => {
-  // Written from what each state MEANS for the file (rule 119), not from laneOf's branches. The
-  // last three are the cases a raw verdict read gets wrong, and they miss in BOTH directions:
-  // two say "condemned" over a file that is kept, one says "left to decide" over one that is not.
+  // Written from what each state means for the file, not from laneOf's own branches. The last
+  // three are the cases a raw verdict read gets wrong, missing in both directions: two say
+  // "condemned" for a file that is kept, and one says "left to decide" for a file that is not.
   const cases: { what: string; row: Candidate; lane: Verdict }[] = [
     {
       what: "an untouched season stays on the lane the scan put it on",
@@ -199,10 +199,10 @@ describe("the show panel's jump into a season", () => {
   });
 });
 
-// The panel is a full-screen dialog under 900px, so it has to say what it is. Its name comes from
-// its own <h2> rather than a second copy of the title in an aria-label (rule 144). One of these
-// per panel: six surfaces render WhyShell, and the name is the one part of the contract the shell
-// cannot supply for them.
+// The panel is a full-screen dialog below 900px wide, so it must say what it is. Its accessible
+// name comes from its own <h2>, not a second copy of the title in an aria-label. Each of the
+// surfaces that render WhyShell supplies its own name this way, since the shell itself cannot
+// supply one for them.
 describe("the show panel's accessible name", () => {
   it("names itself from the show title it is showing", () => {
     renderPanel(group([season(1, "condemn")]));
@@ -210,10 +210,10 @@ describe("the show panel's accessible name", () => {
   });
 });
 
-// A show whose match Reaper refused to settle. The season why-panel offers a way into each
-// Plex row it was choosing between; this panel is served the same list and used to drop it,
-// so a conflicted SHOW named a problem in Plex with nothing to open -- its own header link is
-// built from the show's rating key, which is null on exactly these rows (rule 72).
+// A show whose match Reaper could not settle on its own. The season why-panel already offers a
+// way into each Plex row it was choosing between; this panel renders the same list. Without it,
+// a conflicted show would name a problem in Plex with nothing to open, since its header link is
+// built from the show's rating key, which is null on exactly these rows.
 describe("the show panel's candidate Plex rows", () => {
   it("offers a way into each Plex row it could not choose between", () => {
     renderPanel({
@@ -244,13 +244,13 @@ describe("the show panel's candidate Plex rows", () => {
   });
 });
 
-// Which season names may wrap. The row is nowrap so its height holds still while the list
-// narrows, and for the two labels the panel composes itself that costs nothing. The third branch
-// is different: a season with no number falls back to the server's own title, which can be one
-// long unbroken string with nothing to break on, and nowrap paints it out of the panel (rule
-// 139, #220). So only that branch is marked, and both directions are driven -- the unmarked
-// branch is the state the fixture hands you for free, which is exactly where a marker leaking
-// onto every row would hide, taking the steady row height with it (rule 145).
+// Which season names may wrap. The row uses nowrap so its height holds still while the list
+// narrows, which costs nothing for the two labels the panel composes itself. A season with no
+// number is different: it falls back to the server's own title, which can be one long unbroken
+// string with nothing to break on, and nowrap would push it outside the panel. Only that branch
+// gets a wrap-allowed class, and both branches are tested here, since the untested branch is the
+// one a test fixture defaults to for free, and is exactly where a class leaking onto every row
+// would go unnoticed.
 describe("the show panel's season names", () => {
   it("lets the unnumbered season wrap, because that name is the server's own", () => {
     const { container } = renderPanel(

@@ -92,7 +92,7 @@ class TestLastAdminInvariant:
     async def test_reset_password_restores_local_login_for_a_plex_only_account(
         self, session: AsyncSession
     ) -> None:
-        """The realistic recovery: your only admin is Plex-linked, Plex breaks,
+        """The realistic recovery scenario. Your only admin is Plex-linked, Plex breaks,
         and you need in. `reaper-admin reset-password` must work anyway."""
         session.add(
             AppUser(
@@ -156,7 +156,7 @@ class TestRecoveryToken:
     async def test_the_code_is_never_carried_in_the_url(
         self, session: AsyncSession, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """The token must be a code to paste, not a ``?token=`` query parameter -- else
+        """The token must be a code to paste, not a ``?token=`` query parameter. Otherwise
         the ``GET /recover?token=...`` request line lands in a reverse proxy's access log.
         The printed banner shows a bare ``/recover`` URL and the code on its own line."""
         token = await mint_recovery_token(
@@ -222,9 +222,9 @@ class TestRecoveryToken:
 
 class TestTheRecoveryCodeReachesADesktopOperator:
     """The console is not a channel on a windowed Windows build or a Finder-launched
-    ``.app``: PyInstaller hands those processes no stdout and ``entry.py`` substitutes
-    devnull, so the banner went nowhere and a locked-out operator had no way back in at
-    all (#433). The file in the data folder is the channel that reaches them."""
+    ``.app``. PyInstaller hands those processes no stdout, and ``entry.py`` substitutes
+    devnull, so a console banner alone would leave a locked-out operator with no way back
+    in at all. The file in the data folder is the channel that reaches them instead."""
 
     async def test_the_code_is_written_to_the_data_folder(
         self, session: AsyncSession, tmp_path: Path
@@ -241,11 +241,11 @@ class TestTheRecoveryCodeReachesADesktopOperator:
     async def test_the_file_is_owner_only_from_creation(
         self, session: AsyncSession, tmp_path: Path
     ) -> None:
-        """0600 at creation, never a chmod after the bytes have landed (rule 14/83).
+        """0600 at creation, never a chmod after the bytes have landed.
 
         Skipped on Windows, where the mode bits are inert and the folder's ACL is the
-        protection -- but the assertion still runs everywhere else, so the mode can never
-        drift unnoticed on the platforms that honor it (rule 119)."""
+        protection. The assertion still runs everywhere else, so the mode can never drift
+        unnoticed on the platforms that honor it."""
         if sys.platform == "win32":  # pragma: no cover -- CI and dev are POSIX
             pytest.skip("POSIX mode bits are not the access control on Windows")
         await mint_recovery_token(session, base_url="http://localhost:8420", data_dir=tmp_path)
@@ -280,9 +280,9 @@ class TestTheRecoveryCodeReachesADesktopOperator:
     async def test_an_unwritable_data_folder_still_mints(
         self, session: AsyncSession, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A file that cannot be written must never cost the operator the code itself:
-        the console is still live on the container and the snap, and the token is already
-        in the database. It degrades to one channel, it does not fail."""
+        """A file that cannot be written must never cost the operator the code itself. The
+        console is still live on the container and the snap, and the token is already in
+        the database. It degrades to one channel, but it does not fail."""
         if sys.platform == "win32":  # pragma: no cover -- CI and dev are POSIX
             pytest.skip("a read-only directory is not the same refusal on Windows")
         blocked = tmp_path / "blocked"

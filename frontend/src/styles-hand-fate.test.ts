@@ -2,19 +2,19 @@
 //
 // A hand decision outranks the scan verdict under it, on the one surface that wears both.
 //
-// Rule 49: a fate-bearing cell colors by the item's fate, and a reap the engine cannot honor yet
-// reads dashed red rather than the plain condemned outline beside it. Every selector in that
-// language is a single class, so nothing but SOURCE ORDER decides which wins -- and the season
-// strip square is where it is decided, because `SeasonStrip` puts a scan-verdict class and an
+// A fate-bearing cell colors by the item's fate, and a reap the engine cannot honor yet reads
+// dashed red rather than the plain condemned outline beside it. Every selector in that language
+// is a single class, so nothing but source order decides which wins. The season strip square is
+// where that ordering is decided, because `SeasonStrip` puts a scan-verdict class and an
 // override class on the same button.
 //
-// What goes wrong there is quiet. Moving `.strip-ov-reap-refused` above `.strip-condemn` leaves a
-// held reap wearing the condemned square's inset ring and solid outline, which is the one thing
-// rule 49 says it must never look like: a decision Reaper is acting on.
+// What goes wrong there is quiet. Moving `.strip-ov-reap-refused` above `.strip-condemn` leaves
+// a held reap wearing the condemned square's inset ring and solid outline, which is the one
+// thing this square must never look like: a decision Reaper is acting on.
 //
 // The second describe covers the score badge, whose four hand tones share a rule with the chip
 // and status pill wearing the same tone. `handFate` hands that badge one class, so those tones
-// cannot collide on an element; what is checked there is that the grouping holds and that the
+// cannot collide on an element. What is checked there is that the grouping holds and that the
 // tones still load after the scan verdicts they replace.
 
 import { describe, expect, it } from "vitest";
@@ -23,7 +23,7 @@ import { CSS, siteOf } from "./test/stylesheet";
 
 /** The scan verdicts a square can be based on. `SeasonStrip` writes `strip-${mark.verdict}`, so
  *  this is the `Verdict` union, and a fourth verdict fails the count below rather than slipping
- *  through unwalked (rule 145). */
+ *  through unwalked. */
 const VERDICT_CLASSES = ["strip-condemn", "strip-protect", "strip-abstain"];
 
 /** The hand decisions that paint over one, from `handFate`'s four non-verdict fates. */
@@ -39,22 +39,21 @@ const CODE = CSS.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
 
 /** Where each single-class rule for `cls` sits, outside any at-rule.
  *
- *  The forced-colors block restates every one of these classes to swap the border STYLE, which is
- *  a separate ordering with its own comment in the stylesheet. Folding it in here would compare
- *  offsets across two cascades and answer for neither.
+ *  The forced-colors block restates every one of these classes to swap the border style, which
+ *  is a separate ordering with its own comment in the stylesheet. Folding it in here would
+ *  compare offsets across two cascades and answer for neither.
  *
  *  Brace depth runs across the whole concatenation rather than resetting per file, so one
  *  unbalanced brace anywhere in `styles/` would leave every file after it read as inside an
- *  at-rule and drop out of the walk. That is what the two count assertions catch: they go red on
- *  an emptied walk, where a flag-shaped assertion would read green (rule 145). */
+ *  at-rule and drop out of the walk. The two count assertions below catch that: they fail on an
+ *  emptied walk, where a check that only looks for a flag would still pass. */
 function offsetsOf(cls: string): number[] {
   const out: number[] = [];
   let depth = 0;
   let inAtRule = false;
-  // One match per brace of either kind: the run before it is group 1, the brace is group 2.
-  // Written as two alternatives (`([^{}]*)\{|\}`) the engine retried the first at every position
-  // inside a block body, backtracking across the run each time: ~400 ms per walk over the 355 KB
-  // stylesheet, and each test here walks about 20 times. This form is ~3 ms, same offsets.
+  // One match per brace of either kind: the run before it is group 1, the brace is group 2. An
+  // alternation of two patterns here would backtrack across each block body's run every time,
+  // costing far more per walk than this single-pattern form for the same offsets.
   for (const m of CODE.matchAll(/([^{}]*)([{}])/g)) {
     if (m[2] === "}") {
       depth--;
@@ -76,8 +75,8 @@ function offsetsOf(cls: string): number[] {
 describe("the season strip's hand-override rules", () => {
   it("are all present, one top-level rule each", () => {
     // The population the ordering test walks. A class renamed or merged into a grouped selector
-    // leaves that test with nothing to compare and passing on an empty set, so the count is
-    // pinned first (rule 145).
+    // would leave that test with nothing to compare, passing on an empty set, so the count is
+    // pinned first.
     const found = [...VERDICT_CLASSES, ...OVERRIDE_CLASSES].map(
       (c) => `${c}: ${offsetsOf(c).length}`,
     );
@@ -130,15 +129,15 @@ describe("the season strip's hand-override rules", () => {
     }
     expect(wrong).toEqual([]);
 
-    // And the base it has to beat really does carry one, or the assertion above passes on a
-    // stylesheet where nothing was ever at stake (rule 141).
+    // And the base it has to beat really does carry one, or the assertion above would pass on a
+    // stylesheet where nothing was ever at stake.
     const base = document.createElement("button");
     base.className = "strip-sq strip-condemn";
     document.body.appendChild(base);
     expect(getComputedStyle(base).boxShadow).toContain("inset");
 
     // jsdom's document is shared by every test in this file, so the whole stylesheet and the
-    // buttons under it come back out (rule 133).
+    // buttons under it are removed afterward.
     style.remove();
     document.body.replaceChildren();
   });
@@ -158,11 +157,11 @@ const SCORE_VERDICT_CLASSES = ["score-condemn", "score-protect", "score-abstain"
 
 describe("the score badge's hand-fate tones", () => {
   it("are all present, and so are the scan verdicts they outrank", () => {
-    // Same reason as the strip's count, and it is load-bearing twice over here. `Math.max()` of
-    // an empty array is `-Infinity`, so deleting all three scan verdicts would leave every tone
-    // trivially "after" them; and a trio whose three classes are all gone collapses to one
-    // offset, which reads as grouped. Both assertions below pass on a stylesheet that no longer
-    // declares what they compare (rule 145).
+    // Same reason as the strip's count, and it matters for two separate checks here. `Math.max()`
+    // of an empty array is `-Infinity`, so deleting all three scan verdicts would leave every
+    // tone trivially "after" them. A trio whose three classes are all gone would also collapse to
+    // one offset, which reads as grouped. Both assertions below would pass on a stylesheet that
+    // no longer declares what they compare.
     const found = [...SCORE_VERDICT_CLASSES, ...TONE_TRIOS.flat()].map(
       (c) => `${c}: ${offsetsOf(c).length}`,
     );
@@ -187,9 +186,9 @@ describe("the score badge's hand-fate tones", () => {
 
   it("are declared after the scan-verdict tones they replace", () => {
     // Same direction as the strip, one file apart: `.score-condemn` and friends are in
-    // 11-queue-chrome.css and the four hand tones are in 23-queue-chips.css, grouped with the
+    // 11-queue-chrome.css, and the four hand tones are in 23-queue-chips.css, grouped with the
     // chip and status twins that wear them. `handFate` hands `Score` one class, so these cannot
-    // collide today; this pins the claim 11-queue-chrome.css's comment makes about where they
+    // collide today. This pins the claim 11-queue-chrome.css's comment makes about where they
     // went and which way round they load.
     const verdictAt = Math.max(...SCORE_VERDICT_CLASSES.flatMap(offsetsOf));
     const early: string[] = [];
@@ -205,9 +204,9 @@ describe("the score badge's hand-fate tones", () => {
   });
 
   it("share one rule with the chip and status pill wearing the same tone", () => {
-    // The 12 blocks this replaced were four tones written out three times, and the three families
-    // are one language: `handFate` picks the tone, and the score badge, the card chip and the
-    // status pill render it. A tone split back apart is three places to change one color.
+    // The four tones are rendered by three families: `handFate` picks the tone, and the score
+    // badge, the card chip, and the status pill render it. A tone split back apart is three
+    // places to change one color.
     const split: string[] = [];
     for (const trio of TONE_TRIOS) {
       const offsets = trio.map((c) => offsetsOf(c)[0]!);

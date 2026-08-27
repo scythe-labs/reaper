@@ -4,9 +4,9 @@
 // value from an older build (or a hand-edited one) must degrade field by field to the
 // defaults, never crash the queue or smuggle in an impossible filter state.
 //
-// This environment's jsdom ships without storage (window.localStorage is undefined), so
-// the tests install a faithful in-memory stand-in; the helpers under test also survive
-// that absence on their own, which "defaults when storage is unusable" exercises.
+// This environment's jsdom ships without storage (window.localStorage is undefined), so the
+// tests install a faithful in-memory stand-in. The helpers under test also survive that
+// absence on their own, which "defaults when storage is unusable" exercises.
 
 import { beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_FILTERS, loadFilters, saveFilters, type QueueFilters } from "./ReviewQueue";

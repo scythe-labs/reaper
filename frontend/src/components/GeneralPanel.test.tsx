@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The General panel has one save affordance (rule 43): a bar that names every unsaved field and
-// sends them together. Two things have to hold. The controls that still save on the spot -- the
-// reverse-proxy Switch and the expand-seasons select -- never throw away text being typed
-// elsewhere. And the spare length, which is the one field edited by two controls at once, stages
-// BOTH of them in the bar: it was a third on-the-spot writer, and pressing Forever committed the
-// number the bar had just called unsaved (issue #90).
+// The General panel has one save affordance: a bar that names every unsaved field and sends
+// them together. Two controls still save on the spot, the reverse-proxy switch and the
+// expand-seasons select, and neither may discard text the operator is typing elsewhere. The
+// spare length is edited by two controls at once, a Forever button and a day box, and both
+// stage into the bar rather than writing immediately, so a save always sends what the bar
+// shows.
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -48,11 +48,10 @@ const STORED: GeneralSettings = {
   desktop: null,
 };
 
-// The same row with the two self-gating fields switched ON. `STORED` leaves the proxy switch
-// off, which is exactly the state in which the proxy entry can never be reached -- so against
-// `STORED` alone the array shape never travels through the bar. It also stores Forever, which
-// hides the day box, so the number is only typeable from here. Deleting the proxy gate used to
-// leave the whole suite green.
+// The same row with both self-gating fields switched on. `STORED` leaves the proxy switch off,
+// so the proxy box never appears and the array shape it sends is never exercised there.
+// `STORED` also stores Forever, which hides the day box, so the number field is only reachable
+// from here.
 const STORED_BOTH_ON: GeneralSettings = {
   ...STORED,
   default_spare_days: 30,
@@ -63,8 +62,8 @@ const STORED_BOTH_ON: GeneralSettings = {
 beforeEach(() => {
   vi.clearAllMocks();
   apiMock.general.mockResolvedValue(STORED);
-  // The server answers with the canonical stored row, which for the fields this save did not
-  // touch is the OLD value -- that is exactly what used to overwrite the operator's typing.
+  // The mock answers with the stored row merged with whatever the save sent, the way the real
+  // server does: fields the save did not touch keep their old value.
   apiMock.saveGeneral.mockImplementation((body: Partial<GeneralSettings>) =>
     Promise.resolve({ ...STORED, ...body }),
   );
@@ -73,9 +72,9 @@ beforeEach(() => {
 function renderPanel() {
   renderWithProviders(
     <>
-      {/* Mounted the way the app mounts it -- once, above the panel, before anything can speak
-          into it. Without it in the tree a call to `announce` writes to a store nothing is
-          listening to, so a test could only ever prove the call did not throw. */}
+      {/* Mounted the way the app mounts it: once, above the panel, before anything can speak
+          into it. Without it, a call to `announce` writes to a store nothing is listening to,
+          so a test could only prove the call did not throw. */}
       <Announcer />
       <GeneralPanel />
     </>,
@@ -83,9 +82,9 @@ function renderPanel() {
   return userEvent.setup();
 }
 
-/** The same tree, handing back the client, for the one test that needs a refresh the panel never
- *  asked for. A key made in another tab is exactly that: nothing the operator does here can
- *  produce it, and it is the state #203 is about. */
+/** The same tree, handing back the client, for the one test that needs a refresh the panel
+ *  never asked for: a key made in another tab. Nothing the operator does in this render can
+ *  produce that state, so the test drives it through the client instead. */
 function renderPanelWithClient() {
   const queryClient = testQueryClient();
   renderWithProviders(
@@ -98,7 +97,7 @@ function renderPanelWithClient() {
   return { user: userEvent.setup(), queryClient };
 }
 
-/** What a screen reader would have heard: the region currently holding a sentence. */
+/** Text of whichever status region currently holds a sentence, the way a screen reader would read it. */
 const announced = () =>
   screen
     .getAllByRole("status")
@@ -111,8 +110,8 @@ const announced = () =>
 // panel saying it holds nothing loses the draft silently, and one saying it holds something it
 // no longer shows asks for a discard the operator cannot act on.
 function renderReporting(
-  /** Stored row already in the cache, so the panel mounts with `general.data` on its FIRST
-   *  render -- what returning to this section does. A fresh client is a COLD mount, one render
+  /** Stored row already in the cache, so the panel mounts with `general.data` on its first
+   *  render, the way returning to this section does. A fresh client is a cold mount, one render
    *  behind, and a guard can pass there while failing here. */
   cached?: GeneralSettings,
 ) {
@@ -158,22 +157,21 @@ describe("the save bar", () => {
     apiMock.general.mockResolvedValue(STORED_BOTH_ON);
     renderPanel();
     await screen.findByLabelText("Trusted proxy addresses");
-    // Both arms, because `dim` is the one class computed per render rather than declared once
-    // (rule 145): a row hardcoded to dim passes the test above and fails only here.
+    // Both arms, because `dim` is computed on every render rather than set once: a row
+    // hardcoded to dim passes the test above and fails only here.
     expect(screen.getByText("Trusted proxy addresses").closest(".set-row")).toHaveClass("set-row", {
       exact: true,
     });
   });
 
   it("never reports a draft for the frame before the boxes are seeded", async () => {
-    // #139. The bar flashing was the visible half; this is the half that mattered. `hasDrafts`
-    // is reported up to `Settings` through `onDirtyChange`, so for that one commit the panel
-    // told the shell it was holding four unsaved fields before anything had been typed --
-    // exactly the claim a section-switch confirm is built on (rule 146).
+    // `hasDrafts` is reported up to `Settings` through `onDirtyChange`. For one commit, the
+    // panel used to tell the shell it held four unsaved fields before anything had been typed,
+    // which is the exact claim a section-switch confirm relies on.
     //
-    // Deterministic despite being one frame: the report goes through an effect, so the spy
-    // records the call whether or not the frame was ever painted. Asserting on the RENDERED
-    // bar could only ever catch it by luck.
+    // This is deterministic even though it is only one frame: the report goes through an
+    // effect, so the spy records the call whether or not that frame was ever painted. Asserting
+    // on the rendered bar instead could only catch this by luck.
     const { onDirtyChange } = renderReporting();
     await waitFor(() =>
       expect(screen.getByLabelText("Application name")).toHaveValue(STORED.application_name),
@@ -183,13 +181,12 @@ describe("the save bar", () => {
   });
 
   it("never reports a draft when the stored row is already cached", async () => {
-    // The warm twin of the test above (rule 72), and the reason it is worth writing even though
-    // it passes on the first run: the cold test above passes for a reason that has nothing to do
-    // with the guard. A fresh `QueryClient` leaves `general.data` undefined on the first render,
-    // so nothing is compared yet. Returning to this section mounts the panel with the row already
-    // there, and the boxes still on their initial values. `seeded` is `useState(false)`, which no
-    // cached value can make true, so this holds -- and this test is what keeps it that way if the
-    // flag is ever rewritten as one derived from the data (rule 145).
+    // The warm twin of the test above. The cold test passes for a reason that has nothing to do
+    // with the guard: a fresh `QueryClient` leaves `general.data` undefined on the first render,
+    // so nothing is compared yet. Returning to this section instead mounts the panel with the
+    // row already cached, while the boxes still hold their initial values. `seeded` is
+    // `useState(false)`, which no cached value can flip, so the report still holds here. This
+    // test is what catches it if `seeded` is ever rewritten as a value derived from the data.
     const { onDirtyChange } = renderReporting(STORED);
     await waitFor(() =>
       expect(screen.getByLabelText("Application name")).toHaveValue(STORED.application_name),
@@ -201,13 +198,10 @@ describe("the save bar", () => {
   it("is absent until something is unsaved, and names what is", async () => {
     const person = renderPanel();
     const name = await screen.findByLabelText("Application name");
-    // Rule 137, one turn earlier than usual: the box is not disabled here, it is UNSEEDED. The
-    // form renders on the first data-bearing pass and the stored row is copied into local state
-    // by an effect after it, so finding the box is not the same as the box holding what the
-    // server sent. This asserted straight after the find and failed about one run in three
-    // under load, reading as a bar that appears with nothing typed -- which is exactly what it
-    // was, and #139 fixed the panel rather than the clock. The wait stays because it is the
-    // right way to reach a seeded box, not because the bar needs time to go away.
+    // The box is not disabled here, it is unseeded. The form renders on the first data-bearing
+    // pass, and an effect after that copies the stored row into local state, so finding the box
+    // is not the same as the box holding what the server sent. The wait below is what reaches a
+    // seeded box; it is not there because the bar needs time to disappear.
     await waitFor(() => expect(name).toHaveValue(STORED.application_name));
     expect(bar()).toBeNull();
 
@@ -239,11 +233,10 @@ describe("the save bar", () => {
   });
 
   it("says the save worked, rather than only taking the bar away", async () => {
-    // #175. Success here was the savebar unmounting -- and it takes the button that had focus
-    // with it, so the operator got no message, then no message, then a lost focus point. An
-    // absence cannot be perceived by ear, which made a successful save and a dead button the
-    // same event. The sentence is asserted through the live region, so this fails if the
-    // `announce` call is dropped from the mutation OR if the region stops being reachable.
+    // The savebar unmounting on success also takes the focused button with it, leaving the
+    // operator no message and a lost focus point: an absence is not something a screen reader
+    // can hear. The sentence is asserted through the live region, so this fails if the
+    // `announce` call is dropped from the mutation, or if the region stops being reachable.
     const person = renderPanel();
     const name = await screen.findByLabelText("Application name");
 
@@ -251,7 +244,8 @@ describe("the save bar", () => {
     await person.click(saveChanges());
 
     await waitFor(() => expect(announced()).toBe("Settings saved."));
-    // On the server's answer, not on the press (rule 85): the bar is gone by the time it speaks.
+    // The bar clears on the server's answer, not on the press, so it is gone by the time the
+    // success message is spoken.
     expect(bar()).toBeNull();
   });
 
@@ -272,8 +266,8 @@ describe("the save bar", () => {
 
   it("holds the whole save while the accent color is half-typed", async () => {
     // The accent is applied app-wide from the stored value, so an unfinished hex code must not
-    // be written -- and dropping just that field from a bar that names it would be a lie about
-    // what the press did.
+    // be written. Dropping just that one field from a bar that names it would misstate what the
+    // press actually did.
     const person = renderPanel();
     const hex = await screen.findByLabelText("Accent color hex code");
 
@@ -288,15 +282,15 @@ describe("the save bar", () => {
   });
 
   it("moves the preview's link with its button, not just the button", async () => {
-    // The preview overrode --accent and --accent-ink, so the button followed the typed color
-    // and the LINK beside it kept the saved accent's ink -- a preview showing two accents at
-    // once, on the control whose whole job is to show one.
+    // The preview overrides `--accent` and `--accent-ink`, so both the button and the link
+    // beside it should follow the typed color. A preview where only the button moves shows two
+    // accents at once, on a control whose whole job is to show one.
     //
-    // The link's color is --accent-text, and that is not derived from --accent where it is
-    // used: the stylesheet computes it once on :root from what accent.ts writes there, so
-    // overriding --accent on a child inherits an ink belonging to a different color. Asserted
-    // as "all three move together" rather than against a transcribed hex, so the contrast
-    // search stays free to return whatever it returns (rule 119).
+    // The link's color is `--accent-text`, and it is not derived from `--accent` where it is
+    // used: the stylesheet computes it once on `:root` from what `accent.ts` writes there, so
+    // overriding `--accent` on a child inherits an ink belonging to a different color. The test
+    // asserts that all three move together, rather than against a transcribed hex, so the
+    // contrast search stays free to return whatever it returns.
     const person = renderPanel();
     const hex = await screen.findByLabelText("Accent color hex code");
     const preview = document.querySelector(".accent-preview") as HTMLElement;
@@ -314,11 +308,11 @@ describe("the save bar", () => {
   });
 
   it("hands the refused hex box the sentence saying why", async () => {
-    // #174. `aria-invalid` and `aria-describedby` appeared ZERO times in the whole frontend, so
-    // a box that refuses to save had no way to reach the sentence explaining it: the message
-    // was visible beside the field and the field never mentioned it. Asserted as the accessible
-    // DESCRIPTION rather than as an id string, because that is what a reader actually computes
-    // -- an id pointing at nothing would pass an attribute check and still say nothing.
+    // A box that refuses to save must reach the sentence explaining why through
+    // `aria-describedby`, not just place the message visibly beside the field. The test checks
+    // the accessible description rather than an id string, because that is what a screen reader
+    // actually computes: an id pointing at nothing would pass an attribute check while saying
+    // nothing.
     const person = renderPanel();
     const hex = await screen.findByLabelText("Accent color hex code");
 
@@ -337,8 +331,8 @@ describe("the save bar", () => {
   });
 
   it("still re-seeds from the server's canonical value", async () => {
-    // Rule 39: the field it sent comes back from the response, trimmed the way the server
-    // stored it -- so the row settles on what is really saved, not on what was typed.
+    // The field it sent comes back from the response, trimmed the way the server stores it, so
+    // the row settles on what is really saved rather than on what was typed.
     apiMock.saveGeneral.mockResolvedValue({ ...STORED, application_name: "Trimmed" });
     const person = renderPanel();
     const name = await screen.findByLabelText("Application name");
@@ -351,9 +345,9 @@ describe("the save bar", () => {
 
   it("carries the number and the list shapes, not just the strings", async () => {
     // The two shapes that are not plain strings. The day box only exists while the draft is a
-    // length, and the proxy list only joins the bar while the switch is on -- a gate unreachable
-    // against the default fixture, so this is the only test that sends an array through the bar
-    // and the only one that fails if that gate goes.
+    // length, and the proxy list only joins the bar while the switch is on. That gate is
+    // unreachable against the default fixture, so this is the only test that sends an array
+    // through the bar and the only one that fails if the gate breaks.
     apiMock.general.mockResolvedValue(STORED_BOTH_ON);
     const person = renderPanel();
     const days = await screen.findByLabelText("Default spare length in days");
@@ -378,8 +372,8 @@ describe("the save bar", () => {
   it("says why a refused save was refused, inside the bar", async () => {
     // The route writes all six fields or none, so a refusal costs every draft on the panel. The
     // bar is sticky and the panel is six groups tall, so a notice rendered outside the bar sits
-    // at the document foot -- off screen for anyone editing the top group, which is where five
-    // of the six fields are. Rule 42: the reason renders where the failed press was.
+    // at the document foot, off screen for anyone editing the top group, where five of the six
+    // fields live. The reason must render where the failed press happened.
     apiMock.saveGeneral.mockRejectedValue(new Error("That web address isn't valid."));
     const person = renderPanel();
     const name = await screen.findByLabelText("Application name");
@@ -394,17 +388,18 @@ describe("the save bar", () => {
 });
 
 describe("the default spare length", () => {
-  // One stored field, two controls. Forever IS zero in that field, so the mode press and the
-  // typed number are halves of one draft and both belong in the bar.
+  // One stored field, two controls. Forever is zero in that field, so the mode press and the
+  // typed number are both part of one draft, and both belong in the bar.
   const forever = () => screen.getByRole("button", { name: "Forever" });
   const days = () => screen.getByRole("button", { name: "Days" });
   const dayBox = () => screen.queryByLabelText("Default spare length in days");
 
   it("stages a Forever press instead of writing it, and keeps the Discard", async () => {
-    // Issue #90, in the order it was driven. From a stored 365 the operator types 7; the bar
-    // names the field and offers Discard. Pressing Forever used to write 0 on the spot, which
-    // dropped the field out of `pending` and unmounted the bar -- taking that Discard with it
-    // while the box kept the 7. The next press then sent the 7 nobody had saved.
+    // From a stored 365 the operator types 7. The bar names the field and offers Discard.
+    // Pressing Forever must stage the change rather than write it on the spot: writing 0
+    // immediately would drop the field out of the pending set and unmount the bar, taking the
+    // Discard with it while the box still showed the 7, so the next press would send an
+    // unsaved 7.
     apiMock.general.mockResolvedValue({ ...STORED_BOTH_ON, default_spare_days: 365 });
     const person = renderPanel();
     const box = await screen.findByLabelText("Default spare length in days");
@@ -416,13 +411,13 @@ describe("the default spare length", () => {
     await person.click(forever());
 
     expect(apiMock.saveGeneral).not.toHaveBeenCalled();
-    // Still one unsaved field, still undoable, and the box is gone because Forever has no
-    // length to show -- not because the field left the bar.
+    // Still one unsaved field, still undoable. The box is gone because Forever has no length to
+    // show.
     expect(bar()!.textContent).toContain("Default spare length");
     expect(screen.getByRole("button", { name: "Discard" })).toBeInTheDocument();
     expect(dayBox()).toBeNull();
 
-    // Coming back is just as free: the press that used to commit the 7 sends nothing.
+    // Coming back is just as free: pressing Days again sends nothing.
     await person.click(days());
     expect(apiMock.saveGeneral).not.toHaveBeenCalled();
     expect(dayBox()).toHaveValue(7);
@@ -442,21 +437,21 @@ describe("the default spare length", () => {
 
     await waitFor(() => expect(apiMock.saveGeneral).toHaveBeenCalledTimes(1));
     expect(apiMock.saveGeneral.mock.calls[0]![0]).toEqual({ default_spare_days: 0 });
-    // Re-seeded from the response, so the mode settles on what is really stored (rule 39).
+    // Re-seeded from the response, so the mode settles on what is really stored.
     await waitFor(() => expect(bar()).toBeNull());
     expect(dayBox()).toBeNull();
   });
 
   it("stages a first length from Forever, and shows the number being agreed to", async () => {
     // From a stored Forever there is no box, so the press that reveals one is also the press
-    // that stages it. It used to store 30 before the operator had seen that number at all.
+    // that stages it. It must not save that number before the operator has seen it.
     const person = renderPanel();
     await screen.findByLabelText("Application name");
-    // STORED is Forever, but the length box seeds visible for the first paint and the effect
-    // that reads default_spare_days:0 back into Forever removes it only after that commit.
-    // Landing on Application name does not gate that effect, so assert the box's ABSENCE
-    // through waitFor rather than synchronously, or the read can fall in the pre-seed window
-    // and see the seed box carrying 30 (#477).
+    // STORED is Forever, but the length box is visible for the first paint, and the effect that
+    // reads default_spare_days: 0 back into Forever removes it only after that commit. Landing
+    // on Application name does not gate that effect, so the box's absence is asserted through
+    // waitFor rather than synchronously; a synchronous read can land in the pre-seed window and
+    // see the box carrying 30.
     await waitFor(() => expect(dayBox()).toBeNull());
 
     await person.click(days());
@@ -483,9 +478,10 @@ describe("the default spare length", () => {
 
   it("puts the number back on Discard even when Forever is what is stored", async () => {
     // The test above runs against a stored 30, so it never reaches the branch that skips the
-    // number. `STORED` is Forever, where the box exists only after a press of Days -- and there
-    // Discard left the discarded figure sitting in the hidden box, for the next press to
-    // re-stage. Nothing is written either way, so what is lost is Discard meaning "all of it".
+    // number. `STORED` is Forever, where the box exists only after a press of Days. Discard
+    // must clear the number there too, not just leave the discarded figure sitting in the
+    // hidden box for the next press to re-stage. Nothing is written either way, so what would
+    // be lost is Discard meaning "all of it".
     const person = renderPanel();
     await screen.findByLabelText("Application name");
 
@@ -506,15 +502,14 @@ describe("the default spare length", () => {
   });
 
   it("stops taking presses while the save carrying it is in flight", async () => {
-    // Issue #151, in the order it was driven. `Segmented` took no `disabled`, so this was the one
-    // control in the row still pressable during a save -- every neighbor already carries
-    // `disabled={save.isPending}`. The press flipped `aria-pressed`, so it read as taken; then
-    // `onSuccess` re-seeded the mode from the response and the bar cleared in the same flush, so
-    // nothing on screen said it had been dropped.
+    // `Segmented` needs `disabled={save.isPending}` like every neighboring control in the row,
+    // or this is the one control still pressable during a save: a press flips `aria-pressed` to
+    // read as taken, then `onSuccess` re-seeds the mode from the response and clears the bar in
+    // the same flush, leaving nothing on screen to say the press was dropped.
     //
-    // What is pinned is the GAP, not the end state. After the response the mode reads Days either
-    // way, because the re-seed is exactly what overwrote the press -- so the in-flight moment is
-    // the only place a refused press and a silently dropped one look different (rule 118).
+    // What this test pins is the gap during the save, not the end state: after the response the
+    // mode reads Days either way, because the re-seed overwrites the press. The in-flight moment
+    // is the only place a refused press and a silently dropped one look different.
     apiMock.general.mockResolvedValue({ ...STORED_BOTH_ON, default_spare_days: 365 });
     const person = renderPanel();
     const box = await screen.findByLabelText("Default spare length in days");
@@ -533,13 +528,13 @@ describe("the default spare length", () => {
     );
     await person.click(saveChanges());
 
-    // Both segments, not only the one that would have been pressed: the drop is symmetric, a
-    // Days press during a save writing 0 was lost the same way.
+    // Both segments are checked, not only the one being pressed: the same drop would happen to
+    // a Days press during a save that writes 0.
     await waitFor(() => expect(forever()).toBeDisabled());
     expect(days()).toBeDisabled();
 
-    // user-event dispatches nothing at a disabled target and reports success (rule 137), which
-    // is the behavior under test: the pair does not move. It used to flip here.
+    // user-event dispatches nothing at a disabled target and reports success, which matches the
+    // behavior under test: the pair must not move here.
     await person.click(forever());
     expect(forever()).toHaveAttribute("aria-pressed", "false");
     expect(days()).toHaveAttribute("aria-pressed", "true");
@@ -558,10 +553,10 @@ describe("the default spare length", () => {
 
 describe("what the panel reports to the section rail", () => {
   it("counts a proxy list parked behind its own switch", async () => {
-    // The bar drops that field on purpose (it must not name a box the operator cannot reach to
-    // fix), but the text is still in the disabled box, still unsaved, and still gone on unmount.
-    // Reading the bar alone let exactly that one walk out with no confirm, on the panel that had
-    // just promised to ask.
+    // The bar drops this field on purpose, since it must not name a box the operator cannot
+    // reach to fix. But the typed text is still sitting in the disabled box, still unsaved, and
+    // still lost on unmount, so the dirty report to the section rail must count it even though
+    // the bar does not show it.
     apiMock.general.mockResolvedValue(STORED_BOTH_ON);
     apiMock.saveGeneral.mockImplementation((body: Partial<GeneralSettings>) =>
       Promise.resolve({ ...STORED_BOTH_ON, ...body }),
@@ -589,10 +584,10 @@ describe("what the panel reports to the section rail", () => {
     await fill(person, name, "Second install");
     await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
 
-    // Generate API key and Remove key both invalidate this very query, so a server that blinks
-    // lands here with a draft on screen. React Query keeps the last good row and raises
-    // `isError` beside it, and the panel used to trade the whole form for one paragraph: no
-    // fields, no bar, no Discard, while still reporting something unsaved to lose.
+    // Generate API key and Remove key both invalidate this same query, so a server that blinks
+    // can land here with a draft already on screen. React Query keeps the last good row and
+    // raises `isError` beside it, so the panel must keep showing the form: replacing it with one
+    // paragraph would report something unsaved to lose while giving no way to see or keep it.
     apiMock.general.mockRejectedValue(new Error("boom"));
     await queryClient.invalidateQueries({ queryKey: ["general-settings"] });
     await waitFor(() => expect(apiMock.general).toHaveBeenCalledTimes(2));
@@ -604,8 +599,9 @@ describe("what the panel reports to the section rail", () => {
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
 
     // And it says the read failed. Keeping the form is what keeps the draft reachable; keeping
-    // it with nothing said presents values the panel knows are stale as current (rule 17/36).
-    // Same line as `PlexPanel`, from one component, so the two cannot drift (rules 72 and 144).
+    // it with nothing said would present values the panel knows are stale as if they were
+    // current. Same line as `PlexPanel`, from one shared component, so the two cannot drift
+    // apart.
     const stale = await screen.findByText(/Couldn't check these settings just now/);
     expect(stale).toHaveClass("notice-warn");
   });
@@ -619,24 +615,15 @@ describe("what the panel reports to the section rail", () => {
   });
 });
 
-// Generating REPLACES whatever key the server holds, immediately and with no undo, which is why
-// Replace is a two-step confirm. The one-click Generate rendered on a CACHED `api_key_set: false`
-// -- 30-second staleTime, no refetch on focus, nothing evicting it -- so a key made from another
-// tab, a phone or by another admin left this panel offering a one-click revoke of a live key, with
-// none of the confirmation its own design says the act needs (#203).
-//
-// The button proves the absence now instead of assuming it, so all three answers to "is there a
-// key" are pinned here. Only the first one generates on one press: the other two are the states
-// where the page cannot show that nothing is about to be destroyed.
 describe("the display language picker", () => {
   it("names each shipped language in that language, and offers no browser-match entry", async () => {
     renderPanel();
     const select = await screen.findByLabelText<HTMLSelectElement>("Language");
 
-    // "Espanol", not "Spanish": an operator scanning for their language looks for the name they
-    // call it (rule 21). The tag comes from the same glob the loader reads, so a translation
-    // that ships is choosable with no edit here (rule 66) -- which is also why this asserts on
-    // the two that ship rather than on the whole list.
+    // "Español", not "Spanish": an operator scanning for their language looks for the name they
+    // call it themselves. The list comes from the same glob the loader reads, so a translation
+    // that ships is choosable with no edit here, which is also why this asserts on the two
+    // languages that ship rather than on the whole list.
     expect(select.textContent).toContain("English");
     expect(select.textContent).toContain("Espa\u00f1ol");
     expect(select.textContent).not.toContain("Spanish");
@@ -693,6 +680,15 @@ describe("the display language picker", () => {
   });
 });
 
+// Generating replaces whatever key the server holds, immediately and with no undo, which is why
+// Replace is a two-step confirm. A one-click Generate rendered on a cached `api_key_set: false`
+// (30-second staleTime, no refetch on focus, nothing evicting it) would let a key made from
+// another tab, a phone, or another admin sit behind a one-click revoke with no confirmation.
+//
+// The button re-checks for a key before acting, instead of trusting the cache, so all three
+// answers to "is there a key" are pinned here. Only the no-key answer generates on one press;
+// the other two are the states where the page cannot yet show that nothing is about to be
+// destroyed.
 describe("the Generate API key button", () => {
   const generate = () => screen.findByRole("button", { name: "Generate API key" });
 
@@ -731,7 +727,8 @@ describe("the Generate API key button", () => {
     const user = renderPanel();
     const button = await generate();
 
-    // Another admin, another tab, a phone. This is the press that used to revoke it.
+    // Another admin, another tab, a phone: any of these can have added a key since the last
+    // read. This press must not revoke it.
     apiMock.general.mockResolvedValue({ ...STORED, api_key_set: true });
     await user.click(button);
 
@@ -741,10 +738,10 @@ describe("the Generate API key button", () => {
     expect(screen.getByRole("button", { name: "Replace…" })).toBeInTheDocument();
   });
 
-  // One `confirmReplace` arms a danger button on BOTH rows, and `api_key_set` decides which row
-  // renders, so the flag crossing between them arms a confirm nobody opened. Both directions are
-  // driven here because both were reachable and they fail differently: one shows a danger button
-  // with no notice, the other leaves a live key one press from revocation.
+  // One `confirmReplace` flag arms a danger button on both rows, and `api_key_set` decides
+  // which row renders, so the flag crossing between them can arm a confirm nobody opened. Both
+  // directions are driven here because both are reachable, and they fail differently: one shows
+  // a danger button with no notice, the other leaves a live key one press from revocation.
   it("does not leave a generate confirm armed after the key is removed", async () => {
     apiMock.general.mockResolvedValue({ ...STORED, api_key_set: true });
     const user = renderPanel();
@@ -760,9 +757,9 @@ describe("the Generate API key button", () => {
     await user.click(screen.getByRole("button", { name: "Remove…" }));
     await user.click(screen.getByRole("button", { name: "Confirm remove" }));
 
-    // The no-key row rests on its plain one-click Generate. It used to open on a red "Confirm
-    // generate", asking the operator to confirm destroying a key it had just proved is gone,
-    // with no notice on the page saying why.
+    // The no-key row must rest on its plain one-click Generate, not open already armed on a red
+    // "Confirm generate" asking the operator to confirm destroying a key the page has just
+    // proved is gone.
     expect(await screen.findByRole("button", { name: "Generate API key" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Confirm generate" })).toBeNull();
   });
@@ -776,14 +773,15 @@ describe("the Generate API key button", () => {
     await user.click(button);
     expect(await screen.findByRole("button", { name: "Confirm generate" })).toBeInTheDocument();
 
-    // Now a key made in another tab lands: #203's own scenario, pointed the other way.
+    // Now a key made in another tab lands, the same scenario as before, pointed the other way.
     apiMock.general.mockResolvedValue({ ...STORED, api_key_set: true });
     await act(async () => {
       await queryClient.invalidateQueries({ queryKey: ["general-settings"] });
     });
 
-    // The key-present row rests on Replace…. It used to render with "Confirm replace" ALREADY
-    // pressed, so one press revoked a live key through a confirm the operator never opened.
+    // The key-present row must rest on Replace…, not render with "Confirm replace" already
+    // armed, which would let one press revoke a live key through a confirm the operator never
+    // opened.
     expect(await screen.findByRole("button", { name: "Replace…" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Confirm replace" })).toBeNull();
   });
@@ -798,8 +796,9 @@ describe("the Generate API key button", () => {
 
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
-    // The sentence explained a confirm, so it goes when the confirm does. It used to stay,
-    // telling the operator that confirming replaces a key with no confirm anywhere on the page.
+    // The sentence explains a confirm, so it must go when the confirm does; leaving it behind
+    // would tell the operator that confirming replaces a key with no confirm anywhere on the
+    // page.
     expect(screen.queryByText(/Couldn't check for an existing key/)).toBeNull();
   });
 
@@ -807,8 +806,9 @@ describe("the Generate API key button", () => {
     const user = renderPanel();
     const button = await screen.findByRole("button", { name: "Generate API key" });
 
-    // Hold the re-read open. This is the window the button used to sit through under its idle
-    // label, enabled: `generate` has not started yet, so the only pending flag it read was false.
+    // Hold the re-read open: in this window the button must not sit enabled under its idle
+    // label, since `generate` has not started yet and the only pending flag it can read is
+    // false.
     let release: (row: GeneralSettings) => void = () => {};
     apiMock.general.mockImplementation(
       () =>
@@ -832,10 +832,9 @@ describe("the Generate API key button", () => {
 
 describe("a control that saves on the spot", () => {
   it("leaves an in-progress edit alone", async () => {
-    // B-18, in the shape it survives in: `onSuccess` re-seeded every field from the response, so
-    // any save wrote the STORED url back over the one being typed. The per-row Save buttons that
-    // first exposed it are gone, but the reverse-proxy switch still writes the moment it is
-    // flipped, and it must not take the half-typed URL with it.
+    // `onSuccess` must not re-seed every field from the response: doing that would write the
+    // stored URL back over one still being typed. The reverse-proxy switch writes the moment it
+    // is flipped, and it must not take a half-typed URL field with it.
     const person = renderPanel();
     const url = await screen.findByLabelText("Application URL");
 
@@ -863,7 +862,7 @@ describe("the Desktop app group", () => {
     desktop: { platform: "windows", tray: true, dock_icon: false },
   };
 
-  /** Fold a tray/dock save back into the desktop object the way the server does, so the
+  /** Merge a tray/dock save back into the desktop object the way the server does, so the
    *  switch's post-save state renders from the response rather than a stray top-level key. */
   const foldDesktop = (stored: GeneralSettings) =>
     apiMock.saveGeneral.mockImplementation((body: { tray?: boolean; dock_icon?: boolean }) =>

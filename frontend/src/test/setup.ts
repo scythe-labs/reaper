@@ -12,33 +12,33 @@ import { afterEach } from "vitest";
 
 import { forgetWrittenUrl } from "../navUrl";
 
-// `findBy*` and `waitFor` run on Testing Library's own `asyncUtilTimeout`, and
-// `vite.config.ts`'s `testTimeout` does not reach it. It defaults to 1000ms, which is a budget
-// for waiting on a read, and this suite spends it rendering whole panels: the nine-case anchor
-// walk in `PolicyEditor.warnings.test.tsx` measured 630-948ms per case on an IDLE box, so its
-// widest case had 5% of the budget left. Three full-suite runs failed this way on branches that
-// touch none of it, each passing again alone and on a re-run (#887). Reproduced under a load of
-// 32 on a 20-core box: two full-suite runs in three, three distinct assertions, every one of
-// them a wait in that file.
+// `findBy*` and `waitFor` run on Testing Library's own `asyncUtilTimeout`, which
+// `vite.config.ts`'s `testTimeout` does not reach. It defaults to 1000ms, a budget for waiting
+// on a read, and this suite spends it rendering whole panels. The nine-case anchor walk in
+// `PolicyEditor.warnings.test.tsx` measured 630-948ms per case on an idle machine, leaving its
+// widest case almost no room. Under load, full-suite runs failed here on branches that touched
+// none of this code, then passed again on a re-run.
 //
-// Raised rather than made deterministic, because nothing here is racing. The assertion waits for
-// a first render whose cost belongs to the machine, so there is no timer for a fake clock to
-// advance and no event for a deterministic wait to key on. Two files already answered this once:
-// `AppStaleRead.test.tsx` and `AppUrl.test.tsx` warm a `React.lazy` boundary in `beforeAll` so a
-// cold transform cannot land inside the 1000ms (#651). Both still turned up in #887's failing
-// sets, because that fix covers the one boundary it names and the cost is everywhere.
+// The timeout is raised rather than made deterministic, because nothing here is racing. The
+// assertion waits for a first render whose cost belongs to the machine, so there is no timer
+// for a fake clock to advance and no event for a deterministic wait to key on.
+// `AppStaleRead.test.tsx` and `AppUrl.test.tsx` each warm a `React.lazy` boundary in `beforeAll`
+// so a cold transform cannot land inside a test's wait, but that only covers the one boundary
+// each names, and the same cost shows up anywhere else a first render is expensive.
 //
-// 5000ms, well under `testTimeout`'s 15000, so an element that is genuinely missing still loses
-// HERE and prints Testing Library's "unable to find" with the DOM it searched. Let it lose to
-// `testTimeout` instead and the report is the test's name and nothing else. A real hang now costs
-// five seconds, which is cheaper than the re-run a false failure costs. Per test file, like the
-// rest of this file, so it leaves nothing behind for the next worker (rule 133).
+// 5000ms is well under `testTimeout`'s 15000, so an element that is genuinely missing still
+// loses here and prints Testing Library's "unable to find" message along with the DOM it
+// searched. Losing to `testTimeout` instead would report only the test's name and nothing else.
+// A real hang now costs five seconds, which is cheaper than the re-run a false failure costs.
+// This is set per test file, like the rest of this file, so it leaves nothing behind for the
+// next worker.
 configure({ asyncUtilTimeout: 5000 });
 
-// Read back, for the same reason the warm-up below asserts its own effect. `configure` takes a
-// partial and ignores a key it does not know, so a rename in a major bump of
-// `@testing-library/dom` leaves this file setting nothing, every wait back on 1000ms, and #887
-// returning with no line to blame. Fail here instead, where the message names the cause.
+// This reads the value back, for the same reason the warm-up below asserts its own effect.
+// `configure` takes a partial object and silently ignores a key it does not recognize, so a
+// rename in a major bump of `@testing-library/dom` would leave this file setting nothing, every
+// wait back on 1000ms, with no line anywhere to blame. This fails here instead, where the
+// message names the cause.
 if (getConfig().asyncUtilTimeout !== 5000) {
   throw new Error(
     "Testing Library kept its own asyncUtilTimeout, so `configure` above set nothing and every " +
@@ -47,47 +47,44 @@ if (getConfig().asyncUtilTimeout !== 5000) {
   );
 }
 
-// This file is `setupFiles`, so it runs for EVERY test file, including the twelve carrying an
+// This file is `setupFiles`, so it runs for every test file, including the ones carrying an
 // `@vitest-environment node` docblock. Those have no DOM at all rather than an empty one, so
-// the three writes below are guarded. The console guards further down are not: rule 135's mock
-// gap and rule 136's stray update are as real without a DOM as with one.
+// the three writes below are guarded. The console guards further down are not guarded this
+// way, since an unanswered mock and a state update outside `act()` are just as real without a
+// DOM as with one.
 const hasDom = typeof document !== "undefined";
 
 if (hasDom) {
   // jsdom has no layout, so window.scrollTo is unimplemented and logs a noisy "Not
-  // implemented" on every call. ModalShell restores the scroll offset with it when a modal
-  // closes, so make it a quiet no-op here -- nothing in the tests reads a real scroll.
+  // implemented" message on every call. ModalShell restores the scroll offset with it when a
+  // modal closes, so this makes it a quiet no-op, since nothing in the tests reads a real
+  // scroll position.
   window.scrollTo = () => {};
 
-  // Same reason, one layer down: jsdom does not implement Element.scrollIntoView AT ALL, so
-  // the property is `undefined` rather than a no-op and calling it throws. Four components
-  // scroll a keyboard target into view (the suggester's active option, the docs anchor, the
-  // policy warning anchors), and each would take its whole test file down with a TypeError.
-  // Assigned rather than spied, because `vi.spyOn` cannot wrap a method that does not exist.
+  // This is the same reason, one layer down. jsdom does not implement Element.scrollIntoView at
+  // all, so the property is `undefined` rather than a no-op, and calling it throws. Four
+  // components scroll a keyboard target into view (the suggester's active option, the docs
+  // anchor, the policy warning anchors), and each would take its whole test file down with a
+  // TypeError. This is assigned rather than spied, because `vi.spyOn` cannot wrap a method that
+  // does not exist.
   Element.prototype.scrollIntoView = () => {};
 }
 
-// Pay jsdom's first `getComputedStyle` here, where nothing is timing it.
+// This pays jsdom's first `getComputedStyle` here, where nothing is timing it.
 //
-// The first such call in a jsdom instance costs ~52ms building the CSSOM, and every
-// `*ByRole` query makes one: `queryAllByRole` filters inaccessible elements, which reads
-// computed visibility. So whichever role query runs first in a file paid that ~52ms, and
-// when that query was a test's first `await findByRole(...)` the cost landed INSIDE
-// `findBy`'s budget, spending 5% of the then-1000ms margin before the read it is waiting
-// for had a chance to land. Ten test files opened on a role query that way. The budget is
-// 5000ms now (above), so this buys headroom rather than rescuing the margin, and it is still
-// ~52ms nobody has to spend inside a wait.
+// The first such call in a jsdom instance costs about 52ms building the CSSOM, and every
+// `*ByRole` query makes one, since `queryAllByRole` filters inaccessible elements by reading
+// computed visibility. Whichever role query runs first in a file pays that cost, and when that
+// query is a test's first `await findByRole(...)`, the cost lands inside `findBy`'s own wait
+// budget instead of the read it is waiting for. Paying it here up front buys headroom instead.
+// See docs/LEARNINGS.md for the measurements.
 //
-// Measured on a four-element DOM, so this is not about tree size and not about matching an
-// accessible name: a bare `getAllByRole("button")` costs 60ms cold and 0.6ms warm, and one
-// `getComputedStyle` beforehand drops the cold query to 7.8ms. See docs/LEARNINGS.md.
+// Vitest gives each test file its own module registry and jsdom, so this runs per file, which
+// is exactly the granularity the cost is paid at. It leaves no DOM behind.
 //
-// Vitest gives each test file its own module registry and jsdom, so this runs per file,
-// which is exactly the granularity the cost is paid at. It leaves no DOM behind (rule 133).
-//
-// The property is read, not just the call made, because jsdom builds the CSSOM on first
-// access rather than on the call -- and the value is then asserted, so a jsdom that stops
-// answering fails here loudly instead of leaving this line silently warming nothing.
+// The property is read, not just the call made, because jsdom builds the CSSOM on first access
+// rather than on the call. The value is then asserted, so a jsdom that stops answering fails
+// here loudly, instead of leaving this line silently warming nothing.
 if (hasDom) {
   const warm = document.createElement("div");
   document.body.appendChild(warm);
@@ -102,31 +99,30 @@ if (hasDom) {
   }
 }
 
-// A query with no queryFn FAILS the test rather than warning (rule 135).
+// A query with no queryFn fails the test rather than warning.
 //
-// React Query answers a missing queryFn with a console.error and an error state, so a test that
-// mocked "../api" without a function some nested hook reads renders the tree's "we could not
-// read it" branch and still passes. A warning cannot be the signal here: vitest's console
-// interception drops test console output entirely on some Node versions (on Node 26 a bare
-// console.error inside a test prints nothing, while CI on Node 24 prints it), so the one place
-// the warning is visible is the CI log nobody reads. 302 of these accumulated behind a green
-// suite before anyone looked. Failing the test is the only form of this that survives locally.
+// React Query answers a missing queryFn with a console.error and an error state, so a test
+// that mocked "../api" without a function some nested hook reads still passes, rendering the
+// tree's "could not read it" branch instead. A warning cannot be the signal here. Vitest's
+// console interception drops test console output entirely on some Node versions (on Node 26 a
+// bare console.error inside a test prints nothing, while CI on Node 24 prints it), so the only
+// place the warning would be visible is a CI log nobody reads. Failing the test is the only
+// form of this that survives locally.
 //
-// A state update outside act(...) fails the test for the same reason: it says the test asserted
-// on a moment the component had already left, because something it never awaited settled behind
-// the assertions. A promise a test forgot to await resolves as the body returns, every run.
+// A state update outside act(...) fails the test for the same reason. It means the test
+// asserted on a moment the component had already left, because something it never awaited
+// settled behind the assertions. A promise a test forgot to await resolves as the body
+// returns, every run.
 //
-// It judges EVERY such update, with no exemption for the framework (rule 136). There was one,
-// for React Query's `setTimeout(0)` notification, on the reading that its timing was the
-// machine's rather than the test's -- and it was wrong. What it tolerated had two fixable
-// causes: `refetchOnWindowFocus` refetching the queue's own reads whenever user-event clicked
-// something focusable (`src/test/queryClient.ts`), and a mid-test `await import(...)` of
-// user-event, which is a bare await outside act for a fetch to land in. The tell was that it
-// reproduced on one test, five runs out of five; a race does not do that.
+// This judges every such update, with no exemption for the framework. Two fixable causes
+// explain updates that might look like machine timing: `refetchOnWindowFocus` refetching the
+// queue's own reads whenever user-event clicks something focusable (`src/test/queryClient.ts`),
+// and a mid-test `await import(...)` of user-event, which is a bare await outside act for a
+// fetch to land in.
 //
-// An exempted warning still PRINTED, so a green CI run carried an act warning nobody could act
-// on -- the same "warning nobody reads" this file exists to delete, now with the gate's own
-// blessing. Nothing here warns: it fails, or it has nothing to say.
+// An exempted warning would still print, so a green CI run would carry an act warning nobody
+// could act on, the same "warning nobody reads" this file exists to delete, now with the
+// gate's own blessing. Nothing here warns. It either fails, or it has nothing to say.
 let missingQueryFn: string[] = [];
 let undefinedData: string[] = [];
 let outsideAct: string[] = [];
@@ -135,21 +131,20 @@ const forwardError = console.error.bind(console);
 console.error = (...args: unknown[]) => {
   if (typeof args[0] === "string") {
     if (args[0].includes("No queryFn was passed")) missingQueryFn.push(args[0]);
-    // The same failure reached through an arrow, which is why the collector above cannot see
-    // it: `queryFn: () => api.vocabularyValues(f)` HAS a queryFn, and the mock gap is inside
-    // it. React Query files that as an ordinary rejection, the tree paints its could-not-read
-    // branch, and the test asserts against that branch believing it is the app. Twenty of
-    // these sat behind a green suite, in two files (#704). Rule 135 named this as its own
-    // blind spot and nothing enforced it.
+    // The same failure can be reached through an arrow function, which is why the collector
+    // above cannot see it. `queryFn: () => api.vocabularyValues(f)` has a queryFn, and the mock
+    // gap is inside it instead. React Query files that as an ordinary rejection, the tree
+    // paints its could-not-read branch, and a test can assert against that branch believing it
+    // is the real app.
     if (args[0].includes("Query data cannot be undefined")) undefinedData.push(args[0]);
     // "An update to %s inside a test was not wrapped in act(...)", the component name second.
     if (args[0].includes("was not wrapped in act(")) {
       outsideAct.push(String(args[1] ?? "a component"));
     }
-    // "Encountered two children with the same key, `%s`." React 19 still renders both, so
-    // nothing about the page looks wrong and only this line ever said so -- which is the
-    // shape rule 135 exists to delete. The reconciliation guarantee rule 19 asks for is
-    // what is actually lost, and it is lost silently.
+    // "Encountered two children with the same key, `%s`." React 19 still renders both siblings,
+    // so nothing about the page looks wrong, and this console line is the only thing that ever
+    // says so. What is actually lost is React's reconciliation guarantee across a re-render,
+    // and it is lost silently.
     if (args[0].includes("Encountered two children with the same key")) {
       duplicateKeys.push(String(args[1] ?? "an unnamed key"));
     }
@@ -158,14 +153,14 @@ console.error = (...args: unknown[]) => {
 };
 
 afterEach(() => {
-  // The address bar is app state now (navUrl.ts): `App` reads its section from the path and the
-  // queue seeds its filters from the query string, both at mount. jsdom carries one location
-  // across a whole file, so a test that leaves `/review/limbo?genre=…` behind would silently
-  // open the next test's queue on that lane, filtered. Replaced, never pushed, so the file's
-  // session history is left as it was found (rule 133).
+  // The address bar is app state now (navUrl.ts). `App` reads its section from the path, and
+  // the queue seeds its filters from the query string, both at mount. jsdom carries one
+  // location across a whole file, so a test that leaves `/review/limbo?genre=…` behind would
+  // silently open the next test's queue on that lane, filtered. This replaces the location
+  // rather than pushing a new entry, so the file's session history is left as it was found.
   if (hasDom) history.replaceState(null, "", "/");
-  // ...and the module-level record of what was last written, or a pop in the next test
-  // re-asserts this one's URL over it (rule 133).
+  // This also clears the module-level record of what was last written, or a pop in the next
+  // test would re-assert this one's URL over it.
   forgetWrittenUrl();
 
   const queries = missingQueryFn;

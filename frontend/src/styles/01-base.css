@@ -28,7 +28,7 @@ body {
 /* iOS Safari zooms the page whenever a focused field's font-size is under 16px. That zoom
    shrinks the visual viewport below the layout width, which unlocks the fixed app shell so
    it pans ("free floating"). Every control inherits the 15px body font above (the control
-   standard is `font: inherit`), so this holds text-entry controls at the 16px no-zoom floor
+   standard is font: inherit), so this holds text-entry controls at the 16px no-zoom floor
    on touch devices only. The desktop 15px standard stays untouched, and pinch zoom stays
    enabled (viewport meta unchanged). The #root id lifts these rules over the control classes
    without `!important`, and covers future inputs too. The Spare menu's custom-length field

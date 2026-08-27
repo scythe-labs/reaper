@@ -1,22 +1,22 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The boot gate that refuses a database this build cannot serve (#565).
+"""Tests the boot gate that refuses to serve a database this build cannot read.
 
-An older Reaper pointed at a database a newer one migrated has no pending migrations, so
-nothing in the boot sequence is asked whether the schema on disk is one it understands.
-The refusal is one verdict (``reaper.db.schema_gate.refusal``) with two callers, and both
-of them are driven here for real rather than asserted about: preflight, which every
-launcher runs before ``alembic upgrade head``, and the app's own lifespan, which covers a
-process started without preflight.
+An older Reaper pointed at a database a newer one already migrated sees no pending
+migrations, so nothing in the boot sequence checks whether it actually understands the
+schema on disk. The refusal is one function, ``reaper.db.schema_gate.refusal``, with two
+callers. Both callers are driven here for real, not just asserted about: preflight, which
+every launcher runs before ``alembic upgrade head``, and the app's own lifespan, which
+covers a process started without preflight.
 
-Three files could have held this and none holds all of it: ``test_data_dir_preflight.py``
-is about the data folder, ``test_app.py`` boots a healthy app, and ``test_restore.py``
-owns the same question asked about a backup file. The verdict and its two call sites are
-one subject, so they are one file.
+Three other files could have held pieces of this, but none holds all of it:
+``test_data_dir_preflight.py`` is about the data folder, ``test_app.py`` boots a healthy
+app, and ``test_restore.py`` asks the same question about a backup file. The verdict and
+its two call sites are one subject, so they get one file here.
 
-Rule 118: every test in ``TestARefusal`` fails with the gate removed. The ones in
-``TestWhatMustStillBoot`` are the opposite proof and cannot -- they exist because a gate
-that fails closed too eagerly locks out a fresh install and every test database in the
-suite, which is the failure this shape is most likely to have.
+Every test in ``TestARefusal`` fails if the gate is removed. The tests in
+``TestWhatMustStillBoot`` prove the opposite and cannot fail that way. They exist because a
+gate that fails closed too eagerly would lock out a fresh install and every test database
+in the suite, which is the most likely way this kind of gate breaks.
 """
 
 from __future__ import annotations
@@ -34,13 +34,14 @@ from reaper.db import schema_gate
 from reaper.main import create_app
 from tests.conftest import uncache_module_loggers
 
-#: A revision this build actually ships. Any of them is a schema boot can serve, so which
-#: one the frozenset yields first does not matter.
+#: A revision this build actually ships. Boot can serve any revision this build knows
+#: about, so it does not matter which one the frozenset happens to yield first.
 SHIPPED_REVISION = next(iter(schema_gate.known_revisions()))
 
-#: What a newer Reaper's migration id looks like from here: a revision this build has never
-#: heard of. Deliberately not a plausible-looking hash -- a test that fails only for a
-#: correctly-shaped id would be pinning the shape rather than the membership test.
+#: A revision this build has never heard of, standing in for what a newer Reaper's
+#: migration id looks like from here. It is deliberately not a plausible-looking hash,
+#: since a test that only fails for a correctly-shaped id would be pinning the shape, not
+#: the membership check.
 UNKNOWN_REVISION = "0000fromanewerreaper"
 
 
@@ -57,7 +58,7 @@ def _stamp(db_path: Path, revision: str) -> None:
 
 
 class TestTheVerdict:
-    """``refusal`` alone: what each of the three answers is, and why."""
+    """Tests what each of ``refusal``'s three possible answers means, and why."""
 
     def test_no_revision_row_is_allowed(self) -> None:
         """A database built straight from the models carries no ``alembic_version`` row.
@@ -78,10 +79,10 @@ class TestTheVerdict:
     ) -> None:
         """With no migrations to compare against, the question is unanswerable.
 
-        "I could not tell" is not "it is fine" (rule 93). The database still holds a
-        revision, and this build has no way to learn whether it is one it can read, so the
-        boot stops. Note which revision is passed: a *shipped* one, so the refusal cannot
-        be coming from the membership test.
+        Not knowing whether the database is safe is treated as unsafe, not as fine. The
+        database still holds a revision, but this build has no way to check it, so the boot
+        stops. The revision passed in this test is a *shipped* one, so the refusal cannot be
+        coming from the membership check.
         """
 
         def _no_migrations() -> Path:
@@ -91,22 +92,23 @@ class TestTheVerdict:
         assert schema_gate.refusal(SHIPPED_REVISION) == schema_gate.MIGRATIONS_UNREADABLE
 
     def test_the_operator_copy_carries_no_revision_and_no_em_dash(self) -> None:
-        """Rule 21, on the two sentences an operator reads at a refused boot.
+        """Checks the two sentences an operator reads at a refused boot.
 
-        A hash is not an explanation. The app logs it as its own field instead, which
+        The message omits the hash, since a hash alone would not explain anything to a
+        normal person. The app logs the hash separately, as its own field, which
         ``TestARefusal.test_the_app_refuses_to_serve_a_newer_database`` reads back.
         """
         for message in (schema_gate.DATABASE_IS_NEWER, schema_gate.MIGRATIONS_UNREADABLE):
             assert "—" not in message
             assert UNKNOWN_REVISION not in message
             assert SHIPPED_REVISION not in message
-        # Both ways out of a rollback, named where the operator is standing.
+        # States both ways to recover: upgrade Reaper, or restore an older backup.
         assert "newer version" in schema_gate.DATABASE_IS_NEWER
         assert "restore a backup" in schema_gate.DATABASE_IS_NEWER
 
 
 class TestReadingTheRevision:
-    """``stored_revision``: what it reads, and what it must not create."""
+    """Tests what ``stored_revision`` reads, and what it must never create."""
 
     def test_a_database_that_is_not_there_yet_is_not_conjured(self, tmp_path: Path) -> None:
         """The gate runs before migrations, so on a first boot there is no file at all.
@@ -139,9 +141,9 @@ class TestReadingTheRevision:
 class TestARefusal:
     """Both call sites, driven against a database from a newer Reaper.
 
-    Each of these goes red when the gate is removed from the module it exercises, which is
-    the point of having two: preflight and the lifespan are different processes on a real
-    install, and the container reaches one of them before the other.
+    Each test fails if the gate is removed from the module it exercises. That is why there
+    are two: preflight and the app's lifespan run as different processes on a real install,
+    and the container reaches one before the other.
     """
 
     def test_preflight_refuses_before_migrations_run(
@@ -150,11 +152,12 @@ class TestARefusal:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """The gate every launcher reaches: the container entrypoint, dev-local, launcher.
+        """The gate every launcher reaches, whether the container entrypoint, dev-local, or
+        the packaged launcher.
 
-        Preflight returns non-zero *before* ``alembic upgrade head`` is attempted, so the
-        operator gets the plain sentence rather than Alembic's own "Can't locate revision
-        identified by ..." traceback, which names a hash and nothing else.
+        Preflight returns non-zero before ``alembic upgrade head`` runs, so the operator
+        sees the plain sentence instead of Alembic's own "Can't locate revision identified
+        by ..." traceback, which names only a hash.
         """
         settings = Settings(data_dir=tmp_path, secret_key="test-key")
         _stamp(settings.database_path, UNKNOWN_REVISION)
@@ -182,16 +185,17 @@ class TestARefusal:
         assert str(excinfo.value) == schema_gate.DATABASE_IS_NEWER
 
     def test_the_refused_boot_logs_the_revision_for_support(self, settings: Settings) -> None:
-        """The hash the message deliberately leaves out has to be somewhere.
+        """The hash the operator-facing message leaves out still has to be recorded somewhere.
 
-        It rides as its own log field beside the plain sentence, so a support request that
-        arrives as "it says put the newer version back" can still be answered.
+        It appears as its own log field next to the plain sentence, so a support request
+        that only says "it told me to put the newer version back" can still be answered.
         """
         _stamp(settings.database_path, UNKNOWN_REVISION)
-        # Built before the capture is installed, and thawed after: ``create_app`` calls
-        # ``configure_logging``, which replaces the processor list ``capture_logs`` mutates
-        # and freezes any logger used under it (conftest's ``_capturable_logs``). Entering
-        # the capture first leaves it watching a list nothing writes to.
+        # ``create_app`` must run, and ``uncache_module_loggers`` after it, before
+        # ``capture_logs`` starts. ``create_app`` calls ``configure_logging``, which
+        # replaces the processor list ``capture_logs`` reads from and caches any logger
+        # already built (conftest's ``_capturable_logs``). Starting the capture first would
+        # leave it watching a list nothing ever writes to.
         app = create_app(settings)
         uncache_module_loggers()
 
@@ -207,9 +211,9 @@ class TestARefusal:
 class TestWhatMustStillBoot:
     """The other direction, and the reason it needs its own class.
 
-    A gate on the boot path that refuses too much is worse than the bug it fixes: it locks
-    an operator out of an install that was working. These cannot fail when the gate is
-    deleted, and they are not trying to (rule 118).
+    A gate on the boot path that refuses too much is worse than the bug it fixes. It would
+    lock an operator out of an install that was working. These tests cannot fail when the
+    gate is deleted, and they are not trying to.
     """
 
     def test_a_first_boot_with_no_database_at_all_passes(
@@ -238,10 +242,10 @@ class TestWhatMustStillBoot:
             assert booted.get("/api/health").status_code == 200
 
     def test_a_model_built_database_serves(self, settings: Settings) -> None:
-        """No ``alembic_version`` row at all: every test database in this suite.
+        """Every test database in this suite has no ``alembic_version`` row at all.
 
-        The whole suite would go red with this broken, which is exactly why it is stated
-        once here rather than left as a property nobody named.
+        The whole suite would go red if this broke, which is why the property is stated
+        once here instead of being left as something nobody names.
         """
         with TestClient(create_app(settings)) as booted:
             assert booted.get("/api/health").status_code == 200

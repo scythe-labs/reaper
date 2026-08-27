@@ -1,37 +1,39 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Every section has a URL, and a cold load lands on the one the URL names.
 //
-// The app has no router: the URL is written on every nav and read only at mount (navUrl.ts),
+// The app has no router. The URL is written on every nav and read only at mount (navUrl.ts),
 // and `backnav` stays the authority for Back. That split is what these tests are mostly about.
-// Two of them are the reason it is written that way:
+// Two invariants follow from it.
 //
-//   - a URL write must keep `history.state.__reaperBack`, the marker `backnav` asks the browser
+//   - A URL write must keep `history.state.__reaperBack`, the marker `backnav` asks the browser
 //     for before stepping off an entry. Replacing it with `null` leaves a parked entry that
 //     looks like somebody else's, so a Back press either does nothing or walks the operator out
-//     of Reaper with a panel still open. It is asserted directly, in the state a real write
-//     happens in (a lane change has parked one).
+//     of Reaper with a panel still open. This is asserted directly, in the state a real write
+//     happens in, since a lane change parks one.
 //   - Back still closes an open layer before it moves sections, and still moves sections after.
 //
 // Two of the five sections have sub-navigation of their own, and the URL names where you are
-// inside them: `/settings/logs`, `/policy/tv/deletion`. Policy takes two segments because Movies
-// and TV are separate policies, and a URL naming only the section reopened the right section with
-// the other one's caps, budget and weights on it. `App` owns all three values, which is what lets
-// one effect write them, so each is driven here from the address bar down to the page and back.
+// inside them, such as `/settings/logs` or `/policy/tv/deletion`. Policy takes two segments
+// because Movies and TV are separate policies, so the URL must name both, or the page would show
+// the right section with the wrong policy's caps, budget, and weights. `App` owns all three
+// values, which lets one effect write them, so each is driven here from the address bar down to
+// the page and back.
 //
-// The pages the shell lands on stand in for themselves, as in `AppFocus.test.tsx`: what each
-// one renders is its own tests' subject, and stubbing them keeps the heavy trees out of a file
-// about the shell. The review queue is real, because the filters a link carries are its state.
-// **Settings is real too**, because its panel is the claim: "opens on Logs" is about the panel
-// on screen, and a stub that printed the prop it was handed would assert the shell against
-// itself. Its rail is also where the unsaved-edits confirm sits, which the lifted panel has to
-// keep.
+// The pages the shell lands on stand in for themselves, as in `AppFocus.test.tsx`. What each one
+// renders is its own tests' subject, and stubbing them keeps the heavy trees out of a file about
+// the shell. The review queue is real, because the filters a link carries are its state.
+// **Settings is real too**, because its panel is the claim being tested: "opens on Logs" is
+// about the panel on screen, and a stub that printed back the prop it was handed would only
+// assert the shell against itself. Its rail is also where the unsaved-edits confirm sits, which
+// the lifted panel has to keep.
 //
-// **The policy editor is the one that stays stubbed, and its rail is why.** Which section is
-// current there is measured from the scroll position of four headings, and jsdom has no layout:
-// every rect is 0 and the document reports itself as too short to scroll, so the real rail
-// answers "the first section" whatever it is handed. The stub takes the section and reports one
-// back, which is `App`'s half of the loop; the editor's half is `PolicyEditor.test.tsx`, where a
-// rail click is driven through the real component.
+// **The policy editor is the one page that stays stubbed, and its rail is why.** Which section
+// is current there is measured from the scroll position of four headings, and jsdom has no
+// layout, so every rect reads 0 and the document reports itself as too short to scroll. The real
+// rail always answers "the first section" no matter what it is handed. The stub instead takes
+// the section it is given and reports it back, which is `App`'s half of the loop. The editor's
+// half is checked in `PolicyEditor.test.tsx`, where a rail click is driven through the real
+// component.
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -76,7 +78,7 @@ vi.mock("./components/PolicyEditor", () => ({
       <p>
         policy page, {mediaType}, at {section}
       </p>
-      {/* The rail and the Movies/TV switch, in the one shape jsdom can drive: a click that
+      {/* The rail and the Movies/TV switch, in the one shape jsdom can drive, a click that
           reports one half of the location upward. The switch names where it goes, so a click
           on it cannot be confused for a click on the state it left. */}
       <button type="button" onClick={() => onSectionChange("pace")}>
@@ -171,13 +173,12 @@ const SETUP_DONE: SetupStatus = {
 };
 
 // `App` puts Settings behind `React.lazy`, so the first render through that boundary in this
-// process pays Vite's cold transform of ten panels' worth of modules -- inside Testing Library's
-// `asyncUtilTimeout`, which `testTimeout` does not reach. Warmed the way
-// `AppStaleRead.test.tsx` warms the wizard, rather than by lengthening one assertion's timeout:
-// which test pays the cost is otherwise an accident of file order (#651). The budget itself was
-// 1000ms then and is 5000ms now (`src/test/setup.ts`, #887), which is headroom for the whole
-// suite and not a reason to stop warming: the transform is real work, and paying it here keeps
-// it out of a wait either way.
+// process pays Vite's cold transform of ten panels' worth of modules, which can exceed Testing
+// Library's `asyncUtilTimeout` even where `testTimeout` is longer. This warms it the same way
+// `AppStaleRead.test.tsx` warms the wizard, rather than lengthening one assertion's timeout,
+// since which test pays the cost would otherwise depend on file order. The test timeout is
+// 5000ms (`src/test/setup.ts`), which is headroom for the whole suite, not a reason to stop
+// warming here. The transform is real work, and paying it here keeps it out of a wait either way.
 beforeAll(async () => {
   await import("./components/Settings");
 });
@@ -227,26 +228,27 @@ beforeEach(() => {
     horizon_at: null,
     rows: [],
   });
-  // The queue's two filter suggesters, which go through an arrow and so are rule 135's
-  // documented blind spot rather than its gate.
+  // The queue's two filter suggesters go through an arrow function, so an unanswered mock here
+  // would not be caught by the usual check for unanswered mocks.
   apiMock.vocabularyValues.mockImplementation((field: string) =>
     Promise.resolve({ field, values: [] }),
   );
 });
 
-// jsdom carries one session history across a whole file, and a test that ends with back-nav
-// layers still open has its entries handed back one deferred task at a time. Those are real
-// popstates: arriving after the next test's provider is up, they read as Back presses and eat
-// the ones it means to send. Drain them while nothing is listening, then park the app at the URL
-// this test means to open on. `setup.ts` has already put the location back to "/".
+// jsdom carries one session history across the whole file. A test that ends with back-nav
+// layers still open has its history entries handed back one deferred task at a time. Those are
+// real popstates. Arriving after the next test's provider is up, they read as Back presses and
+// consume the ones this test means to send. This drains them while nothing is listening, then
+// parks the app at the URL this test means to open on. `setup.ts` has already put the location
+// back to "/".
 async function open(path: string) {
   for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0));
   history.replaceState(null, "", path);
   renderWithProviders(<App />);
 }
 
-/** A Back press, the way `backnav.test.tsx` drives one: the provider parks a sentinel entry per
- *  layer and listens for the popstate that handing one back produces. */
+/** A Back press, the way `backnav.test.tsx` drives one. The provider parks a sentinel history
+ *  entry per layer and listens for the popstate that handing one back produces. */
 async function back() {
   await act(async () => {
     window.dispatchEvent(new PopStateEvent("popstate"));
@@ -260,11 +262,11 @@ async function settle() {
   });
 }
 
-/** What the server was last asked for: the lane, and the filters with it.
+/** What the server was last asked for, the lane and the filters with it.
  *
  *  The one-row probe behind the filtered-empty state ("filters are hiding N") asks for the same
- *  lane with no filters at all, and it lands last. Skipped by its page size, or every assertion
- *  below reads that call instead of the list's. */
+ *  lane with no filters at all, and it lands last. This is skipped by its page size, or every
+ *  assertion below would read that call instead of the list's. */
 const lastAsk = () => {
   const asks = apiMock.candidates.mock.calls.filter((c) => c[2] !== 1);
   const call = asks.at(-1) as [Verdict, CandidateQuery] | undefined;
@@ -276,18 +278,18 @@ const laneTab = (label: string) => screen.getByRole("button", { name: label });
 const queue = () => screen.findByRole("searchbox", { name: /search titles/i });
 
 describe("a cold load", () => {
-  // Every section, because a map with a missing entry is exactly the failure this shape is
-  // meant to make impossible, and only driving each one proves the map is the one being read
-  // (rule 145). Review is in the list too: it is the default, so it is the one that would still
-  // pass with the whole feature deleted.
+  // Every section is tested, because a map with a missing entry is exactly the failure this
+  // shape is meant to make impossible, and only driving each one proves the map is the one
+  // being read. Review is in the list too. It is the default, so it is the one test that would
+  // still pass even if the whole feature were deleted.
   it.each([
-    // A bare section still works where the section has sub-navigation: it lands on the default
+    // A bare section still works where the section has sub-navigation. It lands on the default
     // of every value below it.
     ["/policy", "policy page, movie, at flags"],
     ["/reap", "reap page"],
     ["/scales", "scales page"],
-    // Settings is real, so its marker is a rail tab: the section is on screen, on the panel a
-    // link that names none opens.
+    // Settings is real, so its marker is a rail tab. The section shown is the panel that a link
+    // naming none opens by default.
     ["/settings", "Backup & Restore"],
   ])("lands on the section %s names", async (path, marker) => {
     await open(path);
@@ -353,8 +355,8 @@ describe("a cold load", () => {
   });
 
   // Both sections with sub-navigation, every panel driven off the same two declarations the
-  // writer reads (`PANEL_PATHS`, `POLICY_PATHS` in navUrl.ts). A panel added without a path
-  // does not compile; one whose path is wrong lands on the default, which is what these catch.
+  // writer reads (`PANEL_PATHS`, `POLICY_PATHS` in navUrl.ts). A panel added without a path does
+  // not compile. One whose path is wrong lands on the default, which is what these tests catch.
   it.each([
     ["/settings/logs", "Logs"],
     ["/settings/about", "About"],
@@ -395,8 +397,8 @@ describe("a cold load", () => {
   });
 
   it("leaves the recovery path alone", async () => {
-    // `/recover` is a path the signed-out app already reads, and no section may take it over or
-    // rewrite it: whoever is standing there is locked out of their own install.
+    // `/recover` is a path the signed-out app already reads. No section may take it over or
+    // rewrite it, since whoever is standing there is locked out of their own install.
     apiMock.me.mockRejectedValue(new ApiError(401, "signed out"));
     apiMock.authContext.mockResolvedValue({
       setup_needed: false,
@@ -440,8 +442,8 @@ describe("the address bar", () => {
     await person.click(laneTab("Limbo"));
     await waitFor(() => expect(here()).toBe("/review/limbo"));
 
-    // Typing is a filter change: it replaces the entry rather than adding one, or a search
-    // term would cost as many Back presses as it has letters.
+    // Typing is a filter change. It replaces the history entry rather than adding one, or a
+    // search term would cost as many Back presses as it has letters.
     const entries = history.length;
     await person.type(await queue(), "alpha");
     await waitFor(() => expect(here()).toBe("/review/limbo?q=alpha"));
@@ -458,8 +460,8 @@ describe("the address bar", () => {
     expect(await screen.findByRole("heading", { name: "Logs" })).toBeInTheDocument();
     await waitFor(() => expect(here()).toBe("/settings/logs"));
 
-    // The policy rail, through the stub: what `App` does with a section reported upward is the
-    // half that lives here.
+    // This exercises the policy rail through the stub. What `App` does with a section reported
+    // upward is the half of the behavior that lives here.
     await settle();
     await person.click(screen.getByRole("button", { name: "Policy" }));
     await screen.findByText("policy page, movie, at flags");
@@ -469,9 +471,9 @@ describe("the address bar", () => {
   });
 
   it("moves one half of the policy page at a time", async () => {
-    // The two values are independent, and that is the whole finding: the Movies/TV switch used
-    // to live in the editor, so a reload restored the section and reset the policy under it to
-    // Movies. Every number on the page is the other one's.
+    // The two values, media type and section, are independent of each other, and this test is
+    // what proves that. Nothing here resets the media type to Movies when only the section
+    // changes; every number on the page belongs to whichever policy is actually selected.
     const person = userEvent.setup();
     await open("/policy/movies/kept");
     await screen.findByText("policy page, movie, at kept");
@@ -489,9 +491,9 @@ describe("the address bar", () => {
   });
 
   it("waits for the unsaved-edits confirm before it names the new panel", async () => {
-    // The panel moved out of `Settings` and into `App`, and this is what that must not cost: a
-    // rail click still runs the confirm, and neither the panel nor the address bar moves until
-    // the operator says the draft can go.
+    // The confirm for unsaved edits lives in `App`, not in `Settings`. A rail click still runs
+    // it, and neither the panel nor the address bar moves until the operator says the draft can
+    // go.
     const person = userEvent.setup();
     await open("/settings/general");
     const url = await screen.findByLabelText("Application URL");
@@ -511,9 +513,9 @@ describe("the address bar", () => {
   });
 
   it("names the panel a jump lands on, and the one Back comes back to", async () => {
-    // A panel is a place now, not a one-shot aim (navIntent.ts): Back into Settings lands on the
-    // panel it was left on, the way Back into Review lands on the lane it was left on. The user
-    // menu's update item is the app's one always-mounted jump into Settings.
+    // A panel is treated as a place (navIntent.ts). Back into Settings lands on the panel it was
+    // left on, the way Back into Review lands on the lane it was left on. The user menu's update
+    // item is the app's one always-mounted jump into Settings.
     apiMock.update.mockResolvedValue({
       ...DEFAULT_UPDATE,
       update_available: true,
@@ -550,8 +552,8 @@ describe("the address bar", () => {
     await waitFor(() => expect(here()).toBe("/review/limbo"));
     expect((history.state as { __reaperBack?: boolean } | null)?.__reaperBack).toBe(true);
 
-    // The write that would break it: `replaceState(null, …)` here wipes the marker `backnav`
-    // reads before it steps, and the two Back presses below stop working.
+    // A write here using `replaceState(null, …)` would break this. It wipes the marker
+    // `backnav` reads before it steps, and the two Back presses below would stop working.
     await person.type(await queue(), "alpha");
     await waitFor(() => expect(here()).toBe("/review/limbo?q=alpha"));
     expect((history.state as { __reaperBack?: boolean } | null)?.__reaperBack).toBe(true);
@@ -575,11 +577,12 @@ describe("the address bar", () => {
   });
 
   it("keeps the filters in it when a panel closes onto the entry underneath", async () => {
-    // A real Back, not the synthetic popstate above, because the browser's own half is the
-    // subject: an open panel parks its own entry, every write lands on that newest entry, and
-    // stepping off it restores the URL the entry underneath was parked with. Anything filtered
-    // while the panel was open is missing from that older URL, so the address bar would claim a
-    // list the queue is not showing.
+    // This test uses a real Back, not the synthetic popstate above, because the browser's own
+    // history handling is the subject here. An open panel parks its own history entry. Every
+    // write lands on that newest entry, and stepping off it restores the URL the entry
+    // underneath was parked with. Anything filtered while the panel was open is missing from
+    // that older URL, so without care the address bar would claim a list the queue is not
+    // actually showing.
     const person = userEvent.setup();
     apiMock.candidate.mockRejectedValue(new Error("the panel's contents are not this test's"));
     apiMock.candidates.mockResolvedValue({
@@ -608,16 +611,15 @@ describe("the address bar", () => {
   });
 
   it("keeps the filters in it when a panel closes by its own control", async () => {
-    // The other close route: the app closes the panel itself and `backnav` gives the entry back
-    // with its own `history.back()`, rather than the operator's Back doing it. Neither route
-    // re-renders anything that writes a URL, so `navUrl.reassertUrl` is what carries the address
-    // bar across both -- called unconditionally at the top of `backnav`'s `onPop`, above the
-    // self-pop check, because the app's own steps and the operator's revert it alike. Deleting
-    // that call turns BOTH this test and the one above red.
+    // This is the other close route. The app closes the panel itself, and `backnav` gives the
+    // history entry back with its own `history.back()`, rather than the operator's Back doing
+    // it. Neither route re-renders anything that writes a URL, so `navUrl.reassertUrl` carries
+    // the address bar across both. It is called unconditionally at the top of `backnav`'s
+    // `onPop`, above the self-pop check, because both the app's own steps and the operator's
+    // Back must revert it. Deleting that call fails both this test and the one above.
     //
-    // The pair is worth keeping even so: they enter `onPop` by different doors (`selfPopRef` set
-    // and unset), and a fix restricted to one of them passes the other. That was the first
-    // attempt at this, and the test above is what caught it.
+    // Both tests are worth keeping. They enter `onPop` by different doors (`selfPopRef` set and
+    // unset), so a fix that only covers one door can still fail the other.
     const person = userEvent.setup();
     apiMock.candidate.mockRejectedValue(new Error("the panel's contents are not this test's"));
     apiMock.candidates.mockResolvedValue({

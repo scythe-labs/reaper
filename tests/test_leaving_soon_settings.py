@@ -4,14 +4,14 @@
 The shelf settings moved from a host-only environment variable into the database, edited
 under Settings -> Plex. The rules pinned here:
 
-* the shelf is OFF on a fresh install, and the read-only opt-in follows the environment
-  only until a value is stored -- the stored value wins forever after (the same
-  seed-then-DB pattern as the deletion switch);
-* the library choices survive a re-sync, default new libraries ON, and an empty enabled
-  set simply turns every shelf off (this scopes a warning, never a deletion);
-* a manual shelf update while the feature is off is refused with a plain-words reason,
-  and the automatic after-scan pass is a silent no-op in that state, so a hermetic scan
-  never reaches for the network.
+* The shelf is off on a fresh install, and the read-only opt-in follows the environment only
+  until a value is stored. After that, the stored value always wins, the same
+  seed-then-database pattern as the deletion switch.
+* The library choices survive a re-sync, default new libraries on, and an empty enabled set
+  simply turns every shelf off. This scopes a warning, never a deletion.
+* A manual shelf update while the feature is off is refused with a plain-words reason, and
+  the automatic after-scan pass is a silent no-op in that state, so a hermetic scan never
+  reaches for the network.
 """
 
 from __future__ import annotations
@@ -59,8 +59,8 @@ class TestTheStoredSwitches:
     async def test_the_unarmed_opt_in_seeds_from_the_environment_until_stored(
         self, factory: async_sessionmaker[AsyncSession], tmp_path: Path
     ) -> None:
-        """First run: the env default answers. Once a value is stored, the stored value
-        wins -- including winning over a LATER change to the environment, so a switch
+        """On the first run, the environment default answers. Once a value is stored, the
+        stored value always wins, even over a later change to the environment, so a switch
         flipped in the UI is never clobbered by a stale env var."""
         env_on = _settings(tmp_path, allow_unarmed_leaving_soon=True)
         env_off = _settings(tmp_path)
@@ -73,7 +73,7 @@ class TestTheStoredSwitches:
             await session.commit()
 
         async with factory() as session:
-            # Stored False beats env True: the UI's choice is the truth now.
+            # Stored False beats env True. The UI's choice is the truth now.
             assert await app_settings.leaving_soon_unarmed(session, env_on) is False
 
     async def test_the_stored_opt_in_reaches_runtime_safety(
@@ -123,9 +123,9 @@ class TestTheSettingsRoutes:
     async def test_a_scan_that_skipped_the_shelf_reaches_the_row(
         self, client: TestClient, factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        """Both records ride together, because the row needs both to say anything useful:
-        the skip is what happened last, and the completed pass is where the counts still on
-        the shelf came from. Reported side by side rather than resolved here -- the reader
+        """Both records ride together, because the row needs both to say anything useful. The
+        skip is what happened last, and the completed pass is where the counts still on the
+        shelf came from. Both are reported side by side rather than resolved here. The reader
         prefers the newer one, the way ``ScanRow`` does for a scan that crashed."""
         async with factory() as session:
             await app_settings.set_leaving_soon_last(
@@ -161,10 +161,10 @@ class TestTheSettingsRoutes:
     async def test_a_last_pass_stored_before_the_typed_conversion_still_reads(
         self, client: TestClient, factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        """The same rule 96 thaw as the skip row above, for the completed-pass record: a row
-        written before phase 11a carries a bare English phrase under ``"result"`` instead of
-        a wire-encoded reason, thawed as ``Reason("legacy", {"text": ...})``. Written straight
-        into storage, since ``set_leaving_soon_last`` only ever writes the new shape now."""
+        """A row written before this typed reason format existed carries a bare English
+        phrase under ``"result"`` instead of a wire-encoded reason. It reads back as
+        ``Reason("legacy", {"text": ...})``. The row here is written straight into storage,
+        since ``set_leaving_soon_last`` only ever writes the new shape now."""
         async with factory() as session:
             await app_settings._set(
                 session,
@@ -190,14 +190,15 @@ class TestTheSettingsRoutes:
     async def test_a_skip_stored_before_the_typed_conversion_still_reads(
         self, client: TestClient, factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        """A row written before phase 8a carries a bare English phrase under ``"result"``
-        instead of a wire-encoded reason. Rule 96: an old row must still read, thawed as
-        ``Reason("legacy", {"text": ...})`` exactly as ``engine.reason.from_wire`` already
-        does for a bare stored string -- it just stops composing through the catalog.
+        """A row written before this typed reason format existed carries a bare English
+        phrase under ``"result"`` instead of a wire-encoded reason. An old row like this must
+        still read back correctly, as ``Reason("legacy", {"text": ...})``, exactly as
+        ``engine.reason.from_wire`` already does for a bare stored string. It just stops
+        composing through the catalog.
 
-        Written straight into the row rather than through ``set_leaving_soon_last_skip``,
-        which only ever writes the new shape now: the point is a value an OLDER build left
-        behind, which today's setter cannot produce any more.
+        This writes straight into the row rather than through
+        ``set_leaving_soon_last_skip``, which only ever writes the new shape now. The point
+        is a value an older build left behind, which today's setter can no longer produce.
         """
         async with factory() as session:
             await app_settings._set(
@@ -278,8 +279,8 @@ class TestTheSettingsRoutes:
         # No sync has run (no Plex linked), so the list is empty and choices are no-ops.
         assert client.get("/api/settings/plex/libraries").json() == []
 
-        # Seed a stored list the way a sync would, then choose through the API. (The
-        # sync route itself needs a live server; the merge rule is a client concern.)
+        # Seed a stored list the way a sync would, then choose through the API. (The sync
+        # route itself needs a live server. The merge rule is a client concern.)
         settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         factory = create_session_factory(engine)
@@ -294,11 +295,11 @@ class TestTheSettingsRoutes:
             await session.commit()
         await engine.dispose()
 
-        # Turn one off; an unknown key is ignored rather than invented.
+        # Turn one off. An unknown key is ignored rather than invented.
         body = client.put("/api/settings/plex/libraries", json={"enabled_keys": [2, 999]}).json()
         assert [(lib["key"], lib["enabled"]) for lib in body] == [(2, True), (5, False)]
 
-        # An empty selection turns every shelf off -- a legitimate state for a warning
+        # An empty selection turns every shelf off. That is a legitimate state for a warning
         # feature, never an "everything" expansion.
         body = client.put("/api/settings/plex/libraries", json={"enabled_keys": []}).json()
         assert all(lib["enabled"] is False for lib in body)
@@ -306,15 +307,15 @@ class TestTheSettingsRoutes:
     def test_a_pass_with_no_libraries_says_the_same_thing_on_both_surfaces(
         self, client: TestClient, sync_db: Engine
     ) -> None:
-        """The shelf on, a server linked, and no library turned on: one pass, one sentence.
+        """The shelf on, a server linked, and no library turned on. One pass, one sentence.
 
-        The route used to name this case in the response AFTER the pass had stored its own
-        summary, so the two disagreed about it -- the row rested green saying "Preview only,
-        nothing written" while the button flashed a failure (#555). Both halves are asserted
-        here, because a fix on either alone leaves the contradiction standing.
+        The response and the pass's own stored summary must always agree. If they were
+        computed separately, one could say "preview only, nothing written" while the other
+        reported failure. Both halves are asserted here, because a fix on either alone would
+        leave the contradiction standing.
 
-        Hermetic: with no library enabled the reconcile visits no section, so the client is
-        built and closed without ever connecting.
+        This is hermetic. With no library enabled, the reconcile visits no section, so the
+        client is built and closed without ever connecting.
         """
         box: SecretBox = client.app.state.secret_box  # type: ignore[attr-defined]
         with Session(sync_db) as session:
@@ -355,21 +356,19 @@ class TestTheSettingsRoutes:
     def test_a_linked_server_that_will_not_answer_is_a_502_in_reapers_words(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The route answered every `PlexError` 400, with the exception's text verbatim.
+        """``PlexError`` covers more than one failure kind here, so the route must not map
+        every instance of it to the same status. A missing link
+        (``error.leaving_soon.unlinked``) is a configuration problem and stays a 400. A
+        linked server that stops answering is an upstream failure and must read as 502, not
+        400, or the operator gets blamed for something that was not their request.
 
-        The service raised that class for "no linked Plex server" too, so one class arrived
-        carrying a configuration problem and an upstream failure and the route could not tell
-        them apart (#734). An operator whose linked server stopped answering got a
-        bad-request status for something that was not their request, plus a sentence the
-        client wrote for a log.
+        Both the status and the message lead are asserted, since getting either one wrong
+        alone would still leave half a fix.
 
-        The status and the lead are both asserted, since 400 with a good lead and 502 with a
-        bare client sentence would each be half a fix.
-
-        The client's own text still trails Reaper's, which is what the three sibling routes
-        do (`api/plex.py`, `api/plex_trash.py`, `api/lists.py`, rule 72). Rule 21 is answered
-        by what the operator reads FIRST: the outcome in Reaper's words, with the diagnostic
-        behind it, rather than the diagnostic alone under a status that blamed them for it.
+        The client's own diagnostic text still trails Reaper's own sentence, the same order
+        the sibling routes use (`api/plex.py`, `api/plex_trash.py`, `api/lists.py`). The
+        operator reads the outcome in Reaper's words first, with the raw diagnostic behind
+        it, rather than the diagnostic alone under a status that blames them for it.
         """
         from reaper.clients.plex import PlexError
         from reaper.engine.reason import to_wire
@@ -386,8 +385,8 @@ class TestTheSettingsRoutes:
         assert resp.status_code == 502
         body = resp.json()
         assert body["code"] == "error.plex.unreachable"
-        # `{error}` is another composed sentence now, not a raw client string: the client's
-        # own coded failure, carried whole rather than flattened at the raise site.
+        # `{error}` is a composed sentence, not a raw client string. It carries the client's
+        # own coded failure whole, rather than flattening it at the raise site.
         assert body["params"]["error"] == to_wire(
             PlexError(
                 "error.plexclient.paging_failed", what="movie listing for section 3"
@@ -410,7 +409,7 @@ class TestTheAfterScanPass:
     async def test_it_is_a_silent_no_op_when_off_with_no_webhook(
         self, factory: async_sessionmaker[AsyncSession], tmp_path: Path
     ) -> None:
-        """The hermetic promise: a scan on a fresh install must not reach for Plex or
+        """This is the hermetic promise. A scan on a fresh install must not reach for Plex or
         Discord. Disabled shelf + no webhook = nothing to do, nothing raised."""
         await leaving_soon.after_scan(factory, _settings(tmp_path), SecretBox("test-key"))
         async with factory() as session:

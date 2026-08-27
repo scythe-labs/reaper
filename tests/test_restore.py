@@ -3,17 +3,17 @@
 
 What is pinned here, all of it resolving toward keeping the live data:
 
-* the schema gate accepts a backup this build knows how to serve and refuses one from a
-  newer Reaper (409) or one whose database can't be verified;
-* a crafted archive can't write outside the staging directory, and a decompression
-  bomb, a non-archive, a missing member, or a non-SQLite database are all refused;
-* preparing stages the files but does NOT arm the swap -- only a password-confirmed
-  ``arm`` writes the READY marker, and it forces deletion off in the staged database;
-* the boot swap replaces the database only when armed and the staged copy reads as
-  SQLite, keeps the previous data in a recovery directory, and is a no-op otherwise;
+* The schema gate accepts a backup this build knows how to serve, and refuses one from
+  a newer Reaper (409) or one whose database cannot be verified.
+* A crafted archive cannot write outside the staging directory, and a decompression
+  bomb, a non-archive, a missing member, or a non-SQLite database are all refused.
+* Preparing stages the files but does not arm the swap. Only a password-confirmed
+  ``arm`` writes the READY marker, and it forces deletion off in the staged database.
+* The boot swap replaces the database only when armed and the staged copy reads as
+  SQLite, keeps the previous data in a recovery directory, and is a no-op otherwise.
 * ``restart`` stops the app only where a restore is armed and no reap is running, and it
-  stops by the signal that lets a run in flight record itself;
-* the restore routes are fenced off the API-key lane and need a signed-in session.
+  stops by the signal that lets a run in flight record itself.
+* The restore routes are fenced off the API-key lane and need a signed-in session.
 """
 
 from __future__ import annotations
@@ -53,8 +53,9 @@ from tests._auth import TEST_PASSWORD, clear_admin_password
 KNOWN_REVISION = next(iter(restore.known_revisions()))
 UNKNOWN_REVISION = "0000newerversion"
 
-#: For ``_make_archive``: put the manifest's claimed revision into the database itself. Pass
-#: an explicit ``db_revision`` to decouple the two (the tampered-archive case S-2 guards).
+#: For ``_make_archive``, this puts the manifest's claimed revision into the database
+#: itself. Pass an explicit ``db_revision`` to decouple the two, the tampered-archive
+#: case this file guards against.
 _SAME_AS_MANIFEST = object()
 
 
@@ -65,9 +66,9 @@ def _tiny_sqlite(path: Path, *, revision: str | None = None, with_auth: bool = F
     """A minimal real SQLite database carrying the one table ``arm`` writes to.
 
     ``revision`` writes an ``alembic_version`` row the way a real ``reaper.db`` carries it,
-    so the restore schema gate reads the artifact's own revision (S-2). ``with_auth`` adds
-    the session/recovery/pending-login tables with a row each, so the arm-time purge (S-3)
-    has something to clear.
+    so the restore schema gate reads the artifact's own revision. ``with_auth`` adds the
+    session, recovery, and pending-login tables with a row each, so the arm-time purge has
+    something to clear.
     """
     con = sqlite3.connect(path)
     try:
@@ -198,13 +199,14 @@ class TestSchemaGate:
         archive = _make_archive(tmp_path / "backup.reaper", revision=None)
         with pytest.raises(RestoreError) as excinfo:
             restore.stage_upload(settings, archive)
-        # `_summarize` owns this sentence outright now: `_check_schema` carried a second copy
-        # of it behind an `if revision is None` its only caller had already refused.
+        # `_summarize` is the sole owner of this sentence. `_check_schema` must not carry
+        # its own copy of it.
         assert "couldn't be verified" in str(excinfo.value)
 
     def test_it_reads_the_revision_from_the_database_not_the_manifest(self, tmp_path: Path) -> None:
-        # S-2: a manifest claiming a known revision cannot launder a database that carries a
-        # different (here newer/unknown) one -- the artifact's own version is what is gated.
+        # A manifest claiming a known revision cannot launder a database that carries a
+        # different one (here, newer or unknown). The artifact's own version is what is
+        # gated.
         settings = _settings(tmp_path)
         archive = _make_archive(
             tmp_path / "backup.reaper", revision=KNOWN_REVISION, db_revision=UNKNOWN_REVISION
@@ -216,7 +218,7 @@ class TestSchemaGate:
     def test_it_refuses_a_db_with_no_revision_even_if_the_manifest_claims_one(
         self, tmp_path: Path
     ) -> None:
-        # S-2: the manifest's good claim must not paper over a database that carries no
+        # The manifest's good claim must not paper over a database that carries no
         # alembic_version at all (a repacked or foreign file).
         settings = _settings(tmp_path)
         archive = _make_archive(
@@ -284,10 +286,13 @@ class TestArchiveSafety:
 
 class TestAbandonedStaging:
     """A staging is named by the token minted for it, and that token only ever lives in the
-    browser that uploaded it. So one that outlives its page can never be armed and never be
-    canceled, while holding a whole database and the key material that decrypts it, and
-    nothing used to reclaim it (#388). The refusal path is where it was reachable: the card
-    drops the first token before it sends the second file."""
+    browser that uploaded it.
+
+    A staging that outlives its page can never be armed and never be canceled, yet it
+    still holds a whole database and the key material that decrypts it. The only path
+    that reaches it is a second upload's refusal: the card drops the first token before
+    it sends the second file, so that refusal is where an abandoned staging gets cleared.
+    """
 
     def test_a_refused_second_upload_leaves_no_staging_behind(self, tmp_path: Path) -> None:
         settings = _settings(tmp_path)
@@ -300,12 +305,12 @@ class TestAbandonedStaging:
         with pytest.raises(RestoreError):
             restore.stage_upload(settings, junk)
 
-        # Not merely un-armable: gone. The key material is the reason this is not cosmetic --
-        # a copy of it nobody owns is a copy nobody rotates.
+        # Not merely left un-armable. It is gone entirely. The key material is what makes
+        # this matter. A copy of it nobody owns is a copy nobody rotates.
         assert not pending.exists()
 
     def test_an_armed_staging_survives_a_refused_upload(self, tmp_path: Path) -> None:
-        # The other direction, and the one that matters more: an armed restore is one the
+        # The other direction, and the one that matters more. An armed restore is one the
         # operator confirmed with their password, so a later bad file must not cancel it.
         settings = _settings(tmp_path)
         summary = restore.stage_upload(settings, _make_archive(tmp_path / "first.reaper"))
@@ -320,8 +325,8 @@ class TestAbandonedStaging:
         assert restore.is_armed(settings) is True
 
     def test_boot_clears_an_unconfirmed_staging(self, tmp_path: Path) -> None:
-        # The half the client can never cover: a closed tab or a crashed browser strands the
-        # staging the same way, with the token gone from memory rather than overwritten.
+        # The half the client can never cover. A closed tab or a crashed browser strands
+        # the staging the same way, with the token gone from memory rather than overwritten.
         settings = _settings(tmp_path)
         restore.stage_upload(settings, _make_archive(tmp_path / "backup.reaper"))
 
@@ -358,8 +363,8 @@ class TestArm:
             restore.arm(settings, None)
 
     def test_arm_refuses_a_token_from_a_replaced_staging(self, tmp_path: Path) -> None:
-        # S-1: a second upload replaces the staging (and its token) between review and
-        # confirm, so the operator's stale token no longer arms what they never saw.
+        # A second upload replaces the staging, and its token, between review and confirm,
+        # so the operator's stale token no longer arms what they never saw.
         settings = _settings(tmp_path)
         first = restore.stage_upload(settings, _make_archive(tmp_path / "a.reaper"))
         restore.stage_upload(settings, _make_archive(tmp_path / "b.reaper"))
@@ -369,8 +374,8 @@ class TestArm:
         assert restore.is_armed(settings) is False
 
     def test_arm_clears_inherited_auth_state(self, tmp_path: Path) -> None:
-        # S-3: the backup's sessions, recovery tokens, and pending logins must not survive
-        # the swap -- a restore is a wholesale credential change.
+        # The backup's sessions, recovery tokens, and pending logins must not survive the
+        # swap, because a restore is a wholesale credential change.
         settings = _settings(tmp_path)
         summary = restore.stage_upload(
             settings, _make_archive(tmp_path / "backup.reaper", with_auth=True)
@@ -387,9 +392,11 @@ class TestArm:
 
     def test_arm_disarms_recovery_in_the_restored_launcher_conf(self, tmp_path: Path) -> None:
         """A backup taken while recovery mode was armed carries REAPER_RECOVERY=true. Left
-        alone, restoring it would arm recovery on the TARGET at its next boot, mint a
-        sign-in code, and write it to recovery.txt -- turning a backup file into a way into
-        the install it was supposed to rebuild. Same obligation as the auth purge above."""
+        alone, restoring it would arm recovery on the target at its next boot, mint a
+        sign-in code, and write it to recovery.txt, turning a backup file into a way into
+        the install it was supposed to rebuild. This is the same obligation as the auth
+        purge above.
+        """
         settings = _settings(tmp_path)
         conf = b"REAPER_PORT=8421\nREAPER_RECOVERY=true\nREAPER_TRAY=false\n"
         summary = restore.stage_upload(
@@ -399,7 +406,7 @@ class TestArm:
         restore.arm(settings, summary.token)
 
         staged = (settings.data_dir / restore.PENDING_DIR / "launcher.conf").read_text("utf-8")
-        # Commented, not deleted: the operator can still see it and turn it back on.
+        # Commented, not deleted. The operator can still see it and turn it back on.
         assert "\nREAPER_RECOVERY=true" not in f"\n{staged}"
         assert "# REAPER_RECOVERY=true" in staged
         # ...and every other setting they had is untouched. Disarming must not cost them
@@ -408,10 +415,12 @@ class TestArm:
         assert "REAPER_TRAY=false" in staged
 
     def test_arm_leaves_a_conf_that_never_armed_recovery_alone(self, tmp_path: Path) -> None:
-        """The branch the fix does not touch, driven so the rewrite cannot start mangling
-        ordinary files unnoticed (rule 145): an already-commented line is not an active one.
-        Byte-for-byte, because a rewritten file that happens to mean the same thing would
-        still be a file the operator did not write."""
+        """The branch this rewrite must leave untouched, so it cannot start mangling
+        ordinary files unnoticed. An already-commented line is not an active one.
+
+        This checks the file byte-for-byte, because a rewritten file that happens to mean
+        the same thing would still be a file the operator did not write.
+        """
         settings = _settings(tmp_path)
         conf = b"REAPER_PORT=8421\n# REAPER_RECOVERY=true\n"
         summary = restore.stage_upload(
@@ -444,18 +453,18 @@ class TestArm:
         assert not (settings.data_dir / restore.PENDING_DIR).exists()
 
     def test_cancel_refuses_a_token_from_a_replaced_staging(self, tmp_path: Path) -> None:
-        # #387, and the discard side of `test_arm_refuses_a_token_from_a_replaced_staging`
-        # above: two live restore cards each hold their own reviewed summary, and only the
-        # later stage survives. The earlier card's reclaim must not take the other's archive.
+        # The discard side of `test_arm_refuses_a_token_from_a_replaced_staging` above.
+        # Two live restore cards each hold their own reviewed summary, and only the later
+        # stage survives. The earlier card's reclaim must not take the other's archive.
         settings = _settings(tmp_path)
         first = restore.stage_upload(settings, _make_archive(tmp_path / "a.reaper"))
         second = restore.stage_upload(settings, _make_archive(tmp_path / "b.reaper"))
 
         assert restore.clear_pending(settings, first.token) is False
 
-        # Still `second`'s, intact and still armable by the card that staged it -- which is
-        # what a bare "the directory is there" assertion would not tell apart from a staging
-        # left half-removed.
+        # Still `second`'s, intact and still armable by the card that staged it. A bare
+        # "the directory is there" assertion would not tell that apart from a staging left
+        # half-removed.
         assert (settings.data_dir / restore.PENDING_DIR).exists()
         restore.arm(settings, second.token)
         assert restore.is_armed(settings) is True
@@ -468,8 +477,8 @@ class TestArm:
         assert restore.clear_pending(settings, "a" * restore.TOKEN_MAX_LEN) is False
 
     def test_restored_key_and_salt_are_owner_only(self, tmp_path: Path) -> None:
-        # S-4: the key and salt are 0600 from creation, before the boot swap moves them into
-        # the data dir (a bind mount) where a write-then-chmod window would expose the key.
+        # The key and salt are 0600 from creation, before the boot swap moves them into
+        # the data dir, a bind mount where a write-then-chmod window would expose the key.
         settings = _settings(tmp_path)
         restore.stage_upload(settings, _make_archive(tmp_path / "backup.reaper"))
         pending = settings.data_dir / restore.PENDING_DIR
@@ -481,14 +490,13 @@ class TestAPrepareStepThatFails:
     """``arm`` runs three prepare steps, and a failure in any of them must leave the swap
     unarmed and say one sentence.
 
-    Nothing drove any of these three arms before this class. ``_force_destructive_off``,
-    ``_force_recovery_off`` and ``_purge_auth_state`` each raise
-    ``RestoreError("error.restore.prepare_failed")``. Each test asserts against the catalog
-    declaration rather than a copy of its text, so this file cannot become a fifth spelling
-    of the sentence (rule 144).
+    ``_force_destructive_off``, ``_force_recovery_off``, and ``_purge_auth_state`` each
+    raise ``RestoreError("error.restore.prepare_failed")``. Each test asserts against the
+    catalog declaration rather than a copy of its text, so this file cannot become another
+    spelling of the sentence.
 
-    Each test asserts ``is_armed`` too. ``arm`` clears READY before the first step and writes
-    it after the last, so a raise from any of them leaves the staging inert (rule 126).
+    Each test also asserts ``is_armed``. ``arm`` clears READY before the first step and
+    writes it after the last, so a raise from any of them leaves the staging inert.
     """
 
     def test_a_staged_database_that_cannot_take_the_read_only_write_refuses_the_arm(
@@ -539,13 +547,14 @@ class TestAPrepareStepThatFails:
         assert restore.is_armed(settings) is False
 
     def test_a_staged_database_whose_auth_purge_fails_refuses_the_arm(self, tmp_path: Path) -> None:
-        # The backup's sessions and recovery tokens survive the swap unless this step clears
-        # them (rule 12/75). A trigger reaching a table that is not there is how the DELETE is
+        # The backup's sessions and recovery tokens survive the swap unless this step
+        # clears them. A trigger reaching a table that is not there is how the DELETE is
         # made to fail without touching the two steps before it.
         #
-        # On the LAST of `AUTH_BEARING_TABLES`, so the two purged before it are the evidence.
-        # On the first, the surviving row proves nothing: that table's own DELETE is the one
-        # that raised, so its row survives under a rollback and under a half-run alike.
+        # This targets the last of `AUTH_BEARING_TABLES`, so the two purged before it are
+        # the evidence. On the first table, the surviving row would prove nothing, because
+        # that table's own DELETE is the one that raised, so its row survives under a
+        # rollback and under a half-run alike.
         settings = _settings(tmp_path)
         summary = restore.stage_upload(
             settings, _make_archive(tmp_path / "backup.reaper", with_auth=True)
@@ -567,8 +576,8 @@ class TestAPrepareStepThatFails:
         assert excinfo.value.code == "error.restore.prepare_failed"
         assert str(excinfo.value) == MESSAGES["error.restore.prepare_failed"]
         assert restore.is_armed(settings) is False
-        # Every row still there, including the two whose DELETE ran before the raise: the
-        # purge is one transaction, so a failure rolls the whole sweep back.
+        # Every row is still there, including the two whose DELETE ran before the raise.
+        # The purge is one transaction, so a failure rolls the whole sweep back.
         con = sqlite3.connect(staged_db)
         try:
             for table in AUTH_BEARING_TABLES:
@@ -579,11 +588,11 @@ class TestAPrepareStepThatFails:
     def test_a_failed_second_arm_leaves_the_first_one_disarmed(self, tmp_path: Path) -> None:
         """ "Nothing was restored" has to hold on the retry, not only the first attempt.
 
-        Neither of `arm`'s two checks rejects an arm over a staging that is already armed: the
-        token file survives an arm, so a confirm retried after a client-side timeout runs the
-        three prepare steps again with READY on disk. A raise there would leave the swap armed
-        while the operator reads that nothing happened, which is rule 126 exactly and fails in
-        the reassuring direction. `arm` clears READY before the first step, so it cannot.
+        Neither of `arm`'s two checks rejects an arm over a staging that is already armed.
+        The token file survives an arm, so a confirm retried after a client-side timeout
+        runs the three prepare steps again with READY on disk. A raise there would leave
+        the swap armed while the operator reads that nothing happened, which fails in the
+        reassuring direction. `arm` clears READY before the first step, so it cannot.
         """
         settings = _settings(tmp_path)
         summary = restore.stage_upload(settings, _make_archive(tmp_path / "backup.reaper"))
@@ -624,8 +633,9 @@ class TestApplyPendingRestore:
         (settings.data_dir / "secret.salt").write_text("livesalt\n", encoding="utf-8")
 
     def test_the_swap_puts_the_launcher_settings_back(self, tmp_path: Path) -> None:
-        """The point of carrying it: a desktop or snap install rebuilt from a backup keeps
-        the port and bind address it was reachable on. Nothing in the database holds them."""
+        """Carrying the launcher conf through a restore matters because a desktop or snap
+        install rebuilt from a backup keeps the port and bind address it was reachable on.
+        Nothing in the database holds them."""
         settings = _settings(tmp_path)
         self._seed_live(settings, "live")
         (settings.data_dir / "launcher.conf").write_text("REAPER_PORT=1\n", encoding="utf-8")
@@ -648,8 +658,8 @@ class TestApplyPendingRestore:
 
         assert restore.apply_pending_restore(settings) is True
 
-        # The live database is gone: the staged copy (no marker row) took its place, and it
-        # boots read-only because arm forced deletion off.
+        # The live database is gone. The staged copy, with no marker row, took its place,
+        # and it boots read-only because arm forced deletion off.
         new_db = settings.data_dir / "reaper.db"
         con = sqlite3.connect(new_db)
         try:
@@ -671,7 +681,7 @@ class TestApplyPendingRestore:
         settings = _settings(tmp_path)
         self._seed_live(settings, "live")
         restore.stage_upload(settings, _make_archive(tmp_path / "backup.reaper"))
-        # Staged but never armed: no READY marker, so boot leaves the live data alone.
+        # Staged but never armed. No READY marker, so boot leaves the live data alone.
         assert restore.apply_pending_restore(settings) is False
         live = settings.data_dir / "reaper.db"
         con = sqlite3.connect(live)
@@ -732,7 +742,7 @@ class TestApi:
     def test_confirm_refuses_a_token_from_a_replaced_upload(
         self, client: TestClient, tmp_path: Path
     ) -> None:
-        # S-1 end to end: the operator reviews upload A, a second upload B replaces the
+        # End to end: the operator reviews upload A, a second upload B replaces the
         # staging, and A's token can no longer arm B even with the right password.
         first = client.post(
             "/api/settings/backup/restore/prepare",
@@ -767,10 +777,12 @@ class TestApi:
     def test_repeated_wrong_confirm_passwords_are_locked_out(
         self, client: TestClient, tmp_path: Path
     ) -> None:
-        """Confirming a restore is gated exactly like arming, so it locks out exactly like
-        arming: past the threshold it answers 429 instead of running another Argon2 verify
-        (rule 11/98, and rule 72 for its three siblings). The staging stays un-armed through
-        all six, which is the part that matters to the operator's live data."""
+        """Confirming a restore is gated exactly like arming, so it locks out the same way.
+
+        Past the threshold, it answers 429 instead of running another Argon2 verify. The
+        staging stays un-armed through all six attempts, which is the part that matters to
+        the operator's live data.
+        """
         archive = _make_archive(tmp_path / "up.reaper").read_bytes()
         client.post("/api/settings/backup/restore/prepare", content=archive)
         codes = [
@@ -785,11 +797,13 @@ class TestApi:
     def test_with_no_admin_password_set_confirm_points_at_the_password_step(
         self, client: TestClient, tmp_path: Path
     ) -> None:
-        """Not a 403: a Plex-only install has nothing to type, so "that didn't match" would
-        send the operator to guess at a password that does not exist. The archive stays
-        staged and un-armed, which is the state they can still cancel out of.
+        """This must not answer 403. A Plex-only install has nothing to type, so "that
+        didn't match" would send the operator to guess at a password that does not exist.
+        The archive stays staged and un-armed, which is the state they can still cancel
+        out of.
 
-        Sibling of the same pair on arming deletion and on the watch-record reset (rule 72).
+        This is a sibling of the same pair on arming deletion and on the watch-record
+        reset.
         """
         archive = _make_archive(tmp_path / "up.reaper").read_bytes()
         client.post("/api/settings/backup/restore/prepare", content=archive)
@@ -821,12 +835,13 @@ class TestApi:
     def test_cancel_scoped_to_a_replaced_staging_leaves_it(
         self, client: TestClient, tmp_path: Path
     ) -> None:
-        """The route half of #387, over the wire the two cards actually use.
+        """The route half of the replaced-staging case, over the wire the two cards
+        actually use.
 
         The first card's reclaim arrives after a second card has staged its own archive.
-        It names what it staged, the server no longer holds that, and the archive the
-        other card is still showing survives -- confirmed by arming it afterwards, which
-        is the operation the stranded card was left unable to perform.
+        It names what it staged, but the server no longer holds that, and the archive the
+        other card is still showing survives. Arming it afterwards confirms this, since
+        that is the operation the stranded card was left unable to perform.
         """
         first = client.post(
             "/api/settings/backup/restore/prepare",
@@ -853,10 +868,10 @@ class TestApi:
     def test_cancel_refuses_a_token_wider_than_one_can_be(
         self, client: TestClient, tmp_path: Path
     ) -> None:
-        # Rule 95: the field is bounded off the width the staging mints, and the staging it
-        # would otherwise have to read against survives the refusal -- asserted by arming it
-        # afterwards with its own token, since a 422 never reaches the handler and "the
-        # directory is still there" would hold whatever the bound did.
+        # The field is bounded to the width the staging mints, and the staging it would
+        # otherwise have to read against survives the refusal. This is confirmed by
+        # arming it afterwards with its own token, since a 422 never reaches the handler,
+        # and "the directory is still there" would hold regardless of what the bound did.
         prepared = client.post(
             "/api/settings/backup/restore/prepare",
             content=_make_archive(tmp_path / "up.reaper").read_bytes(),
@@ -875,8 +890,8 @@ class TestApi:
     def test_confirm_refuses_a_token_wider_than_one_can_be(
         self, client: TestClient, tmp_path: Path
     ) -> None:
-        # The sibling bound, and the one that matters more: this field sits on the route that
-        # reaches Argon2 (rule 72, and rule 95's reason for the bound in the first place).
+        # The sibling bound, and the one that matters more. This field sits on the route
+        # that reaches Argon2.
         client.post(
             "/api/settings/backup/restore/prepare",
             content=_make_archive(tmp_path / "up.reaper").read_bytes(),
@@ -890,8 +905,8 @@ class TestApi:
 
 
 def _arm(client: TestClient, tmp_path: Path) -> None:
-    """Upload, review, and confirm a backup, leaving the swap armed -- the state the operator
-    is in when the card offers Restart now."""
+    """Upload, review, and confirm a backup, leaving the swap armed. This is the state the
+    operator is in when the card offers Restart now."""
     prepared = client.post(
         "/api/settings/backup/restore/prepare",
         content=_make_archive(tmp_path / "up.reaper").read_bytes(),
@@ -907,9 +922,9 @@ def _arm(client: TestClient, tmp_path: Path) -> None:
 def stops(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     """Every time the route asks this process to stop, recorded instead of sent.
 
-    Not optional decoration: the route's own background task calls this, and ``TestClient``
-    runs background tasks, so a test that armed a restore and posted without this would
-    SIGTERM the pytest process.
+    This stub is required, not optional. The route's own background task calls this, and
+    ``TestClient`` runs background tasks, so a test that armed a restore and posted
+    without this fixture would send SIGTERM to the pytest process.
     """
     sent: list[int] = []
     monkeypatch.setattr(backup_api, "_stop_this_process", lambda: sent.append(1))
@@ -917,17 +932,18 @@ def stops(monkeypatch: pytest.MonkeyPatch) -> list[int]:
 
 
 class TestRestartNow:
-    """The last step of a restore, in the browser rather than in a shell (#386).
+    """The last step of a restore, done in the browser rather than in a shell.
 
-    A restore stages its files and stops; the swap happens on the next boot, from preflight.
-    That left the operator holding an instruction ("restart the container") at the end of a
-    flow that is otherwise entirely in the browser, and the first-run wizard now opens onto
-    that flow. This route is that instruction, as a button.
+    A restore stages its files and stops. The swap happens on the next boot, from
+    preflight. Without this route, the operator would be holding an instruction
+    ("restart the container") at the end of a flow that is otherwise entirely in the
+    browser. This route is that instruction, as a button.
 
-    It cannot promise Reaper comes back -- nothing inside a container can read its own restart
-    policy -- so what is pinned here is everything it CAN promise: it stops only where stopping
-    is what the operator was already being asked to do, it does not stop while files are being
-    deleted, and it leaves by the door that lets a run in flight record itself.
+    It cannot promise Reaper comes back, because nothing inside a container can read its
+    own restart policy. What it can promise is pinned here instead. It stops only where
+    stopping is what the operator was already being asked to do, it does not stop while
+    files are being deleted, and it leaves by the door that lets a run in flight record
+    itself.
     """
 
     def test_with_no_restore_armed_it_refuses(self, client: TestClient, stops: list[int]) -> None:
@@ -966,16 +982,17 @@ class TestRestartNow:
 
         assert response.status_code == 200, response.text
         assert response.json() == {"ok": True}
-        # The stop rides the response's background task, so it lands after the body -- which is
-        # what lets the browser render "Reaper is stopping" instead of a dead connection.
+        # The stop rides the response's background task, so it lands after the body. That
+        # is what lets the browser render "Reaper is stopping" instead of a dead connection.
         assert stops == [1]
 
     def test_it_will_not_stop_the_app_while_a_reap_is_running(
         self, client: TestClient, tmp_path: Path, stops: list[int]
     ) -> None:
-        """Shutdown handles a reap in flight -- it is canceled, awaited, and recorded ABORTED
-        -- but handled is not a reason to interrupt the one path that deletes files. The run
-        has a graceful Stop of its own, and the staged restore will wait as long as it takes.
+        """Shutdown handles a reap in flight. It is canceled, awaited, and recorded
+        ABORTED. But being handled is not a reason to interrupt the one path that deletes
+        files. The run has a graceful stop of its own, and the staged restore will wait as
+        long as it takes.
         """
         _arm(client, tmp_path)
         app = cast(FastAPI, client.app)
@@ -997,11 +1014,12 @@ class TestRestartNow:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """SIGTERM to itself, which uvicorn turns into the graceful shutdown that runs
-        ``main.lifespan``'s finally. ``sys.exit`` or ``os._exit`` would leave by a door that
-        skips it, dropping a reap mid-step with the run row still reading EXECUTING.
+        ``main.lifespan``'s finally. ``sys.exit`` or ``os._exit`` would leave by a door
+        that skips it, dropping a reap mid-step with the run row still reading EXECUTING.
 
-        Asserts what was actually sent (rule 119) rather than that something was called: the
-        signal number IS the behavior, and any other one is a different shutdown or none.
+        This asserts what was actually sent, rather than only that something was called.
+        The signal number is the actual behavior being tested, and any other value would
+        mean a different shutdown, or none at all.
         """
         sent: list[tuple[int, int]] = []
         monkeypatch.setattr(os, "kill", lambda pid, sig: sent.append((pid, sig)))
@@ -1013,22 +1031,23 @@ class TestRestartNow:
     async def test_shutdown_lets_a_reap_in_flight_finish_recording_itself(
         self, tmp_path: Path
     ) -> None:
-        """The refusal above closes the door on pressing this mid-reap. It does not close the
-        window between that check and the signal, and nothing can: a reap that starts in it
-        meets the shutdown anyway -- exactly as it would if the operator restarted the
-        container by hand, or the host rebooted.
+        """The refusal above closes the door on pressing this mid-reap. It does not close
+        the window between that check and the signal, and nothing can. A reap that starts
+        in that window meets the shutdown anyway, exactly as it would if the operator
+        restarted the container by hand, or the host rebooted.
 
-        What makes that survivable is two lines of ``main.lifespan``'s finally: the reap task
-        is canceled AND awaited, before the engines are disposed. The executor's own cancel
-        branch is pinned in ``test_reap_loop.py`` (it marks the run ABORTED and defers the Plex
-        purge); this pins that shutdown gives it a live database to commit that on. A bare
-        ``.cancel()``, or a ``dispose()`` moved above the await, leaves the branch half-run and
-        the run row reading EXECUTING forever -- with files already deleted (#327's shape).
+        What makes that survivable is two lines of ``main.lifespan``'s finally. The reap
+        task is canceled and awaited, before the engines are disposed. The executor's own
+        cancel branch is pinned in ``test_reap_loop.py``, which marks the run ABORTED and
+        defers the Plex purge. This test pins that shutdown gives it a live database to
+        commit that on. A bare ``.cancel()``, or a ``dispose()`` moved above the await,
+        would leave the branch half-run and the run row reading EXECUTING forever, with
+        files already deleted.
 
-        The task stands in for the executor rather than being one: what is under test is the
-        shutdown's ordering, and the executor needs a planned run, an armed host and a gateway
-        to reach the same await. It commits through the app's OWN session factory, so a
-        disposal that landed too early fails here.
+        The task stands in for the executor rather than being one. What is under test is
+        the shutdown's ordering, and the real executor needs a planned run, an armed host,
+        and a gateway to reach the same await. It commits through the app's own session
+        factory, so a disposal that landed too early would fail here.
         """
         settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
@@ -1052,8 +1071,8 @@ class TestRestartNow:
             # One turn, so the task is actually parked in its await when shutdown arrives.
             await asyncio.sleep(0)
 
-        # Read on a connection of our own, after the app's engines are gone: this is the row as
-        # it survives the process, which is the only version of it that matters.
+        # Read on a connection of our own, after the app's engines are gone. This is the
+        # row as it survives the process, which is the only version of it that matters.
         read = sa_create_engine(settings.sync_database_url)
         try:
             with read.connect() as conn:
@@ -1068,8 +1087,8 @@ class TestRestartNow:
 
 
 class TestApiKeyIsFenced:
-    """A restore replaces the whole database. It stays behind the signed-in browser --
-    an automation key can read, scan, and plan, but never drive a restore."""
+    """A restore replaces the whole database, so it stays behind the signed-in browser.
+    An automation key can read, scan, and plan, but never drive a restore."""
 
     def test_prepare_confirm_and_cancel_are_denied_to_api_keys(self) -> None:
         assert _api_key_allowed("POST", "/api/settings/backup/restore/prepare") is False
@@ -1077,12 +1096,15 @@ class TestApiKeyIsFenced:
         assert _api_key_allowed("POST", "/api/settings/backup/restore/cancel") is False
 
     def test_restarting_is_denied_to_api_keys(self) -> None:
-        """The strongest case of the four: this one stops the app. A key is for scripts that
-        scan, plan, and edit the policy, and none of those needs the process to end.
+        """The strongest case of the four, because this one stops the app. A key is for
+        scripts that scan, plan, and edit the policy, and none of those needs the process
+        to end.
 
-        Denied by being born outside the write allowlist rather than by being listed anywhere,
-        so it stays denied without anyone remembering -- but asserted here all the same,
-        because "nobody added it to the allowlist" is not something a reader can see."""
+        This route is denied by being born outside the write allowlist, rather than by
+        being listed anywhere, so it stays denied without anyone remembering. It is
+        asserted here all the same, because "nobody added it to the allowlist" is not
+        something a reader can see.
+        """
         assert _api_key_allowed("POST", "/api/settings/backup/restore/restart") is False
         assert api_key_refused("POST", "/api/settings/backup/restore/restart") is True
 
@@ -1093,5 +1115,5 @@ def test_prepare_needs_a_session(tmp_path: Path) -> None:
     Base.metadata.create_all(engine)
     engine.dispose()
     with TestClient(create_app(settings)) as c:
-        c.headers["X-Reaper-CSRF"] = "1"  # CSRF is present; the missing piece is the session
+        c.headers["X-Reaper-CSRF"] = "1"  # CSRF is present. The missing piece is the session.
         assert c.post("/api/settings/backup/restore/prepare", content=b"x").status_code == 401

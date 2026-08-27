@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Settings -> Lists: what a protection list's row says, and what its buttons do (#475).
+// Settings -> Lists: what a protection list's row says, and what its buttons do.
 //
-// The point of the screen is that a list which stopped protecting reads DIFFERENTLY from one
-// that is simply not on this title's side, so each state is driven here and asserted on its
-// sentence, not only on its chip. The chip is four words; the sentence is what tells the
-// operator whether to go and fix something now or at the weekend.
+// A list that stopped protecting must read differently from one that was never in use, so
+// every health state is driven here and checked against its sentence, not just its chip. The
+// chip is a few words; the sentence tells the operator whether to fix something now or later.
 //
-// The state itself is the server's (`lists.ListHealth`) and is not recomputed here -- that is
-// the whole reason it is decided once. What is pinned is the copy each state produces, and the
-// branches this component does own: whether a keep rule uses the list at all, which is the
-// difference between the green "In use" chip and the gray "Not in use"; the live-vs-cached
-// count; and the definition-to-membership join, which is what lets a row carry Edit and Check
-// now at all.
+// The health state comes from the server (`lists.ListHealth`) and is not recomputed here. This
+// file checks the wording for each state, plus what the component itself decides: whether a
+// keep rule uses the list at all (the green "In use" chip versus the gray "Not in use"),
+// whether a count is live or cached, and the join between a list's definition and its
+// membership, which is what lets a row show Edit and Check now at all.
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -21,8 +19,8 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import type { ListConfig, ListPolicyUse, ProtectionList } from "../api";
 import { ListsPanel } from "./ListsPanel";
 
-// Rule 135: every read the tree under test performs, including the modal's, or React Query
-// renders a failed read and the test passes against the fallback.
+// Mock every read the tree performs, including the modal's. A missing one makes React Query
+// render a failed read, and the test would pass against that fallback instead of the real one.
 const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
@@ -32,7 +30,7 @@ vi.mock("../api", async (importOriginal) => ({
 }));
 
 /** The default hard use: one keeps-it-outright rule per media type, the shape a fresh list
- *  gets server-side. Two entries, one sentence -- the panel deduplicates. */
+ *  gets server-side. Two entries collapse to one sentence, since the panel deduplicates them. */
 const HARD_USE: ListPolicyUse[] = [
   { media_type: "movie", strength: "hard", points: null },
   { media_type: "tv", strength: "hard", points: null },
@@ -63,7 +61,7 @@ const WORKING: ProtectionList = {
   media_types: ["movie"],
 };
 
-/** A Plex collection the operator defined, which is the shape #483 was about. */
+/** A Plex collection the operator defined. */
 const PLEX_DEF: ListConfig = {
   id: 2,
   name: "Never Reap",
@@ -152,8 +150,7 @@ describe("the Lists panel", () => {
   });
 
   it("shows the service's own words for a list that is not working", async () => {
-    // The issue, in one assertion. This message names the thing to go and fix, and until this
-    // screen existed it was written to `last_error` on every failed sync and read by nothing.
+    // The error message names what needs fixing.
     seed(
       [PLEX_DEF],
       [
@@ -180,9 +177,9 @@ describe("the Lists panel", () => {
   });
 
   it("distinguishes a failing list that is still covering its titles", async () => {
-    // The branch this component owns. Same state, opposite urgency: the atomic swap in `sync`
-    // left the previous membership in place, so those titles are still protected and the
-    // operator does not have to drop everything.
+    // A failing list can still protect its old membership. `sync` swaps the list atomically,
+    // so a failed check leaves the previous titles in place and the operator does not need to
+    // act immediately.
     seed(
       [IMDB_DEF],
       [{ ...WORKING, state: "failing", item_count: 37, error: "Sonarr refused the request" }],
@@ -197,23 +194,23 @@ describe("the Lists panel", () => {
   });
 
   it("does not call an empty list working, however well the check went", async () => {
-    // Found by driving a real install: three keep lists sat green at 0 titles, one of them a
-    // "Never Reap" collection. The sync genuinely succeeded, so the server's `working` is
-    // correct about the check -- and green there says "you are covered" to someone covered by
-    // nothing, which is indistinguishable from Reaper reading the wrong library (#483) or from
-    // a list whose entries it cannot identify (#474).
+    // An empty list can still show a green, working check: the sync succeeded, so `working` is
+    // correct about the check itself. But a green chip on an empty list tells the operator they
+    // are covered when they are not, which looks the same as Reaper reading the wrong library or
+    // a list whose entries it cannot match.
     seed([PLEX_DEF], [{ ...WORKING, source: "plex_collection", item_count: 0, list_id: 2 }]);
     renderPanel();
 
     expect(await screen.findByText("Nothing on it")).toBeInTheDocument();
     expect(screen.getByText(/Check it's the one you meant\./)).toBeInTheDocument();
-    // The green "In use" verdict is exactly what an empty keep list must not wear.
+    // An empty keep list must never show the green "In use" chip: that would tell the operator
+    // it is covered when it is not.
     expect(screen.queryByText("In use")).not.toBeInTheDocument();
   });
 
   it("does not call an empty stale list out of date either", async () => {
-    // Same trap one state over: "still protecting 0 titles" is a sentence about coverage that
-    // does not exist, and rule 72 wants the sibling fixed in the same change.
+    // The same problem applies to a stale, empty list: "still protecting 0 titles" claims
+    // coverage that does not exist.
     seed([IMDB_DEF], [{ ...WORKING, state: "stale", item_count: 0 }]);
     renderPanel();
 
@@ -241,10 +238,10 @@ describe("the Lists panel", () => {
   });
 
   it("says a never-checked family holding titles is still protecting them", async () => {
-    // A rolled-up family takes its state from its WORST member, and `never_checked` outranks
-    // `working` -- so adding a second Radarr to a tag list that already holds titles lands
-    // here with a non-zero count. The flat sentence then told the operator a live protection
-    // was not protecting, which is the one question this screen exists to answer.
+    // A family, the same list read across several *arr instances, takes its state from its
+    // worst member, and `never_checked` outranks `working`. So a second Radarr added to a tag
+    // list that already holds titles can show `never_checked` on the family even though titles
+    // are protected elsewhere in it.
     seed(
       [TAG_DEF],
       [
@@ -259,8 +256,8 @@ describe("the Lists panel", () => {
     renderPanel();
 
     expect(await screen.findByText("Not checked yet")).toBeInTheDocument();
-    // The family holds 40 titles from a member that has checked, so the count shows -- as
-    // cached, not "on it", because the family's own state is not-checked-yet.
+    // The family holds 40 titles from a member that has checked, so the count still shows, as
+    // cached rather than "on it", because the family's own state is not checked yet.
     expect(screen.getByText(/40 titles cached\./)).toBeInTheDocument();
     expect(screen.queryByText(/40 titles on it/)).not.toBeInTheDocument();
   });
@@ -273,8 +270,8 @@ describe("the Lists panel", () => {
   });
 
   it("does not read silence as 'your lists are fine' when the read fails", async () => {
-    // Rule 17/36. The failure mode this screen exists to prevent is an operator concluding
-    // nothing is wrong, so an unreadable answer says exactly that it could not tell them.
+    // This screen must not let an operator conclude nothing is wrong when the read simply
+    // failed. An unreadable answer says it could not tell them, rather than staying silent.
     apiMock.listConfigs.mockResolvedValue([]);
     apiMock.lists.mockRejectedValue(new Error("nope"));
     renderPanel();
@@ -284,10 +281,9 @@ describe("the Lists panel", () => {
   });
 
   it("says the same when it is the DEFINITIONS that could not be read", async () => {
-    // The other read, which is the one that decides whether a row exists at all. Without this
-    // branch a failure there renders a page with no rows and a cheerful Add button, which
-    // reads as "you have no lists" to an operator who has several (rule 146's shape: the
-    // panel must not report a state its own early returns contradict).
+    // This is the read that decides whether any row exists at all. Without this check, a
+    // failed read renders an empty page with just an Add button, which looks like "you have no
+    // lists" to an operator who actually has several.
     apiMock.lists.mockResolvedValue([WORKING]);
     apiMock.listConfigs.mockRejectedValue(new Error("nope"));
     renderPanel();
@@ -318,11 +314,12 @@ describe("the kind badges", () => {
     const arr = document.querySelector(".kind-badge.kind-arr");
     expect(arr).not.toBeNull();
     expect(arr).toHaveTextContent(/Sonarr.*Radarr/);
-    // A span per painted half, each carrying its own fill and padding, so the seam lands ON
-    // the gap between the words instead of near it. Both are hidden from a reader, and the
-    // name is said once in a `.sr-only` sibling -- run together the badge announces itself as
-    // one invented word, and whether whitespace between two flex items reaches the
-    // accessibility tree is not a thing jsdom can answer, so the name does not rest on it.
+    // Each half of the badge is its own span with its own fill and padding, so the seam lands
+    // on the gap between the words rather than beside it. Both spans are hidden from a screen
+    // reader, and the full name is read once from a `.sr-only` sibling. Read together as plain
+    // text the two spans would run into each other as one invented word, and jsdom cannot say
+    // whether whitespace between flex items reaches the accessibility tree, so the name must
+    // not depend on that.
     expect(arr?.querySelectorAll(':scope > span[aria-hidden="true"]')).toHaveLength(2);
     expect(arr?.querySelector(".sr-only")?.textContent).toBe("Sonarr and Radarr");
   });
@@ -335,11 +332,12 @@ describe("the policy link, and in use vs not", () => {
     const { onGoToPolicy } = renderPanel();
 
     expect(await screen.findByText("In use")).toBeInTheDocument();
-    // The row says one true thing: in use, and the count. It does NOT restate the strength,
-    // where "Keeps every title on it" is wrong the moment the rule is a lean.
+    // The row states one fact: that the list is in use, and its count. It never restates the
+    // rule's strength, since "Keeps every title on it" would be false the moment the rule is a
+    // lean.
     expect(screen.queryByText(/Keeps every title/)).not.toBeInTheDocument();
     expect(screen.queryByText(/points off/)).not.toBeInTheDocument();
-    // And there is no "Configure in Policy" here -- that is the not-in-use action.
+    // There is no "Configure in Policy" button here. That action belongs to a not-in-use list.
     expect(screen.queryByRole("button", { name: "Configure in Policy" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Change policy" }));
@@ -347,9 +345,8 @@ describe("the policy link, and in use vs not", () => {
   });
 
   it("reads a lean the same as any other use: in use, no false 'keeps every title'", async () => {
-    // The case the operator raised: a rule that only leans toward keeping does not keep every
-    // title, so the row must not say it does. It reads "In use" and the plain count, nothing
-    // about strength.
+    // A lean rule does not keep every title, so the row must not claim it does. It reads
+    // "In use" and the plain count only, with nothing about strength.
     seed(
       [{ ...IMDB_DEF, policy_use: [{ media_type: "movie", strength: "lean", points: 15 }] }],
       [WORKING],
@@ -364,8 +361,8 @@ describe("the policy link, and in use vs not", () => {
   });
 
   it("a list no rule names reads Not in use, and offers Configure in Policy", async () => {
-    // A working check over a list nothing uses still protects nothing, so the chip must not
-    // read green "In use" (rule 79's direction). Its action is to set it up, not to change it.
+    // A working check on a list that no rule uses still protects nothing, so the chip must not
+    // read green "In use". Its action offers to set the list up, not to change it.
     const user = userEvent.setup();
     seed([{ ...IMDB_DEF, policy_use: [] }], [WORKING]);
     const { onGoToPolicy } = renderPanel();
@@ -382,10 +379,10 @@ describe("the policy link, and in use vs not", () => {
 
 describe("media-type coverage on a mixed list (#533)", () => {
   // A keep rule protects a media TYPE, and a list holds whichever types its members do. A rule
-  // naming a mixed list on one policy alone leaves the other side deletable, and the screen has
-  // to say so rather than reading a full green "In use" that reassured the operator their shows
-  // were safe. The half a rule does not cover fades on the split pill; the count line names it;
-  // and a flat-badge list with no half to dim goes amber instead.
+  // that names a mixed list on only one type leaves the other type deletable, and the screen
+  // must say so rather than showing a full green "In use" that would tell the operator their
+  // shows are safe when they are not. The pill dims the uncovered half; the count line names
+  // it; and a flat-badge list with no half to dim turns amber instead.
   const MOVIE_ONLY: ListPolicyUse[] = [{ media_type: "movie", strength: "hard", points: null }];
 
   /** The two halves of a tag pill, Sonarr then Radarr, so a test can assert which is dim. */
@@ -407,9 +404,9 @@ describe("media-type coverage on a mixed list (#533)", () => {
     );
     renderPanel();
 
-    // The chip is still "In use" -- the list IS in use -- and stays green: the dimmed half is
-    // what carries the partial cover here, so the chip color is not the warning (rule 79 is
-    // answered by the pill, not by turning a true "In use" into a lie).
+    // The chip still reads "In use" and stays green, since the list really is in use. The
+    // dimmed half carries the partial-cover warning instead of the chip color, so a true
+    // "In use" chip never turns into a false one.
     const chip = await screen.findByText("In use");
     expect(chip).toHaveClass("status-kept");
     expect(chip).toHaveAttribute("title", "Protecting movies only");
@@ -423,8 +420,8 @@ describe("media-type coverage on a mixed list (#533)", () => {
     const { arr, sonarr, radarr } = arrHalves();
     expect(sonarr).toHaveClass("dim");
     expect(radarr).not.toHaveClass("dim");
-    // The dim is not the only carrier: the badge's spoken name states the exposed side, so a
-    // reader who never sees the color still gets it (rule 21).
+    // Color is not the only signal: the badge's spoken name also states the exposed side, so a
+    // reader who cannot see color still gets the same information.
     expect(arr?.querySelector(".sr-only")?.textContent).toBe("Sonarr and Radarr, shows not kept");
 
     await expectNoA11yViolations(document.body);
@@ -454,8 +451,8 @@ describe("media-type coverage on a mixed list (#533)", () => {
   });
 
   it("turns the chip amber for a flat-badge list, which has no half to dim", async () => {
-    // A Plex watchlist or an IMDb list can hold both types too and hits the same bug, but its
-    // badge is one flat pill. With no half to fade, the chip carries the exposure by going amber.
+    // A Plex watchlist or an IMDb list can hold both types too, but its badge is one flat pill
+    // with no half to dim. So the chip itself turns amber to carry the exposure warning.
     seed([{ ...IMDB_DEF, policy_use: MOVIE_ONLY }], [{ ...WORKING, media_types: ["movie", "tv"] }]);
     renderPanel();
 
@@ -499,8 +496,8 @@ describe("the row actions", () => {
   });
 
   it("checks one list without touching the others", async () => {
-    // A narrowed pass sweeps only the definition it checked (see `sync_protection_lists`),
-    // which is the whole reason the id is sent rather than the button re-running everything.
+    // A narrowed check sweeps only the definition it checked (`sync_protection_lists`). That is
+    // why the id is sent, rather than the button re-running every list.
     const user = userEvent.setup();
     seed([IMDB_DEF, PLEX_DEF], [WORKING]);
     renderPanel();
@@ -510,8 +507,8 @@ describe("the row actions", () => {
   });
 
   it("re-reads the health rows once a check settles, and not before", async () => {
-    // Rule 85. The chip IS the result, so the button must go on saying "Checking…" until the
-    // refetch has landed -- otherwise it reports done while the old answer is still on screen.
+    // The chip is the result, so the button must keep saying "Checking…" until the refetch
+    // lands. Otherwise it reports done while the old answer is still on screen.
     const user = userEvent.setup();
     seed([IMDB_DEF], [WORKING]);
     renderPanel();
@@ -523,8 +520,8 @@ describe("the row actions", () => {
   });
 
   it("says on the row when its check could not run", async () => {
-    // Rule 42: the failure renders beside the button that retries it, not in a page-level slot
-    // where an operator with six lists cannot tell which one it is about.
+    // The failure renders beside the button that retries it, rather than in a page-level slot
+    // where an operator with several lists could not tell which one it is about.
     const user = userEvent.setup();
     seed([IMDB_DEF], [WORKING]);
     apiMock.syncLists.mockRejectedValue(new Error("Radarr refused the request"));
@@ -538,10 +535,10 @@ describe("the row actions", () => {
     seed([IMDB_DEF], [WORKING]);
     renderPanel();
 
-    // "Check all now" was here. Checking every list is the nightly upkeep job's whole
-    // purpose and it has its own Run now on Settings, Jobs, so a button here meaning the
-    // same thing is one job offered in two places (rule 18). Per-row Check now stays: it is
-    // the one thing the job cannot do, which is check the single list you just edited.
+    // Checking every list is the nightly upkeep job's job, and that job has its own Run now
+    // button on Settings, Jobs. A button here doing the same thing would offer one job in two
+    // places. Per-row Check now stays because it does something the nightly job cannot: check
+    // the single list you just edited.
     expect(await screen.findByRole("button", { name: "Add a list" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Check all now" })).not.toBeInTheDocument();
     const foot = document.querySelector(".list-foot")!;
@@ -550,13 +547,13 @@ describe("the row actions", () => {
   });
 
   it("shows every row as busy while a whole-pass check runs", async () => {
-    // Found by driving it: the pass said "Checking…" on one row while every other still
-    // offered "Check now", so a row invited a second check during the pass it was already
-    // part of. A button reports the state it is in, and "all" really is checking that row.
+    // A whole-pass check must show every row as busy. Otherwise a row could invite a second
+    // check while the pass it belongs to was still running, even though a button should report
+    // the state it is actually in.
     //
-    // Driven from an ORPHAN row, which is the only button left that checks everything: a
-    // stored row no definition owns has no id to check by. The footer's "Check all now" is
-    // gone, and the nightly job is what checks every list now.
+    // This is driven from an orphan row, since that is the only button left that checks every
+    // list: a stored row with no definition has no id to check by on its own. The footer's
+    // "Check all now" button is gone, and the nightly job now checks every list.
     const user = userEvent.setup();
     let release: (v: unknown) => void = () => {};
     apiMock.syncLists.mockReturnValue(new Promise((r) => (release = r)));
@@ -577,9 +574,8 @@ describe("the row actions", () => {
   });
 
   it("checks a list as soon as it is added, without a second press", async () => {
-    // A list is protecting nothing until something reads it, and the first read used to wait
-    // for the next scan -- so an operator who had just told Reaper what to keep watched the
-    // row say "Nothing on it is protected until it does" and had no way to know whether the
+    // A list protects nothing until something reads it. Waiting for the next scan to do that
+    // first read would leave an operator who just added a list with no way to know whether the
     // collection they named was even the right one.
     const user = userEvent.setup();
     seed([], []);
@@ -598,9 +594,10 @@ describe("the row actions", () => {
   });
 
   it("says the new row is being checked, rather than to wait for the next scan", async () => {
-    // The row has nothing stored yet, and its never-checked sentence is about the scan that
-    // would have read it. Beside a button reading "Checking…", that is two answers to one
-    // question, and it is what a save now puts on screen every time.
+    // A brand-new row has nothing stored yet, so its default sentence talks about the scan
+    // that would read it. Showing that sentence beside a button already reading "Checking…"
+    // gives two different answers to the same question, so the row must show only the
+    // checking state.
     const user = userEvent.setup();
     let release: (v: unknown) => void = () => {};
     apiMock.syncLists.mockReturnValue(new Promise((r) => (release = r)));
@@ -620,14 +617,14 @@ describe("the row actions", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Check now, My watchlist" })).toBeEnabled(),
     );
-    // Once it settles the row is back to its stored state, which the substitution only ever
-    // covered for: here the health read still answers empty.
+    // Once the check settles, the row falls back to its stored state. The health read here
+    // still answers empty, so that stored state is what the row shows.
     expect(await screen.findByText(/Runs with your next scan/)).toBeInTheDocument();
   });
 
   it("shows the new row as busy while that check runs, and says what came back", async () => {
-    // The check is the panel's own, so it reports where every other check does: the row's
-    // button, and the row's error line when the source refuses (rule 42).
+    // This check belongs to the panel, so it reports the same way every other check does: on
+    // the row's button, and on the row's error line if the source refuses.
     const user = userEvent.setup();
     seed([], []);
     apiMock.addList.mockResolvedValue(WATCHLIST_DEF);
@@ -655,12 +652,10 @@ describe("the row actions", () => {
   });
 
   it("re-scans after a save, so the queue stops showing fates from the old lists", async () => {
-    // A check refreshes MEMBERSHIP, which is not the same thing: the queue's fates were
-    // scored under the lists as they were, and nothing here re-scored them. So the operator
-    // added a keep list, saw it protecting 40 titles, and the queue went on offering those
-    // titles for deletion with no stale notice, until the executor's list interlock refused
-    // the approved plan at the far end. `PolicyEditor` starts a scan on save for exactly this
-    // class of change, and a list is the half of the policy that moved out of the policy body.
+    // A membership check refreshes which titles a list holds. It does not rescore the queue,
+    // so editing a used list can leave the queue still offering titles for deletion under the
+    // old membership until the next scan. Saving triggers a scan for exactly this reason: a
+    // list is part of the policy that lives outside the policy body itself.
     const user = userEvent.setup();
     seed([PLEX_DEF], []);
     apiMock.editList.mockResolvedValue({ ...PLEX_DEF, name: "Films worth keeping" });
@@ -673,9 +668,9 @@ describe("the row actions", () => {
   });
 
   it("does not scan when a list is added, since it names no rule yet", async () => {
-    // A hand-added list writes no keep rule, so no fate moved and the whole-library scan an
-    // edit of a used list warrants would be pointless work here. The membership check still
-    // runs -- that is how the operator learns what is on the list.
+    // A hand-added list writes no keep rule yet, so no fate can have changed, and a
+    // whole-library scan would do nothing useful. The membership check still runs, since that
+    // is how the operator learns what is on the list.
     const user = userEvent.setup();
     seed([], []);
     apiMock.addList.mockResolvedValue({ ...WATCHLIST_DEF, policy_use: [] });
@@ -691,8 +686,9 @@ describe("the row actions", () => {
   });
 
   it("re-scans after removing a list a rule named", async () => {
-    // Removing a USED list takes the keep rules naming it with it, so it changes what is
-    // protected and hands back no row to check. PLEX_DEF is used here, so its removal scans.
+    // Removing a list that a rule uses removes the rule too, changing what is protected, and
+    // leaves no row for a membership check to run against. PLEX_DEF is used here, so removing
+    // it triggers a scan.
     const user = userEvent.setup();
     seed([PLEX_DEF], []);
     apiMock.removeList.mockResolvedValue(undefined);
@@ -706,9 +702,9 @@ describe("the row actions", () => {
   });
 
   it("says so when Plex could not be reached, since no row can", async () => {
-    // With no live server no collection provider is built, so nothing is synced for one and no
-    // row carries an error explaining the silence. Without this the screen would report a
-    // successful check that skipped every Plex list.
+    // With no live Plex server, no collection provider gets built, so nothing syncs and no row
+    // carries an error explaining the silence. Without this notice the screen would report a
+    // successful check that actually skipped every Plex list.
     const user = userEvent.setup();
     seed([PLEX_DEF], []);
     apiMock.syncLists.mockResolvedValue({
@@ -743,8 +739,8 @@ describe("a tag list's counts", () => {
 
     expect(await screen.findByText("Titles you've tagged")).toBeInTheDocument();
     const pills = [...document.querySelectorAll(".tag-pill")];
-    // Separated in the TEXT, not by a flex gap: as adjacent flex items the tag and its count
-    // had nothing between them, so the pill read and copied as "reaper-keep12".
+    // The space must be in the TEXT, not just a flex gap. Adjacent flex items with no text
+    // space between them would read and copy as "reaper-keep12".
     expect(pills.map((p) => p.textContent)).toEqual(["reaper-keep 12", "keep-forever 2"]);
     expect(screen.getByText(/Across 2 servers\./)).toBeInTheDocument();
     expect(screen.getByText(/14 titles on it\./)).toBeInTheDocument();
@@ -770,8 +766,8 @@ describe("a tag list's counts", () => {
   });
 
   it("shows a bare pill for a tag no check has counted yet, never a zero", async () => {
-    // The counts arrived with this screen, so a row synced before them has `tags: null` --
-    // unknown. Zero would claim a check found nothing, which no check said.
+    // A row synced before this screen existed has `tags: null`, meaning unknown. Showing zero
+    // would claim a check found nothing, which no check actually said.
     seed([TAG_DEF], [tagRow("radarr-1-list3")]);
     renderPanel();
 
@@ -783,9 +779,9 @@ describe("a tag list's counts", () => {
   });
 
   it("drops a server with nothing to say about these tags from the fold-out", async () => {
-    // A stats body written before the counts existed, or for tags since renamed, has a
-    // server name and an empty counts object. Rendering it put a bare instance name beside
-    // an empty column, which reads as a broken row.
+    // A stats body from before per-tag counts existed, or for tags since renamed, can carry a
+    // server name with an empty counts object. Rendering it would put a bare instance name
+    // beside an empty column, which reads as a broken row.
     seed([TAG_DEF], [radarr, tagRow("sonarr-2-list3", { server: "Sonarr", tags: {} })]);
     renderPanel();
 
@@ -828,17 +824,18 @@ const ORPHAN_ROW: ProtectionList = {
 };
 
 describe("a list stored before the registry existed", () => {
-  // An upgrade re-homes a stored list under a slug carrying its definition's id, and that
-  // happens on its first successful check. Until then the old row has no definition to be
-  // rendered from -- and it is still protecting, so hiding it would make this screen lie by
-  // omission about the very thing it exists to show.
+  // A stored list gets re-homed under a slug carrying its definition's id on its first
+  // successful check. Until then, the old row has no definition to render from, but it is
+  // still protecting titles, so hiding it would make this screen lie by omission about the
+  // very thing it exists to show.
   it("still shows what it is protecting, and that the next check re-homes it", async () => {
     seed([], [ORPHAN_ROW]);
     renderPanel();
 
     expect(await screen.findByText('Plex collection: "Never Reap"')).toBeInTheDocument();
-    // An orphan carries no definition to hold a policy_use, so it defaults to in use and shows
-    // its live count -- hiding a row still holding titles is the lie this screen exists to fix.
+    // An orphan row has no definition to hold a policy_use, so it defaults to in use and shows
+    // its live count. Hiding a row that still holds titles is the exact lie this screen exists
+    // to prevent.
     expect(screen.getByText(/12 titles on it\./)).toBeInTheDocument();
     expect(
       screen.getByText(/Your next check moves it onto a list you can edit\./),

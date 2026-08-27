@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The rewatch derivation: what counts as a play, and how plays cluster into viewings.
+"""Tests the rewatch derivation: what counts as a play, and how plays cluster into viewings.
 
-Every number here is a ratio or a shape, never a real title or host (the repo's golden
-rule): all fixtures use placeholder rating keys.
+Every number here is a ratio or a shape, never a real title or host. All fixtures use
+placeholder rating keys.
 """
 
 from __future__ import annotations
@@ -30,8 +30,9 @@ NOW_EPOCH = 1_700_000_000  # an arbitrary, fixed instant; only offsets from it m
 
 def _at(epoch: int) -> datetime:
     """``from_epoch``, unwrapped for a caller that needs a plain ``datetime`` (a required
-    ``cutoff`` argument): every epoch this module passes is a fixed nonzero constant, so the
-    null-epoch case ``from_epoch`` guards against never applies here."""
+    ``cutoff`` argument). Every epoch this module passes is a fixed nonzero constant, so
+    the null-epoch case ``from_epoch`` guards against never applies here.
+    """
     dt = from_epoch(epoch)
     assert dt is not None
     return dt
@@ -78,15 +79,15 @@ async def _insert(
 
 
 class TestQualifiesTable:
-    """rule: the play filter, exact table from ``docs/history/REWATCH_PLAN.md`` Stage 1."""
+    """Tests the play filter, the exact table of which plays qualify."""
 
     @pytest.mark.parametrize(
         ("watched_status", "percent_complete", "expected"),
         [
-            # Both uninformative: unknown resolves toward keeping, so the play counts.
+            # Both uninformative. Unknown resolves toward keeping, so the play counts.
             (None, 0, True),
-            # Abandoned play: no status, and under half complete. Load-bearing per
-            # docs/LEARNINGS.md -- unfiltered, these are what fake most apparent cycles.
+            # An abandoned play has no status and is under half complete. docs/LEARNINGS.md
+            # found that, unfiltered, these are what fake most apparent rewatch cycles.
             (None, 30, False),
             (None, 49, False),
             (None, 50, True),
@@ -128,7 +129,7 @@ class TestViewingClustering:
         assert rewatch.viewing_count([start, later]) == 2
 
     def test_clusters_from_the_previous_play_not_the_viewing_start(self) -> None:
-        """Three plays six days apart each: none crosses the gap from its own previous
+        """Three plays, six days apart each. None crosses the gap from its own previous
         play, so this is one viewing, even though the first and last are 12 days apart."""
         start = datetime(2026, 1, 1, tzinfo=UTC)
         plays = [start, start + timedelta(days=6), start + timedelta(days=12)]
@@ -145,28 +146,30 @@ _PERIOD_START = datetime(2026, 1, 1, tzinfo=UTC)
 
 def _play(days: float, episode: int, *, seconds: float = 0) -> tuple[datetime, int]:
     """One ``(play time, episode identity)`` pair, ``days``/``seconds`` offset from a fixed
-    origin -- only the offsets between plays matter to ``replay_period_count``."""
+    origin. Only the offsets between plays matter to ``replay_period_count``.
+    """
     return _PERIOD_START + timedelta(days=days, seconds=seconds), episode
 
 
 class TestReplayPeriodCount:
-    """rule: the TV period/replay derivation (docs/history/REWATCH_PLAN.md, TV section;
-    docs/LEARNINGS.md, "TV: the replay-period formulation clears the lift bar"). Expectations
-    are written from that spec, never from the implementation (rule 119)."""
+    """The TV period and replay derivation. See docs/LEARNINGS.md for the measurement
+    behind it. Expectations are written from that finding, not copied from the
+    implementation.
+    """
 
     def test_empty_input_is_zero(self) -> None:
         assert rewatch.replay_period_count([]) == 0
 
     def test_one_period_first_watch_only_is_zero(self) -> None:
-        # Three new episodes, all inside the gap: one period, and a first period never has
-        # anything in `seen` to overlap against.
+        # Three new episodes, all inside the gap, form one period. A first period never
+        # has anything in `seen` to overlap against.
         plays = [_play(0, 1), _play(1, 2), _play(2, 3)]
         assert rewatch.replay_period_count(plays) == 0
 
     def test_two_periods_of_the_same_episodes_is_one_replay(self) -> None:
         plays = [
             _play(0, 1),
-            _play(1, 2),  # period 1: {1, 2}, first period, not a replay; seen = {1, 2}
+            _play(1, 2),  # period 1: {1, 2}, first period, not a replay. seen = {1, 2}
             _play(40, 1),
             _play(41, 2),  # period 2: {1, 2} again, full overlap -> replay
         ]
@@ -178,7 +181,7 @@ class TestReplayPeriodCount:
             _play(40, 1),
             _play(41, 2),
             _play(42, 3),
-            _play(43, 4),  # period 2: {1, 2, 3, 4}, overlap 1 of 4 -- exactly a quarter
+            _play(43, 4),  # period 2: {1, 2, 3, 4}, overlap 1 of 4, exactly a quarter
         ]
         assert rewatch.replay_period_count(plays) == 1
 
@@ -189,22 +192,23 @@ class TestReplayPeriodCount:
             _play(41, 2),
             _play(42, 3),
             _play(43, 4),
-            _play(44, 5),  # period 2: {1..5}, overlap 1 of 5 -- under a quarter
+            _play(44, 5),  # period 2: {1..5}, overlap 1 of 5, under a quarter
         ]
         assert rewatch.replay_period_count(plays) == 0
 
     def test_a_single_episode_period_is_never_a_replay_even_with_full_overlap(self) -> None:
         plays = [
             _play(0, 1),
-            _play(1, 2),  # period 1: {1, 2}, not a replay; seen = {1, 2}
-            _play(40, 1),  # period 2: {1} alone -- 100% overlap, but only one distinct episode
+            _play(1, 2),  # period 1: {1, 2}, not a replay. seen = {1, 2}
+            _play(40, 1),  # period 2: {1} alone, 100% overlap, but only one distinct episode
         ]
         assert rewatch.replay_period_count(plays) == 0
 
     def test_a_single_episode_first_period_feeds_seen_for_the_second(self) -> None:
-        """Period 1 holds one episode and is never itself a replay (the floor above), but
-        its identity still lands in `seen`: period 2 clears the quarter bar only because of
-        it (without period 1, its overlap would be zero)."""
+        """Period 1 holds one episode and is never itself a replay, per the floor above.
+        Its identity still lands in `seen`. Period 2 clears the quarter bar only because
+        of it. Without period 1, its overlap would be zero.
+        """
         plays = [
             _play(0, 9),  # period 1: {9} alone, not a replay
             _play(40, 9),
@@ -218,23 +222,23 @@ class TestReplayPeriodCount:
         gap = rewatch.SHOW_PERIOD_GAP_DAYS
         plays = [
             _play(0, 1),
-            _play(1, 2),  # period 1: {1, 2}, not a replay; seen = {1, 2}
+            _play(1, 2),  # period 1: {1, 2}, not a replay. seen = {1, 2}
             _play(100, 1),  # period 2 starts, one distinct episode so far
-            _play(100 + gap, 2),  # exactly the gap from the PREVIOUS play: shares period 2
+            _play(100 + gap, 2),  # exactly the gap from the PREVIOUS play, shares period 2
         ]
-        # Merged, period 2 is {1, 2}: full overlap with `seen`, and a replay.
+        # Merged, period 2 is {1, 2}, full overlap with `seen`, and a replay.
         assert rewatch.replay_period_count(plays) == 1
 
     def test_one_second_past_the_gap_splits(self) -> None:
         gap = rewatch.SHOW_PERIOD_GAP_DAYS
         plays = [
             _play(0, 1),
-            _play(1, 2),  # period 1: {1, 2}, not a replay; seen = {1, 2}
+            _play(1, 2),  # period 1: {1, 2}, not a replay. seen = {1, 2}
             _play(100, 1),  # period 2: {1} alone
-            _play(100 + gap, 2, seconds=1),  # one second past the gap: period 3, not 2
+            _play(100 + gap, 2, seconds=1),  # one second past the gap, period 3, not 2
         ]
-        # Split, periods 2 and 3 each hold one distinct episode: neither clears the floor,
-        # whatever their overlap with `seen`.
+        # Split. Periods 2 and 3 each hold one distinct episode, so neither clears the
+        # floor, whatever their overlap with `seen`.
         assert rewatch.replay_period_count(plays) == 0
 
     def test_unsorted_input_is_sorted_first(self) -> None:
@@ -247,7 +251,7 @@ class TestReplayPeriodCount:
         assert rewatch.replay_period_count(plays) == 1
 
     def test_a_weekly_airing_run_stays_one_period_and_is_not_a_replay(self) -> None:
-        """Ten weekly episodes, all new: SHOW_PERIOD_GAP_DAYS=30 bridges the 7-day airing
+        """Ten weekly episodes, all new. SHOW_PERIOD_GAP_DAYS=30 bridges the 7-day airing
         gaps into one period, and nothing in it repeats an earlier period."""
         plays = [_play(7 * i, i) for i in range(10)]
         assert rewatch.replay_period_count(plays) == 0
@@ -359,12 +363,13 @@ class TestMovieRewatchStatsEndToEnd:
 
 
 class TestTheOnlyUnqualifiedPlaysPairingThroughBuildFacts:
-    """A movie with plays, none of them qualified, is missing from ``movie_rewatch_stats``
-    -- the same "no rows" shape as a movie with no plays at all. ``snapshot.build_facts``
-    must read that as ``Known(0)`` viewings paired with an ``Absent`` last-play, never as
-    ``Unknown``: the mirror was read, and there is genuinely nothing to measure the last
-    qualified play from (rule 93). Exercised through the real fact builder, because the
-    pairing is a property of how the two observations are read together."""
+    """A movie with plays, none of them qualified, is missing from ``movie_rewatch_stats``,
+    the same "no rows" shape as a movie with no plays at all. ``snapshot.build_facts`` must
+    read that as ``Known(0)`` viewings paired with an ``Absent`` last-play, never as
+    ``Unknown``. The watch history was checked, and there is genuinely nothing to measure
+    the last qualified play from. This is exercised through the real fact builder, because
+    the pairing is a property of how the two observations are read together.
+    """
 
     async def test_zero_viewings_pairs_with_an_absent_last_play(self, engine: AsyncEngine) -> None:
         await _insert(
@@ -372,10 +377,10 @@ class TestTheOnlyUnqualifiedPlaysPairingThroughBuildFacts:
             rating_key=700,
             watched_at=NOW_EPOCH,
             watched_status=None,
-            percent_complete=20,  # abandoned: under half, no reported status
+            percent_complete=20,  # abandoned, under half, no reported status
         )
         stats = await rewatch.movie_rewatch_stats(engine, {700})
-        assert stats == {}  # confirms the premise: nothing qualified was recorded
+        assert stats == {}  # confirms nothing qualified was recorded
 
         item = RawItem(
             media_key="radarr:1:700",
@@ -404,9 +409,10 @@ class TestTheOnlyUnqualifiedPlaysPairingThroughBuildFacts:
 
 
 class TestShowRewatchStatsEndToEnd:
-    """``rewatch.show_rewatch_stats``: episode plays folded onto their show via
-    ``grandparent_rating_key``, and ``viewings`` derived from `replay_period_count`, not a
-    plain viewing count (docs/history/REWATCH_PLAN.md, TV section)."""
+    """``rewatch.show_rewatch_stats`` folds episode plays onto their show via
+    ``grandparent_rating_key``, and derives ``viewings`` from `replay_period_count`, not a
+    plain viewing count.
+    """
 
     async def test_plays_land_under_the_show_via_grandparent_key(self, engine: AsyncEngine) -> None:
         # Two replay periods of the same two episodes, mirroring
@@ -474,7 +480,7 @@ class TestShowRewatchStatsEndToEnd:
             grandparent_rating_key=2100,
             watched_at=NOW_EPOCH,
             watched_status=None,
-            percent_complete=10,  # abandoned: under half, no reported status
+            percent_complete=10,  # abandoned, under half, no reported status
             media_type="episode",
         )
 
@@ -535,12 +541,12 @@ class TestShowRewatchStatsEndToEnd:
 
 
 # ---------------------------------------------------------------------------
-# Stage 2: the rewatch-probability fit (#554)
+# Stage 2: the rewatch-probability fit
 # ---------------------------------------------------------------------------
 
 
 class TestFitBlocksBuckets:
-    """Bucket edges, half-open (lo, hi] (docs/history/REWATCH_PLAN.md, Stage 2 Fit)."""
+    """Bucket edges are half-open, written (lo, hi]."""
 
     def test_365_lands_in_the_first_bucket(self) -> None:
         curve = rewatch.fit_blocks([(365.0, True)] * 40)
@@ -564,7 +570,7 @@ class TestFitBlocksBuckets:
 
 class TestFitBlocksMonotoneMerge:
     def test_merge_fires_on_an_inversion_and_pools_n_k_and_range(self) -> None:
-        # Bucket 1 (0,365]: rate .2. Bucket 2 (365,548]: rate .8 -- higher, an inversion,
+        # Bucket 1 (0,365]: rate .2. Bucket 2 (365,548]: rate .8, higher, an inversion,
         # since the rate must not RISE with more dormancy.
         pairs = (
             [(100.0, False)] * 8
@@ -597,7 +603,8 @@ class TestBlockFor:
         assert rewatch.block_for(curve, 400.0) is None
 
     def test_dormancy_inside_a_dropped_gap_is_none(self) -> None:
-        # The 365-730 bucket had nothing in it and was dropped: a gap, not a merge target.
+        # The 365-730 bucket had nothing in it and was dropped. It is a gap, not a merge
+        # target.
         curve = (
             rewatch.RewatchBlock(lo_days=0.0, hi_days=365.0, n=40, k=10),
             rewatch.RewatchBlock(lo_days=730.0, hi_days=1095.0, n=40, k=5),
@@ -611,8 +618,9 @@ class TestBlockFor:
 
 
 class TestCohortBlock:
-    """`cohort_block` combines the lookup with the reach withhold (rule 104, and
-    docs/history/REWATCH_PLAN.md, Stage 2, "Floor")."""
+    """`cohort_block` combines the bucket lookup with the check that withholds a value
+    when the watch history does not reach back far enough to cover it.
+    """
 
     BLOCK = rewatch.RewatchBlock(lo_days=365.0, hi_days=548.0, n=40, k=10)
 
@@ -631,7 +639,7 @@ class TestCohortBlock:
 
 
 class TestTrainingPair:
-    """The population rule, pure (docs/history/REWATCH_PLAN.md, Stage 2 Fit)."""
+    """The population rule that decides which pairs feed the fit."""
 
     CUTOFF = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -647,8 +655,9 @@ class TestTrainingPair:
         assert pair == (400.0, True)
 
     def test_a_too_recent_added_date_with_no_play_is_withheld(self) -> None:
-        """Added inside the lookback year: fitting it against the added date would be a
-        negative dormancy, so it is withheld instead."""
+        """This item was added inside the lookback year. Fitting it against the added
+        date would produce a negative dormancy, so it is withheld instead.
+        """
         added_at = self.CUTOFF + timedelta(days=10)
         assert rewatch.training_pair(None, added_at=added_at, cutoff=self.CUTOFF) is None
 
@@ -671,11 +680,12 @@ class TestTrainingPair:
 
 
 class TestMovieRewatchOutcomesEndToEnd:
-    """`rewatch.movie_rewatch_outcomes`: any-completion plays, chunked, folded over merges."""
+    """`rewatch.movie_rewatch_outcomes` counts any-completion plays, chunked, folded over
+    merges."""
 
     async def test_a_key_outside_the_candidate_set_is_not_read(self, engine: AsyncEngine) -> None:
-        """The trap the fit must never fall into: a rating key the caller did not hand in
-        must never surface in the result, whatever rows exist for it."""
+        """This is the trap the fit must never fall into. A rating key the caller did not
+        hand in must never surface in the result, whatever rows exist for it."""
         await _insert(
             engine, rating_key=500, watched_at=NOW_EPOCH, watched_status=1.0, percent_complete=100
         )
@@ -687,8 +697,9 @@ class TestMovieRewatchOutcomesEndToEnd:
         assert outcomes == {}
 
     async def test_an_abandoned_play_still_counts(self, engine: AsyncEngine) -> None:
-        """Unlike `movie_rewatch_stats`, no `qualifies()` filter: an under-50%, no-status
-        play still sets the last play before cutoff (docs/history/REWATCH_PLAN.md, Stage 2 Fit)."""
+        """Unlike `movie_rewatch_stats`, this applies no `qualifies()` filter. An
+        under-50%, no-status play still sets the last play before cutoff.
+        """
         await _insert(
             engine, rating_key=600, watched_at=NOW_EPOCH, watched_status=None, percent_complete=10
         )
@@ -743,9 +754,10 @@ class TestMovieRewatchOutcomesEndToEnd:
 
 
 class TestShowRewatchOutcomesEndToEnd:
-    """`rewatch.show_rewatch_outcomes`: any-completion episode plays, chunked, folded onto
-    the show via `grandparent_rating_key` -- the show-level twin of
-    `TestMovieRewatchOutcomesEndToEnd` above."""
+    """`rewatch.show_rewatch_outcomes` counts any-completion episode plays, chunked, folded
+    onto the show via `grandparent_rating_key`. The show-level twin of
+    `TestMovieRewatchOutcomesEndToEnd` above.
+    """
 
     async def test_an_empty_candidate_set_short_circuits(self, engine: AsyncEngine) -> None:
         outcomes = await rewatch.show_rewatch_outcomes(engine, set(), cutoff=_at(NOW_EPOCH))
@@ -827,17 +839,18 @@ class TestShowRewatchOutcomesEndToEnd:
         assert outcomes == {}
 
     async def test_an_unqualified_play_still_counts(self, engine: AsyncEngine) -> None:
-        """Unlike `show_rewatch_stats`, no `qualifies()` filter: an under-50%, no-status
-        play still sets the last play before cutoff (docs/history/REWATCH_PLAN.md, Stage 2
-        Fit). The any-play contract, pinned explicitly since it is the one most likely to be
-        "fixed" wrongly later."""
+        """Unlike `show_rewatch_stats`, this applies no `qualifies()` filter. An
+        under-50%, no-status play still sets the last play before cutoff. This any-play
+        contract is pinned explicitly, since it is the one most likely to be "fixed"
+        wrongly later.
+        """
         await _insert(
             engine,
             rating_key=10,
             grandparent_rating_key=5400,
             watched_at=NOW_EPOCH,
             watched_status=None,
-            percent_complete=10,  # abandoned: under half, no reported status
+            percent_complete=10,  # abandoned, under half, no reported status
             media_type="episode",
         )
         outcomes = await rewatch.show_rewatch_outcomes(engine, {5400}, cutoff=_at(NOW_EPOCH + DAY))
@@ -900,8 +913,9 @@ def _scanned_facts(
 
 
 class TestRewatchCohortFacts:
-    """`snapshot.build_facts`'s ``rewatch_cohort_n``/``rewatch_cohort_k``: the states table
-    (docs/history/REWATCH_PLAN.md, Stage 2, "Population in snapshot.build_facts")."""
+    """The states table for `snapshot.build_facts`'s ``rewatch_cohort_n`` and
+    ``rewatch_cohort_k``.
+    """
 
     def test_no_plex_key_is_unknown(self) -> None:
         facts = _scanned_facts(rating_key=None, rewatch_curve=None)
@@ -931,7 +945,7 @@ class TestRewatchCohortFacts:
         assert facts.rewatch_cohort_k == Known(value=1, source="tautulli")
 
     def test_past_the_fitted_range_is_unknown(self) -> None:
-        # A narrow block near zero; the item's ancient added_at puts its dormancy well
+        # A narrow block near zero. The item's ancient added_at puts its dormancy well
         # past it.
         curve = (rewatch.RewatchBlock(lo_days=0.0, hi_days=1.0, n=40, k=10),)
         facts = _scanned_facts(rewatch_curve=curve)
@@ -939,8 +953,9 @@ class TestRewatchCohortFacts:
         assert isinstance(facts.rewatch_cohort_k, Unknown)
 
     def test_withheld_by_reach_is_unknown(self) -> None:
-        # An unclamped dormancy from a real play far outside the mirror's reach, and a
-        # block that covers it but starts past that reach -- the withhold's job.
+        # An unclamped dormancy from a real play far outside the watch history's reach,
+        # and a block that covers it but starts past that reach. This is what the
+        # withhold exists to catch.
         now = utcnow()
         curve = (rewatch.RewatchBlock(lo_days=200.0, hi_days=None, n=40, k=10),)
         facts = _scanned_facts(
@@ -962,8 +977,9 @@ def _known_cohort(block: rewatch.RewatchBlock) -> Facts:
 
 
 class TestRewatchOddsContext:
-    """`snapshot._rewatch_odds_context`: the explanation block's three states, and the
-    season lane's ``None`` (docs/history/REWATCH_PLAN.md, Stage 2, "Storage and display")."""
+    """The explanation block's three states for `snapshot._rewatch_odds_context`, and the
+    season lane's ``None``.
+    """
 
     def test_season_lane_is_none_whatever_the_block(self) -> None:
         facts = replace(
@@ -990,7 +1006,7 @@ class TestRewatchOddsContext:
     def test_measured_at_or_above_the_floor(self) -> None:
         block = rewatch.RewatchBlock(lo_days=365.0, hi_days=548.0, n=REWATCH_BLOCK_FLOOR_N, k=9)
         facts = _known_cohort(block)
-        # bound_pct is gates.wilson_upper(9, 30) * 100, rounded (#936) -- the same figure
+        # bound_pct is gates.wilson_upper(9, 30) * 100, rounded. It is the same figure
         # the gate itself compares, not the 30% point rate.
         assert snapshot._rewatch_odds_context(facts, block) == {
             "n": 30,
@@ -1010,12 +1026,12 @@ class TestRewatchOddsContext:
 
 
 class TestTheZeroDormancyEdge:
-    """A title played the day of the cutoff (dormancy exactly 0) is real data, not a gap.
+    """A title played the day of the cutoff, dormancy exactly 0, is real data, not a gap.
 
-    Found on live data during stage 2 verification: 18 of ~3,500 candidates sat at exactly
-    zero days and a strict (0, 365] first bucket dropped them from the fit while
-    ``block_for`` sent their panel to the no-history state. The first bucket is closed at
-    zero in both places, and rule 104 holds the two edges together.
+    About 18 of every 3,500 candidates sit at exactly zero days. A strict (0, 365] first
+    bucket would drop them from the fit, while ``block_for`` would send their panel to the
+    no-history state. The first bucket is closed at zero in both places, so the two edges
+    agree.
     """
 
     def test_a_zero_dormancy_pair_trains_the_first_bucket(self) -> None:

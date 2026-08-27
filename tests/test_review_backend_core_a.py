@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Regressions from the backend-core-A review pass.
+"""Security-sensitive edge cases in credential storage, sessions, and log redaction.
 
-These cover the security-relevant edges the review found: the at-rest key must be
-stretched *and* stay backward-compatible with data written under the old derivation,
-a key rotation must actually work, a password change must invalidate other sessions,
-and the log redactor must reach secrets nested below the top level.
+These check that the at-rest key is stretched but still reads data written under the old
+derivation, that a key rotation actually works, that a password change invalidates other
+sessions, and that the log redactor reaches secrets nested below the top level.
 """
 
 from __future__ import annotations
@@ -44,8 +43,8 @@ class TestSecretBoxKdf:
         assert box.decrypt(box.encrypt("sonarr-api-key")) == "sonarr-api-key"
 
     def test_data_written_with_the_old_sha256_derivation_still_decrypts(self) -> None:
-        """The KDF changed from unsalted SHA-256 to scrypt. An upgrade must not brick
-        credentials written under the old derivation, or every integration breaks
+        """Data encrypted under the old SHA-256 derivation must still decrypt under the new
+        scrypt one. If an upgrade breaks this, every integration's credentials fail
         silently on the next scan."""
         secret = "a-strong-operator-secret-key"
         legacy_ciphertext = Fernet(_derive_legacy_fernet_key(secret)).encrypt(b"legacy").decode()
@@ -54,7 +53,8 @@ class TestSecretBoxKdf:
         assert box.decrypt(legacy_ciphertext) == "legacy"
 
     def test_a_key_rotation_decrypts_data_written_under_the_old_key(self) -> None:
-        """The supported rotation: new key current, old key retired-but-still-readable."""
+        """The supported rotation keeps the new key current while the old key stays
+        readable during the transition."""
         old_box = SecretBox("old-key-value")
         old_ciphertext = old_box.encrypt("radarr-key")
 
@@ -62,8 +62,8 @@ class TestSecretBoxKdf:
         assert new_box.decrypt(old_ciphertext) == "radarr-key"
 
     def test_a_fresh_key_with_no_old_key_cannot_decrypt_prior_data(self) -> None:
-        """States the failure the rotation path exists to prevent: switch the key to a
-        fresh value *without* supplying the old one and prior credentials are lost."""
+        """Switching to a fresh key without supplying the old one loses every credential
+        encrypted under it. This is the failure the rotation path exists to prevent."""
         prior = SecretBox("old-key-value").encrypt("plex-token")
         with pytest.raises(ValueError):
             SecretBox("brand-new-key").decrypt(prior)
@@ -89,16 +89,21 @@ class TestOldKeys:
 
 class TestKeyFilePermissions:
     def test_the_generated_key_file_is_owner_only(self, tmp_path: Path) -> None:
-        """Created 0600 from the outset, never world-readable then chmod-ed."""
+        """The key file is created at 0600 from the start.
+
+        Creating it world-readable and then chmod-ing it after would leave a brief window
+        where another process could read the key.
+        """
         resolve_secret_key(_settings(tmp_path))
         mode = stat.S_IMODE(key_file_path(_settings(tmp_path)).stat().st_mode)
         assert mode == 0o600, oct(mode)
 
     def test_a_blank_file_is_refused_rather_than_replaced(self, tmp_path: Path) -> None:
-        """This used to mint a replacement key and carry on, which reads as recovery and is
-        the opposite: the file decrypts every stored service credential, so a new one makes
-        all of them unreadable in silence (S-5). Permissions are moot when nothing is
-        written; what matters is that the file is left for the operator to fix.
+        """A blank key file is refused, never silently replaced with a new one.
+
+        This file decrypts every stored service credential, so minting a replacement would
+        make all of them unreadable without any warning. The file is left in place for the
+        operator to fix by hand.
         """
         s = _settings(tmp_path)
         s.ensure_data_dir()
@@ -120,8 +125,8 @@ class TestPasswordChangeRevokesSessions:
     async def test_admin_password_change_keeps_the_acting_session_and_revokes_others(
         self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        """The intuitive 'reset my password after a suspected theft' must actually evict
-        the other cookie, while not logging the operator out of the tab they used."""
+        """After a password change following a suspected theft, the other session's cookie
+        must actually be evicted, while the session that made the change stays logged in."""
         from reaper.services.admin_password import set_password
 
         async with async_factory() as session:

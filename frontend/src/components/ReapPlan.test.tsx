@@ -23,9 +23,9 @@ vi.mock("../api", async (importOriginal) => ({
 
 // The breakdown inside the plan reads the unmeasured allowance (["profile"], via
 // useHoldsBackUnmeasured) and the scan poll (["scanStatus"]) on its own; the page itself reads
-// ["setup"] to say what would turn a real run away. Without them it rendered its "we could not
-// read the allowance" branch, which drops the title count from the headline -- silently, under
-// tests that pass. Rule 135.
+// ["setup"] to say what would turn a real run away. Without these mocks it renders its "we
+// could not read the allowance" branch, which drops the title count from the headline silently,
+// even though the test still passes.
 beforeEach(() => {
   apiMock.profile.mockResolvedValue(DEFAULT_PROFILE);
   apiMock.scanStatus.mockResolvedValue(IDLE_SCAN);
@@ -40,15 +40,16 @@ const run = {
   total_bytes: 1024 ** 3,
   held_back_unknown_size: 0,
   confirmation_phrase: "REAP 2 ITEMS 1 GB",
-  // The history list formats this through `date()`, and the server always sends it
-  // (`approved_at` is non-nullable and serialized with `isoformat()`). The `as Run` cast
-  // was hiding its absence here.
+  // The history list formats this through `date()`. The server always sends this field, since
+  // `approved_at` is non-nullable and serialized with `isoformat()`. Leaving it out here would
+  // go unnoticed under the `as Run` cast, so it is filled in deliberately.
   approved_at: "2026-01-02T00:05:00+00:00",
   step_count: 2,
   // Two steps, because `item_count` is 2: a run carrying a count with no steps under it is a
-  // plan the planner cannot build, and the page renders `steps` unconditionally, so an empty
-  // one drew a `<thead>` over an empty `<tbody>` -- a headers-only data table, which axe files
-  // as undecided rather than as a failure. The audit below was certifying that shape.
+  // plan the planner cannot build. The page renders `steps` unconditionally, so an empty list
+  // would draw a `<thead>` over an empty `<tbody>`, a headers-only data table that axe reports
+  // as undecided rather than as a failure. The accessibility check below depends on this
+  // fixture having real rows.
   steps: [
     { media_key: "m:1", ordinal: 0, kind: "delete_files", state: "planned", is_canary: true },
     { media_key: "m:2", ordinal: 1, kind: "delete_files", state: "planned", is_canary: false },
@@ -115,10 +116,9 @@ describe("ReapPlan staleness", () => {
       will_reap_bytes: 1024 ** 3,
       will_reap_unknown: 0,
       movies: 2,
-      // Both `_unknown` shares are required, and omitting them is invisible: `ReapBreakdown`
-      // subtracts them from the totals beside it, so `undefined` rendered "NaN movies, NaN TV
-      // seasons" behind ten passing tests. Rule 135, reached through the arrow the mock hands
-      // React Query rather than through a missing method.
+      // Both `_unknown` fields are required. Omitting one is invisible here because
+      // `ReapBreakdown` subtracts them from the totals beside it, so a missing value renders
+      // "NaN movies, NaN TV seasons" while other assertions keep passing.
       movies_unknown: 0,
       seasons: 0,
       seasons_unknown: 0,
@@ -136,12 +136,12 @@ describe("ReapPlan staleness", () => {
   });
 
   it("counts the rows it is not showing off step_count, never off the page it was sent", async () => {
-    // The response carries a WINDOW of the journal, so the rows this line is counting are not
-    // in it. Subtracting the page from itself reads zero, the line disappears, and the operator
-    // sees 50 rows with nothing saying the plan is 500 -- the copy failing in the reassuring
-    // direction, beside a destructive action (rule 62). Driven: `steps.length` here renders
-    // "NaN more steps" against this fixture, since a windowed response is exactly the case
-    // where the two numbers differ.
+    // The response carries a window of the journal, so the rows this line counts are not all of
+    // them. Subtracting the page's own length from itself would read zero, making the "more
+    // steps" line disappear, so the operator would see 50 rows with nothing saying the plan is
+    // actually 500. That is the wrong direction to fail beside a destructive action. Using
+    // `steps.length` here instead renders "NaN more steps" against this fixture, since a
+    // windowed response is exactly the case where the two numbers differ.
     apiMock.createRun.mockResolvedValue({ ...run, step_count: 500 });
     apiMock.run.mockResolvedValue({ ...run, step_count: 500 });
     await buildPlan();
@@ -174,9 +174,9 @@ describe("ReapPlan staleness", () => {
     expect(await within(summary).findByText(/couldn't check/i)).toBeInTheDocument();
   });
 
-  // #375. Both of these turn true without a press -- a newer scan landing under a plan already
-  // on screen, or a read that would not answer -- so both are read in document order rather
-  // than interrupting whoever is working through the ledger above them.
+  // Both of these can turn true without a press: a newer scan landing under a plan already on
+  // screen, or a read that never answers. So both are read in document order rather than
+  // interrupting whoever is working through the ledger above them.
   it("does not interrupt with the older-scan warning", async () => {
     apiMock.latestSnapshot.mockResolvedValue(snapshot);
     const { summary } = await buildPlan();
@@ -192,10 +192,10 @@ describe("ReapPlan staleness", () => {
   });
 
   it("does not dress the freshness check itself as a warning while it is still running", async () => {
-    // This caption used to be the pending branch of the notice below it, so the first thing
-    // that notice said was "Warning: Checking whether this plan came from the latest scan…" --
-    // a severity claim over a spinner -- and it spoke a second time when the query settled and
-    // swapped its own children in place. A loading affordance is markup (#332).
+    // If this caption were the pending branch of the notice below it, the notice would open by
+    // announcing "Warning: Checking whether this plan came from the latest scan…", a severity
+    // claim over a spinner, and then speak a second time once the query settles and swaps its
+    // children in. A loading affordance should be plain markup, not a warning.
     let settle: (value: Snapshot) => void = () => {};
     apiMock.latestSnapshot.mockReturnValue(
       new Promise<Snapshot>((resolve) => {
@@ -243,9 +243,9 @@ describe("the plan the page is showing", () => {
   });
 
   it("says why a step failed, on a plan reloaded after the run that failed it", async () => {
-    // #260: `error` is durable and the live report is not, so this is the state a restart
-    // leaves -- the run is read back from the database alone. Before, the row said "failed"
-    // and the operator had no way to reach the reason at all.
+    // `error_reason` is durable and the live report is not, so this is the state a restart
+    // leaves: the run is read back from the database alone, with no in-memory report to fall
+    // back on.
     const reason = "Radarr accepted the delete; not confirmed. Reaper could not reach it again.";
     const failed = {
       ...run,
@@ -271,8 +271,8 @@ describe("the plan the page is showing", () => {
   });
 
   it("says why a stopped run stopped, on the row that outlives the report", async () => {
-    // The durable reason's only surface. The report panel is dry-run state and the reap
-    // sheet reads the in-memory status, so a reload leaves this row holding it alone (#342).
+    // The durable reason's only surface: the report panel holds dry-run state, and the reap
+    // sheet reads the in-memory status, so a reload leaves this row holding the reason alone.
     const reason = "Over the size cap for one run. Nothing was sent.";
     apiMock.runs.mockResolvedValue([
       { ...run, state: "aborted", aborted_reason: { k: "legacy", p: { text: reason } } },
@@ -290,8 +290,8 @@ describe("the plan the page is showing", () => {
   });
 
   it("stops offering Execute once the run it shows has been spent", async () => {
-    // The plan is read through the cache, not captured: a run that has since completed
-    // must not keep a live Execute over it (B-15).
+    // The plan is read through the cache, not captured once: a run that has since completed
+    // must not keep a live Execute button over it.
     apiMock.run.mockResolvedValue({ ...run, state: "completed" });
     const { summary } = await buildPlan();
     await waitFor(() =>
@@ -300,9 +300,9 @@ describe("the plan the page is showing", () => {
   });
 
   it("says so when the plan behind a history row can't be loaded", async () => {
-    // Everything about a plan -- the phrase, the count, Execute, the steps -- hangs off this
-    // one query, so a failed fetch used to unmount all of it with no message and no retry, and
-    // clicking a history row simply looked like it did nothing (rule 36).
+    // Everything about a plan (the phrase, the count, Execute, the steps) hangs off this one
+    // query, so a failed fetch would otherwise unmount all of it with no message and no retry,
+    // and clicking a history row would look like it did nothing.
     apiMock.run.mockRejectedValue(new Error("the server dropped it"));
     renderWithProviders(
       <ReapPlan onGoToDeletion={() => {}} onGoToPlexSettings={() => {}} onGoToReview={() => {}} />,
@@ -310,15 +310,15 @@ describe("the plan the page is showing", () => {
     const person = userEvent.setup();
     await person.click(await screen.findByRole("button", { name: `#${run.id}` }));
 
-    // By ROLE, not by text: the message was there before and still said nothing out loud. It
-    // was the one hand-rolled `.notice` the sweep missed, because it is written with a ternary
-    // className and the hygiene ban could parse only a quoted literal (rule 145).
+    // Checked by role, not by text, since this message is not announced out loud. It is written
+    // with a ternary className, which a source-text ban on hand-rolled `.notice` classes cannot
+    // parse, since the ban can only match a quoted literal.
     expect(await screen.findByRole("alert")).toHaveTextContent(/couldn't load this plan/i);
   });
 
   it("won't offer to build a plan from a scan that came back incomplete", async () => {
     // The planner refuses a degraded snapshot outright, so the page says so up front rather
-    // than trading the click for a 422 (PR-8).
+    // than trading the click for a 422 response.
     apiMock.latestSnapshot.mockResolvedValue({
       ...snapshot,
       id: run.snapshot_id,
@@ -335,9 +335,9 @@ describe("the plan the page is showing", () => {
   });
 
   it("offers the help page here too, when the scan named one", async () => {
-    // `ScanBar` renders the same pair off the same field (rule 72). Pinned at both call sites
-    // rather than in the shared component alone: what can go wrong here is this page not
-    // passing the field, which a component test cannot see.
+    // `ScanBar` renders the same pair off the same field. This is pinned at both call sites
+    // rather than only in the shared component, since what can go wrong here is this page
+    // failing to pass the field, which a test of the shared component alone cannot see.
     apiMock.latestSnapshot.mockResolvedValue({
       ...snapshot,
       id: run.snapshot_id,
@@ -405,9 +405,9 @@ describe("what a practice run reports", () => {
   });
 
   it("says what was walked, and never leads with a zero it fixes by construction", async () => {
-    // The old summary led with "0 souls were actually reaped", which is zero for every
-    // practice run there has ever been and so proves nothing, then called the per-item
-    // outcomes "steps" -- a count that disagreed with the journalled steps below it (I-1).
+    // A summary leading with "0 souls were actually reaped" would be zero for every practice
+    // run there has ever been, so it proves nothing. Calling the per-item outcomes "steps"
+    // would also disagree with the journalled step count shown below it.
     apiMock.dryRun.mockResolvedValue(report());
     const { person } = await buildPlan();
 
@@ -433,10 +433,10 @@ describe("what a practice run reports", () => {
   });
 });
 
-// #383. Until this shipped, the ONLY place in the app that said a run needs Plex was the 409
-// the execute route answers with -- which fires after the operator has picked what to delete,
-// armed the host and typed the whole confirmation phrase. The refusal is correct and stays;
-// these pin that the same fact is now on screen above the button instead of only behind it.
+// The 409 the execute route answers with is the route's own refusal, and it fires only after
+// the operator has picked what to delete, armed the host, and typed the whole confirmation
+// phrase. That refusal is correct and stays. These tests pin that the same fact also appears on
+// screen above the button, not only behind it.
 describe("what would turn a real run away", () => {
   beforeEach(() => {
     apiMock.safety.mockResolvedValue({ destructive_enabled: false });
@@ -469,7 +469,7 @@ describe("what would turn a real run away", () => {
     const { summary } = await buildPlan();
 
     expect(summary).toHaveTextContent(/Reaper can't remove anything until Plex is connected/i);
-    // Beside the control that fixes it (rule 42), and inside the summary that carries Execute
+    // This sits beside the control that fixes it, and inside the summary that carries Execute,
     // rather than somewhere further down the page.
     expect(
       within(summary).getByRole("button", { name: /connect plex in settings/i }),
@@ -488,8 +488,8 @@ describe("what would turn a real run away", () => {
   });
 
   it("says it could not check, rather than going quiet, when the read fails", async () => {
-    // Rule 17/36. Silence here reads as "nothing is missing" over a run the server is about
-    // to refuse, which is the failure this whole feature exists to remove.
+    // Silence here would read as "nothing is missing" over a run the server is about to
+    // refuse, which is the failure this whole feature exists to remove.
     apiMock.setupStatus.mockRejectedValue(new Error("nope"));
     const { summary } = await buildPlan();
     expect(summary).toHaveTextContent(/couldn't check whether Plex and Tautulli are connected/i);

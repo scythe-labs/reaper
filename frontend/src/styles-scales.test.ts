@@ -3,16 +3,16 @@
 //
 // The scales hold, and the iOS zoom floor cannot be outranked.
 //
-// Every one of these guards a claim that is otherwise only a comment. The type and weight
-// scales are worth nothing the moment somebody writes a literal beside them -- that is exactly
-// how there came to be 38 sizes and 12 weights -- and the drift is invisible in review because
-// one `font-size: 0.83rem` reads perfectly reasonable on its own line.
+// These tests guard claims that would otherwise live only in a comment. The type and weight
+// scales are worth nothing the moment somebody writes a literal beside them, which is how
+// drift accumulates. That drift is invisible in review, because one `font-size: 0.83rem` reads
+// perfectly reasonable on its own line.
 //
-// The last one is the sharpest: `#root input { font-size: 16px }` in 01-base.css is the only
+// The last test is the sharpest. `#root input { font-size: 16px }` in 01-base.css is the only
 // thing standing between a phone operator and Safari zooming the page every time they focus a
-// field, which unpins the fixed app shell and leaves it panning. Its comment claims the ID
-// "covers future inputs" and until this file nothing checked that -- a reassuring sentence with
-// no gate under it, on a bug that has already been fixed once (rule 144).
+// field, which unpins the fixed app shell and leaves it panning. Its own comment claims the ID
+// "covers future inputs", and until this file nothing checked that claim. A comment that only
+// reassures, with no test enforcing it, is exactly the risk this suite exists to close.
 
 import { describe, expect, it } from "vitest";
 
@@ -25,8 +25,8 @@ const CODE = CSS.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
  *
  *  The dark palette lives at `@media (prefers-color-scheme: dark) { :root { … } }`, so the
  *  rule's own selector is a bare `:root` and says nothing about which theme it is. What
- *  distinguishes the three blocks is the context, and a matcher blind to it collapses them into
- *  one and then agrees with itself (rule 147). */
+ *  distinguishes the three blocks is the context, and a matcher blind to it would collapse them
+ *  into one and then agree with itself. */
 function rootBlocks(): { label: string; names: Set<string> }[] {
   const out: { label: string; names: Set<string> }[] = [];
   let context = "";
@@ -62,7 +62,7 @@ function specificity(sel: string): [number, number, number] {
   const ids = (s.match(/#[\w-]+/g) ?? []).length;
   const classes = (s.match(/\.[\w-]+|\[[^\]]+\]|:(?!:)(?!not\b)[\w-]+(\([^)]*\))?/g) ?? []).length;
   const types = (s.match(/(^|\s)[a-z][\w-]*/g) ?? []).length;
-  // `:not(...)` contributes its argument's specificity, not its own.
+  // `:not(...)`'s specificity comes from what is inside the parentheses.
   let extra: [number, number, number] = [0, 0, 0];
   for (const n of s.matchAll(/:not\(([^)]*)\)/g)) {
     const inner = specificity(n[1] ?? "");
@@ -95,9 +95,9 @@ function declarationsOf(prop: string): [string, string, number][] {
 
 describe("the type and weight scales", () => {
   it("has no font-size written as a bare rem literal", () => {
-    // A literal here is not a smaller version of a token; it is the drift itself. The one
-    // allowed non-token is `0.85em` on `code`, which is relative to whatever it sits inside --
-    // a rem step would change what it means -- and the 16px iOS floor below.
+    // A literal here is not a smaller version of a token. It is the drift itself. The one
+    // allowed non-token is `0.85em` on `code`, which is relative to whatever it sits inside, so
+    // a rem step would change what it means. The other exception is the 16px iOS floor below.
     const stray = declarationsOf("font-size")
       .filter(([sel]) => !sel.includes(":root"))
       .filter(([, v]) => /[0-9]rem\b/.test(v))
@@ -120,26 +120,23 @@ describe("the type and weight scales", () => {
     const used = new Set(
       [...CODE.matchAll(/var\((--(?:text|weight|space)-[a-z0-9]+)/g)].map((m) => m[1]),
     );
-    // An undefined custom property is rule 18's blocker and fails silently: the declaration is
-    // dropped and the element inherits, which looks like a layout bug three files away.
+    // An undefined custom property fails silently. The declaration is dropped and the element
+    // inherits, which looks like a layout bug three files away.
     expect([...used].filter((u) => !declared.has(u ?? ""))).toEqual([]);
   });
 });
 
 describe("the space scale", () => {
-  // Spacing here is a continuum: 0.3 through 0.6rem are all heavily used and 0.8px apart. So the
-  // tokens went in only where a declaration already sat exactly on a step and nothing moved, and
-  // the rest are still literals. This ratchet is what makes those a debt: snapping one to its
-  // nearest step is a visual change wanting an eye on it, a file at a time, and the number comes
-  // down each time that happens.
+  // Spacing here is a continuum. 0.3 through 0.6rem are all heavily used and only 0.8px apart,
+  // so tokens went in only where a declaration already sat exactly on a step and nothing
+  // moved. The rest are still literals, and that is a real debt. Snapping one to its nearest
+  // step is a visual change that wants an eye on it, one file at a time, and the number below
+  // drops each time that happens.
   //
-  // It may only ever fall. Raising it means new drift was written, which the scale exists to
+  // It may only ever fall. Raising it means new drift was written, which this scale exists to
   // stop.
   //
-  // Take the number by running this test. Seeding it from the migration script's count left 173
-  // declarations of slack -- that script counted every declaration it declined to rewrite,
-  // including the ones holding no rem at all -- and three freshly-written off-scale values then
-  // changed nothing, so the ratchet sat green through a mutation planted to break it.
+  // Read the current number by running this test and taking whatever it reports.
   const OFF_SCALE_CEILING = 294;
 
   it("does not grow the number of off-scale spacing literals", () => {
@@ -159,18 +156,20 @@ describe("the space scale", () => {
 
 describe("the theme blocks", () => {
   it("declare the same token set in all three", () => {
-    // The palette is stated three times -- the prefers-color-scheme block and both data-theme
-    // blocks -- because the attribute selector has to outrank the media query in BOTH
+    // The palette is stated three times. It appears in the prefers-color-scheme block and both
+    // data-theme blocks, because the attribute selector has to outrank the media query in both
     // directions, which is what lets "Light" win on a dark device. A token added to one and
-    // forgotten in another does not fail: it falls through to the :root default, so the app
-    // renders a light-mode color on a dark page for exactly the one value nobody re-stated.
-    // The file's own comment asks for the mirroring; this is what checks it.
+    // forgotten in another does not fail loudly. It falls through to the :root default instead,
+    // so the app renders a light-mode color on a dark page for exactly the one value nobody
+    // re-stated. The stylesheet's own comment asks for this mirroring, and this test is what
+    // checks it.
     const blocks = rootBlocks();
     const themed = blocks.filter((b) =>
       /prefers-color-scheme: dark|data-theme="(dark|light)"/.test(b.label),
     );
-    // Three: the media query, and one forced block per theme. Pinned as a count so a block
-    // that stops matching the walk fails here rather than quietly leaving the comparison.
+    // This expects three blocks, the media query and one forced block per theme. The count is
+    // pinned so a block that stops matching the walk fails here, rather than quietly dropping
+    // out of the comparison.
     expect(themed.map((b) => b.label)).toHaveLength(3);
 
     const union = new Set(themed.flatMap((b) => [...b.names]));
@@ -197,11 +196,11 @@ describe("the iOS no-zoom floor", () => {
   });
 
   it("cannot be outranked by any other rule sizing a field", () => {
-    // The guard wins on being an ID selector while every control rule is class-based: an ID
-    // beats any number of classes, so file order and media queries are both irrelevant and it
-    // can sit in the FIRST of 34 files and still beat the last. A future rule carrying an ID,
-    // or a second `#root` qualifier, would take a field back under the floor in silence. This
-    // is the half a reader cannot check by eye.
+    // The guard wins by being an ID selector while every control rule is class-based. An ID
+    // beats any number of classes, so file order and media queries are both irrelevant, and the
+    // guard could sit in the first stylesheet file and still beat the last. A future rule
+    // carrying an ID, or a second `#root` qualifier, would take a field back under the floor in
+    // silence. That is the half a reader cannot check by eye.
     const guard = declarationsOf("font-size").find(([sel]) => sel.includes("#root input"));
     expect(guard).toBeDefined();
     const guardSpec = specificity((guard as [string, string, number])[0].split(",")[0] ?? "");
@@ -220,10 +219,10 @@ describe("the iOS no-zoom floor", () => {
   });
 
   it("names every field the React root does not contain", () => {
-    // The guard is scoped to `#root`, so anything portaled to <body> is outside it and has to
-    // be named alongside. Exactly one component portals today -- the spare-length menu -- and
-    // it is named. A second portal that renders a field would be silently uncovered, so this
-    // pins the count rather than the name (rule 145): a new portal fails here and has to be
+    // The guard is scoped to `#root`, so anything portaled to `<body>` is outside it and has to
+    // be named alongside. Exactly one component portals today, the spare-length menu, and it is
+    // named here. A second portal that renders a field would otherwise go silently uncovered,
+    // so this pins the count rather than the name. A new portal fails here and has to be
     // looked at, whether or not it turns out to hold an input.
     const guard = declarationsOf("font-size").find(([sel]) => sel.includes("#root input"));
     expect((guard as [string, string, number])[0]).toContain(".dur-menu input");
@@ -232,8 +231,8 @@ describe("the iOS no-zoom floor", () => {
 
 describe("the stylesheet walk itself", () => {
   it("reads every file the barrel loads", () => {
-    // Rule 118's shape for a scanner: these guards are worth nothing if the text they scan is
-    // empty, and a walk that reads nothing passes every assertion above.
+    // These guards are worth nothing if the text they scan is empty, since a walk that reads
+    // nothing would pass every assertion above.
     expect(FILES.length).toBeGreaterThan(30);
     expect(CODE.length).toBeGreaterThan(200_000);
     expect(declarationsOf("font-size").length).toBeGreaterThan(250);

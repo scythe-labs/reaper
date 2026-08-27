@@ -34,7 +34,7 @@ const ABOUT: About = {
 
 /** The server's own id for the job (`DEFAULT_MAINTENANCE_CRONS` in services/scheduler.py, and
  *  `UPDATE_CHECK_ID` in JobsPanel.tsx). A fixture that misspells it renders an ordinary row and
- *  the branch this file is about is unreachable, green either way (rule 141). */
+ *  the branch this file is about is unreachable, green either way. */
 const UPDATE_JOB = "check_for_updates";
 
 function schedule(job: Partial<ScheduledJob>): Schedule {
@@ -70,8 +70,8 @@ beforeEach(() => {
 /** Stands in for the account chip in the app's header (`UserMenu.tsx`), which holds the
  *  same `["update"]` query on every page and is therefore what turns an invalidation into a
  *  real re-ask. Settings does not mount the chip, so without this the query has no observer
- *  here and the invalidation would only mark it stale -- a test that passes whether or not the
- *  row invalidates anything (rule 141). */
+ *  here and the invalidation would only mark it stale, passing whether or not the row
+ *  invalidates anything. */
 function UpdateProbe() {
   useUpdateStatus();
   return null;
@@ -106,12 +106,11 @@ describe("the update check's Jobs row", () => {
     apiMock.schedule.mockResolvedValue(schedule({ running: true }));
     const queryClient = renderJobs();
     // Waits on the row the server list produced, so the transition below is one this mount
-    // actually watched rather than a state it was rendered into (rule 137).
+    // actually watched rather than a state it was rendered into.
     expect(await screen.findByText("Check for updates")).toBeInTheDocument();
     await waitFor(() => expect(apiMock.update).toHaveBeenCalledTimes(1));
 
-    // The row itself, with the copy this change adds: the title, the description and the
-    // status line the run writes into.
+    // The row itself: the title, the description, and the status line the run writes into.
     await expectNoA11yViolations();
 
     await finishTheRun(queryClient);

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""GuardedTransport and the Tautulli allow-list: the tests that matter most in the
-suite, the thing standing between a bug and someone's media library."""
+"""GuardedTransport and the Tautulli allow-list are the tests that matter most in the suite.
+They stand between a bug and someone's media library."""
 
 from __future__ import annotations
 
@@ -18,10 +18,10 @@ from reaper.clients.base import GuardedTransport, IntegrationError, SafetyViolat
 from reaper.clients.tautulli import READ_COMMANDS, TautulliClient
 from reaper.config import RuntimeSafety
 
-# The migrated clients speak httpx2; respx cannot intercept an httpx2 client, so the mocks
-# ride the ``httpx2_mock`` fixture (a respx.Router retargeted at httpcore2). ``assert_all_called``
-# is off to match the old ``@respx.mock`` default: some tests register a route a refusal
-# path never reaches.
+# The migrated clients speak httpx2. respx cannot intercept an httpx2 client, so the mocks
+# ride the ``httpx2_mock`` fixture, a respx.Router retargeted at httpcore2.
+# ``assert_all_called`` is off to match respx's own ``@respx.mock`` default, since some tests
+# register a route that a refusal path never reaches.
 pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
 READ_ONLY = RuntimeSafety(destructive_enabled=False)
@@ -72,9 +72,9 @@ class TestMutationsAreBlocked:
 
 
 class TestTlsVerificationReachesTheTransport:
-    """The per-instance "check the server's certificate" switch is only real if the flag
-    survives all the way to the httpx2 transport. Pin both directions, and pin the
-    default: nothing may quietly construct an unverified client."""
+    """The per-instance "check the server's certificate" switch only works if the flag
+    survives all the way to the httpx2 transport. This pins both directions, plus the
+    default. Nothing may quietly construct an unverified client."""
 
     @staticmethod
     def _spy_on_transport(monkeypatch: pytest.MonkeyPatch, seen: list[object]) -> None:
@@ -107,11 +107,11 @@ class TestTlsVerificationReachesTheTransport:
 
 
 class TestClosingAClientReleasesItsSockets:
-    """Rule 34 says someone owns the close. ``scan_runner`` enters or push-callbacks every
-    Radarr, Sonarr, Tautulli and Seerr client it builds -- and every one of those closes
-    released nothing, because ``AsyncClient.aclose()`` closes exactly one thing (its
-    transport), that transport was the guard, and ``AsyncBaseTransport.aclose`` is a no-op
-    the guard inherited. The real connection pool was never told."""
+    """Someone must own closing the connection. ``scan_runner`` enters or push-callbacks
+    every Radarr, Sonarr, Tautulli and Seerr client it builds, and each close must actually
+    release its sockets. ``AsyncClient.aclose()`` only closes its own transport, which here
+    is the guard, and ``AsyncBaseTransport.aclose`` is a no-op by default. Without an
+    override, closing the client would never reach the real connection pool."""
 
     async def test_the_wrapped_transport_is_closed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         closed: list[bool] = []
@@ -148,9 +148,9 @@ class TestClosingAClientReleasesItsSockets:
 
 class TestTypedMutationMethods:
     """The destructive *arr calls the executor actually issues. Each goes through
-    ``_mutate``, so it declares intent to the guard -- and each is still refused unless
-    deletion is enabled on the host. The parameters differ per *arr, and getting them
-    wrong deletes without excluding (Radarr) or fails to prune (Sonarr)."""
+    ``_mutate``, so it declares intent to the guard. Each is still refused unless deletion
+    is enabled on the host. The parameters differ per *arr, and getting them wrong deletes
+    without excluding (Radarr) or fails to prune (Sonarr)."""
 
     async def test_radarr_delete_movie_sends_the_right_params_when_armed(
         self, httpx2_mock: respx.Router
@@ -163,7 +163,8 @@ class TestTypedMutationMethods:
 
         assert route.called
         query = route.calls.last.request.url.params
-        # Radarr's spelling, and both true: delete the files, add the import exclusion.
+        # Radarr's own parameter names, both set true, to delete the files and add the
+        # import exclusion.
         assert query["deleteFiles"] == "true"
         assert query["addImportExclusion"] == "true"
         assert "addImportListExclusion" not in query  # never Sonarr's
@@ -214,11 +215,11 @@ class TestTypedMutationMethods:
 
 
 class TestTautulliAllowList:
-    """HTTP-method filtering is not sufficient for Tautulli.
+    """Tautulli needs more than HTTP-method filtering to stay read-only.
 
     Its API is GET /api/v2?cmd=..., its key is full admin, and delete_library,
-    delete_history and restart are all GETs. GuardedTransport would wave every one
-    of them straight through.
+    delete_history and restart are all GETs. GuardedTransport alone would let every one of
+    them through.
     """
 
     @pytest.mark.parametrize(
@@ -242,7 +243,7 @@ class TestTautulliAllowList:
             with pytest.raises(SafetyViolationError, match="read-only allow-list"):
                 await client.call(cmd)
 
-        # The decisive assertion: the request was never even constructed.
+        # The important check is that the request was never even constructed.
         assert not route.called
 
     async def test_destructive_commands_are_refused_even_when_deletion_is_enabled(
@@ -275,7 +276,7 @@ class TestTautulliAllowList:
 
     async def test_an_error_envelope_becomes_an_exception(self, httpx2_mock: respx.Router) -> None:
         """Tautulli returns HTTP 200 with result='error'. Read naively, a failed
-        history query would look like an empty history -- i.e. 'never watched'."""
+        history query would look the same as an empty one, meaning 'never watched'."""
         httpx2_mock.get("https://tautulli.test/api/v2").mock(
             return_value=httpx.Response(
                 200, json={"response": {"result": "error", "message": "Invalid apikey"}}
@@ -303,7 +304,7 @@ class TestArrDeletionParametersDiffer:
 
 
 class TestErrorClassification:
-    """A wrong key and a service outage must not be treated alike: invalidating
+    """A wrong key and a service outage must not be treated alike. Invalidating
     credentials on a transient 500 would have the owner re-entering keys during
     every blip."""
 
@@ -322,16 +323,15 @@ class TestErrorClassification:
 
 
 class TestTheArrRefusalIsOnTheRecordToo:
-    """Rule 72's half of ``TestEveryRefusalIsOnTheRecord`` in ``test_plex_guard.py``.
+    """The arr-side counterpart to ``TestEveryRefusalIsOnTheRecord`` in
+    ``test_plex_guard.py``.
 
-    Both guards refuse through ``base.refuse_mutation``, and this is the one standing in
-    front of ``DELETE /api/v3/movie/{id}?deleteFiles=true``, so it is the larger blast
-    radius of the two. It shipped unpinned in the commit that added the logging: the whole
-    http half could be reverted to an inline raise and the suite stayed green, which is the
-    same hole C14 measured against the eight ``except SafetyViolationError: raise`` arms,
-    reproduced for the sibling guard in the PR that closed it.
+    Both guards refuse through ``base.refuse_mutation``. This one stands in front of
+    ``DELETE /api/v3/movie/{id}?deleteFiles=true``, the larger blast radius of the two.
+    Without this pin, the whole http refusal-logging path could be reverted to an inline
+    raise and the suite would still stay green.
 
-    ``reason`` is the discriminator, never the sentence (rules 92/93).
+    ``reason`` is the discriminator this test asserts on, never the human-readable sentence.
     """
 
     @pytest.mark.parametrize(
@@ -360,7 +360,7 @@ class TestTheArrRefusalIsOnTheRecordToo:
 
     async def test_the_path_carries_no_api_key(self) -> None:
         """The *arr key rides a header, but a query string reaches the log the same way a
-        Plex token would, so the split is asserted here as well (rule 13)."""
+        Plex token would, so the split is asserted here as well."""
         transport = GuardedTransport(httpx2.AsyncHTTPTransport(), READ_ONLY)
         request = httpx2.Request("DELETE", "https://radarr.test/api/v3/movie/7?apikey=supersecret")
 

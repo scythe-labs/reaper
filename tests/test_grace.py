@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The grace period.
 
-Grace is derived, not stored: an item's place in the window is its ``first_flagged_at``
-plus the owner's ``grace_days``. These tests pin the partition (counting down vs cleared),
-the clamp on "days remaining", the two exclusions that keep the countdown honest --
-only the latest snapshot's condemned set, and never a spared item -- and that the clock
-lookup survives a condemned set larger than SQLite will bind in one statement.
+Grace is derived, never stored. An item's place in the window comes from its
+``first_flagged_at`` plus the owner's ``grace_days``. These tests pin the partition
+(counting down vs. cleared), the clamp on "days remaining", the two exclusions that keep the
+countdown honest (only the latest snapshot's condemned set, and never a spared item), and
+that the clock lookup survives a condemned set larger than SQLite will bind in one statement.
 """
 
 from __future__ import annotations
@@ -32,11 +32,11 @@ NOW = utcnow()
 
 
 #: The most bound variables SQLite will accept in one statement, read off the driver this
-#: suite runs against rather than remembered. It is version-dependent -- 999 on builds older
-#: than 3.32, 32,766 on newer ones -- so a hard-coded number would size the chunking test
-#: against a ceiling that is not the one the code will hit (rule 144). The handle is closed
-#: rather than left to the garbage collector, which reports an unclosed database during
-#: whichever test it happens to run in (rule 133).
+#: suite runs against rather than hardcoded. It varies by version (999 on builds older than
+#: 3.32, 32,766 on newer ones), so a hardcoded number would size the chunking test against a
+#: ceiling the code might not actually hit. The handle is closed explicitly rather than left
+#: to the garbage collector, which reports an unclosed database during whichever test
+#: happens to run next.
 def _variable_ceiling() -> int:
     con = sqlite3.connect(":memory:")
     try:
@@ -148,7 +148,7 @@ class TestPartition:
 
 class TestExclusions:
     async def test_a_spared_item_leaves_the_countdown(self, session: AsyncSession) -> None:
-        """Canceling a grace spares the item; it must drop out at once, even though the
+        """Canceling a grace spares the item. It must drop out at once, even though the
         frozen snapshot still says condemn."""
         snap = await _snapshot(session)
         await _condemn(session, snapshot_id=snap, media_key="radarr:1:1", flagged_days_ago=2)
@@ -198,8 +198,8 @@ async def _condemn_many(
 ) -> None:
     """:func:`_condemn` for a library-sized set, in two executemany writes.
 
-    Deliberately NOT one multi-row ``INSERT``: that binds a variable per column per row and
-    would hit the same ceiling the test is about, from the fixture side.
+    This never uses one multi-row ``INSERT``, because that binds a variable per column per
+    row and would hit the same ceiling the test is about, from the fixture side.
     """
     flagged = NOW - timedelta(days=flagged_days_ago)
     await session.execute(
@@ -234,23 +234,22 @@ class TestTheClockLookupIsChunked:
     async def test_a_condemned_set_past_the_variable_ceiling_still_reports(
         self, session: AsyncSession
     ) -> None:
-        """Rule 94: the grace report reads its clocks in chunks, never one whole-set ``IN``.
+        """The grace report reads its clocks in chunks, never one whole-set ``IN``.
 
-        Nothing bounds the condemned set -- it is every item the latest snapshot condemned,
-        plus every hand reap, minus spares -- so one expanding ``IN`` over it binds a variable
-        per item and a large enough library raised ``OperationalError`` on the read itself.
-        That is not an ``IntegrationError``, so nothing caught it and the whole report failed
-        (#556).
+        Nothing bounds the condemned set. It is every item the latest snapshot condemned,
+        plus every hand reap, minus spares. One expanding ``IN`` over a set that large binds
+        a variable per item, and a large enough library raises ``OperationalError`` on the
+        read itself. That is not an ``IntegrationError``, so nothing catches it and the whole
+        report fails.
 
-        Sized one key past the ceiling this driver reports, so it fails the moment the loop in
-        ``grace_report`` is collapsed back to a single statement -- driven red against exactly
-        that edit.
+        This test sizes the condemned set one key past the ceiling this driver reports, so it
+        fails the moment the loop in ``grace_report`` is collapsed back to a single statement.
 
-        The count is not the whole assertion. Every item here was flagged 30 days ago against a
-        14-day window, so a chunk whose rows never came back would take the missing-clock
-        fallback, be dated ``now``, and land in ``in_grace``: an empty ``in_grace`` beside a full
-        ``ready`` is what says the clocks were read for all of them, not merely that no
-        exception escaped.
+        Checking the count alone is not enough. Every item here was flagged 30 days ago
+        against a 14-day window, so a chunk whose rows never came back would take the
+        missing-clock fallback, get dated ``now``, and land in ``in_grace`` instead of
+        ``ready``. An empty ``in_grace`` beside a full ``ready`` is what proves the clocks
+        were actually read for every item, not just that no exception escaped.
         """
         snap = await _snapshot(session)
         keys = [f"radarr:1:{n}" for n in range(VARIABLE_CEILING + 1)]
@@ -264,10 +263,10 @@ class TestTheClockLookupIsChunked:
         assert report.total_bytes_ready == len(keys) * 5 * GB
 
     async def test_the_chunk_bound_is_under_what_sqlite_will_bind(self) -> None:
-        """The shared bound is a bound, not a decoration.
+        """``KEY_CHUNK`` enforces a real limit, not just a suggestion.
 
-        ``KEY_CHUNK`` is one declaration for every scan-sized ``IN`` in the tree, so a raise
-        past what this driver accepts would break all of them at once, and the failure is a
-        dead scan rather than a slow one.
+        It is one declaration for every scan-sized ``IN`` in the tree, so raising it past
+        what this driver accepts would break all of them at once. The failure would be a
+        dead scan, not just a slow one.
         """
         assert 0 < KEY_CHUNK <= VARIABLE_CEILING

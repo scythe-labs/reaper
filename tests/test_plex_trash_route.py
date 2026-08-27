@@ -22,9 +22,9 @@ from reaper.services import app_settings
 
 from . import test_api
 
-# The shared authenticated app fixture, re-exported rather than imported by name: a bare
-# `from .test_api import client` is read as a redefinition the moment a test declares
-# `client` as a parameter, which is every test here.
+# The shared authenticated app fixture, re-exported rather than imported by name. A bare
+# `from .test_api import client` would read as a redefinition the moment a test declares
+# `client` as a parameter, which every test here does.
 client = test_api.client
 
 
@@ -77,7 +77,8 @@ def plex(monkeypatch: pytest.MonkeyPatch) -> list[_FakePlex]:
         return [
             {"key": 1, "title": "A", "kind": "movie", "enabled": True},
             {"key": 2, "title": "B", "kind": "show", "enabled": True},
-            # Turned off: Reaper never refreshes it, so its trash is not this run's business.
+            # This library is disabled, so Reaper never refreshes it and its trash is not
+            # part of this run.
             {"key": 3, "title": "C", "kind": "movie", "enabled": False},
         ]
 
@@ -103,8 +104,8 @@ class TestTheTrashWarningEvidence:
     def test_an_unreadable_library_is_counted_not_swallowed(
         self, client: TestClient, plex: list[_FakePlex]
     ) -> None:
-        """A library that could not be read makes ``trashed`` a floor, and the page warns on
-        ``sections_unreadable`` rather than reading silence as an empty trash (rule 93)."""
+        """A library that could not be read makes ``trashed`` a floor, and the page warns
+        through ``sections_unreadable`` instead of reading silence as an empty trash."""
         plex.append(_FakePlex({1: 5, 2: PlexError("timed out")}))
         body = client.get("/api/reap/plex-trash").json()
         assert body["trashed"] == 5
@@ -113,12 +114,11 @@ class TestTheTrashWarningEvidence:
     def test_a_server_that_ignores_the_filter_is_unreadable_not_alarming(
         self, client: TestClient, plex: list[_FakePlex]
     ) -> None:
-        """``trash=1`` was confirmed against a live server against a control: an unknown
-        parameter comes back with the WHOLE library while trash=1 narrows. A server that
-        does not know the filter therefore answers with the library size, which would render
-        as a huge, wrong trash count beside the operator's most dangerous button. Equality
-        with the section's own item count means we cannot tell the two apart, so it is
-        reported as unreadable."""
+        """A server that does not recognize the `trash=1` filter answers with the whole
+        library instead of narrowing it, which would show as a huge, wrong trash count next
+        to the operator's most dangerous button. The one way to tell this apart from a real
+        full trash is that the count equals the section's own item count, so that case is
+        reported as unreadable instead of alarming."""
         plex.append(_FakePlex({1: 500, 2: 3}, totals={1: 500, 2: 900}))
         body = client.get("/api/reap/plex-trash").json()
         assert body["trashed"] == 3, "the honest library still counts"
@@ -127,8 +127,9 @@ class TestTheTrashWarningEvidence:
     def test_an_empty_trash_says_so_plainly(
         self, client: TestClient, plex: list[_FakePlex]
     ) -> None:
-        """The quiet case has to stay quiet: a warning that fires on every reap stops being
-        read. Zero with nothing unreadable is what the page renders nothing from."""
+        """The quiet case has to stay quiet. A warning that fires on every reap stops being
+        read, so the page shows nothing when the trash is empty and every library was
+        readable."""
         plex.append(_FakePlex({1: 0, 2: 0}))
         body = client.get("/api/reap/plex-trash").json()
         assert body["trashed"] == 0

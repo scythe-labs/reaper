@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The PIN poll's run guard. Stopping the timer never stopped a request already in the air,
-// so an answer that landed after the sign-in had settled still called the handlers: the
-// operator watched "Plex sign-in failed" paint over a session that had just succeeded, or
-// got signed in a moment after pressing Cancel (B-11).
+// The PIN poll's run guard. Stopping the timer never stops a request already in the air, so an
+// answer that lands after the sign-in has settled must not still call the handlers: the
+// operator would otherwise watch "Plex sign-in failed" paint over a session that just
+// succeeded, or get signed in a moment after pressing Cancel.
 //
 // These drive the hook directly. Both cases need two polls in flight at once with control
 // over which settles first, which is not something a rendered panel lets you arrange.
@@ -19,11 +19,11 @@ import { composeError } from "../why";
 import type { PinPollResult } from "./PlexPin";
 import { chooseServerSaid, usePlexPinPoll } from "./PlexPin";
 
-// The real `announce` and the real `Announcer`, with a counter around the call. Counting matters
-// here and the rendered regions cannot do it: they alternate, hold one sentence at a time, and
-// replace it with the next -- so the same sentence said once and said three times leaves exactly
-// the same DOM. Spreading the actual module keeps the region real, so the "is it spoken at all"
-// half is still proven against markup rather than against a spy (rule 119).
+// The real `announce` and the real `Announcer`, with a counter around the call. Counting
+// matters here and the rendered regions cannot do it: they alternate, hold one sentence at a
+// time, and replace it with the next, so the same sentence said once and said three times
+// leaves exactly the same DOM. Spreading the actual module keeps the region real, so the "is it
+// spoken at all" half is still proven against markup rather than against a spy.
 vi.mock("../announce", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../announce")>();
   return { ...actual, announce: vi.fn(actual.announce) };
@@ -59,8 +59,8 @@ describe("a poll that lands after the sign-in has settled", () => {
 
       act(() => result.current.begin(42));
 
-      // Three ticks with plex.tv not answering. Exactly ONE request is in the air: the
-      // pile-up is what made two answers race in the first place, so the tick skips while
+      // Three ticks with plex.tv not answering. Exactly one request must be in the air: a
+      // pile-up is what makes two answers race in the first place, so the tick must skip while
       // one is outstanding rather than adding to it.
       await act(async () => {
         await vi.advanceTimersByTimeAsync(6000);
@@ -70,9 +70,9 @@ describe("a poll that lands after the sign-in has settled", () => {
       // The run ends while that one is still out.
       act(() => result.current.cancel());
 
-      // It comes back a rejection -- a consumed PIN, or a 429. Clearing the timer never
-      // stopped this request, and the handler used to run regardless, painting "Plex
-      // sign-in failed" over a screen that had already moved on.
+      // It comes back a rejection, a consumed PIN, or a 429. Clearing the timer never stops
+      // this request, so the handler must not run regardless: that would paint "Plex sign-in
+      // failed" over a screen that has already moved on.
       await act(async () => {
         answer().fail(new Error("PIN already used"));
       });
@@ -112,11 +112,11 @@ describe("a poll that lands after the sign-in has settled", () => {
 describe("a wait that is taking longer than usual", () => {
   // Every transition in this flow is driven by the two-second poll and not by the operator, so
   // the waiting paragraph swapping to "your server is restarting" is a change nobody touched
-  // anything to cause: on screen it changed, by ear it did not (#177). `announce()` only speaks
+  // anything to cause: on screen it changed, by ear it did not. `announce()` only speaks
   // through a mounted `Announcer`, so the region is mounted here rather than assumed.
-  // A real catalog code and params (phase 8b), never a transcribed sentence: REASON is what
-  // the real composer renders for it, so these tests prove the wire-to-screen pipeline rather
-  // than a copy of it.
+  // A real catalog code and params, never a transcribed sentence: `REASON` is what the real
+  // composer renders for it, so these tests prove the wire-to-screen pipeline rather than a
+  // copy of it.
   const REASON_KEY: ReasonKey = {
     k: "error.plex.link_unreachable",
     p: { name: "Attic", count: 2 },
@@ -170,7 +170,7 @@ describe("a wait that is taking longer than usual", () => {
   it("says it once, not every two seconds", async () => {
     // The poll repeats the same reason on every tick for as long as the condition lasts. A
     // region restating it each time would talk over everything else on the page, so only a
-    // CHANGE is spoken -- and this is the assertion that tells the two apart.
+    // change is spoken, and this is the assertion that tells the two apart.
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const { answer } = pollingHook();
@@ -220,10 +220,10 @@ describe("a wait that is taking longer than usual", () => {
 });
 
 // The other transition this flow reaches on a timer: the account owns several servers, so the
-// wait is replaced by a picker. Both callers announced it, in their own words, from their own
-// handlers -- and the pair had already been out of step once, with Settings speaking and the
-// login screen silent (#177, rule 72). One declaration in the hook is what makes them agree by
-// construction rather than by whoever edits one of them next remembering the other (rule 144).
+// wait is replaced by a picker. A caller must not announce this itself, in its own words, from
+// its own handler; that lets one caller speak while a sibling stays silent. One declaration in
+// the hook is what makes every caller agree by construction, rather than by whoever edits one
+// of them next remembering the other.
 describe("the account that owns several servers", () => {
   beforeEach(() => {
     vi.mocked(announce).mockClear();
@@ -237,7 +237,7 @@ describe("the account that owns several servers", () => {
 
   it("is announced for a caller that passes no handler at all", async () => {
     // Deliberately no `onChooseServer`. A caller cannot reach the picker without the sentence,
-    // which is why it moved off the two handlers that used to carry it.
+    // which is why the hook speaks it rather than each handler.
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const { poll, answer } = deferredPolls();
@@ -270,15 +270,14 @@ describe("the account that owns several servers", () => {
   });
 });
 
-// Rule 144, as a guard rather than a comment asking the next author to remember. The hook says
-// this sentence for every caller now, so a caller that ALSO says it makes the operator hear it
-// twice -- and each file's own tests stay green either way, because neither can see the other
-// one speaking. This is what one declaration is worth, so it fails by name in the file that
-// broke it.
+// A guard rather than a comment asking the next author to remember. The hook says this sentence
+// for every caller, so a caller that also says it makes the operator hear it twice, and each
+// file's own tests stay green either way, because neither can see the other one speaking. This
+// is what one declaration is worth, so it fails by name in the file that broke it.
 //
-// Bounded, per rule 147: a substring match reads the sentence however it is spelled around it --
-// a bare literal, a template, a constant re-declared by hand -- but only while it is spelled out.
-// A caller composing it from pieces would pass, which is why the anchor asserts the declaration
+// Bounded: a substring match reads the sentence however it is spelled around it, a bare
+// literal, a template, a constant re-declared by hand, but only while it is spelled out. A
+// caller composing it from pieces would pass, which is why the anchor asserts the declaration
 // is still where the two checks below think it is, rather than letting the walk quietly empty.
 describe("who is allowed to say the picker sentence", () => {
   const read = (name: string) =>

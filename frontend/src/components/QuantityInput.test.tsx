@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The number-with-a-unit control: what the box does while a number is being typed. Clearing
-// it to retype must not fold the old digits into the new ones, a half-typed decimal must
-// survive long enough to finish, and the unit a value is shown in must follow a value that
-// was replaced from outside.
+// This file covers the number-with-a-unit control, and what the box does while a number is
+// being typed. Clearing it to retype must not fold the old digits into the new ones, a
+// half-typed decimal must survive long enough to finish, and the unit a value is shown in must
+// follow a value that was replaced from outside.
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
@@ -37,7 +37,8 @@ function Fixed({
   );
 }
 
-/** The rating bar's exact shape: tenths stored, one decimal shown, converted on the way in. */
+/** The rating bar's exact shape. Tenths are stored, one decimal is shown, and the value is
+ *  converted on the way in. */
 function RatingBar({ onEmit }: { onEmit: (tenths: number) => void }) {
   const [floor, setFloor] = useState(65);
   return (
@@ -57,7 +58,7 @@ function RatingBar({ onEmit }: { onEmit: (tenths: number) => void }) {
   );
 }
 
-/** The changeable-unit twin of `Fixed`: a size box wired the way PolicyEditor wires the two
+/** The changeable-unit twin of `Fixed`. A size box wired the way PolicyEditor wires the two
  *  deletion caps, storing whatever the box emits. */
 function Sized({ initial = 1e9, onEmit }: { initial?: number; onEmit?: (n: number) => void }) {
   const [value, setValue] = useState(initial);
@@ -80,8 +81,9 @@ const sizeUnit = () => screen.getByLabelText("Most disk freed per run unit");
 
 describe("typing a number into a box that already has one", () => {
   it("replaces what was there instead of appending to it", async () => {
-    // B7: the box used to read an empty field as 0, write "1" back under the caret, and let
-    // the digits typed next land after it -- select-all + "25" stored 125.
+    // An empty field must never be read as 0. Reading it as 0 and clamping to the floor would
+    // write a digit back into the box under the caret, so the digits typed next would land
+    // after it, turning "25" into 125.
     const user = userEvent.setup();
     const emit = vi.fn();
     render(<Fixed initial={100} min={1} max={1000} onEmit={emit} />);
@@ -92,14 +94,14 @@ describe("typing a number into a box that already has one", () => {
 
     expect(emit).toHaveBeenLastCalledWith(25);
     expect(box()).toHaveValue(25);
-    // The zero is the whole defect: it is what the call site re-floored to 1, which React
-    // then wrote back into the box for "25" to land after.
+    // The zero is the whole risk here. It is what a call site would re-floor to 1, which React
+    // would then write back into the box for "25" to land after.
     expect(emit).not.toHaveBeenCalledWith(0);
   });
 
   it("says nothing at all while the box is empty", async () => {
-    // An empty box is someone midway through retyping, never a zero -- and never a floor
-    // the call site invents to cover for the zero.
+    // An empty box means someone is midway through retyping. It is never a zero, and never a
+    // floor value invented to cover for a zero.
     const user = userEvent.setup();
     const emit = vi.fn();
     render(<Fixed initial={100} min={1} onEmit={emit} />);
@@ -135,8 +137,8 @@ describe("typing a number into a box that already has one", () => {
   });
 
   it("pulls a number over the ceiling down when the box is left", async () => {
-    // PR5: the ceiling the server enforces, applied in the box, so an out-of-range number
-    // never comes home as a validator's sentence.
+    // The box applies the same ceiling the server enforces, so an out-of-range number never
+    // comes back as a validator's error sentence.
     const user = userEvent.setup();
     const emit = vi.fn();
     render(<Fixed initial={100} min={1} max={1000} onEmit={emit} />);
@@ -151,12 +153,13 @@ describe("typing a number into a box that already has one", () => {
 
 describe("a number the field behind the box cannot hold", () => {
   it("never lets a fraction out of a whole-number box", async () => {
-    // #296: seven policy boxes declare no `step`, which in HTML already means 1, and every one
-    // is backed by an `int`. The browser does not enforce it -- Chrome marks a typed 1.5
-    // `stepMismatch` and hands the change handler "1.5" anyway, because step is checked at form
-    // validation and this control never submits a form -- so 1.5 reached the draft and came
-    // home as "Input should be a valid integer, got a number with a fractional part", a
-    // validator's sentence on a saveable-looking form (rule 21).
+    // Seven policy boxes declare no `step`, which in HTML already means 1, and every one is
+    // backed by an `int`. The browser does not enforce that on its own. Chrome marks a typed
+    // 1.5 as `stepMismatch` and hands the change handler "1.5" anyway, because step is only
+    // checked at form validation, and this control never submits a form. Without a guard, 1.5
+    // would reach the draft and come back as "Input should be a valid integer, got a number
+    // with a fractional part," a validator's sentence on a form that otherwise looks ready to
+    // save.
     const user = userEvent.setup();
     const emit = vi.fn();
     render(<Fixed initial={40} min={1} max={1000} onEmit={emit} />);
@@ -166,18 +169,19 @@ describe("a number the field behind the box cannot hold", () => {
     await user.tab();
 
     expect(emit).not.toHaveBeenCalledWith(1.5);
-    // The "1" typed on the way there is a real value and is kept: nothing is rounded, because
-    // rounding needs a direction this control cannot have -- half its call sites are caps and
-    // half are protections, and the safe direction is opposite for the two.
+    // The "1" typed on the way there is a real value and is kept. Nothing here is rounded,
+    // because rounding needs a direction this control cannot assume. Half its call sites are
+    // caps and half are protections, and the safe rounding direction is opposite for the two.
     expect(emit).toHaveBeenLastCalledWith(1);
     expect(box()).toHaveValue(1);
   });
 
   it("leaves the stored number alone when the fraction is all that was typed", async () => {
-    // ".5" never passes through a whole number on its way in, so there is nothing to keep and
-    // the box goes back to what was stored -- the same thing it does with an abandoned "7.".
-    // The floor is 0 here so the blur clamp cannot fire: this is about what the box withholds,
-    // and a box whose floor DOES bite pulls the value up to it, which the floor test covers.
+    // ".5" never passes through a whole number on its way in, so there is nothing to keep, and
+    // the box goes back to what was stored. It does the same thing with an abandoned "7.". The
+    // floor here is 0, so the blur clamp cannot fire. This test is about what the box
+    // withholds. A box whose floor does bite pulls the value up to it instead, which the floor
+    // test above covers.
     const user = userEvent.setup();
     const emit = vi.fn();
     render(<Fixed initial={40} min={0} max={1000} onEmit={emit} />);
@@ -191,10 +195,11 @@ describe("a number the field behind the box cannot hold", () => {
   });
 
   it("reads step as a precision, not as a ladder the value has to land on", async () => {
-    // The vote floor ships `step={100}` so its spinner moves in hundreds. 250 is a legal floor,
-    // and snapping it to the grid would rewrite the operator's own number on a field that
-    // decides what survives -- the deletion-path version of the bug above. Only decimals are
-    // taken from a step, which for 100 is none.
+    // The vote floor ships `step={100}`, so its spinner moves in hundreds. 250 is a legal floor
+    // value, and snapping it to the nearest step would silently rewrite the operator's own
+    // number on a field that decides what survives, the same risk as the test above but on a
+    // deletion-relevant field. Only decimals are taken from a step value, and for a step of 100
+    // that is none.
     const user = userEvent.setup();
     const emit = vi.fn();
     render(<Fixed initial={100} min={0} step={100} onEmit={emit} />);
@@ -210,9 +215,9 @@ describe("a number the field behind the box cannot hold", () => {
 
 describe("the rating bar", () => {
   it("lets a half score be typed", async () => {
-    // B8: the box re-derived its text from stored tenths on every render, so "7" became
-    // "7.0" under the caret and the "." that followed made "7.0." -- which a number input
-    // reports as empty, which the old coercion stored as a floor of 0.0.
+    // If the box re-derived its text from stored tenths on every render, typing "7" would
+    // become "7.0" under the caret, and the "." typed next would make "7.0.", which a number
+    // input reports as empty. An empty field must never be stored as a floor of 0.0.
     const user = userEvent.setup();
     const emit = vi.fn();
     render(<RatingBar onEmit={emit} />);
@@ -224,15 +229,15 @@ describe("the rating bar", () => {
 
     expect(emit).toHaveBeenLastCalledWith(75);
     expect(bar).toHaveValue(7.5);
-    // Never, at any keystroke, a floor of zero: the "." used to report the box as empty,
-    // which the old coercion stored as 0.0 -- a bar that keeps nothing.
+    // At no keystroke does this store a floor of zero. A lone "." reports the box as empty,
+    // and an empty box must never be stored as 0.0, a rating bar that keeps nothing.
     expect(emit).not.toHaveBeenCalledWith(0);
   });
 
   it("takes tenths but not hundredths, because the field behind it holds tenths", async () => {
-    // The tenths box is the case that proves the bound is read off `step` rather than hardcoded
-    // to whole numbers: 7.5 is a real score here and must still go through, while the digit
-    // past it is withheld the same way a fraction is in a whole-number box.
+    // The tenths box proves the decimal bound is read off `step` rather than hardcoded to whole
+    // numbers. 7.5 is a real score here and must still go through, while the digit past it is
+    // withheld the same way a fraction is in a whole-number box.
     const user = userEvent.setup();
     const emit = vi.fn();
     render(<RatingBar onEmit={emit} />);
@@ -262,10 +267,10 @@ describe("the rating bar", () => {
 
 describe("the unit a screen reader hears", () => {
   it("gives the fixed-suffix box its unit, and does not repeat it in the name", () => {
-    // #176: the suffix was `aria-hidden`, so the box announced "Most titles per run, 40" and
-    // the unit lived on screen and nowhere else. It arrives as the DESCRIPTION, read after
-    // the value ("40, titles"), so the eleven call sites whose name already says the unit do
-    // not stutter it (rule 21 binds a spoken string as hard as a printed one).
+    // The suffix must not be `aria-hidden`, or the box would announce only "Most titles per
+    // run, 40" and the unit would exist on screen and nowhere else. The unit arrives as the
+    // accessible description, read after the value ("40, titles"), so the eleven call sites
+    // whose name already says the unit do not repeat it.
     render(<Fixed initial={40} />);
 
     expect(box()).toHaveAccessibleName("Most titles per run");
@@ -273,9 +278,9 @@ describe("the unit a screen reader hears", () => {
   });
 
   it("describes the box with the suffix that is on screen, not a second copy of it", () => {
-    // The description points AT the rendered suffix, so a unit cannot be right in the box and
-    // wrong in the announcement -- there is one copy of the word, not two that drift (rule
-    // 144). "/ 10" is the case a table of spoken units would have had to carry separately.
+    // The description points at the rendered suffix, so the unit cannot be right in the box and
+    // wrong in the announcement. There is one copy of the word, not two that could drift apart.
+    // "/ 10" is the case a separate table of spoken units would have had to carry on its own.
     render(<RatingBar onEmit={vi.fn()} />);
     const bar = screen.getByLabelText("Rating score out of 10");
 
@@ -284,10 +289,9 @@ describe("the unit a screen reader hears", () => {
   });
 
   it("leaves the changeable-unit box undescribed, because its unit is a control", () => {
-    // Rule 72's twin, deliberately not swept and pinned so the deferral is not silently
-    // undone: here the unit is a real <select> beside the number that names itself and
-    // announces the unit as its own value. Describing the number with it as well would say
-    // the unit twice on the way through the pair.
+    // This is a deliberate exception, pinned so it is not silently swept away later. Here the
+    // unit is a real <select> beside the number, and it names itself and announces the unit as
+    // its own value. Describing the number with it as well would say the unit twice.
     render(
       <QuantityInput value={60} units={timeUnits()} onChange={vi.fn()} ariaLabel="Grace period" />,
     );
@@ -299,8 +303,8 @@ describe("the unit a screen reader hears", () => {
 
 describe("the unit a value is shown in", () => {
   it("follows a value replaced from outside", () => {
-    // U17: the unit was picked once, on mount, so a preset staging 7 days into a box left
-    // on months read "0.23 months" -- right, and unreadable.
+    // The unit must not be picked once on mount. If it were, a preset staging 7 days into a
+    // box left on months would read "0.23 months", technically correct but unreadable.
     const { rerender } = render(
       <QuantityInput value={60} units={timeUnits()} onChange={vi.fn()} ariaLabel="Grace period" />,
     );
@@ -330,13 +334,13 @@ describe("the unit a value is shown in", () => {
   });
 
   it("clamps a typed 0 down to the smallest unit, not up to the shown one", async () => {
-    // The floor is in base units (1 byte) and the box draws two decimals of GB, so the clamp
-    // stored 1 byte and drew it as "0": a box reading zero beside a sentence saying "at most
-    // 1 B per run". Lifting the floor to the SHOWN unit fixed the display by raising the
-    // stored cap -- 0.01 GB, then 0.01 TB in a TB box, ten gigabytes of permitted deletion
-    // where the operator asked for none. So the floor drops to what the smallest unit can
-    // draw and the box switches to that unit (rule 31: the bound with less deletion
-    // pressure). 0.01 MB is 10 KB, which no media file fits inside.
+    // The floor is stored in base units (1 byte), and the box draws two decimals of GB, so a
+    // naive clamp would store 1 byte and draw it as "0", a box reading zero beside a sentence
+    // saying "at most 1 B per run". Raising the floor to match the shown unit instead would
+    // raise the actual stored cap along with it, 0.01 GB, then 0.01 TB in a TB box, permitting
+    // ten gigabytes of deletion where the operator asked for none. So instead the floor drops
+    // to whatever the smallest unit can draw, and the box switches to that unit, since a lower
+    // floor deletes less. 0.01 MB is 10 KB, which no media file fits inside.
     const user = userEvent.setup();
     const emit = vi.fn();
     render(<Sized onEmit={emit} />);
@@ -353,10 +357,11 @@ describe("the unit a value is shown in", () => {
 
 describe("the number the box stores, against the number it shows", () => {
   it("drops the digits it will not draw instead of storing them", async () => {
-    // #251: the box draws two decimals of GB and the emit kept every digit typed, so 1.234
-    // stored 1_234_000_000 and then redrew "1.23". The cap in force sat 4 MB above the one on
-    // screen -- on the control whose whole job is to state a bound. No clamp and no unit
-    // switch are involved: three decimals in the shown unit is the whole reproduction.
+    // The box draws two decimals of GB. If the emit kept every digit typed, 1.234 would store
+    // 1_234_000_000 and then redraw as "1.23", so the cap actually in force would sit 4 MB
+    // above the one shown on screen, on a control whose whole job is to state a bound. No clamp
+    // and no unit switch need be involved. Three decimals in the shown unit is enough to
+    // reproduce this on its own.
     const user = userEvent.setup();
     const emit = vi.fn();
     render(<Sized onEmit={emit} />);
@@ -371,10 +376,11 @@ describe("the number the box stores, against the number it shows", () => {
   });
 
   it("cuts the digits off rather than rounding them up", async () => {
-    // Rule 31: a precision reduction on a field that can add deletion pressure takes the bound
-    // with LESS pressure. `trim` rounds to nearest, so reusing it on the way in would round
-    // this cap up to 1.24 GB -- 4 MB of deletion the operator never authorized. Cutting is the
-    // half of the fix that has a direction, and this is the case that tells them apart.
+    // A precision reduction on a field that can permit more deletion must always round toward
+    // less deletion, never more. `trim` rounds to nearest, so using it here would round this
+    // cap up to 1.24 GB, 4 MB of deletion the operator never authorized. Cutting the digits
+    // instead of rounding is what gives this a safe direction, and this test is the case that
+    // tells the two approaches apart.
     const user = userEvent.setup();
     const emit = vi.fn();
     render(<Sized onEmit={emit} />);
@@ -388,10 +394,11 @@ describe("the number the box stores, against the number it shows", () => {
   });
 
   it("keeps a two-decimal number the operator really did type", async () => {
-    // The cut reads the decimal text because the arithmetic form does not survive binary
-    // floating point: `Math.floor(0.29 * 100) / 100` is 0.28, since 0.29 * 100 is
-    // 28.999999999999996. Storing 0.28 over a typed 0.29 would be this same defect pointing
-    // the other way, and it is a whole display step wide rather than a hidden digit.
+    // The cut reads the decimal text instead of doing the arithmetic, because the arithmetic
+    // form does not survive binary floating point. `Math.floor(0.29 * 100) / 100` is 0.28,
+    // since 0.29 * 100 is 28.999999999999996. Storing 0.28 for a typed 0.29 would be this same
+    // defect in the other direction, and here it is a whole display step wide rather than a
+    // hidden digit.
     const user = userEvent.setup();
     const emit = vi.fn();
     render(<Sized onEmit={emit} />);
@@ -409,9 +416,9 @@ describe("how the unit is worded beside the number", () => {
   const unitBox = () => screen.getByLabelText("Minimum dormancy unit") as HTMLSelectElement;
 
   it("says 'year', not 'years', beside a 1", () => {
-    // `bestUnit` picks the largest unit the value clears, so a value of exactly one whole
-    // unit is what every round policy default looks like: 365, 30, 7. The box read
-    // "1 years" on the page where deletion rules are written (#415).
+    // `bestUnit` picks the largest unit the value clears, so a value of exactly one whole unit
+    // is what every round policy default looks like, such as 365, 30, or 7. Without this fix
+    // the box would read "1 years" on the page where deletion rules are written.
     render(
       <QuantityInput
         value={365}
@@ -450,7 +457,7 @@ describe("how the unit is worded beside the number", () => {
   });
 
   it("leaves the size units alone, because they do not inflect", () => {
-    // "1 GBs" would be the same defect introduced by the fix for it.
+    // Pluralizing size units the same way would reintroduce the defect the fix above avoids.
     render(
       <QuantityInput
         value={1e9}

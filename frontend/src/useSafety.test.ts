@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Deletion is armed in the database and stays armed, so this is the one piece of state that
-// changes without the tab doing anything -- and the one the tab must not be caught out on.
+// changes without the tab doing anything. It is also the one state the tab must not be caught
+// out on.
 import { act, waitFor } from "@testing-library/react";
 import { renderHookWithProviders } from "./test/renderWithProviders";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -27,10 +28,10 @@ afterEach(() => vi.useRealTimers());
 
 describe("the safety state", () => {
   it("re-reads itself on a clock, so arming elsewhere reaches this tab", async () => {
-    // B-9: with no interval and the app-wide `refetchOnWindowFocus: false`, a desktop tab left
-    // on Review went on saying "Reaper can look but can't remove anything" for as long as it
-    // was open after deletion was armed from a phone. That is the fail-open direction on the
-    // app's one always-visible safety surface.
+    // Without a polling interval, and with the app-wide `refetchOnWindowFocus: false`, a
+    // desktop tab left on Review would go on saying "Reaper can look but can't remove anything"
+    // indefinitely after deletion was armed from a phone. That direction is unsafe on the app's
+    // one always-visible safety surface.
     const { result } = renderHookWithProviders(() => useSafety());
 
     await waitFor(() => expect(result.current.data?.destructive_enabled).toBe(false));

@@ -2,10 +2,10 @@
 //
 // The library scan's start, said out loud.
 //
-// Pressing "Scan now" disables its own button and swaps the schedule line for a progress
-// bar. Both of those are visual, the disable drops focus to `<body>`, and a `role="progressbar"`
-// announces nothing by itself -- so for an operation that runs for minutes the next thing an
-// operator using a screen reader heard was the finish (#177).
+// Pressing "Scan now" disables its own button and swaps the schedule line for a progress bar.
+// Both of those are visual, the disable drops focus to `<body>`, and a `role="progressbar"`
+// announces nothing by itself. So without a spoken announcement, for an operation that runs for
+// minutes, the next thing an operator using a screen reader would hear is the finish.
 import { QueryClient } from "@tanstack/react-query";
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -88,16 +88,16 @@ describe("starting a library scan", () => {
   });
 
   it("says the scan started, and that leaving the page does not stop it", async () => {
-    // The permission to walk away is the useful half for a wait this long, and it was on screen
-    // only. Said from `onSuccess`, so it reports a scan the server actually accepted rather than
-    // one still being asked for (rule 85).
+    // The permission to walk away is the useful part of this message for a wait this long, so it
+    // has to be spoken, not just shown on screen. It is said from `onSuccess`, so it reports a
+    // scan the server actually accepted rather than one still being asked for.
     const person = userEvent.setup();
     apiMock.scanStatus.mockResolvedValue(IDLE);
     apiMock.startScan.mockResolvedValue(RUNNING);
     renderRow();
 
     // Wait for the control, not for the page: the button is disabled while the status read is in
-    // flight, and user-event reports a click on a disabled control as success (rule 137).
+    // flight, and user-event reports a click on a disabled control as success.
     const scan = await screen.findByRole("button", { name: /scan now/i });
     await waitFor(() => expect(scan).toBeEnabled());
     await person.click(scan);
@@ -112,7 +112,7 @@ describe("starting a library scan", () => {
   it("says nothing when the start itself fails", async () => {
     // The failure already speaks: it renders through `Notice`, which owns `role="alert"`. A
     // "scanning" sentence here as well would be a second, contradicting announcement about the
-    // same press (rule 85).
+    // same press.
     const person = userEvent.setup();
     apiMock.scanStatus.mockResolvedValue(IDLE);
     apiMock.startScan.mockRejectedValue(new Error("Sonarr is unreachable"));
@@ -139,7 +139,7 @@ describe("starting a library scan", () => {
 
   it("holds the last scan's incomplete notice while the next scan runs", async () => {
     // "This scan came back incomplete" renders inside this row, under the bar of the scan in
-    // flight, so during a run it names the wrong scan -- and the operator pressing Scan now
+    // flight, so during a run it would name the wrong scan, and the operator pressing Scan now
     // has already done what it asks. Every other last-scan fact on the row already waits.
     apiMock.scanStatus.mockResolvedValue(RUNNING);
     renderRow(DEGRADED);
@@ -184,8 +184,8 @@ describe("starting a library scan", () => {
 
   it("keeps holding it between the finish and the fresh snapshot, then speaks for that one", async () => {
     // The row goes idle before the snapshot underneath is replaced: `useScanSettled` invalidates
-    // `["snapshot"]` on that edge and the refetch is still out, so what is in hand is the scan
-    // before this one. Painting its verdict there reports it as the new scan's (rule 85).
+    // `["snapshot"]` on that edge while the refetch is still out, so what is in hand is the scan
+    // before this one. Painting its verdict there would report it as the new scan's.
     const client = testQueryClient();
     client.setQueryData(["snapshot"], DEGRADED);
     apiMock.scanStatus.mockResolvedValue(RUNNING);
@@ -193,8 +193,8 @@ describe("starting a library scan", () => {
     await screen.findByRole("progressbar");
 
     // Wait for the row to settle, not just for the write: the two arrive at least a round trip
-    // apart in the app, and flipping the status and the snapshot inside one tick lets the row
-    // read the new snapshot as the one it started from -- a fixture that pins nothing (rule 141).
+    // apart in the app, and flipping the status and the snapshot inside one tick would let the
+    // row read the new snapshot as the one it started from, a fixture that pins nothing.
     apiMock.scanStatus.mockResolvedValue(IDLE);
     await act(async () => {
       client.setQueryData(["scanStatus"], IDLE);
@@ -212,8 +212,8 @@ describe("starting a library scan", () => {
 
   it("says how many sizes are unknown, not the raw template", async () => {
     // `deltaUnknownQualifier`'s catalog string needs both `n` and the ICU plural selector
-    // `count`. The call site once passed only `n`, so i18next-icu's parseErrorHandler
-    // returned the unformatted template mid-sentence instead of "2 sizes unknown".
+    // `count`. If the call site passed only `n`, i18next-icu's parseErrorHandler would return
+    // the unformatted template mid-sentence instead of "2 sizes unknown".
     const client = testQueryClient();
     const before: Snapshot = {
       ...DEGRADED,
@@ -249,12 +249,12 @@ describe("starting a library scan", () => {
   });
 
   it("puts it back when the refetch that would replace the snapshot fails", async () => {
-    // The window above is bounded by the READ settling, not by a new id arriving. `before` is
-    // cleared only when the NEXT scan starts, so on id-equality alone a refetch that never
-    // lands with a new id held the warning down for the life of the mount -- and JobsPanel's
-    // query is `retry: false`, so one dropped request does exactly that. The row went on
-    // rendering this snapshot's counts while withholding its verdict, which is the reassuring
-    // direction to fail in (rules 17/36, 85).
+    // The window above is bounded by the read settling, not by a new id arriving. `before` is
+    // cleared only when the next scan starts, so on id-equality alone, a refetch that never
+    // lands with a new id would hold the warning down for the life of the mount. JobsPanel's
+    // query uses `retry: false`, so one dropped request does exactly that: the row would go on
+    // rendering this snapshot's counts while withholding its verdict, which is the wrong
+    // direction to fail in.
     const client = testQueryClient();
     client.setQueryData(["snapshot"], DEGRADED);
     apiMock.scanStatus.mockResolvedValue(RUNNING);
@@ -267,10 +267,10 @@ describe("starting a library scan", () => {
     });
     await waitFor(() => expect(screen.queryByRole("progressbar")).not.toBeInTheDocument());
 
-    // The refetch goes out and FAILS. Held open across a render rather than rejected inside one
-    // flush, because that is the shape of a real request: the row has to SEE the read in flight
-    // and then see it settle. An error leaves the cached snapshot in place, so the id on screen
-    // is still the one `before` holds.
+    // The refetch goes out and fails. This is held open across a render rather than rejected
+    // inside one flush, because that is the shape of a real request: the row has to see the read
+    // in flight and then see it settle. An error leaves the cached snapshot in place, so the id
+    // on screen is still the one `before` holds.
     let dropIt: (e: Error) => void = () => {};
     const inFlight = new Promise<never>((_, reject) => {
       dropIt = reject;
@@ -284,8 +284,8 @@ describe("starting a library scan", () => {
     // Still held: the read has not settled, so the row still cannot speak for this snapshot.
     expect(screen.queryByText(/came back incomplete/i)).not.toBeInTheDocument();
 
-    // Once it has settled, the snapshot in hand IS the newest thing Reaper has, and it is
-    // incomplete. Before this, the warning stayed down for the life of the mount.
+    // Once it has settled, the snapshot in hand is the newest thing Reaper has, and it is
+    // incomplete.
     await act(async () => {
       dropIt(new Error("dropped"));
       await inFlight.catch(() => {});
@@ -322,8 +322,8 @@ describe("starting a library scan", () => {
   });
 
   it("gives the running bar a name and a value a reader can land on", async () => {
-    // The bar is the only thing on screen while the scan runs, so it carries the wait's name --
-    // the same string the start announcement leads with (rule 144).
+    // The bar is the only thing on screen while the scan runs, so it carries the wait's name,
+    // the same string the start announcement leads with.
     apiMock.scanStatus.mockResolvedValue(RUNNING);
     renderRow();
 

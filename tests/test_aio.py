@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The asyncio helpers: per-loop mutual exclusion.
+"""The asyncio helpers. Per-loop mutual exclusion.
 
 ``gather_reaped`` and ``reap`` are exercised through the scan pipeline that uses them.
-``per_loop_lock`` is not exercised anywhere by its own properties, and both of the
-properties its two original copies asserted in prose were proven by neither.
+``per_loop_lock`` is not exercised anywhere by its own properties, and neither of two
+earlier, duplicated test files actually proved the properties they claimed in prose.
 
-**Every test here contends the lock, which is the whole point.** ``asyncio.Lock.acquire``
+Every test here contends the lock, which is the whole point. ``asyncio.Lock.acquire``
 returns on a fast path that never reads the running loop, so an uncontended acquire binds
-nothing: a test that takes the lock alone passes against a shared module-level lock too,
-and would read as a proof of the thing this module exists for.
+nothing. A test that takes the lock alone would pass against a shared module-level lock
+too, and would read as a proof of the thing this module exists for.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ async def _contend(lock: asyncio.Lock) -> None:
 
 def test_each_loop_gets_its_own_lock() -> None:
     """The whole reason this is a factory. A lock binds to the loop it was first contended
-    on and raises on every other, and the suite runs a fresh loop per test (rule 37)."""
+    on and raises on every other, and the suite runs a fresh loop per test."""
     lock_for = per_loop_lock()
     seen: list[asyncio.Lock] = []
 
@@ -48,10 +48,11 @@ def test_each_loop_gets_its_own_lock() -> None:
 
 
 def test_a_shared_lock_is_what_this_prevents() -> None:
-    """The control, and the reason the test above is not enough on its own: two distinct
+    """The control, and the reason the test above is not enough on its own. Two distinct
     objects say nothing about the failure. One lock contended on two loops raises, so a
     module-level ``asyncio.Lock`` would take the suite down from whichever test second
-    reached it under contention -- intermittently, since an uncontended acquire is silent."""
+    reached it under contention. That would happen intermittently, since an uncontended
+    acquire is silent."""
     shared = asyncio.Lock()
     asyncio.run(_contend(shared))
 
@@ -79,10 +80,10 @@ def test_a_loop_that_never_contended_takes_its_lock_with_it() -> None:
     strong dict would hold one lock per loop the process ever ran, and the suite runs
     thousands.
 
-    **It is named for the case it actually pins.** A lock that WAS contended stores the loop
-    on itself, so the value keeps the key alive and the entry outlives the loop; that bound
-    is recorded on ``per_loop_lock`` and costs one lock per contended loop, which is nothing
-    in a process with one loop.
+    This is named for the case it actually pins. A lock that *was* contended stores the
+    loop on itself, so the value keeps the key alive and the entry outlives the loop. That
+    case is recorded on ``per_loop_lock`` and costs one lock per contended loop, which is
+    nothing in a process with one loop.
     """
     lock_for = per_loop_lock()
     held: list[weakref.ref[asyncio.Lock]] = []

@@ -15,11 +15,10 @@
 // `<img>` cannot see it. The README picks between them with `<picture>` and
 // `prefers-color-scheme`.
 //
-// Only the MARK was generated at first, and the word beside it was typed: the banner shipped
-// reading "reaper" at semibold while every surface in the app reads "Reaper" at bold. The
-// generated half is what made that survive review -- it is demonstrably the app's drawing, and
-// it vouched for a word nothing had checked (rule 144). So the word, its weight and its
-// tracking now come from `test/appLockup`, which reads them out of the app.
+// If only the mark were generated and the word beside it were typed by hand, the two could
+// drift silently: a generated half is demonstrably the app's drawing, so it would vouch for a
+// word nothing had actually checked. So the word, its weight, and its tracking come from
+// `test/appLockup`, which reads them out of the app.
 
 import { describe, expect, it } from "vitest";
 import { appIconSvg } from "./appIcon";
@@ -32,9 +31,9 @@ const MEDIA = "../../../docs/media";
 /** The banner's own size, in the 360x96 box below. Everything else is the app's. */
 const SIZE = 58;
 
-/** The wordmark's ink in each theme. Deliberately NOT the accent: the accent is a fill, and
- *  at Reaper's sky blue it fails WCAG AA as text on white (2.03:1). The mark beside it carries
- *  the color, and the word stays legible. */
+/** The wordmark's ink in each theme. Deliberately not the accent: the accent is a fill, and at
+ *  Reaper's sky blue it fails WCAG AA as text on white (2.03:1). The mark beside it carries the
+ *  color, and the word stays legible. */
 const INK = { light: "#16181d", dark: "#edeef1" } as const;
 
 /** A system stack, because a README image renders with no webfont available and a `@font-face`
@@ -73,10 +72,10 @@ describe("the README banner", () => {
     },
   );
 
-  // An XML comment may not contain a double hyphen, and the regenerate line above wanted to
-  // read `npm --prefix frontend run ...`. Both files shipped malformed and rendered as a broken
-  // image in every viewer, while the snapshot test stayed perfectly green: it compares strings
-  // and has no opinion about whether the string is valid XML.
+  // An XML comment may not contain a double hyphen, but the regenerate line above would want to
+  // read `npm --prefix frontend run ...`. That would make both files malformed, rendering as a
+  // broken image in every viewer, while the snapshot test above would stay green regardless: it
+  // compares strings and has no opinion about whether the string is valid XML.
   it.each(["light", "dark"] as const)("emits well-formed XML for %s", (theme) => {
     const doc = new DOMParser().parseFromString(banner(theme), "image/svg+xml");
     expect(doc.querySelector("parsererror")?.textContent ?? null).toBeNull();

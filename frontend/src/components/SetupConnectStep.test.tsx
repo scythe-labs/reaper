@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The restore door on the wizard's Connect step (#385).
+// The restore door on the wizard's Connect step.
 //
 // Two claims, and the second is the one worth a file of its own. The door **exists on this
 // step**, because an operator moving an existing Reaper here should meet it before doing the
@@ -86,7 +86,7 @@ async function openAndStage(person: ReturnType<typeof userEvent.setup>) {
   fireEvent.change(input, { target: { files: [new File(["x"], "a.reaper")] } });
   // Wait for the staged summary, whose arrival is what puts Restore on screen at all. Waiting
   // for the control rather than for the page, because user-event reports a click on a control
-  // that is not there yet as nothing at all (rule 137).
+  // that is not there yet as nothing at all.
   return screen.findByRole("button", { name: /^restore$/i });
 }
 
@@ -108,7 +108,7 @@ describe("the restore door on the Connect step", () => {
   it("opens the restore flow as a real dialog", async () => {
     const person = renderStep("the-typed-password");
     await person.click(await screen.findByRole("button", { name: /restore a backup/i }));
-    // A dialog, not a step card: there IS a page behind this one and an opener to return focus
+    // A dialog, not a step card: there is a page behind this one and an opener to return focus
     // to, which is the whole of `ModalShell`'s contract.
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveAccessibleName(/restore from a backup/i);
@@ -181,9 +181,9 @@ describe("the restore door on the Connect step", () => {
 });
 
 describe("removing a connection from the Connect step", () => {
-  // An instance added by mistake -- a typo'd address, a second Radarr that turned out to be the
-  // same server -- had no way out of the wizard: a chip only ever opened the editor, and the
-  // editor only ever saved. The operator had to finish setup and go find Settings.
+  // An instance added by mistake, a typo'd address, or a second Radarr that turns out to be the
+  // same server, needs a way out of the wizard beyond finishing setup and finding it later in
+  // Settings.
   const RADARR = {
     id: 7,
     kind: "radarr",
@@ -204,7 +204,7 @@ describe("removing a connection from the Connect step", () => {
   it("asks before it forgets one, and names which one it is asking about", async () => {
     // Never a one-press delete, and never a native confirm(): the same two-step the services
     // panel uses for this act. Both buttons carry the instance, because by their visible text
-    // alone a row of chips is a row of identical "Remove"s (#192's shape).
+    // alone a row of chips is a row of identical "Remove" buttons.
     apiMock.instances.mockResolvedValue([RADARR]);
     const person = renderStep("pw");
     await person.click(await screen.findByRole("button", { name: "Remove HD" }));
@@ -225,8 +225,8 @@ describe("removing a connection from the Connect step", () => {
   });
 
   it("removes it on confirm, and says so out loud", async () => {
-    // The chip vanishing IS the whole success signal, and an absence cannot be perceived by
-    // ear -- the asymmetry #192 was about, reached here by a new control.
+    // The chip vanishing is the whole success signal, and an absence cannot be perceived by
+    // ear, so the removal needs a spoken confirmation too.
     apiMock.instances.mockResolvedValue([RADARR]);
     apiMock.deleteInstance.mockResolvedValue({ removed: true });
     const person = renderStep("pw");
@@ -238,8 +238,8 @@ describe("removing a connection from the Connect step", () => {
   });
 
   it("shows a refused remove rather than leaving the chip there saying nothing", async () => {
-    // Every async onClick is a mutation with a rendered failure (rule 17/36). Silence here
-    // reads as "it worked and came back".
+    // Every async onClick is a mutation with a rendered failure. Silence here reads as "it
+    // worked and came back."
     apiMock.instances.mockResolvedValue([RADARR]);
     apiMock.deleteInstance.mockRejectedValue(new Error("it is in use by a running scan"));
     const person = renderStep("pw");

@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The pure helpers in ``scripts/delete_threshold_ratio_measure.py``: the ramp/gate
-boundaries, the curve math, the ratio wording, and the cutoff/lane split that must never
-leak a play after the cutoff into a "before" reading (rule 119: agreement tests call the
-real function, never a transcribed copy -- every assertion here calls the script's own
-code, including the real ``reaper.services.rewatch.training_pair`` it is built on)."""
+boundaries, the curve math, the ratio wording, and the cutoff/lane split that must never leak
+a play after the cutoff into a "before" reading. Every assertion here calls the script's own
+code, including the real ``reaper.services.rewatch.training_pair`` it is built on, rather than
+a transcribed copy."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-# scripts/ is not on mypy's checked path (return_signal_measure.py precedent: scripts/
-# is not part of the `mypy src/reaper tests/` gate).
+# scripts/ is outside mypy's checked path. The `mypy` gate only runs against src/reaper and
+# tests/, the same as return_signal_measure.py.
 import delete_threshold_ratio_measure as measure  # type: ignore[import-not-found]
 
 DAY = 86_400
@@ -120,7 +120,7 @@ def test_title_pair_splits_lanes_on_a_play_before_the_cutoff() -> None:
 
 def test_title_pair_clamps_a_never_played_anchor_to_the_history_horizon() -> None:
     # The live engine clamps a never-played anchor to the mirror's earliest event
-    # (dormancy.reference_instant): an arrival date the history cannot see past would
+    # (dormancy.reference_instant). An arrival date the history cannot see past would
     # otherwise read as dormancy nobody measured. 3,000 days since arrival with only 400
     # days of history reads as 400, which the MIN_DORMANCY gate (1,095) then protects.
     cutoff = int(datetime(2025, 1, 1, tzinfo=UTC).timestamp())
@@ -139,8 +139,8 @@ def test_title_pair_clamps_a_never_played_anchor_to_the_history_horizon() -> Non
 
 
 def test_title_pair_withholds_a_title_added_inside_the_lookback_year() -> None:
-    # No play either side, and it arrived after the cutoff: it was not in the library
-    # yet, so it must not be scored as if it had sat dormant since the cutoff.
+    # No play either side, and it arrived after the cutoff. It was not in the library yet,
+    # so it must not be scored as if it had sat dormant since the cutoff.
     cutoff = int(datetime(2025, 1, 1, tzinfo=UTC).timestamp())
     window_end = cutoff + 365 * DAY
     pair, in_lane_a = measure.title_pair(

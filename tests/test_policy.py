@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Policy: the hash, the floors, and the things that cannot be spelled.
 
-An approval is bound to a policy hash. So the hash must change when the *meaning*
-changes and must not change when it does not -- otherwise approvals either void
-themselves at random, or (far worse) silently survive an edit the human never saw.
+An approval is bound to a policy hash. The hash must change when the *meaning* changes,
+and must not change when it does not. Otherwise approvals either void themselves at
+random, or, far worse, silently survive an edit the human never saw.
 """
 
 from __future__ import annotations
@@ -74,21 +74,22 @@ from tests._reasons import text as reason_text
 
 
 def _msg(w: PolicyWarning) -> str:
-    """A warning's composed English, from the real catalog (rule 92: never assert on the
-    typed reason's own repr as though it were the operator's sentence). The test-side twin
-    of ``PolicyEditor.tsx``'s ``composeIn("warning", w.reason)``."""
+    """A warning's composed English, read from the real catalog rather than from the typed
+    reason's own repr, which is not the operator's sentence. The test-side twin of
+    ``PolicyEditor.tsx``'s ``composeIn("warning", w.reason)``.
+    """
     return reason_text(w.reason, namespace="warning")
 
 
 #: Every gate ``build_gates`` can construct from a policy row. RATING_FLOOR is not in
 #: ``GATE_TYPES`` because it takes a set of per-source bars rather than one GateConfig, so
-#: ``build_gates`` builds it explicitly -- it is buildable, just not by lookup.
+#: ``build_gates`` builds it explicitly. It is buildable, just not by lookup.
 _BUILDABLE_GATES = set(GATE_TYPES) | {GateId.RATING_FLOOR}
 
-#: Ids the ENGINE emits as gate results without any policy row behind them: the season guard
-#: comes from the season judgment, CUSTOM tags an operator-authored rule's result. ``GATE_TYPES``
-#: has no entry for either, so ``build_gates`` refuses them exactly as it refuses a retired id,
-#: and ``GateSettingIn`` refuses to save one.
+#: Ids the engine emits as gate results without any policy row behind them. The season
+#: guard comes from the season judgment, and CUSTOM tags an operator-authored rule's
+#: result. ``GATE_TYPES`` has no entry for either, so ``build_gates`` refuses them exactly
+#: as it refuses a retired id, and ``GateSettingIn`` refuses to save one.
 _ENGINE_ONLY_GATES = {GateId.SEASON_PROGRESSION, GateId.CUSTOM}
 
 
@@ -126,7 +127,7 @@ class TestPopularityWindow:
 
     def test_a_disabled_gate_must_not_leak_its_window(self) -> None:
         """A stale short window on a switched-off gate would quietly raise FEW_WATCHERS
-        pressure across the whole library -- the fact must fall back to the default."""
+        pressure across the whole library. The fact must fall back to the default."""
         body = _policy(
             gates=(
                 GateSetting(gate=GateId.WHITELISTED),
@@ -150,7 +151,7 @@ class TestTheHash:
         assert _policy(condemn_at=70).policy_hash() != _policy(condemn_at=60).policy_hash()
 
     def test_changing_a_weight_changes_the_hash(self) -> None:
-        """Points move BETWEEN signals rather than in and out of thin air: the total is
+        """Points move BETWEEN signals rather than in and out of thin air. The total is
         pinned at 100, so a weight edit is always a reallocation."""
         a = _policy(signals=_split(60, 40))
         b = _policy(signals=_split(70, 30))
@@ -193,7 +194,7 @@ class TestTheHash:
 
 
 class TestEvidenceHash:
-    """The evidence hash gates the zero-scan replay: it stays the same for edits a frozen-
+    """The evidence hash gates the zero-scan replay. It stays the same for edits a frozen-
     facts replay reproduces exactly, and changes for edits that alter what the scan gathers."""
 
     def test_a_weight_edit_keeps_the_evidence_hash(self) -> None:
@@ -223,11 +224,11 @@ class TestEvidenceHash:
         assert a.evidence_hash() != b.evidence_hash()
 
     def test_switching_a_protection_off_keeps_the_evidence_hash(self) -> None:
-        """A gate decides what to make of an item; it does not decide what gets gathered.
+        """A gate decides what to make of an item. It does not decide what gets gathered.
 
-        Every fact a gate reads is frozen whether or not the gate is switched on -- no fact
-        builder branches on the gate list -- so the replay answers a toggle exactly. This is
-        the edit an operator makes most often on this page, and it used to blank the panel.
+        Every fact a gate reads is frozen whether or not the gate is switched on. No fact
+        builder branches on the gate list, so the replay answers a toggle exactly. This is
+        the edit an operator makes most often on this page.
         """
         a = _policy(gates=(GateSetting(gate=GateId.MIN_DORMANCY, threshold=1095),))
         b = _policy(gates=(GateSetting(gate=GateId.MIN_DORMANCY, threshold=1095, enabled=False),))
@@ -243,9 +244,9 @@ class TestEvidenceHash:
         assert a.evidence_hash() == b.evidence_hash()
 
     def test_switching_the_popularity_gate_off_keeps_the_evidence_hash(self) -> None:
-        """The one gate whose settings reach the gather phase, in the direction that is
-        still exact: a disabled popularity gate leaves the window at the 365-day default, so
-        the watcher counts already frozen were counted over exactly that span."""
+        """The one gate whose settings reach the gather phase, in the direction that stays
+        exact. A disabled popularity gate leaves the window at the 365-day default, so the
+        watcher counts already frozen were counted over exactly that span."""
         a = _policy(
             gates=(GateSetting(gate=GateId.SERVER_POPULARITY, threshold=3, window_days=365),)
         )
@@ -259,9 +260,10 @@ class TestEvidenceHash:
         assert a.evidence_hash() == b.evidence_hash()
 
     def test_switching_the_popularity_gate_on_at_a_new_window_changes_it(self) -> None:
-        """And the direction that is not. A gate disabled at scan time was counted over the
-        365-day fallback; enabling it at 90 asks a question of a count nobody took, so this
-        has to fall through to the refusal however cheap a replay would be."""
+        """The direction that is not exact. A gate disabled at scan time was counted over
+        the 365-day fallback. Enabling it at 90 asks a question of a count nobody took, so
+        this has to fall through to the refusal, however cheap a replay would be.
+        """
         off = _policy(
             gates=(
                 GateSetting(
@@ -275,12 +277,13 @@ class TestEvidenceHash:
         assert off.evidence_hash() != on.evidence_hash()
 
     def test_every_gate_field_is_classified_as_gathering_or_judging(self) -> None:
-        """Rule 103's drift guard, and the reason the split is written out by name.
+        """The drift guard behind the split, and the reason the split is written out by
+        name.
 
         A gate field added later would otherwise fall silently into the judging half and be
-        replayed off frozen bytes that never covered it -- a confident wrong preview, which
-        is worse than the blank panel this change removes. Classify the new field into one
-        of the two sets, and if it is a gathering one, fold it into ``_gathering_evidence``.
+        replayed off frozen bytes that never covered it. That is a confident wrong preview,
+        worse than a blank panel. Classify the new field into one of the two sets, and if
+        it is a gathering one, fold it into ``_gathering_evidence``.
         """
         declared = PolicyBody._GATHERING_GATE_FIELDS | PolicyBody._JUDGING_GATE_FIELDS
         actual = set(GateSetting.model_fields)
@@ -294,9 +297,10 @@ class TestEvidenceHash:
     def test_an_on_list_rule_previews_without_a_scan_but_still_voids_an_approval(self) -> None:
         """The keep tags left the body for Settings -> Lists, and a list now protects
         through an ``on_list`` rule reading the frozen ``Facts.on_lists``. That makes the
-        rule REPLAYABLE -- the membership was gathered whether or not any rule named it --
-        so the evidence hash holds still. The policy hash must still move: a plan approved
-        before the rule was added targets files the new rule keeps (rule 113)."""
+        rule replayable. The membership was gathered whether or not any rule named it, so
+        the evidence hash holds still. The policy hash must still move, because a plan
+        approved before the rule was added targets files the new rule now keeps.
+        """
         a = _policy(protect_conditions=(ConditionSpec(field="on_list", op=Op.EQ, value="A"),))
         b = _policy(protect_conditions=(ConditionSpec(field="on_list", op=Op.EQ, value="B"),))
         assert a.evidence_hash() == b.evidence_hash()
@@ -305,13 +309,13 @@ class TestEvidenceHash:
     def test_a_season_rule_keeps_the_evidence_hash(self) -> None:
         """Every season rule, and every one of them in both directions.
 
-        A season rule recomputes the guard rather than the evidence: the scan freezes what
-        ``plan_series_prune`` reads per show (``db.models.SeasonPruneEvidence``) and the
+        A season rule recomputes the guard rather than the evidence. The scan freezes what
+        ``plan_series_prune`` reads per show (``db.models.SeasonPruneEvidence``), and the
         replay re-derives the plan from it, so none of these nine changes what a scan would
-        gather. Swept rather than sampled, because a field left out of
-        ``_EVIDENCE_REPLAYABLE_FIELDS`` fails closed and nothing else here would notice one
-        of the nine still refusing (rule 141: the fixture values are all off the default, so
-        an edit that does nothing cannot pass this).
+        gather. This sweeps every field rather than sampling one, because a field left out
+        of ``_EVIDENCE_REPLAYABLE_FIELDS`` fails closed, and nothing else here would notice
+        one of the nine still refusing. Each fixture value differs from the default, so an
+        edit that does nothing cannot pass this test.
         """
         edits: list[dict[str, Any]] = [
             {"keep_last_seasons": 4},
@@ -332,8 +336,8 @@ class TestEvidenceHash:
                 f"{field} still forces a fresh scan. It is replayable off the frozen season "
                 "bundle, so it belongs in PolicyBody._EVIDENCE_REPLAYABLE_FIELDS."
             )
-            # Still a real edit: it moves the scores, which is what routes it to the replay
-            # rather than to the stored-score tier.
+            # This is still a real edit, since it moves the scores. That is what routes it
+            # to the replay rather than to the stored-score tier.
             assert edited.scoring_hash() != base.scoring_hash(), (
                 f"{field} moved neither hash, so this case proves nothing about either."
             )
@@ -343,7 +347,7 @@ class TestSimulatorHashesCoverOnlyBehavior:
     """Neither simulator hash may move for a field that cannot change an answer.
 
     A field that is pure bookkeeping, folded into these hashes, does not merely cost one
-    extra scan: it makes the simulator refuse *permanently*, because the scan records the
+    extra scan. It makes the simulator refuse *permanently*, because the scan records the
     stored body's hash while the route computes the round-tripped one. ``schema_version``
     did exactly that on any install whose policy predated a version bump.
     """
@@ -353,20 +357,21 @@ class TestSimulatorHashesCoverOnlyBehavior:
         current = _policy(schema_version=SCHEMA_VERSION)
         assert old.scoring_hash() == current.scoring_hash()
         assert old.evidence_hash() == current.evidence_hash()
-        # It is still part of the body an approval is bound to (rule 113).
+        # It is still part of the body an approval is bound to.
         assert old.policy_hash() != current.policy_hash()
 
     def test_a_scorer_bump_invalidates_stored_scores_but_replays_exactly(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The one version field that IS behavior: a new scorer means the stored scores are
-        not comparable (scoring_hash must move), but a replay runs the new scorer over the
-        frozen Facts, so the evidence is still good (evidence_hash must not).
+        """The one version field that is behavior: a new scorer means the stored scores
+        are not comparable, so ``scoring_hash`` must move. A replay runs the new scorer
+        over the frozen Facts, so the evidence is still good, and ``evidence_hash`` must
+        not move.
 
-        Driven by bumping the CONSTANT rather than by building two bodies that disagree
-        about it, because ``_pin_to_the_running_scorer`` makes the second impossible: the
-        field tracks the running code, so a body claiming the superseded scorer cannot
-        exist. Bumping the constant is also the thing that really happens.
+        This bumps the actual constant instead of building two bodies that disagree about
+        it, because ``_pin_to_the_running_scorer`` makes the second impossible. The field
+        always tracks the running code, so a body claiming a superseded scorer cannot
+        exist. Bumping the constant is also what really happens in practice.
         """
         before_scoring = _policy().scoring_hash()
         before_evidence = _policy().evidence_hash()
@@ -379,12 +384,12 @@ class TestSimulatorHashesCoverOnlyBehavior:
     def test_a_stored_scorer_pin_does_not_outlive_the_scorer(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """What binds an approval is ``policy_hash``, and it has to be able to MOVE when the
-        scorer does. The field took its value from the stored JSON, so a row written under
-        scorer N still read back as N after the constant was bumped: the hash was
-        byte-identical either side, ``live_policy_hash`` still matched a plan approved under
-        the superseded scorer, and the executor deleted on its numbers with no re-scan
-        refusal (rule 113). Two snapshots scored by different scorers hashed the same too.
+        """What binds an approval is ``policy_hash``, and it has to move when the scorer
+        does. The field took its value from the stored JSON, so a row written under scorer
+        N still read back as N after the constant was bumped. The hash was byte-identical
+        either side, ``live_policy_hash`` still matched a plan approved under the
+        superseded scorer, and the executor deleted on its numbers with no re-scan
+        refusal. Two snapshots scored by different scorers hashed the same too.
         """
         stored = _policy().model_dump(mode="json")
         assert stored["scorer_version"] == SCORER_VERSION
@@ -400,10 +405,12 @@ class TestSimulatorHashesCoverOnlyBehavior:
     def test_the_pin_holds_however_the_body_was_built(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A pin that held for a body loaded from the database and not for one built in code
-        would be the half-fix, and it is the easy one to write: a frozen model's top-level
-        "after" validator is silently ignored when it returns a copy rather than mutating
-        through ``object.__setattr__``, and only on the ``__init__`` path."""
+        """A pin that held for a body loaded from the database, but not for one built in
+        code, would be a half-fix, and it is the easy one to write. A frozen model's
+        top-level "after" validator is silently ignored when it returns a copy rather than
+        mutating through ``object.__setattr__``, and that happens only on the ``__init__``
+        path.
+        """
         stored = _policy().model_dump(mode="json")
         monkeypatch.setattr(policy_module, "SCORER_VERSION", SCORER_VERSION + 1)
 
@@ -414,8 +421,9 @@ class TestSimulatorHashesCoverOnlyBehavior:
         )
 
     def test_a_body_from_a_newer_reaper_is_still_refused(self) -> None:
-        """The pin overwrites what the row said, so the bound that refuses a body this code
-        cannot interpret has to keep running first, not be papered over by it."""
+        """The pin overwrites what the row said, so the check that refuses a body this
+        code cannot interpret has to run first. It must not be skipped just because the
+        pin already ran."""
         stored = _policy().model_dump(mode="json")
         stored["scorer_version"] = SCORER_VERSION + 1
 
@@ -425,33 +433,32 @@ class TestSimulatorHashesCoverOnlyBehavior:
     def test_every_body_field_is_classified(self) -> None:
         """A new field lands in one of the three sets, or in the evidence-bearing list here.
 
-        The allow-list makes "unclassified" mean "needs a fresh scan", which is the safe
-        default for evidence but the wrong one for bookkeeping. This fails when a field is
-        added so the author has to decide which it is, rather than discovering it on a live
-        server the way ``schema_version`` was found. (``name`` is deliberately absent: a
-        policy's name lives on the row, not in the hashed body.)
+        The allow-list makes "unclassified" mean "needs a fresh scan," which is the safe
+        default for evidence but the wrong one for bookkeeping. This test fails as soon as
+        a field is added, so the author decides which category it belongs to, instead of
+        finding out from a bug in production. (``name`` is deliberately absent: a policy's
+        name lives on the row, not in the hashed body.)
 
-        **Coverage was not enough on its own.** It used to assert only that the sets COVERED
-        the body, which a field listed in two of them satisfies just as well -- and ``gates``
-        was listed twice, so from the moment it became replayable this test would have gone
-        on passing had it been put back. Coverage catches a field nobody classified; only
-        disjointness catches one classified twice, which is the half that matters when a set
-        is being edited rather than extended.
+        Coverage alone is not enough. Asserting only that the sets cover the body would
+        still pass even if a field were listed in two of them at once. Coverage catches a
+        field nobody classified. Only disjointness catches one classified twice, which is
+        the half that matters when a set is being edited rather than extended.
 
-        Disjointness holds over what the simulator does with a field, and only there: a body
-        field either replays off frozen evidence, or needs a fresh scan, or is bookkeeping,
-        and never two of those. ``_POST_SCORE_FIELDS`` is a different question -- which hash
-        a field leaves, not which tier answers it -- so a threshold is legitimately both
-        post-score and replayable, and it takes part in the coverage check alone.
+        Disjointness holds over what the simulator does with a field, and only there. A
+        body field either replays off frozen evidence, needs a fresh scan, or is
+        bookkeeping, and never two of those. ``_POST_SCORE_FIELDS`` asks a different
+        question, which hash a field leaves rather than which tier answers it, so a
+        threshold can legitimately be both post-score and replayable. It takes part in
+        the coverage check alone.
         """
         exclusive = {
             "evidence-replayable": PolicyBody._EVIDENCE_REPLAYABLE_FIELDS,
             "non-behavioral": PolicyBody._NON_BEHAVIORAL_FIELDS,
-            # Everything else is evidence-bearing: it changes what a scan gathers, so the
-            # frozen evidence cannot answer for it and the simulator refuses. Down to one
-            # field: the season rules replay off the frozen prune bundle, and the keep tags
-            # left the body altogether for Settings -> Lists, where a list protects through
-            # an ``on_list`` rule reading membership the scan gathered regardless.
+            # Everything else is evidence-bearing. It changes what a scan gathers, so the
+            # frozen evidence cannot answer for it, and the simulator refuses. This set is
+            # down to one field. The season rules replay off the frozen prune bundle, and
+            # the keep tags left the body for Settings -> Lists, where a list protects
+            # through an ``on_list`` rule that reads membership the scan gathers regardless.
             "evidence-bearing": frozenset({"media_type"}),
         }
         for left, right in itertools.combinations(exclusive, 2):
@@ -471,23 +478,23 @@ class TestSimulatorHashesCoverOnlyBehavior:
 
 
 class TestFloorsThatCannotBeZero:
-    """0 never means 'disabled' and blank never means 'unlimited'.
+    """0 never means "disabled," and a blank field never means "unlimited."
 
-    Both idioms are how a half-finished config becomes an unbounded deletion.
-    Janitorr's `movie-expiration: {100: 10d}` was read by its author as 'when 100%
-    full' and by the code as 'always' -- and it deleted half a library.
+    Both are ways a half-finished config can become an unbounded deletion. A limit meant
+    as "block everything past this point" can just as easily be read as "no limit at all,"
+    and a tool that reads it the second way can delete most of a library on one run.
     """
 
     def test_a_vote_floor_of_zero_is_refused(self) -> None:
-        """A rating bar without a vote floor protects an 8.3 drawn from a few
-        hundred votes -- a number that means nothing at all. IMDb counts votes, so a
-        vote floor is required on it."""
+        """A rating bar without a vote floor protects an 8.3 drawn from a few hundred
+        votes, a number that means nothing at all. IMDb counts votes, so a vote floor is
+        required on it."""
         with pytest.raises(ValidationError, match="vote floor of 0"):
             RatingRuleSpec(source=RatingSource.IMDB, floor=75, min_votes=0)
 
     def test_a_vote_floor_on_a_percentage_source_is_refused(self) -> None:
         """Rotten Tomatoes is a percentage with no vote count, so a vote floor on it would
-        silently do nothing -- refuse it rather than let the owner set a dead number."""
+        silently do nothing. Refuse it rather than let the owner set a dead number."""
         with pytest.raises(ValidationError, match="no vote count"):
             RatingRuleSpec(source=RatingSource.ROTTEN_TOMATOES_CRITIC, floor=75, min_votes=500)
 
@@ -501,8 +508,8 @@ class TestFloorsThatCannotBeZero:
         assert RatingRuleSpec(source=RatingSource.IMDB, floor=75, min_votes=1).min_votes == 1
 
     def test_a_single_vote_on_a_percentage_source_is_refused_too(self) -> None:
-        """The other side reads `!= 0`, so it is 1 and not 500 that pins it: a probe at 500
-        leaves the comparison free to become "anything but 1" and still pass."""
+        """The other side reads `!= 0`, so it is 1 and not 500 that pins it. A probe at
+        500 would leave the comparison free to become "anything but 1" and still pass."""
         with pytest.raises(ValidationError, match="no vote count"):
             RatingRuleSpec(source=RatingSource.ROTTEN_TOMATOES_CRITIC, floor=75, min_votes=1)
 
@@ -512,19 +519,19 @@ class TestFloorsThatCannotBeZero:
             RatingRuleSpec(source=RatingSource.IMDB, floor=150, min_votes=1000)
 
     def test_a_watcher_floor_of_zero_is_refused(self) -> None:
-        """It would protect every item on the server -- which looks safe, until the
-        owner wonders why Reaper never finds anything and disables the gate."""
+        """It would protect every item on the server, which looks safe until the owner
+        wonders why Reaper never finds anything and disables the gate."""
         with pytest.raises(ValidationError, match="protect your whole library"):
             GateSetting(gate=GateId.SERVER_POPULARITY, threshold=0)
 
     def test_a_disabled_gate_skips_the_floors(self) -> None:
-        """Turning a protection OFF is legitimate and explicit. It is spelling
-        'off' as a zero threshold that is banned.
+        """Turning a protection off is legitimate and explicit. Spelling "off" as a zero
+        threshold is what is banned.
 
-        The same gate and the same zero the test above refuses, so this pins the
-        ``not self.enabled`` early return rather than a value the validator never
-        polices: RATING_FLOOR carries no threshold of its own any more, so a gate
-        row spelled that way builds either way and could not fail (rule 141).
+        This uses the same gate and the same zero the test above refuses, so it pins the
+        ``not self.enabled`` early return rather than a value the validator never checks.
+        RATING_FLOOR no longer carries a threshold of its own, so a gate row spelled that
+        way builds either way, and this case alone could not fail.
         """
         assert GateSetting(gate=GateId.SERVER_POPULARITY, enabled=False, threshold=0)
 
@@ -550,10 +557,10 @@ class TestFloorsThatCannotBeZero:
     def test_a_one_point_miss_names_one_point_and_never_a_negative(self) -> None:
         """The smallest miss in each direction, because it is the one that can go negative.
 
-        The remedy picks its branch on `over > 0`, and `over` is 1 or -1 here. Only ever
-        driving a miss of 20 or 30 left the comparison free to move: at `over > 1` a total of
-        101 takes the under-allocated branch and tells the operator to "give out the other -1",
-        which is rule 21's floor, not a rounding detail.
+        The remedy picks its branch on `over > 0`, and `over` is 1 or -1 here. Driving
+        only a miss of 20 or 30 would leave the comparison free to move. At `over > 1`, a
+        total of 101 takes the under-allocated branch and tells the operator to "give out
+        the other -1," which is a wording bug, not a rounding detail.
         """
         with pytest.raises(ValidationError, match=r"Take 1 away"):
             _policy(signals=_split(51, 50))
@@ -561,8 +568,9 @@ class TestFloorsThatCannotBeZero:
             _policy(signals=_split(50, 49))
 
     def test_both_shipped_defaults_already_balance(self) -> None:
-        """The reason this change moves no score: the policies operators start on are
-        already at exactly 100, so pinning the total is a relabeling, not a migration."""
+        """Neither shipped default's score changes because of this rule. The policies
+        operators start on are already at exactly 100, so pinning the total is a
+        relabeling, not a behavior change."""
         for body in (DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY):
             total = sum(s.weight for s in body.signals) + sum(c.weight for c in body.custom_condemn)
             assert total == 100
@@ -600,14 +608,14 @@ class TestFloorsThatCannotBeZero:
     def test_a_ramp_that_cannot_ramp_is_refused_on_every_spec_that_has_one(
         self, build: Callable[[int], object], floor: int
     ) -> None:
-        """``floor >= saturate_at`` is one rule with three copies (rule 72), and each has to
-        refuse BOTH ways of collapsing the ramp.
+        """``floor >= saturate_at`` is one rule with three separate copies, and each has to
+        refuse both ways of collapsing the ramp.
 
-        At equality the ramp has no width, so the rule is either always off or always at full
-        pressure; above it the ramp runs backwards. Neither is a bound an operator can have
-        meant. This was three copies deep and only one of them was tested, at only one of the
-        two values -- so an operator flip on either newer copy let a degenerate rule be saved,
-        and the save boundary is the last place that can refuse it.
+        At equality the ramp has no width, so the rule is either always off or always at
+        full pressure. Above it, the ramp runs backwards. Neither is a bound an operator
+        could have meant. Each copy needs its own coverage at both values, since one
+        untested copy at one untested value is enough to let an operator save a
+        degenerate rule, and the save boundary is the last place that can refuse it.
         """
         with pytest.raises(ValidationError, match="below saturate_at"):
             build(floor)
@@ -615,12 +623,12 @@ class TestFloorsThatCannotBeZero:
 
 class TestCaps:
     """Four caps, not two. The rolling BYTE cap is what keeps a multi-terabyte incident
-    out of reach: no sequence of runs is admitted past it.
+    out of reach. No sequence of runs can pass it.
 
-    Exact in ITEMS, a close bound in BYTES: the sizes it charges are what the *arr tracks,
-    and a movie delete takes the whole folder (#317, learning 14b). Do not restore "no
-    sequence of runs can exceed it" here -- it was one of three copies of a claim the
-    measurement refuted."""
+    The ITEMS cap is exact. The BYTES cap is a close bound only, because the sizes it
+    charges are what the *arr tracks, and a movie delete removes the whole folder. Do not
+    restate "no sequence of runs can exceed it" as a guarantee on the BYTES cap. That
+    holds for ITEMS, not for BYTES."""
 
     def test_defaults_are_conservative(self) -> None:
         settings_ = ProfileSettings()
@@ -659,9 +667,9 @@ class TestCaps:
         assert settings_.max_unmeasured_per_run == settings_.max_items_per_run
 
     def test_more_unmeasured_items_than_items_is_refused(self) -> None:
-        """A run that may delete more unknown-size items than items in total is incoherent,
-        and the allowance is the only bound on that population -- an unmeasured item adds
-        nothing to either byte cap, so the byte caps cannot catch it."""
+        """A run that may delete more unknown-size items than items in total is
+        incoherent, and the allowance is the only bound on that population. An unmeasured
+        item adds nothing to either byte cap, so the byte caps cannot catch it."""
         with pytest.raises(ValidationError, match="unknown"):
             ProfileSettings(max_items_per_run=9, max_items_per_30d=10, max_unmeasured_per_run=10)
 
@@ -682,14 +690,15 @@ class TestDefaultPolicy:
 
     def test_the_shipped_default_protects_before_it_condemns(self) -> None:
         """Every protection the owner asked for is on by default. List membership arrives
-        as shipped ``on_list`` keep rules rather than as gates, and their names are the ones
-        ``list_config.ensure_defaults`` seeds -- a rule naming a list that does not exist
-        would render as a live protection covering nothing (rule 25).
+        as shipped ``on_list`` keep rules rather than as gates, and their names are the
+        ones ``list_config.ensure_defaults`` seeds. A rule naming a list that does not
+        exist would render as a live protection covering nothing.
 
-        Scoped by the media type each list can hold (#539): the tag list spans both libraries
-        so both policies name it, but the IMDb chart is movies only, so a TV rule naming it
-        could never keep a season (rule 38). The movie default names both, the TV default the
-        tag list alone."""
+        Each rule is scoped to the media types its list can hold: the tag list spans both
+        libraries so both policies name it, but the IMDb chart is movies only, so a TV
+        rule naming it could never keep a season. The movie default names both lists, the
+        TV default names the tag list alone.
+        """
         enabled = {g.gate for g in DEFAULT_MOVIE_POLICY.gates if g.enabled}
 
         assert GateId.STREAMING_NOW in enabled
@@ -709,33 +718,33 @@ class TestDefaultPolicy:
         assert DEFAULT_IMDB_LIST_NAME not in tv_lists
 
     def test_no_shipped_protection_is_one_that_cannot_fire(self) -> None:
-        """Rule 38/117, as a standing check rather than a one-off. Every gate a default
-        policy carries must be one ``build_gates`` can actually construct, or the operator is
-        shown a switch that does nothing (and, since ``build_gates`` refuses an unknown gate
-        rather than skipping it, a scan that will not run).
+        """A standing check, not a one-off. Every gate a default policy carries must be
+        one ``build_gates`` can actually construct, or the operator is shown a switch
+        that does nothing and, since ``build_gates`` refuses an unknown gate rather than
+        skipping it, a scan that will not run.
 
-        Deliberately NOT filtered to ``g.enabled``. A disabled unbuildable gate still renders
-        a row in the editor, and flipping it on is what takes the scan offline -- so the
-        moment it ships in a default body the damage is one click away, not zero clicks.
+        This is deliberately not filtered to ``g.enabled``. A disabled unbuildable gate
+        still renders a row in the editor, and flipping it on is what takes the scan
+        offline. So the moment it ships in a default body, the damage is one click away,
+        not zero clicks.
         """
         for body in (DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY):
             shipped = {g.gate for g in body.gates}
             assert shipped <= _BUILDABLE_GATES, f"{body.media_type}: {shipped - _BUILDABLE_GATES}"
 
     def test_every_unbuildable_gate_id_is_declared_retired(self) -> None:
-        """The drift guard rule 103 asks for, and the one that would have caught ``rule 72``
-        here. ``RETIRED_GATES`` is a hardcoded set mirroring a schema set: any ``GateId``
-        ``build_gates`` cannot construct MUST be listed, or a stored body naming it survives
-        load and takes that install's scans offline permanently with no self-heal.
+        """The drift guard that catches a gate retired without being declared so.
+        ``RETIRED_GATES`` is a hardcoded set mirroring a schema set: any ``GateId``
+        ``build_gates`` cannot construct must be listed, or a stored body naming it
+        survives load and takes that install's scans offline permanently with no
+        self-heal.
 
-        ``OTHERS_WATCHING`` was exactly that gap -- retired before ``UNMANAGED``, refused by
-        ``build_gates``, and missing from the first version of the set.
-
-        Two retirements are handled the other way, and that is deliberate: ``whitelisted``
-        and ``curated_list`` WERE live protections, so ``convert_list_protections`` rewrites
-        a stored body's row into the equivalent ``on_list`` rule rather than dropping it --
-        putting them in ``RETIRED_GATES`` would silently withdraw cover. The set equality
-        below is what forces a future retirement to pick one of the two mechanisms.
+        Two retirements are handled the other way, and that is deliberate. ``whitelisted``
+        and ``curated_list`` were live protections, so ``convert_list_protections``
+        rewrites a stored body's row into the equivalent ``on_list`` rule rather than
+        dropping it. Putting them in ``RETIRED_GATES`` would silently withdraw that cover.
+        The set equality below is what forces a future retirement to pick one of the two
+        mechanisms.
         """
         converted = {GateId.WHITELISTED, GateId.CURATED_LIST}
         unbuildable = set(GateId) - _BUILDABLE_GATES - _ENGINE_ONLY_GATES
@@ -753,7 +762,7 @@ class TestDefaultPolicy:
             assert has_legacy_list_protections(stored), gate
 
     def test_the_save_boundary_allows_exactly_what_the_builder_can_build(self) -> None:
-        """Rule 131: the producer and the consumer of this bound read one declaration.
+        """The producer and the consumer of this bound read one declaration.
 
         ``POLICY_AUTHORABLE_GATES`` lives in ``engine.gates`` because ``api.schemas`` is a
         leaf that must not import the scan stack, so it cannot derive the set from
@@ -771,12 +780,12 @@ class TestDefaultPolicy:
         self, gate: GateId
     ) -> None:
         """The hole the retirement shim did not cover. ``GateSettingIn.gate`` was a bare
-        ``GateId``, so a hand-crafted save could store a retired id OR an engine-only one
-        (``season_progression``, ``custom``); ``build_gates`` then refused it on every
-        subsequent scan and the install went offline with no self-heal.
+        ``GateId``, so a hand-crafted save could store a retired id or an engine-only one
+        (``season_progression``, ``custom``). ``build_gates`` then refused it on every
+        subsequent scan, and the install went offline with no self-heal.
 
-        Covers both classes at once, so a future retirement or a new engine-only id is
-        refused here the moment it stops being buildable.
+        This covers both classes at once, so a future retirement or a new engine-only id
+        is refused here the moment it stops being buildable.
         """
         with pytest.raises(ValidationError) as caught:
             GateSettingIn(gate=gate, enabled=True)
@@ -785,21 +794,20 @@ class TestDefaultPolicy:
 
     @pytest.mark.parametrize("gate", sorted(set(GateId) - _BUILDABLE_GATES))
     def test_the_same_gate_is_still_carried_on_the_way_out(self, gate: GateId) -> None:
-        """The twin of the refusal above, and the two together are the whole of #627.
+        """The twin of the refusal above. Together, the two cover both directions of the
+        same contract.
 
         ``PolicyOut.body`` was typed as the request model, so this refusal ran on the
-        RESPONSE as well and ``GET /api/policy`` raised on the one stored shape the loader
-        preserves on purpose -- an enabled ``whitelisted``/``curated_list`` whose replacement
-        keep rule cannot be named. Refusing a write of these ids and serving one that is
-        already stored are different questions, and only the first has an operator asking
-        for something that does not exist.
+        response as well. ``GET /api/policy`` raised on the one stored shape the loader
+        preserves on purpose, an enabled ``whitelisted``/``curated_list`` whose
+        replacement keep rule cannot be named. Refusing a write of these ids and serving
+        one that is already stored are different questions, and only the first has an
+        operator asking for something that does not exist.
 
-        **This pins the model contract, not the wiring.** Point ``_policy_out`` back at
-        ``GateSettingIn`` and leave this model in place and this test stays green;
-        ``tests/test_api.py::TestPolicyPersistence`` ``::test_a_leftover_list_protection_
-        still_opens_the_editor`` is the one that goes red, and it is what pins the route.
-        Said here because a docstring naming the whole of #627 above a one-line model
-        assertion reads as the proof and is not one (rule 118).
+        This pins the model contract, not the wiring. Point ``_policy_out`` back at
+        ``GateSettingIn`` and leave this model in place, and this test stays green.
+        ``tests/test_api.py::TestPolicyPersistence::test_a_leftover_list_protection_
+        still_opens_the_editor`` is the test that goes red, and it is what pins the route.
         """
         assert GateSettingOut(gate=gate, enabled=True).gate is gate
 
@@ -817,8 +825,9 @@ class TestDefaultPolicy:
         build_gates(loaded)  # would raise ScanConfigError if the drop had not happened
 
     def test_a_retired_gate_cannot_be_reintroduced_by_hand(self) -> None:
-        """Not only the stored path: a body built in code cannot carry one either, so nothing
-        can put the dead switch back in front of an operator."""
+        """This covers more than the stored path. A body built in code cannot carry a
+        retired gate either, so nothing can put the dead switch back in front of an
+        operator."""
         revived = DEFAULT_MOVIE_POLICY.model_copy(
             update={"gates": (*DEFAULT_MOVIE_POLICY.gates, GateSetting(gate=GateId.UNMANAGED))}
         )
@@ -839,14 +848,14 @@ class TestDefaultPolicy:
 
 
 class TestTheDangerousConfigDetector:
-    """Validation refuses what is PROVABLY wrong. This catches what is merely
-    PROBABLY wrong -- and no validator can tell them apart, because the values are
-    legal either way."""
+    """Validation refuses what is provably wrong. This catches what is merely probably
+    wrong, and no validator can tell them apart, because the values are legal either way.
+    """
 
     def test_a_very_high_imdb_bar_is_flagged(self) -> None:
         """A user thinking in Rotten Tomatoes types 96 as an IMDb bar. That is a legal
-        IMDb floor (9.6) which protects almost nothing, and it is indistinguishable, to a
-        validator, from someone who genuinely wants 9.6. So we say so."""
+        IMDb floor (9.6), which protects almost nothing, and it is indistinguishable, to a
+        validator, from someone who genuinely wants 9.6. So this warns anyway."""
         body = _policy(
             gates=(GateSetting(gate=GateId.RATING_FLOOR),),
             keep_rating_rules=(RatingRuleSpec(source=RatingSource.IMDB, floor=96, min_votes=1000),),
@@ -870,22 +879,16 @@ class TestTheDangerousConfigDetector:
     def test_the_rating_keep_says_so_when_it_has_no_sources_to_keep_on(self) -> None:
         """Rating keep on with an empty source list keeps nothing, and looks configured.
 
-        This is the state the #241 shims exist to repair, so the warning about it has to
-        hold. Nothing pinned it: a mutation run (#243) found that making the branch never
-        fire survives the whole suite. The stock inversion mutant dies, but only because it
-        makes the warning fire on healthy policies, which the shipped-default tests catch --
-        the deleting direction, the one that costs the operator a protection they can see
-        switched on, was undefended.
+        The warning about this state has to hold reliably. Both discriminators are here
+        so the assertion cannot be satisfied by a warning that fires unconditionally: the
+        same gate turned off says nothing, and the same gate with a source says nothing.
 
-        Both discriminators are here so the assertion cannot be satisfied by a warning that
-        fires unconditionally: the same gate turned off says nothing, and the same gate with
-        a source says nothing.
-
-        The third discriminator is the field, and it is now load-bearing rather than
-        incidental. Since #189 a per-bar complaint carries ``keep_rating_rules.<source>.floor``
-        and only this card-level one carries the bare name, so ``== "keep_rating_rules"`` is
-        what separates the two. A ``startswith`` here would have gone on passing while the
-        card-level warning stopped firing, answered by a bar's warning instead.
+        The third discriminator is the field, and it carries real weight rather than
+        being incidental. A per-bar complaint carries
+        ``keep_rating_rules.<source>.floor``, and only this card-level one carries the
+        bare name, so ``== "keep_rating_rules"`` is what separates the two. A
+        ``startswith`` check here would pass even while the card-level warning stopped
+        firing, answered by a bar's warning instead.
         """
         enabled_with_no_sources = _policy(gates=(GateSetting(gate=GateId.RATING_FLOOR),))
 
@@ -916,16 +919,17 @@ class TestTheDangerousConfigDetector:
 
         ``PolicyEditor``'s ``keep_rating_rules`` anchor claims this family by its
         ``keep_rating_rules.`` prefix, and each bar row points ``aria-describedby`` at
-        ``keep_rating_rules.<source>.floor`` in full (#189). The sibling cases in this file
-        assert on the MESSAGE, which carries the source's label and would stay green while the
-        field went back to naming the card -- putting every complaint on every bar, which is
-        the misattribution the issue was filed on.
+        ``keep_rating_rules.<source>.floor`` in full. The sibling cases in this file
+        assert on the message, which carries the source's label and would stay green
+        while the field went back to naming the card, putting every complaint on every
+        bar.
 
-        Two sources, on the two scales, warned about at once: with one bar a field that
-        returned a constant would pass. The population assertion is the rule 145 half -- a
-        third producer given the bare field is one this page has never bound, and a
-        flag-shaped check cannot report a member it was never told to look for. The card's own
-        complaint is absent by construction here, because the list is not empty.
+        Two sources, on the two scales, are warned about at once. With only one bar, a
+        field that returned a constant would still pass. This is the population half of
+        that check: a third producer given the bare field is one this page has never
+        bound, and a flag-shaped check cannot report a member it was never told to look
+        for. The card's own complaint is absent by construction here, because the list is
+        not empty.
         """
         body = _policy(
             gates=(GateSetting(gate=GateId.RATING_FLOOR),),
@@ -1000,25 +1004,18 @@ class TestTheDangerousConfigDetector:
         where: str,
         readable: str,
     ) -> None:
-        """Rule 107's warning, which nothing drove at all.
+        """The warning for a rule that names a field this media type cannot read.
 
-        ``Condition.validate_for`` checks the lane, the operator and the type but not the
-        media type, so a rule saved before a field was narrowed keeps validating and simply
-        stops being offered. A protection then reads as "checked, did not fire" forever, and
-        a removal rule is worse than inert: its points still count toward the fixed
-        100-point denominator, so it holds down every score in that policy.
+        ``Condition.validate_for`` checks the lane, the operator, and the type, but not
+        the media type, so a rule saved before a field was narrowed keeps validating and
+        simply stops being offered. A protection then reads as "checked, did not fire"
+        forever, and a removal rule is worse than inert: its points still count toward the
+        fixed 100-point denominator, so it holds down every score in that policy.
 
-        A mutation run (#243) found four survivors in this one branch, and the shape of the
-        split is the proof: deleting the ``BY_KEY.get`` lookup DIES (NameError on the next
-        line, for any rule at all), while deleting either statement past the ``continue``
-        SURVIVES, still raising NameError. So the suite drove rules through the loop and
-        never once drove one the media type cannot read -- ``inspect`` could be made to
-        crash outright and stay green.
-
-        Every arm is therefore driven here, because they fail separately: all three anchors
-        (only the named two build the ``"name"`` clause), and both directions of the
-        media-type test, whose ``==`` was free to invert and tell a TV operator their rule
-        cannot be read "for movies".
+        Every arm is driven here, because they fail separately: all three anchors (only
+        the named two build the ``"name"`` clause), and both directions of the
+        media-type test, whose ``==`` comparison could invert and tell a TV operator
+        their rule cannot be read "for movies" when the reverse is true.
         """
         body = _policy(media_type=media_type, **build(unreadable))
 
@@ -1031,8 +1028,8 @@ class TestTheDangerousConfigDetector:
             f"Your {kind} uses {label}, which Reaper cannot read for {where},"
         )
 
-        # The same rule on the policy that CAN read the field is silent -- otherwise the
-        # assertion above is satisfied by a warning that fires on every rule.
+        # The same rule on the policy that can read the field stays silent. Otherwise the
+        # assertion above would also pass for a warning that fires on every rule.
         fine = _policy(media_type=media_type, **build(readable))
         assert not [w for w in inspect(fine, ProfileSettings()) if w.field == anchor]
 
@@ -1046,11 +1043,11 @@ class TestTheDangerousConfigDetector:
     def test_disabling_the_data_horizon_gate_is_dangerous(self) -> None:
         """Still a danger, but for the reason this switch actually owns.
 
-        The pre-install-history problem is answered by the dormancy CLAMP in
+        The pre-install-history problem is answered by the dormancy clamp in
         ``snapshot.build_facts``, which runs whatever this switch says, so the warning may
         not promise that titles would start looking never-watched. ``DataHorizonGate`` can
         only fail closed on an Unknown dormancy, and ``MinDormancyGate`` does that too, so
-        what is lost is one of two checks (rules 7/24, 25).
+        what is lost is one of two checks.
         """
         body = _policy(gates=(GateSetting(gate=GateId.DATA_HORIZON, enabled=False),))
 
@@ -1065,8 +1062,9 @@ class TestTheDangerousConfigDetector:
         """The executor's active-stream veto is unconditional: ``_reap_one`` calls
         ``_being_watched_now`` before every real send without consulting the policy gate,
         and ``execute`` refuses a real run with no Plex at all. So turning this gate off
-        cannot delete a file mid-play, and the warning must not say it can (rule 7/24).
-        What it does is let the title be condemned, listed and approved, then skipped."""
+        cannot delete a file mid-play, and the warning must not say it can. What it does
+        is let the title be condemned, listed, and approved, then skipped.
+        """
         body = _policy(gates=(GateSetting(gate=GateId.STREAMING_NOW, enabled=False),))
 
         message = next(
@@ -1082,15 +1080,15 @@ class TestTheDangerousConfigDetector:
         """The page routes on the whole string, not on the tail these siblings match.
 
         ``PolicyEditor``'s ``gates`` anchor claims this family by its ``gates.`` prefix,
-        which is what renders the warning beside the protections list instead of at the foot
-        of the page, and the row's own boxes point ``aria-describedby`` at
-        ``gates.<gate>.<setting>`` in full (#189). The two assertions above match with
-        ``endswith``, so dropping or renaming the prefix would leave them green while moving
-        the warning off the switch it is about.
+        which is what renders the warning beside the protections list instead of at the
+        foot of the page, and the row's own boxes point ``aria-describedby`` at
+        ``gates.<gate>.<setting>`` in full. The two assertions above match with
+        ``endswith``, so dropping or renaming the prefix would leave them green while
+        moving the warning off the switch it is about.
 
-        Second assertion is the population, not a second spelling of the first (rule 145): a
-        third protection warned about on its switch is a field this page has never bound, and
-        a flag-shaped check cannot report one it was never told to look for.
+        The second assertion checks the population, not a second spelling of the first: a
+        third protection warned about on its switch is a field this page has never bound,
+        and a flag-shaped check cannot report one it was never told to look for.
         """
         body = _policy(
             gates=(
@@ -1126,25 +1124,23 @@ class TestTheDangerousConfigDetector:
 
 
 class TestWhereEachDetectorThresholdActuallySits:
-    """The same four warnings above, driven at the value they turn on rather than well
-    inside it. Issue #243, and every row of it was real.
+    """The same four warnings above, driven at the value where each one turns on, rather
+    than well inside its range.
 
-    The tests above drive 96 against ``>= 90``, 7 against ``<= 20``, 7 against ``< 30`` and
-    20 against ``<= 30``. Each one proves the warning exists somewhere in its region and
-    none of them can say where the edge is, so a mutation run moved every threshold a point
-    in both directions, swapped ``>=`` for ``>``, and the suite stayed green through all of
-    it. An operator setting a bar of exactly 9.0 is the one this costs: dead center of the
-    misconfiguration these sentences exist to catch, and one point outside every case that
-    was driven.
+    The tests above drive 96 against ``>= 90``, 7 against ``<= 20``, 7 against ``< 30``,
+    and 20 against ``<= 30``. Each one proves the warning exists somewhere in its region,
+    but none of them says where the edge is. An operator setting a bar of exactly 9.0 is
+    the case this matters for. It sits dead center of the misconfiguration these
+    sentences exist to catch.
 
-    So each threshold is driven at the value and one step either side. The rendered number
-    is asserted too, not only the sentence: ``rule.floor / 10`` converts the stored tenths
-    for display and survived becoming ``/ 9``, ``/ 11`` and ``* 10``, which is the same
-    divisor drift #241 found one layer down in ``RatingFloorGate``.
+    So each threshold is driven at the value and one step either side. The rendered
+    number is asserted too, not only the sentence, because ``rule.floor / 10`` converts
+    the stored tenths for display, and a wrong divisor there would render the wrong
+    number without failing a check that only reads the sentence.
     """
 
     #: Enough votes to build a rule on a source that counts them. Not a threshold under
-    #: test here, and deliberately not the shipped 1000 (rule 141).
+    #: test here, and deliberately not the shipped default of 1000.
     VOTES = 250
 
     def _bar(self, source: RatingSource, floor: int, votes: int) -> PolicyBody:
@@ -1188,12 +1184,12 @@ class TestWhereEachDetectorThresholdActuallySits:
     def test_a_percentage_bar_read_on_the_ten_point_scale_is_called_out(
         self, floor: int, shown: str | None
     ) -> None:
-        """The arm nothing drove at all: neither of its two sentences appeared anywhere in
-        ``tests/``, and all six of its mutants survived, including the whole comparison
-        inverted. A Rotten Tomatoes bar of 8 means 8%, which keeps the library.
+        """The arm nothing else here drives. Neither of its two sentences appears
+        anywhere else in ``tests/``. A Rotten Tomatoes bar of 8 means 8%, which keeps the
+        library.
 
-        The number is a percentage here and NOT divided, so this also pins that the two
-        arms did not merge: the sibling above would render the same floor as ``2.0``.
+        The number is a percentage here and is not divided, so this also pins that the
+        two arms do not merge. The sibling above would render the same floor as ``2.0``.
         """
         loud = self._said(self._bar(RatingSource.ROTTEN_TOMATOES_CRITIC, floor, 0))
 
@@ -1214,22 +1210,21 @@ class TestWhereEachDetectorThresholdActuallySits:
     def test_every_source_names_itself_after_a_preposition_never_after_an_article(
         self, source: RatingSource
     ) -> None:
-        """Each of these sentences places a source label, and the label has to fit where it
-        lands.
+        """Each of these sentences places a source label, and the label has to fit where
+        it lands.
 
-        The cases above drive IMDb and Rotten Tomatoes critics only, which is the population
-        that made "A IMDb bar of 9.6" read as correct English to everyone who checked it
-        (#338): "A Rotten Tomatoes bar" is fine, and IMDb was never rendered in a case that
-        asserted the article. ``UNKNOWN`` is the sharper one -- its label is the phrase "an
-        unknown source", so the same sentence doubled the article into "A an unknown source
-        bar" -- and it is reachable through the API even though the editor offers five
-        sources.
+        The cases above drive IMDb and Rotten Tomatoes critics only, and "A IMDb bar of
+        9.6" reads as correct English to most people who check it: "A Rotten Tomatoes
+        bar" is fine, and IMDb alone would never surface the mistake. ``UNKNOWN`` is the
+        sharper case. Its label is the phrase "an unknown source," so the same sentence
+        would double the article into "A an unknown source bar," and it is reachable
+        through the API even though the editor offers only five sources.
 
-        So this sweeps the whole enum rather than the two members that motivated the fix
-        (rule 145), and pins the position contract ``ratings.SOURCE_LABELS`` documents: the
-        label follows a preposition, so the article governs "bar" and cannot disagree with
-        whatever the label turns out to be. A revert to the article form drops "on <label>"
-        and fails here for every source at once.
+        So this sweeps the whole enum rather than just the members that motivated the
+        fix, and pins the position contract ``ratings.SOURCE_LABELS`` documents: the label
+        follows a preposition, so the article governs "bar" and cannot disagree with
+        whatever the label turns out to be. A revert to the article form drops "on
+        <label>" and fails here for every source at once.
         """
         pct = is_percentage_source(source)
         loud = self._said(self._bar(source, 19, 0 if pct else self.VOTES))
@@ -1256,11 +1251,11 @@ class TestWhereEachDetectorThresholdActuallySits:
         """A long reach is stated so this is the only window warning in play: the same
         control feeds a shortfall lane that fires when the history is shallower.
 
-        The sweep used to drive 29, 30 and 31 alone, which is why "A 8-day watch window"
-        shipped (#338): every value that needs "An" sits below 29 and none was reachable
-        from this table. The article now governs "watch window", a literal noun no value
-        can disagree with, so what these cases pin is that the number stays out of its
-        scope -- and 1 pins the singular the plural spelling would have gotten wrong.
+        Every value that needs "An" sits below 29, so this sweep covers the whole
+        singular/plural boundary rather than sampling one point. The article now governs
+        "watch window," a literal noun no value can disagree with, so what these cases
+        pin is that the number stays out of its scope. 1 pins the singular a plural
+        spelling would have gotten wrong.
         """
         body = _policy(
             gates=(GateSetting(gate=GateId.SERVER_POPULARITY, threshold=2, window_days=days),)
@@ -1301,20 +1296,20 @@ class TestWhereEachDetectorThresholdActuallySits:
 
 
 class TestADormancyFloorDeeperThanTheWatchHistory:
-    """The root of the shallow-mirror family, and the one member that had no warning (#217).
+    """The root of the shallow-mirror family, and the one member that had no warning.
 
-    Dormancy is clamped to the mirror, so the most dormant any item can read IS the reach:
-    ``dormancy.reference_instant`` measures from ``last_played``, else ``max(added_at,
-    horizon)``, else nothing at all, and both measurable arms are at most the reach.
-    ``MinDormancyGate`` PROTECTs anything under its threshold and
-    PROTECT beats everything in ``decide_verdict``, so a floor above the reach holds the whole
-    library on age alone until the mirror catches up. On the shipped 1095-day floor that is
-    every operator with under three years of history.
+    Dormancy is clamped to the mirror, so the most dormant any item can read is the
+    reach. ``dormancy.reference_instant`` measures from ``last_played``, else
+    ``max(added_at, horizon)``, else nothing at all, and both measurable arms are at most
+    the reach. ``MinDormancyGate`` protects anything under its threshold, and PROTECT
+    beats everything in ``decide_verdict``, so a floor above the reach holds the whole
+    library on age alone until the mirror catches up. On the shipped 1095-day floor, that
+    is every operator with under three years of history.
 
-    It is the root rather than a fifth member because the other four are all guarded on
-    ``reach_clears_dormancy`` and go silent below the floor -- correctly, since their remedies
-    would move no verdict there. The aggregate was a page that went quietest exactly where the
-    list was emptiest.
+    This is the root rather than a fifth member because the other four are all guarded on
+    ``reach_clears_dormancy`` and go silent below the floor. That is correct, since their
+    remedies would move no verdict there. Without this warning, the page would go
+    quietest exactly where the list was emptiest.
     """
 
     FLOOR = 1095
@@ -1333,7 +1328,7 @@ class TestADormancyFloorDeeperThanTheWatchHistory:
         ]
 
     def test_the_clamp_that_makes_the_claim_true(self) -> None:
-        """Driven against the real derivation rather than restated (rule 119): the most dormant
+        """Driven against the real derivation rather than restated: the most dormant
         reading possible is the reach, whichever arm ``reference_instant`` takes."""
         now = datetime(2026, 7, 29, tzinfo=UTC)
         horizon = now - timedelta(days=90)
@@ -1361,18 +1356,18 @@ class TestADormancyFloorDeeperThanTheWatchHistory:
 
     def test_a_single_unit_floor_keeps_its_number(self) -> None:
         """The shipped floor is three years, so it never exercised ``humanize_window``'s
-        dropped "1" -- and this slot has no article to carry it. An operator who lowered the
-        floor to a year read "Reaper waits year of no watching" (rule 21).
+        dropped "1," and this slot has no article to carry it. An operator who lowered the
+        floor to a year would have read "Reaper waits year of no watching."
 
-        Both settable single-unit floors, and there is no third: ``_protective_floors`` refuses
-        a threshold under 5 days, so "1 day" is unreachable here (rule 141).
+        Both settable single-unit floors, and there is no third: ``_protective_floors``
+        refuses a threshold under 5 days, so "1 day" is unreachable here.
         """
         for threshold, expected in ((365, "1 year"), (30, "1 month")):
             [flagged] = self._floor_warnings(self._floored(threshold), reach=1.0)
             assert f"waits {expected} of no watching" in _msg(flagged)
 
     def test_the_boundary_is_exact(self) -> None:
-        """At the floor a title CAN read as dormant enough, so the claim stops being true."""
+        """At the floor a title can read as dormant enough, so the claim stops being true."""
         assert len(self._floor_warnings(self._floored(), reach=float(self.FLOOR) - 1)) == 1
         assert self._floor_warnings(self._floored(), reach=float(self.FLOOR)) == []
         assert self._floor_warnings(self._floored(), reach=5000.0) == []
@@ -1388,9 +1383,10 @@ class TestADormancyFloorDeeperThanTheWatchHistory:
     def test_it_speaks_where_the_rest_of_the_family_is_silenced(self) -> None:
         """The reason this is the root, driven on the shipped policy rather than argued.
 
-        Below the floor every other reach warning is deliberately quiet, so before this branch
-        the page carried nothing at all while nothing in the library could be flagged. This is
-        also why the two cannot stack: it fires on exactly the negation they are guarded on.
+        Below the floor, every other reach warning is deliberately quiet. Without this
+        one, the page would carry nothing at all while nothing in the library could be
+        flagged either. This is also why the two warnings cannot stack. Each fires on
+        exactly the condition the other is silent for.
         """
         shallow = inspect(DEFAULT_MOVIE_POLICY, ProfileSettings(), history_reach_days=90.0)
 
@@ -1401,9 +1397,9 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
     """The window in the direction nothing warned about, and the reason it needed one.
 
     ``gates.ServerPopularityGate.evaluate`` fails closed when the mirror is shorter than
-    the window it is asked about: a count over three months cannot answer "who watched
-    this in the last year", so the gate blocks. The reach is a property of the operator's
-    DATA, not of any one title, so it blocks library-wide for as long as the shortfall
+    the window it is asked about. A count over three months cannot answer "who watched
+    this in the last year," so the gate blocks. The reach is a property of the operator's
+    data, not of any one title, so it blocks library-wide for as long as the shortfall
     lasts.
 
     Most blocks clear on the next scan, which is why nothing was ever obliged to name a
@@ -1430,14 +1426,14 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         )
 
     def _owner_rule_only(self, *, op: Op = Op.GTE, **overrides: object) -> PolicyBody:
-        """The gate OFF, with the operator's own keep-outright rule on the same count.
+        """The gate off, with the operator's own keep-outright rule on the same count.
 
         ``build_gates`` hands ``CustomProtectGate`` the window whether the gate is on or
-        off, so this rule blocks on exactly the span the gate would have used -- here the
-        365-day fallback, which no control on the page shows.
+        off, so this rule blocks on exactly the span the gate would have used. Here that
+        is the 365-day fallback, which no control on the page shows.
 
-        ``op`` because the operator decides whether the block is total: the field alone
-        does not settle it (``_protect_blocks_on_reach``).
+        ``op`` matters because the operator decides whether the block is total. The
+        field alone does not settle it (``_protect_blocks_on_reach``).
         """
         base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
         return _policy(
@@ -1453,8 +1449,8 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         ]
 
     def _rule_warnings(self, body: PolicyBody, reach: float | None) -> list[PolicyWarning]:
-        """Warnings anchored on the operator's own keep rules, where the gate-off case has
-        to speak: with the gate off the window control is not rendered at all."""
+        """Warnings anchored on the operator's own keep rules, where the gate-off case
+        has to speak. With the gate off, the window control is not rendered at all."""
         return [
             w
             for w in inspect(body, ProfileSettings(), history_reach_days=reach)
@@ -1482,23 +1478,23 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
     def test_the_window_control_stays_silent_while_the_protection_is_off(self) -> None:
         """The editor hides the window control with the gate (``PolicyEditor.tsx``, pinned
-        by ``PolicyEditor.test.tsx``), so a warning anchored THERE would name a control that
-        is not on the page. Nothing else about the gate-off case is settled by this: the
-        span is still in force, and the two tests below are where it is spoken for.
+        by ``PolicyEditor.test.tsx``), so a warning anchored there would name a control
+        that is not on the page. Nothing else about the gate-off case is settled by this:
+        the span is still in force, and the two tests below are where it is spoken for.
         """
         assert self._window_warnings(self._pop(enabled=False), reach=90.0) == []
 
     def test_the_fallback_window_is_flagged_where_the_owners_own_rule_blocks_on_it(self) -> None:
-        """A disabled gate does NOT mean no reader of a watcher count blocks.
+        """A disabled gate does not mean no reader of a watcher count blocks.
 
         ``PolicyBody.popularity_window_days`` falls back to 365 with the gate off, and
         ``build_gates`` hands that span to ``CustomProtectGate`` regardless of the switch,
         so the owner's own keep-outright rule fails closed library-wide over a mirror
         shorter than a year. The editor invites exactly this: ``KeepRulesEditor`` only
-        hides a field whose gate is ON, so ``recent_watchers`` becomes authorable the
+        hides a field whose gate is on, so ``recent_watchers`` becomes authorable the
         moment the protection is switched off.
 
-        It has to say so somewhere the operator can act, which is the rule itself: the
+        It has to say so somewhere the operator can act, which is the rule itself. The
         window control is not rendered, so the year in force is unreachable from the page.
         """
         flagged = self._rule_warnings(self._owner_rule_only(), reach=90.0)
@@ -1516,7 +1512,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         """Two keep rules on the same count, which nothing refuses.
 
         ``PolicyRuleEditors``' ``addHard`` appends unconditionally and filters candidate
-        fields only by the enabled gate, and ``PolicyBody`` validates the pair -- so this
+        fields only by the enabled gate, and ``PolicyBody`` validates the pair. So this
         is a policy an operator can build in the editor, not a hand-edited row.
         """
         base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
@@ -1532,31 +1528,31 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         """ "Remove that rule" has to say which one, and the old message did not.
 
         The field is named from the registry the editor renders from, so the operator is
-        given the string already on the card in front of them (rule 144). Without it the
-        only discriminator was "counts who watched a title in the last year", and the span
-        half of that is unreachable: this branch fires precisely when the window control is
-        not rendered, so nothing on the page carries the year. The field half was no better
-        beside a "People who have ever watched it" rule, which also counts who watched a
-        title (issue #157).
+        given the string already on the card in front of them. Without it the only
+        discriminator was "counts who watched a title in the last year," and the span
+        half of that is unreachable. This branch fires precisely when the window control
+        is not rendered, so nothing on the page carries the year. The field half was no
+        better beside a "People who have ever watched it" rule, which also counts who
+        watched a title.
         """
         [flagged] = self._rule_warnings(self._owner_rule_only(), reach=90.0)
 
         field_label = catalog_entry("field.recent_watchers")
         assert f'"{field_label}"' in _msg(flagged)
-        # The label is the catalog's, not a second spelling of it: the editor renders this
-        # exact string through the same ``why.field.<key>`` entry, so a copy here would
-        # drift from the card. ``FieldSpec`` carries no label of its own (phase 8a): the
-        # save-boundary refusals it used to feed now carry the raw ``field`` key instead.
+        # The label is the catalog's, not a second spelling of it. The editor renders
+        # this exact string through the same ``why.field.<key>`` entry, so a copy here
+        # would drift from the card. ``FieldSpec`` carries no label of its own; the
+        # save-boundary refusals carry the raw ``field`` key instead.
         assert field_label == "People who watched it recently"
 
     def test_two_rules_on_one_field_are_counted_and_the_remedy_goes_plural(self) -> None:
         """A singular remedy is factually wrong once a second rule blocks on the same span.
 
-        Removing one of a pair leaves the warning byte-identical while a live protection is
-        gone, and nothing tells the operator the pick was wrong. So the count is what makes
-        the remedy honest, and it is the count of rules BLOCKING, not of protect conditions:
-        the discriminator below adds a rule the shortfall does not block and the message
-        stays singular.
+        Removing one of a pair leaves the warning byte-identical while a live protection
+        is gone, and nothing tells the operator the pick was wrong. So the count is what
+        makes the remedy honest, and it is the count of rules blocking, not of protect
+        conditions. The discriminator below adds a rule the shortfall does not block, and
+        the message stays singular.
         """
         [flagged] = self._rule_warnings(self._two_rules_on_the_same_field(), reach=90.0)
 
@@ -1567,11 +1563,12 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
     def test_a_rule_the_shortfall_does_not_block_is_left_out_of_the_count(self) -> None:
         """The count ranges over the rules that are blocking, never over the rule list.
 
-        A ``size_bytes`` rule reads a fact the mirror does not bound and an ``lte`` rule on
-        the same count keeps an already-earned outcome (``fields._survives_more_history``),
-        so neither is holding anything back. Counting either would tell the operator to
-        remove one of two rules when only one of them is the problem -- the same wrong-pick
-        failure the naming clause exists to prevent, one step further on.
+        A ``size_bytes`` rule reads a fact the mirror does not bound and an ``lte`` rule
+        on the same count keeps an already-earned outcome
+        (``fields._survives_more_history``), so neither is holding anything back.
+        Counting either would tell the operator to remove one of two rules when only one
+        of them is the problem. That is the same wrong-pick failure the naming clause
+        exists to prevent, one step further on.
         """
         base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
         with_bystanders = _policy(
@@ -1590,10 +1587,10 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         assert "2 keep rules" not in _msg(flagged)
 
     def test_the_fallback_window_is_silent_with_no_rule_reading_it(self) -> None:
-        """The gate off and no owner rule on a watcher count is the ordinary case: the
-        fallback governs a span nothing in the PROTECT lane asks about, so nothing blocks
-        and there is nothing to report. This is the discriminator for the test above --
-        without it, a warning that fired on every gate-off policy would pass it."""
+        """The gate off and no owner rule on a watcher count is the ordinary case. The
+        fallback governs a span nothing in the protect lane asks about, so nothing blocks
+        and there is nothing to report. This is the discriminator for the test above.
+        Without it, a warning that fired on every gate-off policy would pass it."""
         assert self._rule_warnings(self._pop(enabled=False), reach=90.0) == []
         # A rule on a field the mirror does not bound is silent for the same reason.
         unbounded = _policy(
@@ -1603,20 +1600,20 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         assert self._rule_warnings(unbounded, reach=90.0) == []
 
     def test_a_keep_rule_the_shortfall_does_not_block_outright_is_not_claimed(self) -> None:
-        """ "Nothing will be flagged" is a claim about EVERY item, and only ``gte`` earns it.
+        """ "Nothing will be flagged" is a claim about every item, and only ``gte`` earns it.
 
         A truncated watcher count is a lower bound, so ``fields._survives_more_history``
         blocks only the outcomes more history could overturn. Under ``gte`` those are the
         unmatched ones, and the matched ones fire a PROTECT, so every item is kept or
-        blocked and nothing is condemned. Under ``lte`` it inverts: an item already OVER
+        blocked and nothing is condemned. Under ``lte`` it inverts: an item already over
         the bar is an outcome no amount of history changes, so it comes back a plain
         checked ABSTAIN and is scored and condemned like any other.
 
-        Driven rather than reasoned -- a ``recent_watchers lte 2`` rule against a 90-day
-        mirror and the 365-day fallback returns ABSTAIN unblocked for a 5-watcher item, so
-        the list is not empty. Saying it was would be false in the reassuring direction,
-        and the remedy that rides with it ("remove that rule") would strip the protection
-        off the items that ARE blocked.
+        This is driven rather than reasoned. A ``recent_watchers lte 2`` rule against a
+        90-day mirror and the 365-day fallback returns ABSTAIN unblocked for a 5-watcher
+        item, so the list is not empty. Saying it was would be false in the reassuring
+        direction, and the remedy that rides with it ("remove that rule") would strip the
+        protection off the items that are blocked.
         """
         assert self._rule_warnings(self._owner_rule_only(op=Op.LTE), reach=90.0) == []
         # The discriminator: the same rule one operator over is claimed, so this is the op
@@ -1626,12 +1623,12 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
     def test_the_dormancy_floor_silences_the_owners_rule_too(self) -> None:
         """The gate-off arm needs the same guard as the gate-on one, for the same reason.
 
-        Below the floor every item is kept on age alone (``MinDormancyGate`` PROTECTs and
-        PROTECT beats blocked), so the window decides nothing and neither does a keep rule
-        measured over it. Without this the warning would fire for every operator on the
-        shipped 1095-day floor holding under a year of history, telling them to remove a
-        keep rule that is changing no verdict -- the regression the gate-on twin above
-        exists to prevent, one branch over (rule 118).
+        Below the floor every item is kept on age alone (``MinDormancyGate`` protects and
+        PROTECT beats blocked), so the window decides nothing and neither does a keep
+        rule measured over it. Without this the warning would fire for every operator on
+        the shipped 1095-day floor holding under a year of history, telling them to
+        remove a keep rule that is changing no verdict. That is the same regression the
+        gate-on twin above exists to prevent, one branch over.
         """
         floored = self._owner_rule_only()
         floored = floored.model_copy(
@@ -1645,14 +1642,14 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
     def test_the_dormancy_floor_silences_it_while_it_alone_empties_the_list(self) -> None:
         """The remedy has to be able to work, and under the floor it cannot.
 
-        ``MinDormancyGate`` PROTECTs anything younger than its threshold and
-        ``decide_verdict`` puts PROTECT ahead of blocked, while dormancy is clamped to the
-        mirror (``dormancy.reference_instant``). So below the floor every item is kept on
-        age alone and the popularity window decides nothing: telling the operator to lower
-        it would shorten a real keep protection for no effect.
+        ``MinDormancyGate`` protects anything younger than its threshold and
+        ``decide_verdict`` puts PROTECT ahead of blocked, while dormancy is clamped to
+        the mirror (``dormancy.reference_instant``). So below the floor every item is
+        kept on age alone and the popularity window decides nothing. Telling the
+        operator to lower it would shorten a real keep protection for no effect.
 
-        On both shipped policies the two ranges are disjoint -- floor 1095, window 365 --
-        so this is every operator holding under a year of history, which is exactly the
+        On both shipped policies the two ranges are disjoint: floor 1095, window 365. So
+        this is every operator holding under a year of history, which is exactly the
         install the warning was written for.
         """
         with_floor = self._pop_with_dormancy_floor(1095)
@@ -1672,16 +1669,17 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         assert message.index("in the last year") < message.index("does not go back that far")
 
     def test_the_cause_clause_is_the_one_the_why_panel_prints(self) -> None:
-        """Rule 144, structurally rather than by two copies agreeing. ``inspect`` nests the
-        SAME ``Reason`` the why panel prints (off the same ``gates.history_shortfall``
-        helper) as the ``shortfall`` param on ``warning.popularity_beyond_history``, and a
-        nested reason always composes under ``why`` (``why.ts``, this module's ``text``),
-        never a second copy of the sentence written in ``inspect``. So the two cannot drift
-        the way two independently-worded strings could -- there is one catalog entry for
-        this clause, quoted twice.
+        """This test checks structurally, rather than by two copies agreeing, that the
+        why panel and this warning print the same clause. ``inspect`` nests the same
+        ``Reason`` the why panel prints (off the same ``gates.history_shortfall`` helper)
+        as the ``shortfall`` param on ``warning.popularity_beyond_history``, and a nested
+        reason always composes under ``why`` (``why.ts``, this module's ``text``), never
+        a second copy of the sentence written in ``inspect``. So the two cannot drift the
+        way two independently-worded strings could. There is one catalog entry for this
+        clause, quoted twice.
 
-        If this fails, either ``history_shortfall`` changed what it returns for this input,
-        or the warning stopped nesting it. Rule 119: the expectation is the real function's
+        If this fails, either ``history_shortfall`` changed what it returns for this
+        input, or the warning stopped nesting it. The expectation is the real function's
         real output, never a transcribed copy.
         """
         reach = 90.0
@@ -1690,8 +1688,9 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         )
         assert expected_reason is not None
         expected = reason_text(expected_reason)
-        # Truthy, not merely non-None: "" is a legal str that every ``in`` below accepts, so
-        # a helper degrading to an empty sentence would satisfy this test vacuously.
+        # This checks truthiness, not merely non-None. "" is a legal str that every
+        # ``in`` below accepts, so a helper degrading to an empty sentence would satisfy
+        # this test vacuously.
         assert expected
 
         message = _msg(self._window_warnings(self._pop(), reach=reach)[0])
@@ -1704,7 +1703,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
         assert blocked.blocked is True  # the state the warning is describing
         assert expected in message
-        # The why panel's copy of the same clause: the two ``Reason``s carry identical
+        # The why panel's copy of the same clause. The two ``Reason``s carry identical
         # params, which is what "the warning nests the panel's own reason" means.
         assert flat(expected_reason) in flat(blocked.detail)
 
@@ -1718,22 +1717,24 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         assert "very short" in _msg(flagged[0])
 
     def test_the_two_ends_merge_into_one_message_instead_of_opposing_each_other(self) -> None:
-        """A 7-day window under a 3-day mirror is short AND outrun, and the two remedies
-        genuinely oppose: one end says a year is usual, the other said to lower the window
-        to match the history. Stacked on one control they told the operator to raise and to
-        lower the same number in adjacent sentences, with nothing saying which applied.
+        """A 7-day window under a 3-day mirror is short and outrun, and the two remedies
+        genuinely oppose: one end says a year is usual, the other said to lower the
+        window to match the history. Stacked on one control, they would tell the
+        operator to raise and to lower the same number in adjacent sentences, with
+        nothing saying which applied.
 
-        So the shortfall speaks for the control alone and carries the other end's fault in
-        its remedy clause. This names both messages rather than counting severities: a
-        count cannot tell two warnings from two copies of one (rule 118).
+        So the shortfall speaks for the control alone and carries the other end's fault
+        in its remedy clause. This names both messages rather than counting severities. A
+        count cannot tell two warnings from two copies of one.
         """
         flagged = self._window_warnings(self._pop(window_days=7), reach=3.0)
 
         assert len(flagged) == 1
         assert flagged[0].severity == "warn"
         message = _msg(flagged[0])
-        # The shortfall is the one that survives -- it names the live outcome, and the
-        # short-window advice describes pressure that cannot land while nothing is flagged.
+        # The shortfall is the one that survives. It names the live outcome, and the
+        # short-window advice describes pressure that cannot land while nothing is
+        # flagged.
         assert "Nothing will be flagged for removal" in message
         assert "A watch window of 7 days is very short" not in message
         # Its remedy no longer points the way the other end pushes back on.
@@ -1742,7 +1743,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
     def test_each_end_keeps_its_own_message_where_the_other_does_not_hold(self) -> None:
         """The merge above is only for the overlap. Apart, each fault is real on its own
-        and says the thing it always said, remedy included -- which is what makes the
+        and says the thing it always said, remedy included. That is what makes the
         merged message discriminable from either of them."""
         outrun_only = _msg(self._window_warnings(self._pop(), reach=90.0)[0])
         assert "Lower this window to match your history" in outrun_only
@@ -1758,7 +1759,7 @@ class TestRequestedOnlyScopeWithoutSeerr:
     """ "Requested only" needs Seerr to tell a requested show from an unrequested one.
 
     With no Seerr, ``season_scan._keep_last_applies`` never gets a Known answer and
-    falls back to protecting, so the floor quietly covers every show: the setting reads
+    falls back to protecting, so the floor quietly covers every show. The setting reads
     narrower than it behaves. The outcome is safe, which is exactly why nothing else
     surfaces it.
     """
@@ -1791,10 +1792,10 @@ class TestRequestedOnlyScopeWithoutSeerr:
 
     @pytest.mark.parametrize("seasons", [1, 2])
     def test_the_floor_counts_as_on_from_its_very_first_season(self, seasons: int) -> None:
-        """One season is where the floor starts deciding things, and it was never driven:
-        the cases here run 0 and 2, so ``keep_last_seasons > 0`` was free to become ``> 1``
-        and go silent at exactly one season, where the scope quietly behaves as "all shows"
-        (#337)."""
+        """One season is where the floor starts deciding things. The cases run 0 and 2,
+        so ``keep_last_seasons > 0`` could become ``> 1`` and go silent at exactly one
+        season, where the scope would quietly behave as "all shows."
+        """
         warnings = inspect(
             self._tv(keep_last_seasons=seasons), ProfileSettings(), requests_app_configured=False
         )
@@ -1813,7 +1814,7 @@ class TestRequestedOnlyScopeWithoutSeerr:
         assert not [w for w in warnings if w.field == "keep_last_scope"]
 
     def test_a_movie_policy_is_never_flagged(self) -> None:
-        """Movies have no seasons; the keep-last floor is a TV notion."""
+        """Movies have no seasons. The keep-last floor is a TV notion."""
         warnings = inspect(
             _policy(keep_last_scope="requested", keep_last_seasons=2),
             ProfileSettings(),
@@ -1831,10 +1832,11 @@ class TestRequestedOnlyScopeWithoutSeerr:
         ]
 
 
-#: The signal shapes the rescale tests draw weights over, in a fixed order. Five of them, so
-#: the drawn COUNT varies: drift depends on how many rules share the 100 points, which one
-#: four-signal fixture cannot see. ``season_rank`` and ``size`` floor above their lowest
-#: possible value so every signal here can be driven to zero pressure as well as to full.
+#: The signal shapes the rescale tests draw weights over, in a fixed order. Five of them,
+#: so the drawn count varies. Drift depends on how many rules share the 100 points, which
+#: one four-signal fixture cannot see. ``season_rank`` and ``size`` floor above their
+#: lowest possible value so every signal here can be driven to zero pressure as well as
+#: to full.
 _RESCALE_SHAPES: tuple[tuple[str, int, int], ...] = (
     ("unwatched", 1825, 365),
     ("few_watchers", 3, 0),
@@ -1845,7 +1847,8 @@ _RESCALE_SHAPES: tuple[tuple[str, int, int], ...] = (
 
 
 def _over_budget(weights: Sequence[int]) -> dict[str, Any]:
-    """A legacy body: the first ``len(weights)`` signal shapes, totalling anything at all."""
+    """A legacy body built from the first ``len(weights)`` signal shapes, totalling
+    anything at all."""
     return {
         "media_type": "tv",
         "condemn_at": 70,
@@ -1859,7 +1862,7 @@ def _over_budget(weights: Sequence[int]) -> dict[str, Any]:
 
 def _signal_configs(body: dict[str, Any]) -> list[SignalConfig]:
     """The same translation ``services.snapshot`` and ``api.simulate`` do, so these tests
-    score through the real scorer rather than a transcription of it (rule 22)."""
+    score through the real scorer rather than a transcription of it."""
     return [
         SignalConfig(
             signal=SignalId(s["signal"]),
@@ -1872,12 +1875,12 @@ def _signal_configs(body: dict[str, Any]) -> list[SignalConfig]:
 
 
 def _rounding_slack(before_body: dict[str, Any], repaired: dict[str, Any]) -> float:
-    """The most the rounding can move a score: the total weight it handed *upward*.
+    """The most the rounding can move a score. It is the total weight handed upward.
 
-    ``score' - score = Σ (w'ᵢ - wᵢ·100/T)·fillᵢ`` with every ``fill`` in ``[0, 1]``, and the
-    deltas sum to zero, so the drift cannot exceed their positive half. That is reached
-    whenever the rules that gained weight are the ones carrying pressure and the rules that
-    lost it are not, which is an ordinary shape, not a contrived one.
+    ``score' - score = Σ (w'ᵢ - wᵢ·100/T)·fillᵢ`` with every ``fill`` in ``[0, 1]``, and
+    the deltas sum to zero, so the drift cannot exceed their positive half. That is
+    reached whenever the rules that gained weight are the ones carrying pressure and the
+    rules that lost it are not, which is an ordinary shape, not a contrived one.
     """
     weights = [s["weight"] for s in before_body["signals"]]
     exact = [w * 100 / sum(weights) for w in weights]
@@ -1911,7 +1914,7 @@ def _evidence(days: float, watchers: int, rank: int, rating: int, size_gb: float
 
 class TestRebalancingAnOldPolicy:
     """Policies written before removal weights had to total 100 are rescaled rather than
-    discarded. The exact rescale cannot move a score; integer rounding can, by a point or
+    discarded. The exact rescale cannot move a score. Integer rounding can, by a point or
     two, which is why a rescaled body is flagged and reviewed instead of adopted silently.
     These pin how far it can move and what that can do to a verdict."""
 
@@ -1964,11 +1967,11 @@ class TestRebalancingAnOldPolicy:
     ) -> None:
         """What actually matters is the decision, so this asserts on ``decide_verdict``.
 
-        The rescale can only ever change one by nudging a score across the condemn line, and
-        only from within ``_rounding_slack`` of it. That slack is not under a point: it grows
-        with the number of rules sharing the 100 points, which is why the count is drawn.
-        Coverage is held out (floor 0, every fact Known) so the score is the only thing under
-        test.
+        The rescale can only ever change one by nudging a score across the condemn line,
+        and only from within ``_rounding_slack`` of it. That slack is not under a point.
+        It grows with the number of rules sharing the 100 points, which is why the count
+        is drawn. Coverage is held out (floor 0, every fact Known) so the score is the
+        only thing under test.
         """
         before_body = _over_budget(weights)
         repaired = rebalance(before_body)
@@ -1997,14 +2000,14 @@ class TestRebalancingAnOldPolicy:
             )
 
     def test_the_rounding_can_move_a_score_a_full_point_and_flip_a_verdict(self) -> None:
-        """The counterexample to the old ``abs(before - after) < 1.0`` tolerance, kept as a
-        test so nobody restores the claim. Largest-remainder bounds each weight's error, not
-        the score's: here the two rules that gained a point are the two carrying all the
-        pressure, and the two that lost one carry none.
+        """The counterexample to the old ``abs(before - after) < 1.0`` tolerance, kept as
+        a test so nobody restores the claim. Largest-remainder bounds each weight's
+        error, not the score's. Here the two rules that gained a point are the two
+        carrying all the pressure, and the two that lost one carry none.
 
         Nothing exotic is needed. This is why a rescaled body is flagged ``repaired``
-        (``services.profiles.ActivePolicy``), degrades the scan, and opens in the editor as
-        an unsaved draft rather than being adopted as the operator's own.
+        (``services.profiles.ActivePolicy``), degrades the scan, and opens in the editor
+        as an unsaved draft rather than being adopted as the operator's own.
         """
         legacy = _over_budget([1, 1, 1, 5])
         repaired = rebalance(legacy)
@@ -2045,21 +2048,20 @@ class TestRebalancingAnOldPolicy:
         self, raw: object
     ) -> None:
         """``services.profiles.active_policy`` must not raise on anything a hand-edited or
-        truncated row can hold, and it leans on this returning ``None``. Valid JSON that is
-        not an object used to reach ``body.get`` and raise ``AttributeError``."""
+        truncated row can hold, and it leans on this returning ``None``."""
         assert rebalance(raw) is None
 
 
 def _legacy_rating_body(**gate: object) -> dict[str, Any]:
     """A stored body from before the rating bar moved off the RATING_FLOOR gate row.
 
-    The shape that matters: no ``keep_rating_rules`` key at all, and the bar still on the
-    gate as ``threshold`` (tenths) + ``secondary`` (minimum votes).
+    This body has no ``keep_rating_rules`` key at all, and the bar is still on the gate
+    as ``threshold`` (tenths) plus ``secondary`` (minimum votes).
 
-    ``schema_version`` is 2 because that is what an affected body actually carries: it was
-    2 before the bar moved and the move did not bump it, which is why the shim keys on the
-    absent key instead. Dumping the current version here made the restamp a no-op, so the
-    test asserting it could not fail (rule 141).
+    ``schema_version`` is 2 because that is what an affected body actually carries. It
+    was 2 before the bar moved, and the move did not bump it, which is why the shim keys
+    on the absent key instead. Dumping the current version here would make the restamp a
+    no-op, so this fixture deliberately does not do that.
     """
     raw = _policy(
         gates=(GateSetting(gate=GateId.RATING_FLOOR),),
@@ -2074,8 +2076,8 @@ def _legacy_rating_body(**gate: object) -> dict[str, Any]:
 class TestRestoringALostRatingBar:
     """The rating bar moved off the gate row into ``keep_rating_rules`` with no backfill.
 
-    A body written before that move still VALIDATES -- the gate keeps its now-meaningless
-    numbers and the new field defaults to empty -- and an empty rule set makes the gate
+    A body written before that move still validates: the gate keeps its now-meaningless
+    numbers and the new field defaults to empty, and an empty rule set makes the gate
     abstain on every item. So the operator's bar silently protects nothing, on a healthy,
     executable snapshot. These pin what is restored and, just as importantly, what is not.
     """
@@ -2101,26 +2103,26 @@ class TestRestoringALostRatingBar:
         assert restored["schema_version"] == SCHEMA_VERSION
 
     def test_an_explicitly_empty_rule_list_is_left_alone(self) -> None:
-        """Rule 1: omitted is not the same as explicitly empty. An operator who cleared
-        their bars must keep an empty set, or a protection they removed comes back."""
+        """Omitted is not the same as explicitly empty. An operator who cleared their
+        bars must keep an empty set, or a protection they removed comes back."""
         raw = _legacy_rating_body()
         raw["keep_rating_rules"] = []
 
         assert recover_rating_rules(raw) is None
 
     def test_a_disabled_gate_is_left_alone(self) -> None:
-        """Nothing was protecting anything either way, so there is nothing to restore -- and
-        no reason to degrade a scan over it."""
+        """Nothing was protecting anything either way, so there is nothing to restore,
+        and no reason to degrade a scan over it."""
         assert recover_rating_rules(_legacy_rating_body(enabled=False)) is None
 
     def test_a_gate_row_carrying_no_switch_at_all_is_still_recovered(self) -> None:
         """Absent means on, module-wide: every switch is an explicit ``enabled: false``.
 
         A row a hand edit stripped the key from is an enabled gate holding a real bar, so
-        reading it as disabled would skip the recovery and leave the operator's bar empty --
-        the one outcome this shim exists to prevent (rule 105). Every fixture above reaches
-        the switch through ``model_dump``, which always writes it, so nothing exercised the
-        default until this case.
+        reading it as disabled would skip the recovery and leave the operator's bar
+        empty. That is the one outcome this shim exists to prevent. Every fixture above
+        reaches the switch through ``model_dump``, which always writes it, so nothing
+        exercised the default until this case.
         """
         raw = _legacy_rating_body()
         del raw["gates"][0]["enabled"]
@@ -2156,9 +2158,11 @@ class TestRestoringALostRatingBar:
     def test_numbers_the_old_validator_would_have_refused_are_not_restored(
         self, gate: dict[str, Any]
     ) -> None:
-        """Only a bar the old gate would have accepted is put back. Anything else would be
-        inventing a protection value on the operator's behalf, and ``RatingRuleSpec`` would
-        refuse it anyway -- ``bool`` is an ``int`` subclass, so ``true`` must not read as 1."""
+        """Only a bar the old gate would have accepted is put back. Anything else would
+        be inventing a protection value on the operator's behalf, and ``RatingRuleSpec``
+        would refuse it anyway. ``bool`` is an ``int`` subclass, so ``true`` must not read
+        as 1.
+        """
         assert recover_rating_rules(_legacy_rating_body(**gate)) is None
 
     @pytest.mark.parametrize(
@@ -2173,11 +2177,12 @@ class TestRestoringALostRatingBar:
     def test_the_bars_the_old_validator_accepted_are_restored(self, gate: dict[str, Any]) -> None:
         """The inclusive edges of the accepted range, which the refusals above cannot pin.
 
-        The old validator took ``1 <= threshold <= 100`` and ``secondary >= 1``, so every one
-        of these is a bar an operator really could have saved. Refusing one is not a cosmetic
-        miss: the bar stays empty, ``RatingFloorGate`` abstains on every item, and a
-        protection the operator can still see configured holds nothing, on a healthy and
-        executable snapshot. Testing only 0 and 101 left all three edges free to move.
+        The old validator took ``1 <= threshold <= 100`` and ``secondary >= 1``, so every
+        one of these is a bar an operator really could have saved. Refusing one is not a
+        cosmetic miss. The bar stays empty, ``RatingFloorGate`` abstains on every item,
+        and a protection the operator can still see configured holds nothing, on a
+        healthy and executable snapshot. Testing only 0 and 101 would leave all three
+        edges free to move.
         """
         restored = recover_rating_rules(_legacy_rating_body(**gate))
 
@@ -2198,20 +2203,21 @@ class TestRestoringALostRatingBar:
 
     @pytest.mark.parametrize("raw", [[], 42, "a string", None, True, {}, {"gates": "text"}])
     def test_anything_unreadable_returns_none_rather_than_raising(self, raw: object) -> None:
-        """``services.profiles.active_policy`` must not raise on anything a hand-edited row
-        can hold: it keeps the one page that fixes a broken policy reachable."""
+        """``services.profiles.active_policy`` must not raise on anything a hand-edited
+        row can hold. It keeps the one page that fixes a broken policy reachable."""
         assert recover_rating_rules(raw) is None
 
 
 class TestTheBuiltinRewatchKeep:
-    """The built-in habitual-rewatch keep (``docs/history/REWATCH_PLAN.md``, Stage 1; the TV
-    lane joined once its formulation cleared the same bar, ``docs/LEARNINGS.md``): four
-    ``PolicyBody`` fields, translated into one ``KeepConfig`` by ``keep_configs()`` on both
-    lanes, with ``media_type`` carried for the lane's wording."""
+    """The built-in habitual-rewatch keep (docs/LEARNINGS.md has the validated bar): four
+    ``PolicyBody`` fields, translated into one ``KeepConfig`` by ``keep_configs()`` on
+    both lanes, with ``media_type`` carried for the lane's wording."""
 
     def test_a_stored_body_missing_the_four_fields_thaws_to_the_defaults(self) -> None:
-        """A body saved before this release carries none of the four keys. Rule 1's spirit:
-        an omission is not an operator's explicit off, so it thaws to the keep direction."""
+        """A body saved before this release carries none of the four keys. An omission
+        is not an operator's explicit off, so it reads back as the keep direction, using
+        the defaults.
+        """
         raw = _policy().model_dump(mode="json")
         for key in (
             "rewatch_keep_enabled",
@@ -2229,8 +2235,8 @@ class TestTheBuiltinRewatchKeep:
         assert body.rewatch_recent_days == 730
 
     def test_a_movie_body_appends_exactly_one_rewatch_config(self) -> None:
-        """Bars off the shipped 10/730 default (rule 141), so this proves the config carries
-        the body's OWN numbers rather than the fallback they happen to share."""
+        """Bars off the shipped 10/730 default, so this proves the config carries the
+        body's own numbers rather than the fallback they happen to share."""
         body = _policy(
             media_type="movie",
             rewatch_keep_enabled=True,
@@ -2254,10 +2260,10 @@ class TestTheBuiltinRewatchKeep:
         assert all(k.name != REWATCH_KEEP for k in body.keep_configs())
 
     def test_a_tv_body_appends_the_config_with_tv_wording(self) -> None:
-        """The TV lane joined when its formulation cleared the backtest bar
-        (``docs/LEARNINGS.md``, the TV entry). Bars off both shipped defaults (rule 141):
-        3/500 is neither the movie 10/730 nor the TV default 2, so this proves the config
-        carries the body's own numbers on this lane too."""
+        """The TV lane's bar is validated in docs/LEARNINGS.md (the TV entry). This is
+        off both shipped defaults: 3/500 is neither the movie 10/730 nor the TV default
+        of 2, so it proves the config carries the body's own numbers on this lane too.
+        """
         body = _policy(
             media_type="tv",
             rewatch_keep_enabled=True,
@@ -2278,9 +2284,10 @@ class TestTheBuiltinRewatchKeep:
         assert all(k.name != REWATCH_KEEP for k in body.keep_configs())
 
     def test_the_default_tv_policy_ships_the_validated_rewatch_bar(self) -> None:
-        """2 whole re-watches is the bar the TV backtest validated (``docs/LEARNINGS.md``);
-        the class default stays the movie lane's 10, so the default TV body must override
-        it or a fresh install ships a keep that fires on almost nothing."""
+        """2 whole re-watches is the bar the TV backtest validated (docs/LEARNINGS.md).
+        The class default stays the movie lane's 10, so the default TV body must
+        override it, or a fresh install ships a keep that fires on almost nothing.
+        """
         assert DEFAULT_TV_POLICY.rewatch_min_viewings == 2
 
     def test_a_graded_keep_cannot_take_the_built_ins_name(self) -> None:
@@ -2299,14 +2306,14 @@ class TestTheBuiltinRewatchKeep:
 
 
 class TestTheRewatchOddsRow:
-    """The Stage 2 opt-in hold's policy row (``docs/history/REWATCH_PLAN.md``): unlike the Stage 1
-    keep, it carries no dedicated ``PolicyBody`` fields -- the operator's one knob is the
-    ``GateSetting.threshold`` an ordinary gate row already has. ``PolicyBody._rewatch_odds_row``
-    appends or strips the row instead."""
+    """The opt-in rewatch-odds hold's policy row. Unlike the built-in keep, it carries no
+    dedicated ``PolicyBody`` fields: the operator's one knob is the
+    ``GateSetting.threshold`` an ordinary gate row already has.
+    ``PolicyBody._rewatch_odds_row`` appends or strips the row instead."""
 
     def test_a_movie_body_without_the_row_gets_it_appended_disabled_at_25(self) -> None:
         """A stored body predating this release carries no ``rewatch_odds`` gate row at
-        all. It comes back with one, appended DISABLED at the shipped starting
+        all. It comes back with one, appended disabled at the shipped starting
         percentage, so it changes no verdict until the operator turns it on."""
         body = _policy(media_type="movie", gates=(GateSetting(gate=GateId.WHITELISTED),))
 
@@ -2319,7 +2326,7 @@ class TestTheRewatchOddsRow:
     def test_a_movie_body_that_already_carries_the_row_keeps_the_operators_threshold(
         self,
     ) -> None:
-        """40 is off the shipped 25% default (rule 141), so this proves the row survives
+        """40 is off the shipped 25% default, so this proves the row survives
         validation as the operator's own number rather than the appended fallback."""
         body = _policy(
             media_type="movie",
@@ -2336,11 +2343,10 @@ class TestTheRewatchOddsRow:
         assert rows[0].threshold == 40
 
     def test_a_tv_body_gets_the_row_appended_and_keeps_an_operators_threshold(self) -> None:
-        """The parity stage: season rows freeze real cohorts now, so a TV body carries the
-        row exactly as a movie body does -- appended disabled at 25 when missing, and an
-        operator's own 40 kept when present (rule 141). The old strip is gone; this class
-        used to prove it with the row explicitly present, and the same construction now
-        proves survival instead."""
+        """The parity stage: season rows freeze real cohorts now, so a TV body carries
+        the row exactly as a movie body does. It is appended disabled at 25 when
+        missing, and an operator's own 40 is kept when present.
+        """
         appended = _policy(media_type="tv", gates=(GateSetting(gate=GateId.WHITELISTED),))
         rows = [g for g in appended.gates if g.gate is GateId.REWATCH_ODDS]
         assert len(rows) == 1
@@ -2361,11 +2367,11 @@ class TestTheRewatchOddsRow:
     def test_the_row_changes_the_stored_hash_from_what_a_pre_upgrade_install_wrote(
         self,
     ) -> None:
-        """Rule 113: ``_rewatch_odds_row`` always appends the row to a movie body, so
-        there is no way to build a *validated* ``PolicyBody`` without it any more -- which
-        is exactly why the consequence has to be shown at the JSON level, the same level a
-        stored approval's hash is actually computed at. A body dict identical except for
-        the row hashes differently through the SAME canonicalisation ``policy_hash`` uses,
+        """``_rewatch_odds_row`` always appends the row to a movie body, so there is no
+        way to build a *validated* ``PolicyBody`` without it any more. That is exactly
+        why the consequence has to be shown at the JSON level, the same level a stored
+        approval's hash is actually computed at. A body dict identical except for the
+        row hashes differently through the same canonicalisation ``policy_hash`` uses,
         which is what voids a plan a pre-upgrade install approved and asks for a re-scan.
         """
         body = _policy(media_type="movie", gates=(GateSetting(gate=GateId.WHITELISTED),))
@@ -2384,32 +2390,27 @@ class TestTheRewatchOddsRow:
 
 
 class TestEveryReachSpanIsRoutedByName:
-    """A new ``ReachSpan`` member has to be handled at five sites, and this is the alarm.
+    """A new ``ReachSpan`` member has to be handled at five sites, and this test is the
+    alarm that catches a missed one.
 
-    Two of them ROUTE, and both now match member by member behind ``assert_never``:
-    ``fields.reach_shortfall`` picks which bound the mirror is measured against, and
-    ``inspect``'s lean loop files a graded keep under the span that blocks it. mypy fails
-    on those first, so this test is for the author who skips that gate -- and for its own
-    failure message, which is the one place all five sites are written down.
+    Two sites route on the span, and both match member by member behind
+    ``assert_never``: ``fields.reach_shortfall`` picks which bound the mirror is measured
+    against, and ``inspect``'s lean loop files a graded keep under the span that blocks
+    it. mypy fails on those first, so this test is for an author who skips that gate, and
+    for its own failure message, which is the one place all five sites are written down.
 
     Two more are membership tests, one per warning: an owner protect rule on the window
     (``owner_protect_on_window``) and the all-time rule below it. Each carries copy
     written for its own span, so neither can be generated from the set. A third member
-    there is silence rather than a wrong answer, which is why they are named here instead
-    of guarded in code.
+    left out of both would go silent rather than produce a wrong answer, which is why
+    they are named here instead of guarded in code.
 
-    The fifth is ``inspect``'s condemn-lane sum, and it is the one that argument does NOT
-    cover: it decides which weights are withheld, and both figures it withholds are printed
-    to the operator. A span it does not know about is left out of a rendered count, so the
-    warning under-reports the points to move or goes quiet on a list that really is empty --
-    a wrong number in the reassuring direction, not silence (rules 103, 145).
-
-    Rule 103's drift guard, and it was absent. Issue #168's probe measured what that cost:
-    a third member added locally took ``reach_shortfall``'s ``else``, answered
-    ITEM_LIFETIME's question instead of its own, and returned "no shortfall" for an item
-    younger than the mirror against a window the mirror does not span -- the permissive
-    direction, from the helper whose whole job is withholding unsupported counts. Nothing
-    in the suite went red.
+    The fifth is ``inspect``'s condemn-lane sum, and it is the one the type checker does
+    not cover: it decides which weights are withheld, and both figures it withholds are
+    printed to the operator. A span it does not know about is left out of a rendered
+    count, so the warning under-reports the points to move, or goes quiet on a list that
+    really is empty. That is a wrong number in the reassuring direction, not silence, so
+    this drift guard has to stay a runtime check rather than relying on mypy alone.
     """
 
     def test_the_two_spans_every_consumer_handles_are_the_two_that_exist(self) -> None:
@@ -2429,30 +2430,32 @@ class TestEveryReachSpanIsRoutedByName:
 class TestTheOtherReachShortfallLanes:
     """The two readers that could empty the list with nothing on the page saying why.
 
-    ``_protect_blocks_on_reach`` answers with a SPAN, because the registry carries two and
-    only one of them had a warning. The operator test is span-agnostic
-    (``fields._survives_more_history`` reads the op alone), so scoping the detector to the
-    popularity window was never the registry speaking. ``watchers_all_time`` carries the
-    other span, is PROTECT-only, and blocks through ``gates.lifetime_shortfall`` for every
-    item the mirror does not reach back to the arrival of.
+    ``_protect_blocks_on_reach`` answers with a span, because the registry carries two
+    and only one of them had a warning. The operator test is span-agnostic
+    (``fields._survives_more_history`` reads the op alone), so scoping the detector to
+    the popularity window was never what the registry called for. ``watchers_all_time``
+    carries the other span, is PROTECT-only, and blocks through
+    ``gates.lifetime_shortfall`` for every item the mirror does not reach back to the
+    arrival of.
 
     The lean lane is the other one, and it does not block at all: ``signals.evaluate_keep``
-    grants the FULL ``max_discount`` on a shortfall with no earned-outcome test, and
-    ``score()`` is ``max(0, base - keep_discount)`` over a base bounded by ``MAX_SCORE``, so
-    keeps worth more than the headroom hold every affected item under the threshold as
-    provably as a block does. That is summed per SPAN, not per rule: each blocked keep takes
-    its full discount and ``score()`` subtracts the sum, so two keeps of 20 against a headroom
-    of 30 empty the list exactly as one keep of 40 does. The pre-existing ``graded_keeps``
-    warning fires on the keeps TOTALLING at least ``condemn_at`` -- 70 against a headroom of
-    30 on shipped values -- so a keep at 40 sat in a dead zone that warned about nothing
-    (rule 140).
+    grants the full ``max_discount`` on a shortfall with no earned-outcome test, and
+    ``score()`` is ``max(0, base - keep_discount)`` over a base bounded by ``MAX_SCORE``,
+    so keeps worth more than the headroom hold every affected item under the threshold as
+    provably as a block does. That is summed per span, not per rule: each blocked keep
+    takes its full discount and ``score()`` subtracts the sum, so two keeps of 20 against
+    a headroom of 30 empty the list exactly as one keep of 40 does. The pre-existing
+    ``graded_keeps`` warning fires on keeps totalling at least ``condemn_at``, 70 against
+    a headroom of 30 on shipped values, so a keep at 40 sits in a dead zone that warns
+    about nothing.
     """
 
     def _all_time_rule(self, *, op: Op = Op.GTE, count: int = 1) -> PolicyBody:
-        """``count`` rules on the one field carrying this span, which is constructible: the
-        span sits on the ``FieldSpec``, not on the value, so every distinct bar is another
-        blocker. Defaults to one, because every case below but the counting pair asks about
-        the branch and not about how many rules reached it."""
+        """``count`` rules on the one field carrying this span, which is constructible.
+        The span sits on the ``FieldSpec``, not on the value, so every distinct bar is
+        another blocker. Defaults to one, because every case below but the counting pair
+        asks about the branch and not about how many rules reached it.
+        """
         return _policy(
             protect_conditions=tuple(
                 ConditionSpec(field="watchers_all_time", op=op, value=i + 1) for i in range(count)
@@ -2483,16 +2486,16 @@ class TestTheOtherReachShortfallLanes:
         flagged = self._warnings_on(self._all_time_rule(), "protect_conditions", reach=90.0)
 
         assert len(flagged) == 1
-        # `warn`, not `danger`: the outcome is that Reaper deletes nothing, the keep direction.
+        # `warn`, not `danger`. The outcome is that Reaper deletes nothing, the keep
+        # direction.
         assert flagged[0].severity == "warn"
 
     def test_it_names_the_set_rather_than_claiming_an_empty_list(self) -> None:
-        """The span this lane needs is the ITEM's age, which ``inspect`` is never handed.
+        """The span this lane needs is the item's age, which ``inspect`` is never handed.
 
-        So the affected set is "everything added before the history starts" and its size is
-        not knowable here. Claiming "nothing will be flagged" would be false in the
-        reassuring direction for a young library the mirror covers outright, which is the
-        direction rule 144 says a rounded claim always fails in.
+        So the affected set is "everything added before the history starts," and its
+        size is not knowable here. Claiming "nothing will be flagged" would be false in
+        the reassuring direction for a young library the mirror covers outright.
         """
         [flagged] = self._warnings_on(self._all_time_rule(), "protect_conditions", reach=90.0)
 
@@ -2502,10 +2505,10 @@ class TestTheOtherReachShortfallLanes:
     def test_it_does_not_tell_the_operator_to_wait_for_a_span_that_never_closes(self) -> None:
         """The remedy has to be one the operator can actually reach the end of.
 
-        This lane's span is each item's AGE, and the reach grows at exactly the rate the age
-        does, so the shortfall holds while ``added_at < horizon`` however long anyone waits. The
-        clause survived here because it sat beside a remedy that does work, which is how an
-        operator ends up taking the half that never resolves (rules 7/24, 21, 72). The season
+        This lane's span is each item's age, and the reach grows at exactly the rate the
+        age does, so the shortfall holds while ``added_at < horizon`` however long anyone
+        waits. A clause offering to wait here would sit beside a remedy that does work,
+        which is how an operator ends up taking the half that never resolves. The season
         branch at the foot of ``inspect`` is the sibling, and carries no remedy at all.
         """
         [flagged] = self._warnings_on(self._all_time_rule(), "protect_conditions", reach=90.0)
@@ -2514,18 +2517,17 @@ class TestTheOtherReachShortfallLanes:
         assert _msg(flagged).endswith("Remove that rule if you want those titles judged.")
 
     def test_it_counts_the_rules_it_is_asking_the_operator_to_remove(self) -> None:
-        """Issue #157, on the lane that never got the fix (rule 72).
+        """The lane that never got this fix, until now.
 
-        The window branch 40 lines above says why a singular "remove that rule" is not safe to
-        leave implicit: two rules on one span are constructible, so removing one leaves the
-        sentence byte-identical while a live protection is gone, and nothing says the pick was
-        wrong. This branch answered on ``ReachSpan.ITEM_LIFETIME in protect_spans`` -- a SET of
-        spans, which cannot say how many conditions produced it -- and printed the singular for
-        any number of them.
+        The window branch above says why a singular "remove that rule" is not safe to
+        leave implicit: two rules on one span are constructible, so removing one leaves
+        the sentence byte-identical while a live protection is gone, and nothing says
+        the pick was wrong. This branch answered on
+        ``ReachSpan.ITEM_LIFETIME in protect_spans``, a set of spans that cannot say how
+        many conditions produced it, and printed the singular for any number of them.
 
-        Swept rather than pinned at one number: the singular is a real arm and the plural has
-        to hold past two, so the count is read out of the sentence for each (rule 141, since a
-        fixture at the one value the old code got right cannot fail).
+        This sweeps rather than pins at one number: the singular is a real arm and the
+        plural has to hold past two, so the count is read out of the sentence for each.
         """
         for count in (1, 2, 3, 7):
             [flagged] = self._warnings_on(
@@ -2544,15 +2546,16 @@ class TestTheOtherReachShortfallLanes:
     def test_the_op_decides_it_here_exactly_as_it_does_on_the_window(self) -> None:
         """``lte`` leaves an item already over the bar settled, so it stays condemnable.
 
-        Same asymmetry ``_survives_more_history`` applies to the window, reached through the
-        same predicate -- which is the point of answering with the span rather than a bool.
+        This is the same asymmetry ``_survives_more_history`` applies to the window,
+        reached through the same predicate, which is the point of answering with the
+        span rather than a bool.
         """
         assert (
             self._warnings_on(self._all_time_rule(op=Op.LTE), "protect_conditions", reach=90.0)
             == []
         )
-        # The discriminator: the same rule one operator over IS claimed, so this is the op
-        # being read and not the branch having gone quiet.
+        # This discriminator checks that the same rule one operator over is claimed,
+        # confirming the op is being read rather than the branch having gone quiet.
         assert self._warnings_on(self._all_time_rule(), "protect_conditions", reach=90.0) != []
 
     def test_a_caller_that_cannot_read_the_mirror_stays_quiet(self) -> None:
@@ -2613,8 +2616,8 @@ class TestTheOtherReachShortfallLanes:
 
         assert len(windowed) == 1
         assert len(lifetime) == 1
-        # Each says what is true of ITS span: the window empties the list outright, the
-        # lifetime one only for titles older than the mirror.
+        # Each says what is true of its own span: the window empties the list outright,
+        # the lifetime one only for titles older than the mirror.
         assert _msg(windowed[0]).startswith("Nothing will be flagged for removal.")
         assert _msg(lifetime[0]).startswith("Titles added before your watch history starts")
 
@@ -2642,24 +2645,19 @@ class TestTheOtherReachShortfallLanes:
         [flagged] = self._warnings_on(body, "graded_keeps", reach=90.0)
 
         # MAX_SCORE - condemn_at == 20 here, not the 30 the shipped threshold gives, so a
-        # transcribed constant would fail this (rule 141). The message used to restate the
-        # threshold in a third sentence too; that sentence said again what the lead already
-        # says and was cut, so the derived number is the only thing left to pin -- which is
-        # the half that could actually be wrong.
+        # transcribed constant would fail this. The derived number is the only thing
+        # this assertion pins, which is the half that could actually be wrong.
         assert "20 points or less" in _msg(flagged)
 
     def test_a_caller_that_cannot_read_the_mirror_stays_quiet_on_the_lean_lane(self) -> None:
-        """The lean twin of the protect-lane guard above (rules 118, 72).
+        """The lean twin of the protect-lane guard above.
 
-        Both arms were pinned on the protect lane and neither was pinned here: neutering the
-        guard passed all 119 tests.
-
-        **The lifetime span is the arm that actually needs it, so it is the one that must be
-        driven.** A window keep is held back a second time by ``window_short``, which is None
-        with no mirror, so a window-only case passes with the guard gone and reads as a proof
-        it is not (rule 118). A lifetime keep has no second test: without the guard it warns
-        that titles older than the history are held, while nothing knows how far the history
-        reaches.
+        The lifetime span is the arm that actually needs this test, so it is the one
+        driven here. A window keep is held back a second time by ``window_short``, which
+        is None with no mirror, so a window-only case would still pass with this guard
+        gone, and would read as a proof that it is not needed. A lifetime keep has no
+        second test: without the guard it warns that titles older than the history are
+        held, while nothing knows how far the history reaches.
         """
         for field in ("recent_watchers", "watchers_all_time"):
             assert self._warnings_on(self._lean(field, 40), "graded_keeps", None) == []
@@ -2682,9 +2680,10 @@ class TestTheOtherReachShortfallLanes:
             assert self._warnings_on(body, "graded_keeps", reach=90.0) == []
 
     def test_the_message_names_the_operators_window_not_the_fallback(self) -> None:
-        """Every lean test above runs on a policy with no ``SERVER_POPULARITY`` row, so the
-        window is the 365-day fallback in all of them and a hardcoded ``humanize_window(365)``
-        passed the suite. 180 is not the default, so only the wiring can produce it (rule 141).
+        """Every lean test above runs on a policy with no ``SERVER_POPULARITY`` row, so
+        the window is the 365-day fallback in all of them, and a hardcoded
+        ``humanize_window(365)`` would still pass the suite. 180 is not the default, so
+        only the wiring can produce it.
         """
         body = _policy(
             gates=(GateSetting(gate=GateId.SERVER_POPULARITY, threshold=2, window_days=180),),
@@ -2708,10 +2707,11 @@ class TestTheOtherReachShortfallLanes:
     def test_two_keeps_each_inside_the_headroom_still_empty_the_list(self) -> None:
         """The dead zone one arity up, and the reason the check is summed.
 
-        ``evaluate_keep`` grants each blocked keep its FULL ``max_discount`` and ``score()``
-        subtracts the sum, so two keeps of 20 against a headroom of 30 hold every item under
-        70 exactly as one keep of 40 does. Tested per rule, both sat under the bar and the
-        page said nothing -- while the pre-existing total-based warning needs 70.
+        ``evaluate_keep`` grants each blocked keep its full ``max_discount`` and
+        ``score()`` subtracts the sum, so two keeps of 20 against a headroom of 30 hold
+        every item under 70 exactly as one keep of 40 does. Tested per rule, both sit
+        under the bar and the page would say nothing, while the pre-existing total-based
+        warning needs 70.
         """
         body = _policy(
             graded_keeps=(
@@ -2733,13 +2733,13 @@ class TestTheOtherReachShortfallLanes:
         assert "set their total to 30 points or less" in _msg(flagged)
 
     def test_a_window_keep_and_a_lifetime_keep_name_the_affected_set(self) -> None:
-        """Mixed spans do NOT claim an empty list, and that asymmetry is deliberate.
+        """Mixed spans do not claim an empty list, and that asymmetry is deliberate.
 
-        A window shortfall is a property of the operator's data, so it reaches every item; a
-        lifetime shortfall is a property of each item's age, and ``inspect`` is handed one
-        reach and never a list of arrival dates. So 20 + 20 crossing the headroom is only
-        provable for titles older than the mirror, and claiming the whole library would be
-        false in the reassuring direction for a young one (rule 144).
+        A window shortfall is a property of the operator's data, so it reaches every
+        item. A lifetime shortfall is a property of each item's age, and ``inspect`` is
+        handed one reach and never a list of arrival dates. So 20 + 20 crossing the
+        headroom is only provable for titles older than the mirror, and claiming the
+        whole library would be false in the reassuring direction for a young one.
         """
         body = _policy(
             graded_keeps=(
@@ -2758,13 +2758,15 @@ class TestTheOtherReachShortfallLanes:
         assert '"recent"; "ever"' in _msg(flagged)
 
     def test_a_lifetime_keep_alone_is_not_told_to_wait(self) -> None:
-        """ "Wait for it to build up" is false on an ``ITEM_LIFETIME`` span, so it is not offered.
+        """ "Wait for it to build up" is false on an ``ITEM_LIFETIME`` span, so it is not
+        offered.
 
-        The reach is ``(now - horizon).days`` and an item's age is ``(now - added_at).days``, so
-        both advance one day per day and the shortfall holds exactly while ``added_at < horizon``.
-        Waiting cannot move a comparison of two fixed instants. The four members of this family
-        that DO say it turn on a fixed span -- a window, a hold, the dormancy floor -- which a
-        deepening mirror really does cover (rules 7/24, 21, 72).
+        The reach is ``(now - horizon).days`` and an item's age is
+        ``(now - added_at).days``, so both advance one day per day, and the shortfall
+        holds exactly while ``added_at < horizon``. Waiting cannot move a comparison of
+        two fixed instants. The four members of this family that do say it turn on a
+        fixed span, a window, a hold, the dormancy floor, which a deepening mirror
+        really does cover.
         """
         body = _policy(graded_keeps=self._lean("watchers_all_time", 40).graded_keeps)
         [flagged] = self._warnings_on(body, "graded_keeps", reach=90.0)
@@ -2785,9 +2787,10 @@ class TestTheOtherReachShortfallLanes:
         assert "Wait for it to build up, or set it to 30 points or less." in _msg(flagged)
 
     def test_a_threshold_with_no_headroom_names_a_move_the_editor_accepts(self) -> None:
-        """``condemn_at`` may be 100, which is the cautious direction, and ``max_discount`` is
-        ``ge=1`` -- so the headroom is 0 and every settable value is too high. Naming a number
-        sent the operator to a control that refuses it ("set that rule to 0 points or less").
+        """``condemn_at`` may be 100, which is the cautious direction, and
+        ``max_discount`` is ``ge=1``, so the headroom is 0 and every settable value is
+        too high. Naming a number would send the operator to a control that refuses it
+        ("set that rule to 0 points or less").
         """
         body = _policy(condemn_at=100, graded_keeps=self._lean("recent_watchers", 40).graded_keeps)
         [flagged] = self._warnings_on(body, "graded_keeps", reach=90.0)
@@ -2798,10 +2801,10 @@ class TestTheOtherReachShortfallLanes:
     def test_it_is_not_the_total_based_warning_and_both_can_fire(self) -> None:
         """They answer different questions on one anchor, and neither covers the other.
 
-        The pre-existing one is about the keeps TOTALLING at least ``condemn_at`` whatever the
-        mirror says; this one is about a SINGLE keep taking its full discount because the
-        mirror cannot support the field. A keep at 40 against the shipped 70 fires only the
-        second, which is the dead zone this closed.
+        The pre-existing one is about keeps totalling at least ``condemn_at`` whatever
+        the mirror says. This one is about a single keep taking its full discount
+        because the mirror cannot support the field. A keep at 40 against the shipped 70
+        fires only the second, which is the dead zone this closed.
         """
         only_mirror = self._warnings_on(
             self._lean("recent_watchers", 40), "graded_keeps", reach=90.0
@@ -2817,18 +2820,18 @@ class TestTheOtherReachShortfallLanes:
 
 
 class TestTheCondemnLanesCoverage:
-    """The fourth lane, and the one ``inspect`` used to rule harmless in a comment.
+    """The fourth lane.
 
-    A blocked condemn rule withholds its pressure and keeps its weight in the denominator, so
-    it cannot empty the list through PRESSURE -- which is what the old comment said, and it
-    stopped there. The weight it leaves behind lowers both bounds ``decide_verdict`` reads:
-    coverage falls under ``coverage_floor_bp`` and every item abstains, and the score ceiling
-    falls with it so nothing can reach ``condemn_at`` either. Weights need only total 100, so
-    a split that does this is a legal policy nothing refused and nothing announced (#164).
+    A blocked condemn rule withholds its pressure and keeps its weight in the
+    denominator, so it cannot empty the list through score pressure alone. The weight it
+    leaves behind lowers both bounds ``decide_verdict`` reads: coverage falls under
+    ``coverage_floor_bp`` and every item abstains, and the score ceiling falls with it so
+    nothing can reach ``condemn_at`` either. Weights need only total 100, so a split that
+    does this is a legal policy nothing refused and nothing announced.
 
-    Claimed only over the readers whose block is library-wide, which is not every reader of
-    the field -- see the boolean case below, which is why this is a sum over two of the three
-    and not over the field.
+    This is claimed only over the readers whose block is library-wide, which is not
+    every reader of the field. See the boolean case below, which is why this is a sum
+    over two of the three and not over the field.
     """
 
     def _condemn_warnings(
@@ -2853,9 +2856,9 @@ class TestTheCondemnLanesCoverage:
         }
 
     def test_weight_parked_on_a_blocked_signal_empties_the_list(self) -> None:
-        """Issue #164's second measured split, driven: 30 unwatched / 60 few-watchers / 10
-        rating against a 90-day mirror and the 365-day fallback gives coverage 0.40 under the
-        shipped floor of 0.50, so ``decide_verdict`` abstains for every item."""
+        """30 unwatched / 60 few-watchers / 10 rating against a 90-day mirror and the
+        365-day fallback gives coverage 0.40 under the shipped floor of 0.50, so
+        ``decide_verdict`` abstains for every item."""
         body = _policy(**self._gate_off(signals=_split(40, 60)))
 
         [flagged] = self._condemn_warnings(body)
@@ -2867,10 +2870,11 @@ class TestTheCondemnLanesCoverage:
         assert "40 points are left to judge on" in _msg(flagged)
 
     def test_a_graded_custom_rule_adds_to_the_same_sum(self) -> None:
-        """#164's first split: 20 on the built-in alone clears both bounds, and the operator's
-        own graded rule on the same count is what carries it under. Summed rather than tested
-        one at a time, for the reason the lean lane is: each is withheld in full and the
-        shortfall in the denominator is their total."""
+        """20 on the built-in alone clears both bounds, and the operator's own graded
+        rule on the same count is what carries it under. This is summed rather than
+        tested one at a time, for the reason the lean lane is: each is withheld in full
+        and the shortfall in the denominator is their total.
+        """
         alone = _policy(**self._gate_off(signals=_split(80, 20)))
         assert self._condemn_warnings(alone) == []
 
@@ -2917,13 +2921,14 @@ class TestTheCondemnLanesCoverage:
     def test_a_boolean_rule_that_can_never_fire_is_in_the_sum(self) -> None:
         """The bound a per-item block still moves, which is the score and not coverage.
 
-        A boolean rule is all-or-nothing, and under ``lte`` the outcome ``fields.evaluate``
-        blocks is the MATCH. So an item under the bar earns nothing because the rule was
-        blocked and one over it earns nothing because the rule did not fire: the weight is
-        out of every item's score at once, even though the second item keeps it in coverage.
-        Driven through the real scorer at a 90-day reach, watcher counts 0 through 50 all
-        return ``abstain`` on a ceiling of 45 against the shipped threshold of 70, and all of
-        them condemn once the mirror is deep. The list is empty, and this used to be silent.
+        A boolean rule is all-or-nothing, and under ``lte`` the outcome
+        ``fields.evaluate`` blocks is the match. So an item under the bar earns nothing
+        because the rule was blocked, and one over it earns nothing because the rule did
+        not fire: the weight is out of every item's score at once, even though the
+        second item keeps it in coverage. Driven through the real scorer at a 90-day
+        reach, watcher counts 0 through 50 all return ``abstain`` on a ceiling of 45
+        against the shipped threshold of 70, and all of them condemn once the mirror is
+        deep.
         """
         [flagged] = self._condemn_warnings(self._boolean(Op.LTE))
 
@@ -2933,21 +2938,22 @@ class TestTheCondemnLanesCoverage:
     def test_a_boolean_rule_that_can_still_fire_is_left_out(self) -> None:
         """The discriminator, and the reason the sum is not simply "weight on the field".
 
-        Same rule, same weights, ``gte`` instead: now the blocked outcome is the one that
-        does NOT match, so an item over the bar is settled by the truncated count, comes back
-        evaluated, and earns the full 35. The list is genuinely not empty and claiming
-        otherwise would be rule 144's reassuring direction. Coverage alone cannot tell these
-        two apart, which is why ``fields.can_add_pressure_under_a_shortfall`` reads the op.
+        Same rule, same weights, ``gte`` instead: now the blocked outcome is the one
+        that does not match, so an item over the bar is settled by the truncated count,
+        comes back evaluated, and earns the full 35. The list is genuinely not empty and
+        claiming otherwise would be false in the reassuring direction. Coverage alone
+        cannot tell these two apart, which is why
+        ``fields.can_add_pressure_under_a_shortfall`` reads the op.
         """
         assert self._condemn_warnings(self._boolean(Op.GTE)) == []
 
     def test_both_bounds_the_verdict_reads_are_covered(self) -> None:
         """The floor is not the only way this empties the list, so neither is tested alone.
 
-        ``decide_verdict`` abstains under ``coverage_floor_bp`` AND fails to reach
-        ``condemn_at``, and withheld weight lowers both at once. Each case below clears one
-        bound and fails the other, so a fix reading only one of them leaves a case silent.
-        Asking the real decision function is what makes that free (rule 3/22).
+        ``decide_verdict`` abstains under ``coverage_floor_bp`` and fails to reach
+        ``condemn_at``, and withheld weight lowers both at once. Each case below clears
+        one bound and fails the other, so a fix reading only one of them leaves a case
+        silent. Asking the real decision function is what makes that free.
         """
         # Coverage alone: 60 withheld leaves a ceiling of 40, which clears a threshold of 20
         # and still sits under the 0.50 floor.
@@ -2989,15 +2995,16 @@ class TestTheCondemnLanesCoverage:
         )
 
     def test_a_rule_for_unwatched_titles_abstains_exactly_those_titles(self) -> None:
-        """Issue #215's partial case: the list is not empty, and what is missing from it is
+        """The partial case: the list is not empty, and what is missing from it is
         precisely what the operator wrote the rule to find.
 
-        Under ``lte`` an item ABOVE the bar keeps the rule's weight in coverage, because a
-        count already past the bar can only rise and ``_survives_more_history`` blocks only
-        the outcome more history could overturn. The item AT OR UNDER it is blocked and loses
-        that weight from coverage as well. Both ceilings are 80, so at a floor of 0.90 the
-        popular title is judged on coverage 1.00 and the unwatched one abstains on 0.80. The
-        removal list comes back full of the titles the rule was never meant to flag.
+        Under ``lte`` an item above the bar keeps the rule's weight in coverage, because
+        a count already past the bar can only rise and ``_survives_more_history`` blocks
+        only the outcome more history could overturn. The item at or under it is blocked
+        and loses that weight from coverage as well. Both ceilings are 80, so at a floor
+        of 0.90 the popular title is judged on coverage 1.00 and the unwatched one
+        abstains on 0.80. The removal list comes back full of the titles the rule was
+        never meant to flag.
         """
         [flagged] = self._condemn_warnings(self._partial(Op.LTE, floor_bp=9000))
 
@@ -3018,7 +3025,7 @@ class TestTheCondemnLanesCoverage:
         """
         # At and under the blocked item's own coverage, both items condemn. 5000 is the
         # shipped default and is swept deliberately: it is the case an operator is most
-        # likely to be in, and the one a rule-shaped check would get wrong (rule 141).
+        # likely to be in, and the one a rule-shaped check would get wrong.
         for floor_bp in (5000, 7500, 8000):
             assert self._condemn_warnings(self._partial(Op.LTE, floor_bp)) == []
 
@@ -3026,22 +3033,23 @@ class TestTheCondemnLanesCoverage:
         assert len(self._condemn_warnings(self._partial(Op.LTE, floor_bp=8001))) == 1
 
     def test_a_rule_that_can_still_fire_leaves_its_own_candidates_judged(self) -> None:
-        """The op discriminator again, on the second tier this time (rule 72).
+        """The op discriminator again, on the second tier this time.
 
-        Under ``gte`` the blocked outcome is the one that does NOT match, so an item over the
-        bar is settled by the truncated count and earns the weight in full. Nothing is
-        withheld from anybody's coverage, both items are judged alike, and a warning here
-        would be rule 144's reassuring direction pointed the other way: it would send the
-        operator to delete a rule that is working.
+        Under ``gte`` the blocked outcome is the one that does not match, so an item
+        over the bar is settled by the truncated count and earns the weight in full.
+        Nothing is withheld from anybody's coverage, both items are judged alike, and a
+        warning here would be false in the reassuring direction pointed the other way:
+        it would send the operator to delete a rule that is working.
         """
         assert self._condemn_warnings(self._partial(Op.GTE, floor_bp=9000)) == []
 
     def test_the_two_tiers_never_both_fire(self) -> None:
         """They make opposite claims about the same list, so exactly one may be on the page.
 
-        The measured #215 split empties the list outright, which is the first tier's claim;
-        the split above leaves it populated, which is the second's. Anchored on the message
-        rather than the count, because both tiers can land on ``custom_condemn``.
+        The measured partial-case split empties the list outright, which is the first
+        tier's claim. The split above leaves it populated, which is the second's.
+        Anchored on the message rather than the count, because both tiers can land on
+        ``custom_condemn``.
         """
         empty = self._condemn_warnings(self._boolean(Op.LTE))
         partial = self._condemn_warnings(self._partial(Op.LTE, floor_bp=9000))
@@ -3087,7 +3095,7 @@ class TestTheCondemnLanesCoverage:
         assert self._condemn_warnings(floored) == []
 
     def test_the_warning_lands_on_the_card_holding_the_points(self) -> None:
-        """Rule 42: the built-in's slider and the operator's own rules are different cards, so
+        """The built-in's slider and the operator's own rules are different cards, so
         the anchor follows the weight rather than defaulting to one of them."""
         on_the_signal = _policy(**self._gate_off(signals=_split(40, 60)))
         assert self._condemn_warnings(on_the_signal)[0].field == "signals"
@@ -3105,10 +3113,11 @@ class TestTheCondemnLanesCoverage:
         assert self._condemn_warnings(on_the_rule)[0].field == "custom_condemn"
 
     def test_a_split_lands_on_the_card_holding_more_of_them(self) -> None:
-        """The case the two above cannot discriminate: both put the whole withheld weight on
-        one card, so presence and magnitude agree and either rule passes them. Split unevenly
-        and they diverge -- 5 points on the built-in beside 50 on the operator's own rule sent
-        them to the slider holding 5 of the 55, and the card that has to change got nothing.
+        """The case the two above cannot discriminate: both put the whole withheld
+        weight on one card, so presence and magnitude agree and either rule passes them.
+        Split unevenly and they diverge. 5 points on the built-in beside 50 on the
+        operator's own rule sends them to the slider holding 5 of the 55, and the card
+        that has to change gets nothing.
         """
 
         def anchor(built_in: int, rule: int) -> str:
@@ -3139,19 +3148,20 @@ class TestTheCondemnLanesCoverage:
 
 
 class TestAHoldTheWatchHistoryCannotEstablish:
-    """The season path's member of the family, and the last of the four lanes (#154).
+    """The season path's member of the family, and the last of the four lanes.
 
-    The mid-binge guard holds a viewer whose last play falls inside ``in_progress_hold_days``.
-    Where the mirror does not span that hold, an invisible viewer and an expired one are the
-    same viewer, so ``season_pruning`` calls the set un-establishable rather than empty and
-    ``plan_series_prune`` holds every season on disk. The removal list is empty and nothing on
-    the page said why: ``in_progress_hold_days`` appeared in ``policy`` only as a declaration.
+    The mid-binge guard holds a viewer whose last play falls inside
+    ``in_progress_hold_days``. Where the mirror does not span that hold, an invisible
+    viewer and an expired one are the same viewer, so ``season_pruning`` calls the set
+    un-establishable rather than empty, and ``plan_series_prune`` holds every season on
+    disk. The removal list is empty and nothing on the page said why:
+    ``in_progress_hold_days`` appeared in ``policy`` only as a declaration.
 
-    Rule 72's twin one field down the same editor card, and the journey is what makes it bite.
-    An operator on a short mirror gets the popularity-window warning, follows it, lowers the
-    window to match their history, and clears it -- leaving a page with no warnings and a list
-    that is still empty, because the warning they just cleared was the only surface that ever
-    named their history reach.
+    This is the twin of that gap one field down the same editor card, and the journey is
+    what makes it bite. An operator on a short mirror gets the popularity-window
+    warning, follows it, lowers the window to match their history, and clears it. That
+    leaves a page with no warnings and a list that is still empty, because the warning
+    they just cleared was the only surface that ever named their history reach.
     """
 
     #: Under the shipped 1095-day floor every item is kept on age alone (dormancy is clamped to
@@ -3185,13 +3195,13 @@ class TestAHoldTheWatchHistoryCannotEstablish:
         assert "lower this to match your history" in _msg(flagged)
 
     def test_a_single_unit_hold_keeps_its_number(self) -> None:
-        """The dormancy floor's twin (rule 72): 180 is two units, so the shipped case never
-        exercised ``humanize_window``'s dropped "1", and "for year after they last watched"
-        has no article to carry it (rule 21).
+        """The dormancy floor's twin: 180 is two units, so the shipped case never
+        exercised ``humanize_window``'s dropped "1," and "for year after they last
+        watched" has no article to carry it.
 
-        Driven on the lowest floor the gate accepts, since this branch needs a reach that
-        clears the floor and still falls short of the hold. That is also why "1 day" has no
-        case: any reach clearing a 5-day floor already spans a 1-day hold (rule 141).
+        Driven on the lowest floor the gate accepts, since this branch needs a reach
+        that clears the floor and still falls short of the hold. That is also why "1
+        day" has no case: any reach clearing a 5-day floor already spans a 1-day hold.
         """
         floored = (GateSetting(gate=GateId.MIN_DORMANCY, threshold=5),)
         for hold, expected in ((365, "1 year"), (30, "1 month")):
@@ -3202,13 +3212,14 @@ class TestAHoldTheWatchHistoryCannotEstablish:
     def test_a_one_day_hold_still_takes_the_shortfall_copy(self) -> None:
         """The boundary between the two cause clauses, one step below every case here.
 
-        ``in_progress_hold_days <= 0`` was free to become ``<= 1``, which prints "at 0 days a
-        viewer's place is held forever" about a hold of one day. Nothing caught it, because
-        the only mirror short enough to fall behind a one-day hold is shorter than a day, and
-        no other case wants one (#337). No dormancy floor here for the same reason: any floor
-        the gate accepts needs a reach that already spans a day.
+        ``in_progress_hold_days <= 0`` could become ``<= 1``, which would print "at 0
+        days a viewer's place is held forever" about a hold of one day. That would be
+        easy to miss, because the only mirror short enough to fall behind a one-day hold
+        is shorter than a day, and no other case wants one. No dormancy floor here for
+        the same reason: any floor the gate accepts needs a reach that already spans a
+        day.
 
-        Narrowing that same guard to ``== 0`` is left untested and is not a gap (rule 118):
+        Narrowing that same guard to ``== 0`` is left untested, and that is not a gap:
         ``in_progress_hold_days`` is ``ge=0``, so no saveable value tells the two apart.
         """
         body = self._tv(in_progress_hold_days=1, gates=(GateSetting(gate=GateId.WHITELISTED),))
@@ -3219,13 +3230,11 @@ class TestAHoldTheWatchHistoryCannotEstablish:
         assert "held forever" not in _msg(flagged)
 
     def test_the_journey_that_used_to_end_on_a_silent_page(self) -> None:
-        """Clearing the window warning must not clear this one, which is exactly what the
-        issue reported.
+        """Clearing the window warning must not clear this one.
 
-        Both warnings hold at the start. The operator follows the first, lowers the window to
-        their reach, and that one goes -- and this one stays, because the hold is a different
-        span and lowering the window did nothing to it. Before, the page went silent here
-        while the list stayed empty.
+        Both warnings hold at the start. The operator follows the first, lowers the
+        window to their reach, and that one clears. This one stays, because the hold is
+        a different span, and lowering the window did nothing to it.
         """
         window_anchor = f"gates.{GateId.SERVER_POPULARITY.value}.window_days"
 
@@ -3260,8 +3269,8 @@ class TestAHoldTheWatchHistoryCannotEstablish:
         assert "Set a number of days, or turn this protection off." in _msg(flagged)
 
     def test_a_history_that_spans_the_hold_is_silent(self) -> None:
-        """The guard can answer, so it is doing its job and there is nothing to say. 180 is the
-        exact boundary: establishable AT the hold, not one day under it."""
+        """The guard can answer, so it is doing its job and there is nothing to say. 180
+        is the exact boundary: establishable at the hold, not one day under it."""
         body = self._tv(in_progress_hold_days=180)
 
         assert self._hold_warnings(body, reach=180.0) == []
@@ -3285,10 +3294,12 @@ class TestAHoldTheWatchHistoryCannotEstablish:
         assert self._hold_warnings(self._tv(in_progress_hold_days=180), reach=None) == []
 
     def test_the_dormancy_floor_silences_it(self) -> None:
-        """The fourth lane takes the same guard as the other three, for the same reason: under
-        the floor every item is kept on age alone, dormancy being clamped to the mirror, so the
-        hold decides nothing and its remedy would move no verdict. Without this it would fire
-        on both shipped policies for every operator holding under three years of history."""
+        """The fourth lane takes the same guard as the other three, for the same reason.
+        Under the floor every item is kept on age alone, dormancy being clamped to the
+        mirror, so the hold decides nothing and its remedy would move no verdict.
+        Without this it would fire on both shipped policies for every operator holding
+        under three years of history.
+        """
         floored = self._tv(
             in_progress_hold_days=180,
             gates=(GateSetting(gate=GateId.MIN_DORMANCY, threshold=1095),),
@@ -3298,25 +3309,26 @@ class TestAHoldTheWatchHistoryCannotEstablish:
 
 
 class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
-    """The FIFTH member of the family, and the one that was deferred rather than written (#224).
+    """The fifth member of the family.
 
-    ``season_pruning._detect_conflicts`` compares two ALL-TIME season watcher counts. A season
-    the mirror does not reach back to the arrival of reports a lower bound, and more history can
-    always lift a lower bound above anything, so every prunable season of such a show conflicts
-    against every kept season whatever either count says. ``auto_approvable`` goes False and
-    automatic TV pruning is inert on that show until the mirror catches up.
+    ``season_pruning._detect_conflicts`` compares two all-time season watcher counts. A
+    season the mirror does not reach back to the arrival of reports a lower bound, and
+    more history can always lift a lower bound above anything, so every prunable season
+    of such a show conflicts against every kept season whatever either count says.
+    ``auto_approvable`` goes False and automatic TV pruning is inert on that show until
+    the mirror catches up.
 
     ``test_a_short_mirror_holds_every_prunable_season_of_an_old_show`` pins that half in
-    ``test_season_pruning``. This class pins the other half, which did not exist: the page said
-    nothing at all. Driven on the shipped TV policy at a 1200-day reach against a 2000-day-old
-    show, ``inspect`` returned no warning while every prunable season came back held.
+    ``test_season_pruning``. This class pins the other half: whether the page says why.
+    Driven on the shipped TV policy at a 1200-day reach against a 2000-day-old show,
+    ``inspect`` must return a warning while every prunable season comes back held.
 
-    The deferral this replaces called it "the one member with no control behind it ... no setting
-    the operator can reach". ``flag_keep_conflicts`` is a switch on this same editor, so that was
-    false as written; ``test_the_detector_being_off_silences_it`` is the discriminator. What is
-    true is narrower and is why no remedy names that switch: turning it off is the delete-more
-    direction, so this family will not recommend it, and rendering beside it is as far as the
-    prime directive goes.
+    ``flag_keep_conflicts`` is a switch on this same editor, so this family does have a
+    control behind it, and ``test_the_detector_being_off_silences_it`` is the
+    discriminator that proves it. No remedy names that switch, because turning it off is
+    the delete-more direction, and this family will not recommend it. Rendering beside
+    it is as far as Reaper's prime directive goes: every ambiguity resolves toward
+    keeping the file.
     """
 
     #: The shipped floor is 1095 and dormancy is clamped to the mirror, so under it every item is
@@ -3329,10 +3341,10 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
             "media_type": "tv",
             "gates": (GateSetting(gate=GateId.MIN_DORMANCY, threshold=self.DORMANCY),),
             # The 90-day reach these tests use spans this hold, so the mid-binge lane is
-            # establishable and quiet. Left at the shipped 180 it would hold every season on
-            # disk, `prunable` would be empty, and it would silence this branch by design
-            # (`test_the_mid_binge_hold_silences_it`) -- so every assertion here would be
-            # reading that guard rather than the one under test (rule 141's shape).
+            # establishable and quiet. Left at the shipped 180 it would hold every season
+            # on disk, `prunable` would be empty, and it would silence this branch by
+            # design (`test_the_mid_binge_hold_silences_it`), so every assertion here
+            # would be reading that guard rather than the one under test.
             "in_progress_hold_days": 30,
         }
         return _policy(**{**base, **overrides})
@@ -3349,15 +3361,16 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
     def test_the_lane_is_flagged(self) -> None:
         [flagged] = self._conflict_warnings(self._tv())
 
-        # `warn`, not `danger`: the outcome is that Reaper removes LESS, the keep direction.
+        # `warn`, not `danger`. The outcome is that Reaper removes less, the keep
+        # direction.
         assert flagged.severity == "warn"
 
     def test_it_names_the_set_rather_than_claiming_an_empty_list(self) -> None:
-        """The span this turns on is each item's AGE, which ``inspect`` is never handed.
+        """The span this turns on is each item's age, which ``inspect`` is never handed.
 
-        Same reason the ``watchers_all_time`` branch names its set: handed one reach and no
-        arrival dates, "nothing will be flagged" would be false in the reassuring direction for
-        a library the mirror covers outright (rules 7/24, 144).
+        Same reason the ``watchers_all_time`` branch names its set: handed one reach and
+        no arrival dates, "nothing will be flagged" would be false in the reassuring
+        direction for a library the mirror covers outright.
         """
         [flagged] = self._conflict_warnings(self._tv())
 
@@ -3366,40 +3379,45 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
         assert "No TV season will be flagged" not in _msg(flagged)
 
     def test_it_says_where_the_held_shows_go(self) -> None:
-        """They are not lost, and a warning that did not say so would read far worse than the
-        truth. Every conflict carries ``shortfall``, so ``season_evidence.guard_result`` marks each
-        as a comparison Reaper did not make and the show waits in "Needs a look", where a hand
-        reap still condemns it. That is the string the switch's own help text one row up already
-        puts on the operator's screen (rule 144)."""
+        """They are not lost, and a warning that did not say so would read far worse
+        than the truth. Every conflict carries ``shortfall``, so
+        ``season_evidence.guard_result`` marks each as a comparison Reaper did not make,
+        and the show waits in "Needs a look," where a hand reap still condemns it. That
+        is the string the switch's own help text one row up already puts on the
+        operator's screen.
+        """
         [flagged] = self._conflict_warnings(self._tv())
 
         assert '"Needs a look"' in _msg(flagged)
 
     def test_the_needs_a_look_quote_is_the_chip_labels_own_string(self) -> None:
-        """Rule 144's sibling check, since this phrase is hand-authored copy in two catalog
-        entries rather than one generated from the other.
-        ``warning.season_conflicts_before_history`` quotes the same words the status chip
-        actually shows (``why.panel.verdict.needsLookLabel``); a reword of either alone
-        would print a quote that names a label the operator's screen no longer carries."""
+        """This checks a sibling copy, since this phrase is hand-authored copy in two
+        catalog entries rather than one generated from the other.
+        ``warning.season_conflicts_before_history`` quotes the same words the status
+        chip actually shows (``why.panel.verdict.needsLookLabel``). A reword of either
+        alone would print a quote that names a label the operator's screen no longer
+        carries.
+        """
         chip_label = catalog("why")["panel"]["verdict"]["needsLookLabel"]
         assert f'"{chip_label}"' in catalog("warning")["season_conflicts_before_history"]
 
     def test_the_detector_being_off_silences_it(self) -> None:
-        """The control the deferral said did not exist.
+        """This is the control that makes the family a reading of a switch, not a
+        sentence that fires for every TV operator forever.
 
-        ``plan_series_prune`` takes ``flag_keep_conflicts`` and returns no conflicts at all when
-        it is off (``season_pruning`` line 494), so the keep rule is simply followed and there is
-        no hold to explain. This is what makes the branch above a reading of the switch rather
-        than a sentence that fires for every TV operator forever.
+        ``plan_series_prune`` takes ``flag_keep_conflicts`` and returns no conflicts at
+        all when it is off (``season_pruning`` line 494), so the keep rule is simply
+        followed and there is no hold to explain.
         """
         assert self._conflict_warnings(self._tv(flag_keep_conflicts=False)) == []
-        # The discriminator: same policy with it on IS claimed, so the silence is the switch
-        # being read and not the branch having gone quiet for some other reason.
+        # This discriminator checks that the same policy with it on is claimed, so the
+        # silence above is the switch being read, not the branch having gone quiet for
+        # some other reason.
         assert len(self._conflict_warnings(self._tv(flag_keep_conflicts=True))) == 1
 
     def test_the_movies_policy_never_speaks(self) -> None:
-        """Movies have no seasons and never reach ``_detect_conflicts``, so a warning here would
-        name a control the movie editor does not render (rule 25)."""
+        """Movies have no seasons and never reach ``_detect_conflicts``, so a warning
+        here would name a control the movie editor does not render."""
         assert self._conflict_warnings(_policy()) == []
 
     def test_a_caller_that_cannot_read_the_mirror_stays_quiet(self) -> None:
@@ -3408,22 +3426,24 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
         assert self._conflict_warnings(self._tv(), reach=None) == []
 
     def test_the_dormancy_floor_silences_it(self) -> None:
-        """The fifth lane takes the same guard as the other four, for the same reason: under the
-        floor every item is kept on age alone, so this decides nothing and the #217 branch is the
-        voice that speaks there instead. The two cannot stack."""
+        """The fifth lane takes the same guard as the other four, for the same reason.
+        Under the floor every item is kept on age alone, so this decides nothing, and
+        the dormancy-floor branch is the voice that speaks there instead. The two
+        cannot stack."""
         floored = self._tv(gates=(GateSetting(gate=GateId.MIN_DORMANCY, threshold=1095),))
 
         assert self._conflict_warnings(floored, reach=90.0) == []
 
     def test_the_mid_binge_hold_silences_it(self) -> None:
-        """Rule 143's shape, not tidiness: that guard drains the set this one is defined over.
+        """This guard drains the set this one is defined over, which is why it takes
+        priority rather than being redundant.
 
-        Where the mirror cannot establish the mid-binge hold, ``plan_series_prune`` holds every
-        season ON DISK, so ``prunable`` is empty, ``_detect_conflicts`` iterates nothing, and
-        this lane is never reached. Naming it there would assert a cause that is not operative,
-        beside a branch already claiming the strictly stronger "no TV season will be flagged" --
-        and two "wait for it to build up" paragraphs is the stacking #134 took out of this
-        family.
+        Where the mirror cannot establish the mid-binge hold, ``plan_series_prune``
+        holds every season on disk, so ``prunable`` is empty, ``_detect_conflicts``
+        iterates nothing, and this lane is never reached. Naming it there would assert a
+        cause that is not operative, beside a branch already claiming the strictly
+        stronger "no TV season will be flagged." Stacking two "wait for it to build up"
+        paragraphs on top of each other is what this family avoids.
         """
         held = self._tv(in_progress_hold_days=180)  # 90-day reach cannot span it
         fields = [w.field for w in inspect(held, ProfileSettings(), history_reach_days=90.0)]
@@ -3431,22 +3451,23 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
         assert "in_progress_hold_days" in fields
         assert "flag_keep_conflicts" not in fields
 
-        # The discriminator: switch that guard OFF and the set is no longer drained, so this
-        # lane is live again and speaks. Without this the assertion above would also hold if the
-        # branch had simply stopped firing.
+        # This discriminator switches that guard off, so the set is no longer drained
+        # and this lane is live again and speaks. Without this, the assertion above
+        # would also hold if the branch had simply stopped firing.
         assert (
             self._conflict_warnings(self._tv(in_progress_hold_days=180, keep_in_progress=False))
             != []
         )
 
     def test_it_offers_no_remedy_rather_than_one_that_never_resolves(self) -> None:
-        """Every other member of this family ends on "wait for it to build up". Here that would
-        be false: the span is each item's AGE, and ``history_reach_days`` is ``(now - horizon)``
-        while the age is ``(now - added_at)``, so both advance a day per day and the shortfall
-        holds exactly while ``added_at < horizon``. Waiting moves neither instant. The sentence
-        ends on where those shows go instead, which is true and is the only move there is: the
-        one control behind this lane is the switch itself, and turning it off is the delete-more
-        direction on two numbers Reaper knows are wrong (rules 7/24, 21).
+        """Every other member of this family ends on "wait for it to build up." Here
+        that would be false: the span is each item's age, and ``history_reach_days`` is
+        ``(now - horizon)`` while the age is ``(now - added_at)``, so both advance a day
+        per day and the shortfall holds exactly while ``added_at < horizon``. Waiting
+        moves neither instant. The sentence ends on where those shows go instead, which
+        is true and is the only move there is. The one control behind this lane is the
+        switch itself, and turning it off is the delete-more direction on two numbers
+        Reaper knows are wrong.
         """
         [flagged] = self._conflict_warnings(self._tv())
 
@@ -3456,14 +3477,15 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
     def test_a_keep_rule_holding_no_season_silences_it(self) -> None:
         """The hold this claims has to be one the keep rule can actually produce.
 
-        ``_detect_conflicts`` iterates ``prunable`` against ``kept_seasons``, and that list drops
-        specials, so a policy keeping no season on age alone leaves it empty and the inner loop
-        never runs: no conflict is raised however short the mirror is, and every one of those
-        seasons is condemnable on score. Claiming the hold there is false in the REASSURING
-        direction (rules 7/24, 144) -- the operator reads that old shows are waiting for them
-        while the run is about to remove exactly those seasons.
+        ``_detect_conflicts`` iterates ``prunable`` against ``kept_seasons``, and that
+        list drops specials, so a policy keeping no season on age alone leaves it empty
+        and the inner loop never runs. No conflict is raised however short the mirror
+        is, and every one of those seasons is condemnable on score. Claiming the hold
+        there would be false in the reassuring direction. The operator would read that
+        old shows are waiting for them while the run is about to remove exactly those
+        seasons.
 
-        Driven against the real planner rather than an argument about it (rule 119).
+        Driven against the real planner rather than an argument about it.
         """
         seasons = [
             SeasonStats(
@@ -3489,7 +3511,7 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
             ),
         )
 
-        # The premise: nothing to compare against, so the detector raises nothing at all and the
+        # Nothing to compare against, so the detector raises nothing at all, and the
         # whole show is auto-approvable despite every count being unsupported.
         assert [p.season_number for p in plan.protected] == []
         assert plan.conflicts == []
@@ -3497,20 +3519,21 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
 
         assert self._conflict_warnings(self._tv(keep_last_seasons=0, keep_first_season=False)) == []
 
-        # The discriminators: either rule alone puts a season back in ``kept_seasons``, so the
-        # comparison exists again and the lane is live. Without these the silence above would
-        # also read green if the branch had simply stopped firing.
+        # These discriminators check that either rule alone puts a season back in
+        # ``kept_seasons``, so the comparison exists again and the lane is live. Without
+        # these the silence above would also read green if the branch had simply
+        # stopped firing.
         assert self._conflict_warnings(self._tv(keep_last_seasons=1, keep_first_season=False)) != []
         assert self._conflict_warnings(self._tv(keep_last_seasons=0, keep_first_season=True)) != []
 
     def test_the_shipped_tv_policy_is_no_longer_silent_on_a_deep_mirror(self) -> None:
-        """The reported state, driven on the shipped policy with nothing lowered.
+        """Driven on the shipped policy with nothing lowered.
 
-        1200 days clears the shipped 1095-day floor, spans the 365-day popularity window and the
-        180-day mid-binge hold, and carries no ``watchers_all_time`` rule or graded keep, so all
-        four siblings and the #217 root warning are correctly silent. That is precisely the state
-        in which ``inspect`` used to return NOTHING while every prunable season of any show older
-        than the mirror came back held.
+        1200 days clears the shipped 1095-day floor, spans the 365-day popularity
+        window and the 180-day mid-binge hold, and carries no ``watchers_all_time``
+        rule or graded keep, so all four siblings and the dormancy-floor root warning
+        are correctly silent. Every prunable season of a show older than the mirror
+        must still come back held, and this warning is what says why.
         """
         warnings = inspect(DEFAULT_TV_POLICY, ProfileSettings(), history_reach_days=1200.0)
 
@@ -3518,13 +3541,13 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
 
 
 class TestTheUnmeasuredAllowanceWarning:
-    """The ``max_unmeasured_per_run`` lane, which had no test at any point (#337).
+    """The ``max_unmeasured_per_run`` lane.
 
-    Nothing in tests/ named this message, so ``> 0`` inverted, or the guard deleted, removed
-    the warning outright and the mutation run never noticed. The direction that costs the
-    operator is the warning going silent: an operator raising the allowance is then never
-    told the size caps cannot cover those items, which is the one fact that makes the
-    setting understandable.
+    Nothing in tests/ named this message, so ``> 0`` inverting, or the guard being
+    deleted, could remove the warning outright with nothing catching it. The direction
+    that costs the operator is the warning going silent: an operator raising the
+    allowance is then never told the size caps cannot cover those items, which is the
+    one fact that makes the setting understandable.
     """
 
     def _spoken(self, allowance: int) -> list[PolicyWarning]:
@@ -3545,9 +3568,9 @@ class TestTheUnmeasuredAllowanceWarning:
         """One is where it turns on, not some larger number, and the count is rendered.
 
         10 is the highest the default profile permits: the allowance may not exceed
-        ``max_items_per_run``, which ships at 10. The sweep therefore runs from the first
-        legal value to the last, and excludes the default 0 deliberately, since that is the
-        silent arm above (rule 141).
+        ``max_items_per_run``, which ships at 10. The sweep therefore runs from the
+        first legal value to the last, and excludes the default 0 deliberately, since
+        that is the silent arm above.
         """
         spoken = self._spoken(allowance)
 
@@ -3558,12 +3581,12 @@ class TestTheUnmeasuredAllowanceWarning:
 
 
 class TestTheTwoSizeFootguns:
-    """Removing titles for being large, through a hand-written rule and through the built-in
-    signal. Both lanes had no test at any point (#337).
+    """Removing titles for being large, through a hand-written rule and through the
+    built-in signal.
 
-    Deleting either guard dropped a danger silently, and moving a weight comparison the other
-    way raised a danger about a size rule at weight 0 -- which the field's own docstring says
-    is off, its weight out of the denominator entirely.
+    Deleting either guard would drop a danger silently, and moving a weight comparison
+    the other way would raise a danger about a size rule at weight 0, which the field's
+    own docstring says is off, its weight out of the denominator entirely.
     """
 
     def _rule(self, weight: int) -> PolicyBody:
@@ -3608,9 +3631,9 @@ class TestTheTwoSizeFootguns:
 
     @pytest.mark.parametrize("weight", [1, 40])
     def test_the_built_in_size_signal_is_a_danger_at_any_live_weight(self, weight: int) -> None:
-        """The same footgun through the slider, which had no warning at all while the
-        hand-written equivalent got a danger one, and whose docstring claimed the UI warned
-        about it (rule 24). The rendered weight is asserted, not just the sentence."""
+        """The same footgun through the slider. The rendered weight is asserted, not
+        just the sentence, so a docstring claiming the UI warns about it has to stay
+        true."""
         spoken = [
             w for w in inspect(self._signal(weight), ProfileSettings()) if w.severity == "danger"
         ]
@@ -3626,15 +3649,14 @@ class TestTheTwoSizeFootguns:
 
 
 class TestTheKeepLastSeasonsWarning:
-    """ "Keeping the last N seasons ... TV pruning is effectively off". No test named this
-    message, and all six of its mutants survived (#337)."""
+    """ "Keeping the last N seasons ... TV pruning is effectively off"."""
 
     def _spoken(self, body: PolicyBody) -> list[PolicyWarning]:
         return [w for w in inspect(body, ProfileSettings()) if w.field == "keep_last_seasons"]
 
     @pytest.mark.parametrize(("seasons", "spoken"), [(9, False), (10, True), (11, True)])
     def test_ten_is_where_pruning_is_effectively_off(self, seasons: int, spoken: bool) -> None:
-        """Nine is a floor somebody may well mean; ten is where most shows are covered
+        """Nine is a floor somebody may well mean. Ten is where most shows are covered
         entirely. ``>=`` to ``>`` moved that edge by one and nothing said so."""
         warnings = self._spoken(_policy(media_type="tv", keep_last_seasons=seasons))
 
@@ -3653,9 +3675,11 @@ class TestTheKeepLastSeasonsWarning:
 
 
 class TestTheKeepPointsTotalWarning:
-    """ "Your keep rules can subtract up to N points". ``>=`` to ``==`` survived, because the
-    only case that fired it sat exactly on the boundary: ``_lean(..., 70)`` against the
-    shipped ``condemn_at`` of 70 (#337, and the same shape as the four rows of #243).
+    """ "Your keep rules can subtract up to N points."
+
+    A mutation from ``>=`` to ``==`` survives if the only case exercising this message
+    sits exactly on the boundary, such as ``_lean(..., 70)`` against the shipped
+    ``condemn_at`` of 70. So the sweep below drives above and below the boundary too.
     """
 
     def _keeps(self, *discounts: int, condemn_at: int = 70) -> list[PolicyWarning]:
@@ -3701,21 +3725,22 @@ class TestTheKeepPointsTotalWarning:
 
 
 class TestWhoTheEmptyListWarningBlamesAndWhereItSendsThem:
-    """The condemn lane under a short mirror: which weight counts as watcher-dependent, what
-    happens when a blocked boolean rule stands alone, and which card the operator is sent to.
+    """The condemn lane under a short mirror: which weight counts as watcher-dependent,
+    what happens when a blocked boolean rule stands alone, and which card the operator
+    is sent to.
 
-    Every fixture in this lane used ``recent_watchers`` with a ``FEW_WATCHERS`` weight beside
-    it, so the span filter itself was never driven and the boolean-alone state was never
-    built (#337). Three consequences, all of them silent: a rule on a field that reads no
-    watchers counted toward an inflated point total, a blocked boolean rule on its own emptied
-    the reap list and said nothing, and the anchor pointed at whichever card the fixtures
-    happened to agree on.
+    A fixture that always pairs ``recent_watchers`` with a ``FEW_WATCHERS`` weight would
+    leave the span filter itself undriven, and never build the boolean-alone state.
+    Three consequences would then go silent: a rule on a field that reads no watchers
+    counted toward an inflated point total, a blocked boolean rule on its own emptying
+    the reap list with no warning, and the anchor pointing at whichever card the
+    fixtures happened to agree on.
 
-    90 days against the 365-day window is the shortfall throughout, and no dormancy floor is
-    set, so ``reach_clears_dormancy`` holds and the lane speaks.
+    90 days against the 365-day window is the shortfall throughout, and no dormancy
+    floor is set, so ``reach_clears_dormancy`` holds and the lane speaks.
 
-    **What this lane deliberately leaves untested, and why** (rule 118). Three constructs
-    here cannot be told apart by any input, so a case for them would be a proof of nothing:
+    What this lane deliberately leaves untested, and why: three constructs here cannot
+    be told apart by any input, so a case for them would be a proof of nothing.
 
     * ``weight`` is ``ge=0`` at the save boundary, so ``> 0`` widened to ``>= 0`` and
       ``<= 0`` narrowed to ``< 0`` or ``== 0`` are the same test over every value that can
@@ -3739,8 +3764,8 @@ class TestWhoTheEmptyListWarningBlamesAndWhereItSendsThem:
     def _blocked_boolean(
         self, weight: int = 40, rules: int = 1, condemn_at: int = 70
     ) -> PolicyBody:
-        """A boolean removal rule that can never earn its weight under a shortfall, and NO
-        ``FEW_WATCHERS`` weight beside it -- which is the state no fixture built.
+        """A boolean removal rule that can never earn its weight under a shortfall,
+        with no ``FEW_WATCHERS`` weight beside it.
 
         ``lte`` is the operator that cannot: a match is exactly the outcome more history
         could overturn, so ``evaluate`` blocks it, and no item earns the weight at all.
@@ -3760,10 +3785,11 @@ class TestWhoTheEmptyListWarningBlamesAndWhereItSendsThem:
         )
 
     def test_a_blocked_boolean_rule_on_its_own_still_empties_the_list_out_loud(self) -> None:
-        """No withheld weight at all, and 40 points that no item can earn: the score ceiling
-        is 60 against a threshold of 70, so the reap list is empty. Three mutants suppressed
-        the warning for exactly this state, because the second half of ``withheld > 0 or
-        never_earned > 0`` had nothing driving it."""
+        """No withheld weight at all, and 40 points that no item can earn. The score
+        ceiling is 60 against a threshold of 70, so the reap list is empty. This state
+        needs its own coverage: the second half of ``withheld > 0 or never_earned > 0``
+        has nothing else driving it.
+        """
         spoken = self._spoken(self._blocked_boolean())
 
         assert len(spoken) == 1
@@ -3780,13 +3806,14 @@ class TestWhoTheEmptyListWarningBlamesAndWhereItSendsThem:
         assert self._spoken(self._blocked_boolean())[0].field == "custom_condemn"
 
     def test_the_plural_turns_on_at_the_second_blocked_rule(self) -> None:
-        """One rule, then two, on the PARTIAL branch: the list is not empty, and the titles
-        missing from it are the ones the rules were written to find.
+        """One rule, then two, on the partial branch: the list is not empty, and the
+        titles missing from it are the ones the rules were written to find.
 
-        ``never_earned_rules > 1`` was free to become ``< 1`` or ``> 2`` because no case ever
-        built the second rule. This branch names no rule -- two rules on one field are
-        constructible, so a singular would read as a wrong instruction -- which leaves the
-        count as the only thing carrying the plural.
+        ``never_earned_rules > 1`` needs coverage on both sides, since a case that never
+        builds the second rule could not tell ``< 1`` or ``> 2`` from the real
+        comparison. This branch names no rule. Two rules on one field are constructible,
+        so a singular would read as a wrong instruction, which leaves the count as the
+        only thing carrying the plural.
 
         60 blocked points against a threshold of 40 is what reaches this arm: the score
         ceiling still clears the threshold, so the list is genuinely not empty, while the
@@ -3840,10 +3867,10 @@ class TestWhoTheEmptyListWarningBlamesAndWhereItSendsThem:
         assert spoken[0].field == "custom_condemn"
 
     def test_the_list_empties_on_lost_coverage_as_well_as_on_lost_points(self) -> None:
-        """The other half of what ``decide_verdict`` is asked here, and the half no case
-        drove: 40 points left against a threshold of 31 CLEARS the threshold, and the reap
-        list is still empty because the coverage those 60 withheld points took with them
-        falls to 40% against the 50% floor.
+        """The other half of what ``decide_verdict`` checks here: 40 points left against
+        a threshold of 31 clears the threshold, and the reap list is still empty because
+        the coverage those 60 withheld points took with them falls to 40% against the
+        50% floor.
 
         Only the coverage arm can say so. Turning the share into a product makes the coverage
         figure enormous, every item reads as fully covered, and the operator is told their
@@ -3859,10 +3886,11 @@ class TestWhoTheEmptyListWarningBlamesAndWhereItSendsThem:
     def test_a_single_withheld_point_is_still_a_withheld_point(self) -> None:
         """The lowest live weight there is, on both routes into the total.
 
-        Every ``> 0`` guard in this lane was free to become ``> 1``, and a one-point weight
-        is the only value that tells the two apart. It needs a threshold of 100 to be
-        visible: below that, one point of ceiling is never what stops an item condemning, so
-        the warning has nothing to say either way (rule 141).
+        Every ``> 0`` guard in this lane needs coverage at exactly one point, since a
+        one-point weight is the only value that tells ``> 0`` apart from ``> 1``. It
+        needs a threshold of 100 to be visible: below that, one point of ceiling is
+        never what stops an item condemning, so the warning has nothing to say either
+        way.
         """
         slider = self._split_across_both_cards(1, 0, condemn_at=100)
         rule = self._blocked_boolean(weight=1, condemn_at=100)
@@ -3873,8 +3901,8 @@ class TestWhoTheEmptyListWarningBlamesAndWhereItSendsThem:
         assert all("only 99 points are left to judge on" in _msg(w) for w in self._spoken(rule))
 
     def test_the_operator_is_sent_to_whichever_card_holds_more_of_the_weight(self) -> None:
-        """25 on the built-in slider against 40 on a custom rule: the rules card holds more,
-        so that is where the points have to move (rule 42).
+        """25 on the built-in slider against 40 on a custom rule: the rules card holds
+        more, so that is where the points have to move.
 
         The shipped fixtures were 5/50, 50/5 and 25/25, which agree whether the comparison
         doubles the signals share or triples it. This split does not: doubling gives 50
@@ -3899,14 +3927,13 @@ class TestWhoTheEmptyListWarningBlamesAndWhereItSendsThem:
         assert "65 of your 100 removal points" in _msg(spoken[0])
 
     def test_a_rule_that_reads_no_watchers_is_not_counted_as_watcher_dependent(self) -> None:
-        """The span filter itself, which no fixture drove: every rule in this lane was on
-        ``recent_watchers``, so dropping the ``ReachSpan.POPULARITY_WINDOW`` test changed
-        nothing any test could see.
+        """The span filter itself, checked against a rule that does not use
+        ``recent_watchers``.
 
-        Without it a positive-weight rule on ANY field counts toward the withheld total, and
-        an operator whose rules never look at watchers is told their reap list is empty
-        because of a watch window. ``days_unwatched`` carries no reach span at all, so no
-        amount of missing history bounds it.
+        Without this filter, a positive-weight rule on any field would count toward the
+        withheld total, and an operator whose rules never look at watchers would be told
+        their reap list is empty because of a watch window. ``days_unwatched`` carries
+        no reach span at all, so no amount of missing history bounds it.
         """
         body = _policy(
             signals=(SignalSetting(signal=SignalId.UNWATCHED, weight=60, saturate_at=730),),
@@ -3923,15 +3950,15 @@ class TestWhoTheEmptyListWarningBlamesAndWhereItSendsThem:
 class TestTheGradedKeepRemedyReadsAsASentence:
     """The remedy the lean-lane warning ends on, and the sentence in front of it.
 
-    The tests on this lane assert its first and last sentences, both literals, and never the
-    middle one, so the capitalization that joins them was free to drop or to re-slice --
-    rendering "...won't be flagged for removal. your keep rule ..." (or YOur, our, Yur) with
-    nothing failing. The remedy's own boundary was undriven too: the only no-headroom case
-    used ``condemn_at=100``, so ``headroom < 1`` and the point/points plural both sat one
-    step outside every case (#337).
+    The tests on this lane assert its first and last sentences, both literals. Testing
+    only those would leave the capitalization that joins them free to drop or to
+    re-slice, rendering "...won't be flagged for removal. your keep rule ..." (or YOur,
+    our, Yur) with nothing failing. The remedy's own boundary needs its own coverage
+    too: a no-headroom case at ``condemn_at=100`` alone would leave ``headroom < 1`` and
+    the point/points plural both one step outside every case.
 
-    The ``total`` initializer above these branches is left untested and is not a gap (rule
-    118): every branch that reads it assigns it first, so its starting value is dead.
+    The ``total`` initializer above these branches is left untested and is not a gap:
+    every branch that reads it assigns it first, so its starting value is dead.
     """
 
     def _keep(self, field: str, discount: int, condemn_at: int = 70) -> PolicyBody:
@@ -3956,10 +3983,10 @@ class TestTheGradedKeepRemedyReadsAsASentence:
     def test_the_lifetime_only_branch_renders_as_three_whole_sentences(self) -> None:
         """The exact message, because the middle sentence is assembled rather than written.
 
-        Its lead clause is absent on this branch -- the cause clause belongs to the window
-        branch -- so the sentence starts on "your" and is capitalized in code. Asserting the
-        whole string is what pins that: a substring check on either end holds while the join
-        between them renders lowercase.
+        Its lead clause is absent on this branch. The cause clause belongs to the window
+        branch, so the sentence starts on "your" and is capitalized in code. Asserting
+        the whole string is what pins that: a substring check on either end would hold
+        even if the join between them rendered lowercase.
         """
         assert self._said(self._keep("watchers_all_time", 40)) == (
             "Titles added before your watch history starts won't be flagged for removal. "
@@ -3979,12 +4006,13 @@ class TestTheGradedKeepRemedyReadsAsASentence:
     def test_the_remedy_names_a_number_the_control_will_actually_take(
         self, condemn_at: int, remedy: str
     ) -> None:
-        """``max_discount`` is ``ge=1``, so at a headroom of 0 every settable value is too
-        high and the remedy has to drop to "remove that rule".
+        """``max_discount`` is ``ge=1``, so at a headroom of 0 every settable value is
+        too high and the remedy has to drop to "remove that rule."
 
-        One point of headroom is the case nothing drove, and it decides two things at once:
-        whether a number may be named at all, and whether it is "1 point" or "1 points". At
-        98 the operator was being told to set a rule to "2 point or less".
+        One point of headroom is the case that needs its own coverage. It decides two
+        things at once: whether a number may be named at all, and whether it reads "1
+        point" or "1 points." Without it, an operator at 98 could be told to set a rule
+        to "2 point or less."
         """
         assert self._said(self._keep("recent_watchers", 40, condemn_at=condemn_at)).endswith(
             f"Wait for it to build up, or {remedy}"
@@ -3992,12 +4020,12 @@ class TestTheGradedKeepRemedyReadsAsASentence:
 
 
 #: Every id ``policy_warnings.inspect`` can emit, under the ``warning`` catalog namespace, both
-#: directions (rule 145's shape, modeled on ``test_review_chips.TestTheChipVocabulary``).
+#: directions (modeled on ``test_review_chips.TestTheChipVocabulary``).
 #:
 #: Hand-maintained rather than AST-discovered: like chip ids, these are inline ``Reason(...)``
 #: literals scattered across ``inspect``'s many branches, not each a named module constant the
-#: way ``*_REASON`` is. Rule 145's answer for a hand-maintained population is the same as for a
-#: discovered one -- count what it claims to cover, reconcile that count by hand, then pin it.
+#: way ``*_REASON`` is. A hand-maintained population is checked the same way a discovered one
+#: is: count what it claims to cover, reconcile that count by hand, then pin it.
 _WARNING_IDS: frozenset[str] = frozenset(
     {
         "rating_no_sources",
@@ -4036,8 +4064,8 @@ def _leaf_ids(node: dict[str, Any]) -> set[str]:
 
 
 class TestTheWarningVocabulary:
-    """Every id ``policy_warnings.inspect`` can emit, under ``warning.*``, both directions
-    (rule 145's shape, modeled on ``test_review_chips.TestTheChipVocabulary``)."""
+    """Every id ``policy_warnings.inspect`` can emit, under ``warning.*``, both
+    directions (modeled on ``test_review_chips.TestTheChipVocabulary``)."""
 
     def test_the_warning_id_population_is_pinned(self) -> None:
         assert len(_WARNING_IDS) == 24, (
@@ -4057,12 +4085,12 @@ class TestTheWarningVocabulary:
 
 
 class TestOwnListMediaScope:
-    """Which policy a Plex list the operator curates by hand may keep on (#545).
+    """Which policy a Plex list the operator curates by hand may keep on.
 
-    A ``plex_collection`` lives in one library, so it holds that library's one type; a
-    ``plex_watchlist`` spans the account and holds both. Fail-open (rules 65/91): the scope
-    narrows a rule only when the library is known and single-typed, so an unsynced, renamed, or
-    ambiguous library keeps the rule on both.
+    A ``plex_collection`` lives in one library, so it holds that library's one type. A
+    ``plex_watchlist`` spans the account and holds both. This fails open: the scope
+    narrows a rule only when the library is known and single-typed, so an unsynced,
+    renamed, or ambiguous library keeps the rule on both.
     """
 
     def test_library_media_types_maps_title_to_the_policy_side(self) -> None:
@@ -4079,7 +4107,7 @@ class TestOwnListMediaScope:
         }
 
     def test_two_same_titled_libraries_union_to_both(self) -> None:
-        """Case-folded on the title (rule 88): two libraries sharing a title but not a kind
+        """Case-folded on the title: two libraries sharing a title but not a kind
         become a two-typed entry, which the scope below reads as "cannot tell"."""
         libs = [{"title": "Media", "kind": "movie"}, {"title": "media", "kind": "show"}]
         assert library_media_types(libs) == {"media": frozenset({"movie", "tv"})}
@@ -4101,9 +4129,9 @@ class TestOwnListMediaScope:
         assert scope["keep series"] == frozenset({"tv"})
 
     def test_an_unsynced_library_and_a_watchlist_keep_both(self) -> None:
-        """ "Gone" is in no synced library, so its collection keeps both; a watchlist always
-        does. The IMDb row is not the operator's own hand-curated list, so it is absent from
-        the map (the caller reads an absent name as both anyway)."""
+        """ "Gone" is in no synced library, so its collection keeps both. A watchlist
+        always does. The IMDb row is not the operator's own hand-curated list, so it is
+        absent from the map (the caller reads an absent name as both anyway)."""
         scope = own_list_media_scope(self._rows(), {"films": frozenset({"movie"})})
         assert scope["keep unsynced"] == frozenset({"movie", "tv"})
         assert scope["my watchlist"] == frozenset({"movie", "tv"})
@@ -4124,11 +4152,13 @@ class TestOwnListMediaScope:
         assert scope["keep series"] == frozenset({"movie", "tv"})
 
     def test_two_collections_that_casefold_collide_union_to_both(self) -> None:
-        """rule 63: the scope key is a display name, which can always collide. ``list_config``'s
-        NOCASE UNIQUE and its ``func.lower`` pre-check fold ASCII only, but this key is a
-        full-Unicode ``casefold``, so a non-ASCII case pair is admitted as two rows that collapse
-        to one key. A movie-library and a show-library collection colliding there must UNION to
-        both -- overwriting would drop the loser's rule off the policy it keeps on."""
+        """The scope key is a display name, which can always collide. ``list_config``'s
+        NOCASE unique constraint and its ``func.lower`` pre-check fold ASCII only, but
+        this key is a full-Unicode ``casefold``, so a non-ASCII case pair is admitted as
+        two rows that collapse to one key. A movie-library and a show-library collection
+        colliding there must union to both. Overwriting would drop the loser's rule off
+        the policy it keeps on.
+        """
         # "STRASSE".casefold() == "straße".casefold() == "strasse", but the two differ under
         # NOCASE (ß is not folded), so both rows exist in the registry.
         rows = [
@@ -4142,11 +4172,13 @@ class TestOwnListMediaScope:
 
 
 class TestAuthorableMediaScope:
-    """Which policy the list picker OFFERS a list on (#549). The fail-closed twin of
-    ``own_list_media_scope`` (rule 72): that scopes a legacy protection being CONVERTED and keeps
-    BOTH on an unreadable lookup so it never drops a live rule; this offers a NEW rule and gates
-    no deletion, so it WITHHOLDS a list whose type it cannot establish rather than offer it on a
-    type it may not hold. They agree wherever the type is actually known."""
+    """Which policy the list picker offers a list on. The fail-closed twin of
+    ``own_list_media_scope``: that scopes a legacy protection being converted and keeps
+    both types on an unreadable lookup so it never drops a live rule. This offers a new
+    rule and gates no deletion, so it withholds a list whose type it cannot establish
+    rather than offer it on a type it may not hold. They agree wherever the type is
+    actually known.
+    """
 
     @staticmethod
     def _libs() -> dict[str, frozenset[str]]:
@@ -4200,14 +4232,16 @@ class TestAuthorableMediaScope:
         assert both == frozenset({"movie", "tv"})
 
     def test_a_synced_but_empty_tag_is_offered_on_both(self) -> None:
-        """Verified and empty: a list the operator means to fill is protectable now (#549)."""
+        """Verified and empty: a list the operator means to fill is protectable now."""
         scope = authorable_media_scope("arr_tag", "{}", frozenset(), True, {})
         assert scope == frozenset({"movie", "tv"})
 
     def test_an_unsynced_tag_is_withheld_where_conversion_would_keep_both(self) -> None:
-        """The fail-closed / fail-open split (rule 72). No sync has read the tag, so its type is
-        unknown: the picker offers it on neither. A rule authored here could keep nothing, where
-        ``own_list_media_scope`` keeps an analogous unreadable list on both to hold a live rule."""
+        """The fail-closed / fail-open split. No sync has read the tag, so its type is
+        unknown: the picker offers it on neither. A rule authored here could keep
+        nothing, where ``own_list_media_scope`` keeps an analogous unreadable list on
+        both to hold a live rule.
+        """
         scope = authorable_media_scope("arr_tag", "{}", frozenset(), False, {})
         assert scope == frozenset()
 
@@ -4215,12 +4249,12 @@ class TestAuthorableMediaScope:
 class TestConvertListProtections:
     """The load shim for a body from before every list protected through its own keep rule.
 
-    Three legacy shapes leave together because they were saved together: ``keep_tags`` and
-    its match mode, the ``whitelisted``/``curated_list`` gate rows, and rules spelled
-    ``on_curated_list``. Each ENABLED gate was a LIVE protection, so it converts to the
-    equivalent ``on_list`` rule rather than being dropped -- dropping alone would silently
-    withdraw cover, and a target list that cannot be resolved keeps its row so the scan
-    refuses loudly instead (rule 38).
+    Three legacy shapes leave together because they were saved together: ``keep_tags``
+    and its match mode, the ``whitelisted``/``curated_list`` gate rows, and rules
+    spelled ``on_curated_list``. Each enabled gate was a live protection, so it converts
+    to the equivalent ``on_list`` rule rather than being dropped. Dropping alone would
+    silently withdraw cover, and a target list that cannot be resolved keeps its row so
+    the scan refuses loudly instead.
     """
 
     @staticmethod
@@ -4259,8 +4293,9 @@ class TestConvertListProtections:
 
     def test_every_curated_by_hand_list_gets_its_own_rule(self) -> None:
         """The whitelisted gate covered the Plex collection and watchlist definitions as
-        much as the keep tags, so each existing one converts to its own rule -- or an
-        upgrade would quietly withdraw the collections' cover (rule 118 for the new arm)."""
+        much as the keep tags, so each existing one converts to its own rule. Without
+        that, an upgrade would quietly withdraw the collections' cover.
+        """
         converted = self._convert(self._legacy(), collections=("Never Reap", "My watchlist"))
         assert converted is not None
         assert self._rules(converted) == ["Tagged", "Never Reap", "My watchlist", "Top"]
@@ -4303,8 +4338,8 @@ class TestConvertListProtections:
         assert not self._gate_ids(converted) & {"whitelisted", "curated_list"}
 
     def test_an_explicitly_empty_keep_tag_list_converts_to_no_tag_rule(self) -> None:
-        """Rule 1: an operator who cleared their tags had no live tag protection to carry
-        over. The curated gate's rule still lands."""
+        """An operator who cleared their tags had no live tag protection to carry over.
+        The curated gate's rule still lands."""
         converted = self._convert(self._legacy(keep_tags=[]))
 
         assert converted is not None
@@ -4313,20 +4348,20 @@ class TestConvertListProtections:
     def test_an_enabled_gate_with_no_target_list_keeps_its_row(self) -> None:
         """Stripping an enabled gate whose replacement cannot be named would withdraw a
         live protection with nothing in its place. The row stays, and ``build_gates``
-        refuses the scan on it rather than silently skipping (rule 38).
+        refuses the scan on it rather than silently skipping.
 
         The refusal is the operator's own words and names no gate id: they never saw
-        `whitelisted` on any screen (rule 21).
+        `whitelisted` on any screen.
 
-        **What it tells them to do, and in which order, is the load-bearing part.** It used
-        to say to open Policy and save first, then add the list. Doing that loses the
-        protection for good: the save boundary holds Save while the row is there, so the only
-        way to reach a save is to take the row off, and the saved body then carries neither
-        the gate nor ``keep_tags`` -- nothing left for this conversion to fire on, and a list
+        What it tells them to do, and in which order, is the load-bearing part. Saying
+        to open Policy and save first, then add the list, would lose the protection for
+        good: the save boundary holds Save while the row is there, so the only way to
+        reach a save is to take the row off, and the saved body then carries neither the
+        gate nor ``keep_tags``, nothing left for this conversion to fire on, and a list
         added afterwards attaches no rule of its own. The order asserted here is the one
         ``tests/test_api.py::TestPolicyPersistence::
-        test_adding_the_list_back_first_is_what_keeps_the_protection`` drives end to end, so
-        the sentence and the working sequence are one fact (rules 25, 144).
+        test_adding_the_list_back_first_is_what_keeps_the_protection`` drives end to
+        end, so the sentence and the working sequence are one fact.
         """
         converted = self._convert(self._legacy(), tag=None, imdb=None)
 
@@ -4356,8 +4391,8 @@ class TestConvertListProtections:
         assert PolicyBody.model_validate(converted)
 
     def test_a_rule_already_naming_the_list_is_not_doubled(self) -> None:
-        """Matched case-folded (rule 88): a body that already carries the rule the gate
-        would convert to gains nothing beside it."""
+        """Matched case-folded: a body that already carries the rule the gate would
+        convert to gains nothing beside it."""
         legacy = self._legacy(
             protect_conditions=[{"field": "on_list", "op": "eq", "value": "  tagged "}]
         )
@@ -4368,9 +4403,10 @@ class TestConvertListProtections:
         assert self._rules(converted) == ["  tagged ", "Top"]
 
     def test_the_imdb_rule_lands_on_the_movie_body_only(self) -> None:
-        """#539: the IMDb chart is movies only, so converting a TV body must not add its
-        rule -- a TV rule naming it can never match a season and reads as a protection the
-        operator never chose (rule 38). The tag list spans both, so its rule lands on both."""
+        """The IMDb chart is movies only, so converting a TV body must not add its
+        rule. A TV rule naming it can never match a season and reads as a protection
+        the operator never chose. The tag list spans both, so its rule lands on both.
+        """
         movie = self._convert(self._legacy(), media_type="movie")
         tv = self._convert(self._legacy(), media_type="tv")
 
@@ -4379,10 +4415,12 @@ class TestConvertListProtections:
         assert self._rules(tv) == ["Tagged"]
 
     def test_the_curated_gate_strips_from_a_tv_body_with_no_replacement(self) -> None:
-        """The curated_list gate protected nothing on a TV body (IMDb is movies only), so it
-        strips clean even when no IMDb list can be named -- else a missing list would refuse
-        the TV scan over a protection that never fired there (#539, the movie body keeps
-        refusing, ``test_an_enabled_gate_with_no_target_list_keeps_its_row``)."""
+        """The curated_list gate protected nothing on a TV body (IMDb is movies only),
+        so it strips clean even when no IMDb list can be named. Otherwise a missing
+        list would refuse the TV scan over a protection that never fired there. The
+        movie body still refuses in that case
+        (``test_an_enabled_gate_with_no_target_list_keeps_its_row``).
+        """
         converted = self._convert(self._legacy(), media_type="tv", imdb=None)
 
         assert converted is not None
@@ -4392,10 +4430,11 @@ class TestConvertListProtections:
         assert build_gates(PolicyBody.model_validate(converted)) is not None
 
     def test_an_unscoped_collection_lands_on_both_bodies(self) -> None:
-        """#545 fail-open: with no scope for it -- an unsynced, renamed, or ambiguous library --
-        a collection's rule lands on both bodies. Losing no data: an inert rule on the wrong
-        body keeps nothing, and the right body still protects. ``None`` scope is the behavior
-        before scoping existed."""
+        """Fail-open: with no scope for it, an unsynced, renamed, or ambiguous library,
+        a collection's rule lands on both bodies. No data is lost: an inert rule on the
+        wrong body keeps nothing, and the right body still protects. ``None`` scope is
+        the behavior before scoping existed.
+        """
         movie = self._convert(self._legacy(), media_type="movie", collections=("Never Reap",))
         tv = self._convert(self._legacy(), media_type="tv", collections=("Never Reap",))
 
@@ -4404,9 +4443,10 @@ class TestConvertListProtections:
         assert "Never Reap" in self._rules(tv)
 
     def test_a_movie_scoped_collection_lands_on_the_movie_body_only(self) -> None:
-        """#545: a collection in a movie library holds movies only, so its rule lands on the
-        movie body and NOT the TV one -- a TV rule naming it can never match a season and reads
-        as a protection the operator never chose (rule 38). Matched case-folded (rule 88)."""
+        """A collection in a movie library holds movies only, so its rule lands on the
+        movie body and not the TV one. A TV rule naming it can never match a season and
+        reads as a protection the operator never chose. Matched case-folded.
+        """
         scope = {"never reap": frozenset({"movie"})}
         movie = self._convert(
             self._legacy(), media_type="movie", collections=("Never Reap",), collection_scope=scope
@@ -4473,14 +4513,14 @@ class TestTheTwoPolicyDeclarationsAgree:
     """``api.schemas.PolicyIn`` and ``engine.policy.PolicyBody`` declare the same numbers
     twice, and nothing compared them.
 
-    Rule 131: a bound the producer honors and the consumer enforces comes off one
-    declaration, or off two a test keeps in step. These two cannot merge -- ``PolicyIn`` is
-    the wire body and ``PolicyBody`` carries ``schema_version``/``scorer_version`` the browser
-    never sends -- so the test is the seam. ``test_api_type_mirror`` pairs them already and
-    compares field *names* against the browser's copy, which is why a bound present on one
-    side and absent on the other survived it: ``in_progress_hold_days`` and
-    ``season_lookahead`` were ``ge=0`` with no ceiling on both, and the value that reached
-    ``active_progress`` raised ``OverflowError`` out of a scan.
+    A bound the producer honors and the consumer enforces has to come off one
+    declaration, or off two a test keeps in step. These two cannot merge: ``PolicyIn``
+    is the wire body and ``PolicyBody`` carries ``schema_version``/``scorer_version``
+    the browser never sends. So the test is the seam. ``test_api_type_mirror`` pairs
+    them already and compares field *names* against the browser's copy, which would
+    miss a bound present on one side and absent on the other: an unbounded
+    ``in_progress_hold_days`` or ``season_lookahead`` can reach ``active_progress`` with
+    a value large enough to raise ``OverflowError`` out of a scan.
     """
 
     @staticmethod
@@ -4500,10 +4540,9 @@ class TestTheTwoPolicyDeclarationsAgree:
         engine = self._bounds(PolicyBody)
         shared = sorted(set(wire) & set(engine))
 
-        # Rules 145 and 147: pin what the walk COLLECTS. A comparison over an empty
-        # intersection, or over a set that quietly stopped containing the numeric fields,
-        # passes while proving nothing -- and this test exists because the previous guard
-        # compared names only. Nineteen, down from twenty when ``keep_tags`` and
+        # This pins what the walk collects. A comparison over an empty intersection,
+        # or over a set that quietly stopped containing the numeric fields, passes
+        # while proving nothing. Nineteen, down from twenty when ``keep_tags`` and
         # ``keep_tags_match`` left the body for Settings -> Lists.
         assert len(shared) >= 19, f"only {len(shared)} shared fields; the pairing broke"
         constrained = {name for name in shared if wire[name]}
@@ -4539,13 +4578,14 @@ class TestTheTwoPolicyDeclarationsAgree:
         """The two that had no ceiling, at the values that demonstrated why they needed one.
 
         ``in_progress_hold_days`` reached ``now - timedelta(days=...)`` and raised
-        ``OverflowError``; ``season_lookahead`` reached ``range(lookahead + 1)`` and allocated
-        it per anchor per viewer per show. Both arrive through ``PolicyIn``, so refusing at
-        that boundary is what keeps them out of the scan and out of ``/policy/simulate``.
+        ``OverflowError``. ``season_lookahead`` reached ``range(lookahead + 1)`` and
+        allocated it per anchor per viewer per show. Both arrive through ``PolicyIn``,
+        so refusing at that boundary is what keeps them out of the scan and out of
+        ``/policy/simulate``.
         """
         wire = DEFAULT_TV_POLICY.model_dump(mode="json")
-        # The premise: the payload is accepted before the one field is pushed past its
-        # ceiling, so the raise below is that field's and not a malformed body's.
+        # The payload is accepted before the one field is pushed past its ceiling, so
+        # the raise below is that field's and not a malformed body's.
         PolicyIn.model_validate(wire)
         with pytest.raises(ValidationError):
             PolicyIn.model_validate({**wire, field: value})

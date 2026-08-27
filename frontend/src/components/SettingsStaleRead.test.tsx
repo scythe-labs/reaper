@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The Settings surfaces that keep their content through a failed refetch and must say so rather
-// than deny it: About, the Jobs panel (its notice, the scan row's schedule line and the Leaving
-// Soon row inside it) and Notifications. React Query keeps the last good row and raises `isError`
-// beside it, so a surface testing only `isError` prints "couldn't load this page" directly above
-// the page it says did not load. Each is pinned in both directions here -- the never-loaded
-// sentence for a read that really never landed, the stale line for one that landed and then
-// blinked -- because a fix that showed the stale line in both cases would pass a one-sided test
-// (#140).
+// The Settings surfaces that keep their content through a failed refetch and must say so
+// rather than deny it: About, the Jobs panel (its notice, the scan row's schedule line and the
+// Leaving Soon row inside it), and Notifications. React Query keeps the last good row and
+// raises `isError` beside it, so a surface testing only `isError` prints "couldn't load this
+// page" directly above the page it says did not load. Each is pinned in both directions here:
+// the never-loaded sentence for a read that really never landed, and the stale line for one
+// that landed and then blinked. A fix that showed the stale line in both cases would pass a
+// one-sided test.
 import { screen, waitFor } from "@testing-library/react";
 import type { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -36,9 +36,9 @@ const ABOUT: About = {
 const SCHEDULE: Schedule = {
   jobs: [
     {
-      // The scan's REAL id (`SCAN_ID` in JobsPanel.tsx). A fixture calling it "scan" leaves
-      // `jobsById.get(SCAN_ID)` empty, so the scan row renders with no job at all and the branch
-      // these tests are about is unreachable -- green either way (rule 141).
+      // The scan's real id (`SCAN_ID` in JobsPanel.tsx). A fixture calling it "scan" leaves
+      // `jobsById.get(SCAN_ID)` empty, so the scan row renders with no job at all, and the
+      // branch these tests are about becomes unreachable. That would pass green either way.
       id: "scheduled_scan",
       cron: "0 3 * * *",
       default_cron: null,
@@ -64,27 +64,26 @@ const SCHEDULE: Schedule = {
 const NEVER_LOADED_ABOUT = /Couldn't load this page/;
 const NEVER_LOADED_JOBS = /Couldn't load the upkeep jobs/;
 const NEVER_LOADED_SHELF = /Couldn't load the shelf status/;
-// Anchored on the period, which is now the WHOLE difference: the two sentences open with the
-// same eight words and only the never-loaded one puts a full stop there, the stale line running
-// on into "just now". It was anchored on ". Reload" while BOTH said to reload; #153 took that
-// clause off the stale line and #195 took it off this one, since the webhook box below is on
-// screen in every branch and a reload costs a pasted secret. The period is what still separates
-// them, and a `$` would not: RTL matches on the element's whole text.
+// Anchored on the period, which is the whole difference: the two sentences open with the same
+// eight words, and only the never-loaded one puts a full stop there, while the stale line runs
+// on into "just now". Neither sentence offers to reload, since the webhook box below stays on
+// screen in every branch and a reload would cost a pasted secret. The period is what still
+// separates them, and a `$` would not, since RTL matches on the element's whole text.
 const NEVER_LOADED_DISCORD = /Couldn't check whether Discord is connected\./;
 
 // The shared sentence with any noun in it, for the negative assertions: no stale line at all.
 const STALE_ANY = /Couldn't check .* just now/;
-// And per surface, because `what` is the one thing a caller varies and the loose form above
-// cannot tell a supplied noun from the component's default: deleting `what` at either call site
-// left every test in this file green (rules 118, 141).
+// And per surface, because `what` is the one thing a caller varies, and the loose form above
+// cannot tell a supplied noun from the component's default. Deleting `what` at either call
+// site would leave every test in this file green.
 const STALE_ABOUT = /Couldn't check these details just now/;
 const STALE_JOBS = /Couldn't check these jobs just now/;
 const STALE_SHELF = /Couldn't check the shelf status just now/;
 const STALE_DISCORD = /Couldn't check whether Discord is connected just now/;
 
-// Rule 144: one sentence, stated in one place, with a noun each caller supplies. A failure here
-// names the siblings that would have to move with it by file, since a comment asking a future
-// author to remember costs nothing and does nothing.
+// One sentence, stated in one place, with a noun each caller supplies. A failure here names the
+// siblings that would have to move with it by file, since a comment asking a future author to
+// remember costs nothing and does nothing.
 const WHAT_HINT =
   "The stale line's noun is the `what` prop of StaleReadNotice.tsx, which owns the sentence. " +
   'Sibling call sites: AboutPanel.tsx ("these details"), JobsPanel.tsx ("these jobs" on the ' +
@@ -126,7 +125,7 @@ function renderPanel(panel: "about" | "jobs" | "notifications"): QueryClient {
 
 /** Renders Jobs on a good schedule read, then blinks it: the refetch fails and React Query keeps
  *  the last good row. Waits on the row the server list produced, not on the absence of an error,
- *  because a negative assertion made before the read lands passes for the wrong reason (rule 137). */
+ *  because a negative assertion made before the read lands would pass for the wrong reason. */
 async function jobsAfterFailedScheduleRefetch(): Promise<void> {
   apiMock.schedule.mockResolvedValue(SCHEDULE);
   const queryClient = renderPanel("jobs");
@@ -152,7 +151,7 @@ describe("AboutPanel through a failed refetch", () => {
     const stale = await screen.findByText(STALE_ANY);
     expect(stale, WHAT_HINT).toHaveTextContent(STALE_ABOUT);
     expect(stale).toHaveClass("notice-warn");
-    // The claim that matters: it does NOT say the page failed to load, above the loaded page.
+    // The claim that matters: it must not say the page failed to load, above the loaded page.
     expect(screen.queryByText(NEVER_LOADED_ABOUT)).toBeNull();
     expect(screen.getByText("Reaper 1.2.3")).toBeInTheDocument();
   });
@@ -183,7 +182,8 @@ describe("JobsPanel through a failed refetch", () => {
     await jobsAfterFailedScheduleRefetch();
 
     // The sentence points at "what's below", and `.panel` is plain block flow, so DOM order is
-    // the order it is read in. Under the rows it pointed at the schedule editor and nothing else.
+    // the order it is read in. The rows sit below the notice, with the schedule editor and
+    // nothing else below them.
     const stale = screen.getByText(STALE_ANY);
     const firstRow = screen.getByText("Refresh IMDb ratings");
     expect(stale.compareDocumentPosition(firstRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -193,17 +193,17 @@ describe("JobsPanel through a failed refetch", () => {
     await jobsAfterFailedScheduleRefetch();
 
     // The upkeep rows beside it go on printing next-run times off this same held answer, and the
-    // notice above already says the rows may be out of date, so blanking this one line said the
-    // schedule was unknown while the panel displayed it (rule 72).
+    // notice above already says the rows may be out of date. Blanking this one line would say
+    // the schedule is unknown while the panel still displays it.
     expect(screen.getByText(SCAN_SCHEDULE)).toBeInTheDocument();
     expect(screen.queryByText(SCAN_UNKNOWN)).toBeNull();
   });
 
   it("says it once when the shelf read fails alongside the schedule", async () => {
-    // The two reads on this panel are independent polls -- the schedule's runs every 1.5s while
-    // any job does, the shelf row's does not -- so they can fail apart and often fail together.
-    // Together, they used to answer with two near-identical amber lines a few inches apart, one
-    // of them inside a row belonging to the other (#198).
+    // The two reads on this panel are independent polls: the schedule's runs every 1.5s while
+    // any job does, and the shelf row's does not. So they can fail apart, and they can also
+    // fail together, which must not print two near-identical amber lines, one of them inside a
+    // row belonging to the other.
     apiMock.schedule.mockResolvedValue(SCHEDULE);
     apiMock.leavingSoonSettings.mockResolvedValue({ enabled: true, last: null });
     const queryClient = renderPanel("jobs");
@@ -247,34 +247,29 @@ describe("the Leaving Soon row through a failed refetch", () => {
       last: null,
     });
     const queryClient = renderPanel("jobs");
-    // Settle the state this button's EXISTENCE depends on before reaching for it (#228, the
-    // twin of #149). `findByRole` with a name matcher re-computes accessible names across the
-    // whole Settings tree on every 50ms poll -- the most expensive query Testing Library has --
-    // and here it had to cover the shelf read landing as well, on one budget, then 1000ms and
-    // 5000ms now (`src/test/setup.ts`, #887). It lost
-    // that race on a loaded CI runner, on commits touching nothing in this tree, and the dumped
-    // DOM showed the panel still on "Loading the upkeep jobs…" with this row on "Loading…".
+    // Settle the state this button's existence depends on before reaching for it. `findByRole`
+    // with a name matcher recomputes accessible names across the whole Settings tree on every
+    // poll, which is the most expensive query Testing Library has, and here it also has to wait
+    // for the shelf read to land. That can lose the race on a loaded CI runner, leaving the
+    // panel stuck on "Loading the upkeep jobs…".
     //
     // "Runs after every scan" is the cheap text the enabled branch renders, so waiting on it
-    // settles the same read and takes the button synchronously once it holds. Measured idle,
-    // detection falls from 18.2ms mean / 87.5ms worst to 4.5ms / 6.3ms; it is the worst case
-    // that loses on a busy runner. It also pins the branch, in rule 141's shape: the row's OFF
-    // branch draws a disabled "Update now" too, so the old wait held either way and the ON
-    // branch it means to set up was proven by nothing until the `toBeEnabled` at the end.
+    // settles the same read and takes the button synchronously once it holds. It also pins the
+    // right branch: the row's OFF branch draws a disabled "Update now" too, so waiting on the
+    // button alone would not prove the ON branch had actually loaded.
     //
-    // Not a timeout bump on purpose: that hides the next regression in this chain instead of
+    // Bumping the timeout instead would hide the next regression in this chain rather than
     // pinning it.
     //
-    // Rule 137's margin sweep does NOT find this one, which is worth knowing before reaching
-    // for it: holding every React Query notification back 200ms, and again at 500ms, left all
-    // ten tests here green, because the reads still land inside the budget -- what runs out is
-    // the budget spent LOOKING between them. The sweep amplifies notification latency; this
-    // failure is query cost under a starved CPU. Timing the wait itself is what showed it.
+    // A generic latency-margin sweep does not catch this failure, because the reads still land
+    // inside the test's time budget. What runs out is the budget spent polling between them,
+    // which is query cost under a starved CPU rather than notification latency.
     await screen.findByText("Runs after every scan");
     expect(screen.getByRole("button", { name: /^Update now/ })).toBeInTheDocument();
 
-    // "Update now" invalidates exactly this key when it SUCCEEDS, so a blinked refetch here
-    // follows a shelf update that worked -- and used to answer it by declaring the shelf unknown.
+    // "Update now" invalidates exactly this key when it succeeds, so a blinked refetch here
+    // follows a shelf update that worked. It must not answer that by declaring the shelf
+    // unknown.
     apiMock.leavingSoonSettings.mockRejectedValue(new Error("boom"));
     await queryClient.invalidateQueries({ queryKey: ["leaving-soon-settings"] });
     await waitFor(() => expect(apiMock.leavingSoonSettings).toHaveBeenCalledTimes(2));
@@ -313,8 +308,8 @@ describe("NotificationsPanel through a failed refetch", () => {
     expect(stale, WHAT_HINT).toHaveTextContent(STALE_DISCORD);
     expect(stale).toHaveClass("notice-warn");
     expect(screen.queryByText(NEVER_LOADED_DISCORD)).toBeNull();
-    // The three controls that were contradicting the old sentence are still derived from the
-    // held answer, and now the line above them agrees that it was read.
+    // The three controls below are still derived from the held answer, and the line above them
+    // agrees that the data was actually read.
     expect(screen.getByText(/Discord connected/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Send test" })).toBeEnabled();
@@ -325,8 +320,8 @@ describe("NotificationsPanel through a failed refetch", () => {
     renderPanel("notifications");
 
     expect(await screen.findByText(NEVER_LOADED_DISCORD)).toBeInTheDocument();
-    // Nothing was ever read, so nothing below it can be called out of date -- and Remove and the
-    // test send stay away, rather than acting on a webhook nobody confirmed exists.
+    // Nothing was ever read, so nothing below it can be called out of date. Remove and the test
+    // send stay unavailable, rather than acting on a webhook nobody confirmed exists.
     expect(screen.queryByText(STALE_ANY)).toBeNull();
     expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
     expect(screen.getByRole("button", { name: "Send test" })).toBeDisabled();
