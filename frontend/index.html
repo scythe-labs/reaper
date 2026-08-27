@@ -4,10 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <!-- The color the browser paints its own chrome with: Safari's tab bar, Chrome's
-         toolbar. Ships at the built-in accent and is rewritten to the install's accent by
-         the pre-paint below and by accent.ts. The web manifest's theme_color is a static
-         file and cannot follow a per-install setting, so this tag is what carries it. -->
+    <!-- The color a browser paints its own chrome with. Safari 15 to 18, Chrome and Edge on
+         Android, and an installed PWA read this tag. Safari 26 parses it and ignores the
+         value, taking the tint from the page background instead, and desktop Chrome never read
+         it at all, so on a Mac this tag changes nothing. Safari's behavior is deliberate and
+         is confirmed by WebKit at https://bugs.webkit.org/show_bug.cgi?id=301756: the top bar
+         tint extends only from a fixed or sticky element bordering an obscured content inset,
+         and Reaper's masthead is neither. Ships at the built-in accent and is
+         rewritten to the install's accent by the pre-paint below and by accent.ts. The web
+         manifest's theme_color is a static file and cannot follow a per-install setting, so
+         this tag is what carries it. -->
     <meta id="theme-color" name="theme-color" content="#25c3ff" />
     <title>Reaper</title>
     <!-- Raster fallback FIRST, the accent-following SVG (#favicon, rewritten by accent.ts and
