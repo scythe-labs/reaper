@@ -9,7 +9,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Plain `uv sync` skips pytest, ruff and mypy: `dev` is an extra, not a dependency group.
-uv sync --extra dev
+# `--frozen` installs what uv.lock pins. Without it, uv once resolved a newer ruff than CI runs.
+uv sync --frozen --extra dev
 
 # `npm install` rewrites package-lock.json under a different npm and dirties the tree.
 npm --prefix frontend ci
