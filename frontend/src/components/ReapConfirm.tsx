@@ -41,12 +41,17 @@ import { Notice } from "./Notice";
 
 export function ReapConfirm({
   run: openedWith,
+  initialReport,
   onClose,
   onStarted,
 }: {
   /** The plan to confirm, as the caller holds it. It seeds the shared cache entry below; only
    *  its id is relied on afterwards, so a caller holding a captured copy is not a problem. */
   run: Run;
+  /** The practice run the caller already proved this plan with, before opening the sheet. The
+   *  sheet opens at its settled content, not into an empty "checking" state that grows when the
+   *  result lands. It re-proves itself only if the phrase moves under it (the 409 path). */
+  initialReport: RunReport;
   onClose: () => void;
   /** The reap began (Execute succeeded). Fired before the sheet closes, so a caller can react
    *  to the items now being deleted (the review queue clears its selection). Cancel and ✕ do
@@ -73,7 +78,9 @@ export function ReapConfirm({
     staleTime: Infinity,
   });
   const [typed, setTyped] = useState("");
-  const [dryReport, setDryReport] = useState<RunReport | null>(null);
+  // Seeded with the caller's proof, so the sheet opens already at its settled content. Only the
+  // 409 re-prove below replaces it.
+  const [dryReport, setDryReport] = useState<RunReport | null>(initialReport);
   // Consent to Plex purging trash this run did not cause. Reset with the phrase below, so
   // it is always a decision about the plan actually on screen.
   const [trashAcked, setTrashAcked] = useState(false);
@@ -126,15 +133,17 @@ export function ReapConfirm({
     },
   });
 
-  // Prove the plan the moment the sheet opens. Nothing is sent; this only walks interlocks.
-  // Keyed on the phrase, not just the run id. The phrase is content-bound, so the server
-  // moving it means this plan now covers different items, which is exactly what the 409
-  // recovery above refetches. Re-proving on that change stops the sheet from showing
-  // "Practice run passed" for a plan the server has already rejected while every figure
-  // beside it describes the new one: a green tick would otherwise assert a practice run that
-  // never happened for this content. Keying on the run id alone would not catch this, since
-  // the run id never changes here even though the phrase does.
+  // Re-prove ONLY when the phrase moves under an open sheet. The caller already proved the
+  // phrase it opened with (`initialReport`), so the sheet opens settled and never fires a dry
+  // run on mount. The phrase is content-bound, so the server moving it means this plan now
+  // covers different items, which is exactly what the 409 recovery above refetches. Re-proving
+  // on that change stops the sheet from showing "Practice run passed" for a plan the server has
+  // already rejected while every figure beside it describes the new one: a green tick would
+  // otherwise assert a practice run that never happened for this content.
+  const provenPhrase = useRef(openedWith.confirmation_phrase);
   useEffect(() => {
+    if (run.confirmation_phrase === provenPhrase.current) return; // the caller's proof still holds
+    provenPhrase.current = run.confirmation_phrase;
     setDryReport(null);
     // The phrase is content-bound, so it moving means this sheet now covers different
     // items. A tick that survived that would be consent carried from a plan the operator

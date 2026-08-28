@@ -73,14 +73,19 @@ function status(overrides: Partial<ReapStatus> = {}): ReapStatus {
 
 const runningStatus = status({ running: true, run_id: run.id, phase: "reaping", total: 1 });
 
-function renderSheet(onClose: () => void = () => {}, seedStatus?: ReapStatus) {
+function renderSheet(
+  onClose: () => void = () => {},
+  seedStatus?: ReapStatus,
+  initialReport: RunReport = report(),
+) {
   const queryClient = testQueryClient();
   // The status cache is shared with the app-wide bar and the Reap tab. Seeding it lets a test
   // stand another reap up in the one execute slot, which the arm stage reads as `otherRunning`.
   if (seedStatus) queryClient.setQueryData(["reapStatus"], seedStatus);
-  const utils = renderWithProviders(<ReapConfirm run={run} onClose={onClose} />, {
-    client: queryClient,
-  });
+  const utils = renderWithProviders(
+    <ReapConfirm run={run} initialReport={initialReport} onClose={onClose} />,
+    { client: queryClient },
+  );
   return { ...utils, queryClient };
 }
 
@@ -121,7 +126,9 @@ describe("the execute gate", () => {
     const execute = screen.getByRole("button", { name: /^Reap$/ });
     expect(execute).toBeDisabled();
 
-    const input = screen.getByRole("textbox");
+    // The sheet opens proven, so the arm stage is a `useSafety` read away from the phrase field.
+    // In the app that read is already cached; here it settles a tick after mount (rule 137).
+    const input = await screen.findByRole("textbox");
     await fill(user, input, "REAP 9 SOULS 9 GB"); // a stale tab's phrase
     expect(execute).toBeDisabled();
 
@@ -258,10 +265,13 @@ describe("the execute gate", () => {
   });
 
   it("a practice run that stopped never unlocks execution", async () => {
-    apiMock.dryRun.mockResolvedValue(
-      report({ state: "aborted", aborted_reason: { k: "legacy", p: { text: "over the cap" } } }),
-    );
-    renderSheet();
+    // The caller proved the plan before opening, and the practice run stopped. The sheet opens
+    // on that result: the stopped message, and no way to arm.
+    renderSheet(() => {}, undefined, {
+      ...report(),
+      state: "aborted",
+      aborted_reason: { k: "legacy", p: { text: "over the cap" } },
+    });
 
     await screen.findByText(/The plan stopped/);
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
@@ -276,12 +286,13 @@ describe("the execute gate", () => {
     const onStarted = vi.fn();
     const user = userEvent.setup();
     const queryClient = testQueryClient();
-    renderWithProviders(<ReapConfirm run={run} onClose={onClose} onStarted={onStarted} />, {
-      client: queryClient,
-    });
+    renderWithProviders(
+      <ReapConfirm run={run} initialReport={report()} onClose={onClose} onStarted={onStarted} />,
+      { client: queryClient },
+    );
 
     await screen.findByText(/Practice run passed/);
-    await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
+    await fill(user, await screen.findByRole("textbox"), run.confirmation_phrase);
     await user.click(screen.getByRole("button", { name: /^Reap$/ }));
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
@@ -344,7 +355,7 @@ describe("the execute gate", () => {
     // value comes from the input box. If the sheet echoed the prop instead, the human check
     // here would be reduced to a `disabled` attribute, which the server cannot tell apart from
     // a script bypassing it.
-    await fill(user, screen.getByRole("textbox"), `${run.confirmation_phrase}  `);
+    await fill(user, await screen.findByRole("textbox"), `${run.confirmation_phrase}  `);
     await user.click(screen.getByRole("button", { name: /^Reap$/ }));
     expect(apiMock.executeRun).toHaveBeenCalledWith(run.id, run.confirmation_phrase);
   });
@@ -358,7 +369,7 @@ describe("the execute gate", () => {
     renderSheet();
 
     await screen.findByText(/Practice run passed/);
-    await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
+    await fill(user, await screen.findByRole("textbox"), run.confirmation_phrase);
     await user.click(screen.getByRole("button", { name: /^Reap$/ }));
     await screen.findByText(/The plan changed./);
 
@@ -398,7 +409,7 @@ describe("what a screen reader hears through the gauntlet", () => {
     const utils = renderWithProviders(
       <>
         <Announcer />
-        <ReapConfirm run={run} onClose={() => {}} />
+        <ReapConfirm run={run} initialReport={report()} onClose={() => {}} />
       </>,
       { client: queryClient },
     );
@@ -409,7 +420,8 @@ describe("what a screen reader hears through the gauntlet", () => {
     renderWithAnnouncer();
 
     await screen.findByText(/Practice run passed/);
-    expect(spoken()).toContain("Type the confirmation phrase");
+    // The announcement follows the `useSafety` read, a tick behind the visible line.
+    await waitFor(() => expect(spoken()).toContain("Type the confirmation phrase"));
   });
 
   it("puts the operator in the phrase box when it appears", async () => {
@@ -437,8 +449,9 @@ describe("what a screen reader hears through the gauntlet", () => {
     apiMock.safety.mockImplementation(() => Promise.reject(new Error("unreachable")));
     renderWithAnnouncer();
 
-    await screen.findByText(/couldn't confirm whether deletion is on/i);
-    expect(spoken()).toContain("couldn't confirm whether deletion is on");
+    // Two matches, and that is the point: the visible notice AND the spoken line both say it.
+    await screen.findAllByText(/couldn't confirm whether deletion is on/i);
+    await waitFor(() => expect(spoken()).toContain("couldn't confirm whether deletion is on"));
     expect(spoken()).not.toContain("deletion is off");
   });
 
@@ -452,9 +465,10 @@ describe("what a screen reader hears through the gauntlet", () => {
     apiMock.reapStatus.mockResolvedValue(elsewhere);
     renderWithAnnouncer(elsewhere);
 
-    await screen.findByText(/Another reap is running/);
+    // Two matches, and that is the point: the visible notice AND the spoken line both say it.
+    await screen.findAllByText(/Another reap is running/);
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(spoken()).toContain("Another reap is running");
+    await waitFor(() => expect(spoken()).toContain("Another reap is running"));
     expect(spoken()).not.toContain("Type the confirmation phrase");
   });
 

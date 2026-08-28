@@ -34,6 +34,7 @@ import {
   type Run,
   type RunList,
   type RunOutcomeRead,
+  type RunReport,
   type RunSummary,
 } from "../api";
 import { DegradedDocLink } from "../docs/DocLink";
@@ -529,7 +530,10 @@ export function ReapPlan({
 
   const [detailRun, setDetailRun] = useState<RunSummary | null>(null);
 
-  const [confirmRun, setConfirmRun] = useState<Run | null>(null);
+  // The plan whose confirmation sheet is open, with the practice run it was proved by. Proving
+  // before opening is what lets the sheet open at its settled content instead of into an empty
+  // "checking" state (the wait lives on the head button's pending state, below).
+  const [confirmRun, setConfirmRun] = useState<{ run: Run; report: RunReport } | null>(null);
 
   const reapReady =
     armed &&
@@ -544,11 +548,17 @@ export function ReapPlan({
     counts.reapCount > 0;
 
   const createAndConfirm = useMutation({
-    mutationFn: () => api.createRun("all"),
-    onSuccess: (r) => {
-      setConfirmRun(r);
+    // Build the plan and prove it, both before the sheet opens, so it opens ready to confirm.
+    // A practice run that fails to run at all surfaces here (createAndConfirm.error, below the
+    // head), not inside an empty sheet; one that runs and stops opens the sheet at its stopped
+    // message. Either way the sheet never opens mid-check.
+    mutationFn: async () => {
+      const run = await api.createRun("all");
       void queryClient.invalidateQueries({ queryKey: ["runs"] });
+      const report = await api.dryRun(run.id);
+      return { run, report };
     },
+    onSuccess: (proved) => setConfirmRun(proved),
   });
 
   const practice = useMutation({
@@ -839,7 +849,13 @@ export function ReapPlan({
         </div>
       </div>
 
-      {confirmRun && <ReapConfirm run={confirmRun} onClose={() => setConfirmRun(null)} />}
+      {confirmRun && (
+        <ReapConfirm
+          run={confirmRun.run}
+          initialReport={confirmRun.report}
+          onClose={() => setConfirmRun(null)}
+        />
+      )}
       {detailRun && <RunDetailSheet run={detailRun} onClose={() => setDetailRun(null)} />}
     </section>
   );
