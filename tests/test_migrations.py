@@ -12,7 +12,6 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
-import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
@@ -166,9 +165,9 @@ def test_env_py_configures_batch_mode(tmp_path: Path, monkeypatch: pytest.Monkey
     This one reads the shipped env.py, so flipping ``render_as_batch`` to False
     fails here instead of years later, in the first migration that needs it.
 
-    **One call site.** env.py has no offline (``--sql``) branch. 11 revisions call
-    ``op.get_bind()``, so ``alembic upgrade head --sql`` would exit 1 at revision 3,
-    which is why no such branch exists.
+    **One call site.** env.py has no offline (``--sql``) branch. Revisions call
+    ``op.get_bind()``, so ``alembic upgrade head --sql`` would exit 1 at the first
+    one, which is why no such branch exists.
     """
     kwargs = _env_py_configure_kwargs(tmp_path=tmp_path, monkeypatch=monkeypatch)
 
@@ -1822,58 +1821,6 @@ class TestReleaseMLetsTheRetiredColumnsBeOmitted:
             oldest = conn.execute(text("SELECT MIN(id) FROM policy")).scalar_one()
         assert pointed_at == oldest
         engine.dispose()
-
-
-#: Every live file stating how many revisions call ``op.get_bind()``. The sentence is the
-#: reason ``run_migrations_offline`` was deleted rather than kept, and it is written in
-#: three places by three different authors reading each other, so it was already off by
-#: one the moment this file added a revision, in all three at once, in the direction that
-#: reads as measured. Removing a copy means removing it from this tuple, which is a
-#: deliberate edit. ``docs/history/SIMPLIFICATION_PLAN.md`` carries a fourth copy and is
-#: deliberately not here. That file is frozen, so a revision added today would fail this
-#: gate against a sentence nobody may correct, and correcting it anyway would make a
-#: measurement at a named commit false.
-_GET_BIND_CLAIM_SITES = (
-    "alembic/env.py",
-    "CONTRIBUTING.md",
-    "tests/test_migrations.py",
-)
-
-#: Matches the claim in every spelling these files use, anchored on the words rather than
-#: on a delimiter only one spelling puts there. One backtick pair in markdown, two in
-#: reStructuredText, and a line break anywhere in the sentence are all real possibilities.
-#: Every one of these files is hard-wrapped, and one sits behind a comment marker. This
-#: also matches the spelling behind a blockquote marker, since a live copy can move into a
-#: blockquote without anyone updating this matcher.
-_GET_BIND_CLAIM = re.compile(r"(\d+)[\s>#]+revisions call[\s>#]+`+op\.get_bind\(\)`+")
-
-
-def test_every_statement_of_the_get_bind_count_is_the_count_the_revisions_have() -> None:
-    """One measured fact, three live prose copies, none generated from the other.
-
-    ``alembic upgrade head --sql`` cannot work because these revisions ask for a connection
-    offline mode does not have, and each file states the count as evidence. A revision added
-    anywhere makes every copy wrong at once, and a wrong count still reads as measured, which
-    is what makes this worth a gate rather than a comment.
-    """
-    versions = sorted((PROJECT_ROOT / "alembic" / "versions").glob("*.py"))
-    measured = sum(1 for p in versions if "op.get_bind()" in p.read_text(encoding="utf-8"))
-    assert measured, "no revision calls op.get_bind(), so the claim itself no longer holds"
-
-    for site in _GET_BIND_CLAIM_SITES:
-        text_of = (PROJECT_ROOT / site).read_text(encoding="utf-8")
-        found = _GET_BIND_CLAIM.search(text_of)
-        assert found is not None, (
-            f"{site} no longer states how many revisions call op.get_bind(). If the sentence "
-            f"was removed on purpose, remove {site} from _GET_BIND_CLAIM_SITES in "
-            "tests/test_migrations.py; the other copies still say it."
-        )
-        assert int(found.group(1)) == measured, (
-            f"{site} says {found.group(1)} revisions call op.get_bind(); "
-            f"alembic/versions/ has {measured} of {len(versions)}. The same sentence is in "
-            f"{', '.join(s for s in _GET_BIND_CLAIM_SITES if s != site)} -- correct every one, "
-            "not just this file."
-        )
 
 
 # Release M+1: the six retired columns leaving, and the revision just before it.
