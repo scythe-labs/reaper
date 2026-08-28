@@ -3540,7 +3540,7 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # complies from one that dropped out of the walk, and reads green either way.
 #
 # Re-derive this number by running the test. Never update it by hand arithmetic on a diff.
-_EXPECTED_NOTICES = 141
+_EXPECTED_NOTICES = 138
 
 
 def _shipped_tsx() -> list[Path]:
@@ -3770,7 +3770,7 @@ def test_every_silent_notice_says_why_it_is_silent() -> None:
 # defeat that. A ban would have to exempt all of them; a count does not care which way a site
 # resolved, only that nobody added one without deciding.
 _QUERY_FAILURE_HANDLES = {
-    "frontend/src/App.tsx": 7,
+    "frontend/src/App.tsx": 6,
     "frontend/src/components/AboutPanel.tsx": 1,
     "frontend/src/components/BackupPanel.tsx": 1,
     "frontend/src/components/DeletionToggle.tsx": 1,
@@ -4234,9 +4234,6 @@ _NEVER_LOADED_COPY = {
         "frontend/src/locales/en/ui.json",
     ],
     "Reaper couldn't load past reaps. Reload to try again.": [
-        "frontend/src/locales/en/ui.json",
-    ],
-    "Reaper couldn't load this reap. Close this and try View again.": [
         "frontend/src/locales/en/ui.json",
     ],
     "Reaper couldn't load your lists, so there's nothing to pick from.": [
