@@ -399,6 +399,13 @@ button.reap-run:hover {
   margin-top: var(--space-2xl);
   overflow-wrap: anywhere;
 }
+/* The finishing-up line: every item is handled and the run is tidying Plex, so a spinner sits
+   beside the text to say the wait is work in progress, not a hang. */
+.now-line.finishing {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
 
 /* The item-status feed: one row per outcome, a protect check with its size for a removal, an
  * amber dot with why for anything kept. Shared by the reaping card's live log, the done

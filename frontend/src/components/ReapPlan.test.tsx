@@ -506,6 +506,27 @@ describe("reaping", () => {
     expect(bar).toHaveAttribute("aria-valuetext", "3 of 10 removed");
   });
 
+  it("says it is finishing up once every item is handled but the run keeps going", async () => {
+    // The last item is deleted, but the run stays alive while Plex settles and the trash purge
+    // runs, which can be several seconds. The card says so rather than sitting on a stale "Now
+    // removing" line that reads as a hang.
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({
+        running: true,
+        run_id: 12,
+        phase: "reaping",
+        done: 10,
+        total: 10,
+        title: "Some Movie",
+      }),
+    );
+    mockOutcomes([]);
+    renderPlan();
+
+    expect(await screen.findByText(/Finishing up/)).toBeInTheDocument();
+    expect(screen.queryByText(/Now removing/)).not.toBeInTheDocument();
+  });
+
   it("Stop asks the server to halt the run, gracefully, and disables while it is in flight", async () => {
     apiMock.reapStatus.mockResolvedValue(
       reapStatus({ running: true, run_id: 12, phase: "reaping", total: 10 }),

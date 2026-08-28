@@ -267,6 +267,10 @@ function ReapingCard({ status }: { status: ReapStatus }) {
 
   const handled = status.done + status.skipped;
   const pct = status.total > 0 ? Math.min(100, Math.round((handled / status.total) * 100)) : 0;
+  // Every item is handled, but the run is still going: it is tidying Plex now (refreshing the
+  // library so the deletes show, then the trash purge), which can take several seconds. Say so,
+  // or the last "Now removing" line sits there looking hung through that wait.
+  const finalizing = status.total > 0 && handled >= status.total;
 
   return (
     <>
@@ -304,9 +308,14 @@ function ReapingCard({ status }: { status: ReapStatus }) {
         >
           <div className="prog-fill" style={{ width: `${pct}%` }} />
         </div>
-        {status.title && (
+        {finalizing ? (
+          <p className="now-line finishing">
+            <span className="spinner" aria-hidden="true" />
+            {t("reapPlan.reaping.finishingUp")}
+          </p>
+        ) : status.title ? (
           <p className="now-line">{t("reapPlan.reaping.nowRemoving", { title: status.title })}</p>
-        )}
+        ) : null}
       </div>
       <div className="reap-card">
         <h3 className="reap-feed-heading">

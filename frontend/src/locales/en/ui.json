@@ -1869,6 +1869,7 @@
       "running": "Practice run: walking every safety check without deleting anything…"
     },
     "reaping": {
+      "finishingUp": "Finishing up. Refreshing Plex so your library matches.",
       "nowRemoving": "Now removing: {title}",
       "progressValueText": "{done} of {total} removed",
       "removedCount": "{done} of {total}",
