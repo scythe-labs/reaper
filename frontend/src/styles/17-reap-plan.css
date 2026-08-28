@@ -12,6 +12,9 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: var(--space-3xl);
+  /* Clear air between the head row and the two columns: without it the right-aligned
+   * actions sit flush against the history card's top border. */
+  margin-bottom: var(--space-4xl);
 }
 .reap-head-actions {
   display: flex;
@@ -59,10 +62,13 @@
   border-radius: var(--radius);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
-  padding: 0.85rem 1rem 0.9rem;
+  /* One even inset on every side, so text sits the same distance from every card edge. */
+  padding: var(--space-4xl);
 }
 .reap-summary-help {
   margin-top: var(--space-2xl);
+  /* No margin under the last line: the card's own padding is the gap to the edge. */
+  margin-bottom: 0;
 }
 /* The tile row's own bottom margin would collapse with this paragraph's top margin above,
  * landing on whichever of the two is larger rather than either value on its own. Zeroed here
@@ -243,6 +249,11 @@
  * Reset to the mockup's own gap, nothing above it. */
 .reap-history h3 {
   margin: 0 0 var(--space-lg);
+}
+/* The loading and empty lines sit on the heading's own rhythm, not a browser paragraph
+ * margin. */
+.reap-history > p {
+  margin: 0;
 }
 
 /* Past reaps: one row per run, state dot, muted totals, the date pinned to the right edge. */
