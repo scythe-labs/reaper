@@ -1067,7 +1067,7 @@
         "unmonitor_not_verified": "Unmonitor did not take. Refused to delete files while still monitored.",
         "unmonitor_verify_failed": "The season is still monitored after the unmonitor. Not deleting files."
       },
-      "stopped_by_operator": "You stopped this run, so it halted here. Anything already removed stays removed; nothing further was sent.",
+      "stopped_by_operator": "You stopped this run. Only the titles already removed are gone.",
       "unexpected": "The reap hit a problem it didn't expect: {error}",
       "unmeasured_for_caps": "Reaper couldn't measure the size of these items, so it can't check the run against your limits: {keys}. The run is aborted.",
       "unmeasured_over_limit": "This run would delete {unmeasured, plural, one {# item} other {# items}} Reaper couldn't measure, over your limit of {limit, plural, one {# item} other {# items}} per run. It stops rather than deleting just part. Raise the unknown-size allowance in Policy, under Pace and limits."

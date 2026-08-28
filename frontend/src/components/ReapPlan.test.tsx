@@ -631,14 +631,19 @@ describe("done", () => {
         deleted_items: 5,
         deleted_bytes: 10 * GB,
         skipped: 0,
-        aborted_reason: { k: "legacy", p: { text: "You stopped this run, so it halted here." } },
+        aborted_reason: {
+          k: "legacy",
+          p: { text: "You stopped this run. Only the titles already removed are gone." },
+        },
       }),
     ]);
     mockOutcomes([]);
     renderPlan();
 
     expect(await screen.findByText("Reap finished")).toBeInTheDocument();
-    expect(screen.getByText("You stopped this run, so it halted here.")).toBeInTheDocument();
+    expect(
+      screen.getByText("You stopped this run. Only the titles already removed are gone."),
+    ).toBeInTheDocument();
   });
 
   it("does not show the done card for a run refused before it ever left PLANNED (phase error)", async () => {
