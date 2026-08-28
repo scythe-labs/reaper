@@ -1832,12 +1832,29 @@
     "degraded": {
       "notice": "<strong>This scan came back incomplete.</strong> {reason} You can still look at it, but Reaper won't act on it, so a plan can't be built. Fix the source and scan again."
     },
+    "detail": {
+      "itemStatus": "Item status",
+      "noOutcomes": "No titles were handled in this run."
+    },
+    "done": {
+      "heading": "Reap finished",
+      "keptByChecksHeading": "Kept by checks"
+    },
     "history": {
       "empty": "No reaps yet.",
       "freedRemoved": ", {bytes} freed, {count} removed",
       "heading": "Past reaps",
       "loadFailed": "Reaper couldn't load past reaps. Reload to try again.",
-      "row": "Run {id}"
+      "row": "Run {id}",
+      "runningNow": ", running now",
+      "showMore": "Show 50 more",
+      "showingOf": "Showing {shown} of {total}"
+    },
+    "itemStatus": {
+      "heading": "Item status, {done} of {total} handled",
+      "help": "You can leave this page. The reap keeps going.",
+      "keptReason": ", kept: {reason}",
+      "removedSr": "Removed:"
     },
     "page": {
       "title": "Reap"
@@ -1847,6 +1864,12 @@
       "keptSuffix": " {count} would be kept by checks.",
       "passed": "Practice run passed. Nothing was deleted. This run would remove {count} {n, plural, one {title} other {titles}} and free about {bytes}.",
       "running": "Practice run: walking every safety check without deleting anything…"
+    },
+    "reaping": {
+      "nowRemoving": "Now removing: {title}",
+      "progressValueText": "{done} of {total} removed",
+      "removedCount": "{done} of {total}",
+      "stop": "Stop, keep the rest"
     },
     "steps": {
       "testItem": "test item"
@@ -1876,6 +1899,12 @@
         "titles": "titles",
         "toFree": "to free"
       }
+    },
+    "tiles": {
+      "freed": "freed",
+      "freedSoFar": "freed so far",
+      "keptByChecks": "kept by checks",
+      "removed": "removed"
     }
   },
   "reapConfirm": {

@@ -4,10 +4,23 @@
 // blockers notice, the head actions, the standalone practice run, and the history card.
 // Confirmation and execution stay ReapConfirm.tsx's own tests; this file proves that pressing
 // the head Reap button hands it a freshly built run and opens it.
+//
+// Reaping, done, history paging and the run detail sheet (Phase 3) share this file: all four
+// are driven off the same `["reapStatus"]` poll and the executed-history/outcomes reads, so
+// their fixtures live beside the idle ones above rather than in a second file.
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ReapBreakdown, ReapStatus, Run, RunReport, RunSummary, SetupStatus } from "../api";
+import type {
+  ReapBreakdown,
+  ReapStatus,
+  Run,
+  RunOutcomeRead,
+  RunReport,
+  RunSummary,
+  SetupStatus,
+} from "../api";
+import { bytes, count } from "../format";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_PROFILE, DEFAULT_SNAPSHOT, IDLE_SCAN, READY_SETUP } from "../test/apiFixtures";
 import { renderWithProviders } from "../test/renderWithProviders";
@@ -87,6 +100,60 @@ function dryReport(overrides: Partial<RunReport> = {}): RunReport {
   };
 }
 
+function reapStatus(overrides: Partial<ReapStatus> = {}): ReapStatus {
+  return { ...idleReapStatus, ...overrides };
+}
+
+function outcome(overrides: Partial<RunOutcomeRead> = {}): RunOutcomeRead {
+  return {
+    media_key: "radarr:1:10",
+    title: "Some Movie",
+    kind: "radarr_delete",
+    size_bytes: 2 * GB,
+    state: "verified",
+    error_reason: null,
+    is_canary: false,
+    ...overrides,
+  };
+}
+
+/** Answers `api.runOutcomes` off one full, oldest-first list, the same shape the real
+ *  paged route serves: a page from `offset`, and `outcome_count` is the whole list's size
+ *  regardless of how much of it that page covers. */
+function mockOutcomes(items: RunOutcomeRead[]) {
+  apiMock.runOutcomes.mockImplementation((_id: number, offset = 0, limit = 50) =>
+    Promise.resolve({
+      outcomes: items.slice(offset, offset + limit),
+      outcome_count: items.length,
+      offset,
+    }),
+  );
+}
+
+/** Answers `api.runs` off one full, newest-first list, paging it the way the real envelope
+ *  route does: a page from `offset`, and `total` is the whole list's size regardless of how
+ *  much of it that page covers. */
+function mockHistory(rows: RunSummary[]) {
+  apiMock.runs.mockImplementation((offset = 0, limit = 50) =>
+    Promise.resolve({ runs: rows.slice(offset, offset + limit), total: rows.length }),
+  );
+}
+
+function summary(overrides: Partial<RunSummary> = {}): RunSummary {
+  return {
+    id: 30,
+    state: "completed",
+    approved_at: "2026-01-05T12:00:00+00:00",
+    finished_at: "2026-01-05T12:05:00+00:00",
+    aborted_reason: null,
+    deleted_items: 44,
+    deleted_bytes: 289 * GB,
+    deleted_unmeasured: 0,
+    skipped: 0,
+    ...overrides,
+  };
+}
+
 function renderPlan() {
   return renderWithProviders(
     <ReapPlan
@@ -106,7 +173,7 @@ beforeEach(() => {
   apiMock.reapBreakdown.mockResolvedValue(breakdown());
   apiMock.profile.mockResolvedValue(DEFAULT_PROFILE);
   apiMock.scanStatus.mockResolvedValue(IDLE_SCAN);
-  apiMock.runs.mockResolvedValue([]);
+  apiMock.runs.mockResolvedValue({ runs: [], total: 0 });
   // Only reached once a run exists to confirm (createRun -> ReapConfirm, or the standalone
   // practice run). Answered here so every test has a working default.
   apiMock.createRun.mockResolvedValue(run);
@@ -327,33 +394,19 @@ describe("the standalone practice run", () => {
 });
 
 describe("past reaps", () => {
-  function summary(overrides: Partial<RunSummary> = {}): RunSummary {
-    return {
-      id: 30,
-      state: "completed",
-      approved_at: "2026-01-05T12:00:00+00:00",
-      finished_at: "2026-01-05T12:05:00+00:00",
-      aborted_reason: null,
-      deleted_items: 44,
-      deleted_bytes: 289 * GB,
-      deleted_unmeasured: 0,
-      skipped: 0,
-      ...overrides,
-    };
-  }
-
   it("shows the persisted totals for a finished run", async () => {
-    apiMock.runs.mockResolvedValue([summary()]);
+    mockHistory([summary()]);
     renderPlan();
     expect(await screen.findByText("Run 30")).toBeInTheDocument();
     expect(screen.getByText(/289 GiB freed, 44 removed/)).toBeInTheDocument();
   });
 
-  it("shows no numbers at all for a run with nothing persisted yet, never zeros", async () => {
-    // "executing", not "planned": a still-running run is a real past-reaps row (the condemn
-    // dot), where a plan nobody ever executed is filtered out entirely (below). Both carry
-    // null totals, and this is the state that still renders one.
-    apiMock.runs.mockResolvedValue([
+  it("shows no numbers at all for a run still executing, never zeros, and pins it as a plain, non-clickable row", async () => {
+    // GET /api/runs itself now leaves a still-PLANNED run out (`executed_only=true`), so this
+    // page never filters the list it is handed; an "executing" row is the one state that
+    // still has no persisted totals AND belongs on the list, so it is the one to prove both
+    // halves on: no numbers, and no button (its live view is this page's own left column).
+    mockHistory([
       summary({
         id: 31,
         state: "executing",
@@ -367,48 +420,12 @@ describe("past reaps", () => {
     renderPlan();
     const row = (await screen.findByText("Run 31")).closest(".reap-run") as HTMLElement;
     expect(row.textContent).not.toMatch(/freed|removed|\b0\b/);
-  });
-
-  it("hides a plan that was built and never executed", async () => {
-    // Every "Reap N titles…" press and every standalone practice run creates a run row
-    // (POST /api/runs) before anything is confirmed or sent, so the list would otherwise fill
-    // with plans nobody ever acted on. A "planned" run is not a past reap.
-    apiMock.runs.mockResolvedValue([
-      summary({
-        id: 40,
-        state: "planned",
-        finished_at: null,
-        deleted_items: null,
-        deleted_bytes: null,
-        deleted_unmeasured: null,
-        skipped: null,
-      }),
-      summary({ id: 30 }),
-    ]);
-    renderPlan();
-    expect(await screen.findByText("Run 30")).toBeInTheDocument();
-    expect(screen.queryByText("Run 40")).not.toBeInTheDocument();
-  });
-
-  it("shows the empty state when only planned runs exist", async () => {
-    apiMock.runs.mockResolvedValue([
-      summary({
-        id: 41,
-        state: "planned",
-        finished_at: null,
-        deleted_items: null,
-        deleted_bytes: null,
-        deleted_unmeasured: null,
-        skipped: null,
-      }),
-    ]);
-    renderPlan();
-    expect(await screen.findByText("No reaps yet.")).toBeInTheDocument();
-    expect(screen.queryByText("Run 41")).not.toBeInTheDocument();
+    expect(row.textContent).toContain("running now");
+    expect(row.tagName).toBe("DIV");
   });
 
   it("shows the aborted reason instead of a freed/removed count", async () => {
-    apiMock.runs.mockResolvedValue([
+    mockHistory([
       summary({
         id: 32,
         state: "aborted",
@@ -423,8 +440,270 @@ describe("past reaps", () => {
   });
 
   it("says there is nothing yet, on a fresh install", async () => {
-    apiMock.runs.mockResolvedValue([]);
+    apiMock.runs.mockResolvedValue({ runs: [], total: 0 });
     renderPlan();
     expect(await screen.findByText("No reaps yet.")).toBeInTheDocument();
+  });
+});
+
+describe("reaping", () => {
+  it("swaps to the reaping layout, every number the shared reap-status poll's own set", async () => {
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({
+        running: true,
+        run_id: 12,
+        phase: "reaping",
+        done: 3,
+        total: 10,
+        deleted_bytes: 6 * GB,
+        skipped: 1,
+        title: "Some Movie",
+      }),
+    );
+    mockOutcomes([
+      outcome({ media_key: "a", title: "Movie A", state: "verified", size_bytes: 2 * GB }),
+      outcome({
+        media_key: "b",
+        title: "Movie B",
+        state: "skipped",
+        size_bytes: null,
+        error_reason: { k: "legacy", p: { text: "You spared this by hand." } },
+      }),
+    ]);
+    renderPlan();
+
+    // The idle head actions are gone; the graceful Stop replaces them.
+    expect(await screen.findByRole("button", { name: "Stop, keep the rest" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Reap 47 titles…$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Practice run" })).not.toBeInTheDocument();
+
+    expect(screen.getByText("freed so far").closest(".fair-stat")!.textContent).toContain(
+      bytes(6 * GB),
+    );
+    expect(screen.getByText("removed").closest(".fair-stat")!.textContent).toContain("3 of 10");
+    const keptTile = screen.getByText("kept by checks").closest(".fair-stat") as HTMLElement;
+    expect(within(keptTile).getByText("1")).toBeInTheDocument();
+    expect(screen.getByText("Now removing: Some Movie")).toBeInTheDocument();
+
+    await screen.findByText("Item status, 2 of 10 handled");
+    expect(screen.getByText("Movie A")).toBeInTheDocument();
+    expect(screen.getByText(", kept: You spared this by hand.")).toBeInTheDocument();
+    expect(screen.getByText("You can leave this page. The reap keeps going.")).toBeInTheDocument();
+  });
+
+  it("carries an accessible value text on the progress bar", async () => {
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({ running: true, run_id: 12, phase: "reaping", done: 3, total: 10 }),
+    );
+    mockOutcomes([]);
+    renderPlan();
+
+    const bar = await screen.findByRole("progressbar", { name: "Reaping" });
+    expect(bar).toHaveAttribute("aria-valuetext", "3 of 10 removed");
+  });
+
+  it("Stop asks the server to halt the run, gracefully, and disables while it is in flight", async () => {
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({ running: true, run_id: 12, phase: "reaping", total: 10 }),
+    );
+    mockOutcomes([]);
+    let resolveStop: (v: ReapStatus) => void = () => {};
+    apiMock.stopRun.mockReturnValue(
+      new Promise<ReapStatus>((resolve) => {
+        resolveStop = resolve;
+      }),
+    );
+    const user = userEvent.setup();
+    renderPlan();
+
+    const stopButton = await screen.findByRole("button", { name: "Stop, keep the rest" });
+    await user.click(stopButton);
+    expect(apiMock.stopRun).toHaveBeenCalledWith(12);
+    expect(stopButton).toBeDisabled();
+
+    await act(async () => {
+      resolveStop(reapStatus({ running: true, run_id: 12, stopping: true }));
+    });
+  });
+});
+
+describe("done", () => {
+  it("shows the result read back from what the run persisted, never the in-memory report, with Done back to idle", async () => {
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({ running: false, run_id: 12, phase: "complete" }),
+    );
+    mockHistory([
+      summary({
+        id: 12,
+        state: "completed",
+        deleted_items: 44,
+        deleted_bytes: 289 * GB,
+        skipped: 1,
+      }),
+    ]);
+    mockOutcomes([
+      outcome({ media_key: "a", title: "Movie A", state: "verified", size_bytes: 2 * GB }),
+      outcome({
+        media_key: "b",
+        title: "Movie B",
+        state: "skipped",
+        size_bytes: null,
+        error_reason: { k: "legacy", p: { text: "You spared this by hand." } },
+      }),
+    ]);
+    const user = userEvent.setup();
+    renderPlan();
+
+    expect(await screen.findByText("Reap finished")).toBeInTheDocument();
+    expect(screen.getByText("freed").closest(".fair-stat")!.textContent).toContain(bytes(289 * GB));
+    const removedTile = screen.getByText("removed").closest(".fair-stat") as HTMLElement;
+    expect(within(removedTile).getByText(count(44))).toBeInTheDocument();
+    const keptTile = screen.getByText("kept by checks").closest(".fair-stat") as HTMLElement;
+    expect(within(keptTile).getByText(count(1))).toBeInTheDocument();
+
+    expect(await screen.findByText("Kept by checks")).toBeInTheDocument();
+    expect(screen.getByText(", kept: You spared this by hand.")).toBeInTheDocument();
+
+    // The head no longer offers Reap or Practice while the result is showing.
+    expect(screen.queryByRole("button", { name: /^Reap 47 titles…$/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(await screen.findByRole("button", { name: /^Reap 47 titles…$/ })).toBeInTheDocument();
+    expect(screen.queryByText("Reap finished")).not.toBeInTheDocument();
+  });
+
+  it("names a stop or an abort with the composed reason, from the persisted row", async () => {
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({ running: false, run_id: 13, phase: "aborted" }),
+    );
+    mockHistory([
+      summary({
+        id: 13,
+        state: "aborted",
+        deleted_items: 5,
+        deleted_bytes: 10 * GB,
+        skipped: 0,
+        aborted_reason: { k: "legacy", p: { text: "You stopped this run, so it halted here." } },
+      }),
+    ]);
+    mockOutcomes([]);
+    renderPlan();
+
+    expect(await screen.findByText("Reap finished")).toBeInTheDocument();
+    expect(screen.getByText("You stopped this run, so it halted here.")).toBeInTheDocument();
+  });
+
+  it("does not show the done card for a run refused before it ever left PLANNED (phase error)", async () => {
+    // A changed manifest or policy refuses before the claim, so the run's own row never
+    // leaves PLANNED, `executed_only` leaves it out of the history list entirely, and there
+    // is nothing this card could show. The page falls back to idle rather than a permanent
+    // "Loading…" over a run it can never find.
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({
+        running: false,
+        run_id: 14,
+        phase: "error",
+        error_reason: { k: "legacy", p: { text: "The plan changed." } },
+      }),
+    );
+    renderPlan();
+
+    await screen.findByRole("button", { name: /^Reap 47 titles…$/ });
+    expect(screen.queryByText("Reap finished")).not.toBeInTheDocument();
+  });
+});
+
+describe("reload", () => {
+  it("reload mid-run lands on the reaping layout purely from the poll, no local state needed", async () => {
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({ running: true, run_id: 20, phase: "reaping", done: 1, total: 5 }),
+    );
+    mockOutcomes([]);
+    renderPlan();
+
+    expect(await screen.findByRole("button", { name: "Stop, keep the rest" })).toBeInTheDocument();
+  });
+
+  it("reload after a run finished shows the done card immediately, from the same poll ReapBar reads", async () => {
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({ running: false, run_id: 21, phase: "complete" }),
+    );
+    mockHistory([summary({ id: 21, deleted_items: 9, deleted_bytes: 4 * GB, skipped: 0 })]);
+    mockOutcomes([]);
+    renderPlan();
+
+    expect(await screen.findByText("Reap finished")).toBeInTheDocument();
+  });
+});
+
+describe("history paging", () => {
+  function manyRuns(n: number): RunSummary[] {
+    return Array.from({ length: n }, (_, i) => summary({ id: 200 - i }));
+  }
+
+  it("Show 50 more pages the whole history via offset, and the count updates", async () => {
+    mockHistory(manyRuns(60));
+    const user = userEvent.setup();
+    renderPlan();
+
+    expect(await screen.findByText(`Showing ${count(50)} of ${count(60)}`)).toBeInTheDocument();
+    const more = screen.getByRole("button", { name: "Show 50 more" });
+    expect(more).toBeEnabled();
+
+    await user.click(more);
+
+    await waitFor(() => expect(apiMock.runs).toHaveBeenCalledWith(50, 50, true));
+    expect(await screen.findByText(`Showing ${count(60)} of ${count(60)}`)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show 50 more" })).toBeDisabled();
+  });
+});
+
+describe("run detail sheet", () => {
+  it("opens a read-only detail with the persisted totals and outcomes, and closes on Escape and the scrim", async () => {
+    mockHistory([summary({ id: 55, deleted_items: 8, deleted_bytes: 3 * GB, skipped: 2 })]);
+    mockOutcomes([
+      outcome({ media_key: "a", title: "Movie A", state: "verified", size_bytes: 3 * GB }),
+      outcome({
+        media_key: "b",
+        title: "Movie B",
+        state: "skipped",
+        size_bytes: null,
+        error_reason: { k: "legacy", p: { text: "You spared this by hand." } },
+      }),
+    ]);
+    const user = userEvent.setup();
+    const { container } = renderPlan();
+
+    await user.click(await screen.findByRole("button", { name: /^Run 55/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Run 55" });
+    expect(within(dialog).getByText("Item status")).toBeInTheDocument();
+    expect(within(dialog).getByText("Movie A")).toBeInTheDocument();
+    expect(within(dialog).getByText(", kept: You spared this by hand.")).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    await user.click(await screen.findByRole("button", { name: /^Run 55/ }));
+    await screen.findByRole("dialog", { name: "Run 55" });
+    await user.click(container.querySelector(".modal-scrim")!);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("the pinned running-now row does not open a detail", async () => {
+    mockHistory([
+      summary({
+        id: 56,
+        state: "executing",
+        finished_at: null,
+        deleted_items: null,
+        deleted_bytes: null,
+        deleted_unmeasured: null,
+        skipped: null,
+      }),
+    ]);
+    renderPlan();
+
+    await screen.findByText("Run 56");
+    expect(screen.queryByRole("button", { name: /^Run 56/ })).not.toBeInTheDocument();
   });
 });

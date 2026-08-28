@@ -968,6 +968,14 @@ export interface RunSummary {
   skipped: number | null;
 }
 
+/** A page of the run history, plus how many rows match the request as a whole: the history
+ *  footer's "Showing N of M" and its "Show 50 more" button both need `total`, which
+ *  `runs.length` cannot answer once the list is paged. */
+export interface RunList {
+  runs: RunSummary[];
+  total: number;
+}
+
 export interface RunCheck {
   /** The live reason the executor recorded this checklist line with, as a typed
    *  reason. Always present, since a check without one would have nothing to render. */
@@ -2366,11 +2374,13 @@ export const api = {
   startScan: () => post<ScanStatus>("/api/scan/start", {}),
   scanStatus: () => request<ScanStatus>("/api/scan/status"),
 
-  /** The recent plans, newest first. No component pages past the default yet: `offset`
-   *  ships with the route so the whole history stays reachable, which is what a history
-   *  view's own paging will read when it is built. */
-  runs: (offset = 0, limit = 50) =>
-    request<RunSummary[]>(`/api/runs?offset=${offset}&limit=${limit}`),
+  /** The recent plans, newest first, with `total` (of whatever `executedOnly` matches) for
+   *  the history view's "Showing N of M" and its "Show 50 more" paging. `executedOnly`
+   *  drops a plan that was built and never executed (the head Reap button, a standalone
+   *  practice run): the Reap page's own history reads it true, and the app-wide reap bar's
+   *  View still reads a planned run by id off the default (false). */
+  runs: (offset = 0, limit = 50, executedOnly = false) =>
+    request<RunList>(`/api/runs?offset=${offset}&limit=${limit}&executed_only=${executedOnly}`),
   run: (id: number) => request<Run>(`/api/runs/${id}`),
   /** A window of one run's journal, past the page the detail route carries. No component
    *  reads this yet: the step table still draws the first page and says how many it is not

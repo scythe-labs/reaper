@@ -109,7 +109,11 @@ const HOW_TO_UPDATE =
 //: replaced) and added 11 (the head Reap button's count, the summary card's tiles and help
 //: sentence, the standalone practice run's result, the history row's freed/removed line, and
 //: the confirm sheet's merged title), for a net change of -7.
-const EXPECTED_REQUIRED_COUNT = 1172;
+//:
+//: The Reap tab redesign (Phase 3) adds 6: the reaping card's "removed" tile and its "now
+//: removing" line, the progress bar's accessible value text, the item-status log's heading
+//: and its "kept: {reason}" fragment, and the history footer's "Showing N of M" count.
+const EXPECTED_REQUIRED_COUNT = 1178;
 
 describe("translator notes (locales/en/ui.notes.json)", () => {
   it("classifies a plain literal as not required, and an ICU or tagged one as required (rule 145)", () => {

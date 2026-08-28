@@ -26,7 +26,7 @@ from contextlib import AsyncExitStack
 import structlog
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.aio import report_background_failure
@@ -40,6 +40,7 @@ from reaper.api.schemas import (
     ExecuteRunIn,
     ProfileSettingsIO,
     RunCheckOut,
+    RunListOut,
     RunOut,
     RunOutcomeOut,
     RunOutcomeReadOut,
@@ -379,9 +380,10 @@ async def list_runs(
     # stays here, where a bad value is refused instead of clamped silently.
     limit: int = Query(RUN_LIST_PAGE, ge=1, le=200),
     offset: int = Query(0, ge=0),
-) -> list[RunSummaryOut]:
+    executed_only: bool = Query(False),
+) -> RunListOut:
     """Return the recent plans, as stored rows and nothing more (see
-    ``RunSummaryOut``).
+    ``RunSummaryOut``), plus how many rows match in total.
 
     This deliberately is not ``RunOut``. That shape's counts, totals, and
     phrase are each derived from the effective condemned set of the run's
@@ -392,32 +394,40 @@ async def list_runs(
 
     ``offset`` pages the whole history: nothing bounds how many runs a
     long-lived install has executed, unlike a scan's 30-snapshot retention.
+
+    ``executed_only`` drops every row still PLANNED, a plan that was built
+    (the head Reap button, a standalone practice run) and never executed,
+    from both the page and ``total``: filtering a page after it is fetched
+    would leave the two disagreeing with each other and with the true
+    count. The default keeps every row, since another consumer (the app-wide
+    reap bar's View) reads a planned run by id off this same route.
     """
     async with session_factory(request)() as session:
-        runs = list(
-            (
-                await session.execute(
-                    select(ReapRun).order_by(ReapRun.id.desc()).limit(limit).offset(offset)
-                )
-            )
-            .scalars()
-            .all()
-        )
+        rows_stmt = select(ReapRun).order_by(ReapRun.id.desc()).limit(limit).offset(offset)
+        count_stmt = select(func.count()).select_from(ReapRun)
+        if executed_only:
+            rows_stmt = rows_stmt.where(ReapRun.state != RunState.PLANNED)
+            count_stmt = count_stmt.where(ReapRun.state != RunState.PLANNED)
+        runs = list((await session.execute(rows_stmt)).scalars().all())
+        total = (await session.execute(count_stmt)).scalar_one()
         # No memo needed: nothing here is derived, so there is no expensive read to share.
-        return [
-            RunSummaryOut(
-                id=r.id,
-                state=r.state.value,
-                approved_at=r.approved_at.isoformat(),
-                finished_at=r.finished_at.isoformat() if r.finished_at else None,
-                aborted_reason=_thaw_reason(r.aborted_reason),
-                deleted_items=r.deleted_items,
-                deleted_bytes=r.deleted_bytes,
-                deleted_unmeasured=r.deleted_unmeasured,
-                skipped=r.skipped,
-            )
-            for r in runs
-        ]
+        return RunListOut(
+            runs=[
+                RunSummaryOut(
+                    id=r.id,
+                    state=r.state.value,
+                    approved_at=r.approved_at.isoformat(),
+                    finished_at=r.finished_at.isoformat() if r.finished_at else None,
+                    aborted_reason=_thaw_reason(r.aborted_reason),
+                    deleted_items=r.deleted_items,
+                    deleted_bytes=r.deleted_bytes,
+                    deleted_unmeasured=r.deleted_unmeasured,
+                    skipped=r.skipped,
+                )
+                for r in runs
+            ],
+            total=total,
+        )
 
 
 @router.get("/runs/{run_id}")

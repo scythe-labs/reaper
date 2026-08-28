@@ -119,12 +119,22 @@ const CONTAINERS: Record<string, Container> = {
     reach: "has-controls",
     why: "an aria-activedescendant listbox: the <input> keeps DOM focus and the arrow keys move the active option, so the operator drives it without the list ever taking focus. It holds no focusable child of its own, which is why it reads as an exception here rather than as one of the buttons-inside cases",
   },
+  ".feed-scroll": {
+    file: "components/ReapPlan.tsx",
+    reach: "focusable",
+    why: "the reaping card's item-status log is icon, title and size spans, none of them focusable",
+  },
+  ".run-detail-scroll": {
+    file: "components/ReapPlan.tsx",
+    reach: "focusable",
+    why: "the run detail sheet's outcomes feed is the same spans as .feed-scroll, with nothing focusable in a row",
+  },
 };
 
 /** The count is pinned so a scroll container that leaves the walk fails as loudly as one that
  *  arrives without a classification. A flag-shaped assertion cannot tell a member that
  *  complies from one the matcher stopped collecting. */
-const EXPECTED_CONTAINERS = 13;
+const EXPECTED_CONTAINERS = 15;
 
 /** `overflow`, `overflow-x` or `overflow-y` set to a value that makes a box scroll. `hidden`,
  *  `visible` and `clip` do not, and `overflow: auto hidden` (the two-value form) is read by the

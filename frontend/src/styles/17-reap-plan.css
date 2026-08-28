@@ -64,6 +64,12 @@
 .reap-summary-help {
   margin-top: var(--space-2xl);
 }
+/* The tile row's own bottom margin would collapse with this paragraph's top margin above,
+ * landing on whichever of the two is larger rather than either value on its own. Zeroed here
+ * so `.reap-summary-help`'s margin-top is the only declaration setting the gap. */
+.reap-card .fair-stats {
+  margin-bottom: 0;
+}
 .rb-empty {
   color: var(--muted);
   font-size: var(--text-md);
@@ -232,6 +238,13 @@
   color: var(--muted);
 }
 
+/* "Past reaps" itself: a plain browser default h3 carries its own top and bottom margins,
+ * which read as a bigger gap above the first row than the mockup's section-heading rhythm.
+ * Reset to the mockup's own gap, nothing above it. */
+.reap-history h3 {
+  margin: 0 0 var(--space-lg);
+}
+
 /* Past reaps: one row per run, state dot, muted totals, the date pinned to the right edge. */
 .reap-runs {
   display: grid;
@@ -280,4 +293,134 @@
   font-size: var(--text-sm);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+/* A history row becomes a button once it opens the read-only run detail sheet (the pinned
+ * "running now" row stays a plain element: its live view is already this page's own left
+ * column). `.reap-run`'s own grid rules above apply to a button the same as a div; this only
+ * resets the browser's own button chrome. */
+button.reap-run {
+  width: 100%;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+button.reap-run:first-child {
+  border-top: none;
+}
+button.reap-run:hover {
+  background: var(--hover);
+}
+
+/* The history footer: how many of the whole executed history are shown, and the page-more
+ * button, both below the last row. */
+.reap-runs-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2xl);
+  padding-top: var(--space-2xl);
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-xs);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+/* Reaping: a section heading a size down from a card's own h3, muted, matching the mockup's
+ * "Item status"/"Kept by checks" rhythm. Shared by the reaping card's item-status log, the
+ * done card's "Kept by checks" list, and the run detail sheet's own feed. */
+.reap-feed-heading {
+  margin: 0 0 var(--space-lg);
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: var(--weight-semi);
+}
+.reap-feed-help {
+  margin-top: var(--space-2xl);
+}
+.reap-plan-prog {
+  margin-top: var(--space-2xl);
+}
+/* The item last decided, arriving from Sonarr, Radarr or Plex: an operator did not choose
+ * this text, and it can be one long unbroken string. */
+.now-line {
+  color: var(--muted);
+  font-size: var(--text-md);
+  margin-top: var(--space-2xl);
+  overflow-wrap: anywhere;
+}
+
+/* The item-status feed: one row per outcome, a protect check with its size for a removal, an
+ * amber dot with why for anything kept. Shared by the reaping card's live log, the done
+ * card's "Kept by checks" list, and the run detail sheet. */
+.feed {
+  display: grid;
+  gap: var(--space-sm);
+  font-size: var(--text-md);
+}
+.feed-scroll {
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.feed-row {
+  display: flex;
+  gap: var(--space-md);
+  align-items: baseline;
+}
+.feed-mark {
+  width: 1em;
+  text-align: center;
+  flex: none;
+  font-weight: var(--weight-bold);
+}
+.feed-row.gone .feed-mark {
+  color: var(--protect);
+}
+.feed-row.kept .feed-mark {
+  color: var(--unknown);
+}
+/* Titles arrive from Plex/Sonarr/Radarr, not from the operator, and can be one long unbroken
+ * string; a media key with no title falls back to the same treatment. */
+.feed-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.feed-size {
+  margin-inline-start: auto;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+.feed-kept-why {
+  color: var(--muted);
+}
+
+/* Done: the result hero and its Done button. */
+.reap-finished-head {
+  margin: 0 0 var(--space-lg);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semi);
+  color: var(--protect);
+}
+.reap-done-note {
+  margin-top: var(--space-md);
+}
+.reap-done-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-2xl);
+}
+
+/* A failed Stop from the reaping head button. */
+.reap-stop-error {
+  margin: var(--space-lg) 0;
 }

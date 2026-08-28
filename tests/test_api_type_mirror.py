@@ -103,10 +103,13 @@ INNER_MODULES = ("reaper.engine.policy", "reaper.engine.explanation")
 #: ``ThresholdCurveNoScanOut``.
 #: ``RunOutcomeReadOut``/``RunOutcomesOut`` add 2 more, the per-item outcomes read that
 #: reconstructs a run's history from the journal instead of the in-memory report.
+#: ``RunListOut`` adds 1 more, the run history's envelope: ``GET /api/runs`` used to
+#: answer with a bare ``list[RunSummaryOut]``, and paging it (a footer count, "Show 50
+#: more") needed a total the page itself cannot carry.
 #:
 #: This count is here because the collision assertion below is flag-shaped, and a flag
 #: cannot see a member that left the walk.
-_EXPECTED_SERVER_MODELS = 152
+_EXPECTED_SERVER_MODELS = 153
 
 #: Browser types whose server counterpart is spelled differently. Each is a real pair, the
 #: field sets are compared, and the rename is the only reason a suffix rule cannot find it.
@@ -194,8 +197,10 @@ CLIENT_ONLY = {
 # `RatioNotEnoughHistory`, `RatioFloored` and `AppliedRatio`.
 # Both +2 again for the per-item outcomes read: `RunOutcomeRead` pairs with
 # `RunOutcomeReadOut`, and `RunOutcomes` with `RunOutcomesOut`, both on the suffix rule.
-EXPECTED_INTERFACES = 106
-EXPECTED_PAIRS = 104
+# Both +1 again for the run history's envelope: `RunList` pairs with `RunListOut` on the
+# suffix rule.
+EXPECTED_INTERFACES = 107
+EXPECTED_PAIRS = 105
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")

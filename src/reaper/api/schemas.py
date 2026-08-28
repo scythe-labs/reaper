@@ -629,6 +629,18 @@ class RunSummaryOut(BaseModel):
     """How many planned items this run left alone. ``None`` on the same terms."""
 
 
+class RunListOut(BaseModel):
+    """A page of the run history, plus how many rows match the request as a whole.
+
+    ``total`` counts every row ``executed_only`` and the rest of the request would match,
+    not just the page returned: the history footer's "Showing N of M" and its "Show 50
+    more" button both read it, and neither can page correctly off ``len(runs)`` alone.
+    """
+
+    runs: list[RunSummaryOut]
+    total: int
+
+
 class RunCheckOut(BaseModel):
     """One line in an item's after-action checklist: a step the reap did or verified, and
     whether it passed. Rendered as a ``✓``/``✗`` tick, like the why-panel's checks."""

@@ -84,6 +84,29 @@
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   }
 }
+
+/* The read-only run detail sheet becomes the same bottom sheet on a phone, for the same
+   reason and the same coupling to NARROW_SCREEN_QUERY. */
+@media (max-width: 900px) {
+  .modal-scrim:has(.run-detail) {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .modal.run-detail {
+    max-width: none;
+    width: 100%;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+}
+.run-detail-stats {
+  margin-top: var(--space-2xl);
+}
+.run-detail-scroll {
+  max-height: 44dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin-top: var(--space-lg);
+}
 .small {
   font-size: var(--text-sm);
 }

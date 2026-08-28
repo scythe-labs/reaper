@@ -3539,7 +3539,7 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # complies from one that dropped out of the walk, and reads green either way.
 #
 # Re-derive this number by running the test. Never update it by hand arithmetic on a diff.
-_EXPECTED_NOTICES = 139
+_EXPECTED_NOTICES = 141
 
 
 def _shipped_tsx() -> list[Path]:
@@ -3621,7 +3621,7 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
 # and says nothing about whether it speaks; this is the count for that other direction.
 #
 # Re-derive this number by running the test. Never update it by hand arithmetic on a diff.
-_EXPECTED_STANDING = 37
+_EXPECTED_STANDING = 38
 
 # ``standing`` as a JSX attribute, never as a substring of a class name or a word in prose.
 _STANDING_ATTR = re.compile(r"(?<![\w-])standing(?![\w-])")
@@ -3880,6 +3880,10 @@ _READ_HOOKS = {
     # Wraps the reap-breakdown query and returns the whole result, so both the Reap page's
     # summary tiles and its reasons/ledger card branch on `counts.isError`/`counts.isPending`.
     "useReapCounts",
+    # Wraps the executed-history query (GET /api/runs, paged) and returns the whole result
+    # plus a `showMore` page-advance, so the Reap page's history card branches on
+    # `history.isError`/`history.isPending` the same as a bare `useQuery` would.
+    "useExecutedHistory",
 }
 
 # The hooks that hand back payload and no failure handle at all, so a member of their result
