@@ -42,7 +42,9 @@
         "recovery": "",
         "readOnly": "",
         "readOnlyNoLink": "",
-        "armed": ""
+        "armed": "",
+        "expand": "",
+        "collapse": ""
     },
     "format": {
         "sizeUnknown": "",

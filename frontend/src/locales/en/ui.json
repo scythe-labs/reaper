@@ -57,7 +57,9 @@
     "recovery": "<strong>Recovery mode is on.</strong> Deletion is held off. Turn it off and restart once you're back in.",
     "readOnly": "<strong>Read-only.</strong> Reaper can look but can't remove anything. <btn>Turn deletion on in Policy → Deletion</btn> when you're ready.",
     "readOnlyNoLink": "<strong>Read-only.</strong> Reaper can look but can't remove anything. You turn deletion on later, in Policy → Deletion.",
-    "armed": "<strong>Deletion is on.</strong> Reaper can remove media you approve, through Sonarr and Radarr."
+    "armed": "<strong>Deletion is on.</strong> Reaper can remove media you approve, through Sonarr and Radarr.",
+    "expand": "Show the full safety notice",
+    "collapse": "Show less"
   },
   "format": {
     "sizeUnknown": "Size unknown",

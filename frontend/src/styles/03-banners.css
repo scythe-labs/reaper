@@ -75,6 +75,57 @@
   color: var(--unknown);
 }
 
+/* On a phone the safety notice collapses to one line and expands on tap, so it stops eating
+   three lines at the top of every screen. SafetyBanner.tsx gates this markup to the narrow
+   layout; the chevron is the real toggle and the whole line is a tap target too. The state
+   lead is first in every message, so the regime still reads while collapsed. */
+.banner.collapsible {
+  width: 100%;
+  align-items: start;
+  cursor: pointer;
+}
+.banner.collapsible .banner-dot {
+  margin-top: 0.42em;
+}
+.banner-body {
+  flex: 1;
+  min-width: 0;
+}
+.banner-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+  /* The clamp gives the one-line ellipsis; the max-height is what animates, so the reveal is
+     a smooth grow rather than a snap. */
+  max-height: 1.5em;
+  transition: max-height 0.28s var(--ease);
+}
+.banner.collapsible.open .banner-text {
+  -webkit-line-clamp: 20;
+  max-height: 9em;
+}
+.banner-chev {
+  flex: none;
+  margin-top: 0.15em;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  transition: transform 0.28s var(--ease);
+}
+.banner.collapsible.open .banner-chev {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .banner-text,
+  .banner-chev {
+    transition: none;
+  }
+}
+
 /* The "kept to be safe" match notice: the shared amber tone, with the lead in the amber ink
    so the outcome reads first. */
 .kept-notice {
