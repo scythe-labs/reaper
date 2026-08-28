@@ -1858,14 +1858,15 @@ def test_run_totals_backfill_reads_the_states_the_app_stores(
                 " VALUES (1, 1, 'p', 'COMPLETED', 'm', 'operator', 1750000000, 0)"
             )
         )
-        for cid, key, size in ((1, "movie-1", "70"), (2, "movie-2", "NULL")):
+        for cid, key, size in ((1, "movie-1", 70), (2, "movie-2", None)):
             conn.execute(
                 text(
                     "INSERT INTO candidate (id, snapshot_id, media_key, title, media_type,"
                     " verdict, score, coverage_bp, explanation_json, created_at, size_bytes)"
-                    f" VALUES ({cid}, 1, '{key}', 'test item', 'movie', 'CONDEMN', 0, 0,"
-                    f" '{{}}', 1750000000, {size})"
-                )
+                    " VALUES (:id, 1, :key, 'test item', 'movie', 'CONDEMN', 0, 0, '{}',"
+                    " 1750000000, :size)"
+                ),
+                {"id": cid, "key": key, "size": size},
             )
         # One delete that landed, one the executor skipped: both step states in the
         # stored spelling, on the one step kind the totals count.
@@ -1874,9 +1875,10 @@ def test_run_totals_backfill_reads_the_states_the_app_stores(
                 text(
                     "INSERT INTO action_step (id, run_id, media_key, ordinal, kind, method,"
                     " path, idempotency_key, state, created_at)"
-                    f" VALUES ({sid}, 1, '{key}', {sid - 1}, 'radarr_delete', 'DELETE',"
-                    f" '/x', 'k{sid}', '{state}', 1750000000)"
-                )
+                    " VALUES (:id, 1, :key, :ordinal, 'radarr_delete', 'DELETE',"
+                    " '/x', :idem, :state, 1750000000)"
+                ),
+                {"id": sid, "key": key, "ordinal": sid - 1, "idem": f"k{sid}", "state": state},
             )
 
     command.upgrade(config, _RUN_TOTALS)
