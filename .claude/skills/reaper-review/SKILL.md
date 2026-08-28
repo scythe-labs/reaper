@@ -41,7 +41,9 @@ contract between them, which is the exact blind spot `seam` exists to close. The
 lands only on changes that genuinely cross the risk boundaries, which are the changes that
 warrant it.
 
-Run them concurrently, as separate subagents, not as one widened prompt.
+Run them concurrently, as separate subagents, not as one widened prompt. Each lane hands its
+findings back as text, and the session that spawned them makes the one `ReportFindings` call
+(see *Output*).
 
 **Say which lanes fired and why**, in one line, before reporting findings: `safety (executor.py),
 seam (api/runs.py, api.ts) — 2 lanes`. If the operator disagrees they can name a lane explicitly
@@ -148,6 +150,13 @@ Report findings with the **`ReportFindings` tool**, most severe first. Do not al
 out as prose, and do not produce a standalone markdown report — the fixing agent consumes the
 structured list directly, and a document in between costs a full write and a full read to
 convey the same thing.
+
+**Only the session holding the conversation can make that call.** `ReportFindings` is absent
+from the set of tools a subagent may hold, so naming it in an agent definition's `tools:` grants
+nothing. A lane therefore hands its findings to whoever spawned it, as text, one block per
+finding carrying the fields `ReportFindings` wants: `file`, `line`, `category`,
+`short_summary`, `summary`, `failure_scenario`, `verdict`. That session merges the lanes,
+orders them by blast radius across all of them, and makes one call.
 
 The one exception is a whole-tree `backend` or `frontend` pass, which is an event worth
 archiving: those land in `docs/history/` under the freeze banner that directory requires.
