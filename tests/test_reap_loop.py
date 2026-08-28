@@ -30,7 +30,7 @@ from sqlalchemy.exc import IntegrityError, PendingRollbackError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
 
-from reaper.api.runs import STEP_PAGE, _planned_candidates, _run_out
+from reaper.api.runs import STEP_PAGE, _planned_candidates, _run_out, _run_outcomes
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import ActiveStream, PlexError, PlexSectionPaths
 from reaper.clock import utcnow
@@ -4202,6 +4202,185 @@ class TestARemovalIsCountedEvenWhenTheStepFails:
 
 
 # ---------------------------------------------------------------------------
+# The run's terminal totals, written once for a real run
+# ---------------------------------------------------------------------------
+
+
+class TestRunTotalsAreWrittenOnATerminalRun:
+    """``ReapRun.deleted_items``/``deleted_bytes``/``deleted_unmeasured``/``skipped`` are
+    written once, inside the same crash-safe path that makes the run's own terminal
+    state durable (``Executor._commit_and_finalize``), so a restart-durable summary
+    survives even though the in-memory ``RunReport`` does not. ``None`` means "not
+    reached a terminal state," never zero, which is what a run still PLANNED, EXECUTING,
+    or run only as a dry run reads.
+    """
+
+    async def test_a_clean_completion(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 2 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+
+        report = await _real(session, run, _gateway(radarr={1: FakeRadarr()}))
+
+        assert report.state is RunState.COMPLETED
+        stored = await _stored_run(async_factory, run.id)
+        assert stored.deleted_items == 2
+        assert stored.deleted_bytes == 3 * GB
+        assert stored.deleted_unmeasured == 0
+        assert stored.skipped == 0
+
+    async def test_an_abort_before_anything_ran_still_writes_zeros_not_none(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A cap breach aborts before ``_run_deletes`` ever starts, so nothing was
+        journalled. The totals are still written, as zero, which is a fact ("this run
+        deleted nothing") and distinct from NULL ("this run never finished")."""
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 1 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+        settings = ProfileSettings(max_items_per_run=1, max_items_per_30d=100)
+
+        report = await _real(session, run, _gateway(radarr={1: FakeRadarr()}), settings=settings)
+
+        assert report.state is RunState.ABORTED
+        stored = await _stored_run(async_factory, run.id)
+        assert (
+            stored.deleted_items,
+            stored.deleted_bytes,
+            stored.deleted_unmeasured,
+            stored.skipped,
+        ) == (0, 0, 0, 0)
+
+    async def test_a_stop_mid_run_records_what_happened_before_it(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+
+        answers = iter([False, True])  # running for the first item, stopped before the second
+
+        async def stopping() -> bool:
+            return next(answers)
+
+        report = await _real(
+            session, run, _gateway(radarr={1: FakeRadarr()}), stop_recheck=stopping
+        )
+
+        assert report.state is RunState.ABORTED
+        stored = await _stored_run(async_factory, run.id)
+        assert stored.deleted_items == 1  # only the first item was ever sent
+        assert stored.deleted_bytes == 1 * GB
+        assert stored.skipped == 0
+
+    async def test_an_unmapped_crash_records_what_happened_before_it(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """The same scenario ``TestAnUnmappedErrorStopsTheRunWithoutWedgingIt`` proves
+        does not wedge the run: an unmapped exception after a file is already gone. The
+        totals must reflect that removal too, read fresh from the journal rather than
+        from the in-memory report the crash interrupted."""
+        snapshot_id = await _snapshot_many(
+            session,
+            [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 2 * GB, 702), ("radarr:1:3", 3 * GB, 703)],
+        )
+        run = await _plan(session, snapshot_id)
+
+        class _SurprisingRadarr(FakeRadarr):
+            async def exclusions(self) -> list[dict[str, Any]]:
+                if self.delete_calls and self.delete_calls[-1] == 2:
+                    raise ValueError("something nobody anticipated")
+                return await super().exclusions()
+
+        report = await _real(session, run, _gateway(radarr={1: _SurprisingRadarr()}))
+
+        assert report.state is RunState.ABORTED
+        stored = await _stored_run(async_factory, run.id)
+        # Item 1 verified and deleted; item 2 failed but its file is confirmed gone
+        # (the same discipline the rolling budget uses), so it still counts; item 3 was
+        # never sent.
+        assert stored.deleted_items == 2
+        assert stored.deleted_bytes == 1 * GB + 2 * GB
+        assert stored.deleted_unmeasured == 0
+        assert stored.skipped == 0
+
+    async def test_a_dry_run_never_writes_totals(self, session: AsyncSession) -> None:
+        """A dry run proves the plan and sends nothing, so it must never consume the
+        run's terminal-totals columns either: they stay NULL, exactly as a run not yet
+        executed for real reads."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+
+        report = await Executor(
+            session, safety=_read_only(), settings=ProfileSettings(), dry_run=True
+        ).execute(run.id)
+
+        assert report.state is RunState.COMPLETED
+        stored = await session.get(ReapRun, run.id)
+        assert stored is not None
+        assert stored.deleted_items is None
+        assert stored.deleted_bytes is None
+        assert stored.deleted_unmeasured is None
+        assert stored.skipped is None
+
+
+# ---------------------------------------------------------------------------
+# Per-item outcomes, reconstructed from the journal
+# ---------------------------------------------------------------------------
+
+
+class TestRunOutcomesAreReconstructedFromTheJournal:
+    """``api.runs._run_outcomes`` is what lets a run in flight and one long finished
+    answer from the same read, so it must agree exactly with what the journal holds.
+    """
+
+    async def test_an_undecided_item_is_left_out(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """'So far' means exactly that: an item never reached (still PENDING) is not a
+        decided outcome yet, so an aborted run that never sent anything reports none."""
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 1 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+        settings = ProfileSettings(max_items_per_run=1, max_items_per_30d=100)
+        await _real(session, run, _gateway(radarr={1: FakeRadarr()}), settings=settings)
+
+        stored = await _stored_run(async_factory, run.id)
+        outcomes = await _run_outcomes(session, stored)
+
+        assert outcomes == []
+
+    async def test_a_verified_and_a_failed_item_both_read_back_in_order(
+        self, session: AsyncSession
+    ) -> None:
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:2:2", 2 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+
+        report = await _real(
+            session,
+            run,
+            _gateway(radarr={1: FakeRadarr(), 2: FakeRadarr(land_exclusion=False)}),
+        )
+        assert report.state is RunState.COMPLETED  # the canary succeeded, so this carries on
+
+        outcomes = await _run_outcomes(session, run)
+
+        assert [o.media_key for o in outcomes] == ["radarr:1:1", "radarr:2:2"]
+        assert outcomes[0].state is StepState.VERIFIED
+        assert outcomes[0].ordinal == 0  # the canary
+        assert outcomes[1].state is StepState.FAILED
+        assert outcomes[1].error is not None
+
+
+# ---------------------------------------------------------------------------
 # The progress bar counts the set the operator authorized
 # ---------------------------------------------------------------------------
 
@@ -5347,6 +5526,16 @@ _BEFORE_ANY_DELETE_RUN_COLUMNS = frozenset(
     }
 )
 
+#: The run's four terminal totals, written by ``Executor._write_run_totals`` in its own
+#: ``UPDATE``, after ``_Terminal``'s. They need no ``_JournalRow``/``_Terminal``-style
+#: capture object of their own: the hazard those two guard against is an ORM attribute
+#: mutated on a row a rollback can expire before it is replayed, and nothing here ever
+#: sets ``run.deleted_items`` or its siblings as an in-memory attribute at all. Their
+#: values come straight off a fresh ``run_totals.totals_query`` read each time
+#: ``_write_run_totals`` runs, so the same dataclass is what both of ``_commit_journal``'s
+#: attempts send, with nothing to lose to a rollback in between.
+_TOTALS_RUN_COLUMNS = frozenset({"deleted_items", "deleted_bytes", "deleted_unmeasured", "skipped"})
+
 
 class TestARecoveredWriteCarriesEveryColumn:
     """``_JournalRow`` and ``_Terminal`` each mirror a model's columns by hand, and the
@@ -5376,9 +5565,11 @@ class TestARecoveredWriteCarriesEveryColumn:
 
     def test_every_reap_run_column_is_classified_as_terminal_or_already_durable(self) -> None:
         """The sibling of the test above. ``_Terminal`` is the same hand-written mirror
-        over the same hazard, one class above ``_JournalRow`` in the same file."""
+        over the same hazard, one class above ``_JournalRow`` in the same file. The four
+        totals columns are their own third class, written by a later, separate ``UPDATE``
+        that carries no such hazard; see ``_TOTALS_RUN_COLUMNS``."""
         assert {c.key for c in sa_inspect(ReapRun).column_attrs} == (
-            _TERMINAL_RUN_COLUMNS | _BEFORE_ANY_DELETE_RUN_COLUMNS
+            _TERMINAL_RUN_COLUMNS | _BEFORE_ANY_DELETE_RUN_COLUMNS | _TOTALS_RUN_COLUMNS
         )
 
     def test_the_journal_row_carries_every_replayed_column(self) -> None:

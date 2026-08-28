@@ -113,7 +113,7 @@ def run_migrations_online() -> None:
             context.run_migrations()
 
 
-# No offline ("--sql") mode: 10 revisions call ``op.get_bind()`` to inspect the live
+# No offline ("--sql") mode: 11 revisions call ``op.get_bind()`` to inspect the live
 # database, which an offline run has no connection for. Supporting "--sql" would mean
 # removing those checks. ``tests/test_migrations.py`` keeps that count current.
 run_migrations_online()

@@ -1096,6 +1096,34 @@ class ReapRun(Base):
     after the fact, not only before it. Zero for a healthy library, and every surface
     suppresses it at zero."""
 
+    # The four terminal totals below are written once, by Executor._write_run_totals,
+    # the moment a real run reaches COMPLETED or ABORTED. NULL means the run has not
+    # reached a terminal state yet (PLANNED, EXECUTING, or a dry run, which never writes
+    # them), read as unknown, never as zero. services.run_totals.aggregate_rows is the
+    # one place these four numbers are derived, run both here and by the migration that
+    # backfilled every run that finished before these columns existed, so the two can
+    # never drift apart.
+    deleted_items: Mapped[int | None] = mapped_column(Integer, default=None)
+    """How many items this run actually deleted, counted the way the rolling 30-day
+    budget already does: a step whose file is confirmed gone, VERIFIED or carrying a
+    ``file_removed_at`` stamp, never a step counted by its ``state`` alone. A movie whose
+    delete Radarr honored but whose import exclusion never landed ends FAILED and stays
+    FAILED, but it is still counted here, the same item ``removed_unconfirmed`` names on
+    the live report."""
+
+    deleted_bytes: Mapped[int | None] = mapped_column(Integer, default=None)
+    """Bytes reclaimed by ``deleted_items``, from each item's frozen
+    ``Candidate.size_bytes``. Never counts an item ``deleted_unmeasured`` includes."""
+
+    deleted_unmeasured: Mapped[int | None] = mapped_column(Integer, default=None)
+    """How many of ``deleted_items`` had no size, so contributed nothing to
+    ``deleted_bytes``. Above zero only when the operator's unmeasured allowance was
+    open."""
+
+    skipped: Mapped[int | None] = mapped_column(Integer, default=None)
+    """How many planned items this run left alone: a hand spare, a play since approval,
+    someone watching right now, or a size that grew past the approved figure."""
+
     steps: Mapped[list[ActionStep]] = relationship(
         back_populates="run", cascade="all, delete-orphan", order_by="ActionStep.id"
     )

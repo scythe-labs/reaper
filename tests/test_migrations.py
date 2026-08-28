@@ -166,7 +166,7 @@ def test_env_py_configures_batch_mode(tmp_path: Path, monkeypatch: pytest.Monkey
     This one reads the shipped env.py, so flipping ``render_as_batch`` to False
     fails here instead of years later, in the first migration that needs it.
 
-    **One call site.** env.py has no offline (``--sql``) branch. 10 revisions call
+    **One call site.** env.py has no offline (``--sql``) branch. 11 revisions call
     ``op.get_bind()``, so ``alembic upgrade head --sql`` would exit 1 at revision 3,
     which is why no such branch exists.
     """

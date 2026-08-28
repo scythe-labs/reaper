@@ -290,7 +290,7 @@ export function ReapPlan({
     onSuccess: setReport,
   });
 
-  const { data: history } = useQuery({ queryKey: ["runs"], queryFn: api.runs });
+  const { data: history } = useQuery({ queryKey: ["runs"], queryFn: () => api.runs() });
 
   // Shares the app's snapshot query, so this costs no extra request. A plan is frozen
   // against the scan it was built from; if a newer scan has landed since, the plan's

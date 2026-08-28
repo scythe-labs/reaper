@@ -542,6 +542,18 @@ class TestTheRunsApi:
         assert client.get("/api/runs", params={"limit": 200}).status_code == 200
         assert client.get("/api/runs", params={"limit": 1}).status_code == 200
 
+    def test_the_run_list_offset_pages_the_whole_history(self, client: TestClient) -> None:
+        """Nothing bounds how many runs a long-lived install has executed, unlike a
+        scan's 30-snapshot retention, so the history needs a way past the first page."""
+        first = client.post("/api/runs").json()
+        second = client.post("/api/runs").json()
+
+        assert client.get("/api/runs", params={"offset": -1}).status_code == 422
+        page = client.get("/api/runs", params={"limit": 1, "offset": 0}).json()
+        assert [r["id"] for r in page] == [second["id"]]  # newest first
+        next_page = client.get("/api/runs", params={"limit": 1, "offset": 1}).json()
+        assert [r["id"] for r in next_page] == [first["id"]]
+
     def test_the_run_list_carries_only_what_is_stored(self, client: TestClient) -> None:
         """The history is stored rows, nothing derived.
 
@@ -554,11 +566,51 @@ class TestTheRunsApi:
         """
         client.post("/api/runs")
         row = client.get("/api/runs").json()[0]
-        assert set(row) == {"id", "state", "approved_at", "aborted_reason"}
+        assert set(row) == {
+            "id",
+            "state",
+            "approved_at",
+            "finished_at",
+            "aborted_reason",
+            "deleted_items",
+            "deleted_bytes",
+            "deleted_unmeasured",
+            "skipped",
+        }
+        # A freshly planned run has not reached a terminal state, so its totals are
+        # unknown, never zero.
+        assert row["finished_at"] is None
+        assert row["deleted_items"] is None
         # ...and the detail route still answers with the whole thing.
         full = client.get(f"/api/runs/{row['id']}").json()
         assert full["confirmation_phrase"].startswith("REAP ")
         assert isinstance(full["steps"], list)
+
+    def test_a_missing_runs_outcomes_are_a_404(self, client: TestClient) -> None:
+        assert client.get("/api/runs/9999/outcomes").status_code == 404
+
+    def test_a_freshly_planned_runs_outcomes_are_empty(self, client: TestClient) -> None:
+        """Nothing has been decided for a plan that has not been dry-run or executed, so
+        the read that answers a run 'so far' has nothing to report yet, never a row for
+        a step that is merely PENDING."""
+        run = client.post("/api/runs").json()
+
+        body = client.get(f"/api/runs/{run['id']}/outcomes").json()
+
+        assert body == {"outcomes": [], "outcome_count": 0, "offset": 0}
+
+    def test_the_outcomes_page_is_bounded_at_both_ends(self, client: TestClient) -> None:
+        run = client.post("/api/runs").json()
+        assert (
+            client.get(f"/api/runs/{run['id']}/outcomes", params={"offset": -1}).status_code == 422
+        )
+        assert client.get(f"/api/runs/{run['id']}/outcomes", params={"limit": 0}).status_code == 422
+        assert (
+            client.get(f"/api/runs/{run['id']}/outcomes", params={"limit": 501}).status_code == 422
+        )
+        assert (
+            client.get(f"/api/runs/{run['id']}/outcomes", params={"limit": 500}).status_code == 200
+        )
 
     def test_dry_running_a_missing_run_is_a_404(self, client: TestClient) -> None:
         assert client.post("/api/runs/9999/dry-run").status_code == 404

@@ -5267,7 +5267,7 @@ _LAYERS = ("api", "services", "clients", "engine")
 #: Every `.py` file under those four, which is the population the walk parses. It moves when a
 #: module is added, split or deleted, and it is pinned because a walk that quietly stopped
 #: reading the tree would satisfy every assertion below by finding nothing at all.
-_EXPECTED_LAYERED_MODULES = 89
+_EXPECTED_LAYERED_MODULES = 90
 
 #: Every ordered pair where one of the four imports another, reconciled by hand: all six
 #: downward pairs are live, and no upward pair is. Asserted as an equality rather than a subset,
@@ -5584,7 +5584,7 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
 #: different population from that constant, which counts what is under the four packages
 #: only, so a bump to one has no reason to touch the other. The failure message below names
 #: the constant the same way.
-_EXPECTED_SOURCE_MODULES = 124
+_EXPECTED_SOURCE_MODULES = 125
 
 #: Every import cycle under `src/reaper`, each rotated to start at its smallest member. Two,
 #: and both are one edge: `api/settings.py` imports `reaper.launcher` at module level,
@@ -6514,6 +6514,11 @@ _MEMBERSHIP_INVENTORY: dict[str, tuple[int, str]] = {
     "src/reaper/api/review.py::_group_rollups": (2, "chunked"),
     "src/reaper/api/review.py::_decided_keys": (2, "chunked"),
     "src/reaper/api/review.py::group_detail": (1, "bounded: the seasons of one show"),
+    "src/reaper/api/runs.py::_run_outcomes": (
+        1,
+        "bounded: the fixed run_totals.TERMINAL_DELETE_KINDS set",
+    ),
+    "src/reaper/api/runs.py::get_run_outcomes": (1, "bounded: the page (limit le=500)"),
     "src/reaper/services/condemned.py::_reap_overridden_rows": (
         2,
         "bounded: the operator's reap overrides, one row per hand click",
@@ -6546,6 +6551,10 @@ _MEMBERSHIP_INVENTORY: dict[str, tuple[int, str]] = {
     "src/reaper/services/rewatch.py::movie_rewatch_stats": (1, "chunked"),
     "src/reaper/services/rewatch.py::show_rewatch_outcomes": (1, "chunked"),
     "src/reaper/services/rewatch.py::show_rewatch_stats": (1, "chunked"),
+    "src/reaper/services/run_totals.py::totals_query": (
+        1,
+        "bounded: the fixed TERMINAL_DELETE_KINDS set",
+    ),
     "src/reaper/services/season_scan.py::season_watch_stats": (3, "chunked"),
     "src/reaper/services/snapshot.py::record_first_flagged_bulk": (1, "chunked"),
     "src/reaper/services/snapshot.py::_fold_merged_watch_stats": (1, "chunked"),
@@ -7602,7 +7611,7 @@ _UNRECOVERABLE_OPS = frozenset({"alter_column", "drop_column", "drop_table"})
 #: The revision files walked, pinned because a flag-shaped assertion alone cannot tell a
 #: revision that complies from one that dropped out of the walk. Bump the first with any new
 #: revision, the second only with one performing an operation above.
-_EXPECTED_REVISION_FILES = 30
+_EXPECTED_REVISION_FILES = 31
 _EXPECTED_UNRECOVERABLE_REVISIONS = 5
 
 
@@ -7806,7 +7815,7 @@ _EXPECTED_REFUSAL_CODES = 309
 #: reusing an `error.safety.*` code the executor's own backstop already raises, or
 #: `update_check._incomplete()` building one `error.integration.update_check_incomplete`
 #: for several callers. So the site count moves independently of the code count.
-_EXPECTED_REFUSAL_SITES = 360
+_EXPECTED_REFUSAL_SITES = 361
 
 
 def test_every_refusal_code_has_a_raiser_and_a_catalog_entry() -> None:

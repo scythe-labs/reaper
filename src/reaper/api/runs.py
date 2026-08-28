@@ -42,18 +42,20 @@ from reaper.api.schemas import (
     RunCheckOut,
     RunOut,
     RunOutcomeOut,
+    RunOutcomeReadOut,
+    RunOutcomesOut,
     RunReportOut,
     RunStepsOut,
     RunSummaryOut,
 )
 from reaper.config import Settings
 from reaper.crypto import SecretBox
-from reaper.db.models import ActionStep, Candidate, ReapRun, RunState
+from reaper.db.models import ActionStep, Candidate, ReapRun, RunState, StepState
 from reaper.engine.explanation import ReasonKey
 from reaper.engine.policy import ProfileSettings
 from reaper.engine.reason import Reason, from_stored, to_wire
 from reaper.refusal import english
-from reaper.services import app_settings, whitelist
+from reaper.services import app_settings, run_totals, whitelist
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import (
     ExecutionError,
@@ -88,7 +90,18 @@ profile_router = APIRouter(prefix="/api", tags=[api_tags.POLICY])
 #: How many journal rows a run's detail response carries, and the default page of the steps
 #: route. A plan of 500 seasons is 1,500 rows, each with a path and a stringified request body,
 #: and the table draws 50 of them. The rest are a route away rather than in every response.
+#: The outcomes route (GET /runs/{id}/outcomes) reuses this same constant: it pages the
+#: same journal at item granularity instead of step granularity, so producer and consumer
+#: agree on one page size rather than each guessing (rule 131).
 STEP_PAGE = 50
+
+#: The default and max page of GET /runs, named so a page size an operator's history view
+#: reads is a declaration rather than a bare literal repeated at the call site.
+RUN_LIST_PAGE = 50
+
+#: A step this run has decided, one way or another. Filters GET /runs/{id}/outcomes to
+#: items with something to report; a step still PENDING or SENT has not been reached yet.
+_DECIDED_STATES = (StepState.VERIFIED, StepState.FAILED, StepState.SKIPPED)
 
 
 def _reason_key(reason: Reason | None) -> ReasonKey | None:
@@ -364,7 +377,8 @@ async def list_runs(
     # as no limit, returning every run ever made. Cheap rows make that less
     # costly than it would otherwise be, but not bounded, so the bound
     # stays here, where a bad value is refused instead of clamped silently.
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(RUN_LIST_PAGE, ge=1, le=200),
+    offset: int = Query(0, ge=0),
 ) -> list[RunSummaryOut]:
     """Return the recent plans, as stored rows and nothing more (see
     ``RunSummaryOut``).
@@ -375,10 +389,17 @@ async def list_runs(
     profile, and the whole candidate table once per row, fifty times on
     every visit to the Reap page. Opening a run goes to
     ``GET /runs/{id}``, which derives them for the one run being looked at.
+
+    ``offset`` pages the whole history: nothing bounds how many runs a
+    long-lived install has executed, unlike a scan's 30-snapshot retention.
     """
     async with session_factory(request)() as session:
         runs = list(
-            (await session.execute(select(ReapRun).order_by(ReapRun.id.desc()).limit(limit)))
+            (
+                await session.execute(
+                    select(ReapRun).order_by(ReapRun.id.desc()).limit(limit).offset(offset)
+                )
+            )
             .scalars()
             .all()
         )
@@ -388,7 +409,12 @@ async def list_runs(
                 id=r.id,
                 state=r.state.value,
                 approved_at=r.approved_at.isoformat(),
+                finished_at=r.finished_at.isoformat() if r.finished_at else None,
                 aborted_reason=_thaw_reason(r.aborted_reason),
+                deleted_items=r.deleted_items,
+                deleted_bytes=r.deleted_bytes,
+                deleted_unmeasured=r.deleted_unmeasured,
+                skipped=r.skipped,
             )
             for r in runs
         ]
@@ -445,6 +471,94 @@ async def get_run_steps(
                 for s in steps[offset : offset + limit]
             ],
             step_count=len(steps),
+            offset=offset,
+        )
+
+
+async def _run_outcomes(session: AsyncSession, run: ReapRun) -> list[ActionStep]:
+    """Every item's outcome so far, oldest (the canary) first: the terminal delete step
+    of every item that has reached one.
+
+    One row per item already: a season's reversible unmonitor/verify steps never carry
+    the item's own kind (``run_totals.TERMINAL_DELETE_KINDS`` is the fixed pair that
+    does), so there is no grouping to do. An item still PENDING or SENT has not been
+    decided yet, so it is filtered out here rather than in the caller, which is what lets
+    a run mid-flight and one long finished answer from the very same read: the list
+    simply grows as the run goes, and is complete once it ends.
+    """
+    steps = (
+        (
+            await session.execute(
+                select(ActionStep)
+                .where(
+                    ActionStep.run_id == run.id,
+                    ActionStep.kind.in_(run_totals.TERMINAL_DELETE_KINDS),
+                )
+                .order_by(ActionStep.ordinal, ActionStep.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [s for s in steps if s.state in _DECIDED_STATES]
+
+
+@router.get("/runs/{run_id}/outcomes")
+async def get_run_outcomes(
+    request: Request,
+    run_id: int,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(STEP_PAGE, ge=1, le=500),
+) -> RunOutcomesOut:
+    """Per-item outcomes, reconstructed from the durable journal and the frozen
+    candidates it condemned, rather than the in-memory report a real send builds
+    (``ReapStatus.report``, gone the moment the process restarts).
+
+    Answers a run still executing exactly as it answers one long finished, from the same
+    read: see ``_run_outcomes``. This is what lets an item status log follow a run in
+    flight and a reopened history view render the same way, off one source instead of
+    two that could disagree.
+    """
+    async with session_factory(request)() as session:
+        run = await session.get(ReapRun, run_id)
+        if run is None:
+            refuse(404, "error.runs.not_found")
+        decided = await _run_outcomes(session, run)
+        page = decided[offset : offset + limit]
+
+        candidates: dict[str, Candidate] = {}
+        media_keys = [s.media_key for s in page]
+        if media_keys:
+            rows = (
+                (
+                    await session.execute(
+                        select(Candidate).where(
+                            Candidate.snapshot_id == run.snapshot_id,
+                            Candidate.media_key.in_(media_keys),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            candidates = {c.media_key: c for c in rows}
+
+        return RunOutcomesOut(
+            outcomes=[
+                RunOutcomeReadOut(
+                    media_key=s.media_key,
+                    title=candidates[s.media_key].title if s.media_key in candidates else "",
+                    kind=s.kind,
+                    size_bytes=(
+                        candidates[s.media_key].size_bytes if s.media_key in candidates else None
+                    ),
+                    state=s.state.value,
+                    error_reason=_thaw_reason(s.error),
+                    is_canary=s.ordinal == 0,
+                )
+                for s in page
+            ],
+            outcome_count=len(decided),
             offset=offset,
         )
 

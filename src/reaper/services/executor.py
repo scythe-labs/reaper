@@ -126,18 +126,17 @@ from reaper.db.models import (
 from reaper.engine.policy import ProfileSettings
 from reaper.engine.reason import Reason, to_stored
 from reaper.refusal import MESSAGES, Refusal, english
-from reaper.services import list_config, whitelist
+from reaper.services import list_config, run_totals, whitelist
 from reaper.services.condemned import effective_condemned, effective_verdict
 from reaper.services.planner import MediaRef, manifest_hash
 from reaper.services.profiles import live_policy_hash
 
 log = structlog.get_logger(__name__)
 
-#: The irreversible step of an item's plan, the one that removes files. A movie has a
-#: ``radarr_delete``; a season's file delete is ``sonarr_delete_files``, reached only
-#: after its reversible unmonitor and the verification of it. Everything else in a
-#: season plan is a read or a reversible edit.
-_TERMINAL_DELETE_KINDS = frozenset({"radarr_delete", "sonarr_delete_files"})
+#: The irreversible step of an item's plan, the one that removes files. Declared in
+#: services.run_totals, since the terminal-totals write and the outcomes read need the
+#: same set; see that module for what each kind means.
+_TERMINAL_DELETE_KINDS = run_totals.TERMINAL_DELETE_KINDS
 
 #: How many times each post-delete settle re-reads before concluding it did not land.
 #: Fixed, not injected: no caller ever needed a different count. The paired delays stay
@@ -1384,12 +1383,50 @@ class Executor:
             # no stamp is bytes the rolling 30-day budget never charges, so a later run
             # could spend past what the operator set.
             await self._commit_journal(what="the journal writes that did not land", write=pending)
+        if terminal is not None:
+            # Read after the pending retry just above, not before: a file_removed_at
+            # that only just landed there must still be counted, or the totals would
+            # read light by exactly the amount that retry exists to recover. Cheap
+            # either way, one SELECT and one UPDATE, so it runs even on a canceled run.
+            await self._write_run_totals(run_id)
         if canceled:
             if self._affected_sections:
                 log.info("reap.trash_purge_deferred", sections=len(self._affected_sections))
             return
         if self._affected_sections:
             await self._finalize_plex()
+
+    async def _write_run_totals(self, run_id: int) -> None:
+        """Write the run's four terminal totals, best-effort.
+
+        A query or a write that fails here leaves the four columns exactly as they were,
+        NULL on a run's first terminal write, which reads as unknown rather than a wrong
+        number. The run's own state, written just above, does not depend on this landing:
+        a summary that could not be computed must never hold up the record that the run
+        is over. ``run_totals.aggregate_rows`` is the one place these four numbers are
+        derived, the same one the backfill migration calls for a run that finished before
+        these columns existed.
+        """
+        try:
+            rows = (await self._session.execute(run_totals.totals_query(run_id))).all()
+        except Exception as exc:
+            log.warning("reap.run_totals_unreadable", run_id=run_id, error=str(exc))
+            return
+        totals = run_totals.aggregate_rows(rows)
+        await self._commit_journal(
+            what="the run's totals",
+            write=[
+                update(ReapRun)
+                .where(ReapRun.id == run_id)
+                .values(
+                    deleted_items=totals.deleted_items,
+                    deleted_bytes=totals.deleted_bytes,
+                    deleted_unmeasured=totals.deleted_unmeasured,
+                    skipped=totals.skipped,
+                )
+                .execution_options(synchronize_session=False)
+            ],
+        )
 
     async def _check_rolling_caps(self, deletes: Sequence[_Delete]) -> None:
         """The 30-day budget: past verified deletions plus this run must fit both rolling

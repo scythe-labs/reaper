@@ -949,9 +949,23 @@ export interface RunSummary {
   id: number;
   state: string;
   approved_at: string;
+  /** When the run reached a terminal state (completed or aborted). `null` while a run
+   *  is planned or executing. */
+  finished_at: string | null;
   /** Why the run stopped early, as a typed reason: `null` on a run that did not abort.
    *  Read back from storage the same way `ActionStep.error_reason` is. */
   aborted_reason: ReasonKey | null;
+  /** How many items this run actually deleted. `null` until the run reaches a terminal
+   *  state, read as unknown rather than zero. */
+  deleted_items: number | null;
+  /** Bytes reclaimed by `deleted_items`. `null` on the same terms. */
+  deleted_bytes: number | null;
+  /** How many of `deleted_items` had no size, so are absent from `deleted_bytes`. `null`
+   *  on the same terms; above zero only when the operator's unmeasured allowance was
+   *  open. */
+  deleted_unmeasured: number | null;
+  /** How many planned items this run left alone. `null` on the same terms. */
+  skipped: number | null;
 }
 
 export interface RunCheck {
@@ -990,6 +1004,31 @@ export interface RunReport {
   deleted_unmeasured: number;
   skipped: number;
   outcomes: RunOutcome[];
+}
+
+/** One item's outcome, reconstructed from the durable journal rather than the live
+ *  in-memory report `RunOutcome` carries. `error_reason` is optional here, unlike
+ *  `RunOutcome.detail_reason`: a verified step's success sentence lives only in the
+ *  in-memory report, and the journal's own error column is null on a step that
+ *  succeeded, so this mirrors `ActionStep.error_reason`'s own convention. */
+export interface RunOutcomeRead {
+  media_key: string;
+  title: string;
+  kind: string;
+  size_bytes: number | null;
+  state: string; // verified | failed | skipped
+  error_reason: ReasonKey | null;
+  is_canary: boolean;
+}
+
+/** One window of a run's outcomes so far, from `GET /api/runs/{id}/outcomes`. Answers a
+ *  run still executing exactly as it answers one long finished: an item with no decided
+ *  outcome yet is left out, so the list grows as a run in flight goes. */
+export interface RunOutcomes {
+  outcomes: RunOutcomeRead[];
+  /** How many items have a decided outcome so far, not the plan's whole item count. */
+  outcome_count: number;
+  offset: number;
 }
 
 /** A running (or just-finished) reap. Polled while a reap is in flight, and read once on
@@ -2327,7 +2366,11 @@ export const api = {
   startScan: () => post<ScanStatus>("/api/scan/start", {}),
   scanStatus: () => request<ScanStatus>("/api/scan/status"),
 
-  runs: () => request<RunSummary[]>("/api/runs"),
+  /** The recent plans, newest first. No component pages past the default yet: `offset`
+   *  ships with the route so the whole history stays reachable, which is what a history
+   *  view's own paging will read when it is built. */
+  runs: (offset = 0, limit = 50) =>
+    request<RunSummary[]>(`/api/runs?offset=${offset}&limit=${limit}`),
   run: (id: number) => request<Run>(`/api/runs/${id}`),
   /** A window of one run's journal, past the page the detail route carries. No component
    *  reads this yet: the step table still draws the first page and says how many it is not
@@ -2335,6 +2378,11 @@ export const api = {
    *  table's own paging will read when it is built. */
   runSteps: (id: number, offset = 0, limit = 50) =>
     request<RunSteps>(`/api/runs/${id}/steps?offset=${offset}&limit=${limit}`),
+  /** A window of one run's per-item outcomes, reconstructed from the journal. Answers a
+   *  run still executing exactly as it answers one long finished. No component reads
+   *  this yet; it ships with the route for the same reason `runSteps` did. */
+  runOutcomes: (id: number, offset = 0, limit = 50) =>
+    request<RunOutcomes>(`/api/runs/${id}/outcomes?offset=${offset}&limit=${limit}`),
   /** Build a plan, over an explicitly named set. `"all"` covers the whole condemned
    *  set; an array reaps just those items, the safe path for a first, hand-picked
    *  deletion.

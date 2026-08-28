@@ -87,7 +87,7 @@ API_TS = REPO / "frontend" / "src" / "api.ts"
 WIRE_PACKAGE = "reaper.api."
 INNER_MODULES = ("reaper.engine.policy", "reaper.engine.explanation")
 
-#: Reconciled by hand against the tree: 133 under ``reaper.api.*`` and 17 across the two
+#: Reconciled by hand against the tree: 135 under ``reaper.api.*`` and 17 across the two
 #: engine modules.
 #:
 #: ``RewatchOddsOut`` adds 1, mirrored in the browser as ``RewatchOdds``.
@@ -101,10 +101,12 @@ INNER_MODULES = ("reaper.engine.policy", "reaper.engine.explanation")
 #: ``ThresholdCurveMeasuredRowOut``, ``ThresholdCurveMeasuredOut``,
 #: ``ThresholdCurveCountsOnlyRowOut``, ``ThresholdCurveCountsOnlyOut`` and
 #: ``ThresholdCurveNoScanOut``.
+#: ``RunOutcomeReadOut``/``RunOutcomesOut`` add 2 more, the per-item outcomes read that
+#: reconstructs a run's history from the journal instead of the in-memory report.
 #:
 #: This count is here because the collision assertion below is flag-shaped, and a flag
 #: cannot see a member that left the walk.
-_EXPECTED_SERVER_MODELS = 150
+_EXPECTED_SERVER_MODELS = 152
 
 #: Browser types whose server counterpart is spelled differently. Each is a real pair, the
 #: field sets are compared, and the rename is the only reason a suffix rule cannot find it.
@@ -190,8 +192,10 @@ CLIENT_ONLY = {
 # discriminated union itself, `ThresholdCurve`, is a type alias like `PolicyProbe` and is
 # counted by neither walk). Replaces the retired ratio resolver's four: `RatioResolved`,
 # `RatioNotEnoughHistory`, `RatioFloored` and `AppliedRatio`.
-EXPECTED_INTERFACES = 104
-EXPECTED_PAIRS = 102
+# Both +2 again for the per-item outcomes read: `RunOutcomeRead` pairs with
+# `RunOutcomeReadOut`, and `RunOutcomes` with `RunOutcomesOut`, both on the suffix rule.
+EXPECTED_INTERFACES = 106
+EXPECTED_PAIRS = 104
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")
