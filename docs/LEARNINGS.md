@@ -4549,10 +4549,13 @@ the process.
   to be read as "nobody is watching" — and silence is what a broken connection produces.
   Closing that hole means polling the endpoint anyway, as the heartbeat. `websocket-client`
   is not a dependency, and this is why it does not become one.
-- **The refresh is the one that costs Plex something**, and it fired per item, so a
-  200-item reap queued 200 directory scans while it was still deleting into those folders.
-  Sent once at the end instead, deduplicated by path, they start when nothing is competing
-  with them, and the settle wait covers them together rather than one at a time.
+- **The refresh is the one that costs Plex something**, and it fired immediately after
+  each delete, so a 200-item reap had Plex scanning the folders it was still deleting
+  into. Sending them at the end instead removes that overlap. It does **not** make them
+  fewer: each path is still one request and one scan, and a movie owns its folder, so a
+  200-movie reap still sends about 200. Fewer would mean widening each scan to a shared
+  parent, which for movies is the library root, and the trash purge is gated on no
+  whole-section scan having run.
 
 **`LibrarySection.totalSize` is a plexapi `cached_data_property`, on a section object plexapi
 also caches for the life of the connection.** So the trash gate's before-count and

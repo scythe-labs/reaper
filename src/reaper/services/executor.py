@@ -2697,18 +2697,23 @@ class Executor:
         """Remember that Plex must rescan this directory. Sends nothing yet.
 
         Called whenever a file is gone, so Plex can be told the item is missing. The
-        send itself waits for the end of the run (``_flush_refreshes``). A refresh fires
-        an asynchronous Plex scan that can take minutes, so sending one per item would
-        have Plex scanning the folders this run is still deleting from, for the whole
-        length of the run. Queued instead, the scans start once, together, when nothing
-        else is competing with them.
+        send itself waits for the end of the run (``_flush_refreshes``).
 
-        A dict keyed by path, so two items under one folder are scanned once. The value
-        is which Plex listings this run removes under that path (a merged bind lists one
-        file under several), unioned rather than counted, so a listing two candidates
-        both name contributes one allowance and not two (see ``_deleted_by_section``).
-        Under-counting is impossible in the other direction: one rating key is one
-        section entry.
+        **This changes when the rescans are sent, not how many.** Each queued path is
+        still one request and one Plex scan, and most reaps queue about one path per
+        item, since a movie owns its folder. What it stops is the overlap: a refresh
+        fires an asynchronous scan that can take minutes, so sending one straight after
+        each delete had Plex scanning the folders the run was still deleting from, for
+        the whole length of the run. Making the scans fewer would mean widening each one
+        to a shared parent, which for movies is the library root, and a whole-section
+        scan is exactly what the trash purge below is not allowed to follow.
+
+        A dict keyed by path, so two items that really do share a folder are scanned
+        once. The value is which Plex listings this run removes under that path (a merged
+        bind lists one file under several), unioned rather than counted, so a listing two
+        candidates both name contributes one allowance and not two (see
+        ``_deleted_by_section``). Under-counting is impossible in the other direction:
+        one rating key is one section entry.
 
         An empty ``plex_keys`` is a real and meaningful value: this delete removes no
         entry from the section's own count, so it grants the purge no allowance and the
@@ -2778,9 +2783,8 @@ class Executor:
         """Rescan the folders this run emptied, then purge the stale entries, so Plex's
         view stays honest.
 
-        The rescans go first and all at once (``_flush_refreshes``), because nothing can
-        be purged until Plex has noticed the files are gone, and the settle wait below
-        then covers every scan together instead of once per item.
+        The rescans go first (``_flush_refreshes``), because nothing can be purged until
+        Plex has noticed the files are gone.
 
         The purge is the single most dangerous call in the app (an unmounted library, a
         scan and an empty trash is how whole libraries vanish), so it is triply
