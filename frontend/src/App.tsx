@@ -5,14 +5,12 @@ import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "re
 import { useTranslation } from "react-i18next";
 import { applyAccent } from "./accent";
 import { Announcer, useSlowWait } from "./announce";
-import { api, ApiError, type AuthUser, type Verdict } from "./api";
+import { api, type AuthUser, type Verdict } from "./api";
 import { BackNavProvider, useBackGuard, useBackNav, useModalOpen } from "./backnav";
 import { Login } from "./components/Login";
-import { ModalShell } from "./components/ModalShell";
 import { NotInScanPanel } from "./components/NotInScanPanel";
 import type { PolicySectionId } from "./components/PolicyEditor";
 import { ReapBar } from "./components/ReapBar";
-import { ReapConfirm } from "./components/ReapConfirm";
 import { ScanFreshness } from "./components/ScanFreshness";
 import { SectionNav } from "./components/SectionNav";
 import { UserMenu } from "./components/UserMenu";
@@ -30,7 +28,6 @@ import { usePageScrollLock } from "./pageScrollLock";
 import { useGeneralSettings, useSeedLanguage } from "./useGeneralSettings";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "./useMediaQuery";
 import { useScanSettled } from "./useScanSettled";
-import { Notice } from "./components/Notice";
 import { SafetyBanner } from "./components/SafetyBanner";
 import { ScanLine } from "./components/ScanLine";
 
@@ -64,47 +61,6 @@ function RouteLoading() {
       <span className="spinner spinner-xl" aria-hidden="true" />
       <p className="fair-loading-lead">{t("common.loading")}</p>
     </div>
-  );
-}
-
-/** Reopens the reap sheet for a run by id, from the app-wide bar's View button on any screen.
- *  Fetches the run and hands it to the same ReapConfirm the review queue uses, which
- *  re-attaches to the live status and shows progress or the finished report. */
-function ReapSheetLoader({ runId, onClose }: { runId: number; onClose: () => void }) {
-  const { t } = useTranslation();
-  const {
-    data: run,
-    isPending,
-    error,
-  } = useQuery({ queryKey: ["run", runId], queryFn: () => api.run(runId) });
-  if (run) return <ReapConfirm run={run} onClose={onClose} />;
-  // This component must always render something. The query retries once with no
-  // refetch-on-focus, so a failed fetch settles into an error state, and a null render then
-  // would leave the bar's View button permanently dead: useBackGuard keys on `reapSheetRun`,
-  // not on what this renders, so a Back press would silently close an invisible sheet. Show
-  // a loading line or a plain error, both routed through ModalShell's own close button.
-  //
-  // The error text here must never tell the operator to reload the page. This sheet renders
-  // outside `<main>`, over a mounted review queue, unlike the app's other error screens. The
-  // queue keeps its selection only in component state (its filters are the only part that
-  // persists), and "Select everything matching" can build that selection by paging through
-  // thousands of rows. A reload would drop it with no warning, since nothing in the app
-  // confirms before a page unload. Point the operator at the close button this modal already
-  // has instead.
-  return (
-    <ModalShell title={t("shell.app.reapReportTitle")} onClose={onClose}>
-      <div className="service-form">
-        {isPending ? (
-          <p className="help">{t("shell.app.loadingReap")}</p>
-        ) : (
-          <Notice tone="error">
-            {error instanceof ApiError && error.status === 404
-              ? t("shell.app.reapUnavailable")
-              : t("shell.app.reapLoadFailed")}
-          </Notice>
-        )}
-      </div>
-    </ModalShell>
   );
 }
 
@@ -145,9 +101,6 @@ function Dashboard({ user }: { user: AuthUser }) {
     setScalesUser(null);
     setScalesUnmatched(true);
   };
-  // The reap sheet reopened from the app-wide bar's View, by run id, on any screen.
-  const [reapSheetRun, setReapSheetRun] = useState<number | null>(null);
-
   // A side panel is open: the why panel, the show panel, or one of the Scales panels, all of
   // which render as `main.split`'s second column beside their list.
   const splitOpen =
@@ -486,7 +439,6 @@ function Dashboard({ user }: { user: AuthUser }) {
   useBackGuard(selected !== null && view === "review", () => setSelected(null));
   useBackGuard(scalesUser !== null && view === "fairness", () => setScalesUser(null));
   useBackGuard(scalesUnmatched && view === "fairness", () => setScalesUnmatched(false));
-  useBackGuard(reapSheetRun !== null, () => setReapSheetRun(null));
 
   return (
     <div className="app">
@@ -539,7 +491,7 @@ function Dashboard({ user }: { user: AuthUser }) {
           it runs a page-level axe audit that catches a landmark like this going missing. */}
       <section className="app-status" aria-label={t("shell.app.statusLabel")}>
         <SafetyBanner onGoToDeletion={() => goToPolicySection("deletion")} />
-        <ReapBar onView={(runId) => setReapSheetRun(runId)} />
+        <ReapBar onGoToReap={() => setView("reap")} />
         {view === "review" && (
           <ScanFreshness
             snapshot={snapshot}
@@ -666,9 +618,6 @@ function Dashboard({ user }: { user: AuthUser }) {
           )}
         </Suspense>
       </main>
-      {reapSheetRun !== null && (
-        <ReapSheetLoader runId={reapSheetRun} onClose={() => setReapSheetRun(null)} />
-      )}
     </div>
   );
 }

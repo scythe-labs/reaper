@@ -431,7 +431,7 @@ describe("the app-wide reap bar", () => {
     renderWithProviders(
       <>
         <Announcer />
-        <ReapBar onView={() => {}} />
+        <ReapBar onGoToReap={() => {}} />
       </>,
       { client: queryClient },
     );
@@ -522,7 +522,7 @@ describe("the app-wide reap bar", () => {
     renderWithProviders(
       <>
         <Announcer />
-        <ReapBar onView={() => {}} />
+        <ReapBar onGoToReap={() => {}} />
       </>,
       { client: queryClient },
     );
@@ -546,7 +546,7 @@ describe("the app-wide reap bar", () => {
     const client = testQueryClient();
     client.setQueryData(["reapStatus"], finished);
     const user = userEvent.setup();
-    const first = renderWithProviders(<ReapBar onView={() => {}} />, { client });
+    const first = renderWithProviders(<ReapBar onGoToReap={() => {}} />, { client });
 
     await user.click(await screen.findByRole("button", { name: "Dismiss" }));
     expect(screen.queryByText(/Reaped\./)).not.toBeInTheDocument();
@@ -555,7 +555,7 @@ describe("the app-wide reap bar", () => {
     first.unmount();
     const client2 = testQueryClient();
     client2.setQueryData(["reapStatus"], finished);
-    renderWithProviders(<ReapBar onView={() => {}} />, { client: client2 });
+    renderWithProviders(<ReapBar onGoToReap={() => {}} />, { client: client2 });
     expect(screen.queryByText(/Reaped\./)).not.toBeInTheDocument();
     window.localStorage.removeItem(ACK_KEY);
   });

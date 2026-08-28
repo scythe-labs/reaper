@@ -207,10 +207,12 @@ const SITES: Site[] = [
     seenIn: ["components/ServiceModal.tsx"],
   },
   {
-    what: "the title, or the media key when there is none, on the screen confirming a deletion",
-    selectors: [".reap-item-title"],
-    classInTsx: "reap-item-title",
-    seenIn: ["components/ReapConfirm.tsx"],
+    what: "the title, or the media key when there is none, in the reap's item-status log and result",
+    selectors: [".feed-title"],
+    classInTsx: "feed-title",
+    // `OutcomeFeedRow` renders it in all three of the Reap tab's outcome lists: the live log
+    // while a run executes, the done card's kept-by-checks list, and the read-only run detail.
+    seenIn: ["components/ReapPlan.tsx"],
   },
   {
     what: "a Plex server's name, from plex.tv",

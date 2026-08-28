@@ -113,7 +113,12 @@ const HOW_TO_UPDATE =
 //: The Reap tab redesign (Phase 3) adds 6: the reaping card's "removed" tile and its "now
 //: removing" line, the progress bar's accessible value text, the item-status log's heading
 //: and its "kept: {reason}" fragment, and the history footer's "Showing N of M" count.
-const EXPECTED_REQUIRED_COUNT = 1179;
+//:
+//: Mission Control (Phase 4) drops 8: the confirm sheet no longer shows progress, a report, or
+//: a failure of its own. It closes the moment a reap starts, and the Reap tab and app-wide bar
+//: carry the run from there. Gone are the progress tick and item counter, the freed and spared
+//: fragments, the result line's reclaimed/spared/unmeasured pieces, and the failure body.
+const EXPECTED_REQUIRED_COUNT = 1171;
 
 describe("translator notes (locales/en/ui.notes.json)", () => {
   it("classifies a plain literal as not required, and an ICU or tagged one as required (rule 145)", () => {

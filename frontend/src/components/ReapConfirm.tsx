@@ -13,29 +13,25 @@
 //      the count and size, so muscle memory can't carry anyone through it, and a stale plan
 //      reads as obviously different. The server recomputes it and refuses anything else.
 //
-// Once started, the reap runs detached on the server, like a scan: this sheet polls its
-// status, shows live progress, and offers Stop. Closing the sheet no longer stops or loses
-// anything. The run keeps going, the app-wide reap bar carries the count and Stop to every
-// screen, and reopening shows the report. Stop is graceful: the run halts after the item in
-// flight and still tidies Plex for what was removed.
+// The sheet's job ends when the reap begins. On Reap it seeds the shared status and closes, so
+// the operator drops straight back into the app. The Reap tab (ReapPlan.tsx) is the live
+// dashboard from there: progress, the item being removed, the per-item log, then the result read
+// back from what the run persisted. The app-wide reap bar (ReapBar.tsx) carries the count, Stop,
+// and the end announcement to every other screen. This sheet shows neither progress nor a report.
 //
 // Every stage announces itself out loud, because a poll can change what is on screen with
 // nobody touching anything: practice run pending, then passed, then the arm block and the
-// typed-phrase field appearing, then progress, then the report. Without an announcement, an
-// operator could be asked to type a content-bound phrase into a box they were never told had
-// arrived, and a run that deleted their files could finish in silence. The stages call
-// `announce()` and the phrase field takes focus when it mounts. The progress bar carries
-// `role="progressbar"` with an `aria-valuetext` a person would say, and its ticks are
-// throttled to phase changes and tenths, never per item, so a run of 400 files polling every
-// second does not talk over everything else in the app.
+// typed-phrase field appearing. Without an announcement, an operator could be asked to type a
+// content-bound phrase into a box they were never told had arrived. The stages call
+// `announce()` and the phrase field takes focus when it mounts.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
-import { ApiError, api, type ReapStatus, type Run, type RunReport } from "../api";
+import { ApiError, api, type Run, type RunReport } from "../api";
 import { describeError } from "../errors";
-import { bytes, count, souls } from "../format";
+import { bytes, souls } from "../format";
 import { usePlexTrash, trashWarning } from "../usePlexTrash";
 import { useSafety } from "../useSafety";
 import { composeError } from "../why";
@@ -46,13 +42,16 @@ import { Notice } from "./Notice";
 export function ReapConfirm({
   run: openedWith,
   onClose,
-  onDone,
+  onStarted,
 }: {
   /** The plan to confirm, as the caller holds it. It seeds the shared cache entry below; only
    *  its id is relied on afterwards, so a caller holding a captured copy is not a problem. */
   run: Run;
   onClose: () => void;
-  onDone?: () => void;
+  /** The reap began (Execute succeeded). Fired before the sheet closes, so a caller can react
+   *  to the items now being deleted (the review queue clears its selection). Cancel and ✕ do
+   *  not fire it. */
+  onStarted?: () => void;
 }) {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
@@ -87,29 +86,20 @@ export function ReapConfirm({
     onSuccess: setDryReport,
   });
 
-  // The live reap status, shared with the app-wide reap bar (one cache key, one poll). Read
-  // on open so this sheet re-attaches to a run already in flight, and polled while running.
-  // Idle still polls, slowly: a reap started from a phone or a second tab must reach an
-  // already-open sheet, which is otherwise still offering Execute for a plan now in flight.
+  // The live reap status, shared with the app-wide reap bar and the Reap tab (one cache key,
+  // one poll). This sheet only confirms a fresh plan, so it never watches its own run here; it
+  // reads this to learn whether a DIFFERENT run holds the single reap slot. Idle still polls,
+  // slowly: a reap started from a phone or a second tab must reach an already-open sheet, which
+  // is otherwise still offering Execute for a slot now taken.
   const reap = useQuery({
     queryKey: ["reapStatus"],
     queryFn: api.reapStatus,
     refetchInterval: (q) => (q.state.data?.running ? 1000 : 15000),
   });
   const status = reap.data;
-  const mine = status?.run_id === run.id;
-  const running = !!status?.running && mine;
-  const stopping = !!status?.stopping && mine;
   // A DIFFERENT run holds the single reap slot. The arm+confirm stage must not present itself
   // as ready to fire while it does (the server would 409 a second execute anyway).
-  const otherRunning = !!status?.running && !mine;
-  // The after-action report lands on the status when the run ends; only this run's own.
-  const report = mine && status && !status.running ? status.report : null;
-  // The run raised instead of finishing: deletion switched off mid-run, a cap breached, a
-  // failed canary, a crash after N files were already gone. There is no report to show, and
-  // files may already be deleted, so the confirm stage must not re-arm itself in silence.
-  // It says what happened and offers nothing but Done.
-  const failed = mine && !!status && !status.running && status.phase === "error";
+  const otherRunning = !!status?.running && status.run_id !== run.id;
 
   const exec = useMutation({
     // What the operator typed, verbatim, never the phrase this sheet already holds. The
@@ -117,8 +107,14 @@ export function ReapConfirm({
     // human check to a `disabled` attribute the server cannot tell from an echo, and would
     // deadlock the moment the expected phrase moved under an open sheet.
     mutationFn: () => api.executeRun(run.id, typed.trim()),
-    // Seed the shared status so "running" shows at once, without waiting for the first poll.
-    onSuccess: (s) => queryClient.setQueryData(["reapStatus"], s),
+    onSuccess: (s) => {
+      // Seed the shared status so the Reap tab and the app-wide bar show "running" at once,
+      // without waiting for the first poll. Then hand the run to them and close: the run is
+      // detached on the server, so this sheet has nothing left to show.
+      queryClient.setQueryData(["reapStatus"], s);
+      onStarted?.();
+      onClose();
+    },
     onError: (e) => {
       // The phrase moved while this sheet was open (a spare or reap elsewhere, a raised
       // unknown-size allowance). Pull the run again so the label, the placeholder, and the
@@ -130,26 +126,7 @@ export function ReapConfirm({
     },
   });
 
-  const stop = useMutation({
-    mutationFn: () => api.stopRun(run.id),
-    onSuccess: (s) => queryClient.setQueryData(["reapStatus"], s),
-  });
-
-  // When the run ends, let the parent react (e.g. clear a selection). Refreshing the caches
-  // the reap invalidated is NOT done here: this sheet is meant to be closed mid-run, so the
-  // work lives on the always-mounted reap bar (`ReapBar.tsx`), which cannot be unmounted out of it.
-  const endedRef = useRef(false);
-  useEffect(() => {
-    if ((report || failed) && !endedRef.current) {
-      endedRef.current = true;
-      onDone?.();
-    }
-  }, [report, failed, onDone]);
-
   // Prove the plan the moment the sheet opens. Nothing is sent; this only walks interlocks.
-  // Skipped when reopening a run already in flight, finished, or failed (via the bar's View):
-  // the executor refuses a dry run on a non-PLANNED run, and its "practice run" blurb must
-  // never render over live progress, the report, or a failure.
   // Keyed on the phrase, not just the run id. The phrase is content-bound, so the server
   // moving it means this plan now covers different items, which is exactly what the 409
   // recovery above refetches. Re-proving on that change stops the sheet from showing
@@ -158,14 +135,12 @@ export function ReapConfirm({
   // never happened for this content. Keying on the run id alone would not catch this, since
   // the run id never changes here even though the phrase does.
   useEffect(() => {
-    const s = queryClient.getQueryData<ReapStatus>(["reapStatus"]);
-    const active = s?.run_id === run.id && (s.running || s.report != null || s.phase === "error");
     setDryReport(null);
     // The phrase is content-bound, so it moving means this sheet now covers different
     // items. A tick that survived that would be consent carried from a plan the operator
     // is no longer looking at.
     setTrashAcked(false);
-    if (!active) dry.mutate();
+    dry.mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run.id, run.confirmation_phrase]);
 
@@ -174,14 +149,12 @@ export function ReapConfirm({
   // Emptying Plex's trash takes the records of everything already in there, not just what
   // this run deleted, and the executor's count-delta gate structurally cannot see those
   // items. So the operator is told and must tick before Reap enables. The tick is dropped
-  // whenever the plan's content changes (the effect below), so consent from one plan can
+  // whenever the plan's content changes (the effect above), so consent from one plan can
   // never carry into a different one.
   const trash = usePlexTrash();
   const warn = trashWarning(trash.data, trash.isError);
   const trashOk = !warn.show || trashAcked;
-  const canExecute =
-    armed && dryClean && phraseOk && trashOk && !exec.isPending && !running && !failed;
-  const pct = status && status.total > 0 ? Math.round((status.done / status.total) * 100) : 0;
+  const canExecute = armed && dryClean && phraseOk && trashOk && !exec.isPending && !otherRunning;
 
   // The typed-phrase field appears part-way through a dialog the operator is already standing
   // in, on a poll rather than on anything they did, so nothing carries them to it. Focus goes
@@ -192,23 +165,13 @@ export function ReapConfirm({
   // disclosure and the reason Reap will not light. Left alone, a reader moving down the dialog
   // meets the notice in document order, which is what happened before this focus move existed.
   const phraseRef = useRef<HTMLInputElement>(null);
-  const armStage = dryClean && !running && !report && !failed && !otherRunning && armed;
+  const armStage = dryClean && !otherRunning && armed;
   useEffect(() => {
     if (armStage && trashOk) phraseRef.current?.focus();
   }, [armStage, trashOk]);
 
-  // The dialog's purpose changes when the run ends: from "confirm this" to "read what
-  // happened", so focus moves to the outcome rather than leaving the operator standing on a
-  // stage that is no longer on screen.
-  const outcomeRef = useRef<HTMLDivElement>(null);
-  const ended = !!report || failed;
-  useEffect(() => {
-    if (ended) outcomeRef.current?.focus();
-  }, [ended]);
-
-  // What the run has said so far, so a poll that changes nothing says nothing. `null` until the
-  // first announcement, which is what keeps a sheet REOPENED onto a finished run from
-  // announcing a report the operator has already heard once.
+  // What the sheet has said so far, so a poll that changes nothing says nothing. `null` until
+  // the first announcement.
   const spokenRef = useRef<string | null>(null);
   // `useCallback` with no dependencies, so the effect below can name it honestly in its own
   // deps rather than reaching for a disable directive: everything it reads is a ref.
@@ -217,26 +180,11 @@ export function ReapConfirm({
     spokenRef.current = line;
     announce(line);
   }, []);
-  // Stage announcements, in the order an operator meets them. Tenths and not percent: the
-  // status polls every second, so a per-item or per-percent line on a run of hundreds would
-  // hold the app's one polite region for the length of the run. `Math.floor(pct / 10)` makes
-  // "40% deleted." at most ten sentences whatever the run's size.
-  //
-  // The run's end is deliberately not announced here. `ReapBar` announces it, and that bar is
-  // mounted on every screen, where this sheet is only mounted while the operator has it open,
-  // so the bar is the one that always fires. A copy here would say it twice to anyone still
-  // standing in the sheet. What this owns is the stages the bar cannot see: the practice run,
-  // the phrase field arriving, and the progress ticks, which belong to the surface the
-  // operator opened to watch them.
-  const tenth = Math.floor(pct / 10);
+  // Stage announcements, in the order an operator meets them: the practice run settling, then
+  // the arm block and phrase field arriving. The run's own progress and end are not announced
+  // here: this sheet is closed by the time either happens, and ReapBar owns the end
+  // announcement on every screen.
   useEffect(() => {
-    if (report || failed) return;
-    if (running)
-      return say(
-        stopping
-          ? t("reapConfirm.progress.announceStopping")
-          : t("reapConfirm.progress.announceTick", { pct: tenth * 10 }),
-      );
     if (!dryClean) return;
     // From here the spoken stage reads the same checks the screen does, rather than
     // re-deriving a weaker version of them. Reading them separately would risk two kinds of
@@ -253,24 +201,8 @@ export function ReapConfirm({
     if (safety.isError || !safety.data)
       return say(t("reapConfirm.practiceRun.announceUnknownSafety"));
     if (!armed) return say(t("reapConfirm.practiceRun.announceOff"));
-    // `pct` is deliberately absent from the deps: `tenth` is the throttle, and depending on the
-    // percent would re-run this on every poll to re-derive the same sentence.
     say(t("reapConfirm.practiceRun.announcePassed"));
-  }, [
-    failed,
-    report,
-    running,
-    stopping,
-    tenth,
-    dryClean,
-    armed,
-    otherRunning,
-    safety.isPending,
-    safety.isError,
-    safety.data,
-    say,
-    t,
-  ]);
+  }, [dryClean, armed, otherRunning, safety.isPending, safety.isError, safety.data, say, t]);
 
   return (
     <ModalShell
@@ -295,54 +227,41 @@ export function ReapConfirm({
       )}
 
       {/* Stage 1: the practice run ("dry run" is still the API's and the executor's word for
-          it, but every operator-facing string in this flow says practice run). Every block
-          here is gated on !running && !report && !failed, so none of it can render over live
-          progress, the finished report, or a failure (for example, after reopening a live run
-          from the app-wide bar). */}
-      {!running && !report && !failed && (
-        <>
-          {dry.isPending && <p className="blurb">{t("reapConfirm.practiceRun.checking")}</p>}
-          {dry.error && (
-            <Notice tone="error">
-              {t("reapConfirm.practiceRun.failed", { message: describeError(dry.error) })}
-            </Notice>
-          )}
-          {dryReport?.dry_run && dryReport.state === "aborted" && (
-            <div className="sim sim-info">
-              {/* "stopped", the one word the product uses for this. */}
-              <strong>{t("reapConfirm.practiceRun.stopped")}</strong>
-              <p>{dryReport.aborted_reason && composeError(dryReport.aborted_reason)}</p>
-            </div>
-          )}
-          {dryClean && (
-            <p className="dry-ok">
-              <span className="gate-mark" aria-hidden="true">
-                ✓
-              </span>{" "}
-              {t("reapConfirm.practiceRun.passed")}
-            </p>
-          )}
-        </>
+          it, but every operator-facing string in this flow says practice run). */}
+      {dry.isPending && <p className="blurb">{t("reapConfirm.practiceRun.checking")}</p>}
+      {dry.error && (
+        <Notice tone="error">
+          {t("reapConfirm.practiceRun.failed", { message: describeError(dry.error) })}
+        </Notice>
+      )}
+      {dryReport?.dry_run && dryReport.state === "aborted" && (
+        <div className="sim sim-info">
+          {/* "stopped", the one word the product uses for this. */}
+          <strong>{t("reapConfirm.practiceRun.stopped")}</strong>
+          <p>{dryReport.aborted_reason && composeError(dryReport.aborted_reason)}</p>
+        </div>
+      )}
+      {dryClean && (
+        <p className="dry-ok">
+          <span className="gate-mark" aria-hidden="true">
+            ✓
+          </span>{" "}
+          {t("reapConfirm.practiceRun.passed")}
+        </p>
       )}
 
       {/* Another reap holds the single slot: say so, rather than lighting a Reap button the
-          server would refuse. */}
-      {!running && !report && !failed && otherRunning && (
-        // `standing`: `otherRunning` is somebody ELSE's run, seen through the 1s/15s
-        // `["reapStatus"]` poll, so it inserts under a sheet that is already open with nothing
-        // pressed here at all. It is also the state of this sheet for as long as that run holds
-        // the slot, and the sheet reads in document order by design (the focus move below is
-        // withheld for the same reason).
+          server would refuse. `standing`: `otherRunning` is somebody ELSE's run, seen through
+          the poll, so it inserts under a sheet that is already open with nothing pressed here. */}
+      {otherRunning && (
         <Notice tone="warn" standing>
           {t("reapConfirm.otherRunning")}
         </Notice>
       )}
 
       {/* Plex's trash takes more than this reap deletes, so say so before the phrase field
-          and hold Reap until it is acknowledged. Rendered in the same stage gate as the arm
-          block: it is a decision about sending, so it must not sit over live progress, a
-          finished report, or a failure. */}
-      {warn.show && !running && !report && !failed && !otherRunning && (
+          and hold Reap until it is acknowledged. */}
+      {warn.show && !otherRunning && (
         <PlexTrashNotice
           known={warn.known}
           unreadable={warn.unreadable}
@@ -352,9 +271,9 @@ export function ReapConfirm({
         />
       )}
 
-      {/* Stage 2: arm + typed confirmation, shown once the practice run is clean and nothing
-          is running or finished (here or elsewhere) yet. */}
-      {dryClean && !running && !report && !failed && !otherRunning && (
+      {/* Stage 2: arm + typed confirmation, shown once the practice run is clean and no other
+          run holds the slot. */}
+      {dryClean && !otherRunning && (
         <div className="reap-arm">
           {!armed ? (
             // Three states, never one definite claim: only a switch we actually read may
@@ -406,153 +325,6 @@ export function ReapConfirm({
             </button>
             <button className="danger" disabled={!canExecute} onClick={() => exec.mutate()}>
               {exec.isPending ? t("reapConfirm.reapingLabel") : t("reapConfirm.execute")}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Reaping: live progress and a graceful Stop, while this run is in flight. Closing the
-          sheet here leaves the run going. The app-wide bar keeps the count and Stop. */}
-      {running && status && (
-        <div className="reap-arm">
-          <div className="reap-progress">
-            <div className="prog-head">
-              <span className="prog-count">
-                {t("reapConfirm.progress.count", {
-                  done: count(status.done),
-                  total: count(status.total),
-                })}
-              </span>
-              <span className="prog-note">
-                {t("reapConfirm.freedAmount", { bytes: bytes(status.deleted_bytes) })}
-                {status.skipped > 0 && t("reapConfirm.sparedAmount", { n: count(status.skipped) })}
-              </span>
-            </div>
-            {/* A bare `<div>` with an inline width is a picture of a number and nothing else.
-                `aria-valuetext` carries the counts a person would actually say, rather than
-                leaving a reader to read out "62". A progressbar is not a live region, so this
-                is read when the operator asks for it. The announcing is throttled separately,
-                above. `ScanLine` uses the same shape. */}
-            <div
-              className="prog-track"
-              role="progressbar"
-              aria-label={t("reapConfirm.progress.ariaLabel")}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={pct}
-              aria-valuetext={t("reapConfirm.progress.valueText", {
-                pct,
-                done: count(status.done),
-                total: count(status.total),
-              })}
-            >
-              <div className="prog-fill" style={{ width: `${pct}%` }} />
-            </div>
-          </div>
-          {stop.error && <Notice tone="error">{describeError(stop.error)}</Notice>}
-          <div className="reap-confirm-actions">
-            <span className={`reap-running ${stopping ? "stopping" : "deleting"}`}>
-              <span className="spinner" aria-hidden="true" />
-              {stopping ? t("reapConfirm.stoppingLabel") : t("reapConfirm.reapingLabel")}
-            </span>
-            <button
-              className="stop-btn"
-              disabled={stopping || stop.isPending}
-              onClick={() => stop.mutate()}
-            >
-              {stopping ? t("reapConfirm.stopping") : t("reapConfirm.stop")}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Stopped by a problem. There is no report, and files may already be gone, so the one
-          thing on offer is Done: re-arming the phrase here would invite a second execute the
-          server refuses just as silently. What was removed is on the reap bar's report. */}
-      {failed && (
-        // Focus lands here when the run ends: the dialog has stopped being a confirmation and
-        // become the only account of what happened to files that are already gone.
-        <div className="reap-arm" ref={outcomeRef} tabIndex={-1}>
-          <Notice tone="error">
-            <Trans
-              i18nKey="reapConfirm.failed.body"
-              values={{
-                error: status?.error_reason
-                  ? composeError(status.error_reason)
-                  : t("reapConfirm.failed.unknownError"),
-              }}
-              components={{ strong: <strong /> }}
-            />
-          </Notice>
-          <div className="reap-confirm-actions">
-            <button className="primary" onClick={onClose}>
-              {t("common.done")}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Result: the after-action checklist, from the finished run's status. */}
-      {report && (
-        // Same move as the failure branch above: the run is over, and this is what the operator
-        // is here for now.
-        <div className="reap-result" ref={outcomeRef} tabIndex={-1}>
-          <div className="reap-tally">
-            <strong className="reap-souls">
-              {t("reapConfirm.result.reclaimed", { souls: souls(report.would_delete_items) })}
-            </strong>
-            <span className="muted">
-              {/* The count above covers every item; this covers only the ones with a
-                  size. When they differ, say so, rather than letting the byte figure
-                  read as the whole story. */}
-              {t("reapConfirm.freedAmount", { bytes: bytes(report.deleted_bytes) })}
-              {report.deleted_unmeasured > 0 &&
-                t("reapConfirm.result.unmeasuredSuffix", { n: count(report.deleted_unmeasured) })}
-              {report.skipped > 0 &&
-                t("reapConfirm.result.sparedAtLastMoment", { n: count(report.skipped) })}
-            </span>
-          </div>
-          {report.state === "aborted" && (
-            <p className="reap-halt">
-              {report.aborted_reason && composeError(report.aborted_reason)}
-              {report.would_delete_items > 0 && t("reapConfirm.result.refreshedNote")}
-            </p>
-          )}
-          <ul className="reap-checklist">
-            {report.outcomes.map((o) => (
-              <li key={o.media_key} className={`reap-item state-${o.state}`}>
-                <span className="reap-item-title">
-                  {o.title || o.media_key}
-                  {o.is_canary && (
-                    <span className="canary-tag">{t("reapPlan.steps.testItem")}</span>
-                  )}
-                </span>
-                <ul className="reap-checks">
-                  {/* A glyph and a color alone would not distinguish pass from fail: NVDA at
-                      its default symbol level speaks neither ✓ nor ✗, so the two lines would
-                      read out identically, in the report for a run that has just deleted
-                      files. The word carries the distinction, and the glyph goes decorative
-                      (the same split `Notice` makes for its tone). */}
-                  {o.checks.map((c, i) => (
-                    <li key={i} className={c.ok ? "check-ok" : "check-bad"}>
-                      <span className="gate-mark" aria-hidden="true">
-                        {c.ok ? "✓" : "✗"}
-                      </span>
-                      <span className="sr-only">
-                        {c.ok
-                          ? t("reapConfirm.result.checkPassed")
-                          : t("reapConfirm.result.checkFailed")}
-                      </span>
-                      {composeError(c.label_reason)}
-                    </li>
-                  ))}
-                </ul>
-              </li>
-            ))}
-          </ul>
-          <div className="reap-confirm-actions">
-            <button className="primary" onClick={onClose}>
-              {t("common.done")}
             </button>
           </div>
         </div>

@@ -170,10 +170,10 @@
   margin: var(--space-lg) var(--space-3xl);
 }
 
-/* A running reap: live progress and the graceful Stop. Stop follows the keep-first grammar:
-   it is the safe action ("keep the rest"), so it wears the green protect invite like Spare,
-   never red, since red means delete everywhere else. Fixed width so "Stop" -> "Stopping…"
-   never resizes it. */
+/* The graceful Stop, shared by the Reap tab's head and the app-wide bar. Stop follows the
+   keep-first grammar: it is the safe action ("keep the rest"), so it wears the green protect
+   invite like Spare, never red, since red means delete everywhere else. Fixed width so
+   "Stop" -> "Stopping…" never resizes it. */
 .stop-btn {
   min-width: 8.2rem;
   border-color: var(--protect);
@@ -185,50 +185,7 @@
   background: color-mix(in srgb, var(--protect) 16%, var(--surface));
   border-color: var(--protect);
 }
-.reap-running {
-  margin-inline-end: auto;
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  font-size: var(--text-base);
-}
-.reap-running.deleting {
-  color: var(--condemn);
-}
-.reap-running.stopping {
-  color: var(--muted);
-}
-/* The reap indicator's own spinner: it rides the parent's currentColor (red while deleting,
-   gray while stopping), so it is scoped to .reap-running. An unscoped `.spinner` here would
-   redefine the shared spinner (top of file) and silently clobber .spinner-lg / .spinner-xl
-   everywhere: a naming collision, not a second spinner. */
-.reap-running .spinner {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
-  border-top-color: currentColor;
-  animation: spin 0.7s linear infinite;
-}
-.reap-progress {
-  margin: 1rem 0 0.2rem;
-}
-.reap-progress .prog-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: var(--space-lg);
-  font-size: var(--text-md);
-  margin-bottom: 0.4rem;
-}
-.prog-count {
-  font-weight: var(--weight-semi);
-  font-variant-numeric: tabular-nums;
-}
-.prog-note {
-  color: var(--muted);
-}
+/* The reap progress bar, on the Reap tab's reaping card and the app-wide bar. */
 .prog-track {
   height: 7px;
   border-radius: var(--radius-pill);
@@ -314,87 +271,10 @@
 /* Only what this file declares. `.spinner` and `.why-loading` each stop beside their own
    rule instead. See the note in 06-spinner.css for why. */
 @media (prefers-reduced-motion: reduce) {
-  .reap-running .spinner {
-    animation: none;
-  }
   .prog-fill,
   .reap-bar-fill {
     transition: none;
   }
-}
-
-/* The reap result: a per-item checklist, like the why-panel's ticks. */
-.reap-result {
-  margin-top: var(--space-3xl);
-  padding-top: var(--space-3xl);
-  border-top: 1px solid var(--border);
-}
-.reap-tally {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.2rem 0.6rem;
-  margin-bottom: 0.9rem;
-}
-.reap-souls {
-  font-size: var(--text-xl);
-  color: var(--condemn);
-}
-.reap-halt {
-  margin: 0 0 0.9rem;
-  padding: 0.6rem 0.8rem;
-  border-radius: var(--radius);
-  background: var(--surface-2);
-  color: var(--text);
-  font-size: var(--text-md);
-}
-.reap-checklist {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xl);
-}
-.reap-item {
-  padding: 0.6rem 0.8rem;
-  border-radius: var(--radius);
-  background: var(--surface-2);
-}
-.reap-item.state-failed {
-  background: var(--condemn-soft);
-}
-.reap-item-title {
-  display: block;
-  font-weight: var(--weight-semi);
-  margin-bottom: var(--space-sm);
-  /* The title, or the media key when there is no title: a machine key with nothing to break
-     on, on the screen that confirms a deletion. */
-  overflow-wrap: anywhere;
-}
-.reap-checks {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-.reap-checks li {
-  display: flex;
-  align-items: baseline;
-  gap: 0.45rem;
-  font-size: var(--text-md);
-  color: var(--muted);
-}
-.reap-checks .check-ok .gate-mark {
-  color: var(--protect);
-}
-.reap-checks .check-bad {
-  color: var(--text);
-}
-.reap-checks .check-bad .gate-mark {
-  color: var(--condemn);
 }
 
 /* The what-changed modal (About). GitHub release notes are arbitrary markdown from outside

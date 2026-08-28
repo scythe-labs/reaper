@@ -11,11 +11,13 @@ import { Notice } from "./Notice";
 import { ackRun, useAckedRun } from "./runAck";
 
 /** The app-wide reap bar: shown on every screen of the app while a reap runs, so its count and
- *  its Stop are reachable after you close or navigate away from the reap sheet. A reap runs
- *  detached from the request that started it, so this bar (and Stop) survive navigating away
- *  and a tab reload: it re-attaches by polling the shared status. Not a safety surface (the
- *  always-on one is SafetyBanner), so it shows nothing when idle. Stop is graceful: the run
- *  halts after the item in flight and still tidies Plex, and deletion stays armed.
+ *  its Stop are reachable from wherever the operator is. The reap sheet closes the moment a run
+ *  starts, so this bar is the run's presence off the Reap tab. A reap runs detached from the
+ *  request that started it, so this bar (and Stop) survive navigating away and a tab reload: it
+ *  re-attaches by polling the shared status. Its View button opens the Reap tab, the live
+ *  dashboard and, once the run ends, the result. Not a safety surface (the always-on one is
+ *  SafetyBanner), so it shows nothing when idle. Stop is graceful: the run halts after the item
+ *  in flight and still tidies Plex, and deletion stays armed.
  *
  *  "Every screen" means every screen of the app, and the setup wizard is not one:
  *  `App.tsx`'s `Authed` returns it *instead of* `Dashboard`, so nothing under `Dashboard`
@@ -24,18 +26,19 @@ import { ackRun, useAckedRun } from "./runAck";
  *  `scan_ready` goes false, and the wizard takes the page with no reload, landing on the
  *  Connect step, which has Back and Skip, so Stop is two presses away rather than lost.
  *
- *  It mounts, runs, and reaches its end, "Reap failed." included, and announces each of these
+ *  It mounts, runs, and reaches its end, "Reap failed." included, and announces mount and end
  *  out loud. Its fill also carries `role="progressbar"`, the way `ScanLine`
- *  (components/ScanLine.tsx) does. The running ticks are deliberately not announced here: the
- *  reap sheet throttles and speaks them, and a bar that spoke too would say everything twice
- *  for anyone with the sheet open.
+ *  (components/ScanLine.tsx) does. The running ticks are deliberately not announced, by this bar
+ *  or the Reap tab: the visual progressbar carries them, and a run of hundreds polling every
+ *  second would otherwise hold the app's one polite region for the whole run. The end is the
+ *  moment worth speaking, and it is spoken once, here.
  *
  *  Tested directly rather than through `App`, as `WhyPanelFallback` is: what it owes an
  *  operator is a property of this component, and reaching it through the whole authed `App`
  *  tree would test the login gate instead. This component is exported for its tests; the
  *  export carries no other meaning here, since every file in this codebase exports its
  *  component. */
-export function ReapBar({ onView }: { onView: (runId: number) => void }) {
+export function ReapBar({ onGoToReap }: { onGoToReap: () => void }) {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
   // Shared with the Reap page's Done button and persisted, so dismissing a result on either
@@ -126,9 +129,14 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
           </span>
         </span>
         <span className="reap-bar-actions">
-          <button className="link" onClick={() => onView(runId)}>
-            {t("reapConfirm.bar.viewReport")}
-          </button>
+          {/* No report to open for an errored run: the executor raised before the run's own row
+              left PLANNED, so the Reap tab has no result card for it, and the failure is already
+              on this bar. A complete or aborted run has a result there. */}
+          {!errored && (
+            <button className="link" onClick={onGoToReap}>
+              {t("reapConfirm.bar.viewReport")}
+            </button>
+          )}
           <button className="sm" onClick={() => ackRun(runId)}>
             {t("reapConfirm.bar.dismiss")}
           </button>
@@ -180,7 +188,7 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
         )}
       </span>
       <span className="reap-bar-actions">
-        <button className="link" onClick={() => onView(runId)}>
+        <button className="link" onClick={onGoToReap}>
           {t("reapConfirm.bar.view")}
         </button>
         <button

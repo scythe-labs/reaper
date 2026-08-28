@@ -1356,9 +1356,6 @@
         "page": {
             "title": ""
         },
-        "steps": {
-            "testItem": ""
-        },
         "summary": {
             "setupUnknown": ""
         }
@@ -1380,11 +1377,6 @@
             "view": "",
             "viewReport": ""
         },
-        "failed": {
-            "body": "",
-            "unknownError": ""
-        },
-        "freedAmount": "",
         "heldBack": "",
         "otherRunning": "",
         "practiceRun": {
@@ -1397,22 +1389,10 @@
             "stopped": ""
         },
         "progress": {
-            "announceStopping": "",
-            "announceTick": "",
             "ariaLabel": "",
-            "count": "",
             "valueText": ""
         },
         "reapingLabel": "",
-        "result": {
-            "checkFailed": "",
-            "checkPassed": "",
-            "reclaimed": "",
-            "refreshedNote": "",
-            "sparedAtLastMoment": "",
-            "unmeasuredSuffix": ""
-        },
-        "sparedAmount": "",
         "stop": "",
         "stopping": "",
         "stoppingLabel": ""
@@ -2538,11 +2518,7 @@
     "shell": {
         "app": {
             "brandTagline": "",
-            "loadingReap": "",
             "loadingReaperEllipsis": "",
-            "reapLoadFailed": "",
-            "reapReportTitle": "",
-            "reapUnavailable": "",
             "routeLoadingSlow": "",
             "statusLabel": "",
             "stillLoadingReaper": ""

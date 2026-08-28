@@ -1872,9 +1872,6 @@
       "removedCount": "{done} of {total}",
       "stop": "Stop, keep the rest"
     },
-    "steps": {
-      "testItem": "test item"
-    },
     "summary": {
       "allowanceUnknown": "Reaper couldn't check how many titles with no known size it may remove, so it can't say how many this reap removes. {count} {n, plural, one {title} other {titles}} on the list can't be measured.",
       "blockers": {
@@ -1929,11 +1926,6 @@
       "viewReport": "View report"
     },
     "execute": "Reap",
-    "failed": {
-      "body": "<strong>The reap stopped on a problem.</strong> {error} Anything already removed is gone. Check the Review queue after the next scan.",
-      "unknownError": "Reaper couldn't say what went wrong."
-    },
-    "freedAmount": "{bytes} freed",
     "heldBack": "{souls} {n, plural, one {is} other {are}} held back. Reaper couldn't measure {n, plural, one {its} other {their}} size, so it won't delete {n, plural, one {it} other {them}}.",
     "otherRunning": "Another reap is running. Wait for it to finish, then reopen this to reap.",
     "practiceRun": {
@@ -1946,22 +1938,10 @@
       "stopped": "The plan stopped. Nothing would be touched."
     },
     "progress": {
-      "announceStopping": "Stopping after the current one.",
-      "announceTick": "{pct}% deleted.",
       "ariaLabel": "Reaping",
-      "count": "{done} of {total} souls",
       "valueText": "{pct}%, {done} of {total} removed"
     },
     "reapingLabel": "Reaping…",
-    "result": {
-      "checkFailed": "Failed: ",
-      "checkPassed": "Passed: ",
-      "reclaimed": "{souls} reclaimed",
-      "refreshedNote": " Plex is refreshed for what was removed, and a fresh scan is running so the queue matches your library.",
-      "sparedAtLastMoment": ", {n} spared at the last moment",
-      "unmeasuredSuffix": ", {n} of unknown size"
-    },
-    "sparedAmount": ", {n} spared",
     "stop": "Stop",
     "stopping": "Stopping…",
     "stoppingLabel": "Stopping after the current one…",
@@ -3127,11 +3107,7 @@
   "shell": {
     "app": {
       "brandTagline": "Grave decisions, clearly explained",
-      "loadingReap": "Loading the reap…",
       "loadingReaperEllipsis": "Loading Reaper…",
-      "reapLoadFailed": "Reaper couldn't load this reap. Close this and try View again.",
-      "reapReportTitle": "Reap report",
-      "reapUnavailable": "That reap is no longer available.",
       "routeLoadingSlow": "Still loading. Reaper is fetching this page.",
       "statusLabel": "Status",
       "stillLoadingReaper": "Still loading Reaper."

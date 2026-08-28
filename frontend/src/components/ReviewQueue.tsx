@@ -3043,7 +3043,7 @@ export function ReviewQueue({
           <ReapConfirm
             run={reapRun}
             onClose={() => setReapRun(null)}
-            onDone={() => setSelected(new Set())}
+            onStarted={() => setSelected(new Set())}
           />
         )}
       </section>
