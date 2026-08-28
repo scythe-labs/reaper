@@ -46,6 +46,7 @@ import { ReapBreakdown, useReapCounts } from "./ReapBreakdown";
 import { ReapConfirm } from "./ReapConfirm";
 import { ModalShell } from "./ModalShell";
 import { Notice } from "./Notice";
+import { ackRun, useAckedRun } from "./runAck";
 
 /** The link text beside one failing readiness check, naming where to go fix it. Written as a
  *  literal per key, like `reasonLabel` in ReapBreakdown.tsx, rather than composing a catalog
@@ -498,9 +499,9 @@ export function ReapPlan({
   const reaping = status?.running === true;
   // Mirrors ReapBar's own "ended" derivation off the same poll (not off having watched the
   // run live from here): a reload, this page's first mount included, reads the same status
-  // singleton ReapBar does and reaches the same answer. `dismissedRunId` is local, so pressing
-  // Done never touches the server; it only stops this page from showing this one run's result
-  // again until a different run ends.
+  // singleton ReapBar does and reaches the same answer. The dismissal is the shared,
+  // persisted run ack (runAck.ts): pressing Done never touches the server, it hides this
+  // run's result on both surfaces, across refreshes, until a different run ends.
   //
   // "error" is deliberately excluded, unlike ReapBar's own bar (which still has something to
   // show: a bare failure line). That phase is a refusal the executor raised before the run's
@@ -515,7 +516,7 @@ export function ReapPlan({
     (status.phase === "complete" || status.phase === "aborted")
       ? status.run_id
       : null;
-  const [dismissedRunId, setDismissedRunId] = useState<number | null>(null);
+  const dismissedRunId = useAckedRun();
   const showDone = endedRunId != null && endedRunId !== dismissedRunId;
 
   const stop = useMutation({
@@ -618,7 +619,7 @@ export function ReapPlan({
             <ReapingCard status={status} />
           ) : showDone ? (
             endedRun ? (
-              <DoneCard run={endedRun} onDismiss={() => setDismissedRunId(endedRunId)} />
+              <DoneCard run={endedRun} onDismiss={() => ackRun(endedRunId)} />
             ) : (
               <div className="reap-card">
                 <p className="muted">{t("common.loading")}</p>

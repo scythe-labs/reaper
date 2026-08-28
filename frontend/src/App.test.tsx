@@ -21,6 +21,7 @@ import { testQueryClient } from "./test/queryClient";
 import { renderWithProviders } from "./test/renderWithProviders";
 import { App } from "./App";
 import { ReapBar } from "./components/ReapBar";
+import { ACK_KEY } from "./components/runAck";
 import { ScanFreshness } from "./components/ScanFreshness";
 import { SectionNav } from "./components/SectionNav";
 import { UserMenu } from "./components/UserMenu";
@@ -528,6 +529,35 @@ describe("the app-wide reap bar", () => {
 
     await screen.findByText(/Reaped\./);
     expect(screen.queryByText(/Reap finished\./)).not.toBeInTheDocument();
+  });
+
+  it("keeps a dismissed result dismissed across a reload", async () => {
+    // The status poll reports the last run forever, so without a persisted ack every
+    // refresh brought the ended bar back after the operator dismissed it.
+    window.localStorage.removeItem(ACK_KEY);
+    const finished = {
+      ...idle,
+      run_id: 7,
+      phase: "complete",
+      deleted_items: 4,
+      deleted_bytes: 4 * 1024 ** 3,
+    };
+    apiMock.reapStatus.mockResolvedValue(finished);
+    const client = testQueryClient();
+    client.setQueryData(["reapStatus"], finished);
+    const user = userEvent.setup();
+    const first = renderWithProviders(<ReapBar onView={() => {}} />, { client });
+
+    await user.click(await screen.findByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByText(/Reaped\./)).not.toBeInTheDocument();
+
+    // A fresh mount stands in for the page reload.
+    first.unmount();
+    const client2 = testQueryClient();
+    client2.setQueryData(["reapStatus"], finished);
+    renderWithProviders(<ReapBar onView={() => {}} />, { client: client2 });
+    expect(screen.queryByText(/Reaped\./)).not.toBeInTheDocument();
+    window.localStorage.removeItem(ACK_KEY);
   });
 });
 

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
 import { announce } from "../announce";
@@ -8,6 +8,7 @@ import { describeError } from "../errors";
 import { bytes, count, souls } from "../format";
 import { composeError } from "../why";
 import { Notice } from "./Notice";
+import { ackRun, useAckedRun } from "./runAck";
 
 /** The app-wide reap bar: shown on every screen of the app while a reap runs, so its count and
  *  its Stop are reachable after you close or navigate away from the reap sheet. A reap runs
@@ -37,7 +38,9 @@ import { Notice } from "./Notice";
 export function ReapBar({ onView }: { onView: (runId: number) => void }) {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
-  const [dismissed, setDismissed] = useState<number | null>(null);
+  // Shared with the Reap page's Done button and persisted, so dismissing a result on either
+  // surface hides both, and a refresh does not bring it back.
+  const dismissed = useAckedRun();
   // Idle still polls, slowly. A reap can be started from a phone or a second tab, and this
   // bar carries the only Stop on most screens: going silent when nothing is running here
   // would leave an open tab dark through someone else's deletion (the scan line idle-polls
@@ -126,7 +129,7 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
           <button className="link" onClick={() => onView(runId)}>
             {t("reapConfirm.bar.viewReport")}
           </button>
-          <button className="sm" onClick={() => setDismissed(runId)}>
+          <button className="sm" onClick={() => ackRun(runId)}>
             {t("reapConfirm.bar.dismiss")}
           </button>
         </span>

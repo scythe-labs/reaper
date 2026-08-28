@@ -25,6 +25,7 @@ import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_PROFILE, DEFAULT_SNAPSHOT, IDLE_SCAN, READY_SETUP } from "../test/apiFixtures";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { ReapPlan } from "./ReapPlan";
+import { ACK_KEY } from "./runAck";
 
 const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),
@@ -167,6 +168,9 @@ function renderPlan() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The persisted run ack: dropped between tests so a Done click in one cannot hide the
+  // result a later test expects to see.
+  window.localStorage.removeItem(ACK_KEY);
   apiMock.safety.mockResolvedValue({ destructive_enabled: true });
   apiMock.setupStatus.mockResolvedValue(READY_SETUP);
   apiMock.latestSnapshot.mockResolvedValue(DEFAULT_SNAPSHOT);
@@ -568,6 +572,29 @@ describe("done", () => {
     expect(screen.queryByRole("button", { name: /^Reap 47 titles…$/ })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(await screen.findByRole("button", { name: /^Reap 47 titles…$/ })).toBeInTheDocument();
+    expect(screen.queryByText("Reap finished")).not.toBeInTheDocument();
+  });
+
+  it("keeps a dismissed result dismissed across a reload", async () => {
+    // The status poll reports the last run forever, so without a persisted ack every
+    // refresh resurrected the result the operator already pressed Done on.
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({ running: false, run_id: 12, phase: "complete" }),
+    );
+    mockHistory([
+      summary({ id: 12, state: "completed", deleted_items: 7, deleted_bytes: GB, skipped: 0 }),
+    ]);
+    mockOutcomes([]);
+    const user = userEvent.setup();
+    const { unmount } = renderPlan();
+
+    await user.click(await screen.findByRole("button", { name: "Done" }));
+    expect(screen.queryByText("Reap finished")).not.toBeInTheDocument();
+
+    // A fresh mount stands in for the page reload that used to bring the card back.
+    unmount();
+    renderPlan();
     expect(await screen.findByRole("button", { name: /^Reap 47 titles…$/ })).toBeInTheDocument();
     expect(screen.queryByText("Reap finished")).not.toBeInTheDocument();
   });
