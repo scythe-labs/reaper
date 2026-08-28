@@ -52,10 +52,13 @@ def upgrade() -> None:
     from reaper.services.run_totals import aggregate_rows, totals_query
 
     conn = op.get_bind()
+    # The state column stores the enum MEMBER NAME ('COMPLETED'), not the lowercase wire
+    # value: raw SQL here must match that spelling or the backfill silently touches
+    # nothing. tests/test_migrations.py seeds rows in the stored spelling to hold this.
     run_ids = [
         row[0]
         for row in conn.execute(
-            sa.text("SELECT id FROM reap_run WHERE state IN ('completed', 'aborted')")
+            sa.text("SELECT id FROM reap_run WHERE state IN ('COMPLETED', 'ABORTED')")
         ).fetchall()
     ]
     for run_id in run_ids:
