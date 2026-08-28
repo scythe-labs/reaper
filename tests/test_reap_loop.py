@@ -423,6 +423,12 @@ class TestDryRunProvesEverythingAndDeletesNothing:
         assert report.state is RunState.COMPLETED
         assert report.dry_run is True
         assert report.deleted_items == 0  # nothing was actually deleted
+        # What the run proved it would remove is counted apart from anything a check
+        # kept, with the frozen sizes behind it, so a practice run can state both numbers.
+        assert report.would_delete_items == 2
+        assert report.would_delete_bytes == 6 * GB
+        assert report.would_delete_unmeasured == 0
+        assert report.skipped == 0
         # Every step is recorded as what it would have done, as the raw request sequence,
         # not as an English "would" sentence.
         assert all(o.state is StepState.SKIPPED for o in report.outcomes)
@@ -2532,6 +2538,7 @@ class TestASpareIsHonoredAtExecuteTime:
 
         assert report.state is RunState.COMPLETED
         assert report.skipped == 1
+        assert report.would_delete_items == 0  # a veto is a keep, never a proven send
         assert report.outcomes[0].detail.id == "error.reap.step.spared_by_hand"
 
 

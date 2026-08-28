@@ -433,6 +433,19 @@ class StepOutcome:
     stale. A VERIFIED outcome needs no flag (``deleted_items`` already counts it), so this
     defaults False and is set only where a removal is proven under a failure."""
 
+    proven: bool = False
+    """Set on the SKIPPED outcome a dry run records for an item it proved it would delete.
+
+    A dry run's proof and a real check's veto both end SKIPPED, and the report must count
+    them apart: the proof is what the run would remove, the veto is what it would keep.
+    Carried as a flag beside the state rather than inferred from the detail's catalog key,
+    so the tally cannot silently break when the sentence around the plan text changes."""
+
+    proven_size_bytes: int | None = None
+    """The frozen ``Candidate.size_bytes`` of a ``proven`` item, so the report can say how
+    much a dry run would free. ``None`` on a proven item means the size is unknown, the
+    same meaning the column has. Always ``None`` when ``proven`` is False."""
+
     halts_run: bool = False
     """Set on a FAILED outcome the executor could not classify, which stops the whole run.
 
@@ -466,6 +479,18 @@ class RunReport:
     whole story."""
 
     skipped: int = 0
+    """Items a check kept, in a real run and a dry run alike. A dry run's own
+    prove-don't-send outcomes are not in here: those land in ``would_delete_items``."""
+
+    would_delete_items: int = 0
+    """Items a dry run proved it would delete. Always 0 for a real run."""
+
+    would_delete_bytes: int = 0
+    """Frozen bytes behind ``would_delete_items``, minus the unmeasured ones."""
+
+    would_delete_unmeasured: int = 0
+    """How many of ``would_delete_items`` had no size, so are absent from
+    ``would_delete_bytes``."""
 
     removed_unconfirmed: int = 0
     """Items whose file is gone but whose step ended FAILED: a delete Radarr honored whose
@@ -1655,7 +1680,18 @@ class Executor:
             )
 
             if outcome.state == StepState.SKIPPED:
-                report.skipped += 1
+                # A dry run's prove-don't-send outcome and a check's veto share the state,
+                # and the report counts them apart: the first is what the run would
+                # remove, the second is what it kept. Conflating them once made the
+                # practice run tell the operator it would remove nothing.
+                if outcome.proven:
+                    report.would_delete_items += 1
+                    if outcome.proven_size_bytes is None:
+                        report.would_delete_unmeasured += 1
+                    else:
+                        report.would_delete_bytes += outcome.proven_size_bytes
+                else:
+                    report.skipped += 1
                 self._emit_progress(done, total, report, outcome.title)
                 if not journalled:
                     raise ExecutionError("error.reap.journal_halt")
@@ -1851,6 +1887,8 @@ class Executor:
                 detail=Reason("error.reap.step.dry_run", {"plan": " -> ".join(parts)}),
                 title=candidate.title,
                 is_canary=is_canary,
+                proven=True,
+                proven_size_bytes=candidate.size_bytes,
             )
 
         # A real send. Each step is marked SENT and committed before its guarded call, and

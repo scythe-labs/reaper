@@ -517,7 +517,10 @@ class TestTheRunsApi:
 
         assert report["dry_run"] is True
         assert report["state"] == "completed"
-        assert report["would_delete_items"] == 0  # nothing actually deleted
+        # Proven, not deleted: the count says what the run would remove, and nothing a
+        # check kept, so a practice run can tell the operator both numbers honestly.
+        assert report["would_delete_items"] == 1
+        assert report["skipped"] == 0
         assert report["outcomes"][0]["state"] == "skipped"
         assert report["outcomes"][0]["is_canary"] is True  # the sole item is ordinal 0
         detail = report["outcomes"][0]["detail_reason"]

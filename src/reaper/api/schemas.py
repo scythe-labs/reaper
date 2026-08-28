@@ -683,11 +683,13 @@ class RunReportOut(BaseModel):
     executor recorded on ``RunReport``, as a typed reason the browser composes."""
 
     would_delete_items: int
-    """The count of items removed. In a real run this is what was actually deleted. In a
-    dry run it is 0, because a dry run proves the plan by skipping every send."""
+    """In a real run, the count of items actually deleted. In a dry run, the count the
+    run proved it would delete: every item it walked to the send and stopped, minus the
+    ones a live check kept (those are ``skipped``)."""
 
     deleted_bytes: int = 0
-    """Bytes reclaimed by a real run. 0 for a dry run.
+    """Bytes reclaimed by a real run, or, in a dry run, the bytes behind
+    ``would_delete_items``.
 
     Summed from the frozen ``Candidate.size_bytes``, so for movies it is a close lower
     bound on what the disk got back rather than an exact figure. Under-stating is the
@@ -698,6 +700,9 @@ class RunReportOut(BaseModel):
     Above zero only when the operator allowed unmeasured items. Hidden at zero."""
 
     skipped: int
+    """Items a live check kept, in a real run and a dry run alike. A dry run's own
+    prove-don't-send outcomes count into ``would_delete_items``, never here."""
+
     outcomes: list[RunOutcomeOut]
     """Per item: what happened, with a typed-reason checklist of the steps performed and
     which (if any) failed, for the browser to compose."""

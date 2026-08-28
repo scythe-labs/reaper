@@ -1005,11 +1005,14 @@ export interface RunReport {
   /** Why the run stopped early: the live reason the executor recorded on the run report, as
    *  a typed reason. `null` on a run that did not abort. */
   aborted_reason: ReasonKey | null;
+  /** What a real run actually deleted, or what a dry run proved it would delete. */
   would_delete_items: number;
+  /** The bytes behind `would_delete_items`, real or proven, minus the unmeasured ones. */
   deleted_bytes: number;
   /** How many deleted items had no size, so are absent from `deleted_bytes`. Above zero
    *  only when the operator allowed unmeasured items. Hidden at zero. */
   deleted_unmeasured: number;
+  /** Items a live check kept, in a real run and a dry run alike. */
   skipped: number;
   outcomes: RunOutcome[];
 }

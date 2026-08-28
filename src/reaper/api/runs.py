@@ -991,9 +991,11 @@ def _report_out(report: RunReport) -> RunReportOut:
         dry_run=report.dry_run,
         state=report.state.value,
         aborted_reason=_reason_key(report.aborted_reason),
-        would_delete_items=report.deleted_items,
-        deleted_bytes=report.deleted_bytes,
-        deleted_unmeasured=report.deleted_unmeasured,
+        would_delete_items=report.would_delete_items if report.dry_run else report.deleted_items,
+        deleted_bytes=report.would_delete_bytes if report.dry_run else report.deleted_bytes,
+        deleted_unmeasured=(
+            report.would_delete_unmeasured if report.dry_run else report.deleted_unmeasured
+        ),
         skipped=report.skipped,
         outcomes=[
             RunOutcomeOut(
