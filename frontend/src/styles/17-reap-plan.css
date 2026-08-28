@@ -77,11 +77,11 @@
   margin-bottom: 0;
 }
 /* Coupled to NARROW_SCREEN_QUERY in useMediaQuery.ts; change one and change the other. Two
-   tiles to a row on a phone, so the four-tile summary card is about half as tall as one column
-   of four. Scoped to the summary's own `.reap-tiles`, so the reaping and done cards keep their
-   auto-fit sizing. */
+   tiles to a row on a phone across every card on this page, the summary, the reaping dashboard,
+   and the done result, so a column of tall tiles never wastes half the screen. A three-tile
+   card lands as two plus one. */
 @media (max-width: 900px) {
-  .fair-stats.reap-tiles {
+  .reap-card .fair-stats {
     grid-template-columns: 1fr 1fr;
   }
 }

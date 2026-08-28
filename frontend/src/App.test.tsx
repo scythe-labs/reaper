@@ -559,6 +559,45 @@ describe("the app-wide reap bar", () => {
     expect(screen.queryByText(/Reaped\./)).not.toBeInTheDocument();
     window.localStorage.removeItem(ACK_KEY);
   });
+
+  it("draws nothing on the Reap tab, where the page is the dashboard", () => {
+    // The reaping card carries the count, the progress, and its own Stop, so the app-wide bar's
+    // copies would only duplicate them. It shows on every OTHER tab.
+    const queryClient = testQueryClient();
+    queryClient.setQueryData(["reapStatus"], runningAt(1, 4));
+    renderWithProviders(<ReapBar onGoToReap={() => {}} suppressed />, { client: queryClient });
+
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "View" })).not.toBeInTheDocument();
+  });
+
+  it("still refreshes the app when a run ends while suppressed (rule 79)", async () => {
+    // Suppressed hides the bar but keeps it mounted, because the post-run cache invalidation
+    // lives here. Unmounting it on the Reap tab would drop that refresh for a run that finishes
+    // while the operator is watching it there.
+    //
+    // The poll never settles here, so the cache is exactly what these two writes set and the
+    // running-to-ended edge is not raced by a refetch landing back on "running".
+    apiMock.reapStatus.mockImplementation(() => new Promise(() => {}));
+    const queryClient = testQueryClient();
+    queryClient.setQueryData(["reapStatus"], runningAt(1, 4));
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    renderWithProviders(<ReapBar onGoToReap={() => {}} suppressed />, { client: queryClient });
+
+    act(
+      () =>
+        void queryClient.setQueryData(["reapStatus"], {
+          ...idle,
+          run_id: 7,
+          phase: "complete",
+          deleted_items: 4,
+          deleted_bytes: 4 * 1024 ** 3,
+        }),
+    );
+
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["candidates"] }));
+  });
 });
 
 describe("the authenticated app's heading outline", () => {

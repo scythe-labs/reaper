@@ -491,7 +491,7 @@ function Dashboard({ user }: { user: AuthUser }) {
           it runs a page-level axe audit that catches a landmark like this going missing. */}
       <section className="app-status" aria-label={t("shell.app.statusLabel")}>
         <SafetyBanner onGoToDeletion={() => goToPolicySection("deletion")} />
-        <ReapBar onGoToReap={() => setView("reap")} />
+        <ReapBar onGoToReap={() => setView("reap")} suppressed={view === "reap"} />
         {view === "review" && (
           <ScanFreshness
             snapshot={snapshot}

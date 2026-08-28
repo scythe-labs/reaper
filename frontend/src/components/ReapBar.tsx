@@ -38,7 +38,18 @@ import { ackRun, useAckedRun } from "./runAck";
  *  tree would test the login gate instead. This component is exported for its tests; the
  *  export carries no other meaning here, since every file in this codebase exports its
  *  component. */
-export function ReapBar({ onGoToReap }: { onGoToReap: () => void }) {
+export function ReapBar({
+  onGoToReap,
+  suppressed = false,
+}: {
+  onGoToReap: () => void;
+  /** True while the operator is on the Reap tab, which is the run's own live dashboard: the
+   *  bar's count, View, and Stop would only duplicate what is already on that page, so it
+   *  renders nothing there. It stays MOUNTED, not unmounted: the post-run cache invalidation and
+   *  the end announcement below both live here (rule 79) and must still fire when a run ends
+   *  while the operator is watching it on the Reap tab. */
+  suppressed?: boolean;
+}) {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
   // Shared with the Reap page's Done button and persisted, so dismissing a result on either
@@ -100,6 +111,11 @@ export function ReapBar({ onGoToReap }: { onGoToReap: () => void }) {
       void queryClient.invalidateQueries({ queryKey: key });
     }
   }, [status, queryClient, t]);
+
+  // On the Reap tab the page itself is the live dashboard, so the bar draws nothing. This sits
+  // AFTER the invalidation effect on purpose: the component stays mounted and that effect still
+  // fires when the run ends here.
+  if (suppressed) return null;
 
   if (!status || status.run_id == null) return null;
   const runId = status.run_id;

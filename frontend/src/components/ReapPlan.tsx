@@ -683,7 +683,7 @@ export function ReapPlan({
                       </p>
                     ) : (
                       <>
-                        <div className="fair-stats reap-tiles">
+                        <div className="fair-stats">
                           <div className="fair-stat">
                             <span className="fair-stat-num">{count(counts.reapCount)}</span>
                             <span className="fair-stat-lbl">
