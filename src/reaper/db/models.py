@@ -1132,7 +1132,7 @@ class ActionStep(Base):
     kind: Mapped[str] = mapped_column(String(40))
     """Which action, one of the four the planner emits: 'radarr_delete',
     'sonarr_unmonitor', 'sonarr_verify_unmonitor', 'sonarr_delete_files'. The Plex refresh
-    is not among them: it is ``executor._best_effort_refresh``, declared to the guard
+    is not among them: it is ``executor._flush_refreshes``, declared to the guard
     rather than journalled as a step, so nothing here records one."""
 
     method: Mapped[str] = mapped_column(String(10))

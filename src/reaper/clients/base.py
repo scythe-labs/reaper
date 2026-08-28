@@ -228,7 +228,7 @@ def refuse_mutation(
     A refusal is the most serious thing either guard does, but by itself it left
     almost nothing in the log: nothing was written at the point of refusal, so the
     only trace was whatever the caller did with the exception. The executor's
-    ``_best_effort_refresh`` and ``_finalize_plex`` catch ``Exception`` on purpose,
+    ``_flush_refreshes`` and ``_finalize_plex`` catch ``Exception`` on purpose,
     because a reap must not fail on a follow-up step, and each then logs the guard's
     own message under an event that names the wrong cause. Reading that message for
     a cause would break the moment its wording changed, so ``reason`` exists to give

@@ -862,10 +862,17 @@ class Executor:
         self._exclusion_poll_delay = exclusion_poll_delay
         # Plex scans are asynchronous, so the trash purge waits for the refresh to settle.
         self._plex_settle_delay = plex_settle_delay
-        # Plex movie sections whose path this run refreshed: the ones to purge trash from
-        # at the end, once, if the mount is confirmed up. Keyed by section key, not title,
+        # The directories Plex must rescan, path to the Plex listings this run removed
+        # under it. Filled as files go (``_queue_refresh``) and sent once at the end
+        # (``_flush_refreshes``), because a refresh fires an asynchronous Plex scan that
+        # can take minutes, and one per item would leave Plex scanning the folders this
+        # run is still deleting from.
+        self._pending_refreshes: dict[str, set[int]] = {}
+        # Plex sections whose path this run refreshed: the ones to purge trash from at
+        # the end, once, if the mount is confirmed up. Keyed by section key, not title,
         # since two libraries can share a title, and the interlock below must never read
-        # one library's size while purging another's trash.
+        # one library's size while purging another's trash. Filled by the flush above,
+        # so it is empty until the deleting is over.
         self._affected_sections: set[int] = set()
         # The trash interlock's inputs: each section's item count before anything was
         # deleted, and which Plex listings this run removed under each section. The purge
@@ -963,6 +970,7 @@ class Executor:
         self._decisions = await whitelist.overrides(self._session)
         effective = await effective_condemned(self._session, run.snapshot_id, self._decisions)
         self._effective_keys = set(effective)
+        self._pending_refreshes = {}
         self._affected_sections = set()
         self._section_pre_counts = {}
         self._deleted_by_section = {}
@@ -1342,20 +1350,21 @@ class Executor:
         prevent, which is a run that finished and could not say so. The pending journal
         writes are still committed regardless.
 
-        The purge runs on a COMPLETED or an ABORTED run alike, because a canary can fail
-        its exclusion check after its file is already gone. It is gated on a section
-        actually having been refreshed (a file really was removed), and _finalize_plex
-        never raises. A failed purge leaves a cosmetic lingering Plex entry, never a lost
-        file.
+        The Plex tidy-up (the rescans, then the trash purge) runs on a COMPLETED or an
+        ABORTED run alike, because a canary can fail its exclusion check after its file
+        is already gone. It is gated on a rescan actually having been queued (a file
+        really was removed), and _finalize_plex never raises. A failed tidy-up leaves a
+        cosmetic lingering Plex entry, never a lost file.
 
-        ``canceled`` is the one case the purge is skipped. A hard cancel is the container
-        going down, and the purge polls ``is_refreshing`` for up to
+        ``canceled`` is the one case the whole tidy-up is skipped. A hard cancel is the
+        container going down, and the purge polls ``is_refreshing`` for up to
         ``_PLEX_SETTLE_ATTEMPTS * _plex_settle_delay`` per affected section before it can
         even decide, so honoring it here would hold shutdown open for tens of seconds
         inside the cancellation, and might empty a section's trash while the process is
-        being torn down. The state commit above still runs, so the run ends ABORTED and
-        recorded; only the cosmetic tidy-up is deferred, to Plex's own scheduled scan or
-        to the next run over the same section.
+        being torn down. The queued rescans go with it rather than firing one request per
+        deleted folder into a process being torn down. The state commit above still runs,
+        so the run ends ABORTED and recorded; only the cosmetic tidy-up is deferred, to
+        Plex's own scheduled scan or to the next run over the same section.
         """
         # Drained before the terminal write and sent in a commit of their own, never
         # bundled with it. The terminal write has no second chance, and a replay
@@ -1385,10 +1394,10 @@ class Executor:
             # could spend past what the operator set.
             await self._commit_journal(what="the journal writes that did not land", write=pending)
         if canceled:
-            if self._affected_sections:
-                log.info("reap.trash_purge_deferred", sections=len(self._affected_sections))
+            if self._pending_refreshes:
+                log.info("reap.plex_tidy_deferred", paths=len(self._pending_refreshes))
             return
-        if self._affected_sections:
+        if self._pending_refreshes:
             await self._finalize_plex()
 
     async def _check_rolling_caps(self, deletes: Sequence[_Delete]) -> None:
@@ -2246,15 +2255,16 @@ class Executor:
             excluded = True
             checks.append(StepCheck(Reason("error.reap.check.exclusion_off"), True))
 
-        # Once the file is gone, tell Plex, whatever the exclusion result. This is what
-        # stops a stale entry lingering, and it must fire even when the exclusion check
-        # failed, since the file is still gone. Best-effort: never affects the item's
-        # verdict. A merged bind lists this one file under several rating keys, so the
-        # purge's count-delta gate is told which Plex listings this delete removes.
-        # Handing over the keys rather than their count is what lets the gate dedup a
-        # listing two candidates both bound to (see ``_deleted_by_section``).
+        # Once the file is gone, queue Plex's rescan of its folder, whatever the
+        # exclusion result. This is what stops a stale entry lingering, and it must be
+        # queued even when the exclusion check failed, since the file is still gone. The
+        # send waits for the end of the run (``_flush_refreshes``). Best-effort: never
+        # affects the item's verdict. A merged bind lists this one file under several
+        # rating keys, so the purge's count-delta gate is told which Plex listings this
+        # delete removes. Handing over the keys rather than their count is what lets the
+        # gate dedup a listing two candidates both bound to (see ``_deleted_by_section``).
         if assume_removed:
-            await self._best_effort_refresh(
+            self._queue_refresh(
                 str(movie.get("path") or movie.get("folderName") or ""),
                 plex_keys=self._equivalent_keys(delete.candidate),
             )
@@ -2633,7 +2643,7 @@ class Executor:
         # common parent that escapes the series folder is discarded rather than used.
         if scoped and series_path and not _path_within(scoped, series_path):
             scoped = ""
-        await self._best_effort_refresh(scoped or series_path, plex_keys=())
+        self._queue_refresh(scoped or series_path, plex_keys=())
 
         await self._mark_verified(delete_step, {"deleted_file_ids": file_ids, "remaining": 0})
         return StepOutcome(
@@ -2683,22 +2693,22 @@ class Executor:
             except Exception as exc:
                 log.warning("reap.section_count_unreadable", section=section.title, error=str(exc))
 
-    async def _best_effort_refresh(self, arr_path: str, *, plex_keys: Sequence[int]) -> None:
-        """Nudge Plex to rescan the deleted item's directory. Never fatal.
+    def _queue_refresh(self, arr_path: str, *, plex_keys: Sequence[int]) -> None:
+        """Remember that Plex must rescan this directory. Sends nothing yet.
 
-        Fires whenever the file is gone, so Plex learns the item is missing. When the
-        *arr path sits inside a Plex section location, the refresh is path-scoped: it
-        can only affect items under that path, never the whole library, which is what
-        makes the end-of-run trash purge safe. The refreshed section is remembered for
-        that purge, along with ``plex_keys``, which Plex listings this delete removes (a
-        merged bind lists one file under several), feeding the purge's count-delta gate.
-        When the path cannot be mapped, it does nothing and says so; the file is already
-        gone and Plex will notice on its next scheduled scan regardless.
+        Called whenever a file is gone, so Plex can be told the item is missing. The
+        send itself waits for the end of the run (``_flush_refreshes``). A refresh fires
+        an asynchronous Plex scan that can take minutes, so sending one per item would
+        have Plex scanning the folders this run is still deleting from, for the whole
+        length of the run. Queued instead, the scans start once, together, when nothing
+        else is competing with them.
 
-        The keys are unioned into the section's set rather than counted, so a listing
-        two candidates both name contributes one allowance and not two (see
-        ``_deleted_by_section``). Under-counting is impossible in the other direction:
-        one rating key is one section entry.
+        A dict keyed by path, so two items under one folder are scanned once. The value
+        is which Plex listings this run removes under that path (a merged bind lists one
+        file under several), unioned rather than counted, so a listing two candidates
+        both name contributes one allowance and not two (see ``_deleted_by_section``).
+        Under-counting is impossible in the other direction: one rating key is one
+        section entry.
 
         An empty ``plex_keys`` is a real and meaningful value: this delete removes no
         entry from the section's own count, so it grants the purge no allowance and the
@@ -2706,46 +2716,84 @@ class Executor:
         nothing for exactly that reason, since a TV section counts shows. There is no
         default, so a new caller must state which listings it removes rather than
         inheriting an allowance.
+
+        In memory only, and never fatal: it makes no call and touches no row, so the
+        delete it follows cannot fail because of it.
+        """
+        if not arr_path:
+            return
+        self._pending_refreshes.setdefault(arr_path, set()).update(plex_keys)
+
+    async def _flush_refreshes(self) -> None:
+        """Send every queued rescan, once, now that the deleting is over. Never fatal.
+
+        Each path is mapped to the Plex section holding it and refreshed there. The
+        refresh is path-scoped: it can only affect items under that path, never the
+        whole library, which is what makes the trash purge below it safe. The refreshed
+        section is remembered for that purge, along with which listings this run removed
+        under it, feeding the count-delta gate. A path in no section location is skipped
+        and said so; the file is already gone and Plex will notice on its next scheduled
+        scan regardless.
+
+        One path failing does not abandon the rest. Every one of these is best-effort,
+        and a Plex that dropped one request may well answer the next.
+
+        Sections are read once, ahead of the loop, rather than per path.
         """
         gateway = self._gateway
-        if gateway is None or gateway.plex is None or not arr_path:
+        if gateway is None or gateway.plex is None or not self._pending_refreshes:
             return
         try:
             sections = await gateway.plex.section_paths()
-            for section in sections:
-                self._section_titles.setdefault(section.key, section.title)
-                for location in section.locations:
-                    if _path_within(arr_path, location):
-                        with declared_mutation():
-                            await gateway.plex.refresh_path(section.key, arr_path)
-                        self._affected_sections.add(section.key)
-                        self._deleted_by_section.setdefault(section.key, set()).update(plex_keys)
-                        return
-            log.info("reap.refresh_unmapped", arr_path=arr_path)
         except Exception as exc:
-            # Broad, because "never fatal" has to mean it. This runs immediately after a
-            # file has been deleted, and even a raw transport error out of plexapi (a
-            # Plex restart between the connect and the read) must not escape and leave
-            # the terminal step SENT with the whole run wedged in EXECUTING. Nothing
-            # here can affect the item's verdict: the file is already gone, and a missed
-            # refresh only costs a lingering "unavailable" entry until Plex's own
-            # scheduled scan.
-            log.warning("reap.refresh_failed", arr_path=arr_path, error=str(exc))
+            # No section map means no path can be placed, so nothing is refreshed and no
+            # section earns a purge allowance. The safe failure: the files are already
+            # gone, and Plex's own scheduled scan still notices.
+            log.warning("reap.refresh_sections_unreadable", error=str(exc))
+            return
+        for section in sections:
+            self._section_titles.setdefault(section.key, section.title)
+        for arr_path, plex_keys in self._pending_refreshes.items():
+            for section in sections:
+                if not any(_path_within(arr_path, location) for location in section.locations):
+                    continue
+                try:
+                    with declared_mutation():
+                        await gateway.plex.refresh_path(section.key, arr_path)
+                except Exception as exc:
+                    # Broad, because "never fatal" has to mean it, and a raw transport
+                    # error out of plexapi (a Plex restart between the connect and the
+                    # send) is as likely here as a mapped one. A path that was not
+                    # refreshed grants no purge allowance, so the gate below sees less
+                    # than the run deleted and declines, which is the safe direction.
+                    log.warning("reap.refresh_failed", arr_path=arr_path, error=str(exc))
+                    break
+                self._affected_sections.add(section.key)
+                self._deleted_by_section.setdefault(section.key, set()).update(plex_keys)
+                break
+            else:
+                log.info("reap.refresh_unmapped", arr_path=arr_path)
 
     async def _finalize_plex(self) -> None:
-        """Purge the stale entries for the files this run removed, so Plex's view stays honest.
+        """Rescan the folders this run emptied, then purge the stale entries, so Plex's
+        view stays honest.
 
-        The single most dangerous call in the app (an unmounted library, a scan and an
-        empty trash is how whole libraries vanish), so it is triply interlocked:
+        The rescans go first and all at once (``_flush_refreshes``), because nothing can
+        be purged until Plex has noticed the files are gone, and the settle wait below
+        then covers every scan together instead of once per item.
+
+        The purge is the single most dangerous call in the app (an unmounted library, a
+        scan and an empty trash is how whole libraries vanish), so it is triply
+        interlocked:
 
         * **The mount must be up.** Every deletion routed through an *arr whose root
           folder reports ``accessible``. If any does not, the volume may be gone and the
           trash may be full of items that are merely unreachable, not deleted, so the
           purge is refused.
-        * **Only path-scoped scans ran.** ``_best_effort_refresh`` rescans one directory
-          at a time (for a movie its own folder, for a season prune the folder its files
-          sat in, via ``_common_parent``), so the only items Plex could have freshly
-          trashed are the ones under the paths this run deleted. Reaper never triggers a
+        * **Only path-scoped scans ran.** ``_flush_refreshes`` rescans one directory at a
+          time (for a movie its own folder, for a season prune the folder its files sat
+          in, via ``_common_parent``), so the only items Plex could have freshly trashed
+          are the ones under the paths this run deleted. Reaper never triggers a
           whole-section scan.
         * **The count-delta gate** (``_trash_delta_is_ours``). The section must have
           shrunk since the pre-delete baseline, and by no more than the distinct Plex
@@ -2771,7 +2819,14 @@ class Executor:
         raises.
         """
         gateway = self._gateway
-        if gateway is None or gateway.plex is None or not self._affected_sections:
+        if gateway is None or gateway.plex is None:
+            return
+
+        await self._flush_refreshes()
+        # Filled by the flush above, one entry per path it placed in a section. Empty
+        # means nothing was refreshed, so nothing can have been freshly trashed and
+        # there is nothing to purge.
+        if not self._affected_sections:
             return
 
         if not await self._mount_is_up():
@@ -2800,7 +2855,7 @@ class Executor:
                     await gateway.plex.empty_trash(section_key)
                 log.info("reap.trash_purged", section=title)
             except Exception as exc:
-                # Same reasoning as _best_effort_refresh: the docstring above promises
+                # Same reasoning as _flush_refreshes: the docstring above promises
                 # this never raises. This runs in execute()'s finally block, where an
                 # escape would replace the run's real outcome with a Plex error the
                 # operator can do nothing about.

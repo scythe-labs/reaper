@@ -9,16 +9,27 @@ names the wrong belief it protects against.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import ClassVar
+from xml.etree.ElementTree import Element
+from xml.etree.ElementTree import fromstring as _unsafe_fromstring
 
 import pytest
+from plexapi.library import LibrarySection
 
 from reaper.clients.base import IntegrationError
+from reaper.clients.plex import PlexClient
 from reaper.clients.seerr import SeerrClient
 from reaper.clients.sonarr_stats import SeasonStats, parse_season_stats, rank_seasons
 from reaper.clock import from_epoch, from_iso
 from reaper.config import RuntimeSafety
 from reaper.ratings import Rating, RatingSource, from_plex, from_radarr, pick
+
+
+def _fromstring(xml: str) -> Element:
+    """Parse a canned test fixture. These are literals in this file, not untrusted data,
+    so the stdlib parser is fine here (S314 exists for hostile inputs)."""
+    return _unsafe_fromstring(xml)  # noqa: S314
 
 
 class TestSeerrPaginationEnvelope:
@@ -555,3 +566,60 @@ class TestUpstreamTimestampShapes:
         is how a deletion clock ends up hours off.
         """
         assert from_iso(value) is None
+
+
+class TestPlexCachesASectionsItemCount:
+    """``LibrarySection.totalSize`` is a plexapi ``cached_data_property``, and plexapi
+    keeps one section object per key for the life of a connection. So reading it twice
+    answers with the first number both times, however much the library changed between
+    the two reads.
+
+    The trash interlock reads this count before the first delete and again before the
+    purge, and refuses to purge unless the section shrank. Sharing one cached number
+    across both reads makes every shrink zero, so the gate declines every purge it is
+    asked to decide while still reading like a working interlock.
+    """
+
+    #: One movie library, as Plex spells it in ``/library/sections``.
+    SECTION: ClassVar[str] = (
+        '<Directory key="1" type="movie" title="Movies" agent="a" scanner="s" '
+        'language="en" uuid="u"/>'
+    )
+
+    class _Server:
+        """A connected plexapi server, minus the socket. Its section listing answers the
+        next scripted count, so a second answer can differ from the first only if
+        something actually asked Plex again."""
+
+        def __init__(self, counts: list[int], section_xml: str) -> None:
+            self._counts = list(counts)
+            self._section_xml = section_xml
+            self.section = LibrarySection(  # type: ignore[no-untyped-call]
+                self, _fromstring(section_xml), initpath="/library/sections"
+            )
+            self.library = SimpleNamespace(sectionByID=lambda key: self.section)
+
+        def query(self, path: str, **kwargs: object) -> Element:
+            if "/all" in path:
+                total = self._counts.pop(0) if len(self._counts) > 1 else self._counts[0]
+                return _fromstring(f'<MediaContainer totalSize="{total}"/>')
+            return _fromstring(f"<MediaContainer>{self._section_xml}</MediaContainer>")
+
+    def test_reading_the_count_twice_answers_with_the_first_number(self) -> None:
+        """The upstream behavior itself, on a bare section object. This is the belief the
+        reload in ``PlexClient.item_count`` exists to correct, so it is pinned rather than
+        assumed: if plexapi ever stops caching, this test says so."""
+        server = self._Server([100, 98], self.SECTION)
+
+        assert server.section.totalSize == 100
+        assert server.section.totalSize == 100  # Plex was never asked a second time
+
+    async def test_item_count_answers_the_live_number_every_time(self) -> None:
+        """And what Reaper does about it. Two calls, two answers, because the client
+        reloads the section before reading the count off it."""
+        client = PlexClient("http://plex.test", "t", safety=RuntimeSafety())
+        # Injected so `_connect` returns without a socket.
+        client._server = self._Server([100, 98], self.SECTION)  # type: ignore[assignment]
+
+        assert await client.item_count(1) == 100
+        assert await client.item_count(1) == 98

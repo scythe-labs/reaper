@@ -327,7 +327,7 @@ class TestAGuardRefusalReachesTheCallerAsARefusal:
     Mapping ``except Exception`` uniformly instead would turn a guard refusal into a
     ``PlexError``. ``leaving_soon.sync_shelves._reconcile`` catches ``PlexError`` per
     library and continues past it, so that would turn a safety refusal into one line
-    beside "Plex is unreachable". The executor's ``_best_effort_refresh`` and
+    beside "Plex is unreachable". The executor's ``_flush_refreshes`` and
     ``_finalize_plex`` swallow a ``PlexError`` even more completely, by design.
 
     **What this pins and what it does not.** It pins that a refusal raised inside the
@@ -427,7 +427,7 @@ class TestEveryRefusalIsOnTheRecord:
     """Checks that every guard refusal leaves a trace in the log.
 
     At the point of refusal nothing is written by default, so the only trace is whatever
-    the caller makes of the exception. The executor's ``_best_effort_refresh`` and
+    the caller makes of the exception. The executor's ``_flush_refreshes`` and
     ``_finalize_plex`` catch ``Exception`` on purpose, because a reap must not fail on a
     follow-up, and each logs the refusal under an event naming the wrong cause. What
     matters is having a discriminator to tell refusals apart, not the wording.

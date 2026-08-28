@@ -1829,9 +1829,11 @@ Anomalies found, every one explained and none an ingest bug:
   not a per-library setting: it is what a stock install does.
 - **So the executor's trash interlock is largely decorative on a default server.**
   `_trash_delta_is_ours`, `_mount_is_up` and `_wait_for_scan` all gate `empty_trash`, but
-  when Plex empties the trash itself after every scan, the path refresh Reaper fires per
-  deleted item has already triggered that purge, inside Plex, before the gated call
-  arrives. The interlock is still worth keeping (it is the only thing standing on a server
+  when Plex empties the trash itself after every scan, the path refreshes Reaper fires
+  have already triggered that purge, inside Plex, before the gated call arrives. (Those
+  refreshes fired per deleted item when this was measured. They are sent once at the end
+  of a run now, which changes when Plex purges, not whether.) The interlock is still worth
+  keeping (it is the only thing standing on a server
   where the setting is off), but it was never the whole defense we described it as.
 - **The trash reads empty on every library of a default-configured server**, which is a
   consequence of the above rather than a coincidence, and it means a count-based warning
@@ -4521,6 +4523,46 @@ pool only within `REWATCH_BLOCK_FLOOR_N`-sized (30+) dormancy-age bands.
 - **Verdict: the abandonment signal is not justified.** A negative result, recorded here as
   prominently as a positive one would be: an "abandoned play" gate or signal is not worth
   building on what either library's history currently supports.
+
+## What a reap actually asks Plex for, per item (2026-08-28)
+
+Counted by reading every call site in `services/executor.py`, prompted by a worry that the
+streaming veto's per-item session read was loading Plex. It is not the expensive one.
+
+| Per-item call | What Plex does with it |
+|---|---|
+| `active_streams` -> `GET /status/sessions` | reads its in-memory session table |
+| the path refresh -> `GET /library/sections/{k}/refresh?path=` | **queues an asynchronous scan** |
+
+Nothing else in the loop is per item. `_connect` caches the `PlexServer`, so plexapi rides
+one `requests.Session` for the whole run, and `section_paths` looks per item but is not:
+plexapi holds `/library/sections` in a `cached_data_property`, so only the first call leaves
+the process.
+
+- **`/status/sessions` is the cheapest read Plex serves, and Tautulli polls it every 1 to 5
+  seconds forever.** A reap issues one per item, seconds apart, between a Radarr delete and
+  its verification. Against Tautulli's standing load that is noise. Dropping the veto to
+  save it would trade the last check before an irreversible act for nothing measurable.
+- **A websocket listening for `playing` cannot replace it, because it fails the wrong way.**
+  The read raises when Plex is unreachable and the item is kept. A socket that dropped forty
+  seconds ago looks exactly like a socket where nobody pressed play, so silence would have
+  to be read as "nobody is watching" — and silence is what a broken connection produces.
+  Closing that hole means polling the endpoint anyway, as the heartbeat. `websocket-client`
+  is not a dependency, and this is why it does not become one.
+- **The refresh is the one that costs Plex something**, and it fired per item, so a
+  200-item reap queued 200 directory scans while it was still deleting into those folders.
+  Sent once at the end instead, deduplicated by path, they start when nothing is competing
+  with them, and the settle wait covers them together rather than one at a time.
+
+**`LibrarySection.totalSize` is a plexapi `cached_data_property`, on a section object plexapi
+also caches for the life of the connection.** So the trash gate's before-count and
+after-count were the same number, and the shrink it refuses to purge without could only ever
+be read as zero. It worked only because `_wait_for_scan` happens to call `section.reload()`
+in between, which invalidates it. `item_count` reloads for itself now, and
+`test_upstream_quirks.py` pins both halves.
+
+⇒ Same shape as the collections finding above: the request count is the lever, and the
+request worth cutting is the one the server does work for, not the one there are most of.
 
 ## Prior art
 
