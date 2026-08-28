@@ -1830,9 +1830,9 @@ class TestStopMidRun:
         honoring it here would hold the container's shutdown open for tens of seconds per
         section, and could empty a section's trash while the process is being torn down.
         The queued rescans go with it, since they are sent at the end of a run and a
-        canceled run has no end. The tidy-up is cosmetic. The state commit is not, so the
-        state is made durable and Plex is left to its own scheduled scan, or to the next
-        run over the same section.
+        canceled run has no end. The tidy-up is cosmetic, where the state commit has to
+        survive, so the state is made durable and Plex is left to its own scheduled scan,
+        or to the next run over the same section.
         """
         snapshot_id = await _snapshot_many(
             session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
@@ -1865,10 +1865,8 @@ class TestStopMidRun:
         # On disk, not merely on the session's copy of the row. A shutdown is exactly when
         # an in-memory terminal state buys nothing.
         assert (await _stored_run(async_factory, run.id)).state is RunState.ABORTED  # not EXECUTING
-        # The rescans are queued during the run and sent at the end, so a shutdown that
-        # lands mid-run sends none of them.
         assert plex.refreshed == []
-        # The settle-wait and the purge do not run inside the cancellation either.
+        # The settle-wait and the purge stay out of the cancellation too.
         assert plex.emptied == []
 
     async def test_progress_is_reported_after_every_item(self, session: AsyncSession) -> None:
