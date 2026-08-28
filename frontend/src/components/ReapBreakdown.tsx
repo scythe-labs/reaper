@@ -153,6 +153,11 @@ export function ReapBreakdown({ onGoToReview }: { onGoToReview: () => void }) {
   return (
     <div className="reap-card">
       {showReasons && <Reasons rows={data.condemned_by} anchor={data.policy_condemned} />}
+      {/* With nothing policy-condemned there are no reason bars, so without this line the
+          card is a bare fold and the count above it looks like the policy's doing. */}
+      {showLedger && data.policy_condemned === 0 && (
+        <p className="help rb-all-hand">{t("reapPlan.breakdown.allHandReaps")}</p>
+      )}
       {showLedger && (
         <details className="gates-fold rb-ledger-fold">
           <summary>

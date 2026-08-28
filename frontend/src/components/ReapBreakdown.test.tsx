@@ -152,6 +152,29 @@ describe("the closed-by-default ledger fold", () => {
     expect(within(disclosure).queryByText("You marked to reap by hand")).not.toBeInTheDocument();
   });
 
+  it("says the whole count is hand reaps when the policy condemns nothing", async () => {
+    // With no policy-condemned titles there are no reason bars, so this line is the only
+    // thing telling the operator the count is their own doing, not the policy's.
+    apiMock.reapBreakdown.mockResolvedValue(
+      full({
+        policy_condemned: 0,
+        policy_condemned_bytes: 0,
+        condemned_by: [],
+        hand_spared: 0,
+        hand_reaped: 195,
+        will_reap: 195,
+      }),
+    );
+    renderBreakdown();
+    await screen.findByText(/Your policy condemns nothing right now/);
+  });
+
+  it("leaves the hand-reaps line off while the policy condemns anything", async () => {
+    renderBreakdown();
+    await screen.findByText("Gone unwatched too long");
+    expect(screen.queryByText(/Your policy condemns nothing right now/)).not.toBeInTheDocument();
+  });
+
   it("shows the held-back row when unmeasured titles are actually held back", async () => {
     apiMock.reapBreakdown.mockResolvedValue(
       full({ will_reap: 569, will_reap_unknown: 4, movies_unknown: 3, seasons_unknown: 1 }),

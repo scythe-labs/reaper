@@ -257,10 +257,13 @@ def truth_of(rows: list[Judged]) -> dict[str, Any]:
     condemned = protected = abstained = 0
     reclaimable = 0
     unknown_size = 0
+    hand_reaped = 0
     for row in rows:
         histogram[min(row.score // 10, 9)] += 1
         if row.fate == "condemn":
             condemned += 1
+            if row.override == "reap":
+                hand_reaped += 1
             if row.size is None:
                 unknown_size += 1
             else:
@@ -275,6 +278,7 @@ def truth_of(rows: list[Judged]) -> dict[str, Any]:
         "abstained": abstained,
         "reclaimable_bytes": reclaimable,
         "unknown_size_items": unknown_size,
+        "hand_reaped": hand_reaped,
         "histogram": histogram,
     }
 
@@ -648,6 +652,7 @@ NUMBERS = (
     "abstained",
     "reclaimable_bytes",
     "unknown_size_items",
+    "hand_reaped",
     "newly_condemned",
     "no_longer_condemned",
     "condemned_before",

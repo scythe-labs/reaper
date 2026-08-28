@@ -203,6 +203,7 @@ const BASE: Simulation = {
   abstained: 2669,
   reclaimable_bytes: 2_090_000_000_000,
   unknown_size_items: 0,
+  hand_reaped: 0,
   newly_condemned: 0,
   no_longer_condemned: 0,
   condemned_before: 412,
@@ -317,6 +318,42 @@ describe("the outcome panel on an edit that changes no title", () => {
   it("has no accessibility violations", async () => {
     const { container } = renderOutcome({ changed_titles: 0 }, true);
     await expectNoA11yViolations(container);
+  });
+});
+
+describe("what the headline says about hand reaps", () => {
+  // A hand reap condemns at any threshold. Without these lines, a maxed-out slider beside a
+  // nonzero "items would be removed" reads as the sliders not working, which is exactly how
+  // it was reported from a live library.
+  function renderOutcome(sim: Partial<Simulation>) {
+    return render(
+      <Outcome
+        simulation={{ ...BASE, ...sim }}
+        threshold={62}
+        pace={null}
+        edited={false}
+        mediaType="movie"
+      />,
+    );
+  }
+
+  it("says when the whole count is the operator's own reaps", () => {
+    renderOutcome({ condemned: 12, hand_reaped: 12 });
+    expect(
+      screen.getByText("All of these are titles you marked to reap by hand", { exact: false }),
+    ).toBeInTheDocument();
+  });
+
+  it("counts the hand-reaped share when the policy condemns the rest", () => {
+    renderOutcome({ condemned: 412, hand_reaped: 9 });
+    expect(
+      screen.getByText(/9 of these are titles you marked to reap by hand/),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing when no reap was marked by hand", () => {
+    renderOutcome({ hand_reaped: 0 });
+    expect(screen.queryByText(/marked to reap by hand/)).not.toBeInTheDocument();
   });
 });
 

@@ -113,7 +113,7 @@ const HOW_TO_UPDATE =
 //: The Reap tab redesign (Phase 3) adds 6: the reaping card's "removed" tile and its "now
 //: removing" line, the progress bar's accessible value text, the item-status log's heading
 //: and its "kept: {reason}" fragment, and the history footer's "Showing N of M" count.
-const EXPECTED_REQUIRED_COUNT = 1178;
+const EXPECTED_REQUIRED_COUNT = 1179;
 
 describe("translator notes (locales/en/ui.notes.json)", () => {
   it("classifies a plain literal as not required, and an ICU or tagged one as required (rule 145)", () => {

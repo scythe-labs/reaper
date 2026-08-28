@@ -1242,6 +1242,11 @@ class SimulationOut(BaseModel):
     """How many of the condemned have no size, and so are left out of the total above
     rather than folded in as zeros. Hidden at zero."""
 
+    hand_reaped: int = 0
+    """How many of ``condemned`` are titles the owner marked to reap by hand. A hand reap
+    condemns at any threshold, so these never move with the sliders. The panel says so,
+    because a removal count that quietly includes them reads as the policy's doing."""
+
     newly_condemned: int
     """Items this policy would condemn that the current one does not. The number the
     owner actually needs before saving."""

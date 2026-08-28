@@ -235,6 +235,11 @@
   margin-top: var(--space-md);
 }
 
+/* The card's only at-a-glance content when nothing is policy-condemned. */
+.rb-all-hand {
+  margin: 0;
+}
+
 /* The pointers under the ledger: expired spares, held hand reaps. */
 .rb-line {
   border-top: 1px solid var(--border);

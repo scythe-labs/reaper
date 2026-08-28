@@ -716,6 +716,8 @@ class TestTheFrozenFactsReplay:
         """
         result = self._replay(replay_client)
         assert result["condemned"] == 2
+        # Only one of the two removals is the owner's own doing, and the panel says which.
+        assert result["hand_reaped"] == 1
         assert result["reclaimable_bytes"] == 2 * SIZE
         assert result["protected_by"] == [
             {"gate": "custom", "count": 1},

@@ -1806,6 +1806,7 @@
       "reapButton": "Reap {count} {n, plural, one {title} other {titles}}…"
     },
     "breakdown": {
+      "allHandReaps": "Your policy condemns nothing right now. Everything here is a title you marked to reap by hand.",
       "condemnedByPolicy": "Condemned by your policy",
       "expiredSpares": "<strong>{count} {n, plural, one {title is} other {titles are}} kept by {n, plural, one {a spare that expired} other {spares that expired}}.</strong> This reap won't remove {n, plural, one {it} other {them}}. A new scan judges {n, plural, one {it} other {them}} again.",
       "handReaped": "You marked to reap by hand",
@@ -2459,6 +2460,8 @@
     "appliesOnNextScan": "Policy changes apply on the next scan, which starts by itself after saving.",
     "comparisonLine": "Your last scan flags <beforeNum>{beforeCount}</beforeNum>. This draft flags <afterNum>{afterCount}</afterNum>.",
     "deltaBlurb": "What changes compared with the list you already reviewed.",
+    "handReapsAll": "All of these are titles you marked to reap by hand. They stay on the list whatever you set here.",
+    "handReapsSome": "{count} of these {n, plural, one {is a title} other {are titles}} you marked to reap by hand. {n, plural, one {It stays} other {They stay}} on the list whatever you set here.",
     "histogram": {
       "bucketTooltip": "{low}–{high}: {n} items"
     },

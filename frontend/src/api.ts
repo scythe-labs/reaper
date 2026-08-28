@@ -869,6 +869,10 @@ export interface Simulation {
   reclaimable_bytes: number;
   /** How many of the condemned have no size, left out of the total above. Hidden at zero. */
   unknown_size_items: number;
+  /** How many of `condemned` are titles the operator marked to reap by hand. A hand reap
+   *  condemns at any threshold, so these never move with the sliders and the panel says
+   *  so under the headline. */
+  hand_reaped: number;
   newly_condemned: number;
   no_longer_condemned: number;
   /** How many titles the last scan flags: the stored verdicts with overrides applied,
