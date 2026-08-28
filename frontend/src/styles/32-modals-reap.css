@@ -268,6 +268,26 @@
   background: var(--condemn);
   transition: width 0.4s var(--ease);
 }
+/* Coupled to NARROW_SCREEN_QUERY in useMediaQuery.ts; change one and change the other. On a
+   phone the actions drop to their own full-width line instead of bunching into the right of a
+   wrapped row. Stop is the urgent action on a live deletion, so it grows to fill the line beside
+   View as the primary tap target. The done and errored bars are not urgent, so their buttons
+   sit compact at the right. */
+@media (max-width: 900px) {
+  .reap-bar-actions {
+    flex-basis: 100%;
+    margin-inline-start: 0;
+    gap: var(--space-lg);
+  }
+  .reap-bar-actions .stop-btn {
+    flex: 1;
+    padding: var(--space-md) var(--space-2xl);
+  }
+  .reap-bar.done .reap-bar-actions,
+  .reap-bar.errored .reap-bar-actions {
+    justify-content: flex-end;
+  }
+}
 /* Only what this file declares. `.spinner` and `.why-loading` each stop beside their own
    rule instead. See the note in 06-spinner.css for why. */
 @media (prefers-reduced-motion: reduce) {
