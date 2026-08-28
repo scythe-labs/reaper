@@ -74,20 +74,10 @@ const CONTAINERS: Record<string, Container> = {
     reach: "focusable",
     why: "log rows are <span>s; nothing in the console can take focus",
   },
-  ".table-scroll": {
-    file: "components/ReapPlan.tsx",
-    reach: "focusable",
-    why: "the plan-steps table is the journalled record of what a run will send, and no cell is focusable",
-  },
   ".matrix-scroll": {
     file: "components/ListsPanel.tsx",
     reach: "focusable",
     why: "the per-server counts matrix scrolls sideways on a narrow pane and holds no focusable cell, so the box itself takes the tabIndex to carry the scroll",
-  },
-  ".dryrun-outcomes": {
-    file: "components/ReapPlan.tsx",
-    reach: "focusable",
-    why: "the practice-run outcome list is text; the list keeps its listitems and takes the tabIndex itself",
   },
   ".why": {
     file: "components/WhyShell.tsx",
@@ -134,7 +124,7 @@ const CONTAINERS: Record<string, Container> = {
 /** The count is pinned so a scroll container that leaves the walk fails as loudly as one that
  *  arrives without a classification. A flag-shaped assertion cannot tell a member that
  *  complies from one the matcher stopped collecting. */
-const EXPECTED_CONTAINERS = 15;
+const EXPECTED_CONTAINERS = 13;
 
 /** `overflow`, `overflow-x` or `overflow-y` set to a value that makes a box scroll. `hidden`,
  *  `visible` and `clip` do not, and `overflow: auto hidden` (the two-value form) is read by the

@@ -622,7 +622,8 @@ function Dashboard({ user }: { user: AuthUser }) {
             />
           ) : view === "reap" ? (
             <ReapPlan
-              onGoToDeletion={() => goToPolicySection("deletion")}
+              onGoToSecurity={() => goToSettingsPanel("security")}
+              onGoToServices={() => goToSettingsPanel("services")}
               onGoToPlexSettings={() => goToSettingsPanel("plex")}
               onGoToReview={() => goTo({ view: "review", select: null })}
             />

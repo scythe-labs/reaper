@@ -291,30 +291,6 @@
   font-weight: var(--weight-medium);
 }
 
-.dryrun-outcomes {
-  list-style: none;
-  padding: 0;
-  margin: var(--space-md) 0 0;
-  max-height: 320px;
-  overflow-y: auto;
-}
-.dryrun-outcomes li {
-  display: flex;
-  gap: var(--space-md);
-  align-items: baseline;
-  font-size: var(--text-sm);
-  padding: var(--space-2xs) 0;
-}
-/* The executor's own words for one item. Same shape as .plan-steps code in
-   17-reap-plan.css, and needs the same treatment, in a different subtree that the other
-   rule does not reach. */
-.dryrun-outcomes li code {
-  overflow-wrap: anywhere;
-}
-.dryrun-outcomes .gate-mark {
-  color: var(--protect);
-}
-
 /* Pace and limits. The four caps read as one 2x2 matrix: titles and disk freed down the
    side, per run and per 30 days across the top. The boxes sit in fixed grid tracks and line
    up down each column, and the row and column headers carry what would otherwise need four
@@ -464,27 +440,4 @@
   .pace-extra .ex-ctl {
     margin-bottom: var(--space-xl);
   }
-}
-
-.run-history {
-  margin-top: var(--space-6xl);
-}
-.run-history ul {
-  list-style: none;
-  padding: 0;
-  font-size: var(--text-md);
-}
-.run-history li {
-  padding: 0.2rem 0;
-}
-/* The plan currently shown above wears the app's active-item look (the raised surface of
-   .tab.active), so the list says which row you are already reading. The negative margin
-   cancels the added padding, so marking a row never shifts its neighbors. */
-.run-history li.open {
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
-  border-radius: var(--radius-sm);
-  font-weight: var(--weight-semi);
-  padding: 0.2rem 0.5rem;
-  margin: 0 -0.5rem;
 }

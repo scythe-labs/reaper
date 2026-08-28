@@ -120,7 +120,7 @@ describe("the execute gate", () => {
     renderSheet();
 
     await screen.findByText(/Practice run passed/);
-    const execute = screen.getByRole("button", { name: /^Reap 1 soul$/ });
+    const execute = screen.getByRole("button", { name: /^Reap$/ });
     expect(execute).toBeDisabled();
 
     const input = screen.getByRole("textbox");
@@ -149,7 +149,7 @@ describe("the execute gate", () => {
 
     // The phrase alone is not enough while the warning stands.
     await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
-    const execute = screen.getByRole("button", { name: /^Reap 1 soul$/ });
+    const execute = screen.getByRole("button", { name: /^Reap$/ });
     expect(execute).toBeDisabled();
 
     await user.click(screen.getByRole("checkbox"));
@@ -168,7 +168,7 @@ describe("the execute gate", () => {
     expect(await screen.findByText(/couldn't read Plex's trash/i)).toBeInTheDocument();
 
     await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
-    expect(screen.getByRole("button", { name: /^Reap 1 soul$/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Reap$/ })).toBeDisabled();
   });
 
   it("says nothing at all when the trash is empty and readable", async () => {
@@ -245,7 +245,7 @@ describe("the execute gate", () => {
     expect(await screen.findByText(/Checking whether deletion is on/)).toBeInTheDocument();
     expect(screen.queryByText(/Deletion is/)).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Reap 1 soul$/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Reap$/ })).toBeDisabled();
   });
 
   it("says it couldn't look when the safety read fails, never that deletion is off", async () => {
@@ -256,7 +256,7 @@ describe("the execute gate", () => {
     expect(await screen.findByText(/couldn't confirm whether deletion is on/)).toBeInTheDocument();
     expect(screen.queryByText(/Deletion is/)).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Reap 1 soul$/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Reap$/ })).toBeDisabled();
   });
 
   it("a practice run that stopped never unlocks execution", async () => {
@@ -267,7 +267,7 @@ describe("the execute gate", () => {
 
     await screen.findByText(/The plan stopped/);
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Reap 1 soul$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Reap$/ })).not.toBeInTheDocument();
   });
 
   it("shows live progress and a Stop while reaping, and closes freely (the run is detached)", async () => {
@@ -277,7 +277,7 @@ describe("the execute gate", () => {
 
     await screen.findByText(/Practice run passed/);
     await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
-    await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
+    await user.click(screen.getByRole("button", { name: /^Reap$/ }));
 
     // While the reap is in flight, the graceful Stop is offered and the sheet no longer traps
     // focus. The close button is enabled and the scrim closes it, because the run keeps going
@@ -294,7 +294,7 @@ describe("the execute gate", () => {
 
     await screen.findByText(/Practice run passed/);
     await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
-    await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
+    await user.click(screen.getByRole("button", { name: /^Reap$/ }));
 
     await user.click(await screen.findByRole("button", { name: /^Stop$/ }));
     expect(apiMock.stopRun).toHaveBeenCalledWith(run.id);
@@ -338,7 +338,7 @@ describe("the execute gate", () => {
   it("is a dialog that says what it is", async () => {
     renderSheet();
 
-    const dialog = await screen.findByRole("dialog", { name: /Reap 1 soul/ });
+    const dialog = await screen.findByRole("dialog", { name: /Reap 1 title/ });
     expect(dialog).toHaveAttribute("aria-modal", "true");
   });
 
@@ -352,7 +352,7 @@ describe("the execute gate", () => {
     // here would be reduced to a `disabled` attribute, which the server cannot tell apart from
     // a script bypassing it.
     await fill(user, screen.getByRole("textbox"), `${run.confirmation_phrase}  `);
-    await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
+    await user.click(screen.getByRole("button", { name: /^Reap$/ }));
     expect(apiMock.executeRun).toHaveBeenCalledWith(run.id, run.confirmation_phrase);
   });
 
@@ -366,7 +366,7 @@ describe("the execute gate", () => {
 
     await screen.findByText(/Practice run passed/);
     await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
-    await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
+    await user.click(screen.getByRole("button", { name: /^Reap$/ }));
     await screen.findByText(/The plan changed./);
 
     // Without this, the sheet would deadlock. It would keep lighting the button for the stale
@@ -374,9 +374,10 @@ describe("the execute gate", () => {
     // from a run object the caller only captured, the same one "Reap now" in the review queue
     // hands over, so nothing outside the sheet observes the query key ["run", id]. The sheet
     // has to watch that key itself, or the invalidation reaches nobody.
-    const input = await screen.findByRole("textbox");
-    expect((input as HTMLInputElement).placeholder).toBe(moved.confirmation_phrase);
-    expect(screen.getByRole("button", { name: /^Reap 2 souls$/ })).toBeInTheDocument();
+    await screen.findByRole("textbox");
+    expect(screen.getByText(moved.confirmation_phrase)).toBeInTheDocument();
+    expect(screen.queryByText(run.confirmation_phrase)).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: /Reap 2 titles/ })).toBeInTheDocument();
   });
 
   it("says a reap stopped on a problem, and never re-arms itself in silence", async () => {
@@ -398,7 +399,7 @@ describe("the execute gate", () => {
     expect(screen.getByText(/Deletion was switched off mid-run./)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Reap 1 soul$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Reap$/ })).not.toBeInTheDocument();
     // No dry run is fired over this state. The executor refuses one on a non-planned run, and
     // a dry-run message would otherwise render as the only explanation for a failed deletion.
     expect(apiMock.dryRun).not.toHaveBeenCalled();
@@ -410,7 +411,7 @@ describe("the execute gate", () => {
 
     await screen.findByText(/Practice run passed/);
     await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
-    await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
+    await user.click(screen.getByRole("button", { name: /^Reap$/ }));
     await screen.findByRole("button", { name: /^Stop$/ });
 
     // The run finishes, and the status now carries the after-action report.

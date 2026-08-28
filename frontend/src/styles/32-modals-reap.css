@@ -68,6 +68,22 @@
   letter-spacing: 0.03em;
   color: var(--condemn);
 }
+/* On a phone the confirm sheet becomes a bottom sheet, so the phrase, the field and the
+   buttons sit under a thumb instead of in the middle of the screen. Scoped to `.reap-confirm`
+   alone: every other modal in the app stays a centered dialog at every width. `:has()` lets
+   the scrim react to which sheet it holds without ModalShell taking a variant prop.
+   Coupled to NARROW_SCREEN_QUERY in useMediaQuery.ts; change one and change the other. */
+@media (max-width: 900px) {
+  .modal-scrim:has(.reap-confirm) {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .modal.reap-confirm {
+    max-width: none;
+    width: 100%;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+}
 .small {
   font-size: var(--text-sm);
 }

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The reap plan. See `../index.css` for how this file fits into the stylesheet's load
- * order. */
+ * The reap page: plan on the left, audit on the right. See `../index.css` for how this file
+ * fits into the stylesheet's load order. */
 
 .reap {
   margin-top: var(--space-4xl);
@@ -10,69 +10,96 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--space-3xl);
 }
-
-.plan-summary {
+.reap-head-actions {
   display: flex;
-  align-items: center;
-  gap: var(--space-3xl);
-  flex-wrap: wrap;
-  margin: var(--space-3xl) 0;
-  padding: 0.75rem 1rem;
-  background: var(--surface);
+  gap: var(--space-lg);
+}
+
+/* Plan on the left, audit (the run history) on the right. Collapses to one column under
+ * NARROW_SCREEN_QUERY (useMediaQuery.ts): the history renders second in document order, so
+ * it lands below the plan without a separate mobile layout. */
+.reap-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: var(--space-4xl);
+  align-items: start;
+}
+.reap-left {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4xl);
+  min-width: 0;
+}
+/* Coupled to NARROW_SCREEN_QUERY in useMediaQuery.ts; change one and change the other. */
+@media (max-width: 900px) {
+  .reap-columns {
+    grid-template-columns: 1fr;
+  }
+  /* The two head actions stop sharing the title's row (`.reap-head`'s wrap takes them onto
+     their own) and go full width, side by side, each an easy thumb target rather than the
+     narrow right-aligned pair a phone squeezed them into. */
+  .reap-head-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  }
+  .reap-head-actions button {
+    width: 100%;
+    padding: 0.55rem 0.9rem;
+  }
+}
+
+/* The one surface every block on this page sits in: the summary card, the reasons/ledger
+ * card, and the history card all share it. */
+.reap-card {
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  background: var(--surface);
   box-shadow: var(--shadow-sm);
+  padding: 0.85rem 1rem 0.9rem;
 }
-/* A notice inside the summary takes its own row, so it reads as a warning about the whole
-   plan rather than as another chip beside the counts. Matches `.savebar .notice`. */
-.plan-summary .notice {
-  flex-basis: 100%;
+.reap-summary-help {
+  margin-top: var(--space-2xl);
 }
-.confirm-phrase {
-  font-family: var(--mono);
-  font-weight: var(--weight-bold);
-  font-size: var(--text-lg);
-  letter-spacing: 0.03em;
-}
-/* The one-line reason Execute is disabled, with the shortest path to the switch. Takes
-   the full row under the plan summary's controls. */
-.exec-note {
-  flex-basis: 100%;
+.rb-empty {
   color: var(--muted);
   font-size: var(--text-md);
+  margin: 0.2rem 0 0.6rem;
 }
 
-.plan-steps {
-  margin-top: var(--space-3xl);
+/* The one notice for a failing readiness check (reapReadiness.ts): a plain list, one line
+ * per check, each with its own fix link. */
+.reap-blockers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-sm);
 }
-.plan-steps code {
-  display: inline-block;
-  background: var(--surface-2);
-  padding: 0.1rem 0.35rem;
-  border-radius: 4px;
-  /* An API path and a JSON body have no spaces to break on, so without this the Request
-     cell keeps its full width even inside .table-scroll. */
-  overflow-wrap: anywhere;
+
+/* The standalone practice run: a spinner line while it runs, a protect-tinted result once it
+ * passes (the same tone as `.dry-ok`'s check mark, `32-modals-reap.css`). */
+.reap-practice-running {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  font-size: var(--text-md);
+  margin-top: var(--space-2xl);
 }
-.step-body {
-  margin-inline-start: 0.4rem;
-  color: var(--muted);
+.reap-practice-pass {
+  border: 1px solid color-mix(in srgb, var(--protect) 45%, transparent);
+  background: var(--protect-soft);
+  border-radius: var(--radius-sm);
+  padding: var(--space-lg) var(--space-2xl);
+  font-size: var(--text-md);
+  margin-top: var(--space-2xl);
 }
-/* Why a step failed or was skipped, under the state it explains. A block so it takes its own
-   line rather than running on from the state word, and capped in `ch` because the State column
-   is the narrowest in the table: left to the column it would set the table's width from one
-   long sentence and push the whole thing sideways. `overflow-wrap` because the sentence can
-   carry a title or a path the operator did not choose. */
-.step-why {
-  display: block;
-  margin-top: var(--space-xs);
-  max-width: 34ch;
-  font-size: var(--text-sm);
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
+
+/* The canary tag on a journalled step or an outcome row: the test item every plan runs
+ * first. Still used by ReapConfirm's post-run checklist. */
 .canary-tag {
   margin-inline-start: 0.4rem;
   font-size: var(--text-2xs);
@@ -84,48 +111,63 @@
   padding: 0 var(--space-xs);
 }
 
-/* Reap breakdown: what a reap would remove, and why. The context above the plan. */
-.reap-breakdown {
-  margin: 0.9rem 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
-  padding: 0.85rem 1rem 0.9rem;
-}
-.rb-headline {
+/* Why the policy condemned them: one participation bar per signal, overlapping. Leads the
+ * reasons/ledger card, so it carries no top border of its own. */
+.rb-reasons-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: var(--space-3xl);
-  flex-wrap: wrap;
+  margin-bottom: 0.55rem;
 }
-.rb-head {
-  font-size: var(--text-base);
-  font-weight: var(--weight-semi);
+.rb-reasons-head h3 {
+  margin: 0;
 }
-.rb-meta {
-  font-size: var(--text-md);
+.rb-of {
+  font-size: var(--text-sm);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-.rb-meta strong {
-  color: var(--text);
-  font-weight: var(--weight-semi);
-}
-.rb-sub {
-  color: var(--muted);
+.rb-bar {
+  display: grid;
+  grid-template-columns: 12.5rem 1fr auto;
+  gap: var(--space-xl);
+  align-items: center;
+  margin: 0.3rem 0;
   font-size: var(--text-md);
-  margin: 0.1rem 0 0.8rem;
+}
+.rb-rlab {
+  color: var(--muted);
+}
+.rb-track {
+  height: 12px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.rb-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--condemn) 62%, transparent);
+}
+.rb-rn {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  min-width: 2.5rem;
+  text-align: end;
+}
+.rb-note {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  margin: 0.5rem 0 0.2rem;
   max-width: 72ch;
 }
-.rb-empty {
-  color: var(--muted);
-  font-size: var(--text-md);
-  margin: 0.2rem 0 0.6rem;
-}
 
-/* The ledger: policy verdict, hand changes, the net, three aligned columns. */
+/* The closed-by-default ledger fold, right under the reasons. Reuses .gates-fold's native
+ * <details> grammar (13-receipt.css) rather than a one-off disclosure widget. */
+.rb-ledger-fold {
+  margin-top: var(--space-2xl);
+}
 .rb-ledger {
   margin: 0.1rem 0 0.4rem;
 }
@@ -177,73 +219,65 @@
 .rb-total .rb-sz {
   color: var(--text);
 }
-.rb-split {
-  color: var(--muted);
-  font-size: var(--text-sm);
-  margin-top: 0.1rem;
+.rb-footnote {
+  margin-top: var(--space-md);
 }
 
-/* Why the policy condemned them: one participation bar per signal, overlapping. */
-.rb-reasons {
-  border-top: 1px solid var(--border);
-  margin-top: var(--space-2xl);
-  padding-top: 0.8rem;
-}
-.rb-reasons-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: 0.55rem;
-}
-.rb-reasons-head h3 {
-  margin: 0;
-}
-.rb-of {
-  font-size: var(--text-sm);
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-.rb-bar {
-  display: grid;
-  grid-template-columns: 12.5rem 1fr auto;
-  gap: var(--space-xl);
-  align-items: center;
-  margin: 0.3rem 0;
-  font-size: var(--text-md);
-}
-.rb-rlab {
-  color: var(--muted);
-}
-.rb-track {
-  height: 12px;
-  border-radius: 3px;
-  background: var(--surface-2);
-  overflow: hidden;
-}
-.rb-fill {
-  display: block;
-  height: 100%;
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--condemn) 62%, transparent);
-}
-.rb-rn {
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
-  min-width: 2.5rem;
-  text-align: end;
-}
-.rb-note {
-  font-size: var(--text-sm);
-  color: var(--muted);
-  margin: 0.5rem 0 0.2rem;
-  max-width: 72ch;
-}
-
-/* The pointers under the ledger: held-back, Leaving Soon, the queue. */
+/* The pointers under the ledger: expired spares, held hand reaps. */
 .rb-line {
   border-top: 1px solid var(--border);
   padding: var(--space-lg) 0 0;
   margin-top: var(--space-lg);
   font-size: var(--text-sm);
   color: var(--muted);
+}
+
+/* Past reaps: one row per run, state dot, muted totals, the date pinned to the right edge. */
+.reap-runs {
+  display: grid;
+}
+.reap-run {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-lg);
+  padding: var(--space-md) 0;
+  border-top: 1px solid var(--border);
+  font-size: var(--text-md);
+}
+.reap-run:first-child {
+  border-top: none;
+}
+.reap-run-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  align-self: center;
+  background: var(--faint);
+}
+.reap-run-dot.ok {
+  background: var(--protect);
+}
+.reap-run-dot.bad {
+  background: var(--unknown);
+}
+.reap-run-dot.live {
+  background: var(--condemn);
+}
+.reap-run-what {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.reap-run-sub {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  /* The freed/removed fragment carries its own leading comma; an aborted reason is a plain
+     sentence with none, so this covers both. */
+  margin-inline-start: 0.2rem;
+}
+.reap-run-when {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }

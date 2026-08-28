@@ -213,12 +213,6 @@ const SITES: Site[] = [
     seenIn: ["components/ReapConfirm.tsx"],
   },
   {
-    what: "the executor's own words for one item",
-    selectors: [".dryrun-outcomes li code"],
-    classInTsx: "dryrun-outcomes",
-    seenIn: ["components/ReapPlan.tsx"],
-  },
-  {
     what: "a Plex server's name, from plex.tv",
     selectors: [".server-pick-row"],
     classInTsx: "server-pick-row",
@@ -556,14 +550,14 @@ describe("the stylesheet: text the operator did not choose", () => {
 
   it("walks the population it claims to, and says how big that is", () => {
     // A flag-shaped assertion cannot tell a member that complies from one that fell out of the
-    // walk, so the size of the walk is pinned by hand: 36 sites in the table, 4 of them exempt.
-    expect(SITES.length).toBe(36);
+    // walk, so the size of the walk is pinned by hand: 35 sites in the table, 4 of them exempt.
+    expect(SITES.length).toBe(35);
     expect(SITES.filter((s) => s.exempt).length).toBe(4);
     // This also counts the CSS blocks each site actually resolves to. Most sites match one
-    // block; a few match more than one, for a total of 44. If this number moves, a selector
+    // block; a few match more than one, for a total of 43. If this number moves, a selector
     // joined or left a row: check that the change was intended, then update the number.
     const blocks = SITES.reduce((n, s) => n + matchesOf(s).length, 0);
-    expect(blocks).toBe(44);
+    expect(blocks).toBe(43);
   });
 });
 

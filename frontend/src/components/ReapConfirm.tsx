@@ -274,15 +274,14 @@ export function ReapConfirm({
 
   return (
     <ModalShell
-      title={t("reapConfirm.reapCount", { souls: souls(run.item_count) })}
+      title={t("reapConfirm.title", {
+        count: run.item_count,
+        n: run.item_count,
+        bytes: bytes(run.total_bytes),
+      })}
       onClose={onClose}
       className="reap-confirm"
     >
-      <p className="reap-confirm-phrase">{run.confirmation_phrase}</p>
-      <p className="muted small">
-        {t("reapConfirm.summary", { souls: souls(run.item_count), bytes: bytes(run.total_bytes) })}
-      </p>
-
       {/* Said again here, not only on the plan screen: this is the last surface before
           the files go, and the count above is smaller than the queue's for a reason the
           owner is entitled to know while deciding. */}
@@ -376,13 +375,18 @@ export function ReapConfirm({
             )
           ) : (
             <>
+              {/* The second passed-check line: the practice run above and arming here are
+                  the two gates a dry run alone cannot prove. */}
+              <p className="dry-ok">
+                <span className="gate-mark" aria-hidden="true">
+                  ✓
+                </span>{" "}
+                {t("reapConfirm.arm.armedLine")}
+              </p>
               <label className="reap-confirm-label" htmlFor="reap-phrase">
-                <Trans
-                  i18nKey="reapConfirm.arm.typePhrase"
-                  values={{ phrase: run.confirmation_phrase }}
-                  components={{ code: <code /> }}
-                />
+                {t("reapConfirm.arm.typePhrase")}
               </label>
+              <p className="reap-confirm-phrase">{run.confirmation_phrase}</p>
               <input
                 ref={phraseRef}
                 id="reap-phrase"
@@ -390,7 +394,7 @@ export function ReapConfirm({
                 autoComplete="off"
                 spellCheck={false}
                 value={typed}
-                placeholder={run.confirmation_phrase}
+                placeholder={t("reapConfirm.arm.placeholder")}
                 onChange={(e) => setTyped(e.target.value)}
               />
             </>
@@ -401,9 +405,7 @@ export function ReapConfirm({
               {t("common.cancel")}
             </button>
             <button className="danger" disabled={!canExecute} onClick={() => exec.mutate()}>
-              {exec.isPending
-                ? t("reapConfirm.reapingLabel")
-                : t("reapConfirm.reapCount", { souls: souls(run.item_count) })}
+              {exec.isPending ? t("reapConfirm.reapingLabel") : t("reapConfirm.execute")}
             </button>
           </div>
         </div>

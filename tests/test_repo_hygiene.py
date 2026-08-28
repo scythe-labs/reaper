@@ -3539,7 +3539,7 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # complies from one that dropped out of the walk, and reads green either way.
 #
 # Re-derive this number by running the test. Never update it by hand arithmetic on a diff.
-_EXPECTED_NOTICES = 142
+_EXPECTED_NOTICES = 139
 
 
 def _shipped_tsx() -> list[Path]:
@@ -3801,13 +3801,13 @@ _QUERY_FAILURE_HANDLES = {
     # nothing here for this walk to count.
     "frontend/src/components/PolicyEditor.tsx": 5,
     "frontend/src/components/PolicyRuleEditors.tsx": 3,
-    "frontend/src/components/ReapBreakdown.tsx": 2,
+    "frontend/src/components/ReapBreakdown.tsx": 3,
     "frontend/src/components/ReapConfirm.tsx": 2,
     # The pre-flight read says what would turn a real run away. Deliberately undivided in the
     # same way as the safety reads above: an unreadable setup status is unknown, and the page
     # says so rather than staying silent, because silence there reads as "nothing is missing"
     # over a run the server is about to refuse.
-    "frontend/src/components/ReapPlan.tsx": 4,
+    "frontend/src/components/ReapPlan.tsx": 3,
     # The collection screen's three fate-lane reads (condemned/protected/abstained) each
     # branch on their own failure. `isPending` alone reads true on an error exactly as it does
     # on a success, so a lane that exhausted its retries would otherwise render as loaded with
@@ -3877,6 +3877,9 @@ _READ_HOOKS = {
     # Wraps the general-settings query and returns the whole result, so `GeneralPanel` still
     # branches on `general.isError` and the number does not move.
     "useGeneralSettings",
+    # Wraps the reap-breakdown query and returns the whole result, so both the Reap page's
+    # summary tiles and its reasons/ledger card branch on `counts.isError`/`counts.isPending`.
+    "useReapCounts",
 }
 
 # The hooks that hand back payload and no failure handle at all, so a member of their result
@@ -4225,7 +4228,7 @@ _NEVER_LOADED_COPY = {
     " rules you've already added are still here.": [
         "frontend/src/locales/en/ui.json",
     ],
-    "Reaper couldn't load this plan. Reload the page to try again.": [
+    "Reaper couldn't load past reaps. Reload to try again.": [
         "frontend/src/locales/en/ui.json",
     ],
     "Reaper couldn't load this reap. Close this and try View again.": [
