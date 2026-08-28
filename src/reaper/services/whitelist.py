@@ -303,3 +303,33 @@ async def remove_override(session: AsyncSession, *, media_key: str) -> bool:
     await session.delete(entry)
     await session.flush()
     return True
+
+
+async def remove_show_overrides(session: AsyncSession, *, show_key: str) -> list[tuple[str, str]]:
+    """Remove a show's own override and every season-level override under it.
+
+    Returns each removed ``(media_key, decision)``. The bulk bar's clear is the caller:
+    a selected show card shows its seasons' hand marks, so its clear covers them all. A
+    level-scoped control (the show panel, a season row) clears one key through
+    :func:`remove_override` instead, so it only ever reverses what it lit.
+
+    For a key with no children (a movie, a season) the prefix matches nothing and this
+    degrades to an exact-key remove.
+    """
+    rows = (
+        (
+            await session.execute(
+                select(WhitelistEntry).where(
+                    (WhitelistEntry.media_key == show_key)
+                    | WhitelistEntry.media_key.like(show_key + ":%")
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    removed = [(entry.media_key, entry.decision) for entry in rows]
+    for entry in rows:
+        await session.delete(entry)
+    await session.flush()
+    return removed

@@ -2473,11 +2473,14 @@ export const api = {
       spare_days: spareDays,
     }),
   /** Clear any override (spare or reap). This does not delete anything: the item is
-   *  judged by the policy again on the next scan. */
-  clearOverride: (media_key: string) =>
-    request<{ removed: boolean }>(`/api/override/${encodeURIComponent(media_key)}`, {
-      method: "DELETE",
-    }),
+   *  judged by the policy again on the next scan. `includeSeasons` widens a show key's
+   *  clear to its season-level rows: only the bulk bar sends it, because a selected show
+   *  card shows every season's hand mark; level-scoped controls clear one key. */
+  clearOverride: (media_key: string, includeSeasons = false) =>
+    request<{ removed: boolean }>(
+      `/api/override/${encodeURIComponent(media_key)}${includeSeasons ? "?include_seasons=true" : ""}`,
+      { method: "DELETE" },
+    ),
 
   // --- auth ---------------------------------------------------------------
   me: () => request<AuthUser>("/api/auth/me"),

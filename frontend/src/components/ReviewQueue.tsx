@@ -1793,15 +1793,20 @@ export function ReviewQueue({
       keys,
       decision,
       spareDays = 0,
+      showKeys,
     }: {
       keys: string[];
       decision: Override | null;
       spareDays?: number;
+      /** The selected keys that are whole shows. A show card shows every season's hand
+       *  mark, so its bulk clear also clears the season-level rows (include_seasons);
+       *  without this a show whose marks are all season-level cleared nothing. */
+      showKeys?: Set<string>;
     }) => {
       const results = await Promise.allSettled(
         keys.map((key) =>
           decision === null
-            ? api.clearOverride(key)
+            ? api.clearOverride(key, showKeys?.has(key) ?? false)
             : api.override(key, decision, undefined, spareDays),
         ),
       );
@@ -2990,7 +2995,13 @@ export function ReviewQueue({
                 type="button"
                 className="sm ghost"
                 disabled={pending || selected.size === 0}
-                onClick={() => bulk.mutate({ keys: [...selected], decision: null })}
+                onClick={() =>
+                  bulk.mutate({
+                    keys: [...selected],
+                    decision: null,
+                    showKeys: new Set(groups.filter((g) => g.isShow).map((g) => g.key)),
+                  })
+                }
                 title={t("reviewQueue.clearOverrideTitle")}
               >
                 {t("reviewQueue.clearOverrideButton")}

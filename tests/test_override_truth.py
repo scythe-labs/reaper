@@ -898,3 +898,86 @@ class TestAHandDecisionLeavesARecord:
 
         assert response.json() == {"removed": False}
         assert self._overrides(before) == []
+
+
+@pytest.fixture
+def bulk_clear_client(tmp_path: Path) -> Iterator[TestClient]:
+    """A logged-in client over one show with two scan-condemned seasons."""
+    settings = Settings(data_dir=tmp_path, secret_key="k")
+    engine = sa_create_engine(settings.sync_database_url)
+    Base.metadata.create_all(engine)
+    with Session(engine) as s:
+        snap = Snapshot(
+            created_at=NOW,
+            policy_hash="p" * 64,
+            scoring_hash="s" * 64,
+            horizon_at=NOW,
+            item_count=2,
+        )
+        s.add(snap)
+        s.flush()
+        for season in (2, 3):
+            s.add(
+                Candidate(
+                    snapshot_id=snap.id,
+                    media_key=f"sonarr:1:5:{season}",
+                    group_key="sonarr:1:5",
+                    title=f"Example Show S{season}",
+                    group_title="Example Show",
+                    media_type="season",
+                    size_bytes=GB,
+                    verdict="condemn",
+                    score=80,
+                    coverage_bp=10_000,
+                    explanation_json="{}",
+                    created_at=NOW,
+                )
+            )
+        s.commit()
+    engine.dispose()
+
+    with TestClient(create_app(settings)) as c:
+        login(c, settings)
+        yield c
+
+
+class TestBulkClearOnAShow:
+    """``DELETE /api/override/{show}?include_seasons=true``, the bulk bar's clear.
+
+    A selected show card shows every season's hand mark, so its clear covers the
+    season-level rows too. Without the flag the same route stays level-scoped, which is
+    what the show panel's own control sends.
+    """
+
+    def test_include_seasons_clears_season_level_rows_under_the_show(
+        self, bulk_clear_client: TestClient
+    ) -> None:
+        for season in (2, 3):
+            response = bulk_clear_client.post(
+                "/api/override", json={"media_key": f"sonarr:1:5:{season}", "decision": "reap"}
+            )
+            assert response.status_code == 200, response.text
+
+        cleared = bulk_clear_client.delete(
+            "/api/override/sonarr:1:5", params={"include_seasons": "true"}
+        )
+        assert cleared.status_code == 200
+        assert cleared.json() == {"removed": True}
+        again = bulk_clear_client.delete(
+            "/api/override/sonarr:1:5", params={"include_seasons": "true"}
+        )
+        assert again.json() == {"removed": False}
+
+    def test_without_the_flag_the_show_clear_stays_level_scoped(
+        self, bulk_clear_client: TestClient
+    ) -> None:
+        bulk_clear_client.post(
+            "/api/override", json={"media_key": "sonarr:1:5:2", "decision": "reap"}
+        )
+
+        response = bulk_clear_client.delete("/api/override/sonarr:1:5")
+        assert response.status_code == 200
+        assert response.json() == {"removed": False}
+        # The season row survives: a level-scoped control only reverses what it lit.
+        cleared = bulk_clear_client.delete("/api/override/sonarr:1:5:2")
+        assert cleared.json() == {"removed": True}

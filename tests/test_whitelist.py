@@ -164,6 +164,42 @@ class TestOverrideService:
         assert await whitelist.remove_override(session, media_key="radarr:1:9") is True
         assert await whitelist.overrides(session) == {}
 
+    async def test_remove_show_overrides_clears_the_show_and_its_seasons(
+        self, session: AsyncSession
+    ) -> None:
+        # The show's own row, two of its season rows, and a season of ANOTHER show that
+        # must survive: a show card's bulk clear covers exactly what the card showed.
+        await whitelist.set_override(
+            session, media_key="sonarr:1:5", title="Example Show", decision="reap", note=None
+        )
+        await whitelist.set_override(
+            session, media_key="sonarr:1:5:2", title="Example Show", decision="spare", note=None
+        )
+        await whitelist.set_override(
+            session, media_key="sonarr:1:5:3", title="Example Show", decision="reap", note=None
+        )
+        await whitelist.set_override(
+            session, media_key="sonarr:1:55:1", title="Other Show", decision="reap", note=None
+        )
+        removed = await whitelist.remove_show_overrides(session, show_key="sonarr:1:5")
+        assert sorted(removed) == [
+            ("sonarr:1:5", "reap"),
+            ("sonarr:1:5:2", "spare"),
+            ("sonarr:1:5:3", "reap"),
+        ]
+        assert await whitelist.overrides(session) == {"sonarr:1:55:1": "reap"}
+
+    async def test_remove_show_overrides_on_a_key_with_no_children_is_an_exact_remove(
+        self, session: AsyncSession
+    ) -> None:
+        await whitelist.set_override(
+            session, media_key="radarr:1:9", title="Gone", decision="reap", note=None
+        )
+        assert await whitelist.remove_show_overrides(session, show_key="radarr:1:9") == [
+            ("radarr:1:9", "reap")
+        ]
+        assert await whitelist.remove_show_overrides(session, show_key="radarr:1:9") == []
+
 
 class TestTimedSpare:
     async def test_a_forever_spare_stores_no_expiry(self, session: AsyncSession) -> None:

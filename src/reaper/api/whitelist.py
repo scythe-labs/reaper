@@ -237,10 +237,32 @@ async def set_override(request: Request, payload: OverrideIn) -> WhitelistEntryO
 
 
 @router.delete("/override/{media_key}")
-async def clear_override(request: Request, media_key: str) -> RemovedOut:
+async def clear_override(
+    request: Request, media_key: str, include_seasons: bool = False
+) -> RemovedOut:
     """Remove any override, spare or reap. This is the decision-neutral name for the
-    same action."""
+    same action.
+
+    ``include_seasons`` widens a show key's clear to its season-level rows too. The
+    review queue's bulk bar sends it, because a selected show card shows every season's
+    hand mark, so its clear must cover what it showed. The level-scoped controls (show
+    panel, season rows) never send it, so each still reverses only the key it lit.
+    ``cleared_spare`` fires if ANY removed row was a spare: a spare among them may have
+    been keeping a season off the list, so every affected clock resets to a fresh
+    window rather than trusting one accrued while the item was covered.
+    """
     async with session_factory(request)() as session:
+        if include_seasons:
+            cleared = await whitelist.remove_show_overrides(session, show_key=media_key)
+            await _sync_grace_clocks(
+                session,
+                media_key,
+                cleared_spare=any(decision == "spare" for _, decision in cleared),
+            )
+            await session.commit()
+            for key, decision in cleared:
+                _log_override(key, "cleared", prior=decision, spare_days=None)
+            return RemovedOut(removed=bool(cleared))
         prior = await whitelist.override_for(session, media_key)
         removed = await whitelist.remove_override(session, media_key=media_key)
         await _sync_grace_clocks(session, media_key, cleared_spare=prior == "spare")

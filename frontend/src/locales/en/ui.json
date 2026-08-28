@@ -2623,7 +2623,7 @@
     "bulkFailuresMessage": "{n, plural, one {1 item could not be updated. It is still selected so you can try again.} other {# items could not be updated. They are still selected so you can try again.}}",
     "clearFilters": "Clear filters",
     "clearOverrideButton": "Clear override",
-    "clearOverrideTitle": "Remove any override and let Reaper judge these again",
+    "clearOverrideTitle": "Remove every override, a show's season decisions included. Reaper judges these again.",
     "clearWholeSelectionTitle": "Clear the whole selection, including the cards not drawn yet",
     "collCounts": "{plexCount} in the collection, {scannedCount} in the last scan.",
     "collFateError": "Couldn't read the counts for this collection.",
