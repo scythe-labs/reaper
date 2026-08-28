@@ -1817,7 +1817,7 @@ class TestStopMidRun:
         assert report.state is RunState.COMPLETED
         assert radarr.delete_calls == [1]  # it ran to completion, not halted on the blip
 
-    async def test_a_hard_cancel_marks_aborted_and_defers_the_trash_purge(
+    async def test_a_hard_cancel_marks_aborted_and_defers_the_plex_tidy_up(
         self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         """A hard cancel mid-run, the app shutting down or a force-stop, is not the
@@ -1825,12 +1825,14 @@ class TestStopMidRun:
         must still mark the run ABORTED before the cancellation propagates, so shutdown
         never leaves the run EXECUTING.
 
-        It must not finish tidying Plex. The purge polls each affected section for up to
+        It must not tidy Plex. The purge polls each affected section for up to
         ``_PLEX_SETTLE_ATTEMPTS * _plex_settle_delay`` before it can even decide, so
         honoring it here would hold the container's shutdown open for tens of seconds per
         section, and could empty a section's trash while the process is being torn down.
-        The purge is cosmetic. The state commit is not, so the state is made durable and
-        the purge is deferred to Plex's own scan or the next run over that section.
+        The queued rescans go with it, since they are sent at the end of a run and a
+        canceled run has no end. The tidy-up is cosmetic, where the state commit has to
+        survive, so the state is made durable and Plex is left to its own scheduled scan,
+        or to the next run over the same section.
         """
         snapshot_id = await _snapshot_many(
             session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
@@ -1863,10 +1865,8 @@ class TestStopMidRun:
         # On disk, not merely on the session's copy of the row. A shutdown is exactly when
         # an in-memory terminal state buys nothing.
         assert (await _stored_run(async_factory, run.id)).state is RunState.ABORTED  # not EXECUTING
-        # The path-scoped refresh already fired with the delete, mid-run. That is not
-        # part of the shutdown work.
-        assert plex.refreshed == [("Movies", "/movies/One (2001)")]  # the first item's path
-        # The settle-wait and the purge do not run inside the cancellation.
+        assert plex.refreshed == []
+        # The settle-wait and the purge stay out of the cancellation too.
         assert plex.emptied == []
 
     async def test_progress_is_reported_after_every_item(self, session: AsyncSession) -> None:
@@ -2552,6 +2552,44 @@ class TestPlexCleanup:
         assert report.deleted_items == 1
         assert plex.refreshed == [("Movies", "/movies/Worthless (2001)")]
         assert plex.emptied == ["Movies"]  # the stale entry is purged
+
+    async def test_the_rescans_are_sent_once_at_the_end_not_per_item(
+        self, session: AsyncSession
+    ) -> None:
+        """A rescan starts an asynchronous Plex scan, so one per item leaves Plex
+        scanning folders this run is still deleting from. They are queued as files go,
+        keyed by path, and sent once the run is over."""
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+
+        class _CountDeletesFirst(FakePlex):
+            """Records how many deletes Radarr had taken by the time each rescan arrived."""
+
+            def __init__(self, radarr: FakeRadarr, **kw: Any) -> None:
+                super().__init__(**kw)
+                self._radarr = radarr
+                self.deletes_before_each_refresh: list[int] = []
+
+            async def refresh_path(self, section_key: int, path: str) -> None:
+                self.deletes_before_each_refresh.append(len(self._radarr.delete_calls))
+                await super().refresh_path(section_key, path)
+
+        radarr = FakeRadarr(path="/movies/Worthless")
+        plex = _CountDeletesFirst(
+            radarr, sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 98]}
+        )
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}, plex=plex))
+
+        assert report.deleted_items == 2
+        # Both movies report one folder, so two deletes ask for one scan.
+        assert plex.refreshed == [("Movies", "/movies/Worthless")]
+        # It arrived after both deletes, never between them.
+        assert plex.deletes_before_each_refresh == [2]
+        # Both rating keys still reach the purge gate, so it allows a shrink of two.
+        assert plex.emptied == ["Movies"]
 
     async def test_refresh_and_purge_fire_even_when_the_exclusion_fails(
         self, session: AsyncSession
@@ -4642,9 +4680,9 @@ class TestAnUnmappedErrorStopsTheRunWithoutWedgingIt:
     async def test_a_plex_surprise_during_the_refresh_is_swallowed(
         self, session: AsyncSession
     ) -> None:
-        """``_best_effort_refresh`` is documented as never fatal, so a handler that only
-        catches PlexError is not enough. It runs immediately after a file is gone, so
-        anything escaping it lands at the worst possible moment."""
+        """``_flush_refreshes`` is documented as never fatal, so a handler that only
+        catches PlexError is not enough. It runs in the block that records the run's
+        outcome, so anything escaping it replaces that outcome with a Plex error."""
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
         run = await _plan(session, snapshot_id)
 

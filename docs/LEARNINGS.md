@@ -1829,9 +1829,11 @@ Anomalies found, every one explained and none an ingest bug:
   not a per-library setting: it is what a stock install does.
 - **So the executor's trash interlock is largely decorative on a default server.**
   `_trash_delta_is_ours`, `_mount_is_up` and `_wait_for_scan` all gate `empty_trash`, but
-  when Plex empties the trash itself after every scan, the path refresh Reaper fires per
-  deleted item has already triggered that purge, inside Plex, before the gated call
-  arrives. The interlock is still worth keeping (it is the only thing standing on a server
+  when Plex empties the trash itself after every scan, the path refreshes Reaper fires
+  have already triggered that purge, inside Plex, before the gated call arrives. (Those
+  refreshes fired per deleted item when this was measured. They are sent once at the end
+  of a run now, which changes when Plex purges, not whether.) The interlock is still worth
+  keeping (it is the only thing standing on a server
   where the setting is off), but it was never the whole defense we described it as.
 - **The trash reads empty on every library of a default-configured server**, which is a
   consequence of the above rather than a coincidence, and it means a count-based warning
@@ -4521,6 +4523,58 @@ pool only within `REWATCH_BLOCK_FLOOR_N`-sized (30+) dormancy-age bands.
 - **Verdict: the abandonment signal is not justified.** A negative result, recorded here as
   prominently as a positive one would be: an "abandoned play" gate or signal is not worth
   building on what either library's history currently supports.
+
+## What a reap actually asks Plex for, per item (2026-08-28)
+
+Counted by reading every call site in `services/executor.py`. The question was whether the
+streaming veto's per-item session read was loading Plex. It is not the expensive one.
+
+| Per-item call | What Plex does with it |
+|---|---|
+| `active_streams` -> `GET /status/sessions` | reads its in-memory session table |
+| the path refresh -> `GET /library/sections/{k}/refresh?path=` | **queues an asynchronous scan** |
+
+Nothing else in the loop is per item. `_connect` caches the `PlexServer`, so plexapi rides
+one `requests.Session` for the whole run. `section_paths` looks per item and is not: plexapi
+holds `/library/sections` in a `cached_data_property`, so only the first call leaves the
+process.
+
+- **`/status/sessions` is the cheapest read Plex serves, and Tautulli polls it every 1 to 5
+  seconds forever.** A reap issues one per item, seconds apart, between a Radarr delete and
+  its verification. That is noise against Tautulli's standing load. Dropping the veto to
+  save it trades the last check before an irreversible act for nothing measurable.
+- **A websocket listening for `playing` fails the wrong way.** The read raises when Plex is
+  unreachable, and the item is kept. A socket that dropped forty seconds ago looks like a
+  socket where nobody pressed play, so a listener has to read silence as "nobody is
+  watching". A broken connection produces exactly that silence. Closing the hole means
+  polling the endpoint anyway, as the heartbeat, so `websocket-client` stays out of the
+  dependencies.
+- **The refresh is the one Plex does work for**, and it fired immediately after each delete,
+  so a 200-item reap had Plex scanning the folders it was still deleting into. Sending them
+  at the end removes that overlap.
+
+**Sending them at the end makes them later, not fewer.** Each path is one request and one
+scan, and a movie owns its folder, so a 200-movie reap still sends about 200. The queue is
+keyed by path, which collapses only items that share a folder, in practice several seasons
+of one show.
+
+**One library-wide scan instead is the wrong trade, twice over.** A path-scoped refresh can
+only trash items under that path. A section scan can trash anything Plex now fails to find,
+and `autoEmptyTrash` ships ON (measured above), so Plex purges those records before Reaper's
+count-delta gate is consulted at all. It is also more work for Plex, since it walks every
+directory in the library rather than the handful the run emptied. One request, more scanning,
+and an unbounded blast radius.
+
+**`LibrarySection.totalSize` is a plexapi `cached_data_property`, on a section object plexapi
+also caches for the life of the connection.** So the trash gate's before-count and
+after-count were one number, and the shrink it refuses to purge without could only read as
+zero. It worked because `_wait_for_scan` happens to call `section.reload()` in between, which
+invalidates the cache. `item_count` reloads for itself now, and `test_upstream_quirks.py`
+pins both halves.
+
+=> The collections finding above says the only lever is asking fewer times. This is the
+boundary of that rule. Where each request buys a bounded piece of work, batching them into
+one unbounded request costs more and risks more.
 
 ## Prior art
 

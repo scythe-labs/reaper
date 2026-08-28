@@ -1056,11 +1056,19 @@ class PlexClient:
         whichever of two same-titled libraries plexapi saw first, so the interlock
         meant to catch an over-large trash purge would end up comparing the wrong
         library's size against this run's deletions.
+
+        The ``reload()`` is what makes the second read a second read. plexapi holds
+        one section object per key for the life of the connection and caches
+        ``totalSize`` on it, so without this the before-count and the after-count
+        are the same number, the gate sees a shrink of zero, and it declines every
+        purge it was asked to decide.
         """
         server = await self._connect()
 
         def read() -> int:
-            return int(server.library.sectionByID(section_key).totalSize)
+            section = server.library.sectionByID(section_key)
+            section.reload()
+            return int(section.totalSize)
 
         return await self._call(read, what=f"count items in section {section_key}")
 
