@@ -1215,11 +1215,12 @@ def _selects_processes_by_pattern(line: str) -> bool:
 #: ``docker-entrypoint.sh``, ``scripts/dev-local.sh``, ``scripts/log-instructions-loaded.sh``,
 #: ``scripts/try-image.sh``, ``scripts/worktree-setup.sh``.
 _EXPECTED_SHELL_SCRIPTS = 5
-#: Both in ``dev-local.sh``'s ``stop_all``: the TERM sweep, and the KILL for a survivor of it.
-#: Pinned separately from the script count because the walk and the ban cover different
-#: populations: a script that drops out of the walk is absent from both, so a single figure
-#: would agree with itself while disagreeing with the tree.
-_EXPECTED_PATTERN_KILLS = 2
+#: In ``dev-local.sh``'s ``stop_all``: the API TERM sweep, the KILL for a survivor of it, and
+#: the per-port sweep of any rehearsal proxy's ``uv run`` wrapper. Pinned separately from the
+#: script count because the walk and the ban cover different populations: a script that drops
+#: out of the walk is absent from both, so a single figure would agree with itself while
+#: disagreeing with the tree.
+_EXPECTED_PATTERN_KILLS = 3
 
 
 def test_a_dev_script_kills_only_its_own_ports() -> None:
@@ -5805,7 +5806,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: parses. Pinned for the same reason as `_EXPECTED_SOURCE_MODULES`, and it carries more
 #: weight here: the expected cycle set is empty, so a walk that stopped reading the tree
 #: would agree with a clean graph exactly.
-_EXPECTED_FRONTEND_MODULES = 245
+_EXPECTED_FRONTEND_MODULES = 246
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")
