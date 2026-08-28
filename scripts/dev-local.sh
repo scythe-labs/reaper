@@ -42,13 +42,13 @@
 #                         branch head usually fails, because the models expect the new
 #                         columns. The upgrade is additive-only, so it is safe to run)
 #
-# Rehearsal proxies (opt-in, for testing a real armed reap with no file ever deleted). Set an
-# upstream and a port for a kind and `up` starts a proxy in front of that instance, `down`
-# stops it, and `status`/`logs` cover it. Point Reaper's Radarr/Sonarr URL at the proxy port
-# in Settings. Absent variables mean no proxy and no change to anything else. Put these in the
-# .env.local beside your data dir (loaded the same way as every other value here):
-#   REHEARSAL_RADARR_UPSTREAM / REHEARSAL_RADARR_PORT   real Radarr, and the proxy's port
-#   REHEARSAL_SONARR_UPSTREAM / REHEARSAL_SONARR_PORT   real Sonarr, and the proxy's port
+# Rehearsal proxies (opt-in, for testing a real armed reap with no file ever deleted). `up`
+# starts one proxy per entry, in front of a real Radarr or Sonarr, `down` stops them, and
+# `status`/`logs` cover them. Point each instance's URL in Settings at its proxy port. Set
+# REHEARSAL_PROXIES in the .env.local beside your data dir (loaded like every other value
+# here) to a space-separated list, one "label,upstream,port" per instance. Any number, so two
+# Radarr and two Sonarr each get their own proxy and port. Absent means no proxy and no change:
+#   REHEARSAL_PROXIES="radarr-hd,https://radarr.example,7879 sonarr-hd,https://sonarr.example,8990"
 #
 # Two instances side by side: give the second both REAPER_PORT and REAPER_WEB_PORT. They move
 # together, because Vite's /api proxy target reads REAPER_PORT (see the note further down), so
@@ -152,30 +152,34 @@ WEB_PORT="${REAPER_WEB_PORT:-$WEB_PORT_DEFAULT}"
 # --- optional: arr rehearsal proxies (opt-in, from the dotenv loaded above) -----------------
 # A real armed reap drives Radarr/Sonarr's delete endpoints. Pointed at one of these proxies
 # instead of the real host, the executor runs its real send path while no file is ever removed
-# upstream (scripts/arr_rehearsal_proxy.py refuses or fakes every write). Collected into three
+# upstream (scripts/arr_rehearsal_proxy.py refuses or fakes every write). One entry per
+# instance, so two Radarr and two Sonarr are four proxies on four ports. Collected into three
 # parallel arrays, indexed together, so every place below that acts per instance treats a proxy
 # exactly like the servers: same port scoping, same per-port log file, same start/stop/report.
-# Strictly opt-in: with none of the variables set, all three arrays stay empty and nothing
-# below changes. A half-configured pair is a likely mistake, so it warns and skips rather than
-# booting a proxy pointed nowhere or on no port.
-PROXY_KINDS=(); PROXY_UPSTREAMS=(); PROXY_PORTS=()
-add_proxy() { # kind upstream port
-  local kind="$1" upstream="$2" port="$3"
-  if [ -n "$upstream" ] && [ -z "$port" ]; then
-    warn "$kind rehearsal proxy: REHEARSAL_${kind^^}_UPSTREAM is set but REHEARSAL_${kind^^}_PORT is not; skipping it"
-    return
+# Strictly opt-in: with REHEARSAL_PROXIES unset the arrays stay empty and nothing below changes.
+PROXY_LABELS=(); PROXY_UPSTREAMS=(); PROXY_PORTS=()
+add_proxy() { # label upstream port
+  local label="$1" upstream="$2" port="$3"
+  if [ -z "$label" ] || [ -z "$upstream" ] || [ -z "$port" ]; then
+    warn "rehearsal proxy entry '$label,$upstream,$port' is missing a field (want label,upstream,port); skipping it"
+    return 0
   fi
-  if [ -z "$upstream" ] && [ -n "$port" ]; then
-    warn "$kind rehearsal proxy: REHEARSAL_${kind^^}_PORT is set but REHEARSAL_${kind^^}_UPSTREAM is not; skipping it"
-    return
-  fi
-  # `return 0`, never a bare `return`: it would hand back the failed test's status, and under
-  # `set -e` an opted-out boot (both variables unset, the default) would die right here.
-  [ -n "$upstream" ] || return 0
-  PROXY_KINDS+=("$kind"); PROXY_UPSTREAMS+=("$upstream"); PROXY_PORTS+=("$port")
+  local taken
+  for taken in ${PROXY_PORTS[@]+"${PROXY_PORTS[@]}"}; do
+    if [ "$taken" = "$port" ]; then
+      warn "rehearsal proxy '$label' wants port $port, already claimed by another entry; skipping it"
+      return 0
+    fi
+  done
+  PROXY_LABELS+=("$label"); PROXY_UPSTREAMS+=("$upstream"); PROXY_PORTS+=("$port")
 }
-add_proxy radarr "${REHEARSAL_RADARR_UPSTREAM:-}" "${REHEARSAL_RADARR_PORT:-}"
-add_proxy sonarr "${REHEARSAL_SONARR_UPSTREAM:-}" "${REHEARSAL_SONARR_PORT:-}"
+# Space-separated entries, each "label,upstream,port". A URL carries no comma or space, so the
+# two delimiters never collide with a field. Under `set -u` the `:-` keeps an unset list empty.
+for _entry in ${REHEARSAL_PROXIES:-}; do
+  IFS=, read -r _label _upstream _port <<<"$_entry"
+  add_proxy "$_label" "$_upstream" "$_port"
+done
+unset _entry _label _upstream _port
 
 # A log belongs to the instance, and what identifies an instance is its port, not the tree
 # it was booted from. So both halves of the path follow the port: the files are named for
@@ -273,18 +277,18 @@ proxy_log() { printf '%s/proxy-%s.log' "$LOG_DIR" "$1"; }
 # error), so this confirms the port bound and moves on rather than blocking the boot.
 start_proxies() {
   mkdir -p "$LOG_DIR"
-  local i kind upstream port plog
+  local i label upstream port plog
   for i in ${PROXY_PORTS[@]+"${!PROXY_PORTS[@]}"}; do
-    kind="${PROXY_KINDS[$i]}"; upstream="${PROXY_UPSTREAMS[$i]}"; port="${PROXY_PORTS[$i]}"
+    label="${PROXY_LABELS[$i]}"; upstream="${PROXY_UPSTREAMS[$i]}"; port="${PROXY_PORTS[$i]}"
     if [ -n "$(port_pids "$port")" ]; then
-      log "$kind rehearsal proxy already on :$port"
+      log "$label rehearsal proxy already on :$port"
       continue
     fi
     plog="$(proxy_log "$port")"
-    log "starting $kind rehearsal proxy on :$port -> $upstream (no file is ever deleted)"
+    log "starting $label rehearsal proxy on :$port -> $upstream (no file is ever deleted)"
     nohup uv run python scripts/arr_rehearsal_proxy.py --upstream "$upstream" --port "$port" \
       > "$plog" 2>&1 &
-    wait_ready "http://127.0.0.1:$port/api/v3/system/status" "$kind proxy" || true
+    wait_ready "http://127.0.0.1:$port/api/v3/system/status" "$label proxy" || true
   done
 }
 
@@ -298,10 +302,10 @@ case "$cmd" in
       if [ -n "$pids" ]; then log "$1 :$2 listening ($pids)"; else warn "$1 :$2 not running"; fi
     done
     for i in ${PROXY_PORTS[@]+"${!PROXY_PORTS[@]}"}; do
-      port="${PROXY_PORTS[$i]}"; kind="${PROXY_KINDS[$i]}"
+      port="${PROXY_PORTS[$i]}"; label="${PROXY_LABELS[$i]}"
       pids="$(port_pids "$port")"
-      if [ -n "$pids" ]; then log "$kind proxy :$port listening ($pids)"
-      else warn "$kind proxy :$port not running"; fi
+      if [ -n "$pids" ]; then log "$label proxy :$port listening ($pids)"
+      else warn "$label proxy :$port not running"; fi
     done
     exit 0 ;;
   logs)
@@ -436,5 +440,5 @@ cat <<EOF
 EOF
 
 for i in ${PROXY_PORTS[@]+"${!PROXY_PORTS[@]}"}; do
-  log "point Reaper's ${PROXY_KINDS[$i]} URL (in Settings) at http://127.0.0.1:${PROXY_PORTS[$i]} to rehearse a reap"
+  log "point Reaper's ${PROXY_LABELS[$i]} URL (in Settings) at http://127.0.0.1:${PROXY_PORTS[$i]} to rehearse a reap"
 done
