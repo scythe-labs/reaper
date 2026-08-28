@@ -1829,10 +1829,10 @@ class TestStopMidRun:
         ``_PLEX_SETTLE_ATTEMPTS * _plex_settle_delay`` before it can even decide, so
         honoring it here would hold the container's shutdown open for tens of seconds per
         section, and could empty a section's trash while the process is being torn down.
-        The queued rescans go with it: they are sent at the end of a run, and a run that
-        was canceled has no end to send them from. The whole tidy-up is cosmetic. The
-        state commit is not, so the state is made durable and Plex is left to its own
-        scheduled scan, or to the next run over the same section.
+        The queued rescans go with it, since they are sent at the end of a run and a
+        canceled run has no end. The tidy-up is cosmetic. The state commit is not, so the
+        state is made durable and Plex is left to its own scheduled scan, or to the next
+        run over the same section.
         """
         snapshot_id = await _snapshot_many(
             session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
@@ -1865,9 +1865,8 @@ class TestStopMidRun:
         # On disk, not merely on the session's copy of the row. A shutdown is exactly when
         # an in-memory terminal state buys nothing.
         assert (await _stored_run(async_factory, run.id)).state is RunState.ABORTED  # not EXECUTING
-        # No Plex call at all inside the cancellation. The rescans are queued during the
-        # run and sent at the end, so a shutdown that lands mid-run sends none of them
-        # rather than firing one request per deleted folder into a dying process.
+        # The rescans are queued during the run and sent at the end, so a shutdown that
+        # lands mid-run sends none of them.
         assert plex.refreshed == []
         # The settle-wait and the purge do not run inside the cancellation either.
         assert plex.emptied == []
@@ -2559,10 +2558,9 @@ class TestPlexCleanup:
     async def test_the_rescans_are_sent_once_at_the_end_not_per_item(
         self, session: AsyncSession
     ) -> None:
-        """A rescan fires an asynchronous Plex scan that can take minutes. One per item
-        would leave Plex scanning the folders this run is still deleting from, for the
-        whole length of the run. They are queued as files go, deduplicated by path, and
-        sent together once the deleting is over."""
+        """A rescan starts an asynchronous Plex scan, so one per item leaves Plex
+        scanning folders this run is still deleting from. They are queued as files go,
+        keyed by path, and sent once the run is over."""
         snapshot_id = await _snapshot_many(
             session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
         )
@@ -2588,9 +2586,9 @@ class TestPlexCleanup:
         report = await _real(session, run, _gateway(radarr={1: radarr}, plex=plex))
 
         assert report.deleted_items == 2
-        # Both movies report the same folder, so two deletes ask Plex for one scan.
+        # Both movies report one folder, so two deletes ask for one scan.
         assert plex.refreshed == [("Movies", "/movies/Worthless")]
-        # And it arrived after both deletes, never between them.
+        # It arrived after both deletes, never between them.
         assert plex.deletes_before_each_refresh == [2]
         # Both rating keys still reach the purge gate, so it allows a shrink of two.
         assert plex.emptied == ["Movies"]
@@ -4685,7 +4683,7 @@ class TestAnUnmappedErrorStopsTheRunWithoutWedgingIt:
         self, session: AsyncSession
     ) -> None:
         """``_flush_refreshes`` is documented as never fatal, so a handler that only
-        catches PlexError is not enough. It runs in the same block that records the run's
+        catches PlexError is not enough. It runs in the block that records the run's
         outcome, so anything escaping it replaces that outcome with a Plex error."""
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
         run = await _plan(session, snapshot_id)

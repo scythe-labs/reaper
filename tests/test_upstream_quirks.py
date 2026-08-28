@@ -569,15 +569,13 @@ class TestUpstreamTimestampShapes:
 
 
 class TestPlexCachesASectionsItemCount:
-    """``LibrarySection.totalSize`` is a plexapi ``cached_data_property``, and plexapi
-    keeps one section object per key for the life of a connection. So reading it twice
-    answers with the first number both times, however much the library changed between
-    the two reads.
+    """``LibrarySection.totalSize`` is a plexapi ``cached_data_property``, on a section
+    object plexapi keeps for the life of a connection. Reading it twice answers with the
+    first number both times.
 
     The trash interlock reads this count before the first delete and again before the
-    purge, and refuses to purge unless the section shrank. Sharing one cached number
-    across both reads makes every shrink zero, so the gate declines every purge it is
-    asked to decide while still reading like a working interlock.
+    purge, and refuses to purge unless the section shrank. One cached number makes every
+    shrink zero, so the gate declines every purge while reading like a working interlock.
     """
 
     #: One movie library, as Plex spells it in ``/library/sections``.
@@ -588,8 +586,7 @@ class TestPlexCachesASectionsItemCount:
 
     class _Server:
         """A connected plexapi server, minus the socket. Its section listing answers the
-        next scripted count, so a second answer can differ from the first only if
-        something actually asked Plex again."""
+        next scripted count, so two answers differ only if something asked Plex twice."""
 
         def __init__(self, counts: list[int], section_xml: str) -> None:
             self._counts = list(counts)
@@ -606,17 +603,17 @@ class TestPlexCachesASectionsItemCount:
             return _fromstring(f"<MediaContainer>{self._section_xml}</MediaContainer>")
 
     def test_reading_the_count_twice_answers_with_the_first_number(self) -> None:
-        """The upstream behavior itself, on a bare section object. This is the belief the
-        reload in ``PlexClient.item_count`` exists to correct, so it is pinned rather than
-        assumed: if plexapi ever stops caching, this test says so."""
+        """The upstream behavior, on a bare section object. The reload in
+        ``PlexClient.item_count`` rests on it, so it is pinned rather than assumed. This
+        test fails the day plexapi stops caching."""
         server = self._Server([100, 98], self.SECTION)
 
         assert server.section.totalSize == 100
         assert server.section.totalSize == 100  # Plex was never asked a second time
 
     async def test_item_count_answers_the_live_number_every_time(self) -> None:
-        """And what Reaper does about it. Two calls, two answers, because the client
-        reloads the section before reading the count off it."""
+        """Two calls, two answers, because the client reloads the section before reading
+        the count off it."""
         client = PlexClient("http://plex.test", "t", safety=RuntimeSafety())
         # Injected so `_connect` returns without a socket.
         client._server = self._Server([100, 98], self.SECTION)  # type: ignore[assignment]
