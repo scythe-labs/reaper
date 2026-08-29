@@ -41,6 +41,7 @@ from reaper.db.models import (
     Profile,
     ReapRun,
     RunState,
+    SizeSource,
     Snapshot,
     StepState,
 )
@@ -237,6 +238,11 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     title="Example Movie",
                     media_type="movie",
                     size_bytes=5_900_000_000,
+                    # Stamped the way a scan stamps a measured movie. A size with no
+                    # source is kept by the executor's frozen-size gate, dry run
+                    # included, so leaving it off would make every run here decline
+                    # the one condemned item.
+                    size_source=SizeSource.RADARR,
                     year=2013,
                     genres_json=json.dumps(["Documentary", "Drama"]),
                     quality="Bluray-1080p",
