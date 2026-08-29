@@ -379,23 +379,32 @@ function ReapingCard({ status }: { status: ReapStatus }) {
   return (
     <>
       <div className="reap-card">
-        <div className="fair-stats">
-          <div className="fair-stat">
+        <div className="fair-stats reap-tiles">
+          <div className="fair-stat rt-freed">
+            <span className="rt-cap">
+              <TileIcon kind="free" />
+              <span className="fair-stat-lbl">{t("reapPlan.tiles.freedSoFar")}</span>
+            </span>
             <span className="fair-stat-num">{bytes(status.deleted_bytes)}</span>
-            <span className="fair-stat-lbl">{t("reapPlan.tiles.freedSoFar")}</span>
           </div>
-          <div className="fair-stat">
+          <div className="fair-stat rt-removed">
+            <span className="rt-cap">
+              <ScytheGlyph className="rt-ic" strokeWidth={4.5} />
+              <span className="fair-stat-lbl">{t("reapPlan.tiles.removed")}</span>
+            </span>
             <span className="fair-stat-num">
               {t("reapPlan.reaping.removedCount", {
                 done: count(status.done),
                 total: count(status.total),
               })}
             </span>
-            <span className="fair-stat-lbl">{t("reapPlan.tiles.removed")}</span>
           </div>
-          <div className="fair-stat">
+          <div className="fair-stat rt-kept">
+            <span className="rt-cap">
+              <TileIcon kind="kept" />
+              <span className="fair-stat-lbl">{t("reapPlan.tiles.keptByChecks")}</span>
+            </span>
             <span className="fair-stat-num">{count(status.skipped)}</span>
-            <span className="fair-stat-lbl">{t("reapPlan.tiles.keptByChecks")}</span>
           </div>
         </div>
         <div

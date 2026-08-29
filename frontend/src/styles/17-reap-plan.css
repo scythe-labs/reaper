@@ -141,11 +141,11 @@
   background: color-mix(in srgb, var(--sonarr) 9%, var(--surface));
 }
 
-/* The done result's three tiles wear the same rail-and-icon grammar as the idle summary above.
-   Freed is the space reclaimed, and the only colored number, so it reads as the result. Removed
-   is the delete side, condemn red. Kept by checks is a protection that held, protect green.
-   Amber is deliberately not used for kept: amber is "could not be checked," the opposite of a
-   check that fired and kept the file. */
+/* The reaping card and the done result wear the same rail-and-icon grammar as the idle summary
+   above. Freed is the space reclaimed, and the only colored number, so it reads as the result.
+   Removed is the delete side, condemn red. Kept by checks is a protection that held, protect
+   green. Amber is deliberately not used for kept: amber is "could not be checked," the opposite
+   of a check that fired and kept the file. */
 .reap-tiles .rt-freed {
   --rt-rail: var(--protect);
   background: color-mix(in srgb, var(--protect) 8%, var(--surface));
