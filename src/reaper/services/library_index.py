@@ -243,6 +243,11 @@ async def build_index(
     async def _spine_rows() -> list[Mapping[str, Any]]:
         collected: list[Mapping[str, Any]] = []
         malformed = 0
+        # Tautulli stores one row per server and section, and its listing does not say
+        # which server a row came from. A Tautulli that has watched two Plex servers can
+        # therefore name one section id twice, and walking it twice would enter every row
+        # of that library into the index twice. The first row for an id is the one walked.
+        seen: set[int] = set()
         # Widened to Any deliberately: the client types this as a list of dicts, but the
         # value is whatever the remote returned, so the type is a claim rather than a
         # guarantee and the guard below has to stay reachable.
@@ -271,6 +276,9 @@ async def build_index(
                     "this scan"
                 )
                 continue
+            if section_id in seen:
+                continue
+            seen.add(section_id)
             if allowed_sections is not None and section_id not in allowed_sections:
                 continue
             # The library title, stamped onto each of its rows so the item build loop has a
