@@ -70,6 +70,13 @@ function runDotClass(state: string): string {
   return "reap-run-dot";
 }
 
+/** The reason key an operator-stopped run carries. The shared catalog message for it is the
+ *  truncated head ("You stopped this run…"), because the done card, a history row, and a log
+ *  line have no item list beneath it to point at. The run detail sheet DOES, so it alone swaps
+ *  in the full sentence naming that list. Matched on this stable key, never the translated text
+ *  (rule 92). */
+const STOPPED_BY_OPERATOR = "error.reap.stopped_by_operator";
+
 type TileKind = "titles" | "free" | "movies" | "seasons";
 
 /** The idle-summary tile's icon, one per metric. Decorative: the label beside it names the
@@ -499,7 +506,11 @@ function RunDetailSheet({ run, onClose }: { run: RunSummary; onClose: () => void
           run, not a reply to anything pressed here. */}
       {run.aborted_reason && (
         <Notice tone="warn" standing>
-          {composeError(run.aborted_reason)}
+          {/* The one surface with the item list beneath it, so the operator-stop message gets
+              its full "the titles below were the only ones removed" tail here. */}
+          {run.aborted_reason.k === STOPPED_BY_OPERATOR
+            ? t("reapPlan.detail.stopped")
+            : composeError(run.aborted_reason)}
         </Notice>
       )}
       <div className="run-detail-stats">

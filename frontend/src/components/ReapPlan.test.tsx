@@ -620,7 +620,9 @@ describe("done", () => {
     expect(screen.queryByText("Reap finished")).not.toBeInTheDocument();
   });
 
-  it("names a stop or an abort with the composed reason, from the persisted row", async () => {
+  it("shows the truncated stop note on the done card, not the detail sheet's below tail", async () => {
+    // The operator-stop note is the truncated head here, because the done card has no item list
+    // beneath it to point at. The "titles below" tail belongs to the detail sheet alone.
     apiMock.reapStatus.mockResolvedValue(
       reapStatus({ running: false, run_id: 13, phase: "aborted" }),
     );
@@ -631,23 +633,15 @@ describe("done", () => {
         deleted_items: 5,
         deleted_bytes: 10 * GB,
         skipped: 0,
-        aborted_reason: {
-          k: "legacy",
-          p: {
-            text: "You stopped this run before it finished, so the rest of the plan was left alone.",
-          },
-        },
+        aborted_reason: { k: "error.reap.stopped_by_operator", p: {} },
       }),
     ]);
     mockOutcomes([]);
     renderPlan();
 
     expect(await screen.findByText("Reap finished")).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "You stopped this run before it finished, so the rest of the plan was left alone.",
-      ),
-    ).toBeInTheDocument();
+    expect(screen.getByText("You stopped this run…")).toBeInTheDocument();
+    expect(screen.queryByText(/titles below/)).not.toBeInTheDocument();
   });
 
   it("does not show the done card for a run refused before it ever left PLANNED (phase error)", async () => {
@@ -744,6 +738,32 @@ describe("run detail sheet", () => {
     await screen.findByRole("dialog", { name: "Run 55" });
     await user.click(container.querySelector(".modal-scrim")!);
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("gives the operator-stop note its full 'titles below' tail here, where the list is beneath it", async () => {
+    mockHistory([
+      summary({
+        id: 60,
+        state: "aborted",
+        deleted_items: 3,
+        deleted_bytes: 5 * GB,
+        skipped: 0,
+        aborted_reason: { k: "error.reap.stopped_by_operator", p: {} },
+      }),
+    ]);
+    mockOutcomes([
+      outcome({ media_key: "a", title: "Movie A", state: "verified", size_bytes: 5 * GB }),
+    ]);
+    const user = userEvent.setup();
+    renderPlan();
+
+    await user.click(await screen.findByRole("button", { name: /^Run 60/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Run 60" });
+    expect(
+      within(dialog).getByText(
+        "You stopped this run. The titles below were the only ones removed.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("the pinned running-now row does not open a detail", async () => {
