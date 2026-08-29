@@ -83,7 +83,6 @@ const idleReapStatus: ReapStatus = {
   skipped: 0,
   title: "",
   error_reason: null,
-  report: null,
 };
 
 function dryReport(overrides: Partial<RunReport> = {}): RunReport {

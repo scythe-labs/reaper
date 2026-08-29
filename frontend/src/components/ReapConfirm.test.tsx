@@ -66,7 +66,6 @@ function status(overrides: Partial<ReapStatus> = {}): ReapStatus {
     skipped: 0,
     title: "",
     error_reason: null,
-    report: null,
     ...overrides,
   };
 }

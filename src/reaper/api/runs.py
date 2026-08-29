@@ -399,8 +399,9 @@ async def list_runs(
     (the head Reap button, a standalone practice run) and never executed,
     from both the page and ``total``: filtering a page after it is fetched
     would leave the two disagreeing with each other and with the true
-    count. The default keeps every row, since another consumer (the app-wide
-    reap bar's View) reads a planned run by id off this same route.
+    count. The SPA's one caller, the Reap page's history, passes it true;
+    the default stays permissive for raw API readers, for whom a planned
+    row is data, not noise.
     """
     async with session_factory(request)() as session:
         rows_stmt = select(ReapRun).order_by(ReapRun.id.desc()).limit(limit).offset(offset)
@@ -646,10 +647,6 @@ class ReapStatus(BaseModel):
     #: ``error.reap.unexpected`` for anything else. ``null`` while running
     #: and on a clean finish.
     error_reason: ReasonKey | None = None
-    report: RunReportOut | None = None
-    """The after-action report, set once the run ends. Null while running.
-    The browser reads it when ``running`` turns false, to render the
-    per-item checklist without a second call."""
 
 
 def _reap_status(app: FastAPI) -> ReapStatus:
@@ -747,7 +744,6 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
     status.skipped = 0
     status.title = ""
     status.error_reason = None
-    status.report = None
 
     try:
         async with factory() as session:
@@ -864,15 +860,6 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
                 # the start even if the process dies mid-run.
                 log.info("reap.started", run_id=run_id, planned=status.total)
                 report = await executor.execute(run_id)
-                # This publishes first, ahead of anything else that can
-                # raise. The report is the operator's only account of what
-                # happened to each file, and the executor has already made
-                # the run's own state and journal durable, so nothing below
-                # is load-bearing for it. Publishing the report after the
-                # commit below instead would lose the report whenever the
-                # database was the thing that had gone wrong, leaving phase
-                # "error" and a bare string in place of the per-item record.
-                status.report = _report_out(report)
                 try:
                     # This is a second layer, not the durability itself.
                     # The executor commits its own journal per item and its

@@ -1069,8 +1069,6 @@ export interface ReapStatus {
   /** Why the run stopped, composed under `error.*` with `composeError` (`why.ts`). `null`
    *  while running and on a clean finish. */
   error_reason: ReasonKey | null;
-  /** The after-action report, present once the run has ended (null while running). */
-  report: RunReport | null;
 }
 
 export interface ProfileSettings {
@@ -2387,8 +2385,7 @@ export const api = {
   /** The recent plans, newest first, with `total` (of whatever `executedOnly` matches) for
    *  the history view's "Showing N of M" and its "Show 50 more" paging. `executedOnly`
    *  drops a plan that was built and never executed (the head Reap button, a standalone
-   *  practice run): the Reap page's own history reads it true, and the app-wide reap bar's
-   *  View still reads a planned run by id off the default (false). */
+   *  practice run): the Reap page's history, the one caller here, reads it true. */
   runs: (offset = 0, limit = 50, executedOnly = false) =>
     request<RunList>(`/api/runs?offset=${offset}&limit=${limit}&executed_only=${executedOnly}`),
   run: (id: number) => request<Run>(`/api/runs/${id}`),
@@ -2399,8 +2396,9 @@ export const api = {
   runSteps: (id: number, offset = 0, limit = 50) =>
     request<RunSteps>(`/api/runs/${id}/steps?offset=${offset}&limit=${limit}`),
   /** A window of one run's per-item outcomes, reconstructed from the journal. Answers a
-   *  run still executing exactly as it answers one long finished. No component reads
-   *  this yet; it ships with the route for the same reason `runSteps` did. */
+   *  run still executing exactly as it answers one long finished, which is what lets the
+   *  Reap page's live item-status feed, its done card, and the run detail sheet all read
+   *  the same source. */
   runOutcomes: (id: number, offset = 0, limit = 50) =>
     request<RunOutcomes>(`/api/runs/${id}/outcomes?offset=${offset}&limit=${limit}`),
   /** Build a plan, over an explicitly named set. `"all"` covers the whole condemned
