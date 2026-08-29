@@ -4,7 +4,8 @@ name: Release
 # Cut a CalVer release from main. main is release-only, so every push here IS a
 # release: compute the next vYYYY.M.N, tag it, draft the release, build the
 # binaries and snaps (binaries.yml does that work), push the versioned container
-# image, attach everything, publish, then scan the assets with VirusTotal and submit
+# image, attest the image and the assets through Sigstore, attach everything,
+# publish, then scan the assets with VirusTotal and submit
 # the installer to winget (both jobs below, because publishing with the workflow's
 # own token fires no other workflow).
 # The notes are GitHub-generated over the PRs since the previous tag, sectioned by
@@ -227,8 +228,14 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Sigstore mints a short-lived signing certificate from this job's OIDC
+      # token, so provenance needs no key to store, and none to rotate.
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - name: Stitch and tag
+        id: stitch
         env:
           VERSION: ${{ needs.cut.outputs.version }}
         run: |
@@ -239,6 +246,26 @@ jobs:
           docker buildx imagetools create -t "${image}:${VERSION}" \
             "${image}:${VERSION}-amd64" "${image}:${VERSION}-arm64"
           docker buildx imagetools create -t "${image}:latest" "${image}:${VERSION}"
+          # The index digest, which is what both tags resolve to. Attesting it
+          # covers the two architecture images under it, so neither needs its own.
+          digest="$(docker buildx imagetools inspect "${image}:${VERSION}" \
+            --format '{{.Manifest.Digest}}')"
+          {
+            echo "image=${image}"
+            echo "digest=${digest}"
+          } >> "$GITHUB_OUTPUT"
+
+      # Which workflow, repository and commit built this image, signed by Sigstore
+      # and recorded in its public transparency log. An operator checks it with
+      # `gh attestation verify oci://<image>:<version> --repo scythe-labs/reaper`.
+      # push-to-registry also stores the attestation beside the image, so a tool
+      # that reads the registry can verify without asking GitHub.
+      - name: Attest the image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.stitch.outputs.image }}
+          subject-digest: ${{ steps.stitch.outputs.digest }}
+          push-to-registry: true
 
   publish:
     name: Attach artifacts and publish
@@ -246,12 +273,26 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Same keyless signing as the image, see the docker-manifest job above. No
+      # artifact-metadata here: a storage record is only written for a subject
+      # pushed to a registry, and these are files on a release.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: binaries-*
           merge-multiple: true
           path: assets
+
+      # Ahead of the upload, so a failed attestation leaves a draft rather than a
+      # published release whose provenance nobody can check. A rerun redoes both.
+      # The bundles are not release assets: `gh attestation verify <file> --repo
+      # scythe-labs/reaper` looks them up by the file's own digest.
+      - name: Attest the binaries
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: assets/*
 
       - name: Upload and publish
         env:

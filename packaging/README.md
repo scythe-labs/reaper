@@ -129,6 +129,34 @@ release. The free tier covers a release: it allows four requests a minute, and t
 workflow sends two assets a minute because an asset over 32 MB costs two requests.
 Without the secret it skips, green.
 
+## Build provenance
+
+Every release asset and the release container image carry a signed build provenance
+attestation, produced by `actions/attest-build-provenance` in `release.yml` and signed
+through [Sigstore](https://www.sigstore.dev/). It records which repository, workflow and
+commit produced the file, signs that with a certificate minted from the job's OIDC token,
+and logs the signature in Sigstore's public transparency log. There is no key in a secret,
+because the certificate lives about ten minutes and the log is what proves it was valid
+when it signed.
+
+Anyone can check a download:
+
+```
+gh attestation verify Reaper-2026.8.1-windows-x64-setup.exe --repo scythe-labs/reaper
+gh attestation verify oci://ghcr.io/scythe-labs/reaper:2026.8.1 --repo scythe-labs/reaper
+```
+
+The image attestation is also pushed to GHCR beside the image, so a registry client can
+verify it without asking GitHub.
+
+**This is not OS code signing, and it clears no warning.** Windows and macOS trust their
+own certificate programs, and Sigstore is in neither, so an operator still sees SmartScreen
+and Gatekeeper exactly as before. Provenance answers a different question: this file came
+from that commit in this repository. The next section covers the warnings.
+
+Not wired: the dev builds. `binaries.yml` publishes the nightly `dev-build` prerelease
+and the `:dev` image unattested. Add it there the same way if a dev-channel operator asks.
+
 ## Antivirus false positives, and what is wired
 
 Unsigned Windows installers start with zero reputation, so some scanners flag them.
@@ -140,7 +168,9 @@ Four remedies, in order of effect:
    `codesign`/`notarytool` step after PyInstaller (today the binary carries the
    ad-hoc signature arm64 requires, so macOS warns on first launch instead of
    refusing). When the accounts exist, both land in `binaries.yml` behind
-   secrets-present guards.
+   secrets-present guards. Sigstore does not substitute for either identity. Its
+   certificates are not in Microsoft's or Apple's trust programs, so the previous
+   section's attestations sit alongside this remedy rather than in place of it.
 2. **WinGet presence — wired.** Each release passes Microsoft's validation and
    scanning pipeline on its way into winget-pkgs.
 3. **Per-release submission — manual.** When Defender specifically flags a release,
