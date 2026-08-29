@@ -255,11 +255,10 @@ jobs:
             echo "digest=${digest}"
           } >> "$GITHUB_OUTPUT"
 
-      # Which workflow, repository and commit built this image, signed by Sigstore
-      # and recorded in its public transparency log. An operator checks it with
-      # `gh attestation verify oci://<image>:<version> --repo scythe-labs/reaper`.
-      # push-to-registry also stores the attestation beside the image, so a tool
-      # that reads the registry can verify without asking GitHub.
+      # Which repository, workflow and commit built this image, signed by Sigstore.
+      # `gh attestation verify oci://<image>:<version> --repo scythe-labs/reaper`
+      # checks it. push-to-registry also stores it beside the image, so a registry
+      # client verifies without asking GitHub.
       - name: Attest the image
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -286,9 +285,8 @@ jobs:
           path: assets
 
       # Ahead of the upload, so a failed attestation leaves a draft rather than a
-      # published release whose provenance nobody can check. A rerun redoes both.
-      # The bundles are not release assets: `gh attestation verify <file> --repo
-      # scythe-labs/reaper` looks them up by the file's own digest.
+      # release nobody can check. The bundles are not release assets: `gh
+      # attestation verify <file> --repo scythe-labs/reaper` finds them by digest.
       - name: Attest the binaries
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
