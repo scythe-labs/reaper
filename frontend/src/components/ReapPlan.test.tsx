@@ -384,6 +384,24 @@ describe("the standalone practice run", () => {
     expect(pass.textContent).toContain("3 would be kept by checks.");
   });
 
+  it("clears a standing practice result once the reap flow starts", async () => {
+    // The pass line describes the plan as it stood before the reap; surviving it would
+    // greet the emptied plan with "would remove 47 titles" beside "would remove nothing".
+    const user = userEvent.setup();
+    renderPlan();
+
+    const practiceButton = await screen.findByRole("button", { name: "Practice run" });
+    await waitFor(() => expect(practiceButton).toBeEnabled());
+    await user.click(practiceButton);
+    await screen.findByText(/Practice run passed/);
+
+    await user.click(screen.getByRole("button", { name: /^Reap 47 titles…$/ }));
+    await screen.findByRole("dialog");
+    // The confirm sheet shows its own dry-run line; the page's standing pass card is
+    // what must not survive into the run.
+    expect(document.querySelector(".reap-practice-pass")).not.toBeInTheDocument();
+  });
+
   it("reports a failed practice run in the shared error tone", async () => {
     apiMock.dryRun.mockRejectedValue(new Error("Radarr is unreachable."));
     const user = userEvent.setup();
@@ -742,6 +760,23 @@ describe("done", () => {
         "You stopped this run. Only the titles it had already reached were removed.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("says the result could not load, Done still reachable, when the history read fails", async () => {
+    // The result reads back from the history query, so a failed read must say so instead
+    // of sitting on "Loading" until a refetch happens to land.
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({ running: false, run_id: 12, phase: "complete" }),
+    );
+    apiMock.runs.mockRejectedValue(new Error("boom"));
+    mockOutcomes([]);
+    renderPlan();
+
+    expect(
+      await screen.findAllByText("Reaper couldn't load past reaps. Reload to try again."),
+    ).not.toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
+    expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
   });
 
   it("does not show the done card for a run refused before it ever left PLANNED (phase error)", async () => {

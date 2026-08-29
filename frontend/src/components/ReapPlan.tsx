@@ -735,7 +735,12 @@ export function ReapPlan({
       const report = await api.dryRun(run.id);
       return { run, report };
     },
-    onSuccess: (proved) => setConfirmRun(proved),
+    onSuccess: (proved) => {
+      // A standing practice result describes the plan as it stood before this reap, so
+      // it must not survive into the run and greet the emptied plan afterward.
+      practice.reset();
+      setConfirmRun(proved);
+    },
   });
 
   const practice = useMutation({
@@ -807,6 +812,18 @@ export function ReapPlan({
           ) : showDone ? (
             endedRun ? (
               <DoneCard run={endedRun} onDismiss={() => ackRun(endedRunId)} />
+            ) : history.isError ? (
+              // The result reads back from the history query, so a failed read is said
+              // out loud rather than sitting on "Loading" until a refetch happens to
+              // land, and Done stays reachable meanwhile.
+              <div className="reap-card">
+                <Notice tone="warn">{t("reapPlan.history.loadFailed")}</Notice>
+                <div className="reap-done-actions">
+                  <button type="button" className="ghost" onClick={() => ackRun(endedRunId)}>
+                    {t("common.done")}
+                  </button>
+                </div>
+              </div>
             ) : (
               <div className="reap-card">
                 <p className="muted">{t("common.loading")}</p>
