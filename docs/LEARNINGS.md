@@ -1293,19 +1293,19 @@ which is written per play, not from this cache.
 
 ### Tautulli's `get_libraries` is a live Plex read, one request per section (measured 2026-08-29)
 
-It looks like a listing and reads like one. Tautulli answers it with
-`PmsConnect().get_library_details()`: one live Plex call for the section list, one more per
-section for its item count, and two further calls for every show or artist section. Reaper
-reads three fields off that answer, and the item counts it pays for are all discarded.
+Tautulli answers it with `PmsConnect().get_library_details()`. That makes one live Plex call
+for the section list, one more per section for its item count, and two further calls for every
+show or artist section. Reaper reads three fields from the answer. The item counts those calls
+paid for are all discarded.
 
 Measured against a live pair with Plex idle: `get_libraries` 3.6s, `get_library_names` 0.01s.
 `get_library_names` answers from Tautulli's own `library_sections` table in one query, and it
 carries the three fields the scan reads: section id, name and type.
 
 The cost only shows as a failure after a reap. The executor refreshes every path the run
-emptied, the run then kicks a fresh scan, and those calls land while Plex is rescanning. The
-30s read budget expires and the snapshot comes back incomplete. Both media lanes report it,
-because `build_index` runs once per lane.
+emptied, and the run then starts a fresh scan. Those calls reach Plex while it is still
+rescanning. The 30s read budget expires and the snapshot comes back incomplete. Both media
+lanes report it, because `build_index` runs once per lane.
 
 => The scan reads `get_library_names`. Two properties come with it. The table keeps a row for
 a library Plex no longer serves, and a synthetic Live TV row, so the list is a superset of
