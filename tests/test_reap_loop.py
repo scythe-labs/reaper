@@ -4427,6 +4427,36 @@ class TestRunTotalsAreWrittenOnATerminalRun:
         assert stored.skipped is None
 
 
+class TestAggregateRowsReadsTheStoredSpelling:
+    """``aggregate_rows`` accepts a raw string beside an enum member, and the column
+    stores the member NAME ('VERIFIED'), the spelling the totals migration's raw backfill
+    matches too. A fallback comparing the lowercase value would silently count every raw
+    row as neither deleted nor skipped, an audit record of zero for a run that deleted
+    files."""
+
+    def test_raw_member_names_count_exactly_like_enum_members(self) -> None:
+        from reaper.services.run_totals import aggregate_rows
+
+        as_members = [
+            (StepState.VERIFIED, False, 10),
+            (StepState.FAILED, True, None),
+            (StepState.FAILED, False, 7),
+            (StepState.SKIPPED, False, 5),
+        ]
+        as_stored_strings = [
+            ("VERIFIED", 0, 10),
+            ("FAILED", 1, None),
+            ("FAILED", 0, 7),
+            ("SKIPPED", 0, 5),
+        ]
+
+        assert aggregate_rows(as_stored_strings) == aggregate_rows(as_members)
+        totals = aggregate_rows(as_stored_strings)
+        assert totals.deleted_items == 2  # VERIFIED plus FAILED-with-file-removed
+        assert totals.deleted_unmeasured == 1
+        assert totals.skipped == 1
+
+
 # ---------------------------------------------------------------------------
 # Per-item outcomes, reconstructed from the journal
 # ---------------------------------------------------------------------------

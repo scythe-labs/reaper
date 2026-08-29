@@ -95,17 +95,20 @@ def aggregate_rows(rows: Iterable[Sequence[Any]]) -> RunTotals:
     skipped = 0
     for state, file_removed, size_bytes in rows:
         # The Enum column's own type does the string-to-member conversion whether this
-        # ran through the ORM or a migration's plain Connection, but read defensively by
-        # value either way: a raw SQL read anywhere in this path (a future caller, a
-        # hand-run query) is one string comparison away from working, not a crash.
-        value = state.value if isinstance(state, StepState) else state
-        if value == StepState.VERIFIED.value or bool(file_removed):
+        # ran through the ORM or a migration's plain Connection. A raw SQL read (a
+        # future caller, a hand-run query) hands the stored string instead, and the
+        # column stores the member NAME ("VERIFIED"), the same spelling the totals
+        # migration's own raw backfill matches on, so that is the spelling compared
+        # here. Comparing the lowercase value would silently count every raw row as
+        # neither deleted nor skipped.
+        name = state.name if isinstance(state, StepState) else state
+        if name == StepState.VERIFIED.name or bool(file_removed):
             deleted_items += 1
             if size_bytes is None:
                 deleted_unmeasured += 1
             else:
                 deleted_bytes += size_bytes
-        elif value == StepState.SKIPPED.value:
+        elif name == StepState.SKIPPED.name:
             skipped += 1
     return RunTotals(
         deleted_items=deleted_items,
