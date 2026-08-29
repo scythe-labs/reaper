@@ -1856,7 +1856,7 @@
     },
     "itemStatus": {
       "failedReason": ", failed: {reason}",
-      "heading": "Item status, {done} of {total} handled",
+      "heading": "Item status, {count} handled",
       "help": "You can leave this page. The reap keeps going.",
       "keptReason": ", kept: {reason}",
       "removedProblem": ", removed. {reason}",
@@ -1874,8 +1874,7 @@
     "reaping": {
       "finishingUp": "Finishing up. Refreshing Plex so your library matches.",
       "nowRemoving": "Now removing: {title}",
-      "progressValueText": "{done} of {total} removed",
-      "removedCount": "{done} of {total}",
+      "progressValueText": "{done} of {total} handled",
       "stop": "Stop, keep the rest"
     },
     "summary": {

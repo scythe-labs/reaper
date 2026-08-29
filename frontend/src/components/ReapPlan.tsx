@@ -398,7 +398,10 @@ function ReapingCard({ status }: { status: ReapStatus }) {
     prevHeightRef.current = el.scrollHeight;
   }, [feed.items.length]);
 
-  const handled = status.done + status.skipped;
+  // `done` alone is the walk's own count over the confirmed set: the executor increments it
+  // for every walked item whatever its outcome, vetoed ones included, so adding `skipped` on
+  // top counts a mid-run veto twice and reads finished while files are still being removed.
+  const handled = status.done;
   const pct = status.total > 0 ? Math.min(100, Math.round((handled / status.total) * 100)) : 0;
   // Every item is handled, but the run is still going: it is tidying Plex now (refreshing the
   // library so the deletes show, then the trash purge), which can take several seconds. Say so,
@@ -421,12 +424,10 @@ function ReapingCard({ status }: { status: ReapStatus }) {
               <ScytheGlyph className="rt-ic" strokeWidth={4.5} />
               <span className="fair-stat-lbl">{t("reapPlan.tiles.removed")}</span>
             </span>
-            <span className="fair-stat-num">
-              {t("reapPlan.reaping.removedCount", {
-                done: count(status.done),
-                total: count(status.total),
-              })}
-            </span>
+            {/* `deleted_items`, the true removal count, never `done`: the walk's count also
+                covers vetoed and failed items, so under the label "removed" it would claim
+                removals that never happened. */}
+            <span className="fair-stat-num">{count(status.deleted_items)}</span>
           </div>
           <div className="fair-stat rt-kept">
             <span className="rt-cap">
@@ -444,7 +445,7 @@ function ReapingCard({ status }: { status: ReapStatus }) {
           aria-valuemax={100}
           aria-valuenow={pct}
           aria-valuetext={t("reapPlan.reaping.progressValueText", {
-            done: count(status.done),
+            done: count(handled),
             total: count(status.total),
           })}
         >
@@ -460,11 +461,11 @@ function ReapingCard({ status }: { status: ReapStatus }) {
         ) : null}
       </div>
       <div className="reap-card">
+        {/* The decided count alone, with no "of {total}": an item spared before the run was
+            claimed still gets a decided outcome, outside the confirmed set the total counts,
+            so pairing the two can read "11 of 10". */}
         <h3 className="reap-feed-heading">
-          {t("reapPlan.itemStatus.heading", {
-            done: count(feed.total),
-            total: count(status.total),
-          })}
+          {t("reapPlan.itemStatus.heading", { count: count(feed.total) })}
         </h3>
         {/* `tabIndex={0}`: every row is a `<span>`, nothing inside can take focus, so the box
             itself has to be a Tab stop or its scroll is unreachable by keyboard

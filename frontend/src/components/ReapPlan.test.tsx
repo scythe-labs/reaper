@@ -460,6 +460,7 @@ describe("reaping", () => {
         phase: "reaping",
         done: 3,
         total: 10,
+        deleted_items: 2,
         deleted_bytes: 6 * GB,
         skipped: 1,
         title: "Some Movie",
@@ -485,12 +486,15 @@ describe("reaping", () => {
     expect(screen.getByText("freed so far").closest(".fair-stat")!.textContent).toContain(
       bytes(6 * GB),
     );
-    expect(screen.getByText("removed").closest(".fair-stat")!.textContent).toContain("3 of 10");
+    // The removed tile is the true removal count, never the walk's own `done`, which also
+    // counts vetoed and failed items.
+    const removedTile = screen.getByText("removed").closest(".fair-stat") as HTMLElement;
+    expect(within(removedTile).getByText("2")).toBeInTheDocument();
     const keptTile = screen.getByText("kept by checks").closest(".fair-stat") as HTMLElement;
     expect(within(keptTile).getByText("1")).toBeInTheDocument();
     expect(screen.getByText("Now removing: Some Movie")).toBeInTheDocument();
 
-    await screen.findByText("Item status, 2 of 10 handled");
+    await screen.findByText("Item status, 2 handled");
     expect(screen.getByText("Movie A")).toBeInTheDocument();
     expect(screen.getByText(", kept: You spared this by hand.")).toBeInTheDocument();
     expect(screen.getByText("You can leave this page. The reap keeps going.")).toBeInTheDocument();
@@ -504,7 +508,31 @@ describe("reaping", () => {
     renderPlan();
 
     const bar = await screen.findByRole("progressbar", { name: "Reaping" });
-    expect(bar).toHaveAttribute("aria-valuetext", "3 of 10 removed");
+    expect(bar).toHaveAttribute("aria-valuetext", "3 of 10 handled");
+  });
+
+  it("does not count a vetoed item twice, so the bar cannot finish while files are still going", async () => {
+    // The executor's `done` already counts every walked item, vetoed ones included, and
+    // `skipped` counts the vetoes again. Adding the two pinned the bar at 100% with
+    // "Finishing up" while deletes were still being sent.
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({
+        running: true,
+        run_id: 12,
+        phase: "reaping",
+        done: 8,
+        total: 10,
+        skipped: 2,
+        title: "Movie J",
+      }),
+    );
+    mockOutcomes([]);
+    renderPlan();
+
+    const bar = await screen.findByRole("progressbar", { name: "Reaping" });
+    expect(bar).toHaveAttribute("aria-valuenow", "80");
+    expect(screen.getByText("Now removing: Movie J")).toBeInTheDocument();
+    expect(screen.queryByText(/Finishing up/)).not.toBeInTheDocument();
   });
 
   it("says it is finishing up once every item is handled but the run keeps going", async () => {
