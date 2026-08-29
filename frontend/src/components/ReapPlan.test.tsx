@@ -462,14 +462,16 @@ describe("past reaps", () => {
       summary({
         id: 32,
         state: "aborted",
-        deleted_items: 0,
-        deleted_bytes: 0,
+        deleted_items: 3,
+        deleted_bytes: 2 * GB,
         aborted_reason: { k: "legacy", p: { text: "Over the size cap for one run." } },
       }),
     ]);
     renderPlan();
     const row = (await screen.findByText("Run 32")).closest(".reap-run") as HTMLElement;
-    expect(row.textContent).toContain("Over the size cap for one run.");
+    // A period between the counts and the note: an aborted run carries both, and a bare
+    // space ran them together into one unpunctuated line.
+    expect(row.textContent).toContain("3 removed. Over the size cap for one run.");
   });
 
   it("says there is nothing yet, on a fresh install", async () => {
@@ -715,9 +717,9 @@ describe("done", () => {
     expect(screen.queryByText("Reap finished")).not.toBeInTheDocument();
   });
 
-  it("shows the truncated stop note on the done card, not the detail sheet's below tail", async () => {
-    // The operator-stop note is the truncated head here, because the done card has no item list
-    // beneath it to point at. The "titles below" tail belongs to the detail sheet alone.
+  it("shows the operator-stop note whole on the done card", async () => {
+    // One sentence, valid on every surface: the note no longer points at a list, so
+    // nothing needs truncating and the log line and raw API read the same words.
     apiMock.reapStatus.mockResolvedValue(
       reapStatus({ running: false, run_id: 13, phase: "aborted" }),
     );
@@ -735,8 +737,11 @@ describe("done", () => {
     renderPlan();
 
     expect(await screen.findByText("Reap finished")).toBeInTheDocument();
-    expect(screen.getByText("You stopped this run…")).toBeInTheDocument();
-    expect(screen.queryByText(/titles below/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "You stopped this run. Only the titles it had already reached were removed.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("does not show the done card for a run refused before it ever left PLANNED (phase error)", async () => {
@@ -835,7 +840,7 @@ describe("run detail sheet", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
-  it("gives the operator-stop note its full 'titles below' tail here, where the list is beneath it", async () => {
+  it("shows the operator-stop note on the detail sheet", async () => {
     mockHistory([
       summary({
         id: 60,
@@ -856,7 +861,7 @@ describe("run detail sheet", () => {
     const dialog = await screen.findByRole("dialog", { name: "Run 60" });
     expect(
       within(dialog).getByText(
-        "You stopped this run. The titles below were the only ones removed.",
+        "You stopped this run. Only the titles it had already reached were removed.",
       ),
     ).toBeInTheDocument();
   });
