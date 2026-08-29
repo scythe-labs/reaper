@@ -19,8 +19,12 @@ name: Submit to WinGet
 # Two prerequisites nothing in this repository can create:
 #   - the ScytheLabs.Reaper manifest must exist in winget-pkgs once (first
 #     submission is a hand-written PR; packaging/README.md walks through it)
-#   - a WINGET_TOKEN secret: a PAT with public_repo scope, which wingetcreate
-#     uses to fork winget-pkgs, open the version PR, and keep that fork level
+#   - a WINGET_TOKEN secret: a PAT with public_repo AND workflow scope, which
+#     wingetcreate uses to fork winget-pkgs, open the version PR, and keep that
+#     fork level. workflow scope is what the sync needs: GitHub refuses a write
+#     touching .github/workflows/ without it, and upstream edits its own
+#     workflows, so a public_repo-only token syncs until the first such commit
+#     and then fails every release after it.
 # Without the token this workflow says so and exits green; without the manifest,
 # wingetcreate itself fails and the log names the missing package.
 
@@ -58,14 +62,25 @@ jobs:
           $version = $env:RAW_VERSION -replace '^v', ''
           $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/v$version/Reaper-$version-windows-x64-setup.exe"
           # wingetcreate cannot open a pull request from a fork that trails upstream, and
-          # winget-pkgs moves fast enough to strand it between releases. A first run has no
-          # fork yet, so a failure here is left to wingetcreate.
+          # winget-pkgs moves fast enough to strand it between releases. A failing native
+          # command sets $LASTEXITCODE rather than throwing, so the try/catch this replaced
+          # never fired: a refused sync ran on and died inside wingetcreate, whose message
+          # names the stale fork and not the reason it is stale.
+          # A first run has no fork yet. That 404 is the one failure wingetcreate itself
+          # handles, by forking; every other one stops the run here, where the cause is.
           $env:GH_TOKEN = $env:WINGET_TOKEN
-          try {
-            $owner = gh api user --jq .login
-            gh api -X POST "repos/$owner/winget-pkgs/merge-upstream" -f branch=master
-          } catch {
-            Write-Host "Could not sync the winget-pkgs fork, submitting anyway: $_"
+          $owner = gh api user --jq .login
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not read the WINGET_TOKEN account. The token is unset, expired, or invalid."
+          }
+          $sync = gh api -X POST "repos/$owner/winget-pkgs/merge-upstream" -f branch=master 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            if ($sync -match 'Not Found') {
+              Write-Host "No $owner/winget-pkgs fork yet; wingetcreate will create one."
+            } else {
+              Write-Host $sync
+              throw "Could not sync $owner/winget-pkgs with upstream. A 422 naming a file under .github/workflows/ means WINGET_TOKEN is missing the workflow scope."
+            }
           }
           # wingetcreate is Microsoft's manifest tool. "latest" is deliberate, unlike
           # every pinned action here: the manifest schema it must emit is

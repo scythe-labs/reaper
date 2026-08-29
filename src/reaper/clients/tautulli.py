@@ -41,6 +41,7 @@ READ_COMMANDS: Final[frozenset[str]] = frozenset(
         "get_history",
         "get_libraries",
         "get_libraries_table",
+        "get_library_names",  # the section list, read from Tautulli's own table
         "get_library_media_info",  # the sweep (last_played, play_count, file_size, added_at)
         "get_metadata",
         "get_children_metadata",
@@ -135,7 +136,23 @@ class TautulliClient(BaseClient):
     # -- libraries ------------------------------------------------------------
 
     async def libraries(self) -> list[dict[str, Any]]:
-        data = await self.call("get_libraries")
+        """Every library section: its id, its name and its type.
+
+        ``get_library_names`` answers from Tautulli's own table in one local query.
+        ``get_libraries`` returns the same three fields plus item counts, and it pays for
+        those counts with a live Plex call per section, three for a show or artist
+        section. Nothing in Reaper reads a count. The scan that follows a reap runs while
+        Plex is still rescanning the paths the reap emptied, so those calls are slowest
+        exactly when the scan needs them, and the read budget expired instead.
+
+        The table keeps a row for a library Plex no longer serves, and a synthetic Live TV
+        row, so this list is a superset of what Plex holds now. Each extra section answers
+        the sweep with no rows, so it costs one empty page and adds nothing to the index.
+        The table is unique on server and section together, and the answer does not say
+        which server a row came from, so ``services.library_index`` walks one section id
+        once however many rows carry it.
+        """
+        data = await self.call("get_library_names")
         return list(data) if isinstance(data, list) else []
 
     async def library_media_info(
