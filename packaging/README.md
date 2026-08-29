@@ -133,10 +133,10 @@ Without the secret it skips, green.
 
 `release.yml` attests every release asset and the release image through
 [Sigstore](https://www.sigstore.dev/), using `actions/attest-build-provenance`. The
-attestation says which repository, workflow and commit built the file. There is no secret
-to add and no key to rotate. The signing certificate comes from the job's OIDC token and
-expires in about ten minutes, and Sigstore's public transparency log is what proves it was
-valid at the time.
+attestation says which repository, workflow and commit built the file. The signing
+certificate comes from the job's OIDC token and expires in about ten minutes, and
+Sigstore's public transparency log is what proves it was valid at the time. That is why
+the setup is a permissions block and nothing else.
 
 Anyone can check a download:
 
@@ -145,16 +145,16 @@ gh attestation verify Reaper-2026.8.1-windows-x64-setup.exe --repo scythe-labs/r
 gh attestation verify oci://ghcr.io/scythe-labs/reaper:2026.8.1 --repo scythe-labs/reaper
 ```
 
-The image attestation also sits in GHCR next to the image, so a registry client can check
-it without asking GitHub.
+The image attestation also sits in GHCR next to the image, so a registry client can read
+it straight from the registry.
 
-**This is not OS code signing, and it clears no warning.** Sigstore is not in Microsoft's
-or Apple's trust programs, so SmartScreen and Gatekeeper behave exactly as they did.
-Provenance answers a different question, which is whether the file you have came from the
-commit it claims. The next section is about the warnings.
+**Provenance answers one question: did this file come from the commit it claims?**
+SmartScreen and Gatekeeper ask a different one, and they behave exactly as they did.
+Clearing those needs a certificate from Microsoft's or Apple's own trust program, which is
+remedy 1 in the next section.
 
-Dev builds are unattested. `binaries.yml` publishes the nightly prerelease and `:dev`
-without provenance. Wire it up there the same way if a dev-channel operator asks.
+Provenance covers the release channel. `binaries.yml` publishes the nightly prerelease and
+`:dev` plain. Wire it up there the same way if a dev-channel operator asks.
 
 ## Antivirus false positives, and what is wired
 
@@ -166,13 +166,12 @@ Four remedies, in order of effect:
    build; for macOS a Developer ID certificate plus a `codesign`/`notarytool` step
    after PyInstaller (today the binary carries the ad-hoc signature arm64 requires,
    so macOS warns on first launch instead of refusing). When the identities exist,
-   both land in `binaries.yml` behind secrets-present guards. Sigstore is no
-   substitute for either, since its certificates are in neither trust program. The
-   attestations in the previous section sit alongside this remedy, not in place of
-   it.
+   both land in `binaries.yml` behind secrets-present guards. Microsoft and Apple
+   each trust their own certificate programs, so this remedy needs one of theirs. The
+   attestations in the previous section stand alongside it.
 
-   Windows has a free route. macOS does not. What each option costs, and whether a
-   workflow can drive it without a human:
+   Windows has a free route. macOS costs $99 a year. What each option costs, and
+   whether a workflow can drive it without a human:
 
    | Identity | Cost | Signs unattended |
    | --- | --- | --- |
@@ -182,23 +181,23 @@ Four remedies, in order of effect:
    | [Azure Artifact Signing](https://azure.microsoft.com/en-us/products/artifact-signing) Basic (Windows) | $9.99/month | yes |
    | Apple Developer Program (macOS) | $99/year | yes |
 
-   **Treat SignPath Foundation as an application, not a plan.** Reaper meets
-   everything on their published list of conditions. What the list leaves out sits
-   further down the same page: before they will sign a downloadable executable, they
-   want to see "a certain verifiable reputation". They also say plainly that they are
-   under no obligation to accept a project and that there is no appeal. Libraries are
-   exempt from that bar. Reaper is not.
+   **The free row is an application.** Reaper meets everything on SignPath
+   Foundation's published list of conditions. Further down the same page they add
+   one more: before they sign a downloadable executable, they want to see "a certain
+   verifiable reputation". It applies to executables, which is what Reaper ships.
+   They also say plainly that acceptance is theirs to decide and that there is no
+   appeal.
 
-   Three of their terms still apply once a project is in. Someone has to approve
-   every signature by hand, so releases stop being unattended. The certificate
-   belongs to SignPath Foundation, so they are the publisher Windows shows, not
-   Scythe Labs. And a code signing policy has to sit on the project's home page
-   listing who may approve a release, which puts a real name on a public page. That
-   is the no-identifying-information rule bending on purpose rather than by accident.
+   Three of their terms still apply once a project is in. Someone approves every
+   signature by hand, so releases become attended. The certificate belongs to
+   SignPath Foundation, so Windows shows them as the publisher. And a code signing
+   policy has to sit on the project's home page listing who may approve a release,
+   which puts a real name on a public page. That is the no-identifying-information
+   rule bending on purpose rather than by accident.
 
-   Certum has neither the reputation bar nor the manual approval. Their certificate
-   is issued to a person rather than an organization, and they want a link showing
-   that person works on the project.
+   Certum sells to anyone who can show they work on an open source project, and its
+   cloud tier signs unattended. Their certificate names a person, and they want a
+   link showing that person works on the project.
 2. **WinGet presence — wired.** Each release passes Microsoft's validation and
    scanning pipeline on its way into winget-pkgs.
 3. **Per-release submission — manual.** When Defender specifically flags a release,
