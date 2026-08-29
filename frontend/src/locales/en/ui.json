@@ -1921,7 +1921,7 @@
       "dismiss": "Dismiss",
       "endedLabel": "{phase, select, error {Reap failed.} aborted {Stopped.} other {Reaped.}}",
       "errorSuffix": ". {error}",
-      "freedSuffix": ", {bytes} freed",
+      "freed": "{bytes} freed",
       "reapingCount": "Reaping, {done} of {total}",
       "removedFreed": "{souls} removed, {bytes} freed",
       "stopError": "Reaper couldn't stop the reap: {error}",

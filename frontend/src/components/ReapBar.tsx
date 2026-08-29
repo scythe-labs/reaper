@@ -164,7 +164,6 @@ export function ReapBar({
   const pct = status.total > 0 ? Math.round((status.done / status.total) * 100) : 0;
   return (
     <div className="reap-bar">
-      <span className="banner-dot" aria-hidden="true" />
       {/* The role goes on the TEXT, never on the bar. `progressbar` carries ARIA's Children
           Presentational: True, so a role on the container would prune everything inside it,
           including View, Stop, and the `role="alert"` that reports a failed Stop: a reader
@@ -187,22 +186,30 @@ export function ReapBar({
           total: count(status.total),
         })}
       >
-        {status.stopping ? (
-          <b>{t("reapConfirm.stoppingLabel")}</b>
-        ) : (
-          <>
+        <span className="reap-bar-lead">
+          <span className="banner-dot" aria-hidden="true" />
+          {status.stopping ? (
+            <b>{t("reapConfirm.stoppingLabel")}</b>
+          ) : (
             <b>
               {t("reapConfirm.bar.reapingCount", {
                 done: count(status.done),
                 total: count(status.total),
               })}
             </b>
-            <span className="reap-bar-sub">
-              {t("reapConfirm.bar.freedSuffix", { bytes: bytes(status.deleted_bytes) })}
-            </span>
-          </>
-        )}
+          )}
+        </span>
+        {/* A glance percent, shown on a phone only, where the freed size drops to its own line
+            and would otherwise leave the top line half empty. Decorative: the progressbar aria
+            above already voices the same figure, so this is hidden from a reader. */}
+        {!status.stopping && <span className="reap-bar-pct" aria-hidden="true">{`${pct}%`}</span>}
       </span>
+      {/* The space freed so far. Inline after the count on desktop, its own line on a phone. */}
+      {!status.stopping && (
+        <span className="reap-bar-sub">
+          {t("reapConfirm.bar.freed", { bytes: bytes(status.deleted_bytes) })}
+        </span>
+      )}
       {/* The visible progress track. Decorative: the progressbar role and its aria live on the
           text above (which never prunes to nothing), so this stays aria-hidden. Inline on
           desktop between the count and the actions, full width on a phone. It replaces the old

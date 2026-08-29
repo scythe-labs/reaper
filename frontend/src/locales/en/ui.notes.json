@@ -639,7 +639,7 @@
   "reapConfirm.bar.announceEnded": "Screen-reader announcement when a reap run ends. `phase` picks one of three outcomes: error, aborted, or a normal finish. {souls} is the already-formatted item count (see format.souls, Reaper's own word for the titles it removes); {bytes} is an already-formatted size like \"4.2 GB\".",
   "reapConfirm.bar.endedLabel": "Short status label on the reap progress bar once a run ends. `phase` picks one of three outcomes: error, aborted, or a normal finish.",
   "reapConfirm.bar.errorSuffix": "A fragment appended after another sentence on the reap progress bar, never shown alone. {error} is the raw error text from the failed step, in whatever language it arrived in. Keep the leading period and space.",
-  "reapConfirm.bar.freedSuffix": "A fragment appended after a count on the reap progress bar, never shown alone. {bytes} is an already-formatted size. Keep the leading comma and space.",
+  "reapConfirm.bar.freed": "The space freed so far, on its own line of the reap progress bar. {bytes} is an already-formatted size.",
   "reapConfirm.bar.reapingCount": "Progress bar label while a reap run is in progress. {done} and {total} are plain item counts.",
   "reapConfirm.bar.removedFreed": "Progress bar summary once items have been removed. {souls} is the already-formatted item count (format.souls); {bytes} is an already-formatted size.",
   "reapConfirm.bar.stopError": "Shown if the operator clicks Stop on a running reap and the stop itself fails. {error} is the raw error text from the failed request.",
