@@ -307,6 +307,62 @@ class TestAMalformedLibraryRowDegradesInsteadOfRaising:
         assert any("without a usable id" in r for r in reasons)
 
 
+class TestOneSectionIdIsWalkedOnce:
+    """Tautulli stores one row per server and section, and the section listing does not
+    say which server a row came from. A Tautulli that has watched two Plex servers can
+    name one section id twice, and walking it twice enters every row of that library into
+    the index a second time. The section is walked once and the extra row is ignored."""
+
+    async def test_a_repeated_section_id_is_walked_once(self) -> None:
+        tautulli = _RawLibraries(
+            [
+                {"section_id": "1", "section_type": "movie", "section_name": "Films"},
+                {"section_id": "1", "section_type": "movie", "section_name": "Films (old server)"},
+            ],
+            [{"rating_key": "7", "title": "Only", "year": 2001}],
+            count=1,
+        )
+        reasons: list[str] = []
+
+        index = await library_index.build_index(
+            tautulli,
+            None,
+            section_type="movie",
+            degrade=reasons.append,
+            allowed_sections=None,
+        )
+
+        # One walk, so one page request, and the row entered the index once.
+        assert tautulli.starts == [0]
+        assert set(index.by_rating_key) == {7}
+        assert reasons == []
+
+    async def test_two_different_sections_are_both_walked(self) -> None:
+        """The dedupe keys on the id, so it must not collapse two real libraries. Without
+        this, dropping every row after the first would pass the test above."""
+        tautulli = _RawLibraries(
+            [
+                {"section_id": "1", "section_type": "movie", "section_name": "Films"},
+                {"section_id": "2", "section_type": "movie", "section_name": "Documentaries"},
+            ],
+            [{"rating_key": "7", "title": "Only", "year": 2001}],
+            count=1,
+        )
+        reasons: list[str] = []
+
+        index = await library_index.build_index(
+            tautulli,
+            None,
+            section_type="movie",
+            degrade=reasons.append,
+            allowed_sections=None,
+        )
+
+        assert tautulli.starts == [0, 0]
+        assert set(index.by_rating_key) == {7}
+        assert reasons == []
+
+
 class TestAShortPageDoesNotEndTheLibraryWalk:
     """The spine walk used to exit on ``len(rows) < 1000``. A server is free to clamp a
     page below the length asked for, so that read part of a library as the whole of it
