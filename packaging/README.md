@@ -133,9 +133,10 @@ Without the secret it skips, green.
 
 `release.yml` attests every release asset and the release image through
 [Sigstore](https://www.sigstore.dev/), using `actions/attest-build-provenance`. The
-attestation records which repository, workflow and commit built the file. No secret holds
-a key. The certificate is minted from the job's OIDC token, lives about ten minutes, and
-Sigstore's public transparency log proves it was valid when it signed.
+attestation says which repository, workflow and commit built the file. There is no secret
+to add and no key to rotate. The signing certificate comes from the job's OIDC token and
+expires in about ten minutes, and Sigstore's public transparency log is what proves it was
+valid at the time.
 
 Anyone can check a download:
 
@@ -144,16 +145,16 @@ gh attestation verify Reaper-2026.8.1-windows-x64-setup.exe --repo scythe-labs/r
 gh attestation verify oci://ghcr.io/scythe-labs/reaper:2026.8.1 --repo scythe-labs/reaper
 ```
 
-The image attestation also sits in GHCR beside the image, so a registry client verifies
-without asking GitHub.
+The image attestation also sits in GHCR next to the image, so a registry client can check
+it without asking GitHub.
 
-**This is not OS code signing and clears no warning.** Sigstore is in neither Microsoft's
-nor Apple's trust program, so SmartScreen and Gatekeeper behave as before. Provenance
-answers a different question: this file came from that commit. The next section covers the
-warnings.
+**This is not OS code signing, and it clears no warning.** Sigstore is not in Microsoft's
+or Apple's trust programs, so SmartScreen and Gatekeeper behave exactly as they did.
+Provenance answers a different question, which is whether the file you have came from the
+commit it claims. The next section is about the warnings.
 
 Dev builds are unattested. `binaries.yml` publishes the nightly prerelease and `:dev`
-without provenance. Wire it there the same way when a dev-channel operator asks.
+without provenance. Wire it up there the same way if a dev-channel operator asks.
 
 ## Antivirus false positives, and what is wired
 
@@ -165,13 +166,13 @@ Four remedies, in order of effect:
    build; for macOS a Developer ID certificate plus a `codesign`/`notarytool` step
    after PyInstaller (today the binary carries the ad-hoc signature arm64 requires,
    so macOS warns on first launch instead of refusing). When the identities exist,
-   both land in `binaries.yml` behind secrets-present guards. Sigstore does not
-   substitute for either. Its certificates are in neither trust program, so the
-   previous section's attestations sit alongside this remedy rather than in place of
+   both land in `binaries.yml` behind secrets-present guards. Sigstore is no
+   substitute for either, since its certificates are in neither trust program. The
+   attestations in the previous section sit alongside this remedy, not in place of
    it.
 
-   The Windows identity has a free route, the macOS one does not. What the options
-   cost, and whether a workflow can drive them unattended:
+   Windows has a free route. macOS does not. What each option costs, and whether a
+   workflow can drive it without a human:
 
    | Identity | Cost | Signs unattended |
    | --- | --- | --- |
@@ -181,20 +182,23 @@ Four remedies, in order of effect:
    | [Azure Artifact Signing](https://azure.microsoft.com/en-us/products/artifact-signing) Basic (Windows) | $9.99/month | yes |
    | Apple Developer Program (macOS) | $99/year | yes |
 
-   **SignPath Foundation is an application, not a plan.** Reaper clears their listed
-   conditions. Their terms then add a bar the list omits: a downloadable executable
-   needs "a certain verifiable reputation" before they sign it. They are under no
-   obligation to accept, and there is no appeal. A library is exempt. Reaper is not.
+   **Treat SignPath Foundation as an application, not a plan.** Reaper meets
+   everything on their published list of conditions. What the list leaves out sits
+   further down the same page: before they will sign a downloadable executable, they
+   want to see "a certain verifiable reputation". They also say plainly that they are
+   under no obligation to accept a project and that there is no appeal. Libraries are
+   exempt from that bar. Reaper is not.
 
-   Three terms bind an accepted project. A human approves every signature, so
-   releases stop being unattended. The certificate belongs to SignPath Foundation, so
-   Windows names them as the publisher. A code signing policy on the home page names
-   who may approve, which is the one place the no-identifying-information rule bends
-   by design rather than by accident.
+   Three of their terms still apply once a project is in. Someone has to approve
+   every signature by hand, so releases stop being unattended. The certificate
+   belongs to SignPath Foundation, so they are the publisher Windows shows, not
+   Scythe Labs. And a code signing policy has to sit on the project's home page
+   listing who may approve a release, which puts a real name on a public page. That
+   is the no-identifying-information rule bending on purpose rather than by accident.
 
-   Certum has neither the bar nor the approval step. Its certificate issues to a
-   person, never an organization, and it wants a link proving they work on the
-   project.
+   Certum has neither the reputation bar nor the manual approval. Their certificate
+   is issued to a person rather than an organization, and they want a link showing
+   that person works on the project.
 2. **WinGet presence — wired.** Each release passes Microsoft's validation and
    scanning pipeline on its way into winget-pkgs.
 3. **Per-release submission — manual.** When Defender specifically flags a release,
