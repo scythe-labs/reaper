@@ -763,7 +763,9 @@ MESSAGES: dict[str, str] = {
         "Deletion was turned off while this run was in progress, so the run stopped "
         "here. Anything already deleted stays deleted; nothing further was sent."
     ),
-    "error.reap.stopped_by_operator": "You stopped this run…",
+    "error.reap.stopped_by_operator": (
+        "You stopped this run. The titles below were the only ones removed."
+    ),
     "error.reap.journal_halt": (
         "Reaper could not save its record of what it just did, so it stopped before "
         "touching anything else. Anything already removed stays removed. Check the "

@@ -70,12 +70,22 @@ function runDotClass(state: string): string {
   return "reap-run-dot";
 }
 
-/** The reason key an operator-stopped run carries. The shared catalog message for it is the
- *  truncated head ("You stopped this run…"), because the done card, a history row, and a log
- *  line have no item list beneath it to point at. The run detail sheet DOES, so it alone swaps
- *  in the full sentence naming that list. Matched on this stable key, never the translated text
- *  (rule 92). */
+/** The reason key an operator-stopped run carries. Its message ends with "The titles below were
+ *  the only ones removed," which only makes sense on the run detail sheet, the one surface with
+ *  that item list beneath it. Matched on this stable key, never the translated text (rule 92). */
 const STOPPED_BY_OPERATOR = "error.reap.stopped_by_operator";
+
+/** An aborted run's note, clipped for surfaces with no item list beneath it. The operator-stop
+ *  message is the one reason whose tail points at a list, so on the done card and a history row
+ *  it is cut back to its head with an ellipsis, standing in for the "titles below" tail the run
+ *  detail sheet shows in full. One string, truncated in the view, not a second translation.
+ *  Every other reason is shown whole. */
+function abortedNoteShort(reason: NonNullable<RunSummary["aborted_reason"]>): string {
+  const text = composeError(reason);
+  if (reason.k !== STOPPED_BY_OPERATOR) return text;
+  const split = text.indexOf(". ");
+  return split === -1 ? text : `${text.slice(0, split)}…`;
+}
 
 type TileKind = "titles" | "free" | "movies" | "seasons";
 
@@ -161,7 +171,7 @@ function HistoryRow({ run, onOpen }: { run: RunSummary; onOpen: (run: RunSummary
       }),
     );
   }
-  if (!live && run.aborted_reason) parts.push(composeError(run.aborted_reason));
+  if (!live && run.aborted_reason) parts.push(abortedNoteShort(run.aborted_reason));
 
   const content = (
     <>
@@ -465,7 +475,7 @@ function DoneCard({ run, onDismiss }: { run: RunSummary; onDismiss: () => void }
         <h3 className="reap-finished-head">{t("reapPlan.done.heading")}</h3>
         <RunTotalsTiles run={run} />
         {run.aborted_reason && (
-          <p className="help reap-done-note">{composeError(run.aborted_reason)}</p>
+          <p className="help reap-done-note">{abortedNoteShort(run.aborted_reason)}</p>
         )}
         <div className="reap-done-actions">
           <button type="button" className="ghost" onClick={onDismiss}>
@@ -506,11 +516,9 @@ function RunDetailSheet({ run, onClose }: { run: RunSummary; onClose: () => void
           run, not a reply to anything pressed here. */}
       {run.aborted_reason && (
         <Notice tone="warn" standing>
-          {/* The one surface with the item list beneath it, so the operator-stop message gets
-              its full "the titles below were the only ones removed" tail here. */}
-          {run.aborted_reason.k === STOPPED_BY_OPERATOR
-            ? t("reapPlan.detail.stopped")
-            : composeError(run.aborted_reason)}
+          {/* The full message here, including the "titles below" tail: this is the one surface
+              with the item list beneath it. */}
+          {composeError(run.aborted_reason)}
         </Notice>
       )}
       <div className="run-detail-stats">
