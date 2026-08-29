@@ -364,16 +364,24 @@
   margin: 0;
 }
 
-/* Past reaps: one row per run, state dot, muted totals, the date pinned to the right edge. */
+/* Past reaps: one row per run, state dot, muted totals, the date pinned to the right edge.
+ * About ten rows tall, then it scrolls, and the footer scrolling into view loads the next ten
+ * (ReapPlan.tsx). The list runs wider than its text, into the card's own padding, so a row's
+ * hover background has air around what it highlights instead of stopping at the words; each
+ * row's own padding puts the text back on the card's content edge. */
 .reap-runs {
   display: grid;
+  margin-inline: calc(var(--space-md) * -1);
+  max-height: 360px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .reap-run {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: baseline;
   gap: var(--space-lg);
-  padding: var(--space-md) 0;
+  padding: var(--space-md);
   border-top: 1px solid var(--border);
   font-size: var(--text-md);
 }
@@ -399,6 +407,12 @@
 .reap-run-what {
   min-width: 0;
   overflow-wrap: anywhere;
+  /* Two lines at most. An aborted run's note is a whole sentence, and four lines of it push
+     the runs under it off the screen. The row opens on the full text. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .reap-run-sub {
   color: var(--muted);
@@ -432,22 +446,15 @@ button.reap-run {
 button.reap-run:first-child {
   border-top: none;
 }
+/* Hover is a rounded pill, the same shape every other hoverable row in the app wears. The
+ * dividers above and below it drop out while it is up, so no line cuts across the corners. */
 button.reap-run:hover {
   background: var(--hover);
+  border-radius: var(--radius-sm);
+  border-top-color: transparent;
 }
-
-/* The history footer: how many of the whole executed history are shown, and the page-more
- * button, both below the last row. */
-.reap-runs-foot {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--space-2xl);
-  padding-top: var(--space-2xl);
-  border-top: 1px solid var(--border);
-  margin-top: var(--space-xs);
-  font-size: var(--text-sm);
-  color: var(--muted);
+button.reap-run:hover + .reap-run {
+  border-top-color: transparent;
 }
 
 /* Reaping: a section heading a size down from a card's own h3, muted, matching the mockup's

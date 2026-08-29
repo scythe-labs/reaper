@@ -124,6 +124,11 @@ const CONTAINERS: Record<string, Container> = {
     reach: "focusable",
     why: "the reaping card's item-status log is icon, title and size spans, none of them focusable",
   },
+  ".reap-runs": {
+    file: "components/ReapPlan.tsx",
+    reach: "has-controls",
+    why: "every past run is a button opening its detail sheet, and a list long enough to scroll holds several: only the one run executing right now is a plain row",
+  },
   ".run-detail-scroll": {
     file: "components/ReapPlan.tsx",
     reach: "focusable",
@@ -134,7 +139,7 @@ const CONTAINERS: Record<string, Container> = {
 /** The count is pinned so a scroll container that leaves the walk fails as loudly as one that
  *  arrives without a classification. A flag-shaped assertion cannot tell a member that
  *  complies from one the matcher stopped collecting. */
-const EXPECTED_CONTAINERS = 15;
+const EXPECTED_CONTAINERS = 16;
 
 /** `overflow`, `overflow-x` or `overflow-y` set to a value that makes a box scroll. `hidden`,
  *  `visible` and `clip` do not, and `overflow: auto hidden` (the two-value form) is read by the

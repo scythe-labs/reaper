@@ -1851,7 +1851,6 @@
       "loadFailed": "Reaper couldn't load past reaps. Reload to try again.",
       "row": "Run {id}",
       "runningNow": ", running now",
-      "showMore": "Show 50 more",
       "showingOf": "Showing {shown} of {total}"
     },
     "itemStatus": {
