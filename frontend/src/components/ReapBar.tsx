@@ -147,9 +147,11 @@ export function ReapBar({
           </span>
         </span>
         <span className="reap-bar-actions">
-          {/* No report to open for an errored run: the executor raised before the run's own row
-              left PLANNED, so the Reap tab has no result card for it, and the failure is already
-              on this bar. A complete or aborted run has a result there. */}
+          {/* No report link for an errored run: usually it was refused before anything ran (a
+              changed manifest, a changed policy) and there is nothing to show beyond the
+              failure already on this bar. A crash mid-run also ends in this phase, with the
+              run's row left EXECUTING and no result card on the Reap tab; that run's record
+              stays reachable through its history row there, which opens like any other. */}
           {!errored && (
             <button className="link" onClick={onGoToReap}>
               {t("reapConfirm.bar.viewReport")}

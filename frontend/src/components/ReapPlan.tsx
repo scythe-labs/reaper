@@ -697,11 +697,13 @@ export function ReapPlan({
   // run's result on both surfaces, across refreshes, until a different run ends.
   //
   // "error" is deliberately excluded, unlike ReapBar's own bar (which still has something to
-  // show: a bare failure line). That phase is a refusal the executor raised before the run's
-  // own row ever left PLANNED (a changed manifest, a changed policy), so it never gets the
-  // totals this card reads, and `executed_only` leaves a still-PLANNED row out of the history
-  // list entirely. Showing this card for it would be a permanent "Loading…" over a run this
-  // page can never find.
+  // show: a bare failure line). Usually that phase is a refusal raised before the run's own
+  // row ever left PLANNED (a changed manifest, a changed policy), so it never gets the totals
+  // this card reads, and `executed_only` leaves a still-PLANNED row out of the history list
+  // entirely; showing this card for it would be a permanent "Loading…" over a run this page
+  // can never find. A crash mid-run ends in the same phase with the row left EXECUTING and
+  // no totals written, so the card has nothing to show for it either. That run's record stays
+  // reachable through its history row, which opens like any other.
   const endedRunId =
     status &&
     !status.running &&
