@@ -48,6 +48,7 @@ import { ReapConfirm } from "./ReapConfirm";
 import { ModalShell } from "./ModalShell";
 import { Notice } from "./Notice";
 import { ackRun, useAckedRun } from "./runAck";
+import { ScytheGlyph } from "./ScytheGlyph";
 
 /** The link text beside one failing readiness check, naming where to go fix it. Written as a
  *  literal per key, like `reasonLabel` in ReapBreakdown.tsx, rather than composing a catalog
@@ -87,10 +88,13 @@ function abortedNoteShort(reason: NonNullable<RunSummary["aborted_reason"]>): st
   return split === -1 ? text : `${text.slice(0, split)}…`;
 }
 
-type TileKind = "titles" | "free" | "movies" | "seasons";
+type TileKind = "titles" | "free" | "movies" | "seasons" | "kept";
 
-/** The idle-summary tile's icon, one per metric. Decorative: the label beside it names the
- *  metric, so it carries `aria-hidden`. Color comes from the tile's rail (CSS), not from here. */
+/** A reap-page tile's icon, one per metric. The idle summary uses titles/free/movies/seasons;
+ *  the done result reuses `free` and adds `kept`, a shield with a check, for the items a
+ *  protection held. Decorative: the label beside it names the metric, so it carries
+ *  `aria-hidden`. Color comes from the tile's rail (CSS), not from here. The reap glyph the
+ *  done result's Removed tile wears is the shared `ScytheGlyph`, never redrawn here. */
 function TileIcon({ kind }: { kind: TileKind }) {
   if (kind === "titles")
     return (
@@ -125,6 +129,24 @@ function TileIcon({ kind }: { kind: TileKind }) {
           d="M7 4v16M17 4v16M3 8h4M17 8h4M3 12h18M3 16h4M17 16h4"
           stroke="currentColor"
           strokeWidth="1.3"
+        />
+      </svg>
+    );
+  if (kind === "kept")
+    return (
+      <svg className="rt-ic" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path
+          d="M12 3l7 3v5c0 4-3 6.6-7 8-4-1.4-7-4-7-8V6l7-3Z"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M9 12l2 2 4-4"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
         />
       </svg>
     );
@@ -437,24 +459,33 @@ function TileValue({ value, format }: { value: number | null; format: (n: number
 function RunTotalsTiles({ run }: { run: RunSummary }) {
   const { t } = useTranslation();
   return (
-    <div className="fair-stats">
-      <div className="fair-stat">
+    <div className="fair-stats reap-tiles">
+      <div className="fair-stat rt-freed">
+        <span className="rt-cap">
+          <TileIcon kind="free" />
+          <span className="fair-stat-lbl">{t("reapPlan.tiles.freed")}</span>
+        </span>
         <span className="fair-stat-num">
           <TileValue value={run.deleted_bytes} format={bytes} />
         </span>
-        <span className="fair-stat-lbl">{t("reapPlan.tiles.freed")}</span>
       </div>
-      <div className="fair-stat">
+      <div className="fair-stat rt-removed">
+        <span className="rt-cap">
+          <ScytheGlyph className="rt-ic" strokeWidth={4.5} />
+          <span className="fair-stat-lbl">{t("reapPlan.tiles.removed")}</span>
+        </span>
         <span className="fair-stat-num">
           <TileValue value={run.deleted_items} format={count} />
         </span>
-        <span className="fair-stat-lbl">{t("reapPlan.tiles.removed")}</span>
       </div>
-      <div className="fair-stat">
+      <div className="fair-stat rt-kept">
+        <span className="rt-cap">
+          <TileIcon kind="kept" />
+          <span className="fair-stat-lbl">{t("reapPlan.tiles.keptByChecks")}</span>
+        </span>
         <span className="fair-stat-num">
           <TileValue value={run.skipped} format={count} />
         </span>
-        <span className="fair-stat-lbl">{t("reapPlan.tiles.keptByChecks")}</span>
       </div>
     </div>
   );
