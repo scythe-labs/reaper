@@ -1841,7 +1841,8 @@
     },
     "done": {
       "heading": "Reap finished",
-      "keptByChecksHeading": "Kept by checks"
+      "keptByChecksHeading": "Kept by checks",
+      "problemsHeading": "Needs a look"
     },
     "history": {
       "empty": "No reaps yet.",
@@ -1854,9 +1855,11 @@
       "showingOf": "Showing {shown} of {total}"
     },
     "itemStatus": {
+      "failedReason": ", failed: {reason}",
       "heading": "Item status, {done} of {total} handled",
       "help": "You can leave this page. The reap keeps going.",
       "keptReason": ", kept: {reason}",
+      "removedProblem": ", removed. {reason}",
       "removedSr": "Removed:"
     },
     "page": {

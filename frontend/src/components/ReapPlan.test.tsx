@@ -114,6 +114,7 @@ function outcome(overrides: Partial<RunOutcomeRead> = {}): RunOutcomeRead {
     state: "verified",
     error_reason: null,
     is_canary: false,
+    file_removed: false,
     ...overrides,
   };
 }
@@ -595,6 +596,44 @@ describe("done", () => {
     await user.click(screen.getByRole("button", { name: "Done" }));
     expect(await screen.findByRole("button", { name: /^Reap 47 titles…$/ })).toBeInTheDocument();
     expect(screen.queryByText("Reap finished")).not.toBeInTheDocument();
+  });
+
+  it("files a failed item under its own list, and one whose file is gone reads removed, never kept", async () => {
+    // A FAILED step is not a check that kept the file: filing it under "Kept by checks"
+    // claims a protection fired when nothing was checked, and when the delete landed before
+    // the failure (the journal's file_removed stamp), it tells the operator a file that is
+    // off disk still exists.
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({ running: false, run_id: 12, phase: "complete" }),
+    );
+    mockHistory([
+      summary({ id: 12, state: "completed", deleted_items: 2, deleted_bytes: GB, skipped: 0 }),
+    ]);
+    mockOutcomes([
+      outcome({
+        media_key: "a",
+        title: "Movie A",
+        state: "failed",
+        file_removed: true,
+        error_reason: { k: "legacy", p: { text: "The import exclusion was not confirmed." } },
+      }),
+      outcome({
+        media_key: "b",
+        title: "Movie B",
+        state: "failed",
+        file_removed: false,
+        error_reason: { k: "legacy", p: { text: "Radarr did not respond." } },
+      }),
+    ]);
+    renderPlan();
+
+    expect(await screen.findByText("Needs a look")).toBeInTheDocument();
+    expect(screen.queryByText("Kept by checks")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(", removed. The import exclusion was not confirmed."),
+    ).toBeInTheDocument();
+    expect(screen.getByText(", failed: Radarr did not respond.")).toBeInTheDocument();
+    expect(screen.queryByText(/, kept:/)).not.toBeInTheDocument();
   });
 
   it("keeps a dismissed result dismissed across a reload", async () => {

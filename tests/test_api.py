@@ -58,7 +58,7 @@ from reaper.engine.policy import (
 from reaper.engine.reason import Reason, from_wire, to_stored
 from reaper.main import create_app
 from reaper.secrets import resolve_kdf_salt, resolve_old_keys, resolve_secret_key
-from reaper.services import retention
+from reaper.services import retention, run_totals
 from reaper.services.history_sync import SCHEMA
 
 from ._auth import login
@@ -644,6 +644,42 @@ class TestTheRunsApi:
         assert (
             client.get(f"/api/runs/{run['id']}/outcomes", params={"limit": 500}).status_code == 200
         )
+
+    def test_an_outcomes_row_says_whether_the_file_was_removed(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """A FAILED step whose delete landed before the failure (the exclusion poll, the
+        Plex refresh) carries the journal's durable stamp onto the wire, so the browser
+        can say "removed" for it instead of telling the operator a file that is off disk
+        was kept."""
+        run = client.post("/api/runs").json()
+
+        db_url = Settings(data_dir=tmp_path, secret_key="k").sync_database_url
+        engine = sa_create_engine(db_url)
+        with Session(engine) as session:
+            step = session.scalars(
+                select(ActionStep)
+                .where(
+                    ActionStep.run_id == run["id"],
+                    ActionStep.kind.in_(run_totals.TERMINAL_DELETE_KINDS),
+                )
+                .order_by(ActionStep.ordinal, ActionStep.id)
+            ).first()
+            assert step is not None, "the plan fixture planned nothing, so nothing is exercised"
+            step.state = StepState.FAILED
+            session.commit()
+
+            unstamped = client.get(f"/api/runs/{run['id']}/outcomes").json()["outcomes"][0]
+            assert unstamped["state"] == "failed"
+            assert unstamped["file_removed"] is False
+
+            step.file_removed_at = utcnow()
+            session.commit()
+        engine.dispose()
+
+        stamped = client.get(f"/api/runs/{run['id']}/outcomes").json()["outcomes"][0]
+        assert stamped["state"] == "failed"
+        assert stamped["file_removed"] is True
 
     def test_dry_running_a_missing_run_is_a_404(self, client: TestClient) -> None:
         assert client.post("/api/runs/9999/dry-run").status_code == 404

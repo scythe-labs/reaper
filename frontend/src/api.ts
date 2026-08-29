@@ -1034,6 +1034,9 @@ export interface RunOutcomeRead {
   state: string; // verified | failed | skipped
   error_reason: ReasonKey | null;
   is_canary: boolean;
+  /** Whether the file's removal was confirmed. A failed step can carry true: the delete
+   *  landed and a follow-up did not, so the row must say "removed", never "kept". */
+  file_removed: boolean;
 }
 
 /** One window of a run's outcomes so far, from `GET /api/runs/{id}/outcomes`. Answers a

@@ -726,6 +726,10 @@ class RunOutcomeReadOut(BaseModel):
     state: str  # verified | failed | skipped
     error_reason: ReasonKey | None = None
     is_canary: bool
+    file_removed: bool
+    """Whether the file's removal was confirmed, off the journal's durable stamp. A FAILED
+    step can carry True: the delete landed and a follow-up (the import exclusion, the Plex
+    refresh) did not, and the browser must say "removed" for it, never "kept"."""
 
 
 class RunOutcomesOut(BaseModel):

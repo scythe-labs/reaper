@@ -565,6 +565,7 @@ async def get_run_outcomes(
                     state=s.state.value,
                     error_reason=_thaw_reason(s.error),
                     is_canary=s.ordinal == 0,
+                    file_removed=s.file_removed_at is not None,
                 )
                 for s in page
             ],

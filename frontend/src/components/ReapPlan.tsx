@@ -308,14 +308,18 @@ function useAllOutcomes(runId: number | null): { items: RunOutcomeRead[]; isPend
   return { items: query.data ?? [], isPending: query.isPending };
 }
 
-/** One outcome, in the grammar shared by the reaping card's live log, the done card's "Kept
- *  by checks" list, and the read-only run detail sheet: a protect check for a verified
- *  removal (with its size), an amber dot for anything kept, with the reason composed from its
- *  typed key (never matched against English, rule 92's sibling obligation for the browser
- *  side: the sentence is translated, so a string match on it would silently stop working the
- *  moment a translator touches it). */
+/** One outcome, in the grammar shared by the reaping card's live log, the done card's lists,
+ *  and the read-only run detail sheet: a protect check for a confirmed removal (with its
+ *  size), a red cross for a step that failed, an amber dot for an item a check kept, with the
+ *  reason composed from its typed key (never matched against English, rule 92's sibling
+ *  obligation for the browser side: the sentence is translated, so a string match on it would
+ *  silently stop working the moment a translator touches it). The journal's `file_removed`
+ *  stamp, not the state alone, decides the removal grammar: a FAILED step whose delete landed
+ *  is a removed file with a problem after it, and calling it anything but removed would tell
+ *  the operator a file that is off disk still exists. */
 function OutcomeFeedRow({ outcome }: { outcome: RunOutcomeRead }) {
   const { t } = useTranslation();
+  const reason = outcome.error_reason ? composeError(outcome.error_reason) : "";
   if (outcome.state === "verified") {
     return (
       <div className="feed-row gone">
@@ -330,6 +334,35 @@ function OutcomeFeedRow({ outcome }: { outcome: RunOutcomeRead }) {
       </div>
     );
   }
+  if (outcome.state === "failed" && outcome.file_removed) {
+    return (
+      <div className="feed-row gone">
+        <span className="feed-mark" aria-hidden="true">
+          ✓
+        </span>
+        <span className="feed-title">
+          {outcome.title || outcome.media_key}
+          <span className="feed-kept-why">
+            {t("reapPlan.itemStatus.removedProblem", { reason })}
+          </span>
+        </span>
+        <span className="feed-size">{itemBytes(outcome.size_bytes)}</span>
+      </div>
+    );
+  }
+  if (outcome.state === "failed") {
+    return (
+      <div className="feed-row failed">
+        <span className="feed-mark" aria-hidden="true">
+          ✕
+        </span>
+        <span className="feed-title">
+          {outcome.title || outcome.media_key}
+          <span className="feed-kept-why">{t("reapPlan.itemStatus.failedReason", { reason })}</span>
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="feed-row kept">
       <span className="feed-mark" aria-hidden="true">
@@ -337,11 +370,7 @@ function OutcomeFeedRow({ outcome }: { outcome: RunOutcomeRead }) {
       </span>
       <span className="feed-title">
         {outcome.title || outcome.media_key}
-        <span className="feed-kept-why">
-          {t("reapPlan.itemStatus.keptReason", {
-            reason: outcome.error_reason ? composeError(outcome.error_reason) : "",
-          })}
-        </span>
+        <span className="feed-kept-why">{t("reapPlan.itemStatus.keptReason", { reason })}</span>
       </span>
     </div>
   );
@@ -501,13 +530,17 @@ function RunTotalsTiles({ run }: { run: RunSummary }) {
 }
 
 /** The done card: the result of the run this page just watched end, read back from what it
- *  persisted rather than the in-memory report (rule 5/30). "Kept by checks" only renders
- *  while there is something to list, the same restraint `ReapBreakdown` uses for its own
- *  pointer cards. */
+ *  persisted rather than the in-memory report (rule 5/30). "Kept by checks" lists exactly the
+ *  items a check kept (the same set the tile above counts), and a failed item gets its own
+ *  list instead: filing it under "kept" would claim a protection fired when nothing was
+ *  checked. Either list only renders while there is something in it, the same restraint
+ *  `ReapBreakdown` uses for its own pointer cards. */
 function DoneCard({ run, onDismiss }: { run: RunSummary; onDismiss: () => void }) {
   const { t } = useTranslation();
   const outcomes = useAllOutcomes(run.id);
-  const kept = [...outcomes.items].reverse().filter((o) => o.state !== "verified");
+  const decided = [...outcomes.items].reverse();
+  const problems = decided.filter((o) => o.state === "failed");
+  const kept = decided.filter((o) => o.state === "skipped");
 
   return (
     <>
@@ -523,6 +556,16 @@ function DoneCard({ run, onDismiss }: { run: RunSummary; onDismiss: () => void }
           </button>
         </div>
       </div>
+      {problems.length > 0 && (
+        <div className="reap-card">
+          <h3 className="reap-feed-heading">{t("reapPlan.done.problemsHeading")}</h3>
+          <div className="feed">
+            {problems.map((o) => (
+              <OutcomeFeedRow key={o.media_key} outcome={o} />
+            ))}
+          </div>
+        </div>
+      )}
       {kept.length > 0 && (
         <div className="reap-card">
           <h3 className="reap-feed-heading">{t("reapPlan.done.keptByChecksHeading")}</h3>
