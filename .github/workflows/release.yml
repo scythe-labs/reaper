@@ -295,6 +295,10 @@ jobs:
     name: Release snap ${{ matrix.arch }} to stable
     needs: [cut, publish]
     strategy:
+      # One architecture failing must not cancel the other's upload, the way
+      # binaries.yml's matrices already declare. Both arches were mid-upload when a
+      # dropped connection failed one of them and cancelled its sibling.
+      fail-fast: false
       matrix:
         arch: [amd64, arm64]
     runs-on: ubuntu-latest

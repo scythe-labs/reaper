@@ -166,8 +166,31 @@ function renderPlan() {
   );
 }
 
+// The history card watches its footer to load the next ten. jsdom has no observer, so this
+// one records the node it was handed and fires only when a test says the footer was reached.
+let reachFooter: (() => void) | null = null;
+class TestObserver {
+  constructor(private cb: IntersectionObserverCallback) {}
+  observe(node: Element) {
+    reachFooter = () =>
+      this.cb(
+        [{ isIntersecting: true, target: node } as IntersectionObserverEntry],
+        this as unknown as IntersectionObserver,
+      );
+  }
+  unobserve() {}
+  disconnect() {
+    reachFooter = null;
+  }
+  takeRecords() {
+    return [];
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  reachFooter = null;
+  vi.stubGlobal("IntersectionObserver", TestObserver);
   // The persisted run ack: dropped between tests so a Done click in one cannot hide the
   // result a later test expects to see.
   window.localStorage.removeItem(ACK_KEY);
@@ -827,20 +850,23 @@ describe("history paging", () => {
     return Array.from({ length: n }, (_, i) => summary({ id: 200 - i }));
   }
 
-  it("Show 50 more pages the whole history via offset, and the count updates", async () => {
-    mockHistory(manyRuns(60));
-    const user = userEvent.setup();
+  it("loads ten at a time as the footer is reached, and stops watching at the end", async () => {
+    mockHistory(manyRuns(25));
     renderPlan();
 
-    expect(await screen.findByText(`Showing ${count(50)} of ${count(60)}`)).toBeInTheDocument();
-    const more = screen.getByRole("button", { name: "Show 50 more" });
-    expect(more).toBeEnabled();
+    expect(await screen.findByText(`Showing ${count(10)} of ${count(25)}`)).toBeInTheDocument();
+    expect(apiMock.runs).toHaveBeenCalledWith(0, 10, true);
 
-    await user.click(more);
+    await act(async () => reachFooter?.());
+    await waitFor(() => expect(apiMock.runs).toHaveBeenCalledWith(10, 10, true));
+    expect(await screen.findByText(`Showing ${count(20)} of ${count(25)}`)).toBeInTheDocument();
 
-    await waitFor(() => expect(apiMock.runs).toHaveBeenCalledWith(50, 50, true));
-    expect(await screen.findByText(`Showing ${count(60)} of ${count(60)}`)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Show 50 more" })).toBeDisabled();
+    await act(async () => reachFooter?.());
+    await waitFor(() => expect(apiMock.runs).toHaveBeenCalledWith(20, 10, true));
+    expect(await screen.findByText(`Showing ${count(25)} of ${count(25)}`)).toBeInTheDocument();
+    // Nothing left to fetch, so the footer is no longer watched: reaching it again asks for
+    // no eleventh row past the end.
+    expect(reachFooter).toBeNull();
   });
 });
 
