@@ -13,9 +13,9 @@ const GB = 1024 ** 3;
 
 /** How far back the watch mirror reaches. Every figure the drawer prints is counted over this
  *  span, so a zero only means "never watched" back to here. Deliberately a year no other
- *  fixture date uses, so an assertion on "2018" can only be reading the horizon; and midday
- *  UTC, so `date()` renders the same month whatever zone the run happens to be in (rule 133).
- *  The DAY still moves by zone, which is why the assertions below match it loosely. */
+ *  fixture date uses, so an assertion on "2018" can only be reading the horizon, and midday
+ *  UTC, so `date()` renders the same month whatever zone the run happens to be in. The day
+ *  still moves by zone, which is why the assertions below match it loosely. */
 const HORIZON = "2018-01-11T12:00:00+00:00";
 
 function title(over: Partial<PersonTitle> = {}): PersonTitle {
@@ -138,8 +138,8 @@ describe("ScalesPanel", () => {
   });
 
   it("says “per day” for a daily quota, not “per 1 days”", () => {
-    // This file and Fairness already pluralize "person"/"people" and "title"/"titles";
-    // the quota line pluralized nothing (U-19).
+    // This file and Fairness already pluralize "person"/"people" and "title"/"titles". The
+    // quota line must pluralize its unit the same way.
     render(
       <ScalesPanel
         detail={detail({
@@ -158,10 +158,10 @@ describe("ScalesPanel", () => {
     expect(screen.queryByText(/per 1 days/)).not.toBeInTheDocument();
   });
 
-  // Both of these send the LANE alongside the id, and both send one that is not the queue's
-  // default -- a row carrying "condemn" would agree with the tab the queue already opens on, so
-  // it could not tell a lane that travelled from one that was never sent. Two different lanes
-  // across the pair, so a caller passing a constant fails one of them (rule 141).
+  // Both of these send the lane alongside the id, and both send one that is not the queue's
+  // default. A row carrying "condemn" would agree with the tab the queue already opens on, so
+  // it could not tell a lane that traveled from one that was never sent. The pair uses two
+  // different lanes, so a caller passing a constant fails one of them.
   it("opens a movie by its item id, on the lane that movie is in", async () => {
     const onOpenItem = vi.fn();
     render(
@@ -220,9 +220,9 @@ describe("ScalesPanel", () => {
     expect(screen.getByText("Kept")).toBeInTheDocument();
     expect(screen.getByText("Left to decide")).toBeInTheDocument();
     // A movie shows its raw plays.
-    // The word, not the multiplication sign: `×` carried the meaning rather than decorating
-    // it, and a reader at its default symbol level drops the character, leaving "watched 4"
-    // (#177). It sits inside a composed string, so there was no element to hide it on.
+    // The word, not the multiplication sign: a screen reader at its default symbol level drops
+    // the "×" character, leaving "watched 4". It sits inside a composed string, so there is no
+    // element to hide the glyph on.
     expect(screen.getByText(/watched 4 times/)).toBeInTheDocument();
     // A zero is a lower bound against the mirror's span, so it names the span rather than
     // stating a never that nothing establishes.
@@ -247,11 +247,11 @@ describe("ScalesPanel", () => {
     expect(screen.getByText(/watched 1 time(?!s)/)).toBeInTheDocument();
   });
 
-  // The issue this guards: `watched_by_them` is counted over the whole mirror and the mirror
-  // begins at its horizon, so a person whose plays all predate it reads as having watched
-  // nothing. The drawer printed "not watched" and a red 0% as plain fact, on the screen built
-  // to decide who is holding disk they do not use. `ServerPopularityGate` is the model: past
-  // its reach it refuses the negative rather than asserting a zero.
+  // `watched_by_them` is counted over the whole mirror, and the mirror begins at its horizon,
+  // so a person whose plays all predate it would read as having watched nothing. The drawer
+  // must not print "not watched" and a red 0% as plain fact on the screen built to decide who
+  // is holding disk they do not use. `ServerPopularityGate` is the model: past its reach it
+  // refuses the negative rather than asserting a zero.
   it("bounds a zero by the span it was counted over, and names that span", () => {
     render(
       <ScalesPanel
@@ -263,14 +263,14 @@ describe("ScalesPanel", () => {
     );
 
     expect(screen.getByText(/none since Jan \d+, 2018/)).toBeInTheDocument();
-    // The board's line, repeated here because on a phone this panel is a sheet OVER the board
+    // The board's line, repeated here because on a phone this panel is a sheet over the board,
     // and the board's copy is not on screen to read.
     expect(screen.getByText(/watch history reaches back to Jan \d+, 2018/i)).toBeInTheDocument();
   });
 
   // The mirror has never synced. There is no span to count from, so no figure means anything:
-  // not the percentage, and not a per-title zero either. The board's caveat was gated on a
-  // known span, so this state used to be the one printing a red 0% with no caveat anywhere.
+  // not the percentage, and not a per-title zero either. The board's caveat is gated on a
+  // known span, so this state must not print a red 0% with no caveat anywhere.
   it("asserts no watched figure at all when the mirror holds nothing", () => {
     render(
       <ScalesPanel
@@ -292,10 +292,10 @@ describe("ScalesPanel", () => {
     expect(screen.getByText(/can't see their history/i)).toBeInTheDocument();
   });
 
-  // The board's twin (rule 72). With no Plex account behind the request account there is no
-  // history to read at all: `fairness._roll_up` fills `played_by_them` and each title's
-  // `watched_by_them` only inside `if pid is not None`. The panel drew that as a red 0% tile
-  // and a definite "not watched" on every row, which is a measurement nobody took.
+  // The board's twin. With no Plex account behind the request account there is no history to
+  // read at all: `fairness._roll_up` fills `played_by_them` and each title's `watched_by_them`
+  // only inside `if pid is not None`. The panel must not draw that as a red 0% tile and a
+  // definite "not watched" on every row, which would present a measurement nobody took.
   it("says the history is unreadable when no Plex account is linked", () => {
     render(
       <ScalesPanel
@@ -423,10 +423,10 @@ describe("ScalesPanel", () => {
 });
 
 // The panel is a full-screen dialog under 900px, so it has to say what it is. Its name comes from
-// its own <h2> rather than a second copy of the title in an aria-label (rule 144). One of these
-// per panel: six surfaces render WhyShell, and the name is the one part of the contract the shell
-// cannot supply for them. The fallbacks are included because they are two of the six -- and the
-// loading branch has no heading at all, so its lead line carries the name instead.
+// its own <h2> rather than a second copy of the title in an aria-label. One of these per panel:
+// six surfaces render WhyShell, and the name is the one part of the contract the shell cannot
+// supply for them. The fallbacks are included because they are two of the six, and the loading
+// branch has no heading at all, so its lead line carries the name instead.
 describe("the Scales panel's accessible name", () => {
   it("names itself from the person it is about", () => {
     render(
@@ -452,8 +452,8 @@ describe("the Scales panel's accessible name", () => {
     ).toBeInTheDocument();
   });
 
-  // It carried no Escape handler of its own: ScalesPanel had one, its fallback never got the
-  // copy, so a panel stuck loading or failed could not be dismissed from the keyboard at all.
+  // The fallback needs its own Escape handler: without one, a panel stuck loading or failed
+  // could not be dismissed from the keyboard at all.
   it("closes on Escape while it is still loading", async () => {
     const onClose = vi.fn();
     render(<ScalesPanelFallback error={false} onClose={onClose} />);

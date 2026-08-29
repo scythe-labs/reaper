@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The bottom sheet (local login). One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* ---- bottom sheet (local login) ------------------------------------------ */
+ * The bottom sheet (local login). See `../index.css` for how this file fits into the
+ * stylesheet's load order. */
 
 .sheet-scrim {
   position: fixed;
@@ -30,21 +29,20 @@
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   box-shadow: var(--shadow-lg);
   /* The bottom padding clears the home indicator as well as the sheet's own edge. This surface
-     is anchored to the bottom of a fixed scrim, so it is viewport-bottom-anchored exactly like
-     the five that already add the inset -- the phone section bar, the scan toast, the policy
-     save bar and the bulk-action bar -- and it was the one that did not. 1.8rem is 28.8px
-     against a 34px indicator, and `.sheet-actions` holds the sign-in button as the last thing
-     in the sheet, so what landed under the indicator was the control the sheet exists for. */
+     is anchored to the bottom of a fixed scrim, the same as the phone section bar, the scan
+     toast, the policy save bar, and the bulk-action bar, so it needs the same inset those
+     four already add. 1.8rem is 28.8px against a 34px indicator. `.sheet-actions` holds the
+     sign-in button as the last thing in the sheet, so without this padding, the indicator
+     would sit over the control the sheet exists for. */
   padding: 0.9rem 1.6rem calc(1.8rem + env(safe-area-inset-bottom, 0px));
   /* Same bound as .modal, and dvh for the same reason: the sheet is anchored to the bottom
      of the scrim, so on a short viewport (a landscape phone, or once an error notice
      renders) the username field grows straight off the top with nothing to scroll. */
   max-height: 85dvh;
   overflow-y: auto;
-  /* And contained for .modal's reason too: the scrim is `position: fixed` but is not itself a
-     scroll container, so without this a flick past the end of the sheet scrolls the login page
-     behind it. Both structural siblings (.modal, .why) contain; this one was reasoned against
-     .modal for its height bound and did not carry the rest across. */
+  /* Contained for the same reason as .modal: the scrim is `position: fixed` but is not itself a
+     scroll container, so without this, a flick past the end of the sheet scrolls the login
+     page behind it. .modal and .why both contain for the same reason. */
   overscroll-behavior: contain;
 }
 .sheet.open {
@@ -77,8 +75,8 @@
   text-align: start;
   margin-bottom: 0.9rem;
 }
-/* The one control chrome (see the standard at the top of the file); only the full-bleed
-   width is this sheet's own. */
+/* The one control chrome (see the standard in 00-tokens.css). Only the full-bleed width is
+   this sheet's own. */
 .local-form input {
   width: 100%;
   padding: var(--control-pad);

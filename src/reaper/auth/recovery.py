@@ -1,47 +1,47 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Recovery mode -- the last resort when you cannot log in at all.
+"""Recovery mode: the last resort when you cannot sign in at all.
 
-Set ``REAPER_RECOVERY=true`` and restart. Reaper mints one single-use code, valid
-for 15 minutes, and delivers it two ways, because no single one reaches every
-install:
+Set ``REAPER_RECOVERY=true`` and restart. Reaper mints one single-use code, valid for
+15 minutes, and delivers it two ways, because no single channel reaches every install:
 
 * **The console.** ``docker compose logs reaper | grep -A2 RECOVERY`` on the
   container, ``snap logs scythe-labs-reaper`` on the snap.
 * **A file in the data folder**, ``recovery.txt``, beside ``launcher.conf``.
 
-The file exists because the console does not. A windowed Windows build and a
-Finder-launched macOS ``.app`` are handed no console at all, so PyInstaller leaves
-``sys.stdout`` as ``None`` and ``packaging/pyinstaller/entry.py`` stands devnull in
-for it: the banner below went nowhere an operator could look, and the in-app Logs
-tab cannot substitute, because it sits behind the sign-in they have lost (#433).
+The file exists because the console does not always exist. A windowed Windows build
+and a Finder-launched macOS ``.app`` get no console at all: PyInstaller leaves
+``sys.stdout`` as ``None`` and ``packaging/pyinstaller/entry.py`` stands ``devnull`` in
+for it, so the console banner below would go nowhere an operator could read it. The
+in-app Logs tab cannot substitute either, because it sits behind the sign-in the
+operator has lost.
 
-Redeeming the code grants a normal admin session, bypassing both Plex OAuth and the
+Redeeming the code opens a normal admin session, bypassing both Plex OAuth and the
 local password. That session is marked ``via_recovery`` (see
-:func:`auth.sessions.open_session`), which is what lets Settings -> Security set a
-new admin password without the current one -- an operator who has forgotten it has
-nothing to type there, and forgetting it is why recovery was used. Then turn the
-flag back off.
+:func:`auth.sessions.open_session`), which is what lets Settings -> Security set a new
+admin password without the current one: an operator who has forgotten the password has
+nothing to type there, and forgetting it is why recovery was used. The flag then turns
+back off.
 
-Why this is safe: obtaining the code requires setting an environment variable *and*
-reading either the console or a 0600 file in the folder that already holds
-``secret.key``. Anyone who can do both already has host access, and could simply open
-the SQLite file and rewrite the password hash. Recovery mode adds no new capability
--- it only makes the legitimate path convenient instead of requiring surgery on the
-database.
+Recovery adds no new capability. Getting the code requires setting an environment
+variable and then reading either the console or a 0600 file in the folder that already
+holds ``secret.key``. Anyone who can do both already has host access, and could just
+open the SQLite file and rewrite the password hash directly. Recovery only makes the
+legitimate path convenient instead of requiring surgery on the database.
 
-Why it is still bounded: single-use, 15 minutes, minted only at boot with the flag
-set, and every redemption is written to the audit trail. The file is owner-only from
-creation, replaced on every mint, deleted by ``api.auth.recover`` the moment the code
-is redeemed, and swept at the next boot with the flag off (``main.lifespan``).
+What keeps it bounded: the code is single-use, expires in 15 minutes, is minted only
+at boot with the flag set, and every redemption is written to the audit trail. The file
+is owner-only from creation, replaced on every mint, deleted by ``api.auth.recover``
+the moment the code is redeemed, and swept at the next boot with the flag off
+(``main.lifespan``).
 
-The token is delivered as a **code to paste**, not embedded in the link's query
-string: the banner prints a bare ``/recover`` URL plus the code on its own line, and
-the browser sends the code in the ``POST /recover`` body. Nothing carries the token in
-a request line, so a fronting reverse proxy's access log never records it -- closing
-the one residual exposure a ``GET /recover?token=...`` link would have left open.
+The token is delivered as a code to paste, not embedded in the link's query string:
+the banner prints a bare ``/recover`` URL plus the code on its own line, and the
+browser sends the code in the ``POST /recover`` body. Nothing carries the token in a
+request line, so a fronting reverse proxy's access log never records it. A
+``GET /recover?token=...`` link would have left that exposure open.
 
-The URL's host comes from :func:`recovery_base_url`, not from the bind address --
-see there for why.
+The URL's host comes from :func:`recovery_base_url`, not from the bind address; see
+there for why.
 """
 
 from __future__ import annotations
@@ -75,10 +75,11 @@ _HOST_PLACEHOLDER = "<your-reaper-address>"
 def recovery_base_url(host: str, port: int) -> str:
     """Where to tell the operator to open the recovery page.
 
-    The banner used to interpolate ``settings.host`` straight in, which prints
-    ``http://0.0.0.0:8420/recover`` on a default install -- a bind address, not a place
-    (B-12). A bind that names every interface is replaced by a placeholder the operator
-    fills in; one that names a real address is kept, because then it IS the answer.
+    ``settings.host`` is a bind address, not necessarily a place a browser can reach:
+    interpolating it directly would print ``http://0.0.0.0:8420/recover`` on a default
+    install. A bind that names every interface is replaced by a placeholder the operator
+    fills in themselves; one that names a real address is kept, because then it is the
+    answer.
     """
     cleaned = (host or "").strip()
     shown = _HOST_PLACEHOLDER if cleaned in _UNROUTABLE_BINDS else cleaned
@@ -93,14 +94,15 @@ def recovery_file_path(data_dir: Path) -> Path:
 def _write_owner_only(path: Path, text: str) -> None:
     """Create ``path`` owner-only from creation, replacing whatever was there.
 
-    Written through a same-directory sibling opened ``O_EXCL`` at 0600 and moved into
-    place: the bytes are never on disk under a wider mode for even an instant, which is
-    what rule 14/83 forbids buying with a later ``chmod``. The move also means a crash
-    mid-write leaves the previous file intact rather than a truncated one, so a half-written
-    code can never be presented as the whole code.
+    Writes through a same-directory sibling opened with ``O_EXCL`` at 0600 and moves it
+    into place, so the bytes are never on disk under a wider mode, not even for an
+    instant. A later ``chmod`` cannot buy that guarantee, since the file would already
+    have existed at the wider mode before it ran. The move also means a crash mid-write
+    leaves the previous file intact rather than a truncated one, so a half-written code
+    can never be shown as the whole code.
 
-    On Windows the mode bits are largely inert; the file inherits the ACL of the per-user
-    data folder, which is the same protection ``secret.key`` beside it already relies on.
+    On Windows the mode bits are largely inert. The file inherits the ACL of the
+    per-user data folder, the same protection ``secret.key`` beside it already relies on.
     """
     tmp = path.with_name(path.name + ".tmp")
     tmp.unlink(missing_ok=True)
@@ -120,13 +122,13 @@ def clear_recovery_file(data_dir: Path) -> None:
     """Delete the recovery file if one is there. Never fatal, never noisy.
 
     Called on a successful redemption (``api.auth.recover``), at every boot
-    (``main.lifespan``), and by :func:`_write_recovery_file` before it writes, so a spent or
-    stale code does not sit in the data folder after it has stopped being the way in.
+    (``main.lifespan``), and by :func:`_write_recovery_file` before it writes, so a spent
+    or stale code never sits in the data folder after it stops being a way in.
 
-    The half-written sibling goes too. A kill between ``os.open`` and the rename strands a
-    ``.tmp`` holding a live code, which neither the redemption sweep nor the boot sweep would
-    have looked at -- a file nothing ever deletes is the one shape this whole channel must
-    not have.
+    The half-written sibling is deleted too. A process killed between ``os.open`` and the
+    rename leaves a ``.tmp`` file holding a live code that neither the redemption sweep
+    nor the boot sweep would otherwise look at, and a file nothing ever deletes is
+    exactly what this channel must not leave behind.
     """
     path = recovery_file_path(data_dir)
     for target in (path, path.with_name(path.name + ".tmp")):
@@ -144,12 +146,12 @@ def _write_recovery_file(
     A failure here is never fatal: the console banner is still a live channel on the
     container and the snap, and the token is already in the database.
 
-    **The old file is deleted before the new one is written**, so a failure leaves NOTHING
-    rather than the previous code. Minting has already invalidated that code by the time this
-    runs, so leaving it in place would hand the operator a file that reads exactly like a
-    working one and cannot possibly sign them in -- on the builds where this file is the only
-    channel there is, and where the warning below reaches only the in-app Logs tab they
-    cannot get to. An empty folder at least matches what the manual says to expect.
+    The old file is deleted before the new one is written, so a failure leaves nothing
+    rather than the previous code. Minting has already invalidated that old code by the
+    time this runs, so leaving it in place would hand the operator a file that reads
+    exactly like a working one but cannot sign them in. On the builds where this file is
+    the only channel, and where the warning below reaches only the in-app Logs tab they
+    cannot get to, an empty folder at least matches what the manual says to expect.
     """
     clear_recovery_file(data_dir)
     path = recovery_file_path(data_dir)
@@ -175,15 +177,15 @@ def _write_recovery_file(
 
 
 async def mint_recovery_token(session: AsyncSession, *, base_url: str, data_dir: Path) -> str:
-    """Create a single-use recovery token, print it to the CONSOLE, and write it to a file.
+    """Create a single-use recovery token, print it to the console, and write it to a file.
 
-    Not "to the log": the banner below goes out through ``print``, deliberately (see the
-    comment on it), so it never reaches structlog, the in-app Logs tab, or the rotating
-    files the Logs tab downloads. ``docker logs`` is where a container operator finds it,
-    and the recovery screen's copy has to say so (U-11).
+    This goes to the console, not the log: the banner below is written through
+    ``print``, deliberately (see the comment on it), so it never reaches structlog, the
+    in-app Logs tab, or the rotating files the Logs tab downloads. ``docker logs`` is
+    where a container operator finds it, and the recovery screen's copy has to say so.
 
-    The file (:func:`_write_recovery_file`) is the channel for the builds that have no
-    console to print to at all -- see the module docstring. It carries the same code, is
+    The file (:func:`_write_recovery_file`) is the channel for builds that have no
+    console to print to at all; see the module docstring. It carries the same code, is
     owner-only from creation, and is removed on redemption by ``api.auth.recover``.
     """
     # Invalidate any earlier unredeemed tokens: only one may be live at a time.
@@ -251,7 +253,7 @@ async def redeem_recovery_token(session: AsyncSession, plaintext: str) -> bool:
     token.used_at = utcnow()
     await session.flush()
     # No audit line here. flush() stamps used_at inside the caller's open transaction, and
-    # the no-admin 409 path rolls that back on purpose to leave the code usable (rule 125).
-    # The "was used to gain admin access" line records an outcome, so it fires past the
-    # caller's commit, where the redemption is durable and a session is actually open (#467).
+    # the no-admin 409 path rolls that back on purpose to leave the code usable. The "was
+    # used to gain admin access" line records an outcome, so it fires after the caller's
+    # commit, where the redemption is durable and a session is actually open.
     return True

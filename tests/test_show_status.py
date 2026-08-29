@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Whether a show has finished, from Sonarr's payload to the wire.
 
-The fact is three-state on purpose: ended, still going, and *we could not read it*.
-Sonarr reporting no status at all must never arrive at the card as a definite answer,
-so the tests below follow all three states -- plus the movie case, where the question
-does not apply -- through the one mapping function and out of the API. A nullable bool
-would collapse two of those four, which is exactly the conflation this field exists to
-avoid.
+The fact is three-state on purpose: ended, still going, or unreadable. Sonarr reporting
+no status at all must never arrive at the card as a definite answer, so the tests below
+follow all three states, plus the movie case where the question does not apply, through
+the one mapping function and out of the API. A nullable bool would collapse two of those
+four states together, which is the mixup this field exists to avoid.
 """
 
 from __future__ import annotations
@@ -41,13 +40,14 @@ class TestTheObservationBecomesAKey:
         assert show_status_key(Known(value=False, source="sonarr")) == "continuing"
 
     def test_an_unreadable_status_keeps_its_own_value(self) -> None:
-        """Never "continuing". A status we could not read is not a claim that the show
-        is still running, and the card draws it as "we could not check"."""
+        """An unreadable status must never become "continuing". A status this tool could
+        not read is not a claim that the show is still running, so the card draws it as
+        "we could not check"."""
         assert show_status_key(Unknown(reason="no status", source="sonarr")) == "unknown"
 
     def test_a_row_the_question_does_not_apply_to_carries_nothing(self) -> None:
-        """Absent is the movie case (and any row nobody stamped): the card shows no
-        status at all, rather than an unreadable one."""
+        """Absent covers the movie case and any row nobody stamped. The card shows no
+        status at all for these, rather than an unreadable one."""
         assert show_status_key(Absent(source="radarr")) is None
 
 
@@ -60,10 +60,10 @@ class TestSonarrPayloadsMapThroughUnchanged:
             ({"status": "ended", "ended": True}, "ended"),
             ({"status": "deleted", "ended": True}, "ended"),
             ({"status": "continuing", "ended": False}, "continuing"),
-            # An upcoming show has not ended, which is why the label is "Still going"
-            # and not "Continuing": this arm covers a show that has not started.
+            # An upcoming show has not ended, which is why the label reads "Still going"
+            # rather than "Continuing". This arm covers a show that has not started.
             ({"status": "upcoming", "ended": False}, "continuing"),
-            # Neither key present: the one case that must survive as its own state.
+            # Neither key is present. This case must survive as its own state.
             ({"title": "Example Show"}, "unknown"),
         ],
     )
@@ -91,11 +91,11 @@ def _explanation(score: int) -> str:
 def client(tmp_path: Path) -> Iterator[TestClient]:
     """A snapshot holding one show per status, plus a movie.
 
-    Two of the shows carry a season with no status stored -- the shape a snapshot taken
-    before this field existed leaves behind -- so the show-level rollup is exercised
-    against groups that are not uniformly filled in. They carry it in opposite orders:
-    show 1 has the status on its first season, show 4 on its last, so an implementation
-    that reads whichever season sorts first cannot pass both.
+    Two of the shows carry a season with no status stored, the shape an older snapshot
+    can leave behind, so the show-level rollup is exercised against groups that are not
+    uniformly filled in. They carry it in opposite orders: show 1 has the status on its
+    first season, show 4 on its last, so an implementation that reads whichever season
+    sorts first cannot pass both.
     """
     settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
@@ -134,10 +134,10 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
         session.add_all(
             [
                 season(1, 1, "ended"),
-                season(1, 2, None),  # a row from before the field existed
+                season(1, 2, None),  # a row with no status stored
                 season(2, 1, "continuing"),
                 season(3, 1, "unknown"),
-                # The mirror of show 1: the empty row sorts FIRST, so a rollup that
+                # The mirror of show 1. The empty row sorts FIRST, so a rollup that
                 # reads the leading season blanks a status the group plainly has.
                 season(4, 1, None),
                 season(4, 2, "ended"),
@@ -175,7 +175,7 @@ class TestTheQueueCarriesEveryState:
         assert rows["sonarr:5:1:1"]["show_status"] == "ended"
         assert rows["sonarr:5:2:1"]["show_status"] == "continuing"
         assert rows["sonarr:5:3:1"]["show_status"] == "unknown"
-        # A movie is not a series: nothing to say, and nothing said.
+        # A movie is not a series, so it carries no status at all.
         assert rows["radarr:1:10"]["show_status"] is None
 
     def test_a_row_stored_before_the_field_existed_is_null_not_a_guess(
@@ -215,7 +215,7 @@ class TestTheShowCardCarriesTheStatus:
     def test_the_group_reads_the_show_level_value(
         self, client: TestClient, group_key: str, expected: str
     ) -> None:
-        """Any season answers for the show: one reading of the series is stamped onto
+        """Any season answers for the show. One reading of the series is stamped onto
         every one of its seasons in the same scan."""
         group = client.get(f"/api/groups/{group_key}").json()
 
@@ -232,9 +232,9 @@ class TestTheShowCardCarriesTheStatus:
     def test_the_status_is_found_even_when_the_empty_season_comes_first(
         self, client: TestClient
     ) -> None:
-        """Same shape as the test above, in the opposite order: the leading season is
-        the empty one. Reading the first season would report nothing here, so the pair
-        pins that the rollup looks at every season rather than at row order."""
+        """Same shape as the test above, in the opposite order. The leading season is
+        the empty one here. Reading only the first season would report nothing, so the
+        pair pins that the rollup looks at every season rather than at row order."""
         group = client.get("/api/groups/sonarr:5:4").json()
 
         assert [s["show_status"] for s in group["seasons"]] == [None, "ended"]

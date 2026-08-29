@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The overlay contract for a hand decision, from the mutation's side:
-//   - a PER-ITEM decision (movie/season already on screen) is patched by media_key and the
+//   - a PER-ITEM decision (movie/season already on screen) is patched by media_key, and the
 //     active tab is NOT refetched, so the just-decided row stays put and re-buckets on the
 //     next fetch;
 //   - a WHOLE-SHOW decision keys on the show/group key: it patches the show-level fields on the
-//     group's loaded seasons and, likewise, does NOT refetch the active tab -- so the card
-//     carrying the control reflects the decision AND the show stays in the lane the operator is
+//     group's loaded seasons and, likewise, does NOT refetch the active tab, so the card
+//     carrying the control reflects the decision and the show stays in the lane the operator is
 //     looking at (a whole-show reap must not re-bucket a Limbo show to Condemned and vanish
 //     mid-review);
 //   - a decision on a row/show that is NOT loaded matches nothing and falls back to a real
 //     refetch, since there is no on-screen overlay to preserve.
-// This is the regression guard for both the whole-show "no feedback" gap and the whole-show
-// "jumps out of the list" regression.
+// This test guards against both the whole-show "no feedback" gap and the whole-show "jumps
+// out of the list" bug.
 
 import { act } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,7 +25,7 @@ vi.mock("./api", () => ({
   api: { override: vi.fn().mockResolvedValue({}), clearOverride: vi.fn().mockResolvedValue({}) },
 }));
 
-// A minimal candidate row -- only the fields the patch reads/writes matter here.
+// A minimal candidate row: only the fields the patch reads and writes matter here.
 const row = (media_key: string, group_key: string | null) =>
   ({
     media_key,
@@ -118,9 +118,9 @@ describe("useOverrideMutations", () => {
     expect(queueRefetchType(invalidateSpy)).toBe("active");
   });
 
-  // B-14: the scan summary shifts lanes by the overrides and the Scales figures count only
-  // the effective reap set, so a spare that does not reach them leaves Jobs still counting
-  // the title as reclaimable and that person still carrying its weight.
+  // The scan summary shifts lanes by the overrides, and the Scales figures count only the
+  // effective reap set. A spare that does not reach them would leave Jobs still counting the
+  // title as reclaimable, and that person still carrying its weight.
   it.each([["a single decision"], ["a bulk decision"]])(
     "refreshes every override-aware surface after %s",
     async (which) => {

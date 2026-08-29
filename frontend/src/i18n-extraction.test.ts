@@ -2,14 +2,14 @@
 // @vitest-environment node
 //
 // Stage 4's extraction gate (docs/history/I18N_PLAN.md): once a file is declared extracted, no
-// user-visible English literal may sit in it again. Rule 144 is why the unit is the whole
-// file and never "the easy strings": a converted file vouches for a consistency a
-// half-converted one does not have, so CONVERTED grows only when a surface is done
-// completely, and this gate is what holds it done.
+// user-visible English literal may sit in it again. The unit is the whole file, never just the
+// easy strings, because a converted file vouches for a consistency a half-converted one does
+// not have. CONVERTED grows only when a surface is done completely, and this gate is what
+// keeps it done.
 //
-// What the scan reads is the TypeScript AST, not a regex over the text (rule 147), and it
-// covers exactly three populations, each in VALUE position only -- the expression itself,
-// the branches of a ternary, the operands of `||`/`??`/`+`, the right side of `&&`:
+// The scan reads the TypeScript AST rather than matching text with a regex, and it covers
+// exactly three populations, each in value position only: the expression itself, the branches
+// of a ternary, the operands of `||`/`??`/`+`, and the right side of `&&`.
 //   1. JSX text with at least one letter.
 //   2. String-ish literals whose value a visible attribute (VISIBLE_ATTRS) renders. JSX
 //      passed through such an attribute as a component prop is scanned as JSX, not as a
@@ -19,11 +19,11 @@
 // Everything outside value position is data, not copy: `===` comparisons, call arguments
 // (a t() key, an ICU discriminant param like `is4k: on ? "yes" : "no"`).
 //
-// Named limits (rule 118: a check that cannot discriminate must not read as a proof):
-// copy that reaches the operator through a plain function call (`fmt("literal")`, a
-// string built in a `.ts` module and rendered elsewhere) and copy passed through props
-// outside VISIBLE_ATTRS are invisible to this scan. The workflow's verify agent reads
-// for those; this gate holds the mechanical majority against regression.
+// This scan cannot see everything: copy that reaches the operator through a plain function
+// call (`fmt("literal")`, a string built in a `.ts` module and rendered elsewhere), and copy
+// passed through props outside VISIBLE_ATTRS, are invisible to it. The workflow's verify agent
+// checks for those by hand; this gate catches the mechanical majority and holds it against
+// regression.
 
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -108,9 +108,9 @@ const CONVERTED = [
   "focus.ts",
   // Most of the file is localized through Intl (unit-style numbers, RelativeTimeFormat); see
   // format.ts's own header. humanDays/humanWindow route their unit words through the catalog
-  // too (format.span.*), since Intl has no built-in "N years, M months" form -- proven by
-  // humanDays.test.ts and why.test.ts against the real catalog, not this scan: a literal
-  // built from a plain function's return value is invisible to it (the named limit above).
+  // too (format.span.*), since Intl has no built-in "N years, M months" form. This is proven by
+  // humanDays.test.ts and why.test.ts against the real catalog, not by this scan, since a
+  // literal built from a plain function's return value is invisible to it.
   "format.ts",
   "i18n.ts",
   "main.tsx",
@@ -156,6 +156,7 @@ const CONVERTED = [
   "components/queueIcons.tsx",
   "components/queueSettings.tsx",
   "components/reviewFate.ts",
+  "components/runAck.ts",
   "components/signalRamp.ts",
   "components/watchReach.ts",
   "docs/DocLink.tsx",
@@ -163,8 +164,8 @@ const CONVERTED = [
   "docs/blocks.ts",
   // The in-app manual's English source. Each has an established translation route:
   // `docs/content/<tag>/index.ts`, proven by `manual.locales.test.ts` and loaded by
-  // `docs/localized.ts` -- the same route CONTRIBUTING.md documents for the manual. No
-  // catalog reads to check for; the English here is what a translated directory replaces.
+  // `docs/localized.ts`, the same route CONTRIBUTING.md documents for the manual. There are no
+  // catalog reads to check for here; the English is what a translated directory replaces.
   "docs/content/arming.ts",
   "docs/content/cheatSheet.ts",
   "docs/content/deletionSafety.ts",
@@ -197,8 +198,8 @@ const hasLetter = (s: string) => /\p{L}/u.test(s);
 const NAMES = new Set(["Reaper"]);
 const isCopy = (s: string) => hasLetter(s) && !NAMES.has(s.trim());
 
-// A `.ts` file parsed as TSX misreads generics (`foo<T>(x)`) as JSX and invents phantom
-// text nodes: api.ts alone "gained" 187 of them when this gate was first drafted.
+// A `.ts` file parsed as TSX misreads generics (`foo<T>(x)`) as JSX and invents phantom text
+// nodes, which is why picking the correct script kind matters here.
 const scriptKind = (fileName: string) =>
   fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
 
@@ -281,12 +282,12 @@ export function leftoverCopy(fileName: string, text: string): Leftover[] {
   return out;
 }
 
-/** Whether an expression's value position is copy this FILE composed -- a literal with a
- *  letter (old-style, still-unconverted copy) or a call shaped like a translation lookup
+/** Whether an expression's value position is copy this FILE composed: a literal with a
+ *  letter (still-unconverted copy) or a call shaped like a translation lookup
  *  (`t(...)`, `i18next.t(...)`, `someAlias.t(...)`). A bare identifier or member access
- *  (`{title}`, `{units.nearLabel}`) is neither: the file is relaying a value that was
- *  translated somewhere else (a caller's prop, another module's function), which is that
- *  other site's obligation to prove, not this file's. */
+ *  (`{title}`, `{units.nearLabel}`) is neither, since the file is relaying a value that was
+ *  translated somewhere else (a caller's prop, another module's function). Proving that
+ *  translation is that other site's job, not this file's. */
 const isOwnTranslatedSurface = (e: ts.Expression, sf: ts.SourceFile): boolean =>
   valuePositions(e).some((v) => {
     if (ts.isStringLiteral(v) || ts.isNoSubstitutionTemplateLiteral(v)) return hasLetter(v.text);
@@ -301,11 +302,11 @@ const isOwnTranslatedSurface = (e: ts.Expression, sf: ts.SourceFile): boolean =>
   });
 
 /** Whether `text` renders JSX text with a letter, or a VISIBLE_ATTRS attribute this file
- *  itself translates (`isOwnTranslatedSurface`) -- never a passed-through prop, which is
+ *  itself translates (`isOwnTranslatedSurface`), never a passed-through prop, since that is
  *  someone else's literal or someone else's call and proves nothing about THIS file. Used
- *  only to decide which converted files owe the catalog-import check below; not a copy scan
- *  (a converted file's copy is gone by definition, which is the whole point of the call-shape
- *  half of this check). */
+ *  only to decide which converted files owe the catalog-import check below. It is not a copy
+ *  scan: a converted file's copy is gone by definition, which is what the call-shape half of
+ *  this check is actually for. */
 export function hasVisibleSurface(fileName: string, text: string): boolean {
   const sf = ts.createSourceFile(
     fileName,
@@ -361,15 +362,15 @@ describe("the i18n extraction gate", () => {
   });
 
   it("every converted file exists and actually uses the catalog", () => {
-    // A rename would otherwise drop the file out of the walk while the gate stays green
-    // (rule 145): every listed file must exist, whatever else is true of it.
+    // A rename would otherwise drop the file out of the walk while the gate stays green:
+    // every listed file must exist, whatever else is true of it.
     //
     // Whether it must also import the catalog is narrower (phase 9): a file with nothing the
-    // operator can see -- a pure `.ts` utility, an icon component with no VISIBLE_ATTRS
-    // attribute -- has no copy to have translated, and demanding an import from it would be
-    // a claim with nothing under it in the other direction (`focus.ts`, `brand/BrandMark.tsx`).
+    // operator can see, a pure `.ts` utility, or an icon component with no VISIBLE_ATTRS
+    // attribute, has no copy to have translated, and demanding an import from it would be a
+    // claim with nothing under it in the other direction (`focus.ts`, `brand/BrandMark.tsx`).
     // So the import is required only of a file that renders JSX text or a VISIBLE_ATTRS
-    // attribute -- the same two populations `leftoverCopy` scans for copy, checked here for
+    // attribute, the same two populations `leftoverCopy` scans for copy, checked here for
     // presence rather than for English, since after conversion the attribute's value is an
     // expression (`{t(...)}`) and no longer a literal `leftoverCopy` itself would see.
     expect(new Set(CONVERTED).size).toBe(CONVERTED.length);
@@ -384,10 +385,10 @@ describe("the i18n extraction gate", () => {
   });
 
   it("CONVERTED is the tree, in both directions (phase 9, rule 145)", () => {
-    // Reuses the one shared walk (`shippedSource`) rather than a second one of its own: rule
-    // 145 is exactly the failure a second, slightly different walk invites -- one that quietly
-    // excludes a directory this one does not, or the reverse, and the two counts agree with
-    // each other while disagreeing with the tree.
+    // Reuses the one shared walk (`shippedSource`) rather than a second one of its own. A
+    // second, slightly different walk could quietly exclude a directory this one does not, or
+    // the reverse, so the two counts would agree with each other while disagreeing with the
+    // tree.
     const tree = new Set(shippedSource().map((p) => srcRelative(p)));
     const converted = new Set(CONVERTED);
     const missing = [...tree].filter((f) => !converted.has(f)).sort();

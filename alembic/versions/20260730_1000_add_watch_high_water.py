@@ -1,31 +1,27 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """add watch_high_water
 
-A Plex rating key is not stable. Remove a file, let it come back, and Plex issues a new
-one -- while Tautulli keeps every earlier play filed under the OLD one. That is not a
-guess: across Tautulli's whole source the only thing that rewrites a historical rating key
-is ``datafactory.update_metadata_details``, reachable from the "Fix Metadata" button and
-the API command of the same name, and no scheduled task calls it. Reaper reads its mirror
-by the key the item carries now, finds nothing, and reports ``Known(0)`` watchers plus
-maximum dormancy -- an affirmative "nobody ever watched this" about a title somebody
-watched, which is pressure in the condemn direction.
+A Plex rating key is not stable. If a file is removed and comes back, Plex assigns it a
+new key, but Tautulli still files every earlier play under the old one. Reaper reads its
+Tautulli mirror by the item's current key, finds nothing, and reports ``Known(0)``
+watchers and maximum dormancy. That reads as an affirmative "nobody ever watched this"
+for a title somebody did watch, which adds deletion pressure.
 
-The read path cannot tell that apart from a genuinely unwatched item, because both are
-"no rows for this key". This table is the outside evidence that can: the most watch
-evidence ever measured for an item, under the stable ``media_key`` rather than the rating
-key that moved. All-time watch evidence only grows (the mirror never deletes, and a
-Tautulli prune is caught by ``history_sync._check_regression``), so a fall to zero from a
-positive mark is a transition no library can make, and the scan then reports those facts
-``Unknown`` instead of zero -- which blocks the gate and takes the keep discount.
+The read path cannot tell that case apart from a genuinely unwatched item, since both
+show "no rows for this key". This table is the evidence that can. It stores the most
+watch activity ever measured for an item, keyed on the stable ``media_key`` rather than
+the rating key that moved. All-time watch evidence only grows, so a fall to zero from a
+positive mark is a change no real library makes. When the scan sees that fall, it reports
+those facts as ``Unknown`` instead of zero, which blocks the gate and keeps the discount
+for uncertain evidence.
 
-It has to outlive the snapshots for the check to keep working. Comparing against only the
-previous snapshot would let the first blind scan write zero as the new baseline, and after
-that 0 -> 0 is not a fall and nothing ever notices again.
+This table has to outlive individual snapshots. Comparing only against the previous
+snapshot would let the first blind scan record zero as a new baseline, after which a
+drop from zero to zero is invisible and the check never fires again.
 
-Non-breaking by construction: a brand new table, nothing altered. Existing databases gain
-an empty one, the next scan fills it, and an item with no mark yet simply never fires the
-check -- so no in-flight database is judged differently on the strength of a row that is
-not there. Testers never rebuild.
+This is a new table, so nothing existing is altered. Every current database gains an
+empty one, and the next scan fills it in. An item with no recorded mark yet simply never
+triggers the check. No tester database needs to be rebuilt.
 
 Revision ID: c4d5e6f70819
 Revises: 8192a3b4c5d6
@@ -46,9 +42,9 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # Integer timestamps, like every other one in this schema: ``UtcTimestamp`` stores
-    # epoch seconds (``db.types.EpochDateTime``), so a DateTime column here would read as
-    # schema drift against the model and fail `alembic check`.
+    # Integer timestamps, like every other one in this schema. ``EpochDateTime`` (see
+    # ``db.types.EpochDateTime``) stores epoch seconds, so a DateTime column here would
+    # read as schema drift against the model and fail ``alembic check``.
     op.create_table(
         "watch_high_water",
         sa.Column("media_key", sa.String(length=100), nullable=False),

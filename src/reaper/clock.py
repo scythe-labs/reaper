@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Time.
 
-Reaper has exactly one notion of time: a **UTC instant**. There is no local time
-anywhere in the domain, and no naive datetime is ever valid -- every deletion
-decision rests on watch-history recency, so an ambiguous instant is a correctness
-bug that mis-deletes media.
+Reaper uses one notion of time: a UTC instant. The app never uses local time or a
+naive datetime. Every deletion decision depends on how recently an item was
+watched, so an unclear instant could delete the wrong media.
 
-Timestamps are stored as integer unix epoch (see ``reaper.db.types``) and the
-upstream APIs speak epoch too: Tautulli's ``date`` / ``started`` / ``stopped`` /
-``last_played`` / ``added_at`` and Plex's ``addedAt`` / ``lastViewedAt`` are all
-unix ints. These helpers are the only sanctioned way across that boundary.
+Timestamps are stored as integer unix epoch values (see ``reaper.db.types``), and
+the upstream APIs use epoch too. Tautulli's ``date``, ``started``, ``stopped``,
+``last_played``, and ``added_at`` fields, and Plex's ``addedAt`` and
+``lastViewedAt`` fields, are all unix integers. These helpers are the only
+sanctioned way to convert across that boundary.
 """
 
 from __future__ import annotations
@@ -27,11 +27,11 @@ def from_epoch(value: int | float | str | None) -> datetime | None:
 
     Returns ``None`` for null, empty, zero, or unparseable input.
 
-    Zero is treated as absent deliberately. Tautulli and Plex use ``0`` (and
-    sometimes ``""``) to mean "never played" -- and a 1970 date would be read by
-    the scoring engine as *extremely stale*, which is the exact opposite of the
-    truth. Absent must stay absent, so that an unknown value can only protect an
-    item, never condemn it.
+    Tautulli and Plex use ``0`` (and sometimes ``""``) to mean "never played."
+    Treating that as absent is deliberate: a 1970 date would make the item look
+    extremely stale, the opposite of the truth. An absent watch date must stay
+    absent, so it can only protect an item and never add pressure toward
+    deleting it.
     """
     if value is None or value == "":
         return None
@@ -47,13 +47,12 @@ def from_epoch(value: int | float | str | None) -> datetime | None:
 def from_iso(value: str | None) -> datetime | None:
     """Parse an ISO-8601 timestamp into an aware UTC datetime.
 
-    Seerr speaks ISO, not epoch: ``mediaAddedAt`` arrives as
-    ``"2026-07-13T15:54:47.000Z"``. (Tautulli and Plex speak epoch. The two
-    boundaries are genuinely different, so they get different parsers rather than
-    one that guesses.)
+    Seerr sends ISO timestamps, not epoch integers: ``mediaAddedAt`` arrives as
+    ``"2026-07-13T15:54:47.000Z"``. Tautulli and Plex use epoch integers instead,
+    so each source gets the parser that matches its format.
 
-    A timestamp without an offset is *rejected*, not assumed to be UTC. Guessing
-    is how a deletion clock ends up hours out.
+    Rejects a timestamp with no UTC offset instead of assuming UTC. Guessing the
+    offset would let the deletion clock drift by hours.
     """
     if not value:
         return None
@@ -76,24 +75,24 @@ def to_epoch(value: datetime) -> int:
 def days_since(value: datetime, *, now: datetime | None = None) -> float:
     """Whole and fractional days between ``value`` and now.
 
-    The workhorse of the scoring engine: "not watched in 612 days".
+    This is the number the scoring engine reports as "not watched in 612 days".
     """
     return ((now or utcnow()) - value).total_seconds() / 86_400
 
 
 def humanize_days(days: float) -> str:
-    """A day count as a phrase a person reads without doing arithmetic.
+    """Turn a day count into a phrase a person reads without doing arithmetic.
 
-    ``2060`` becomes ``"5 years, 7 months"``; ``90`` becomes ``"3 months"``; ``5`` becomes
-    ``"5 days"``. Kept to the two most-significant units on purpose -- past "years, months"
-    the extra precision is noise in a decision measured in years, and it reads worse.
+    ``2060`` becomes ``"5 years, 7 months"``, ``90`` becomes ``"3 months"``, and ``5``
+    becomes ``"5 days"``. Only the two largest units show, because past "years, months"
+    extra precision only adds noise to a decision already measured in years.
 
-    Approximate by construction (a month is 30 days, a year 365): these are the phrases the
-    why-panel shows next to a dormancy floor, not accounting.
+    Treats a month as 30 days and a year as 365. These phrases feed the why-panel next
+    to a dormancy floor, and are meant to read well, not to be exact.
 
-    Sub-day is ``"less than a day"``, not ``"today"``: every caller drops this into a slot
-    that wants a *length* ("not watched in ...", "untouched for ...", "released ... ago"),
-    and a date reads as broken English in all of them.
+    Returns ``"less than a day"`` for under a day, never ``"today"``. Every caller puts
+    this phrase into a slot that wants a length ("not watched in ...", "untouched for
+    ...", "released ... ago"), and a date word would read as broken English there.
     """
     whole = round(days)
     if whole <= 0:
@@ -110,11 +109,11 @@ def humanize_days(days: float) -> str:
 
 
 def humanize_window(days: float) -> str:
-    """A window length phrased for "in the last <window>".
+    """Phrase a window length for "in the last <window>".
 
-    Same as :func:`humanize_days`, but a single-unit window drops the redundant "1": you say
-    "in the last year", not "in the last 1 year". A multi-unit window ("6 months", "3 years")
-    is left as-is.
+    Uses :func:`humanize_days`, but drops the redundant "1" from a single-unit window:
+    "in the last year", not "in the last 1 year". A multi-unit window like "6 months" or
+    "3 years" is left as-is.
     """
     text = humanize_days(days)
     return text[2:] if text.startswith("1 ") and "," not in text else text

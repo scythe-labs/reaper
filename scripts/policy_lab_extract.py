@@ -3,39 +3,41 @@
 
 Reads the newest non-degraded snapshot in ``data/reaper.db`` plus the local mirrors in
 ``data/cache.db`` and writes ``tests/fixtures/policy_lab_vectors.json``: a stratified
-sample of real fact *shapes* for the permutation harness in
+sample of real fact shapes for the permutation harness in
 ``tests/test_policy_permutations.py``.
 
-What the fixture contains, and deliberately nothing more:
+The fixture contains, and nothing more:
 
 * observation states (known / absent / unknown) per fact, with numeric values only:
   day counts, watcher counts, season numbers, rating tenths;
 * vote counts rounded to two significant figures and sizes to 100 MB, so no value is
-  precise enough to fingerprint a file;
+  precise enough to identify a file;
 * genre names replaced by frequency-ranked tokens (``Genre01``), rare quality names
   collapsed to ``Other``;
 * per-show season shapes as ``(season_number, watchers)`` pairs;
-* two pinned baselines per vector: ``baseline`` under the SHIPPED default policies, and
-  ``lane_baseline`` under ``tests._policy_lab.lane_policy``, which adds the custom condemn
-  and graded keep rules the defaults leave empty -- so a change to the operator-authored
-  lanes moves a pinned number too, rather than moving nothing at all.
+* two pinned baselines per vector: ``baseline`` under the shipped default policies, and
+  ``lane_baseline`` under ``tests._policy_lab.lane_policy``, which adds the custom
+  condemn and graded keep rules the defaults leave empty, so a change to the
+  operator-authored lanes moves a pinned number too, instead of moving nothing at all.
 
-No titles, ids, media keys, paths, hosts, or usernames -- the golden rule applies to
-fixtures exactly as it does to code.
+No titles, ids, media keys, paths, hosts, or usernames. A fixture is committed to the
+repo, so it follows the same rule code does.
 
-Usage: ``uv run python scripts/policy_lab_extract.py`` from the repo root.
+Usage: run ``uv run python scripts/policy_lab_extract.py`` from the repo root.
 
 ``--rebaseline`` re-pins only the baseline block on the fixture already committed, using
-the shapes it already holds. That is the mode to use after an intentional engine change:
-it needs no real library, so CI and every contributor can reproduce it, and it prints
-every vector that moved.
+the shapes it already holds. Use this mode after an intentional engine change: it needs
+no real library, so CI and every contributor can reproduce it, and it prints every
+vector that moved.
 
-**Both modes refuse** to write a moved baseline while ``SCORER_VERSION`` still reads what the
-fixture was cut under, because that combination leaves plans approved under the old numbers
-executable (rule 113). Bump the constant, or pass ``--unbumped="<why>"`` when no approval is
-owed a void. The full extract is held to the same bar by re-judging the OLD fixture's vectors
-before it writes the new sample -- see ``guard_the_full_extract`` for why re-sampling does not
-excuse it. ``refuse_unless_the_scorer_moved`` is the interlock both call.
+Both modes refuse to write a moved baseline while ``SCORER_VERSION`` still reads what
+the fixture was cut under, because that combination would leave plans approved under
+the old numbers still executable. Bump the constant, or pass ``--unbumped="<why>"``
+when no approval is owed a void. The full extract is held to the same bar: it
+re-judges the old fixture's vectors before it writes the new sample, since
+re-sampling on its own would not excuse skipping the check (see
+``guard_the_full_extract``). ``refuse_unless_the_scorer_moved`` is the interlock both
+modes call.
 """
 
 from __future__ import annotations
@@ -74,18 +76,18 @@ OUT = REPO / "tests" / "fixtures" / "policy_lab_vectors.json"
 TARGET_PER_TYPE = 220
 TARGET_SHOWS = 100
 
-#: Where the real library lives, honoring the same env var the app does
-#: (``launcher.py``). A worktree has no ``data/`` of its own, so the extract could only be
-#: run from the main checkout -- and the alternative, symlinking ``data`` into the worktree,
-#: is a directory-shaped entry that ``.gitignore``'s ``/data/`` does not match, so it shows
-#: up untracked and one ``git add -A`` from being committed. Both databases are opened
+#: Where the real library lives. Reads the same environment variable the app does
+#: (``launcher.py``). A worktree has no ``data/`` directory of its own, so this extract can
+#: only run from the main checkout. Symlinking ``data`` into the worktree is not a safe
+#: workaround either: ``.gitignore``'s ``/data/`` entry does not match a symlink, so it shows
+#: up untracked and one ``git add -A`` away from being committed. Both databases are opened
 #: read-only.
 DATA_DIR = Path(os.environ.get("REAPER_DATA_DIR", "").strip() or (REPO / "data"))
 
 
 def round_votes(votes: int) -> int:
-    """Two significant figures: enough for every vote-floor comparison the engine makes,
-    coarse enough to identify nothing."""
+    """Return the count rounded to two significant figures: enough for every vote-floor
+    comparison the engine makes, coarse enough to identify nothing."""
     if votes < 100:
         return votes
     magnitude = 10 ** (len(str(votes)) - 2)
@@ -100,8 +102,8 @@ def obs(state: str, value: Any = None) -> dict[str, Any]:
     return {"state": state, "value": value} if state == "known" else {"state": state}
 
 
-#: The observation states ``facts_codec._obs_to_dict`` emits. The fixture uses the same
-#: three names, so this is not a translation: it is the allow-list that sends anything
+#: The observation states ``facts_codec._obs_to_dict`` emits. The fixture uses these same
+#: three names, so this set is not a translation. It is the allow-list that sends anything
 #: unrecognized (a future state, a corrupt row) to the caller's default.
 _STATES = frozenset({"known", "absent", "unknown"})
 
@@ -109,20 +111,21 @@ _STATES = frozenset({"known", "absent", "unknown"})
 def stored_obs(
     frozen: dict[str, Any], field: str, transform: Any = None, *, default: str = "unknown"
 ) -> dict[str, Any]:
-    """One observation, read from the snapshot's FROZEN facts rather than re-derived.
+    """Return one observation, read from the snapshot's frozen facts rather than re-derived.
 
     Everything else in this file reconstructs facts from ``explanation_json`` and the
-    gate details, which is a second implementation of the fact layer and drifts from the
-    first. It did: production learned to tell "we looked and there is no rating" from
-    "we had no id to look one up with" (``display_meta.dataset_lookup``), and this script
-    kept collapsing both to ``absent``, so a regenerated fixture could not contain an
-    ``Unknown`` rating however many scans it read. Those two states are opposite
-    instructions to the keep lane, so the harness was sweeping evidence that no real scan
+    gate details. That is a second implementation of the fact layer, and it can drift
+    from the first: production distinguishes "we looked and there is no rating" from
+    "we had no id to look one up with" (``display_meta.dataset_lookup``), and a
+    reconstruction that collapses both to ``absent`` can never produce an ``Unknown``
+    rating, no matter how many scans it reads. Those two states mean opposite things to
+    the keep lane, so a harness built that way would test evidence no real scan
     produces.
 
-    ``facts_json`` is the evidence the scan froze, which is exactly what the fixture wants
-    a de-identified copy of. ``transform`` blunts precision on the way out (sizes, votes);
-    identifying values must be tokenised by the caller, never passed through.
+    ``facts_json`` is the evidence the scan froze, exactly what the fixture wants a
+    de-identified copy of. ``transform`` blunts precision on the way out (sizes,
+    votes). The caller must tokenize any identifying value before it reaches here,
+    never pass one through untouched.
     """
     entry = frozen.get(field)
     if not isinstance(entry, dict):
@@ -135,48 +138,49 @@ def stored_obs(
 
 
 def shown(path: Path) -> str:
-    """A path for the summary line, repo-relative where that is meaningful.
+    """Return a path for the summary line, repo-relative where that is meaningful.
 
-    ``relative_to`` RAISES on a path outside the repo rather than returning the absolute
-    one, and both writers call it *after* the fixture is on disk -- so a run that fully
-    succeeded would end in a traceback and read as a failed regeneration. Only reachable
-    with ``OUT`` redirected, which is what the tests do, and a summary line is never worth
-    a crash.
+    ``relative_to`` raises on a path outside the repo instead of returning the
+    absolute one. Both writers call this after the fixture is already on disk, so
+    without this fallback a fully successful run could end in a traceback and read as
+    a failed regeneration. This only matters when ``OUT`` is redirected, which is what
+    the tests do; a summary line is never worth crashing over.
     """
     return str(path.relative_to(REPO) if path.is_relative_to(REPO) else path)
 
 
 def write_fixture(fixture: dict[str, Any]) -> None:
-    """The one place the fixture reaches disk, and the one place the stamp is set.
+    """Write the fixture to disk. The only writer, and the only place the version stamp is set.
 
-    Rule 72 asks for the sibling to be swept, and the sibling here is unreachable from a
-    test: the full extract needs a real ``data/reaper.db``, so a stamp set in ``rebaseline``
-    and forgotten in ``main`` would be invisible to the whole suite -- mutation-tested, and
-    it was. Setting it here instead makes that defect unconstructible rather than merely
-    covered, which is the better trade whenever it is available.
+    The full extract's own writer needs a real ``data/reaper.db``, so no test can
+    drive it directly. Setting the stamp only here means a stamp added to
+    ``rebaseline`` and forgotten in ``main`` cannot happen, since there is only one
+    writer to set it in.
 
-    Keep this the only ``OUT.write_text`` in the file; ``test_policy_lab_extract`` pins that,
-    because a second writer would restore the split this exists to remove.
+    Keep this the only ``OUT.write_text`` in the file. ``test_policy_lab_extract``
+    checks that, because a second writer would bring back the split this exists to
+    remove.
     """
     fixture["scorer_version"] = SCORER_VERSION
     OUT.write_text(json.dumps(fixture, separators=(",", ":"), sort_keys=True) + "\n")
 
 
 def stamped_scorer(fixture: dict[str, Any]) -> int | None:
-    """The ``SCORER_VERSION`` this fixture's baselines were cut under, or ``None`` when it
-    carries no usable stamp: absent, or present as something that is not a version number.
+    """Return the ``SCORER_VERSION`` this fixture's baselines were cut under.
 
-    ``None`` means "cannot tell", which is fail-closed *only where a caller checks it* --
-    ``refuse_unless_the_scorer_moved`` does, and it is the one caller. Note what that does
-    NOT say: an unstamped fixture whose baselines did not move is written and stamped with
-    no refusal at all, which is deliberate, because that is every fixture predating this
-    mechanism on its first re-pin.
+    Returns ``None`` when the fixture carries no usable stamp: the field is absent, or
+    holds something that is not a version number. ``None`` means "cannot tell", and
+    only matters where a caller checks it: ``refuse_unless_the_scorer_moved`` is the
+    one caller, and it treats an unstamped fixture whose baselines did not move as
+    fine to write with no refusal. That covers every fixture written before this
+    mechanism existed, on its first re-pin.
 
-    ``bool`` is excluded by hand. ``isinstance(True, int)`` is ``True`` in Python, so a
-    stamp of ``true`` read back as the integer 1 and compared unequal to the running
-    constant -- which this file's refusal reads as "the scorer moved", the fail-open
-    direction. ``0`` and negatives are rejected for the same reason: production declares
-    this field ``ge=1`` (``PolicyBody.scorer_version``) and nothing below 1 is a version.
+    ``bool`` is excluded on purpose. Python's ``isinstance(True, int)`` is ``True``,
+    so a stamp of ``true`` would read back as the integer 1, compare unequal to the
+    running constant, and be read as "the scorer moved", the wrong, fail-open
+    direction. ``0`` and negative numbers are rejected for the same reason:
+    production declares this field ``ge=1`` (``PolicyBody.scorer_version``), so
+    nothing below 1 is a real version.
     """
     value = fixture.get("scorer_version")
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -184,12 +188,11 @@ def stamped_scorer(fixture: dict[str, Any]) -> int | None:
     return value
 
 
-#: The two baselines every vector carries, and the policy each is judged under. ``baseline``
-#: is the shipped default; ``lane_baseline`` is ``_policy_lab.lane_policy``, which adds the
-#: operator-authored rules the defaults leave empty, so ``evaluate_custom`` and
-#: ``evaluate_keep`` are pinned by something. Declared as one table because both writers and
-#: the permutation test all walk it, and a second baseline added on one path only would be
-#: the ``scorer_version`` split all over again (rule 72).
+#: The two baselines every vector carries, and the policy each is judged under.
+#: ``baseline`` is the shipped default. ``lane_baseline`` is ``_policy_lab.lane_policy``,
+#: which adds the operator-authored rules the defaults leave empty, so ``evaluate_custom``
+#: and ``evaluate_keep`` are pinned by something. Declared as one table because both writers
+#: and the permutation test all walk it, so a baseline added on one path only cannot happen.
 BASELINES: tuple[tuple[str, Any, Any], ...] = (
     ("baseline", lambda mt: DEFAULT_MOVIE_POLICY if mt == "movie" else DEFAULT_TV_POLICY, None),
     ("lane_baseline", lane_policy, lane_gates),
@@ -197,30 +200,28 @@ BASELINES: tuple[tuple[str, Any, Any], ...] = (
 
 
 def rejudge(fixture: dict[str, Any]) -> int:
-    """Re-pin every vector's baselines in place; return how many moved.
+    """Re-pin every vector's baselines in place, and return how many moved.
 
-    Shared by both regeneration paths so the comparison cannot exist on one and not the
-    other, which is exactly the split that let the full extract launder an engine change.
+    Shared by both regeneration paths, so the comparison always runs on both. A path
+    that skipped it once let a full extract launder an engine change through
+    unchecked.
 
-    A baseline is the whole block ``_policy_lab.pinned_baseline`` builds -- the decision, the
-    three gate lists, and the arithmetic the panel states -- so "moved" now covers a refactor
-    that changed which protections were checked or what a signal contributed while the rounded
-    score held still. Adding a field to that block moves every baseline at once, which is the
-    refusal's fourth named case rather than an engine change: re-run with
-    ``--unbumped="<why>"``.
+    A baseline is the whole block ``_policy_lab.pinned_baseline`` builds: the
+    decision, the three gate lists, and the arithmetic the panel states. So "moved"
+    covers a refactor that changed which protections were checked, or what a signal
+    contributed, even while the rounded score held still. Adding a field to that
+    block moves every baseline at once. That case is not an engine change; re-run
+    with ``--unbumped="<why>"``.
     """
     default_gates = {
         "movie": build_gates(DEFAULT_MOVIE_POLICY),
         "season": build_gates(DEFAULT_TV_POLICY),
     }
     # The reach of the sample being judged, not of whatever fixture is on disk. The lab
-    # derives ``history_reach_days`` from the oldest play across the vectors, cached at
-    # module level off ``load_fixture()`` -- so a full extract judged its new sample against
-    # the PREVIOUS fixture's reach and wrote that as ground truth, then the permutation test
-    # recomputed with the new one and disagreed. Exactly what ``judge``'s docstring warns a
-    # generator can do: a lab that disagrees with the scan does not fail, it records the
-    # disagreement. Pre-existing, and it surfaced the first time anyone ran a full extract
-    # after the reach was introduced -- the two samples differ by eighteen days.
+    # derives ``history_reach_days`` from the oldest play across the vectors, and caches it
+    # at module level off ``load_fixture()``. Judging a new sample against a cached reach
+    # from the previous fixture would silently disagree with what the permutation test
+    # computes when it reloads the new one.
     reach = reach_of(fixture["vectors"])
     moved = 0
     first_pinned = 0
@@ -231,18 +232,16 @@ def rejudge(fixture: dict[str, Any]) -> int:
             gates = gates_for(media_type) if gates_for else default_gates[media_type]
             fresh = pinned_baseline(v, policy, gates, reach=reach)
             was = v.get(key)
-            # A key the fixture never carried has not MOVED -- there was no number to move
-            # from. Counting it as movement makes every added baseline trip the refusal for
-            # every vector at once, which teaches people to reach for --unbumped on a change
-            # that never touched the engine, and an escape hatch used by reflex is one that
-            # stops being read. Only a value that existed and now differs is a scoring
-            # change (rule 93's distinction: absent is not the same as unreadable, and
-            # neither is the same as changed).
+            # A key the fixture never carried has not moved: there was no number to move
+            # from. Counting it as movement would trip the refusal for every vector
+            # whenever a baseline is added, even though the engine never changed, and an
+            # escape hatch people reach for by reflex stops being read. Only a value that
+            # existed before and differs now counts as a scoring change.
             if was is None:
                 first_pinned += 1
             elif fresh != was:
-                # Leaf by leaf, not block by block: at this size a whole-block dump scrolls
-                # past and hides which of twelve signals moved, and the author reads this
+                # Reported leaf by leaf, not block by block. A whole-block dump at this
+                # size scrolls past and hides which signal moved, and the author reads this
                 # output to decide whether the change was the one they meant to make.
                 for line in baseline_differences(was, fresh):
                     print(f"{v['id']} {key}.{line}")
@@ -254,21 +253,22 @@ def rejudge(fixture: dict[str, Any]) -> int:
 
 
 def refuse_unless_the_scorer_moved(moved: int, was: int | None, unbumped: str | None) -> None:
-    """The interlock. Exits rather than letting a moved baseline be written under a scorer
-    that stood still.
+    """The interlock. Refuses to write a moved baseline under a scorer that never bumped.
 
-    Printing the moved vectors was the whole safeguard before this, and printing is not a
-    gate: the author regenerated, the suite went green, ``SCORER_VERSION`` stayed put, and
-    every pending approval stayed bound to a ``policy_hash`` this build still computes -- so
-    the run on the Reap page executes on scores this build would not produce (rule 113).
-    Only a regeneration step can tell, because only it holds the old baseline and the new one
-    at once; a test comparing them knows they disagree and nothing more.
+    Printing the moved vectors used to be the only safeguard, and printing is not a
+    gate. An author could regenerate, watch the suite go green, leave
+    ``SCORER_VERSION`` in place, and leave every pending approval bound to a
+    ``policy_hash`` this build still computes, so a run on the Reap page would
+    execute on scores this build no longer produces. Only a regeneration step can
+    catch this, since only it holds the old baseline and the new one at once. A test
+    comparing them only knows they disagree.
 
-    A stamp AHEAD of the running constant is refused outright, whether or not anything moved.
-    That fixture came from a newer build, and production makes the same call on the same value
-    (``PolicyBody.scorer_version`` is ``le=SCORER_VERSION``: "a body from a newer Reaper is
-    refused, because we genuinely cannot interpret it"). Writing would silently re-stamp it
-    DOWNWARD and destroy the only evidence of where it came from.
+    A stamp ahead of the running constant is refused outright, whether or not
+    anything moved. That fixture came from a newer build, and production makes the
+    same call on the same value: ``PolicyBody.scorer_version`` is
+    ``le=SCORER_VERSION``, so a body from a newer Reaper is refused because this
+    build cannot interpret it. Writing here would silently re-stamp it backward and
+    destroy the only evidence of where it came from.
     """
     if was is not None and was > SCORER_VERSION:
         sys.exit(
@@ -278,12 +278,12 @@ def refuse_unless_the_scorer_moved(moved: int, was: int | None, unbumped: str | 
             "it, or take the fixture from the branch that matches this one."
         )
 
-    # Strictly BELOW, not merely different. ``!=`` read a stamp AHEAD of the running
-    # constant as a bump, which is permission. The exit above now rejects that case first,
-    # so the two spellings are equivalent as this function stands -- mutation-tested, and
-    # swapping them back turns nothing red. It stays ``<`` because the equivalence is a
-    # property of that exit, not of this line, and a later edit that softens the exit would
-    # hand the fail-open back with no test to notice.
+    # Strictly less than, not merely different. Using ``!=`` would read a stamp ahead of
+    # the running constant as a bump, which grants permission it should not have. The
+    # exit above already rejects that case first, so today the two spellings behave the
+    # same. This stays ``<`` because that safety depends on the exit above staying in
+    # place, not on this line, and a future edit that softens the exit would silently
+    # bring back the fail-open case.
     scorer_moved = was is not None and was < SCORER_VERSION
     if moved and not scorer_moved and unbumped is None:
         sys.exit(
@@ -306,10 +306,11 @@ def refuse_unless_the_scorer_moved(moved: int, was: int | None, unbumped: str | 
 def rebaseline(unbumped: str | None = None) -> None:
     """Re-pin the baseline block on the fixture already committed, without a real library.
 
-    The vectors are de-identified fact *shapes* and do not change when the engine does;
-    only ``baseline`` (the engine's own output under the shipped defaults) does. An
-    intentional engine change would otherwise be un-re-pinnable by anyone without a real
-    ``data/reaper.db`` -- i.e. by CI, and by every contributor who is not the operator.
+    The vectors are de-identified fact shapes and do not change when the engine does.
+    Only ``baseline``, the engine's own output under the shipped defaults, does.
+    Without this mode, an intentional engine change could only be re-pinned by
+    someone with a real ``data/reaper.db``, which rules out CI and every contributor
+    who is not the operator.
     """
     fixture = json.loads(OUT.read_text())
     if not fixture.get("vectors"):
@@ -322,32 +323,33 @@ def rebaseline(unbumped: str | None = None) -> None:
     moved = rejudge(fixture)
     refuse_unless_the_scorer_moved(moved, was, unbumped)
 
-    # The note explains the last cut whose baselines moved without a bump, so it is only
-    # written and only cleared when baselines actually moved. Recording one on a run that
-    # changed nothing justifies nothing, and clearing one on such a run would drop the
-    # justification for the baselines still sitting in the file.
+    # The note explains the last cut whose baselines moved without a bump, so it is
+    # written or cleared only when baselines actually moved. Recording one on a run that
+    # changed nothing would justify nothing, and clearing one on such a run would drop
+    # the justification for baselines still sitting in the file.
     if moved and unbumped is not None:
         fixture["scorer_note"] = unbumped
     elif moved:
         fixture.pop("scorer_note", None)
     write_fixture(fixture)
-    # Baselines, not vectors: each vector carries one per entry in ``BASELINES``, so a run
-    # where both moved printed "880 of 440 vectors moved" and read as a broken counter.
+    # Counts baselines, not vectors: each vector carries one per entry in ``BASELINES``,
+    # so counting vectors here would print a total higher than the vector count and read
+    # as a broken counter.
     total = len(fixture["vectors"]) * len(BASELINES)
     print(f"re-pinned {shown(OUT)}: {moved} of {total} baselines moved")
 
 
-#: What a ``--unbumped`` reason may contain. Letters, spaces and light punctuation -- no
-#: digits, no paths, no ``@``. The fixture is committed and the golden rule binds it as it
-#: binds code: never a real title, host, path, username or **stat**. This is the first
-#: free-text field a human types straight into that file, so the charset is where it is
-#: caught, at the boundary, rather than left to a reviewer noticing.
+#: What a ``--unbumped`` reason may contain: letters, spaces, and light punctuation, no
+#: digits, no paths, no ``@``. The fixture is committed, so it follows the same rule code
+#: does: never a real title, host, path, username, or measurement. This is the first
+#: free-text field a human types straight into that file, so the charset is checked here,
+#: at the boundary, instead of being left for a reviewer to notice.
 _REASON_ALLOWED = re.compile(r"^[A-Za-z][A-Za-z_ ,;:'()-]+$")
 
 
 def check_reason(raw: str) -> str:
-    """A stated reason, or exit. ``--unbumped=`` states nothing and ``--unbumped=x`` states
-    barely more, and the flag exists precisely to make someone state the case."""
+    """Return a stated reason, or exit. ``--unbumped=`` states nothing and ``--unbumped=x``
+    states barely more, and this flag exists precisely to make someone state the case."""
     reason = raw.strip()
     if not reason:
         sys.exit(
@@ -369,13 +371,15 @@ def check_reason(raw: str) -> str:
 
 
 def parse_argv(argv: list[str]) -> tuple[bool, str | None]:
-    """``(rebaseline, unbumped)``. Anything unrecognized exits.
+    """Return ``(rebaseline, unbumped)``. Exits on anything unrecognized.
 
-    A near miss used to fall straight through to the full extract: ``--rebaseline=true`` and
-    ``--re-baseline`` both ran the path with no interlock, against a live library, and the
-    refusal's own message asks the author to retype this command line -- which is when a typo
-    happens. Both spellings of the flag are accepted because one of them is how every other
-    CLI works and silently dropping it loses the justification the author believed they gave.
+    A near-miss like ``--rebaseline=true`` or ``--re-baseline`` must never fall through
+    to the full extract, since that path runs against a live library with no interlock,
+    and a typo is most likely exactly when someone is retyping this command line after
+    the refusal asked them to. ``--unbumped`` accepts both ``--unbumped="<why>"`` and
+    ``--unbumped <why>``, since one of those is how most other CLIs work, and silently
+    dropping the reason someone typed would lose the justification they believed they
+    gave.
     """
     rebaseline_mode = False
     unbumped: str | None = None
@@ -404,17 +408,15 @@ def parse_argv(argv: list[str]) -> tuple[bool, str | None]:
 def guard_the_full_extract(unbumped: str | None) -> None:
     """Hold the full extract to the same bar as ``--rebaseline``.
 
-    This path used to be exempt, on the reasoning that "a full extract re-samples different
-    shapes from a live library, so 'the baseline moved' is not a question it can ask." That
-    was wrong, and measured: the OLD fixture and its baselines are still on disk when the new
-    one is written, so re-judging *those* vectors under the current engine answers exactly
-    the same question and needs no database. With a ramp change, ``--rebaseline`` refused 338
-    moved baselines while this path wrote all 338 and re-stamped the scorer. Re-sampling makes
-    the NEW vectors incomparable; it says nothing about the old ones.
+    Re-sampling makes the new vectors incomparable to the old ones, but the old
+    fixture and its baselines are still on disk when the new one is written.
+    Re-judging those old vectors under the current engine answers the same "did the
+    scorer move" question and needs no database, so this path checks it the same way
+    ``--rebaseline`` does.
 
-    It matters more here than there, not less: the only person who can run a full extract is
-    the operator with a real library, who is also the person most likely to be regenerating
-    after an engine change.
+    This matters more here, not less: the only person who can run a full extract is
+    the operator with a real library, who is also the person most likely to be
+    regenerating right after an engine change.
     """
     if not OUT.exists():
         return
@@ -461,10 +463,11 @@ def main() -> None:
         season_user_last.setdefault(int(k), {})[int(u)] = int(last)
 
     def recency_days(keys: list[int], media_type: str) -> list[float]:
-        """Days since each distinct viewer last played any of ``keys``, ascending.
+        """Return days since each distinct viewer last played any of ``keys``, ascending.
 
-        The only thing this script still derives from the watch mirror. Dormancy, watcher
-        counts and every other fact come from the snapshot's frozen facts (``stored_obs``).
+        The only value this script still derives from the watch mirror. Dormancy,
+        watcher counts, and every other fact come from the snapshot's frozen facts
+        (``stored_obs``).
         """
         user_last = movie_user_last if media_type == "movie" else season_user_last
         merged: dict[int, int] = {}
@@ -474,10 +477,9 @@ def main() -> None:
                     merged[u] = last
         return sorted(float(round((created_at - la) / 86400.0)) for la in merged.values())
 
-    # An `imdb()` helper lived here, looking ratings up in the cache to rebuild the
-    # rating observation. It was the drift: the snapshot already froze that observation,
-    # with a three-state answer this could not express. Read the frozen facts instead
-    # (stored_obs) rather than asking the dataset a second time.
+    # Ratings are read from the frozen facts (stored_obs), never rebuilt from the cache.
+    # A lookup against the cache can only tell known from absent, while the frozen facts
+    # also carry unknown, so rebuilding from the cache would lose a real state.
 
     # ---- genre / quality token maps ----------------------------------------
     genre_freq: Counter[str] = Counter()
@@ -520,8 +522,8 @@ def main() -> None:
         facts_json,
     ) in cur:
         exp = json.loads(explanation_json)
-        # The frozen evidence, which is what the fixture is a de-identified copy of.
-        # Preferred over any reconstruction below; see stored_obs.
+        # The frozen evidence. This is what the fixture is a de-identified copy of, and
+        # it is preferred over any reconstruction below (see stored_obs).
         frozen = (json.loads(facts_json).get("obs") or {}) if facts_json else {}
         gates: dict[str, tuple[str, str]] = {}
         override = None
@@ -538,8 +540,8 @@ def main() -> None:
 
         merged_keys = (exp.get("match") or {}).get("merged_rating_keys") or None
         keys = merged_keys or ([rating_key] if rating_key else [])
-        # Watch-recency days per user, for the show-shape map. The only thing still read
-        # out of the mirror rather than the frozen facts, because it is not a Fact: it
+        # Watch-recency days per user, for the show-shape map. The only value still read
+        # from the mirror instead of the frozen facts, because it is not a Fact: it
         # describes the show, not the item.
         recency = recency_days(keys, media_type) if keys else []
 
@@ -547,15 +549,12 @@ def main() -> None:
 
         # Every numeric fact, straight from the frozen evidence.
         #
-        # These were all reconstructed: dormancy inverted out of a signal's contribution
-        # or parsed back out of a humanized gate detail, season rank pulled out of a
-        # detail string with a regex. That is a second implementation of the fact layer
-        # AND it parses operator-facing copy, so a wording change silently corrupts the
-        # fixture. It did, twice, in one session: the rating states collapsed (see
-        # stored_obs) and every season's rank fell to Unknown when the season-rank
-        # sentence was reworded, quietly deleting 210 known ranks from the sweep.
+        # Reconstructing facts by parsing operator-facing text is fragile: dormancy
+        # inverted out of a signal's contribution, or season rank pulled from a detail
+        # string with a regex, both depend on wording that can change. A reworded
+        # sentence would silently corrupt the fixture instead of raising an error.
         #
-        # `facts_json` is the evidence the scan actually judged. Read that.
+        # `facts_json` is the evidence the scan actually judged. Read that instead.
         dormancy = stored_obs(frozen, "days_observed_unwatched", float)
         rating_obs = stored_obs(frozen, "imdb_rating_tenths")
         votes_obs = stored_obs(frozen, "imdb_votes", round_votes)
@@ -617,12 +616,11 @@ def main() -> None:
                     "is_managed": from_gate("unmanaged", False),
                     "in_curated_list": curated_obs,
                     "is_whitelisted": from_gate("whitelisted", True),
-                    # These three were hand-written constants -- ``requested`` and
-                    # ``show_ended`` pinned to unknown, and no arrival date at all -- while
-                    # the scan had frozen all three for every candidate. The lab was
-                    # sweeping evidence no real scan produces, which is the failure
-                    # ``stored_obs`` was written for, one field list later. Read what was
-                    # frozen (rule 35).
+                    # These three fields must come from the frozen facts, not hand-written
+                    # constants. A constant pinning `requested` and `show_ended` to unknown,
+                    # with no arrival date at all, would sweep evidence no real scan
+                    # produces, even though the scan actually froze all three for every
+                    # candidate.
                     "requested": stored_obs(frozen, "requested"),
                     "days_since_added": stored_obs(frozen, "days_since_added", float),
                     "genres": genres_obs,
@@ -672,8 +670,9 @@ def main() -> None:
     for i, v in enumerate(sample):
         v.pop("_group", None)
         v["id"] = f"v{i:04d}"
-    # One pass through the shared table, so a baseline can never exist on the re-pin path
-    # and not on the extract path. Every key starts absent, so all of them read as moved.
+    # Runs through the same shared table used by the re-pin path, so a baseline can never
+    # exist on one path and not the other. Every key starts absent here, so every
+    # baseline is pinned for the first time rather than counted as moved.
     rejudge({"vectors": sample})
 
     out = {
@@ -686,9 +685,8 @@ def main() -> None:
         "vectors": sample,
         "shows": shows,
     }
-    # ``scorer_version`` is stamped by the writer, not spelled here. No refusal on this path
-    # either: a full extract re-samples different shapes from a live library, so "the
-    # baseline moved" is not a question it can ask.
+    # ``scorer_version`` is stamped by the writer (write_fixture), not set here directly.
+    # The scorer-moved check for this path already ran earlier, in guard_the_full_extract.
     write_fixture(out)
     by_type = Counter(v["media_type"] for v in sample)
     print(f"wrote {shown(OUT)}: {dict(by_type)} vectors, {len(shows)} show shapes")

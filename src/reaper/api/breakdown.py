@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The reap-breakdown endpoint: what a reap would remove, and why. Read-only.
+"""Show what a reap would remove, and why. Read-only.
 
-Deletes nothing and plans nothing -- it explains the set the runs API would plan, built
-from the latest snapshot and the owner's live overrides so the numbers match the exact
-set the planner will act on.
+It reports the same set the runs API would plan, built from the latest snapshot and the
+owner's live overrides, so the numbers match what the planner would act on.
 """
 
 from __future__ import annotations
@@ -21,8 +20,8 @@ router = APIRouter(prefix="/api", tags=[api_tags.REAP])
 async def get_reap_breakdown(request: Request) -> ReapBreakdownOut:
     async with request.app.state.session_factory() as session:
         report = await breakdown.reap_breakdown(session)
-    # Field for field off the service record, including the nested `condemned_by` counts.
-    # The wire model's own field list is what selects; a name it declares that the record
-    # does not carry is caught by `test_api_type_mirror.py`'s service-side check, since
-    # `from_attributes` would otherwise fill a defaulted field silently.
+    # Copies the service record field by field, including the nested `condemned_by` counts.
+    # The wire model's field list controls what copies over. If the model names a field the
+    # record does not have, `test_api_type_mirror.py` catches it. Without that test,
+    # `from_attributes` would silently fill the field with its default instead of failing.
     return ReapBreakdownOut.model_validate(report, from_attributes=True)

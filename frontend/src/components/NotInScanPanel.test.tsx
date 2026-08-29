@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The board's "not in the last scan" panel: it names every request the scan didn't include
-// and groups them by why. It decides nothing; each row is static text.
+// The board's "not in the last scan" panel names every request the scan didn't include and
+// groups them by why. It decides nothing. Each row is static text.
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -73,7 +73,8 @@ describe("NotInScanPanel", () => {
         onClose={vi.fn()}
       />,
     );
-    // One title row, two requests behind it: the lead says both so nothing reads as missing.
+    // One title row can represent two requests. The lead line says both counts, so nothing
+    // reads as missing.
     expect(screen.getByText(/2 requests across 1 title/i)).toBeInTheDocument();
   });
 
@@ -88,7 +89,7 @@ describe("NotInScanPanel", () => {
   it("says it is checking, not all-clear, while the report is still loading", () => {
     render(<NotInScanPanel items={[]} isPending onClose={vi.fn()} />);
     expect(screen.getByText(/checking the last scan/i)).toBeInTheDocument();
-    // The definite all-clear must not render when the data is merely missing (U-3, rule 17/36).
+    // The definite all-clear must not render when the data is merely missing, not yet loaded.
     expect(
       screen.queryByText(/every available request is in the last scan/i),
     ).not.toBeInTheDocument();
@@ -122,10 +123,10 @@ describe("UnmatchedList", () => {
   });
 });
 
-// The panel is a full-screen dialog under 900px, so it has to say what it is. Its name comes from
-// its own <h2> rather than a second copy of the title in an aria-label (rule 144). One of these
-// per panel: six surfaces render WhyShell, and the name is the one part of the contract the shell
-// cannot supply for them.
+// The panel is a full-screen dialog under 900px, so it has to say what it is. Its name comes
+// from its own <h2>, rather than a second copy of the title in an aria-label. Six surfaces
+// render WhyShell, and this is the one part of the contract the shell cannot supply for each of
+// them.
 describe("the not-in-scan panel's accessible name", () => {
   it("names itself from its own heading", () => {
     render(<NotInScanPanel items={[u()]} onClose={vi.fn()} />);

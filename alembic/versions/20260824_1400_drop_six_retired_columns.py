@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """drop the six retired columns
 
-Rule 148's **release M+1**. Release M (``e6f7a8b9c0d1``) shipped in v2026.8.4 and gave these
-columns a server default or made them nullable so their ORM attributes could leave. That bought
-one release where the M and M-1 images read the same schema, which is what makes an operator's
-rollback survivable. It has been served, so the columns go.
+This is release M+1, following release M (``e6f7a8b9c0d1``), which gave these
+columns a server default or made them nullable so their ORM attributes could
+leave. That bought one release where the M and M-1 images read the same
+schema, which is what makes an operator's rollback survivable. That release
+has been served, so the columns go.
 
 Six columns across five tables, plus the foreign key one of them carried::
 
@@ -12,31 +13,36 @@ Six columns across five tables, plus the foreign key one of them carried::
     list_config.built_in                profile.active_policy_id  (+ its FK)
     pending_plex_login.pin_code         profile.enabled
 
-``alembic/env.py``'s ``RETIRED_COLUMNS`` and ``RETIRED_CONSTRAINTS`` empty in the same change.
-That set is the bridge, not a registry, and an entry outliving its sweep is how a dead column
-becomes permanent behind a growing exclusion list.
+``alembic/env.py``'s ``RETIRED_COLUMNS`` and ``RETIRED_CONSTRAINTS`` empty in
+the same change. That set is a bridge, not a registry, and an entry outliving
+its sweep is how a dead column becomes permanent behind a growing exclusion
+list.
 
-**One ``batch_alter_table`` block per table**, every drop for that table inside it, because each
-block is another full copy of the table under SQLite. Five tables, five rebuilds.
+One ``batch_alter_table`` block per table, with every drop for that table
+inside it, because each block is another full copy of the table under
+SQLite. Five tables, five rebuilds.
 
-**The FK is dropped before its column.** Alembic reflects an index or constraint on a column
-being dropped and recreates it against a column that is gone: a two-line authoring slip,
-invisible against a fresh database and fatal against a populated one. None of the six carries an
-index, so there is no ``drop_index`` to order ahead of it.
+The foreign key is dropped before its column. Alembic reflects an index or
+constraint on a column being dropped and recreates it against a column that
+is gone: a two-line authoring slip, invisible against a fresh database and
+fatal against a populated one. None of the six carries an index, so there is
+no ``drop_index`` to order ahead of it.
 
-**``list_config.name`` is re-declared with its collation, and dropping that line silently
-un-protects the table.** A batch rebuild copies from SQLite's REFLECTION, and reflection does not
-report collations, so a rebuild that does not restate ``COLLATE NOCASE`` recreates ``name``
-case-SENSITIVE and "Holiday" and "holiday" become two lists answering to one keep rule (#508).
-Release M met this and left the warning; it applies again here for the same reason, and
+``list_config.name`` is re-declared with its collation, and dropping that
+line would silently un-protect the table. A batch rebuild copies from
+SQLite's reflection, and reflection does not report collations, so a rebuild
+that does not restate ``COLLATE NOCASE`` recreates ``name`` case-sensitive,
+and "Holiday" and "holiday" become two lists answering to one keep rule.
+Release M met this and kept the warning here for the same reason, and
 ``test_migrations.TestAListNameIsUniqueWithoutRegardToCase`` is what proves it.
 
-``recreate`` is left at its default: SQLite already recreates for a drop, and forcing it would
-rebuild on backends that need no copy.
+``recreate`` is left at its default: SQLite already recreates for a drop, and
+forcing it would rebuild on backends that need no copy.
 
-**The downgrade puts the columns back, not their data.** A rollback past this revision is the
-backup, never this function. It exists so the schema is reversible and so a test can drive both
-directions; every value these columns held is gone the moment upgrade runs.
+The downgrade puts the columns back, not their data. A rollback past this
+revision is the backup, never this function. It exists so the schema is
+reversible and so a test can drive both directions. Every value these columns
+held is gone the moment upgrade runs.
 
 Revision ID: e2f3a4b5c6d7
 Revises: d1e2f3a4b5c6
@@ -55,11 +61,12 @@ down_revision: str | None = "d1e2f3a4b5c6"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-#: ``preflight`` copies the database aside before this runs (#566). What it loses is every
-#: value the six columns held: ``downgrade`` puts the columns back and cannot put the data
-#: back, which is rule 148 saying the way back is the backup rather than the image. Five of
-#: the six held something an operator or a Plex link had chosen once, so a rollback that
-#: recreated them empty would look like a working install with its history quietly blanked.
+#: ``preflight`` copies the database aside before this runs. What it loses is
+#: every value the six columns held: ``downgrade`` puts the columns back and
+#: cannot put the data back, so the way back is the backup, never the image.
+#: Five of the six held something an operator or a Plex link had chosen once,
+#: so a rollback that recreated them empty would look like a working install
+#: with its history quietly blanked.
 needs_snapshot = True
 
 
@@ -74,9 +81,9 @@ def upgrade() -> None:
         batch_op.drop_column("owner_plex_account_id")
 
     with op.batch_alter_table("profile", schema=None) as batch_op:
-        # Constraint before column (rule 148's ordering): the FK names `active_policy_id`, and
-        # reflecting it onto a table that no longer has the column is the failure that ordering
-        # exists to prevent.
+        # Constraint before column: the FK names `active_policy_id`, and
+        # reflecting it onto a table that no longer has the column is the
+        # failure this ordering exists to prevent.
         batch_op.drop_constraint("fk_profile_active_policy_id_policy", type_="foreignkey")
         batch_op.drop_column("active_policy_id")
         batch_op.drop_column("enabled")

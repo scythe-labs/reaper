@@ -1,25 +1,27 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Build an invented review-queue screenshot, kept as the spare.
+"""Build an invented review-queue screenshot, kept as a spare.
 
-The README shows a real screenshot now, of the maintainer's own instance, because a picture
-of invented titles sells nothing. This still renders the same screen from invented data, and
-it is kept so that call can be reversed with a one-line README edit rather than rebuilt.
+The README shows a real screenshot now, of the maintainer's own instance, since a
+picture of invented titles sells nothing. This script still renders the same screen
+from invented data, and it stays here so that call can be reversed with a one-line
+README edit instead of a rebuild.
 
-The markup is the markup `ReviewQueue`/`WhyPanel` emit, the stylesheet is
-`frontend/src/index.css` inlined in its own load order, and every poster and backdrop is drawn
-here as flat SVG, so nothing in the output belongs to anyone.
+The markup matches what `ReviewQueue`/`WhyPanel` emit. The stylesheet is
+`frontend/src/index.css` inlined in its own load order, and every poster and backdrop
+is drawn here as flat SVG, so nothing in the output belongs to anyone.
 
     uv run python scripts/gen_screenshot_mockup.py           # write the page
     uv run python scripts/gen_screenshot_mockup.py --render  # and shoot it with headless Chrome
 
-`--render` wants Chrome and writes a 2x PNG beside the page, which is the artifact the README
-would show if this call were reversed. The page itself is a build product and is not committed.
+`--render` needs Chrome and writes a 2x PNG beside the page: the artifact the README
+would show again if that call were reversed. The page itself is a build product and is
+not committed.
 
-Rendering needs a browser, so CI cannot re-shoot it. `tests/test_screenshot_mockup.py` gates
-what it can without one: that this script still runs against the current stylesheet, that the
-page it emits fetches nothing and embeds only art drawn here, and that the committed PNG is the
-size this capture box produces (rule 68).
+Rendering needs a browser, so CI cannot re-shoot it. `tests/test_screenshot_mockup.py`
+checks what it can without one: that this script still runs against the current
+stylesheet, that the page it emits fetches nothing and embeds only art drawn here, and
+that the committed PNG matches the size this capture box produces.
 """
 
 from __future__ import annotations
@@ -40,21 +42,22 @@ OUT_DIR = ROOT / "docs" / "media"
 PAGE = OUT_DIR / "review-queue-mockup.html"
 SHOT = OUT_DIR / "review-queue-mockup.png"
 
-# The capture box. 1440 CSS px keeps the split view (the panel sits beside the list above
-# 1100px) and 2x keeps the text sharp where a README scales the picture down. The height is
-# measured, not guessed: it clears the sixth card's bottom edge (1120) and the panel's (1096),
-# so the picture ends on a whole row rather than slicing one in half. Re-measure it after any
-# change to the list -- the cards below are simply outside the frame.
+# The capture box. 1440 CSS px keeps the split view (the panel sits beside the list only
+# above 1100px), and 2x keeps the text sharp when a README scales the picture down. The
+# height is measured, not guessed: it clears the sixth card's bottom edge (1114) and the
+# panel's (1109), and stops short of the seventh card's top (1124), so the picture ends on
+# a whole row instead of slicing one in half. Re-measure it after any change to the list or
+# to what sits above it. The cards below are simply outside the frame.
 WIDTH = 1440
-HEIGHT = 1134
+HEIGHT = 1120
 SCALE = 2
 
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 
 # --------------------------------------------------------------------------------------------
-# The stylesheet, in the order index.css imports it -- that order is load-bearing (see the
-# ordering note at the top of index.css), so this reads the import list rather than globbing.
+# The stylesheet, in the order index.css imports it. That order is load-bearing (see the
+# ordering note at the top of index.css), so this reads the import list instead of globbing.
 # --------------------------------------------------------------------------------------------
 def stylesheet() -> str:
     index = (STYLES / "index.css").read_text()
@@ -158,14 +161,15 @@ def poster(title: str, year: str, palette: tuple[str, str, str], shape: str) -> 
 
 
 def backdrop(palette: tuple[str, str, str], shape: str) -> str:
-    # Bright end first. A row's art rides at 0.22 opacity under `.card-scrim` (21-queue-cards.css),
-    # so a backdrop built from the poster's dark end lands on near-black and the row reads as
-    # having no art at all -- which is the one thing the real queue never looks like.
+    # Uses the bright end of the palette first. A row's art sits at 0.22 opacity under
+    # `.card-scrim` (21-queue-cards.css), so a backdrop built from the poster's dark end
+    # would land on near-black, and the row would read as having no art at all, which the
+    # real queue never looks like.
     top, _bottom, ink = palette
     blob = top
-    # Everything worth seeing sits in the upper-middle band. Both crops crossing this image are
-    # wide and short -- a card row at `object-position: center 20%`, the panel hero at 25% -- so
-    # art drawn down at the baseline is cropped away and the surface reads as a bare gradient.
+    # Everything worth seeing sits in the upper-middle band. Both crops applied to this
+    # image are wide and short: a card row at `object-position: center 20%`, the panel hero
+    # at 25%. Art drawn down at the baseline would be cropped away, leaving a bare gradient.
     art = {
         "arc": (
             f'<circle cx="1140" cy="330" r="270" fill="{blob}" opacity=".38"/>'
@@ -345,7 +349,7 @@ ITEMS = [
 ]
 
 ACCOUNT = "reaper-demo"
-SCANNED = "Last scanned Mar 12, 2026, 4,812 items"
+SCANNED = "Last scanned 3 hours ago, 4,812 items."
 TOTAL_ITEMS = "418"
 TOTAL_SIZE = "3.9 TiB"
 
@@ -466,7 +470,8 @@ NAV_ICONS = {
     ),
 }
 
-# The masthead mark, mask and all -- BrandMark.tsx's shape with brand/dissolve.ts's geometry.
+# The masthead mark, mask included, matches BrandMark.tsx's shape and brand/dissolve.ts's
+# geometry.
 BRAND_BLOCKS_UPPER = [(19, 40, 7), (31, 40, 7), (25, 47, 7), (39, 47, 6), (19, 48, 6), (45, 40, 6)]
 BRAND_BLOCKS_LOWER = [
     (33, 55, 6),
@@ -506,7 +511,7 @@ def brand_mark() -> str:
 
 
 # --------------------------------------------------------------------------------------------
-# The markup, component by component -- each block mirrors the JSX named above it.
+# The markup, component by component. Each block mirrors the JSX named above it.
 # --------------------------------------------------------------------------------------------
 def dormant_pill(span: str) -> str:
     return f'<span class="dormant-pill">{CLOCK}Not watched in {span}</span>'
@@ -763,9 +768,9 @@ def nav() -> str:
     return f'<nav class="views" aria-label="Sections">{buttons}</nav>'
 
 
-# Mockup-only, and deliberately tiny: nothing here restyles the app. It freezes the one state a
-# live pointer would be holding (the hovered card shows its Spare/Reap buttons, rule 46) and
-# trims the page margin the capture would otherwise frame.
+# Mockup-only, and deliberately tiny: nothing here restyles the app. It freezes the one
+# state a live pointer would be holding (the hovered card shows its Spare/Reap buttons)
+# and trims the page margin the capture would otherwise frame.
 MOCK_CSS = """
 body { margin: 0; }
 .card.mock-hover > .card-side .override-controls { opacity: 1; visibility: visible; }
@@ -825,7 +830,6 @@ def page() -> str:
         <button class="tab" data-label="Sanctuary">Sanctuary</button>
         <button class="tab" data-label="Limbo">Limbo</button>
       </nav>
-      <p class="blurb">Scored at or above your threshold, with nothing protecting them.</p>
       <div class="queue-toolbar">
         <div class="search-wrap">
           {SEARCH}
@@ -859,11 +863,11 @@ def render() -> None:
     if not Path(CHROME).exists() and not shutil.which("chrome"):
         raise SystemExit(f"no Chrome at {CHROME} -- write the page and shoot it yourself")
     chrome = CHROME if Path(CHROME).exists() else shutil.which("chrome")
-    # Its own profile, and stopped by us. Two things this Chrome will not do: exit after
-    # writing the shot (it holds the process open, in both headless modes), or share the
-    # default user-data-dir with the browser the operator is sitting in front of without
-    # blocking on its lock. So the render runs detached, and the file appearing -- at a size
-    # that has stopped growing -- is what "done" means.
+    # Runs with its own profile, and this script stops it when done. This Chrome will not
+    # do two things on its own: exit after writing the shot (it holds the process open in
+    # both headless modes), or share the operator's default user-data-dir without blocking
+    # on its lock. So the render runs detached, and "done" means the screenshot file has
+    # appeared and its size has stopped growing.
     SHOT.unlink(missing_ok=True)
     with tempfile.TemporaryDirectory(prefix="reaper-shot-") as profile:
         proc = subprocess.Popen(  # noqa: S603 -- argv is this file's flags and its own paths
@@ -896,8 +900,9 @@ def render() -> None:
             else:
                 raise SystemExit("Chrome never wrote the screenshot")
         finally:
-            # SIGTERM is not enough -- this Chrome sits through it, which is the same
-            # stubbornness that makes it hold the process open after the write.
+            # SIGTERM alone often is not enough: this Chrome can sit through it, the same
+            # way it stays open after writing the shot, so the timeout below falls
+            # through to kill().
             proc.terminate()
             try:
                 proc.wait(timeout=5)

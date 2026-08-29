@@ -7,10 +7,10 @@
 // the first answer worth anything. So Spared and Left alone are real tabs, not a debug
 // affordance.
 //
-// Each item is a card you click to open the full reasoning. A movie is one card; every
+// Each item is a card you click to open the full reasoning. A movie is one card. Every
 // season of a show collapses under one show card you expand. The card leads with the *reason*
-// Reaper judged it -- not a plot synopsis -- because on this screen the question is "why did
-// it decide that?", not "what is this about?". The synopsis lives in the slide-out.
+// Reaper judged it, not a plot synopsis, because on this screen the question is "why did it
+// decide that?", not "what is this about?". The synopsis lives in the slide-out.
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -40,6 +40,7 @@ import {
   type OverrideFilter,
   type RequestedFilter,
   type Run,
+  type RunReport,
   type ShowStatus,
   type SortKey,
   type Verdict,
@@ -112,12 +113,12 @@ import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
 import { staleReadLine, StaleReadNotice } from "./StaleReadNotice";
 
 //: How many cards to *render* at a time. A tab can hold thousands, so we draw a screenful and
-//  reveal more as you scroll -- keeping the DOM (and the lazy poster fetches) small.
-/** What the two scan-freshness surfaces say, in one place because each is said twice now: once
- *  on screen and once into the shared live region. Neither had a voice before -- both were bare
- *  `role="status"` nodes mounted with their own text, which several readers never announce -- and
- *  a hand-copied sentence in the announcement would be a second copy of an operator-facing claim
- *  free to drift from the one on screen (rule 144).
+//  reveal more as you scroll, keeping the DOM (and the lazy poster fetches) small.
+/** What the two scan-freshness surfaces say, in one place because each is said twice: once on
+ *  screen and once into the shared live region. A bare `role="status"` node mounted with its
+ *  own text is not reliably announced by several readers, so the sentence is spoken through the
+ *  shared live region instead, and a hand-copied sentence in that announcement would be a second
+ *  copy of an operator-facing claim free to drift from the one on screen.
  *
  *  Functions, not constants: this module is in the eager bundle, so a string resolved in its
  *  body would stay English for the life of the page (`i18n-module-scope.test.ts`). */
@@ -132,23 +133,20 @@ const PAGE = 40;
 //  render window nears the end of what we have.
 const FETCH_PAGE = 100;
 
-const tabs = (): { verdict: Verdict; label: string; blurb: string; empty: string }[] => [
+const tabs = (): { verdict: Verdict; label: string; empty: string }[] => [
   {
     verdict: "condemn",
     label: i18next.t("reviewQueue.tabs.condemn.label"),
-    blurb: i18next.t("reviewQueue.tabs.condemn.blurb"),
     empty: i18next.t("reviewQueue.tabs.condemn.empty"),
   },
   {
     verdict: "protect",
     label: i18next.t("reviewQueue.tabs.protect.label"),
-    blurb: i18next.t("reviewQueue.tabs.protect.blurb"),
     empty: i18next.t("reviewQueue.tabs.protect.empty"),
   },
   {
     verdict: "abstain",
     label: i18next.t("reviewQueue.tabs.abstain.label"),
-    blurb: i18next.t("reviewQueue.tabs.abstain.blurb"),
     empty: i18next.t("reviewQueue.tabs.abstain.empty"),
   },
 ];
@@ -164,7 +162,7 @@ const laneLabels = () =>
 
 // --- little inline icons for the filter/sort pills ------------------------------------------
 
-/** The Plex library an item lives in, as a quiet neutral chip on the facts line -- the same
+/** The Plex library an item lives in, as a quiet neutral chip on the facts line: the same
  *  placement and weight as the resolution badge, deliberately not a verdict color. Hidden when
  *  the library is unknown (unmatched, or a row from before this shipped). Shared by movie and
  *  show cards and both info panels, so movies and seasons read the same. */
@@ -179,7 +177,7 @@ export function LibraryChip({ library }: { library: string | null }) {
   );
 }
 
-/** A labeled dropdown pill with a leading icon -- the filter/sort control shape. */
+/** A labeled dropdown pill with a leading icon: the filter/sort control shape. */
 function Pill({
   icon,
   value,
@@ -337,13 +335,13 @@ function DormantPill({ dormantFor }: { dormantFor: string | null }) {
 }
 
 /** How a card participates in Select mode. When ``selectMode`` is off these are inert and the
- *  card behaves normally (click opens the why-panel); when on, the whole card is a selection
- *  target -- press to toggle, drag across to paint a run.
+ *  card behaves normally (click opens the why-panel). When on, the whole card is a selection
+ *  target: press to toggle, drag across to paint a run.
  *
  *  Everything here is the SAME for every card, so the queue builds one of these and passes it
  *  to all of them. Whether a given card is picked is its own `isSelected` prop, not a field in
- *  here: with it folded in, the object was rebuilt per card per render and no card could be
- *  memoized -- so painting one card re-rendered every drawn card (P-1). */
+ *  here: folding it in would rebuild this object per card per render, so no card could be
+ *  memoized, and painting one card would re-render every drawn card. */
 type CardSelect = {
   selectMode: boolean;
   onSelectDown: (key: string, e: ReactPointerEvent) => void;
@@ -354,6 +352,10 @@ type CardSelect = {
   onSelectToggle: (key: string) => void;
 };
 
+/** One status line per card. A condemned card leads with the amber dormancy pill. The reason
+ *  paragraph shows only when the pill is absent and the item isn't held back for an unknown
+ *  size, since either one already says why nothing else needs to. The full sentence lives in
+ *  the why-panel. Sanctuary and Limbo cards wear a single short chip instead. */
 function CardStatusLine({
   condemned,
   dormantFor,
@@ -372,7 +374,7 @@ function CardStatusLine({
   const { t } = useTranslation();
   const heldBack = useHoldsBackUnmeasured().holdsBack && unmeasured;
   // A condemned row carries no chip by construction, so the moment a hand spare flips
-  // `condemned` false the card would lose this line outright and reflow under the cursor --
+  // `condemned` false the card would lose this line outright and reflow under the cursor,
   // the live reflow the in-place patch exists to prevent. The dormancy fact is true on every
   // lane, so it stands in when there is no chip to show.
   if (!condemned)
@@ -393,21 +395,21 @@ type Group = {
   poster: string | null;
   reason: string | null;
   requestedBy: string | null;
-  /** The first (highest-scoring) season's dormancy span, like `reason` -- the show
-   *  card's pill leads with its most condemned season. */
+  /** The first (highest-scoring) season's dormancy span, like `reason`: the show card's pill
+   *  leads with its most condemned season. */
   dormantFor: string | null;
-  /** The Plex library the item lives in -- a show's is shared by all its seasons, so the
-   *  first season sets it for the whole card. Null when unknown; the chip is hidden. */
+  /** The Plex library the item lives in. A show's is shared by all its seasons, so the first
+   *  season sets it for the whole card. Null when unknown; the chip is hidden. */
   library: string | null;
   /** The show's Plex collection names, shared by every season the same way `library` is (a TV
    *  collection lists the show, not its seasons). Null renders no chip. */
   collections: string[] | null;
-  /** The first season's `matched_collection` (#816 phase 3b) -- set only when this show landed
-   *  under the collection-name search block, in which case the chip renders THIS name rather
-   *  than `collections[0]`. Null outside that block, same as the field it is taken from. */
+  /** The first season's `matched_collection`, set only when this show landed under the
+   *  collection-name search block, in which case the chip renders THIS name rather than
+   *  `collections[0]`. Null outside that block, same as the field it is taken from. */
   matchedCollection: string | null;
   /** The show's whole-snapshot rollup, sent once per show beside the rows. Null for a movie,
-   *  and for a show whose rollup did not arrive -- never a page-shaped substitute, since
+   *  and for a show whose rollup did not arrive. Never a page-shaped substitute, since
    *  every figure on it sits beside a destructive control. */
   rollup: GroupRollup | null;
   items: Candidate[];
@@ -425,9 +427,9 @@ function groupKeyOf(group: Group): string {
  *
  *  Read from EVERY page, never `pages[0]`: a show first seen on page three has its rollup
  *  on page three. Reading only the first page would leave those shows with no rollup at
- *  all, and the count beside their Reap button is the one number that must come from the
- *  set the server will act on (rule 30). A show straddling two pages carries the same
- *  whole-snapshot figures in both, so which copy wins does not matter. */
+ *  all, and the count beside their Reap button must come from the set the server will
+ *  actually act on. A show straddling two pages carries the same whole-snapshot figures in
+ *  both, so which copy wins does not matter. */
 function toRollups(pages: CandidatePage[] | undefined): Map<string, GroupRollup> {
   const byKey = new Map<string, GroupRollup>();
   for (const page of pages ?? []) {
@@ -559,9 +561,9 @@ const markLabels = (): Record<string, string> => ({
 });
 
 /** The season strip: one small square per season of the show, colored by its fate
- *  across the WHOLE snapshot -- so "which seasons stay and which go" reads at a glance
- *  without expanding anything. A hand decision paints its square solid; a reap the engine
- *  can't honor yet reads dashed red and carries a small scythe corner-mark -- so it stays
+ *  across the WHOLE snapshot, so "which seasons stay and which go" reads at a glance
+ *  without expanding anything. A hand decision paints its square solid. A reap the engine
+ *  can't honor yet reads dashed red and carries a small scythe corner-mark, so it stays
  *  clearly YOURS (the way a movie card's resting scythe does) yet never the solid red of a
  *  removal, and never the plain condemned outline beside it. The tooltip says both facts.
  *  Each square opens that season's own reasoning (the show card itself opens the show). */
@@ -611,7 +613,7 @@ function SeasonStrip({
         // The lane word follows the EFFECTIVE fate (handFate), not the raw verdict, so a spared
         // condemnation reads "kept, you spared it" and never "would be removed, you spared it".
         // An expired spare is still "kept" for the same reason its square stays green: only a
-        // scan realizes the clock, so nothing will reap it before then (rule 61).
+        // scan realizes the clock, so nothing will reap it before then.
         const lane =
           fate === "reap"
             ? lanes.condemn
@@ -629,17 +631,17 @@ function SeasonStrip({
             aria-label={t("reviewQueue.stripOpenAria", { name, lane })}
             onClick={(e) => {
               // The whole card head still opens the show on a click; a square opens just its
-              // season. No key guard beside it any more: the head's `role="button"` and its
-              // Enter/Space handler are gone (#169), so nothing above this cancels the button's
-              // own activation, and a guard against a handler that does not exist is a comment
-              // claiming a safeguard (rule 7/24).
+              // season. No key guard beside it: the head has no `role="button"` and no
+              // Enter/Space handler above this button, so nothing would cancel its own
+              // activation, and a comment claiming a guard against a handler that does not
+              // exist would not be true.
               e.stopPropagation();
               onOpen(mark.id);
             }}
           >
             {mark.season === 0 ? t("reviewQueue.specialsAbbrev") : (mark.season ?? "·")}
             {/* A held reap keeps the scythe so the square still reads as YOUR ask, the way a
-                movie card's resting OverrideMark does -- the strip has no such mark of its own. */}
+                movie card's resting OverrideMark does. The strip has no such mark of its own. */}
             {reapRefused && (
               <span className="strip-mark" aria-hidden="true">
                 <ScytheIcon />
@@ -675,7 +677,7 @@ function SeasonExpander({
       }
       onClick={(e) => {
         // A click still bubbles into the head, which opens the show, so it stops here.
-        // Enter/Space needs no guard: the head no longer handles keys at all (#169).
+        // Enter/Space needs no guard: the head does not handle keys at all.
         e.stopPropagation();
         onToggle();
       }}
@@ -710,17 +712,16 @@ function seasonName(title: string, showTitle: string): string {
 }
 
 /** The one-time banner atop an expanded show whose WHOLE-SHOW decision (spare or reap) drives
- *  its seasons. It states that decision once so the rows below no longer each repeat it -- every
- *  inheriting season used to carry an identical `KeptByShowNote`, which read as a wall of the
- *  same red sentence. The mark and tint track the inherited fate (green spare, red reap) so the
+ *  its seasons. It states that decision once, so the rows below do not each need to repeat an
+ *  identical note. The mark and tint track the inherited fate (green spare, red reap) so the
  *  banner never disagrees with the scores beneath it. Shown only when `show_override` is set.
  *
  *  A spare's mark and words describe the spare actually IN FORCE, not the shape of a spare in
  *  general: ∞ only for a forever one, the clock (dashed once its time is up) for a timed one.
- *  A fixed ∞ said "kept forever" directly above a control reading "30d", and went on saying it
- *  after the clock passed. The expired wording is the one that has to be careful: the seasons
- *  really are still kept, because only a scan realizes a spare's expiry, so it says what
- *  happened without claiming the seasons are back on the block (rule 61). */
+ *  A fixed ∞ would say "kept forever" directly above a control reading "30d", and go on saying
+ *  it after the clock passed. The expired wording is the one that has to be careful: the
+ *  seasons really are still kept, because only a scan realizes a spare's expiry, so it says
+ *  what happened without claiming the seasons are back on the block. */
 function ShowInheritBanner({
   override,
   spareExpiresAt,
@@ -749,8 +750,8 @@ function ShowInheritBanner({
       <span>
         {reap ? (
           // The header must not assert removal the engine can't honor: with every inherited reap
-          // held, the seasons are kept; with a mix, only some go (rule 61). The per-row chips
-          // still mark each held season, so this just stops the header contradicting them (U-2).
+          // held, the seasons are kept, and with a mix, only some go. The per-row chips still
+          // mark each held season, so this just stops the header from contradicting them.
           reapReach === "none" ? (
             <Trans i18nKey="reviewQueue.showInherit.reapNone" components={{ b: <b /> }} />
           ) : reapReach === "some" ? (
@@ -760,7 +761,7 @@ function ShowInheritBanner({
           )
         ) : remaining.expired ? (
           // Still kept, and it must say so: only a scan realizes a spare's clock, so until one
-          // runs nothing will remove these seasons (rule 61). What has run out is the decision.
+          // runs, nothing will remove these seasons. What has run out is the decision.
           <Trans i18nKey="reviewQueue.showInherit.spareExpired" components={{ b: <b /> }} />
         ) : (
           <Trans
@@ -774,29 +775,29 @@ function ShowInheritBanner({
   );
 }
 
-/** What a season row says for ITSELF inside a show the header already explains. The banner states
- *  the inherited fate once, so a plain-inheriting season -- or one whose own decision agrees with
- *  its show -- carries nothing here and reads from its score's color alone. Only a season that
- *  goes its own way earns words:
+/** What a season row says for ITSELF inside a show the header already explains. The banner
+ *  states the inherited fate once, so a plain-inheriting season, or one whose own decision
+ *  agrees with its show, carries nothing here and reads from its score's color alone. Only a
+ *  season that goes its own way earns words:
  *    - a HELD reap (the engine can't honor it yet, own or inherited): a dashed-red "Kept for now"
  *      chip plus the reason it is held (the same "why" the refused OverrideChip would carry);
  *    - a season the owner decided AGAINST its show: a solid chip and a one-line "kept / removed
- *      anyway" -- dashed green, and saying so, when the spare doing the keeping has run out.
- *  The chips reuse the shared `.status-chip` tones (rule 18) and the score's color still comes
- *  from `handFate`, so the two can't disagree (rule 49). Only reached when the show has an
- *  override; a season with no whole-show decision keeps its own scan chip back in SeasonList. */
+ *      anyway", dashed green, and saying so, when the spare doing the keeping has run out.
+ *  The chips reuse the shared `.status-chip` tones, and the score's color still comes from
+ *  `handFate`, so the two can't disagree. Only reached when the show has an override; a season
+ *  with no whole-show decision keeps its own scan chip back in SeasonList. */
 function seasonDivergence(
   season: Candidate,
   showOverride: Override,
 ): { chip: ReactNode; reason: string | null } {
-  // A held reap is noted but the file is still kept -- dashed red, never the solid red of a
+  // A held reap is noted but the file is still kept: dashed red, never the solid red of a
   // removal. Judged by the item's own fate, so an inherited held reap reads the same as an own one.
   if (handFate(season) === "refused") {
     // The specific reason the engine held it (from the stored explanation) beats the chip's
-    // sentence, which beats a generic line -- so the row says WHY, e.g. that the season it
-    // was compared against is kept because Sonarr is still downloading it. Both `cardReason`
-    // and `chipWhy` already compose a full sentence (capital lead, full stop), so nothing
-    // here reworks the clause.
+    // sentence, which beats a generic line, so the row says WHY, for example that the season
+    // it was compared against is kept because Sonarr is still downloading it. Both
+    // `cardReason` and `chipWhy` already compose a full sentence (capital lead, full stop), so
+    // nothing here reworks the clause.
     const why =
       cardReason(season) ??
       chipWhy(season.chip) ??
@@ -812,16 +813,16 @@ function seasonDivergence(
   }
   const own = season.override_own;
   // No own decision, or one that agrees with the show: the header covers it, and the control's
-  // own lit/unlit state is the only extra signal an agreeing own decision needs (rule 50).
+  // own lit/unlit state is the only extra signal an agreeing own decision needs.
   if (own == null || own === showOverride) return { chip: null, reason: null };
   // Decided against the show: it goes the opposite way, and says so beside its control.
   if (own === "spare") {
     // The spare's own three states again, because this chip sits inches from the score badge
-    // and the strip square that already draw them (rule 49). A spent spare wears the dashed
-    // green, not the solid "you chose this and it holds" -- solid beside a dashed badge on one
-    // row is the row disagreeing with itself. It still keeps the season either way, so the
-    // sentence beneath is the same one; what changes is that it says the spare ran out, and
-    // that a scan is what ends it (rule 61).
+    // and the strip square that already draw them. A spent spare wears the dashed green, not
+    // the solid "you chose this and it holds": solid beside a dashed badge on one row is the
+    // row disagreeing with itself. It still keeps the season either way, so the sentence
+    // beneath is the same one. What changes is that it says the spare ran out, and that a
+    // scan is what ends it.
     const expired = handFate(season) === "spare-expired";
     return {
       chip: (
@@ -848,9 +849,9 @@ function seasonDivergence(
 
 /** The expanded show: EVERY season in the latest snapshot, whatever its lane, so kept
  *  and condemned read side by side. Every row is actable from here, not just the ones on
- *  the tab you opened: each carries its own Spare/Reap, judged by that season's OWN verdict
- *  (rule 51), so an under-scored season inside a condemned show can be decided in place
- *  instead of only from Limbo. Clicking any row still opens its full reasoning. */
+ *  the tab you opened: each carries its own Spare/Reap, judged by that season's OWN verdict,
+ *  so an under-scored season inside a condemned show can be decided in place instead of only
+ *  from Limbo. Clicking any row still opens its full reasoning. */
 function SeasonList({
   groupKey,
   selectedId,
@@ -869,16 +870,15 @@ function SeasonList({
    *  every season, so they still disable these rows. */
   pending: boolean;
   /** The one row being written app-wide. A season writes its own `media_key`, so this is the
-   *  only way it can know the wait is its own (rule 72: `MovieCard` and the whole-show control
-   *  were already keyed, these rows were not). */
+   *  only way it can know the wait is its own. */
   busyKey: string | null;
 }) {
   const { t } = useTranslation();
   // One request per expanded show, and with "Expand seasons by default" on that is one per
-  // drawn card -- unbounded as the render window grows, and fired all over again every time
-  // entering or leaving Select mode remounts the lists (P-2). The five minutes is the same
-  // staleTime the sibling vocabulary queries use: a show's seasons only change when a scan
-  // lands, and a scan invalidates ["group"] outright (ScanBar), as does every override.
+  // drawn card: unbounded as the render window grows, and fired all over again every time
+  // entering or leaving Select mode remounts the lists. The five minutes is the same staleTime
+  // the sibling vocabulary queries use: a show's seasons only change when a scan lands, and a
+  // scan invalidates ["group"] outright (ScanBar), as does every override.
   const { data, isPending, error } = useQuery({
     queryKey: ["group", groupKey],
     queryFn: () => api.group(groupKey),
@@ -888,12 +888,12 @@ function SeasonList({
   // The list is an always-visible surface once expanded: say "loading" and "failed"
   // out loud rather than rendering nothing under an open chevron.
   //
-  // `!data` alone, never `error || !data`: ["group", …] is override-aware, so sparing ONE season
-  // refetches it, and an undivided `error` traded every season row -- each with its own Spare and
-  // Reap -- for one red line while React Query still held the last good list (#190). A failed
-  // refetch says so above the rows instead, in the list's own `.season-list-note` grammar, which
-  // its loading and failed lines already speak. Not a rule: nothing keeps a `.notice` out of a
-  // review surface, and the queue one screen out renders one.
+  // `!data` alone, never `error || !data`: ["group", …] is override-aware, so sparing ONE
+  // season refetches it, and branching on `error` alone would trade every season row, each
+  // with its own Spare and Reap, for one red line while React Query still held the last good
+  // list. A failed refetch says so above the rows instead, in the list's own
+  // `.season-list-note` grammar, which its loading and failed lines already speak. Nothing
+  // keeps a `.notice` out of a review surface, and the queue one screen out renders one.
   if (isPending) {
     return <p className="season-list-note muted">{t("reviewQueue.seasonList.loading")}</p>;
   }
@@ -918,8 +918,8 @@ function SeasonList({
       {showOverride && (
         <ShowInheritBanner
           override={showOverride}
-          // The SHOW's own spare, matching the show decision the banner states -- never a
-          // season's, which the rows below carry themselves (rule 50).
+          // The SHOW's own spare, matching the show decision the banner states, never a
+          // season's, which the rows below carry themselves.
           spareExpiresAt={data.show_spare_expires_at}
           reapReach={showReapReach(data.seasons)}
         />
@@ -928,8 +928,8 @@ function SeasonList({
         className="season-list"
         style={
           {
-            // Both widths derive from --ov-btn-w / --ov-btn-gap (styles/00-tokens.css), so a button-width
-            // change lands in one place and the columns can't drift (H-1, rule 16).
+            // Both widths derive from --ov-btn-w / --ov-btn-gap (styles/00-tokens.css), so a
+            // button-width change lands in one place and the columns can't drift.
             "--btns": anyReapable
               ? "calc(2 * var(--ov-btn-w) + var(--ov-btn-gap))"
               : "var(--ov-btn-w)",
@@ -941,7 +941,7 @@ function SeasonList({
           const reason = divergence?.reason ?? null;
           // With a whole-show decision the header explains the inherited fate, so a row's chip is
           // whatever `seasonDivergence` returns (often nothing). Without one, the row wears its own
-          // decision, the condemned mark, or its scan chip -- one pill, the truth.
+          // decision, the condemned mark, or its scan chip: one pill, the truth.
           let chip: ReactNode;
           if (divergence) {
             chip = divergence.chip;
@@ -974,10 +974,10 @@ function SeasonList({
                     ? "card-reaped"
                     : ""
               } ${season.id === selectedId ? "card-selected" : ""} ${reason ? "has-reason" : ""}`}
-              // A plain `<li>`. It carried `role="button"`, which stripped `listitem` off every
-              // row -- so the list announced no item count -- and pruned the row's score, chip
-              // and reason line out of the tree, on the row where a per-season keep-or-delete
-              // decision is made (#169). `CardOpen` on the season name is the control.
+              // A plain `<li>`, not `role="button"`: that role would strip `listitem` off every
+              // row, so the list would announce no item count, and it would prune the row's
+              // score, chip and reason line out of the tree, on the row where a per-season
+              // keep-or-delete decision is made. `CardOpen` on the season name is the control.
               onClick={() => onOpen(season.id)}
             >
               <Score item={season} />
@@ -994,9 +994,9 @@ function SeasonList({
                 {chip}
               </span>
               {/* The control toggles the season's OWN decision (override_own), never the one it
-                  inherits from its show (rule 50). Reap is dropped only when this season's own
-                  verdict is condemn -- reaping it changes nothing (rule 51); Spare is never
-                  dropped. A divergent season's reason line below says how it goes its own way. */}
+                  inherits from its show. Reap is dropped only when this season's own verdict is
+                  condemn, since reaping it would change nothing; Spare is never dropped. A
+                  divergent season's reason line below says how it goes its own way. */}
               <OverrideControls
                 override={season.override_own}
                 onSet={(d, sd) => onSet(season.media_key, d, sd)}
@@ -1005,7 +1005,7 @@ function SeasonList({
                 hideReap={reapIsNoop(season)}
                 // Safe to pass the effective expiry beside `override_own`: a season with no
                 // decision of its own carries its SHOW's expiry here, but its button is not in
-                // the spared state and never reads it (rule 50, and the prop's own doc).
+                // the spared state and never reads it (see the prop's own doc).
                 spareExpiresAt={season.spare_expires_at}
               />
               <span className="season-size num">{itemBytes(season.size_bytes)}</span>
@@ -1019,8 +1019,8 @@ function SeasonList({
 }
 
 // Memoized: with every prop below stable or scalar, a card re-renders only when something it
-// actually shows has changed. Painting a drag across a long list used to re-render every drawn
-// card once per `pointerenter` (P-1).
+// actually shows has changed. Without this, painting a drag across a long list would
+// re-render every drawn card once per `pointerenter`.
 const MovieCard = memo(function MovieCard({
   item,
   selected,
@@ -1035,16 +1035,16 @@ const MovieCard = memo(function MovieCard({
   hideReap,
 }: {
   item: Candidate;
-  /** The open card -- the one whose reasoning the panel is showing. */
+  /** The open card: the one whose reasoning the panel is showing. */
   selected: boolean;
   /** Picked in Select mode. A different question from `selected`, and the only per-card part
    *  of selection, which is why it is not inside `select`. */
   isSelected: boolean;
   select: CardSelect;
   onOpen: (id: number) => void;
-  /** Open the collection screen on the chip's collection (#816 phase 5). */
+  /** Open the collection screen on the chip's collection. */
   onOpenCollection: (name: string) => void;
-  /** Each known collection's Plex member count, for the picker's rows (#816 phase 4/5). */
+  /** Each known collection's Plex member count, for the picker's rows. */
   collectionSizes: Record<string, number> | null;
   onSet: (key: string, decision: Override, spareDays?: number) => void;
   onClear: (key: string) => void;
@@ -1061,8 +1061,8 @@ const MovieCard = memo(function MovieCard({
         selectMode ? "card-select" : ""
       } ${isSelected ? "card-picked" : ""}`}
       // A plain container: the control that opens it is `CardOpen` on the title below, and the
-      // click here is the redundant mouse affordance beside it (#169). Carrying `role="button"`
-      // pruned every chip, reason and season mark on the card out of the accessibility tree.
+      // click here is the redundant mouse affordance beside it. Carrying `role="button"` would
+      // prune every chip, reason and season mark on the card out of the accessibility tree.
       onClick={() => !selectMode && onOpen(item.id)}
       onPointerDown={(e) => selectMode && select.onSelectDown(item.media_key, e)}
       onPointerEnter={() => selectMode && select.onSelectEnter(item.media_key)}
@@ -1127,7 +1127,7 @@ const MovieCard = memo(function MovieCard({
       </div>
       <div className="card-side">
         <Score item={item} />
-        {/* In Select mode the whole card is a target, so the inline buttons stand down -- the
+        {/* In Select mode the whole card is a target, so the inline buttons stand down. The
             bulk bar carries the actions instead. Otherwise the decision icon rests here until
             you hover, when the buttons take its place. */}
         {!selectMode && (
@@ -1168,18 +1168,18 @@ const ShowCard = memo(function ShowCard({
 }: {
   group: Group;
   /** Whether the season list starts expanded, from the operator's General preference.
-   *  Only the STARTING state -- a click on this card's season pill still wins. */
+   *  Only the STARTING state: a click on this card's season pill still wins. */
   defaultOpen: boolean;
   selectedId: number | null;
   selectedGroupKey: string | null;
-  /** Picked in Select mode -- the only per-card part of selection, hence not in `select`. */
+  /** Picked in Select mode: the only per-card part of selection, hence not in `select`. */
   isSelected: boolean;
   select: CardSelect;
   onOpen: (id: number) => void;
   onOpenGroup: (key: string) => void;
-  /** Open the collection screen on the chip's collection (#816 phase 5). */
+  /** Open the collection screen on the chip's collection. */
   onOpenCollection: (name: string) => void;
-  /** Each known collection's Plex member count, for the picker's rows (#816 phase 4/5). */
+  /** Each known collection's Plex member count, for the picker's rows. */
   collectionSizes: Record<string, number> | null;
   onSet: (key: string, decision: Override, spareDays?: number) => void;
   onClear: (key: string) => void;
@@ -1192,15 +1192,15 @@ const ShowCard = memo(function ShowCard({
   const { t } = useTranslation();
   const [open, setOpen] = useState(defaultOpen);
   // The operator's "expand by default" preference may resolve a tick after this card first
-  // mounts (it rides its own query), so apply it once known -- but never stomp a toggle the
-  // user already made on THIS card. `touched` is the cross-render "the user has decided" flag
-  // (rule 19); once set, the preference stops seeding this card's state.
+  // mounts (it rides its own query), so apply it once known, but never stomp a toggle the
+  // user already made on THIS card. `touched` is the cross-render "the user has decided" flag.
+  // Once set, the preference stops seeding this card's state.
   const touched = useRef(false);
   useEffect(() => {
     if (!touched.current) setOpen(defaultOpen);
   }, [defaultOpen]);
   const first = group.items[0]!;
-  // The whole show's shape, across every lane of the snapshot -- what the strip and the
+  // The whole show's shape, across every lane of the snapshot: what the strip and the
   // season count draw from. Null only when the show's rollup did not arrive with the page.
   const marks = group.rollup?.seasons ?? null;
   // Whether the show has finished, from the first season row that carries it. This is a
@@ -1221,29 +1221,29 @@ const ShowCard = memo(function ShowCard({
   // plan: the server's whole-snapshot totals (every condemned season minus hand-spares),
   // never a sum over the fetched pages, which on a long sorted list can hold only some
   // of a show's seasons. Other tabs describe the whole show, which the strip shows.
-  // The whole show's marks, across every lane -- `marks`, not the tab-filtered `group.items`
+  // The whole show's marks, across every lane: `marks`, not the tab-filtered `group.items`
   // (on the Condemned lane that holds only this show's reaped/condemned seasons). Used for the
   // strip and for whether a whole-show reap would change anything.
   const showSeasons = marks ?? group.items;
-  // The show's OWN decision -- the show key the whole-show control toggles, read straight from
+  // The show's OWN decision: the show key the whole-show control toggles, read straight from
   // the row, never rolled up from the seasons' own marks. The control clears only this key, so
-  // lighting it from an aggregate it cannot clear was a dead toggle. Seasons overridden one by
-  // one keep their marks in the strip; this stays null until the whole show is decided.
+  // lighting it from an aggregate it cannot clear would be a dead toggle. Seasons overridden
+  // one by one keep their marks in the strip. This stays null until the whole show is decided.
   const showOverride = first.show_override;
   // A whole-show decision settles the card's story before the seasons' verdicts do, because
   // `patchShowOverride` deliberately leaves each season's own `override` alone. Reading the
-  // seasons here left a card tinted "spared", chipped "will be kept", and still saying "3 of 5
-  // would be removed" one line below, all session (rule 61).
+  // seasons here instead would leave a card tinted "spared", chipped "will be kept", and still
+  // saying "3 of 5 would be removed" one line below, for the rest of the session.
   const isReapTab =
     showOverride === "spare" ? false : showOverride === "reap" ? true : isCondemned(first);
   // How many seasons carry no size, over whichever set the card is describing. The planner
   // holds an unmeasured season back, so it is counted apart from the removal count rather
-  // than folded into it -- the same split the server's rollup makes.
+  // than folded into it, the same split the server's rollup makes.
   const unknownSeasons = marks ? wholeShowUnknown : fetchedUnknown;
   // What the removal line counts, and which source is right turns on whose decision put the
   // card on the reap side:
   //   - the scan's own condemnation: the server's whole-snapshot rollup, which is the exact
-  //     set "Reap now" would plan (rule 30/62);
+  //     set "Reap now" would plan;
   //   - a hand reap on the WHOLE show: the show's own season marks, because the rollup still
   //     describes the set from BEFORE that decision and cannot catch up on its own.
   // The second case needs saying because `patchShowOverride` deliberately refetches nothing
@@ -1290,10 +1290,10 @@ const ShowCard = memo(function ShowCard({
     >
       <div
         className={`card-head clickable ${selectedGroupKey === group.key ? "card-selected" : ""}`}
-        // A plain container, for the reason MovieCard's is: the head held a `role="button"`, and
-        // it holds the season strip, the removal count and the expander, every one of which was
-        // pruned out of the accessibility tree by it (#169). `CardOpen` on the title is the
-        // control; this click is the redundant mouse affordance.
+        // A plain container, for the reason MovieCard's is: a `role="button"` here would strip
+        // the season strip, the removal count and the expander, every one of which sits inside
+        // it, out of the accessibility tree. `CardOpen` on the title is the control; this click
+        // is the redundant mouse affordance.
         onClick={() => !selectMode && onOpenGroup(group.key)}
       >
         <Backdrop posterUrl={group.poster} />
@@ -1327,7 +1327,7 @@ const ShowCard = memo(function ShowCard({
               effective={groupReapEffective(showSeasons)}
               // Seasons whose OWN decision opposes the show's (their effective override differs
               // from show_override), so the chip won't claim the whole show is kept/removed
-              // when one season inside goes the other way (U-3).
+              // when one season inside goes the other way.
               exceptions={
                 showOverride
                   ? showSeasons.filter((s) => s.override != null && s.override !== showOverride)
@@ -1335,7 +1335,7 @@ const ShowCard = memo(function ShowCard({
                   : 0
               }
               // A show has no parent to inherit a longer spare from, so its own expiry IS the
-              // covering one -- unlike a season's, which this chip must never read (rule 50).
+              // covering one, unlike a season's, which this chip must never read.
               spareCoversUntil={first.show_spare_expires_at}
             />
           </div>
@@ -1383,8 +1383,8 @@ const ShowCard = memo(function ShowCard({
           />
         </div>
         <div className="card-side">
-          {/* Spare or reap the whole show in one go -- the decision covers every season. In
-              Select mode the inline buttons stand down; the bulk bar carries the actions.
+          {/* Spare or reap the whole show in one go: the decision covers every season. In
+              Select mode the inline buttons stand down. The bulk bar carries the actions.
               Otherwise the decision icon rests here until hover reveals the buttons. */}
           {!selectMode && (
             <>
@@ -1396,7 +1396,7 @@ const ShowCard = memo(function ShowCard({
                 pending={pending}
                 // Not the movie's tab-based `hideReap`: a whole-show Reap still takes the
                 // show's kept seasons, so it stays until the WHOLE show is condemned
-                // (showReapIsNoop). Judged over `marks` -- every season, every lane -- not
+                // (showReapIsNoop). Judged over `marks`, every season, every lane, not
                 // `group.items`, which on the Condemned tab holds only this show's condemned
                 // seasons and would wrongly read as "all condemned" and hide Reap. The season
                 // rows below keep the per-lane test.
@@ -1441,15 +1441,15 @@ export function ReviewQueue({
   /** What a jump into this queue aimed it at (navIntent.ts): the search box's contents, so the
    *  list behind an opened panel is the title that was opened rather than the whole lane.
    *  Acted on once per `nonce`, so returning to Review later does not re-seed the box.
-   *  `collection` opens the collection screen on that name (#816 phase 5); undefined leaves
-   *  whichever one is already open (or not) alone -- there is no jump that closes one. */
+   *  `collection` opens the collection screen on that name. Undefined leaves whichever one is
+   *  already open, or not, alone: there is no jump that closes one. */
   focus?: { search: string; collection?: string | undefined; nonce: number } | null;
   selectedId: number | null;
   selectedGroupKey: string | null;
   onSelect: (id: number) => void;
   onSelectGroup: (key: string) => void;
   /** Close an open why-panel. Called from Show latest, whose new snapshot makes the panel's
-   *  candidate id stale (B-7). Optional so the queue still renders without the app shell. */
+   *  candidate id stale. Optional so the queue still renders without the app shell. */
   onClearItemSelection?: () => void;
   /** Filled in with a way to move the open card one place up or down this list, for the
    *  keyboard review loop. The queue owns the order, so it owns the walk. */
@@ -1462,19 +1462,19 @@ export function ReviewQueue({
   // Seeded from the jump that opened this queue, not set by an effect afterwards: the queue is
   // unmounted while the operator is on Scales, so a jump from there mounts it, and an effect
   // would let one unfiltered request for the whole lane go out before the seeded one replaced
-  // it. `search` is seeded alongside `searchInput` for the same reason -- it is the debounced
+  // it. `search` is seeded alongside `searchInput` for the same reason: it is the debounced
   // copy the query is keyed on, and waiting 250 ms for it would draw the lane first.
   //
   // A link is the other thing the box can be seeded from, read once here at mount and never
   // again (navUrl.ts): re-reading the URL later would fight the state `backnav`'s undo restores
-  // on a Back press. A jump wins over it -- a jump is happening now, and the query string
+  // on a Back press. A jump wins over it, since a jump is happening now, and the query string
   // belongs to the section the operator is leaving.
   const [linked] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     return {
       // A key given twice takes neither, the same answer `initialFilters` gives its five
       // dimensions: the first of `?q=x&q=y` is a value the sender may never have meant, and it
-      // is narrower than the empty default. Every hostile shape in this file widens (rule 72).
+      // is narrower than the empty default. Every hostile shape in this file widens.
       search: (params.getAll("q").length > 1 ? null : params.get("q")) ?? "",
       filters: initialFilters(verdict, window.location.search),
     };
@@ -1484,14 +1484,14 @@ export function ReviewQueue({
   // The last jump this queue has already acted on. Seeded with the one it mounted under, so the
   // effect below only ever handles a jump that arrives while it is already on screen.
   const handledFocus = useRef<number | null>(focus?.nonce ?? null);
-  // The collection screen (#816 phase 5): a place INSIDE Review, not a lane, so it lives here
-  // rather than in `App` alongside `verdict` -- the lane the operator left is waiting underneath
-  // it, and closing is local, never a jump. The raw setter below has exactly two callers,
-  // `openCollection` and `closeCollection`; everything else goes through those, because what the
-  // lane's search and filters do on the way in and out is the whole of what they carry.
-  // Seeded from a jump the same way `search` is seeded from `focus` above; there is no URL
-  // fallback, unlike `search`'s `linked.search` -- a reload lands on the plain lane rather than
-  // restoring an open collection, the one gap the plan itself leaves open (#816's "not decided").
+  // The collection screen: a place INSIDE Review, not a lane, so it lives here rather than in
+  // `App` alongside `verdict`. The lane the operator left is waiting underneath it, and closing
+  // is local, never a jump. The raw setter below has exactly two callers, `openCollection` and
+  // `closeCollection`. Everything else goes through those, because what the lane's search and
+  // filters do on the way in and out is the whole of what they carry.
+  // Seeded from a jump the same way `search` is seeded from `focus` above. There is no URL
+  // fallback, unlike `search`'s `linked.search`: a reload lands on the plain lane rather than
+  // restoring an open collection, which is a known gap.
   const [activeCollection, setActiveCollection] = useState<string | null>(
     focus?.collection ?? null,
   );
@@ -1501,26 +1501,25 @@ export function ReviewQueue({
   useBackGuard(activeCollection !== null, () => closeCollection());
   const [filters, setFilters] = useState<QueueFilters>(linked.filters);
   // Each tab remembers its own filters, and the new tab's set is adopted DURING the render
-  // that brings the new verdict in -- React's supported "adjust state when a prop changes"
-  // pattern. Doing it in an effect instead paired the new verdict with the old tab's filters
-  // for one commit: switching from Condemned with Genre set to Sanctuary fired
-  // `?verdict=protect&genre=...`, drew that wrong list, and only then fired the right
-  // request, so every such switch flashed a wrong page and made the server answer twice
-  // (B-30). A render-phase update is discarded before it commits, so neither the query nor
-  // the DOM ever sees the mismatched pair.
+  // that brings the new verdict in, React's supported "adjust state when a prop changes"
+  // pattern. Doing it in an effect instead would pair the new verdict with the old tab's
+  // filters for one commit: switching from Condemned with Genre set to Sanctuary would fire
+  // `?verdict=protect&genre=...`, draw that wrong list, and only then fire the right request,
+  // flashing a wrong page and making the server answer twice for every such switch. A
+  // render-phase update is discarded before it commits, so neither the query nor the DOM ever
+  // sees the mismatched pair.
   const [filtersVerdict, setFiltersVerdict] = useState(verdict);
   if (filtersVerdict !== verdict) {
     setFiltersVerdict(verdict);
     setFilters(loadFilters(verdict));
   }
-  // One door into a collection and one out, because there were two ways in and they disagreed.
-  // A card's chip set `activeCollection` directly and left the lane's search and filters
-  // applied, so the screen opened on a NARROWED subset while the fate summary above it counted
-  // the whole collection, and a search chip the operator set for the lane sat over a screen
-  // they had not typed it on. The why panel's chip went through App's jump instead, which
-  // clears the search, so the same chip did two different things depending on which surface it
-  // was pressed from (rule 72). This screen's job is every member, so entering clears what
-  // narrows and keeps the operator's chosen sort, the same split "Clear all" already makes.
+  // One door into a collection and one out, so the same chip cannot do two different things
+  // depending on which surface it is pressed from. Setting `activeCollection` directly while
+  // leaving the lane's search and filters applied would open the screen on a NARROWED subset
+  // while the fate summary above it counts the whole collection, with a search chip the
+  // operator set for the lane sitting over a screen they never typed it on. This screen's job
+  // is every member, so entering clears what narrows and keeps the operator's chosen sort, the
+  // same split "Clear all" already makes.
   // The lane is put back exactly as it was left, which is what the back link promises.
   const laneBeforeCollection = useRef<{ search: string; filters: QueueFilters } | null>(null);
   // Memoized because the jump effect below calls it, and an unstable identity there would put
@@ -1556,7 +1555,7 @@ export function ReviewQueue({
   // The collection chip's own click still fires while Select mode is on (it stops the card's
   // click before that mode's toggle sees it, same as the caret does), so opening a collection
   // this way could otherwise land the operator on a screen with select styling and no bulk bar
-  // to act on it -- the one control this screen keeps off (rule 48).
+  // to act on it, the one control this screen keeps off.
   useEffect(() => {
     if (activeCollection !== null) setSelectMode(false);
   }, [activeCollection]);
@@ -1584,12 +1583,13 @@ export function ReviewQueue({
   // How many of the last bulk override's requests failed, so the operator learns that a bulk
   // action was partial rather than seeing it silently succeed. 0 means nothing to report.
   const [bulkFailures, setBulkFailures] = useState(0);
-  // The plan whose confirmation sheet is open, if any. Building it is the "Reap now" step;
-  // the sheet then dry-runs, checks arming, and takes the typed confirmation before deleting.
-  const [reapRun, setReapRun] = useState<Run | null>(null);
+  // The plan whose confirmation sheet is open, with the practice run it was proved by. Building
+  // and proving the plan is the "Reap now" step; the sheet then opens ready to arm and take the
+  // typed confirmation. Proving before opening keeps the sheet from opening into an empty check.
+  const [reapRun, setReapRun] = useState<{ run: Run; report: RunReport } | null>(null);
   const menuIdBase = useId();
   // The control that opened the popover, so closing it can hand focus back rather than dropping
-  // it on <body> -- where the next Tab restarts at the top of the page, above the whole queue.
+  // it on <body>, where the next Tab restarts at the top of the page, above the whole queue.
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const openMenuFrom = (id: string, trigger: HTMLButtonElement) => {
     menuTriggerRef.current = trigger;
@@ -1607,10 +1607,11 @@ export function ReviewQueue({
   // chip the pick just created is the honest successor, and it does not exist until that commit,
   // so the focus waits for one.
   const focusChip = useRef<string | null>(null);
-  // The other direction: removing a chip destroys the ✕ holding focus, so the operator lands on
-  // `<body>` and the next Tab restarts above the toolbar (#173). Focus goes to the next chip's
-  // ✕, or to the ＋ Filter button once the row is empty -- which always exists after a removal,
-  // since removing a filter is exactly what makes that dimension addable again.
+  // The other direction: removing a chip destroys the ✕ holding focus, so without this, the
+  // operator would land on `<body>` and the next Tab would restart above the toolbar. Focus
+  // goes to the next chip's ✕, or to the ＋ Filter button once the row is empty, which always
+  // exists after a removal, since removing a filter is exactly what makes that dimension
+  // addable again.
   const addFilterRef = useRef<HTMLButtonElement>(null);
   const chips = useRemovalFocus(addFilterRef);
   useLayoutEffect(() => {
@@ -1623,7 +1624,7 @@ export function ReviewQueue({
   useBackGuard(openMenu !== null, closeMenu);
   useBackGuard(reapRun !== null, () => setReapRun(null));
   // The in-flight drag: whether a press-and-drag is currently adding or removing, so every card
-  // the pointer crosses paints the same way. A ref, not state -- it changes mid-drag and must
+  // the pointer crosses paints the same way. A ref, not state: it changes mid-drag and must
   // not re-render the list on every card it passes over.
   const dragRef = useRef<{ mode: "add" | "remove" } | null>(null);
   const sentinel = useRef<HTMLDivElement>(null);
@@ -1636,7 +1637,7 @@ export function ReviewQueue({
     return () => clearTimeout(id);
   }, [searchInput]);
 
-  // A jump that lands on a queue already on screen -- ShowPanel's season list is the one inside
+  // A jump that lands on a queue already on screen: ShowPanel's season list is the one inside
   // Review today, and it deliberately sends no search. Both halves are set, skipping the
   // debounce, so the list the operator lands on is the filtered one and not the lane first.
   useEffect(() => {
@@ -1662,8 +1663,8 @@ export function ReviewQueue({
       if (e.key !== "Escape") return;
       // The popover is the newest layer, so it consumes the press: `document` bubbles on to
       // `window`, where an open `.why` panel's Escape sits (WhyShell), and the queue and that
-      // panel are on screen together in split view. The spare-length menu stops the same key for
-      // the same reason (rule 72).
+      // panel are on screen together in split view. The spare-length menu stops the same key
+      // for the same reason.
       e.stopPropagation();
       setOpenMenu(null);
       menuTriggerRef.current?.focus();
@@ -1703,17 +1704,17 @@ export function ReviewQueue({
   }, [verdict, search, filters]);
 
   // Start over from the top whenever the list itself changes (a new tab, filter, sort, or
-  // opening/closing a collection), and drop any selection -- a key picked on one list is not
-  // visible on another.
+  // opening/closing a collection), and drop any selection, since a key picked on one list is
+  // not visible on another.
   useEffect(() => setVisible(PAGE), [verdict, activeCollection, search, filters]);
   // The failure notice promises the failed items are still picked, so it has to die with the
-  // selection it refers to -- otherwise it keeps offering a retry over an empty set.
+  // selection it refers to, or it keeps offering a retry over an empty set.
   useEffect(() => {
     setSelected(new Set());
     setBulkFailures(0);
   }, [verdict, activeCollection, search, filters]);
 
-  // "any" is every stored lane at once -- what makes the collection screen cross-lane, mixing
+  // "any" is every stored lane at once: what makes the collection screen cross-lane, mixing
   // fates on one page instead of the tab's single lane. The lane the operator left is untouched
   // underneath: `verdict` itself never changes for this, only which value the query sends.
   const queryVerdict: Verdict | "any" = activeCollection ? "any" : verdict;
@@ -1751,19 +1752,19 @@ export function ReviewQueue({
     },
   });
 
-  // Every candidate loaded so far, flattened across pages; the totals come from the server (the
+  // Every candidate loaded so far, flattened across pages. The totals come from the server (the
   // full filtered set, measured before the page window) so the header is right from page one.
   // Memoised on `pages` so the reference is stable between unrelated renders (a keystroke, a
-  // drag repaint) -- otherwise the sentinel observer below, keyed on `data`, would tear down
-  // and rebuild every render and could re-fire while the sentinel sits in view.
+  // drag repaint), or the sentinel observer below, keyed on `data`, would tear down and rebuild
+  // every render and could re-fire while the sentinel sits in view.
   const data = useMemo(() => (pages ? pages.pages.flatMap((p) => p.items) : undefined), [pages]);
   // Merged across every page, not read off the first: a show first seen on page three has
   // its rollup on page three, and its card's count sits beside a destructive control.
   const rollups = useMemo(() => toRollups(pages?.pages), [pages]);
   const totalItems = pages?.pages[0]?.total ?? 0;
-  // Named apart from the `totalBytes` formatter, which this used to shadow -- which is
-  // how the header kept rendering a bare sum while every other total had learned to say
-  // what it could not include.
+  // Named apart from the `totalBytes` formatter: a variable that shadows it would let the
+  // header render a bare sum instead of saying what every other total says it could not
+  // include.
   const totalSize = pages?.pages[0]?.total_bytes ?? 0;
   const totalUnknownSize = pages?.pages[0]?.unknown_size ?? 0;
 
@@ -1794,15 +1795,20 @@ export function ReviewQueue({
       keys,
       decision,
       spareDays = 0,
+      showKeys,
     }: {
       keys: string[];
       decision: Override | null;
       spareDays?: number;
+      /** The selected keys that are whole shows. A show card shows every season's hand
+       *  mark, so its bulk clear also clears the season-level rows (include_seasons);
+       *  without this a show whose marks are all season-level cleared nothing. */
+      showKeys?: Set<string>;
     }) => {
       const results = await Promise.allSettled(
         keys.map((key) =>
           decision === null
-            ? api.clearOverride(key)
+            ? api.clearOverride(key, showKeys?.has(key) ?? false)
             : api.override(key, decision, undefined, spareDays),
         ),
       );
@@ -1852,18 +1858,21 @@ export function ReviewQueue({
       setBulkFailures(0);
     },
   });
-  // Build a plan for exactly the selected items and open the confirmation sheet. Nothing
-  // deletes here -- the sheet is the gauntlet (dry run, arm check, typed phrase).
+  // Build a plan for exactly the selected items, prove it, then open the confirmation sheet.
+  // Nothing deletes here: the sheet is the gauntlet (arm check, typed phrase). Proving before
+  // opening is what lets the sheet open at its settled content rather than into an empty check.
   const reapNow = useMutation({
     // Fails closed on an empty selection rather than posting one: an omitted key list means
     // "the whole condemned set" to the route, so a selection that emptied out (a filter, a
     // race with a refresh) must never widen into a whole-library plan. The disabled button
     // above is a convenience, not the control.
-    mutationFn: (keys: string[]) => {
+    mutationFn: async (keys: string[]) => {
       if (keys.length === 0) throw new Error(t("reviewQueue.nothingSelectedError"));
-      return api.createRun(keys);
+      const run = await api.createRun(keys);
+      const report = await api.dryRun(run.id);
+      return { run, report };
     },
-    onSuccess: (run) => setReapRun(run),
+    onSuccess: (proved) => setReapRun(proved),
   });
   // A write that covers the WHOLE list, so nothing anywhere may be pressed while it is in
   // flight. The single-row writes are deliberately not here (see `pendingFor`).
@@ -1880,14 +1889,15 @@ export function ReviewQueue({
     : clearOverride.isPending
       ? clearOverride.variables
       : null;
-  /** Whether THIS row's controls are disabled, which used to be whether ANY row's were.
+  /** Whether THIS row's controls are disabled, scoped to the row doing the writing rather than
+   *  every row in the list.
    *
    *  Disabling the focused element drops focus to `<body>` in every major browser, and the
    *  `aria-pressed` flip on the Spare button is the app's only announcement that a spare
-   *  succeeded -- so by the time the state settled there was no focused element to announce it,
-   *  and the press that KEEPS a file confirmed itself to nobody (#173). Scoping the wait to the
-   *  row doing the writing restores that for free, and it was never right anyway: one row's
-   *  in-flight spare has nothing to say about another row's Reap. */
+   *  succeeded. Disabling every row while one writes would lose that focused element by the
+   *  time the state settles, so the press that KEEPS a file would confirm itself to nobody.
+   *  Scoping the wait to the row doing the writing avoids that, and is the more accurate scope
+   *  anyway: one row's in-flight spare has nothing to say about another row's Reap. */
   const pendingFor = (key: string) => blocking || busyKey === key;
   /** Anything at all is writing. The bulk bar reads this rather than `pendingFor`, because a
    *  bulk action covers the whole selection and must not fire over a single row's write in
@@ -1908,12 +1918,12 @@ export function ReviewQueue({
 
   // --- Keeping the list in step with the latest scan ------------------------------------------
   // A scan finishing while this queue is open leaves it showing an older snapshot. Pull the
-  // whole review surface to the newest one -- the list, the tab counts, the freshness line, an
-  // open why or show panel, the reap breakdown -- in the one place that names every review
+  // whole review surface to the newest one (the list, the tab counts, the freshness line, an
+  // open why or show panel, the reap breakdown) in the one place that names every review
   // cache, the same way an override does. Any of these landing the newer snapshot clears the
   // nudge on its own. `["candidate"]` is here so the claim above is true and a stale why-panel
-  // refetches; the panel itself is also closed in showLatest, since its id is snapshot-bound
-  // and a refetch of the old id can only return a stale row (B-7).
+  // refetches. The panel itself is also closed in showLatest, since its id is snapshot-bound,
+  // and a refetch of the old id can only return a stale row.
   const queryClient = useQueryClient();
   // Returns a promise that settles once these refetches have finished, which is what tells a
   // failed silent refresh from one still in flight (useReviewFreshness).
@@ -1944,11 +1954,11 @@ export function ReviewQueue({
     [selectedId, selectedGroupKey, selected, pending],
   );
   // A quiet refresh still says so. When a newer scan lands while the reviewer is idle at the
-  // top, the list swaps under them; a brief toast confirms it moved to the newest scan, so the
-  // numbers never change with no acknowledgment. It is the silent path's only signal -- the
-  // nudge covers the mid-review one. Fired only once the swap has actually landed (the freshness
-  // hook's caught-up callback), never at issuance, so a failed refetch can never claim it
-  // (PR-5, rule 85). A tick re-arms the fade each time, then it clears.
+  // top, the list swaps under them, and a brief toast confirms it moved to the newest scan, so
+  // the numbers never change with no acknowledgment. It is the silent path's only signal; the
+  // nudge covers the mid-review one. Fired only once the swap has actually landed (the
+  // freshness hook's caught-up callback), never at issuance, so a failed refetch can never
+  // claim it. A tick re-arms the fade each time, then it clears.
   const [toastTick, setToastTick] = useState(0);
   const [toastOn, setToastOn] = useState(false);
   // Passed straight through, promise and all: the hook waits on it to tell a failed silent
@@ -1957,11 +1967,12 @@ export function ReviewQueue({
   useEffect(() => {
     if (toastTick === 0) return;
     setToastOn(true);
-    // Said through the shared region rather than left to the toast's own markup. A `role="status"`
-    // node mounted in the same commit as its text is unreliably announced -- several readers only
-    // watch regions that were already there -- which is the bug `Notice` reached for `role="alert"`
-    // to avoid, and it is why this toast was silent while looking correct (#177). The words are
-    // the toast's own, so the ear and the eye get the same sentence (rule 144).
+    // Said through the shared region rather than left to the toast's own markup. A
+    // `role="status"` node mounted in the same commit as its text is unreliably announced,
+    // since several readers only watch regions that were already there, which is the same
+    // reason `Notice` reaches for `role="alert"` instead. Without this, the toast would be
+    // silent while looking correct. The words are the toast's own, so the ear and the eye get
+    // the same sentence.
     announce(toastCaughtUp());
     const id = window.setTimeout(() => setToastOn(false), 2600);
     return () => window.clearTimeout(id);
@@ -1970,16 +1981,16 @@ export function ReviewQueue({
     viewSnapshotId: pages?.pages[0]?.snapshot_id ?? null,
     latestSnapshotId: latestScanSnapshotId,
     isBusy,
-    // A silent refresh whose refetch settles without catching up surfaces the nudge instead of a
-    // phantom toast, so the list is never left silently stale (PR-5).
+    // A silent refresh whose refetch settles without catching up surfaces the nudge instead of
+    // a phantom toast, so the list is never left silently stale.
     onSilentRefresh,
     onSilentCaughtUp: () => setToastTick((n) => n + 1),
   });
   // The nudge's own voice. It appears when a scan lands under an open review, which is a change
-  // the operator did not make to a page whose every number just moved -- so it is exactly the
-  // event a reader has to hear, and the surface announcing it was the one that could not.
-  // Fired on the EDGE the bar goes up, not on every render it is up for, or a re-render would
-  // repeat it -- and the bar is sticky, so it stays up across a lot of them.
+  // the operator did not make to a page whose every number just moved, so it is exactly the
+  // event a reader has to hear, on a surface that otherwise could not announce it. Fired on the
+  // EDGE the bar goes up, not on every render it is up for, or a re-render would repeat it, and
+  // the bar is sticky, so it stays up across a lot of them.
   const nudgeUp = freshness.showBar;
   const nudgeWasUp = useRef(false);
   useEffect(() => {
@@ -1990,7 +2001,7 @@ export function ReviewQueue({
   const showLatest = () => {
     // Close an open why-panel first: its candidate id is from the snapshot being replaced, so a
     // refetch could only return a stale row. The show panel is keyed on a stable group key and
-    // refreshes in place, so only the item selection is cleared (B-7).
+    // refreshes in place, so only the item selection is cleared.
     onClearItemSelection?.();
     void refreshReview();
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
@@ -2006,13 +2017,13 @@ export function ReviewQueue({
     });
   }, []);
   // The live selection, for the two handlers that must read it without being rebuilt every time
-  // it changes -- a fresh handler would re-render every memoized card on every painted card,
-  // which is the loop P-1 is about. Same latest-ref pattern the modal shell uses for onClose.
+  // it changes: a fresh handler would re-render every memoized card on every painted card. Same
+  // latest-ref pattern the modal shell uses for onClose.
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
   // A press begins a drag whose direction (add vs remove) is fixed by the card pressed: press an
   // unpicked card to paint selections, a picked one to rub them out. Then every card the pointer
-  // enters follows suit -- so a tap toggles one, a drag sweeps a section.
+  // enters follows suit, so a tap toggles one, a drag sweeps a section.
   const onSelectDown = useCallback(
     (key: string, e: ReactPointerEvent) => {
       e.preventDefault();
@@ -2028,7 +2039,7 @@ export function ReviewQueue({
     },
     [applySelect],
   );
-  // Keyboard toggle: flip one card and leave no drag armed -- the belt to onSelectDown's
+  // Keyboard toggle: flip one card and leave no drag armed. This is the belt to onSelectDown's
   // pointer path, so tabbing through and pressing Space never strands a hover-painting mode.
   const onSelectToggle = useCallback(
     (key: string) => {
@@ -2036,7 +2047,7 @@ export function ReviewQueue({
     },
     [applySelect],
   );
-  // End the drag wherever the button is released -- even off the list.
+  // End the drag wherever the button is released, even off the list.
   useEffect(() => {
     const end = () => {
       dragRef.current = null;
@@ -2048,7 +2059,7 @@ export function ReviewQueue({
       window.removeEventListener("pointercancel", end);
     };
   }, []);
-  // Leaving Select mode clears the picks -- the toggle is the one place selection is undone, so
+  // Leaving Select mode clears the picks. The toggle is the one place selection is undone, so
   // turning it off can never strand a hidden selection behind a bulk action.
   const toggleSelectMode = () => {
     setBulkFailures(0);
@@ -2061,13 +2072,13 @@ export function ReviewQueue({
   const tabList = tabs();
   const tab = tabList.find((tb) => tb.verdict === verdict) ?? tabList[0]!;
   const laneLabel = laneLabels();
-  // Memoized on the loaded set. Without it, every render re-folded every fetched candidate
-  // into groups -- and a drag-select across a long list renders once per `pointerenter`
-  // (P-1). Everything derived from it is memoized on it, all the way to the card props.
+  // Memoized on the loaded set. Without it, every render would re-fold every fetched candidate
+  // into groups, and a drag-select across a long list renders once per `pointerenter`.
+  // Everything derived from it is memoized on it, all the way to the card props.
   const groups = useMemo(() => (data ? toGroups(data, rollups) : []), [data, rollups]);
 
-  // The genre and library choices are what the latest scan actually saw, most common first --
-  // the genre list is the same one the policy rule editors suggest from.
+  // The genre and library choices are what the latest scan actually saw, most common first.
+  // The genre list is the same one the policy rule editors suggest from.
   const { data: genreValues } = useQuery({
     queryKey: ["vocabulary-values", "genre"],
     queryFn: () => api.vocabularyValues("genre"),
@@ -2079,15 +2090,15 @@ export function ReviewQueue({
     staleTime: 5 * 60 * 1000,
   });
   // The operator's "expand seasons by default" preference (Settings -> General). It only
-  // seeds each show card's starting state; a click on a card still wins for that card.
+  // seeds each show card's starting state. A click on a card still wins for that card.
   // Shares the query key the settings panel writes, so flipping it there and returning here
-  // takes effect. Unknown/error reads as off -- the safe, unchanged default.
+  // takes effect. Unknown/error reads as off, the safe, unchanged default.
   const { data: generalSettings } = useGeneralSettings();
   // ...and which screens it applies to. A phone's season list is long enough to bury the next
   // card, so the two screen sizes are separately choosable. Live rather than read once: drag a
   // window across the boundary and untouched cards re-seed to match, which is also what makes
   // the setting observable without a reload. `useMediaQuery` reports false where matchMedia is
-  // missing, so that fallback is the wide screen -- the same one App's `fullSheet` assumes.
+  // missing, so that fallback is the wide screen, the same one App's `fullSheet` assumes.
   const narrowScreen = useMediaQuery(NARROW_SCREEN_QUERY);
   const expandSeasonsByDefault = shouldExpandSeasons(
     generalSettings?.expand_seasons_mode ?? "off",
@@ -2098,10 +2109,10 @@ export function ReviewQueue({
   // it uses the default and its glyph (∞ or a clock) shows which that is.
   const defaultSpareDays = generalSettings?.default_spare_days ?? 0;
   // The unmeasured allowance, read once here for the whole list. Together with the spare
-  // length above this is everything the rows share, and the two are handed down through
-  // QueueSettingsContext -- one subscription each, where there used to be one PER CONTROL:
-  // four hundred cards with their seasons expanded came to roughly a thousand observers on
-  // these two keys, and every write to either re-rendered all of them (P-7).
+  // length above, this is everything the rows share, and the two are handed down through
+  // QueueSettingsContext as one subscription each. A subscription per control instead would
+  // put four hundred cards with their seasons expanded at roughly a thousand observers on
+  // these two keys, with every write to either re-rendering all of them.
   const profile = useQuery({ queryKey: ["profile"], queryFn: api.profile });
   const queueSettings = useMemo<QueueSettings>(
     () => ({
@@ -2206,7 +2217,7 @@ export function ReviewQueue({
   });
   // The collection header's fate summary: three lightweight, single-verdict reads over the
   // SAME endpoint the ordinary tabs already trust for their own headline totals, rather than a
-  // new server aggregate -- each `total`/`total_bytes` is the server's own EFFECTIVE-lane count
+  // new server aggregate. Each `total`/`total_bytes` is the server's own EFFECTIVE-lane count
   // (a hand override already moves a row before this reads it), and every row lands in exactly
   // one of the three, so summing all three total_bytes is the collection's whole known size, no
   // less honest than a bespoke query would be. Independent of the toolbar's own search/filters:
@@ -2228,9 +2239,9 @@ export function ReviewQueue({
     enabled: collEnabled,
   });
   // Plex's own member count for every collection, from the snapshot the scan already recorded
-  // it on -- shares the ["snapshot"] cache with the shell's own poll (App.tsx), so this costs
-  // nothing extra there. Always enabled, not just on the collection screen: every card's picker
-  // reads `collectionSizes` below too (#816 phase 4/5).
+  // it on, sharing the ["snapshot"] cache with the shell's own poll (App.tsx), so this costs
+  // nothing extra there. Always enabled, not just on the collection screen: every card's
+  // picker reads `collectionSizes` below too.
   const { data: snapshot } = useQuery({
     queryKey: ["snapshot"],
     queryFn: api.latestSnapshot,
@@ -2238,9 +2249,9 @@ export function ReviewQueue({
   });
   const collectionSizes = snapshot?.collection_sizes ?? null;
   // `isPending` alone reads true the moment a query settles, on an ERROR exactly as on a
-  // success -- so a lane that exhausted its retries would read as "loaded" with a `total` of
+  // success, so a lane that exhausted its retries would read as "loaded" with a `total` of
   // `?? 0`, and the header would state a false zero and an undercounted total rather than say
-  // it could not read them (rule 17/36). `collLoaded` therefore also requires no error.
+  // it could not read them. `collLoaded` therefore also requires no error.
   const collFateError = condemnedFate.isError || protectedFate.isError || abstainedFate.isError;
   const collLoaded =
     !condemnedFate.isPending &&
@@ -2251,7 +2262,7 @@ export function ReviewQueue({
   const collProtected = protectedFate.data?.total ?? 0;
   const collAbstained = abstainedFate.data?.total ?? 0;
   // The scan's own total (the blurb's "N in the last scan"), independent of the toolbar's
-  // search/filters -- `queue-total` below states the byte size, already filtered the operator's
+  // search/filters. `queue-total` below states the byte size, already filtered the operator's
   // way, off the SAME infinite query every lane's `queue-total` already reads.
   const collScanned = collCondemned + collProtected + collAbstained;
   const collPlexCount = activeCollection
@@ -2260,10 +2271,10 @@ export function ReviewQueue({
 
   // The override key each shown card acts on: a show's group key, or a movie's media key.
   const shownGroups = useMemo(() => groups.slice(0, visible), [groups, visible]);
-  // Where the collection-name search block (2) starts, for the labeled divider above it (#816
-  // phase 3b/5). The server sorts block 0/1/2 ahead of the operator's own order, so once block 2
-  // starts every later group is in it too -- the first hit is the only index this needs. -1 with
-  // no search at all, since `search_rank` is null outside one and every group would "match".
+  // Where the collection-name search block (2) starts, for the labeled divider above it. The
+  // server sorts block 0/1/2 ahead of the operator's own order, so once block 2 starts every
+  // later group is in it too, and the first hit is the only index this needs. -1 with no search
+  // at all, since `search_rank` is null outside one and every group would "match".
   const collectionBlockAt = search
     ? shownGroups.findIndex((g) => g.items[0]!.search_rank === 2)
     : -1;
@@ -2287,11 +2298,11 @@ export function ReviewQueue({
   // Picked cards that are not on screen: the state "Select everything matching" leaves behind.
   const holdsUndrawn = selected.size > shownKeys.length;
   // What the picked CARDS cover in the items a reap would plan: a show card stands for every
-  // actable season, so "3 selected" can sit beside a run of thirty (rule 30). A show's count
-  // is the server's own actable total, never the seasons this page happened to fetch. Null --
-  // and the bar says cards only -- off the condemned lane, where the bulk actions decide whole
-  // cards rather than seasons, and whenever a picked card is not drawn, since its size is
-  // unknown here.
+  // actable season, so "3 selected" can sit beside a run of thirty. A show's count is the
+  // server's own actable total, never the seasons this page happened to fetch. Null, with the
+  // bar saying cards only, off the condemned lane, where the bulk actions decide whole cards
+  // rather than seasons, and whenever a picked card is not drawn, since its size is unknown
+  // here.
   //
   // A show with no rollup falls into that same "cards only" arm rather than to the fetched
   // season count, which is the number this figure exists to avoid printing beside Reap.
@@ -2377,14 +2388,14 @@ export function ReviewQueue({
   return (
     // Every row below reads the operator's spare length and the unmeasured allowance, and
     // reads them from HERE: one subscription for the whole list rather than one per control
-    // (P-7, see QueueSettingsContext).
+    // (see QueueSettingsContext).
     <QueueSettingsContext.Provider value={queueSettings}>
       <section className="queue">
-        {/* The collection screen (#816 phase 5): one back link in place of the lane tabs, since
-          the lane is exactly what this screen is ignoring -- leaving the tabs up would invite a
-          click that throws the collection away. Fate moves onto each row instead (rule 48's
-          `hideReap` already reads the ROW's own verdict, never the tab's, so the cards need no
-          change to be correct here). */}
+        {/* The collection screen: one back link in place of the lane tabs, since the lane is
+          exactly what this screen is ignoring, and leaving the tabs up would invite a click that
+          throws the collection away. Fate moves onto each row instead (`hideReap` already reads
+          the ROW's own verdict, never the tab's, so the cards need no change to be correct
+          here). */}
         {activeCollection ? (
           <>
             <button type="button" className="back-to-lane" onClick={closeCollection}>
@@ -2401,7 +2412,7 @@ export function ReviewQueue({
                 decided about it" is what the fate chips below already show, and repeating the
                 scanned count restates the "N items" line under the search box. What neither of
                 those can say is that Plex holds titles this scan never saw, because they sit in
-                an unscanned library or Plex never matched them -- so that sentence appears only
+                an unscanned library or Plex never matched them, so that sentence appears only
                 when the two numbers actually disagree, and showing the scanned count alone would
                 be the lie by omission. */}
             {collLoaded && collPlexCount !== null && collPlexCount !== collScanned && (
@@ -2462,18 +2473,16 @@ export function ReviewQueue({
                 </button>
               ))}
             </nav>
-
-            <p className="blurb">{tab.blurb}</p>
           </>
         )}
 
         {/* A scan finished under an open review. Sticky, so it stays in reach however far the
-          reviewer has scrolled; derived from the list being behind, so it clears itself the
+          reviewer has scrolled. Derived from the list being behind, so it clears itself the
           moment any refetch pulls the newer snapshot. */}
-        {/* No `role="status"` here any more. It was mounted in the same commit as its text, which
-            several readers do not announce at all, so the role read as correct and said nothing --
-            and it wrapped two focusable buttons, which a live region should not. The sentence is
-            spoken through the shared region instead, from the effect below. */}
+        {/* No `role="status"` here: mounted in the same commit as its text, that role would not
+            be announced by several readers, and it would wrap two focusable buttons, which a
+            live region should not. The sentence is spoken through the shared region instead,
+            from the effect below. */}
         {freshness.showBar && (
           <div className="scan-nudge">
             <span className="nudge-dot" aria-hidden="true" />
@@ -2511,7 +2520,7 @@ export function ReviewQueue({
             <span className="scan-behind-cta">{t("reviewQueue.showLatest")}</span>
           </button>
         )}
-        {/* Same as the nudge above (rule 72): the role is gone and the sentence is announced. */}
+        {/* Same as the nudge above: the role is gone and the sentence is announced. */}
         {toastOn && (
           <div className="scan-toast">
             <span className="scan-toast-check" aria-hidden="true">
@@ -2548,7 +2557,7 @@ export function ReviewQueue({
               // The year is named because it is not guessable: the box takes "Example Alpha
               // 1979" and takes "1979" on its own, and an operator who is not told tries the
               // year once, gets nothing, and stops trying. `list_candidates` is the other copy
-              // of this sentence (rule 144) and says the same three things.
+              // of this sentence and says the same three things.
               // The name repeats the placeholder word for word, because the placeholder is this
               // box's only visible label: a name that says "and years" where the screen says
               // "years" cannot be reached by someone who speaks what they can see.
@@ -2653,7 +2662,7 @@ export function ReviewQueue({
           {/* Turn the whole list into a selectable surface: tap a card to pick it, or press and
             drag across a run. Turning it off clears the picks. Off on the collection screen: a
             selection spanning three fates is not one decision, and bulk stays on the lanes,
-            where every row shares one (rule 48). */}
+            where every row shares one. */}
           {!activeCollection && (
             <button
               type="button"
@@ -2763,10 +2772,10 @@ export function ReviewQueue({
           </div>
         )}
 
-        {/* Divided, and in plain language. The raw `error.message` was an exception string over
-            a fully drawn queue: it broke rule 21 on its own, and it said the read had failed
-            directly above the rows it had read (#190). Which one shows turns on whether anything
-            ever landed -- `data` is undefined only then. */}
+        {/* Divided, and in plain language: the raw `error.message` is never shown, since an
+            exception string over a fully drawn queue is not plain language, and it would say
+            the read had failed directly above the rows it had read. Which one shows turns on
+            whether anything ever landed: `data` is undefined only then. */}
         {error && !data && <p className="error">{t("reviewQueue.loadQueueError")}</p>}
         {error && data && <StaleReadNotice what={t("reviewQueue.staleQueueWhat")} />}
         {isPending && <p className="muted">{t("common.loading")}</p>}
@@ -2859,10 +2868,10 @@ export function ReviewQueue({
                       onSet={onSet}
                       onClear={onClear}
                       pending={pendingFor(group.items[0]!.media_key)}
-                      // The ITEM's own verdict, through the one shared test -- never the tab's.
+                      // The ITEM's own verdict, through the one shared test, never the tab's.
                       // Lane membership is the effective verdict, so a movie sits on Condemned
                       // with a stored abstain and an honored hand reap: Reap must stay, and a
-                      // spared condemnation must stay flippable (rule 48).
+                      // spared condemnation must stay flippable.
                       hideReap={reapIsNoop(group.items[0]!)}
                     />
                   )}
@@ -2882,10 +2891,10 @@ export function ReviewQueue({
           </>
         )}
 
-        {/* Never on the collection screen (rule 48): the select-toggle above is already hidden
-          there, and this re-states the same guard rather than trusting that alone, since the
-          chip's own click can land `activeCollection` and a stale `selectMode` in the same
-          render (the effect that clears it runs a commit later). */}
+        {/* Never on the collection screen: the select-toggle above is already hidden there, and
+          this re-states the same guard rather than trusting that alone, since the chip's own
+          click can land `activeCollection` and a stale `selectMode` in the same render (the
+          effect that clears it runs a commit later). */}
         {!activeCollection && selectMode && (
           <div className="bulk-bar" role="region" aria-label={t("reviewQueue.bulkActionsAria")}>
             <span className="bulk-count">
@@ -2991,7 +3000,13 @@ export function ReviewQueue({
                 type="button"
                 className="sm ghost"
                 disabled={pending || selected.size === 0}
-                onClick={() => bulk.mutate({ keys: [...selected], decision: null })}
+                onClick={() =>
+                  bulk.mutate({
+                    keys: [...selected],
+                    decision: null,
+                    showKeys: new Set(groups.filter((g) => g.isShow).map((g) => g.key)),
+                  })
+                }
                 title={t("reviewQueue.clearOverrideTitle")}
               >
                 {t("reviewQueue.clearOverrideButton")}
@@ -3015,8 +3030,8 @@ export function ReviewQueue({
         )}
 
         {/* A per-card Spare or Reap that failed says so here, in the same place as the bulk
-          failures -- otherwise the button reads as a click the app ignored. Same wording as
-          the why-panel's, since it is the same action. */}
+          failures, or the button reads as a click the app ignored. Same wording as the
+          why-panel's, since it is the same action. */}
         {(setOverride.isError || clearOverride.isError) && (
           <p className="error bulk-error">{t("common.saveError")}</p>
         )}
@@ -3031,9 +3046,10 @@ export function ReviewQueue({
         {reapNow.error && <p className="error bulk-error">{describeError(reapNow.error)}</p>}
         {reapRun && (
           <ReapConfirm
-            run={reapRun}
+            run={reapRun.run}
+            initialReport={reapRun.report}
             onClose={() => setReapRun(null)}
-            onDone={() => setSelected(new Set())}
+            onStarted={() => setSelected(new Set())}
           />
         )}
       </section>
@@ -3042,7 +3058,7 @@ export function ReviewQueue({
 }
 
 // Re-exported so these keep their old import path while callers and tests move over to the
-// files that now own them (R-1). New code imports from ./queueFilters, ./queueSettings and
+// files that now own them. New code imports from ./queueFilters, ./queueSettings and
 // ./reviewFate directly.
 export { DEFAULT_FILTERS, loadFilters, saveFilters, type QueueFilters };
 export { useHoldsBackUnmeasured };

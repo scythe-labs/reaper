@@ -2,8 +2,8 @@
 //
 // Every manual the build ships, for the gates that read them all: English first, then each
 // translated one by tag. Eager, so it never runs in the app. `docs/localized.ts` holds the
-// lazy twin over the same pattern, and `manual.locales.test.ts` pins that the two agree
-// (rule 145: two walks over one population, checked against each other).
+// lazy twin over the same pattern, and `manual.locales.test.ts` pins that the two agree: two
+// walks over one population, checked against each other.
 
 import type { Doc } from "../docs/blocks";
 import { ENGLISH, type Manual } from "../docs/localized";

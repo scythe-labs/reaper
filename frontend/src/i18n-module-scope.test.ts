@@ -5,21 +5,21 @@
 //
 // A module body runs once, when something first imports it, and whatever `i18next.t()` returns
 // there is that string for the life of the page. `main.tsx` serves the operator's language in
-// `applyStoredLanguage`, which it awaits before rendering -- but a static `import` runs the
-// imported body FIRST, so everything the entry reaches has already been evaluated by the time
-// that await is reached. That is how a Spanish browser got a Spanish queue with English tabs
-// (#897). The lazily imported half of the tree escaped it by accident of load order, which is
+// `applyStoredLanguage`, which it awaits before rendering. A static `import` runs the imported
+// body first, though, so everything the entry reaches has already been evaluated by the time
+// that await is reached. That is how a Spanish browser could get a Spanish queue with English
+// tabs. The lazily imported half of the tree escapes this by accident of load order, which is
 // not a property worth resting on: a new static import moves a module from one half to the
 // other with nothing to notice.
 //
 // So the rule is flat, and every table is a function called per render, the way
 // `queueFilters.tsx` has always done it.
 //
-// Named limits (rule 118). It reads one spelling, `<default import of ./i18n>.t(...)`, at module
-// scope. A catalog read reached another way -- a destructured `t`, a helper in another module
-// called from a module-scope initializer -- is invisible to it; a sweep for the second shape
-// found none. The fixtures below are the accepted and rejected forms, run against the detector
-// itself (rule 147), and the population it walked is pinned for rule 145's reason.
+// Named limits: this reads one spelling, `<default import of ./i18n>.t(...)`, at module scope.
+// A catalog read reached another way, such as a destructured `t` or a helper in another module
+// called from a module-scope initializer, is invisible to it. A sweep for the second shape found
+// none. The fixtures below are the accepted and rejected forms, run against the detector itself,
+// and the population it walked is pinned by hand below.
 
 import { readFileSync } from "node:fs";
 import ts from "typescript";
@@ -28,9 +28,9 @@ import { describe, expect, it } from "vitest";
 import { shippedSource, srcRelative } from "./test/sources";
 
 //: Every `.ts`/`.tsx` the SPA ships, which is the population the ban below scans. Pinned
-//: because the ban's expected result is EMPTY, so a walk that stopped reading the tree agrees
-//: with a clean one exactly (rule 147). Bump it when you add or delete a module.
-const EXPECTED_SHIPPED_MODULES = 127;
+//: because the ban's expected result is empty, so a walk that stopped reading the tree would
+//: agree with a clean one exactly. Bump it when you add or delete a module.
+const EXPECTED_SHIPPED_MODULES = 128;
 
 const parse = (fileName: string, text: string) =>
   ts.createSourceFile(

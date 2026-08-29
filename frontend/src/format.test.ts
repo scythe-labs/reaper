@@ -10,6 +10,7 @@ import {
   count,
   coverage,
   itemBytes,
+  since,
   spareRemaining,
   titleWithYear,
   totalBytes,
@@ -46,8 +47,8 @@ describe("itemBytes", () => {
   });
 
   it("renders a real zero honestly, now that null carries the unknown", () => {
-    // Regression on the heuristic this replaced: a `value > 0` test could not tell an
-    // empty thing from an unmeasured one, so it called both unknown.
+    // A `value > 0` test cannot tell an empty thing from an unmeasured one, so it would call
+    // both unknown. `itemBytes` must not make that mistake.
     expect(itemBytes(0)).toBe("0 B");
   });
 
@@ -176,5 +177,30 @@ describe("titleWithYear", () => {
 
   it("trims, so the seeded search is not a term with an edge no title has", () => {
     expect(titleWithYear("  Example Alpha  ", 1979)).toBe("Example Alpha 1979");
+  });
+});
+
+describe("since", () => {
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+  // The freshness line above the review queue is the caller that needs the first three: a scan
+  // five minutes old and one from this morning both read "today" before, on the one line whose
+  // job is to say how stale the queue is.
+  it("counts minutes and hours on the day it happened", () => {
+    expect(since(ago(20_000))).toBe("now");
+    expect(since(ago(8 * 60_000))).toBe("8 minutes ago");
+    expect(since(ago(3 * 3_600_000))).toBe("3 hours ago");
+    expect(since(ago(23.5 * 3_600_000))).toBe("23 hours ago");
+  });
+
+  it("counts days, then months, then years", () => {
+    expect(since(ago(26 * 3_600_000))).toBe("yesterday");
+    expect(since(ago(5 * 86_400_000))).toBe("5 days ago");
+    expect(since(ago(200 * 86_400_000))).toBe("6 months ago");
+    expect(since(ago(1000 * 86_400_000))).toBe("2.7 years ago");
+  });
+
+  it("hands back an unparseable stamp rather than a formatted lie", () => {
+    expect(since("not a date")).toBe("not a date");
   });
 });

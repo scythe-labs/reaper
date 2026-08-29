@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Background maintenance keeps the caches fresh so a scan can judge.
 
-The one that matters most: the startup catch-up. Without it a fresh install refreshes
+The most important piece is the startup catch-up. Without it, a fresh install refreshes
 the ratings dataset only at 3:30am, so every scan until then degrades and nothing can be
-reaped -- the tool looks broken on day one. These prove the catch-up fires when the data
-is stale, skips the download when it is warm, and never deletes.
+reaped, making the tool look broken on day one. These tests check that the catch-up
+fires when the data is stale, skips the download when it is warm, and never deletes.
 """
 
 from __future__ import annotations
@@ -48,8 +48,8 @@ class TestStartupCatchUp:
     async def test_it_refreshes_when_the_dataset_is_missing(
         self, cache_engine: AsyncEngine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A fresh install has no ratings dataset, so the catch-up must fetch it now --
-        otherwise the first scan degrades and stays that way until the nightly job."""
+        """A fresh install has no ratings dataset, so the catch-up must fetch it now.
+        Otherwise the first scan degrades and stays that way until the nightly job."""
         called: list[str] = []
 
         async def fake_refresh(engine: AsyncEngine, data_dir: Path) -> None:
@@ -64,9 +64,9 @@ class TestStartupCatchUp:
     async def test_it_skips_the_download_when_the_dataset_is_warm(
         self, cache_engine: AsyncEngine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A restart of a healthy install must not re-download ~280 MB it already has."""
-        # Seed a fresh, non-degraded dataset state. state() checks that the ratings
-        # DATA table exists AND that the sync-metadata row is recent, so both are needed.
+        """A restart of a healthy install must not re-download a dataset it already has."""
+        # Seeds a fresh, non-degraded dataset state. state() checks that the ratings
+        # data table exists and that the sync-metadata row is recent, so both are needed.
         from sqlalchemy import text
 
         from reaper.clock import utcnow
@@ -133,7 +133,7 @@ async def _seed_synced(engine: AsyncEngine, *, hours_ago: float) -> None:
 class TestRatingsRefreshFreshnessGuard:
     """The scheduled refresh short-circuits when the dataset was pulled recently, so an
     aggressive schedule (the shared presets go down to hourly) cannot re-download the same
-    daily-published data on repeat (PF-1)."""
+    daily-published data on repeat."""
 
     async def test_a_recent_refresh_short_circuits_the_download(
         self, cache_engine: AsyncEngine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -167,7 +167,7 @@ class TestRatingsRefreshFreshnessGuard:
 class TestTheSchedulerIsUpkeepOnly:
     async def test_it_schedules_only_refresh_jobs_never_a_deletion(self, tmp_path: Path) -> None:
         """A timer must never be able to trigger a reap. Automated deletion is gated
-        behind an earned autonomy grant, not a cron entry -- so the scheduler's whole job
+        behind an earned autonomy grant, not a cron entry, so the scheduler's whole job
         list is refreshes."""
         settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
@@ -180,7 +180,7 @@ class TestTheSchedulerIsUpkeepOnly:
             timezone=ZoneInfo("UTC"),
             reap_running=lambda: False,
         )
-        # build_scheduler returns an unstarted scheduler; jobs are inspectable without
+        # build_scheduler returns an unstarted scheduler. Jobs are inspectable without
         # starting it, and there is nothing to shut down.
         job_ids = {job.id for job in sched.get_jobs()}
         assert job_ids == {
@@ -188,16 +188,17 @@ class TestTheSchedulerIsUpkeepOnly:
             "refresh_curated_lists",
             "full_history_sweep",
             "check_for_updates",
-            # Housekeeping, deliberately absent from the operator's Jobs list: deleting
-            # sessions whose window has already closed is not a choice to hand over, and an
-            # off switch on it could only ever let the table grow (PR-13). Trimming the
-            # scan history is off it on the same argument (#315), and deletes rows Reaper
-            # wrote about itself -- never a file, an *arr or Plex.
+            # Housekeeping, deliberately absent from the operator's Jobs list. Deleting
+            # sessions whose window has already closed is not a choice to hand over, and
+            # an off switch on it could only ever let the table grow. Trimming the scan
+            # history follows the same argument, and deletes rows Reaper wrote about
+            # itself, never a file, an *arr, or Plex.
             scheduler.SESSION_SWEEP_JOB_ID,
             scheduler.SNAPSHOT_SWEEP_JOB_ID,
         }
-        # Every job is a refresh/sweep. Nothing here touches the executor or an *arr
-        # delete -- automated deletion is gated behind an autonomy grant, not a cron entry.
+        # Every job is a refresh or a sweep. Nothing here touches the executor or an
+        # *arr delete, since automated deletion is gated behind an autonomy grant, not
+        # a cron entry.
         for job in sched.get_jobs():
             assert "delete" not in job.func.__name__
             assert "reap" not in job.func.__name__
@@ -207,9 +208,9 @@ class TestTheSchedulerIsUpkeepOnly:
                 or "refresh" in job.func.__name__
                 or "sweep" in job.func.__name__
                 # The update check reads one anonymous GitHub URL and writes nothing
-                # anywhere -- no credentials, no client that can mutate, no *arr and no
-                # Plex (`scheduler.check_for_updates`). It earns the fourth verb rather
-                # than being renamed to fit one of the three.
+                # anywhere. It touches no credentials, no client that can mutate, and no
+                # *arr or Plex client (`scheduler.check_for_updates`). It earns the
+                # fourth verb rather than being renamed to fit one of the three.
                 or job.func.__name__ == "check_for_updates"
             )
         await engine.dispose()
@@ -218,9 +219,10 @@ class TestTheSchedulerIsUpkeepOnly:
         self, tmp_path: Path
     ) -> None:
         """An install upgrading with months of scans behind it has a database that is
-        mostly dead weight now, so an interval trigger's default first fire -- a whole
-        twelve hours in -- is the wrong answer. Pinned against the interval rather than a
-        literal, so raising one cannot quietly turn the delay back into a full period."""
+        mostly dead weight now, so an interval trigger's default first fire, a whole
+        twelve hours in, is the wrong answer. This is pinned against the interval rather
+        than a literal, so raising one cannot quietly turn the delay back into a full
+        period."""
         settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         sched = scheduler.build_scheduler(
@@ -243,18 +245,18 @@ class TestTheSchedulerIsUpkeepOnly:
         self, tmp_path: Path
     ) -> None:
         """Twelve hours is an exact multiple of an hour, so an unjittered interval fires at
-        the same second forever -- and a firing that runs late does not move it, because the
-        next one is computed from the scheduled time rather than the actual one. That was
-        harmless until the compaction was gated on a live scan or reap (#325): a scan on a
-        cron whose period divides twelve hours now collides with every firing or with none,
-        and a collision means the vacuum never runs again rather than running twelve hours
-        later, so an upgraded install's freed pages stay on disk for the life of the process.
+        the same second forever, and a firing that runs late does not move it, because the
+        next one is computed from the scheduled time rather than the actual one. Now that
+        compaction is gated on a live scan or reap, a scan on a cron whose period divides
+        twelve hours collides with every firing or with none. A collision means the vacuum
+        never runs again rather than running twelve hours later, so an upgraded install's
+        freed pages stay on disk for the life of the process.
 
-        Asserted on the fire times, not on the trigger's ``jitter`` attribute: the attribute
-        reads the same whether or not the trigger honors it (rule 118). Consecutive firings
-        must land at different offsets within the interval, and each gap must still sit
-        inside one interval plus the spread, so a jitter large enough to reorder firings or
-        small enough to round away would both fail."""
+        This asserts on the actual fire times, not on the trigger's ``jitter`` attribute,
+        because that attribute reads the same whether or not the trigger honors it.
+        Consecutive firings must land at different offsets within the interval, and each
+        gap must still sit inside one interval plus the spread, so a jitter large enough
+        to reorder firings or small enough to round away would both fail."""
         settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         sched = scheduler.build_scheduler(
@@ -294,20 +296,18 @@ class TestTheSchedulerIsUpkeepOnly:
         self, tmp_path: Path
     ) -> None:
         """The compaction opens ``data_dir / "reaper.db"`` with a raw sqlite3 connection, so
-        a wrong folder here does not fail: it CREATES an empty second database there and
-        vacuums that, while the real one is never compacted. The arity is the same either
-        way, so APScheduler's own argument check cannot see it.
+        a wrong folder here does not fail loudly. It creates an empty second database
+        there and vacuums that, while the real one is never compacted. The arity is the
+        same either way, so APScheduler's own argument check cannot see the mistake.
 
-        The sweep folder used to arrive beside ``settings`` as its own argument, and this test
-        passed a different folder to prove the job read the argument (rule 141). It is derived
-        from ``settings`` now, so there is no second source to diverge from and no divergent
-        value to pass. What is left to pin is the thing the old assertion took on trust: that
-        the folder the sweep vacuums is the folder the ENGINE opened. So it is read back off
-        the engine's own URL rather than recomputed from ``settings``, which would only restate
-        the derivation under test.
+        The sweep folder is derived from ``settings``, so there is no second source it
+        could diverge from. What matters is that the folder the sweep vacuums is the
+        folder the engine opened, so this reads the folder back off the engine's own URL
+        rather than recomputing it from ``settings``, which would only restate the
+        derivation under test.
 
-        The folder is nested a level under ``tmp_path`` and is not the shipped default, so a
-        wiring that reached for either would fail (rule 141).
+        The folder is nested a level under ``tmp_path`` and is not the shipped default, so
+        a wiring that reached for either would fail.
         """
         db_dir = tmp_path / "db"
         db_dir.mkdir()
@@ -337,14 +337,14 @@ class TestTheSchedulerIsUpkeepOnly:
         await db_engine.dispose()
 
     async def test_the_ratings_refresh_is_handed_that_same_folder(self, tmp_path: Path) -> None:
-        """`refresh_ratings` downloads the IMDb dataset into ``data_dir`` and is wired from the
-        same `settings` the sweep now reads, so it is the sibling of the assertion above (rule
-        72) and had nothing pinning its wired arguments at all.
+        """`refresh_ratings` downloads the IMDb dataset into ``data_dir`` and is wired from
+        the same `settings` the sweep reads above, so this is the sibling of that
+        assertion.
 
-        A wrong folder here is quiet in the same way: the download lands somewhere the loader
-        never looks and the dataset reads as permanently stale, degrading every scan. Both jobs
-        are checked against the engine's own folder, so a change that moves one and not the
-        other fails on whichever it left behind."""
+        A wrong folder here is quiet in the same way. The download would land somewhere
+        the loader never looks, and the dataset would read as permanently stale,
+        degrading every scan. Both jobs are checked against the engine's own folder, so a
+        change that moves one and not the other fails on whichever it left behind."""
         db_dir = tmp_path / "db"
         db_dir.mkdir()
         settings = Settings(data_dir=db_dir, secret_key="k")
@@ -363,19 +363,20 @@ class TestTheSchedulerIsUpkeepOnly:
         job = next(j for j in sched.get_jobs() if j.id == "refresh_ratings")
 
         assert db_engine.url.database is not None
-        # `refresh_ratings(cache_engine, data_dir, session_factory)`: the folder is second.
+        # `refresh_ratings(cache_engine, data_dir, session_factory)`. The folder is the
+        # second argument.
         assert list(job.args)[1] == Path(db_engine.url.database).parent
         await db_engine.dispose()
 
     async def test_the_snapshot_sweep_is_handed_a_way_to_ask_whether_a_reap_is_live(
         self, tmp_path: Path
     ) -> None:
-        """A reap's live flag lives on app state, which the scheduler has no handle on, so it
-        arrives as a predicate. Wired wrong it would still have the right arity, and the job
-        would compact straight through a reap (#325).
+        """A reap's live flag lives on app state, which the scheduler has no handle on, so
+        it arrives as a predicate. Wired wrong, it would still have the right arity, and
+        the job would compact straight through a live reap.
 
-        The predicate is passed answering True, which no default could produce -- a job wired
-        to a placeholder would read False here (rule 141)."""
+        The predicate is passed answering True, which no default could produce. A job
+        wired to a placeholder would read False here instead."""
         settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         sched = scheduler.build_scheduler(
@@ -395,9 +396,9 @@ class TestTheSchedulerIsUpkeepOnly:
 
     def test_the_predicate_the_real_app_wires_reads_the_live_reap(self, tmp_path: Path) -> None:
         """The test above proves the job calls whatever it was handed, which a placeholder
-        would satisfy just as well. This boots the real app and pins the whole chain --
-        ``main`` to ``api.runs.reap_in_flight`` to ``app.state.reap_status`` -- so the
-        interlock cannot be wired to something that never says True (#325).
+        would satisfy just as well. This boots the real app and pins the whole chain, from
+        ``main`` to ``api.runs.reap_in_flight`` to ``app.state.reap_status``, so the
+        interlock cannot be wired to something that never says True.
 
         Driven in both states off one predicate object, because a lambda captured before the
         status existed would answer False forever and read as correct in the False case."""
@@ -421,8 +422,8 @@ class TestTheSchedulerIsUpkeepOnly:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Gating compaction on this firing's sweep would make the upgrade firing the only
-        one that could ever hand disk back: it drains the whole backlog at once, so every
-        later firing removes nothing. A compaction lost to a full disk, a locked database
+        one that could ever hand disk back. It drains the whole backlog at once, so every
+        later firing removes nothing. A compaction lost to a full disk, a locked database,
         or a canceled shutdown would then never be reattempted until a new scan pushed the
         count past the window, which on an install with auto-scan off is never.
 
@@ -448,17 +449,17 @@ class TestTheSchedulerIsUpkeepOnly:
     async def test_compaction_yields_to_a_live_scan_or_reap_but_the_sweep_still_runs(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, live: str
     ) -> None:
-        """``VACUUM`` rewrites the whole file under the write lock and every app connection
-        waits only 5s for it (``db.session``). Measured on local NVMe with the app's own
-        pragmas, a 2.4 GB database vacuums for 8s and the concurrent write fails -- a size
-        inside the range ``retention.KEEP_SNAPSHOTS`` documents as the steady state, so it
-        needs no unusual storage. A scan loses every source read it made, since it commits
-        once at the end; a reap loses a journal step and wedges (#325, #327).
+        """``VACUUM`` rewrites the whole file under the write lock, and every app connection
+        waits only a few seconds for it (``db.session``). A database well within the range
+        ``retention.KEEP_SNAPSHOTS`` documents as the steady state can vacuum for long
+        enough that a concurrent write times out. A scan loses every source read it made,
+        since it commits once at the end. A reap loses a journal step and wedges.
 
-        Both arms are pinned because they read two different flags from two different homes,
-        so one wired and one not is the likely half-fix. The sweep itself is asserted to have
-        run in both: its batches are short writes, and skipping them would let the database
-        grow without limit again (#315), which is a bigger harm than a deferred vacuum."""
+        Both arms are pinned because they read two different flags from two different
+        homes, so one wired and one not is the likely half-fix. The sweep itself is
+        asserted to have run in both. Its batches are short writes, and skipping them
+        would let the database grow without limit again, which is a bigger harm than a
+        deferred vacuum."""
         swept, attempted = [], []
 
         async def _sweep(_factory: object) -> int:
@@ -483,7 +484,7 @@ class TestTheSchedulerIsUpkeepOnly:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A database busy with a scan must not stop the scheduler, and nothing downstream
-        depends on this having run -- the worst case of a skipped firing is that the next
+        depends on this having run. The worst case of a skipped firing is that the next
         one has one more scan to drop."""
 
         async def _boom(_factory: object) -> int:
@@ -494,9 +495,9 @@ class TestTheSchedulerIsUpkeepOnly:
         await scheduler.sweep_old_snapshots(None, tmp_path, lambda: False)  # type: ignore[arg-type]
 
     async def test_the_snapshot_sweep_is_not_operator_schedulable(self) -> None:
-        """Same argument as the session sweep: an off switch on it could only ever let the
-        database grow, which is the state it exists to end (#315). Nothing reads a scan
-        older than the newest one, so there is no window an operator would want to widen."""
+        """Same argument as the session sweep. An off switch on it could only ever let the
+        database grow, which is the state it exists to end. Nothing reads a scan older
+        than the newest one, so there is no window an operator would want to widen."""
         assert scheduler.SNAPSHOT_SWEEP_JOB_ID not in scheduler.SCHEDULABLE_JOB_IDS
         assert scheduler.SNAPSHOT_SWEEP_JOB_ID not in scheduler.DEFAULT_MAINTENANCE_CRONS
 
@@ -517,9 +518,9 @@ async def main_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[Async
 
 class TestUpkeepJobsRecordTheirLastRun:
     """Every upkeep job records when it last finished, whether it succeeded, and a short
-    result -- the store behind the Jobs page's one last-run line per job. The scan and
-    Leaving Soon read a SUCCESSFUL run from their own sources, so those are not exercised
-    here; the scan's own failure-only recording has its own test class below."""
+    result. This is the store behind the Jobs page's one last-run line per job. The scan
+    and Leaving Soon read a successful run from their own sources, so those are not
+    exercised here. The scan's own failure-only recording has its own test class below."""
 
     async def _last(
         self, factory: async_sessionmaker[AsyncSession], job_id: str
@@ -531,10 +532,10 @@ class TestUpkeepJobsRecordTheirLastRun:
     def _wire_lists(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Settings, SecretBox]:
         """Stand in for the *arr and Plex clients the pass builds, and hand back its config.
 
-        The job reads every source now, not just the IMDb mirror, so it goes through
-        ``scan_runner.build_sources`` the way the Lists screen's own check does. What each
-        test below is about is the bookkeeping the pass records, so the clients are stubbed
-        and ``sync_protection_lists`` is what carries the outcome.
+        The job reads every source, not just the IMDb mirror, so it goes through
+        ``scan_runner.build_sources`` the way the Lists screen's own check does. Each test
+        below is about the bookkeeping the pass records, so the clients are stubbed and
+        ``sync_protection_lists`` is what carries the outcome.
         """
 
         async def no_sources(*args: object, **kwargs: object) -> tuple[object, ...]:
@@ -571,9 +572,9 @@ class TestUpkeepJobsRecordTheirLastRun:
     ) -> None:
         """Every list in the pass came back an error, so the line says so outright.
 
-        ``sync_protection_lists`` does not raise on a source that is down -- it records the
-        reason per slug and leaves that list's stored membership alone (rule 2) -- so the
-        failure reaches this job as an error VALUE, never as an exception.
+        ``sync_protection_lists`` does not raise on a source that is down. It records the
+        reason per slug and leaves that list's stored membership alone, so the failure
+        reaches this job as an error value, never as an exception.
         """
         settings, box = self._wire_lists(monkeypatch, tmp_path)
 
@@ -595,9 +596,10 @@ class TestUpkeepJobsRecordTheirLastRun:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A partial pass names both halves. One list down must not read as a total failure:
-        the two that refreshed really did, and their titles are protected on fresh membership.
-        ``sync_protection_lists`` guards per provider, so one bad list never ends the pass."""
+        """A partial pass names both halves. One list down must not read as a total failure.
+        The two that refreshed really did, and their titles are protected on fresh
+        membership. ``sync_protection_lists`` guards per provider, so one bad list never
+        ends the pass."""
         settings, box = self._wire_lists(monkeypatch, tmp_path)
 
         async def one_bad(*args: object, **kwargs: object) -> dict[str, int | str]:
@@ -622,13 +624,13 @@ class TestUpkeepJobsRecordTheirLastRun:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A per-list failure arrives as an error VALUE, and several other faults do not.
+        """A per-list failure arrives as an error value, and several other faults do not.
 
-        ``sync_protection_lists`` re-raises what its own guards do not cover:
+        ``sync_protection_lists`` re-raises what its own guards do not cover, including
         ``adopt_legacy``, ``sync_rule_names``, ``retire_absent``, and the cache-database
-        faults ``gather_reaped`` re-raises. Nothing else records these rows -- APScheduler has
-        no failure listener wired -- so a raise left the Jobs page showing the last successful
-        night while nothing had refreshed since.
+        faults ``gather_reaped`` re-raises. Nothing else records these rows, and
+        APScheduler has no failure listener wired, so a raise would leave the Jobs page
+        showing the last successful night while nothing had refreshed since.
         """
         settings, box = self._wire_lists(monkeypatch, tmp_path)
 
@@ -665,13 +667,14 @@ class TestUpkeepJobsRecordTheirLastRun:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """With no live server no Plex provider is built, so those lists produce no entry at
-        all: not in the failure count, not in the checked count. The job read that as a clean
-        pass and wrote "Lists refreshed" while every Plex list went unchecked.
+        """With no live server, no Plex provider is built, so those lists produce no entry
+        at all. They land in neither the failure count nor the checked count, so a naive
+        pass would read this as clean and record "Lists refreshed" while every Plex list
+        went unchecked.
 
-        The manual check says the same thing through ``plex_error`` and a scan degrades
-        outright, so this row was the third copy of one fact and the only cheerful one
-        (rules 72, 144).
+        The manual check already says the same thing through ``plex_error``, and a scan
+        degrades outright on it, so a cheerful row here would be a third, incorrect copy
+        of one fact.
         """
         settings, box = self._wire_lists(monkeypatch, tmp_path)
         await self._seed_plex_list(main_factory)
@@ -694,7 +697,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The control, and why this keys on a Plex-sourced definition EXISTING rather than on
+        """The control, and why this keys on a Plex-sourced definition existing rather than on
         Plex being absent. The seeded registry is an IMDb list and a tag list, neither of which
         needs Plex, so an operator who does not use Plex must still get a green row."""
         settings, box = self._wire_lists(monkeypatch, tmp_path)
@@ -720,8 +723,8 @@ class TestUpkeepJobsRecordTheirLastRun:
         """A misconfigured install cannot build clients at all, and that is a refusal the job
         records rather than an exception escaping into the scheduler unrecorded."""
 
-        # `_wire_lists` for the config it hands back; its `build_sources` stub is replaced
-        # below, because this one is about `build_sources` REFUSING.
+        # Uses `_wire_lists` only for the config it hands back. Its `build_sources` stub
+        # is replaced below, because this test is about `build_sources` refusing.
         settings, box = self._wire_lists(monkeypatch, tmp_path)
 
         async def refuse(*args: object, **kwargs: object) -> tuple[object, ...]:
@@ -744,17 +747,18 @@ class TestUpkeepJobsRecordTheirLastRun:
     ) -> None:
         """A stored row whose body will not parse stops the pass, and the stop is recorded.
 
-        ``strict=True`` is what stops it: this pass retires, so a row read as absent would
-        disable the membership it is still protecting with (rules 65/91, 115). The stop used
-        to be recorded by a handler wrapped around that one read, spelling the same log
-        event, the same ``ok=False`` and the same result the job's own catch-all writes. What
-        this pins is the row landing, not which arm wrote it.
+        ``strict=True`` is what stops it. This pass retires, so a row read as absent would
+        disable the membership it is still protecting. This test pins that the failure
+        gets recorded with the same log event, the same ``ok=False``, and the same result
+        as any other failure in this job, whichever code path inside the job actually
+        catches it.
         """
         settings, box = self._wire_lists(monkeypatch, tmp_path)
         async with main_factory() as session:
             session.add(
-                # The source is not load-bearing: the raise is at `json.loads`, one line above
-                # where `definitions` would construct a `ListSource` at all.
+                # The source value is not load-bearing here. The raise happens at
+                # `json.loads`, one line above where `definitions` would construct a
+                # `ListSource` at all.
                 ListConfig(
                     name="Keep these",
                     source="imdb",
@@ -787,8 +791,8 @@ class TestUpkeepJobsRecordTheirLastRun:
         tmp_path: Path,
         main_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        # Synced an hour ago: the download short-circuits, but the owner who pressed "Run
-        # now" still gets a truthful last-run line rather than "hasn't run yet".
+        # Synced an hour ago, so the download short-circuits. The owner who pressed "Run
+        # now" still gets a truthful last-run line instead of "hasn't run yet".
         await _seed_synced(cache_engine, hours_ago=1)
         await scheduler.refresh_ratings(cache_engine, tmp_path, main_factory)
 
@@ -820,8 +824,8 @@ class TestUpkeepJobsRecordTheirLastRun:
     async def test_the_startup_catch_up_records_nothing(
         self, cache_engine: AsyncEngine, tmp_path: Path
     ) -> None:
-        # Called without a session factory (as the startup catch-up does), recording is a
-        # no-op -- a catch-up refresh is not an on-schedule or by-hand run.
+        # Called without a session factory, as the startup catch-up does. Recording is a
+        # no-op, since a catch-up refresh is not an on-schedule or by-hand run.
         await _seed_synced(cache_engine, hours_ago=1)
         await scheduler.refresh_ratings(cache_engine, tmp_path)  # no factory, must not raise
 
@@ -832,9 +836,8 @@ class TestUpkeepJobsRecordTheirLastRun:
         main_factory: async_sessionmaker[AsyncSession],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The freshness check itself (``ImdbRatings.state()``) used to run before the
-        try/except, so a broken cache read would escape unrecorded. It is inside the try
-        now, so a crash there is a recorded failure, not a silent gap."""
+        """The freshness check itself (``ImdbRatings.state()``) runs inside the
+        try/except, so a crash there is a recorded failure, not a silent gap."""
 
         async def boom(self: object) -> object:
             raise RuntimeError("cache.db is locked")
@@ -853,9 +856,9 @@ class TestUpkeepJobsRecordTheirLastRun:
         main_factory: async_sessionmaker[AsyncSession],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The Tautulli instance lookup and client construction used to run before the
-        try/except, so a broken DB read or a bad decrypt would escape unrecorded. Both are
-        inside the try now."""
+        """The Tautulli instance lookup and client construction both run inside the
+        try/except, so a broken DB read or a bad decrypt is recorded as a failure instead
+        of escaping unrecorded."""
 
         class _BoomSecretBox:
             def decrypt(self, value: str) -> str:
@@ -940,11 +943,10 @@ class TestUpkeepJobsRecordTheirLastRun:
 
 
 class TestTheUpdateCheckJob:
-    """The check runs on a schedule now, which is the whole point of the job: before it,
-    ``UpdateChecker.status()`` had one caller -- the About route -- so an install nobody
-    signed in to never checked at all, under a panel saying Reaper checked a few times a
-    day (#464). These pin what each state writes to the Jobs page's last-run line, and
-    that the job asks rather than repeating a cached answer."""
+    """The scheduled check is what lets an install nobody signs in to still get checked,
+    since ``UpdateChecker.status()`` alone only answers when something calls the About
+    route. These tests pin what each state writes to the Jobs page's last-run line, and
+    that the job asks for a fresh answer rather than repeating a cached one."""
 
     async def _last(
         self, factory: async_sessionmaker[AsyncSession], job_id: str
@@ -954,9 +956,9 @@ class TestTheUpdateCheckJob:
 
     @staticmethod
     def _checker(status: UpdateStatus) -> object:
-        """A checker that answers ``status`` from ``refresh`` and counts both doors, so a
-        job rewired to the cache-serving one fails here rather than reporting a six-hour-old
-        answer as a check that just ran."""
+        """A checker that answers ``status`` from ``refresh`` and counts calls to both
+        methods, so a job rewired to the cache-serving one fails here instead of
+        reporting a six-hour-old answer as a check that just ran."""
 
         class _Stub:
             def __init__(self) -> None:
@@ -976,13 +978,14 @@ class TestTheUpdateCheckJob:
     async def test_a_newer_release_is_recorded_and_logged_for_a_headless_install(
         self, main_factory: async_sessionmaker[AsyncSession], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The log line is the only place this lands on a server nobody opens, so it is INFO
-        rather than DEBUG.
+        """The log line is the only place this lands on a server nobody opens, so it is
+        logged at INFO rather than DEBUG.
 
-        Read off a stub logger rather than ``capture_logs``: a module logger that was
-        materialized while ``cache_logger_on_first_use`` was live is permanently deaf to it
-        (conftest's ``_capturable_logs``), and this module's logger is used by half the suite,
-        so the assertion would pass or fail on which tests shared the worker (rule 119/133)."""
+        This reads off a stub logger rather than ``capture_logs``. A module logger that
+        was materialized while ``cache_logger_on_first_use`` was live is permanently deaf
+        to ``capture_logs`` (conftest's ``_capturable_logs``), and this module's logger is
+        used by half the suite, so that assertion would pass or fail depending on which
+        tests shared the worker."""
         said: list[str] = []
 
         class _Recorder:
@@ -1054,8 +1057,8 @@ class TestTheUpdateCheckJob:
     async def test_an_unanswerable_check_records_a_failure_not_a_green_tick(
         self, main_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        """Unreachable, rate-limited, or an unorderable version pair: the checker maps all
-        three to unknown, and unknown is not "you are up to date"."""
+        """Unreachable, rate-limited, and an unorderable version pair all map to unknown
+        in the checker, and unknown is not "you are up to date"."""
         checker = self._checker(UpdateStatus(channel="release", enabled=True, current="2026.8.1"))
         await scheduler.check_for_updates(checker, main_factory)  # type: ignore[arg-type]
 
@@ -1067,8 +1070,8 @@ class TestTheUpdateCheckJob:
     async def test_the_off_switch_is_recorded_as_off_never_as_a_check_that_ran(
         self, main_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        """Rule 55: ``REAPER_UPDATE_CHECK=false`` governs the scheduled path too. The
-        checker answers disabled without sending anything, and the run says so rather than
+        """``REAPER_UPDATE_CHECK=false`` governs the scheduled path too. The checker
+        answers disabled without sending anything, and the run says so rather than
         reading as a check that found nothing."""
         checker = self._checker(UpdateStatus(channel="release", enabled=False, current="2026.8.1"))
         await scheduler.check_for_updates(checker, main_factory)  # type: ignore[arg-type]
@@ -1095,11 +1098,11 @@ class TestTheUpdateCheckJob:
 
 class TestScheduledScanRecordsOnlyItsFailure:
     """A scheduled scan that crashes outright writes no snapshot, so it is the one
-    exception to 'the scan reads its own last-run line from the snapshot' (see
-    JOB_LAST_RUN_PREFIX): the crash is recorded under ``scheduler.SCAN_JOB_ID`` so the
-    Jobs page can still show it failed, instead of silently repeating whatever the last
-    successful snapshot said. A quiet, expected skip (no Radarr/Tautulli configured yet,
-    or a scan already running) is not a failure and must record nothing."""
+    exception to "the scan reads its own last-run line from the snapshot" (see
+    JOB_LAST_RUN_PREFIX). The crash is recorded under ``scheduler.SCAN_JOB_ID`` instead,
+    so the Jobs page can still show it failed, instead of silently repeating whatever the
+    last successful snapshot said. A quiet, expected skip, such as no Radarr or Tautulli
+    configured yet, or a scan already running, is not a failure and must record nothing."""
 
     async def _last(
         self, factory: async_sessionmaker[AsyncSession], job_id: str

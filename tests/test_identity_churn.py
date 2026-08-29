@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""#809: the scan-level check on how much of the library changed Plex identity at once.
+"""The scan-level check on how much of the library changed Plex identity at once.
 
-``tests/test_scan_pipeline.py::TestALibraryWideIdentityChangeDegradesTheSnapshot`` drives the
-same guard through a whole scan, which is what pins the call site (rule 118). These cases pin
-what it counts.
+``tests/test_scan_pipeline.py::TestALibraryWideIdentityChangeDegradesTheSnapshot`` drives
+the same guard through a whole scan, which is what pins the call site. These cases pin what
+it counts.
 """
 
 from __future__ import annotations
@@ -24,8 +24,8 @@ NOW = utcnow().replace(microsecond=0)
 _OLD = 1_000
 _REISSUED = 9_000_000
 
-#: Deliberately above the shipped floor rather than equal to it (rule 141): a fixture sitting on
-#: the production number cannot tell a floor that is read from one that is ignored. The floor's
+#: Deliberately above the shipped floor rather than equal to it. A fixture sitting on the
+#: production number cannot tell a floor that is read from one that is ignored. The floor's
 #: own cases name it directly.
 LIBRARY = 300
 
@@ -54,9 +54,9 @@ class TestWhatCountsAsChanged:
     def test_a_rebuilt_library_is_named_for_the_operator(self) -> None:
         said = identity_churn.wholesale_change(_ledger(LIBRARY), _bound(LIBRARY, changed=LIBRARY))
         assert said is not None
-        # The counts, and the repair in the order it has to happen: Tautulli holds the plays
-        # under the ids the files used to have, and the full sweep is what pulls the corrected
-        # ids into Reaper's mirror (`scheduler.full_history_sweep`).
+        # The counts, and the repair in the order it has to happen. Tautulli holds the
+        # plays under the ids the files used to have, and the full sweep is what pulls the
+        # corrected ids into Reaper's mirror (`scheduler.full_history_sweep`).
         assert "300 of the 300" in said
         assert "Tautulli" in said
         assert "Settings → Jobs" in said
@@ -66,9 +66,9 @@ class TestWhatCountsAsChanged:
         assert identity_churn.wholesale_change(_ledger(LIBRARY), _bound(LIBRARY, changed=1)) is None
 
     def test_a_key_the_ledger_already_holds_is_not_a_change(self) -> None:
-        """A title listed twice, or one whose bind moved back: recorded means recorded."""
+        """A title listed twice, or one whose bind moved back. Recorded means recorded."""
         ledger = _ledger(LIBRARY, keys_each=3)
-        # Every title binds the LAST of the three keys recorded for it, not the first.
+        # Every title binds the *last* of the three keys recorded for it, not the first.
         bound = {f"movie:tmdb:{i}": {_OLD + i * 10 + 2} for i in range(LIBRARY)}
         assert identity_churn.wholesale_change(ledger, bound) is None
 
@@ -86,7 +86,8 @@ class TestWhatCountsAsChanged:
                 returned_at=None,
                 returned_by_reaper=None,
             )
-        # 200 titles left with a key, every one of them reissued: still the whole population.
+        # 200 titles left with a key, every one of them reissued. Still the whole
+        # population.
         assert identity_churn.wholesale_change(ledger, _bound(LIBRARY, changed=LIBRARY)) is not None
 
 
@@ -99,12 +100,13 @@ class TestWhatCannotManufactureAnEvent:
         assert identity_churn.wholesale_change(_ledger(LIBRARY), bound) is None
 
     def test_an_unreadable_plex_records_no_sighting_at_all(self) -> None:
-        """No bind, no entry in ``bound``: an outage shrinks the population, never the share."""
+        """No bind, no entry in ``bound``. An outage shrinks the population, never the
+        share."""
         assert identity_churn.wholesale_change(_ledger(5000), _bound(3, changed=3)) is None
 
 
 class TestTheHelpPage:
-    """Rule 103: this module names a frontend declaration, so a rename must fail here.
+    """This module names a frontend declaration, so a rename must fail here.
 
     ``Snapshot.degraded_doc`` carries this id to the browser, where the notice looks it up in the
     docs registry and renders nothing if it is not there. That is the right failure for a stored
@@ -120,7 +122,7 @@ class TestTheHelpPage:
             for line in path.read_text().splitlines()
             if line.strip().startswith('id: "')
         }
-        # The population, not just the member (rule 145): one id per content file, so a walk that
+        # The population, not just the member. One id per content file, so a walk that
         # stopped reading the tree cannot pass this by finding nothing.
         assert len(declared) == len(list(content.glob("*.ts")))
         assert identity_churn.HELP_DOC in declared
@@ -130,14 +132,14 @@ class TestTheFloor:
     def test_a_small_library_never_fires(self) -> None:
         """Every title reissued on a 199-title library still says nothing.
 
-        Below the floor the share is meaningless, and the direction is the tolerable one: this
+        Below the floor the share is meaningless, and the direction is the tolerable one. This
         guard withholds a scan, so a wrong fire on a small library costs its whole run.
         """
         small = identity_churn._APPLIES_ABOVE - 1
         assert identity_churn.wholesale_change(_ledger(small), _bound(small, changed=small)) is None
 
     def test_the_smallest_event_it_can_report(self) -> None:
-        """At the floor, the share needs 20 titles: an ordinary rate predicts 0.2."""
+        """At the floor, the share needs 20 titles. An ordinary rate predicts 0.2."""
         floor = identity_churn._APPLIES_ABOVE
         allowed = int(floor * identity_churn.WHOLESALE_SHARE) - 1
         assert (

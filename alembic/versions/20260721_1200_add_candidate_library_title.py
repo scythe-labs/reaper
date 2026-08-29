@@ -1,12 +1,12 @@
 """add candidate.library_title
 
-The first additive revision after the frozen baseline (see the baseline's note). Adds
+The first additive revision after the frozen baseline (see its docstring). Adds
 the Plex library (section) title captured onto each candidate at scan time, for the
 review queue's library chip and the library filter.
 
-Non-breaking by construction: a single nullable column. Existing rows keep NULL (the UI
-shows no library chip for them), and the next scan backfills every candidate it writes,
-so testers never rebuild their database.
+The new column is nullable. Existing rows keep NULL, so the UI shows no library
+chip for them, and the next scan backfills every candidate it writes. No tester
+database needs to be rebuilt.
 
 Revision ID: 1f2a3b4c5d6e
 Revises: 22777b2b5015
@@ -28,8 +28,8 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # batch_alter_table for SQLite parity with the baseline: adding a nullable column is a
-    # plain ADD COLUMN, no table copy, so existing data is untouched.
+    # batch_alter_table matches the baseline's SQLite style. Adding a nullable column is a
+    # plain ADD COLUMN with no table rebuild, so existing data is untouched.
     with op.batch_alter_table('candidate', schema=None) as batch_op:
         batch_op.add_column(sa.Column('library_title', sa.String(length=200), nullable=True))
 

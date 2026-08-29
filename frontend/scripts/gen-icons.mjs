@@ -4,12 +4,11 @@
 //
 //   npm run icons
 //
-// Run this after ANY change to the brand mark, then commit what it writes. appIcon.test.ts is
+// Run this after any change to the brand mark, then commit what it writes. appIcon.test.ts is
 // the backstop: it re-derives each asset's source SVG and compares it to the hash recorded in
 // icons.generated.json, so a mark that changed without a regeneration fails the suite instead
-// of silently shipping stale rasters on iOS home screens and installed PWAs. That hole is why
-// this script exists -- the previous drift test only checked each PNG's width and height, which
-// a redraw never changes.
+// of silently shipping stale rasters on iOS home screens and installed PWAs. A drift test that
+// only checks each PNG's width and height cannot catch that, since a redraw never changes them.
 //
 // The TypeScript source is loaded through Vite's own module runner rather than a second
 // bundler, so the script resolves imports exactly the way the app does and needs no dependency
@@ -47,8 +46,8 @@ const ASSETS = [
 const sha256 = (data) => createHash("sha256").update(data).digest("hex");
 
 async function loadBrand() {
-  // `appType: "custom"` and middleware mode keep this from binding a port; we only want the
-  // module runner. Vite prints its own config-loading noise on stderr, which is harmless.
+  // `appType: "custom"` and middleware mode keep this from binding a port. Only the module
+  // runner is wanted. Vite prints its own config-loading noise on stderr, which is harmless.
   const server = await createServer({
     root: ROOT,
     logLevel: "warn",
@@ -73,8 +72,8 @@ for (const asset of ASSETS) {
   const opts = asset.radius === undefined ? {} : { radius: asset.radius };
   const svg = appIconSvg(DEFAULT_ACCENT, opts);
   const out = join(PUBLIC, asset.file);
-  // Recorded so the test can re-derive this asset's exact source and compare hashes; the
-  // default is spelled out rather than left implicit so the manifest reads on its own.
+  // Recorded so the test can re-derive this asset's exact source and compare hashes. The
+  // default is spelled out rather than left implicit, so the manifest reads on its own.
   const radius = asset.radius === undefined ? APP_ICON_RADIUS : asset.radius;
 
   if (asset.kind === "svg") {
@@ -103,7 +102,7 @@ await writeFile(
   MANIFEST,
   JSON.stringify(
     {
-      // Read by appIcon.test.ts. Regenerate with `npm run icons`; never hand-edit, because the
+      // Read by appIcon.test.ts. Regenerate with `npm run icons`. Never hand-edit, because the
       // hashes are the only thing tying these files to the drawing they came from.
       generator: "frontend/scripts/gen-icons.mjs",
       accent: DEFAULT_ACCENT,

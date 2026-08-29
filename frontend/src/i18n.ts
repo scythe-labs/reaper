@@ -96,13 +96,13 @@ export function storedLanguage(): string | undefined {
 
 /** Every language Reaper can be served in, for the Settings picker: English, then each shipped
  *  catalog's tag. Read from the same glob the loader uses, so a translation becomes choosable
- *  the moment its catalog ships and stops being offered if one is ever dropped (rule 66). */
+ *  the moment its catalog ships and stops being offered if one is ever dropped. */
 export const LANGUAGES: readonly string[] = ["en", ...[...SHIPPED_TAGS].sort()];
 
 /** A BCP 47 tag's name in its own language ("de" -> "Deutsch"), which is what an operator
  *  scanning a language list looks for. `inLanguage` writes the name in that language instead.
- *  From the browser's own list rather than a hand-kept map that would need an entry added every
- *  time a translation ships (rule 66). */
+ *  From the browser's own list rather than a hand-kept map that would need an entry added
+ *  every time a translation ships. */
 export function languageName(tag: string, inLanguage: string = tag): string {
   try {
     const name = new Intl.DisplayNames([inLanguage], { type: "language" }).of(tag) ?? tag;
@@ -129,16 +129,17 @@ async function serve(tag: string): Promise<void> {
 /** What this browser asks for, of the catalogs that shipped: the operator's stored choice, else
  *  the best match for `navigator.languages`, else English.
  *
- *  Named because it is read twice now. `applyStoredLanguage` paints with it, and `App` sends it
- *  to the server the first time it finds no language stored there, which is what makes the
- *  browser's own preference the seed for a fresh install rather than a standing mode.
+ *  Named because it is read from two places: `applyStoredLanguage` paints with it, and `App`
+ *  sends it to the server the first time it finds no language stored there. That is what makes
+ *  the browser's own preference the seed for a fresh install, rather than something the
+ *  browser is asked for on every visit.
  *
- *  It ends in `"en"`, a CATALOG tag, and never `"en-US"`, the tag the init above pins. The two
- *  are the same language and not the same value: `LANGUAGES` is what the Settings picker offers,
- *  so seeding the server `"en-US"` gave that `<select>` a value none of its options carry and it
- *  rendered blank. Painting is unaffected -- `serve` sends every tag with no shipped catalog,
- *  `"en"` included, to `changeLanguage("en-US")`, which is where the US number and date formats
- *  come from. */
+ *  It ends in `"en"`, a catalog tag, and never `"en-US"`, the tag the init above pins. The two
+ *  are the same language and not the same value: `LANGUAGES` is what the Settings picker
+ *  offers, so seeding the server `"en-US"` would give that `<select>` a value none of its
+ *  options carry, and it would render blank. Painting is unaffected: `serve` sends every tag
+ *  with no shipped catalog, `"en"` included, to `changeLanguage("en-US")`, which is where the
+ *  US number and date formats come from. */
 export function preferredLanguage(): string {
   return storedLanguage() ?? shippedTag(navigator.languages) ?? "en";
 }
@@ -172,8 +173,8 @@ export async function applyStoredLanguage(): Promise<void> {
  *  plain `i18next` import does not, so a screen holding still would keep the old words while the
  *  ones around it changed. A reload paints the whole app once, in one language.
  *
- *  What it no longer covers for is a frozen table. Every string in the tree resolves in a
- *  function now, and `i18n-module-scope.test.ts` keeps it that way (#897). */
+ *  It never has to cover a frozen table, because every string in the tree resolves inside a
+ *  function, and `i18n-module-scope.test.ts` keeps it that way. */
 export async function setLanguage(tag: string): Promise<void> {
   try {
     localStorage.setItem(LANGUAGE_KEY, tag);
@@ -187,7 +188,7 @@ export async function setLanguage(tag: string): Promise<void> {
 }
 
 /** Which way `tag` is read, from the browser's own locale data rather than a list kept here
- *  that would need an entry the day Arabic or Hebrew ships (rule 66).
+ *  that would need an entry the day Arabic or Hebrew ships.
  *
  *  Anything unrecognized reads left to right. That is the safe answer both ways: it is right
  *  for every language Reaper ships today, and a tag the browser cannot place is far more
@@ -210,7 +211,7 @@ export function textDirection(tag: string): "ltr" | "rtl" {
 
 // index.html ships `lang="en"` as the pre-JS default; from here on the attribute follows
 // the locale actually serving strings, and `dir` follows the language's own reading order so
-// the layout mirrors with it (#861). Guarded: test/setup.ts imports this file for the
+// the layout mirrors with it. Guarded, because test/setup.ts imports this file for the
 // node-environment test files too, where there is no document at all.
 if (typeof document !== "undefined") {
   const setLang = () => {

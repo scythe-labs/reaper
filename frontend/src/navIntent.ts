@@ -2,23 +2,17 @@
 //
 // Where in the app to land, as one value.
 //
-// The app has no router (see backnav.tsx): where you are is plain React state in `App`, and a
-// cross-page jump used to be a handful of one-off setters per destination -- "Turn it on in
-// Policy → Deletion" pushed a section, "Settings → Plex" pushed a panel, Scales pushed an item
-// and a lane, and each grew its own function, its own back-nav frame and its own idea of what
-// else to reset. Four spellings of one thing, so a fifth destination meant a fifth spelling and
-// nothing checked that they agreed.
+// The app has no router (see backnav.tsx): where you are is plain React state in `App`. A
+// `NavIntent` is a whole destination, named by the caller and handed to `App`'s single
+// `goTo`. Every jump in the app is one of these, so what a destination can carry is declared
+// here rather than argued per call site, and anything that can build one of these values can
+// drive the app: a button, a keyboard shortcut, or a reader turning a URL into a destination,
+// which the app does not have today.
 //
-// A `NavIntent` is that one thing: a whole destination, named by the caller, handed to `App`'s
-// single `goTo`. Every jump in the app is one of these, so what a destination can carry is
-// declared here rather than argued per call site, and anything that can build one of these
-// values can drive the app -- a button, a keyboard shortcut, or a reader turning a URL into a
-// destination, which the app does not have today.
-//
-// The three-state optionals are the load-bearing part, and they are why a jump cannot be a bag
-// of setters: `undefined` means "leave this as the operator left it" and is not the same as a
-// value. Landing on Review from the section nav must not disturb the open panel; landing on it
-// from a lane tab must clear it. Both are `select`.
+// The three-state optionals are the load-bearing part: `undefined` means "leave this as the
+// operator left it" and is not the same as a value. Landing on Review from the section nav
+// must not disturb the open panel; landing on it from a lane tab must clear it. Both are
+// `select`.
 
 import type { Verdict } from "./api";
 import type { PolicySectionId } from "./components/PolicyEditor";
@@ -28,7 +22,7 @@ import type { Panel } from "./components/Settings";
 export type View = "review" | "policy" | "reap" | "fairness" | "settings";
 
 /** What the review screen's side panel is showing: one item's reasoning, one whole
- *  show, or nothing. A single slot -- opening either closes the other. */
+ *  show, or nothing. A single slot: opening either closes the other. */
 export type Selection = { kind: "item"; id: number } | { kind: "group"; key: string } | null;
 
 /** A destination. One variant per section, carrying only what that section can be aimed at. */
@@ -49,10 +43,10 @@ export type NavIntent =
        *  Spelled `| undefined` because callers forward their own optional straight through, and
        *  `exactOptionalPropertyTypes` counts an explicit `undefined` as a value. */
       search?: string | undefined;
-      /** Open the collection screen on this collection, in place of the lane tabs (#816 phase
-       *  5). Omitted leaves the queue on whatever it was already showing -- a lane, or a
-       *  collection already open. There is no way to CLOSE one through a jump: that is the
-       *  queue's own back link and browser Back, both local to `ReviewQueue`. */
+      /** Opens the collection screen on this collection, in place of the lane tabs. Omitted
+       *  leaves the queue on whatever it was already showing, a lane or a collection already
+       *  open. Closing a collection view happens through the queue's own back link and
+       *  browser Back, both local to `ReviewQueue`, never through a jump. */
       collection?: string;
     }
   | { view: "policy"; section?: PolicySectionId }
@@ -68,21 +62,20 @@ export type NavIntent =
  *  you there the first time. The nonce is what "once" is counted with, and the view remembers
  *  the last one it handled.
  *
- *  **One value, keyed on `view`, and that is what makes the clearing structural.** `App` used
- *  to hold three of these in parallel, one per aimable view, and an aim then had to be dropped
- *  by name on the way off screen. Both incidents in `App`'s own clearing effect are that list
- *  going stale. A focus that names its view cannot be read by another view, and it outlives its
- *  own by exactly the commit that changes `view`. The drop runs in an effect, so `App` reads
- *  every aim through a check on the name rather than trusting the state to be clean. A third
- *  destination is a member here and nothing else.
+ *  **One value, keyed on `view`, and that is what makes the clearing structural.** A focus
+ *  that names its view cannot be read by another view, and it outlives its own by exactly the
+ *  commit that changes `view`. The drop runs in an effect, so `App` reads every aim through a
+ *  check on the name rather than trusting the state to be clean. A third destination is a
+ *  member here and nothing else.
  *
- *  **Settings' member is the ASK, not the panel.** Which panel is open is `App` state, so the
- *  address bar can name it, and a place you can come back to is not a one-shot aim. A jump that
- *  wants a different panel is: it fires once, and Settings may refuse it, because the panel it
- *  would leave can be holding unsaved edits. So `App` names a destination here instead of setting
- *  the panel, and the panel moves only when the confirm inside Settings lets it (#794). Everything
- *  in this union fires once. The search box seeded by a jump must not refill itself on the way
- *  back, and a policy section is a scroll position on one long page. */
+ *  **Settings' member is the ask, not the panel.** Which panel is open is `App` state, so the
+ *  address bar can name it, and a place you can come back to is not a one-shot aim. A jump
+ *  that wants a different panel is one-shot, though: it fires once, and Settings may refuse
+ *  it, because the panel it would leave can be holding unsaved edits. So `App` names a
+ *  destination here instead of setting the panel directly, and the panel moves only when the
+ *  confirm inside Settings lets it. Everything in this union fires once: the search box
+ *  seeded by a jump must not refill itself on the way back, and a policy section is a scroll
+ *  position on one long page. */
 export type Focus =
   | { view: "review"; search: string; collection?: string | undefined; nonce: number }
   | { view: "policy"; section: PolicySectionId; nonce: number }

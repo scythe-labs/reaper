@@ -22,7 +22,7 @@ vi.mock("../api", async (importOriginal) => ({
 function renderToggle() {
   renderWithProviders(
     <>
-      {/* App mounts this once above every route; the switch speaks into it (#170). */}
+      {/* App mounts this once above every route; the switch speaks into it. */}
       <Announcer />
       <DeletionToggle />
     </>,
@@ -57,10 +57,10 @@ describe("when the safety state can't be read", () => {
   });
 
   it("still offers Turn off, the one direction that can only make Reaper safer", async () => {
-    // PR-4: the error branch used to render the amber notice and nothing else, so an operator
-    // who wanted read-only RIGHT NOW was handed advice to assume the worst and no button --
-    // and had to reload until a GET happened to succeed. Turning deletion off is exactly the
-    // direction the backend never gates: no password, no prior state.
+    // The error branch must still offer a working Turn off button, not just the amber notice:
+    // an operator who wants read-only RIGHT NOW needs a way to get there without reloading.
+    // Turning deletion off is exactly the direction the backend never gates: no password, no
+    // prior state.
     const person = renderToggle();
     const off = await screen.findByRole("button", { name: "Turn off" });
 
@@ -72,9 +72,9 @@ describe("when the safety state can't be read", () => {
   it("confirms the result, since the banner above still cannot", async () => {
     const person = renderToggle();
     await person.click(await screen.findByRole("button", { name: "Turn off" }));
-    // On screen, and said out loud (#170). Both, because this branch is reached exactly when
-    // the state could not be read, so the confirmation IS the operator's only answer -- and an
-    // operator driving by ear had none of it.
+    // On screen, and said out loud. Both must fire, because this branch is reached exactly
+    // when the state could not be read, so the confirmation is the operator's only answer,
+    // including for one navigating by screen reader.
     expect(await screen.findByText(/Reaper is read-only/i, { selector: "strong" })).toBeVisible();
     expect(
       await screen.findByText(/Reaper is read-only/i, { selector: ".sr-only" }),
@@ -106,8 +106,8 @@ describe("the arming password", () => {
   });
 
   it("is gone once you cancel, not waiting in the field when you come back", async () => {
-    // S-5: Cancel closed the form and left the password in component state, so it was still
-    // there for as long as Settings stayed open -- and refilled the box on the way back in.
+    // Cancel must clear the typed password from component state, or it stays there for as
+    // long as Settings is open and refills the box on the way back in.
     const person = renderToggle();
     await person.click(await screen.findByRole("button", { name: /Turn on/i }));
     await person.type(screen.getByLabelText(/password/i), "a-password");
@@ -117,10 +117,9 @@ describe("the arming password", () => {
     expect(screen.getByLabelText(/password/i)).toHaveValue("");
   });
 
-  // #170: this switch decides whether Reaper may remove anything at all, and it used to signal
-  // the outcome the way the rest of the app once did -- the form unmounted, a `<strong>` in an
-  // unfocused subtree rewrote itself, and focus fell to `<body>`. An operator driving by ear
-  // could not tell whether they had just armed the app to delete their library.
+  // This switch decides whether Reaper may remove anything at all, so arming it must announce
+  // the outcome out loud. A visual-only update, an unfocused `<strong>` rewriting itself while
+  // focus falls to `<body>`, tells an operator navigating by screen reader nothing.
   it("says out loud that deletion is on", async () => {
     const person = renderToggle();
     await person.click(await screen.findByRole("button", { name: /Turn on/i }));
@@ -162,10 +161,10 @@ describe("the arming password", () => {
   });
 
   it("never claims read-only over a host it just armed", async () => {
-    // The arm lands, and the read that would confirm it fails -- a restarted server, a dropped
-    // session, or any later poll. `toggle.isSuccess` records only THAT a toggle succeeded, not
-    // which way it went, so the unknown branch painted its green "Reaper is read-only" over a
-    // host that is armed, while the live region a few nodes away said "Deletion is on."
+    // The arm lands, and the read that would confirm it fails (a restarted server, a dropped
+    // session, or any later poll). `toggle.isSuccess` records only THAT a toggle succeeded, not
+    // which way it went, so the unknown branch must not paint a green "Reaper is read-only"
+    // over a host that is actually armed.
     const person = renderToggle();
     await person.click(await screen.findByRole("button", { name: /Turn on/i }));
     await person.type(screen.getByLabelText(/password/i), "a-password");

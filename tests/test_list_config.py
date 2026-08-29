@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The list DEFINITIONS: naming a list, pointing it somewhere, and taking it away (#475).
+"""The list *definitions*: naming a list, pointing it somewhere, and taking it away.
 
 Membership is somebody else's data mirrored into ``cache.db`` and rebuilt on every sync. A
-definition is not rebuildable from anything, so it lives in ``reaper.db`` and is migrated and
-backed up. These pin the boundary between the two, and every refusal on the way in.
+definition is not rebuildable from anything, so it lives in ``reaper.db`` and is migrated
+and backed up. These pin the boundary between the two, and every refusal on the way in.
 
-**Everything here fails closed toward keeping.** A configuration that could never match
+Everything here fails closed toward keeping. A configuration that could never match
 anything is refused while the operator is looking at the box that is empty, rather than
-syncing to empty and sitting on the screen reading "Nothing on it". Removing a list withdraws
-a protection, so the API pairs the delete with ``list_rules.detach_list`` -- the pairing is
-pinned in ``tests/test_list_rules.py``.
+syncing to empty and sitting on the screen reading "Nothing on it". Removing a list
+withdraws a protection, so the API pairs the delete with ``list_rules.detach_list``. That
+pairing is pinned in ``tests/test_list_rules.py``.
 """
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ async def session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
 class TestWhatShipsWithReaper:
     async def test_the_first_read_seeds_the_two_default_lists(self, session: AsyncSession) -> None:
         """The two lists the default policy's keep rules name, so the screen is never
-        empty on a fresh install and those rules never point at nothing (rule 25)."""
+        empty on a fresh install and those rules never point at nothing."""
         rows = await list_config.all_lists(session)
 
         assert [(r.name, r.source) for r in rows] == [
@@ -83,7 +83,7 @@ class TestWhatShipsWithReaper:
         assert len(rows) == 2
 
     async def test_a_deleted_seeded_list_is_not_resurrected(self, session: AsyncSession) -> None:
-        """The seed runs exactly once, tracked by a flag rather than by the rows: an
+        """The seed runs exactly once, tracked by a flag rather than by the rows. An
         operator who removed a shipped list must not find it back on the next read."""
         rows = await list_config.all_lists(session)
         await list_config.delete(session, rows[0].id)
@@ -93,7 +93,7 @@ class TestWhatShipsWithReaper:
         assert names == ["Titles you've tagged"]
 
     async def test_a_renamed_seeded_list_keeps_its_new_name(self, session: AsyncSession) -> None:
-        """Same flag, other direction: a rename must not spawn a second shipped copy
+        """Same flag, other direction. A rename must not spawn a second shipped copy
         beside the operator's."""
         [imdb, _tags] = await list_config.all_lists(session)
         await list_config.update(session, imdb.id, name="Films worth keeping")
@@ -104,9 +104,9 @@ class TestWhatShipsWithReaper:
 
 
 class TestRefusingAConfigurationThatCouldNeverMatch:
-    """Rule 108's shape one level up: a list saved with no collection or no tags syncs to
-    empty and then reads as "Nothing on it", which is indistinguishable from a collection the
-    operator has not filled in yet. The refusal names the box while they are looking at it."""
+    """A list saved with no collection or no tags syncs to empty and then reads as "Nothing
+    on it", which is indistinguishable from a collection the operator has not filled in
+    yet. The refusal names the box while they are looking at it."""
 
     async def test_a_plex_list_needs_a_library(self, session: AsyncSession) -> None:
         with pytest.raises(list_config.ListConfigError, match="which Plex library"):
@@ -129,7 +129,7 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
 
     async def test_whitespace_is_not_a_tag(self, session: AsyncSession) -> None:
         """A tag that strips to nothing would be looked up as "" and never resolve, which
-        ``ArrTagRule`` reads as a MISSING container and fails the whole list over."""
+        ``ArrTagRule`` reads as a *missing* container and fails the whole list over."""
         with pytest.raises(list_config.ListConfigError, match="at least one tag"):
             await list_config.create(
                 session, name="Keep", source="arr_tag", config={"tags": ["  ", ""]}
@@ -150,8 +150,8 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
         """Sonarr and Radarr lower-case every label, so two spellings are one tag upstream.
         Stored twice they collapsed to one tag id at fetch time and only the later spelling
         was counted, so the Lists screen showed a chip reading zero for a tag protecting
-        everything it names (#509). The first spelling is the one kept: it is what the
-        operator typed before the duplicate."""
+        everything it names. The first spelling is the one kept. It is what the operator
+        typed before the duplicate."""
         row = await list_config.create(
             session, name=f"Keep {'-'.join(saved)}", source="arr_tag", config={"tags": saved}
         )
@@ -175,10 +175,11 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
         self, session: AsyncSession
     ) -> None:
         """A row that will not decode must not read to the sync as a row the operator
-        deleted: absent from the definitions, its slug is outside every family's ``current``
-        set, so the retire sweep disables the membership it is still protecting with, with
-        only a log line to say so. ``strict`` routes that to the registry-unreadable state
-        the scan already has, which builds nothing and retires nothing (rules 65/91).
+        deleted. Absent from the definitions, its slug is outside every family's
+        ``current`` set, so the retire sweep disables the membership it is still
+        protecting with, with only a log line to say so. ``strict`` routes that to the
+        registry-unreadable state the scan already has, which builds nothing and retires
+        nothing.
 
         Tolerant for a reader, because the screen an operator would fix the row from must
         still render the rows beside it.
@@ -209,8 +210,8 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
 
         The auto-attached keep rule then matches nothing while the Lists row and the Policy
         screen both render it as an outright protection, and an item on "Kids, Holiday"
-        satisfies a rule naming a different list called "Holiday". Refused at the save
-        boundary, the way rule 108 refuses a rule value that strips to nothing.
+        satisfies a rule naming a different list called "Holiday". This is refused at the
+        save boundary, the same way an empty rule value gets refused.
         """
         with pytest.raises(list_config.ListConfigError, match="can't have a comma"):
             await list_config.create(
@@ -219,7 +220,7 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
 
     async def test_a_rename_cannot_put_a_comma_in_the_name(self, session: AsyncSession) -> None:
         """The same refusal on the edit path, which is the one an operator reaches by renaming
-        rather than by adding (rule 72's sibling of the check above)."""
+        rather than by adding."""
         row = await list_config.create(
             session, name="Keep", source="arr_tag", config={"tags": ["a"]}
         )
@@ -232,10 +233,10 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
         """A rule naming a list has to mean exactly one list, or the protection points at
         whichever row was written last.
 
-        Swept over capitalization because every reader case-folds the name (rule 88), so a
-        second row differing only in case is a second row answering to one keep rule: it
-        never got a rule of its own, and deleting either one stripped that rule and stopped
-        the other protecting, untouched and unannounced (#508)."""
+        This is swept over capitalization too, because every reader case-folds the name. A
+        second row differing only in case is a second row answering to one keep rule. It
+        never got a rule of its own, so deleting either one stripped that rule and stopped
+        the other protecting, untouched and unannounced."""
         await list_config.create(session, name="Keep", source="arr_tag", config={"tags": ["a"]})
 
         with pytest.raises(list_config.ListConfigError, match="already have a list"):
@@ -248,7 +249,7 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
 
     async def test_a_rename_cannot_take_another_list_s_name(self, session: AsyncSession) -> None:
         """The same refusal on the edit path, which is the one an operator reaches by
-        renaming rather than by adding (rule 72's sibling of the check above)."""
+        renaming rather than by adding. It mirrors the check above."""
         await list_config.create(session, name="Keep", source="arr_tag", config={"tags": ["a"]})
         other = await list_config.create(
             session, name="Hold", source="arr_tag", config={"tags": ["b"]}
@@ -271,7 +272,7 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
         assert renamed.name == "Keep"
 
     async def test_the_retired_curated_source_is_refused(self, session: AsyncSession) -> None:
-        """``curated`` left the source vocabulary when the IMDb provider generalized; a
+        """``curated`` left the source vocabulary when the IMDb provider generalized. A
         hand-crafted save naming it is refused like any unknown source."""
         with pytest.raises(list_config.ListConfigError, match="where the list comes from"):
             await list_config.create(session, name="Mine", source="curated", config={})
@@ -301,13 +302,13 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
     def test_the_modal_spells_every_refusal_the_way_this_module_does(self) -> None:
         """The i18n catalog says these same sentences before the round trip.
 
-        Two copies of one requirement, which is rule 144's hazard: each side was pinned by its
-        own test, nothing bound the pair, and a one-sided edit left both suites green. The
-        failure message names the other file, because a comment asking a future author to
-        remember the second copy does nothing.
+        These are two copies of one requirement. Each side was pinned by its own test,
+        nothing bound the pair, and a one-sided edit left both suites green. The failure
+        message names the other file, because a comment asking a future author to remember
+        the second copy does nothing.
 
-        The frontend copy lives in the en-US catalog since Stage 4 (``lists.blocked.*``), so
-        this binds backend sentence to catalog message; the frontend's own gates
+        The frontend copy lives in the en-US catalog (``lists.blocked.*``), so this binds
+        backend sentence to catalog message. The frontend's own gates
         (``i18n-keys.test.ts``) bind the catalog to the keys ``ListModal.tsx`` renders.
         """
         modal = (Path(__file__).resolve().parents[1] / "frontend/src/locales/en/ui.json").read_text(
@@ -327,18 +328,19 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
             )
 
     def test_the_name_length_is_one_number_in_three_places(self) -> None:
-        """The one refusal the modal ENFORCES rather than repeating, and the reason it has to.
+        """The one refusal the modal *enforces* rather than repeating, and the reason it
+        has to.
 
-        ``_clean_name`` writes the sentence an operator should read, and it can never fire:
-        both schemas bound ``name`` at 100 and FastAPI validates before the route runs, so a
-        101-character name comes back as Pydantic's "String should have at most 100
-        characters", which ``api.ts``'s ``reason()`` joins into "The list wasn't saved: …"
-        (rule 21). The schema bound stays (rule 95) and the box stops taking characters at
-        the same number instead, which makes the state unreachable from the UI. Nobody types
-        101 characters; a paste gets there in one go.
+        ``_clean_name`` writes the sentence an operator should read, and it can never
+        fire. Both schemas bound ``name`` at 100 and FastAPI validates before the route
+        runs, so a 101-character name comes back as Pydantic's "String should have at most
+        100 characters", which ``api.ts``'s ``reason()`` joins into "The list wasn't
+        saved: …". The schema bound stays, and the box stops taking characters at the same
+        number instead, which makes the state unreachable from the UI. Nobody types 101
+        characters. A paste gets there in one go.
 
-        Three declarations of one number, held together here rather than by a comment asking
-        a future author to remember the other two (rules 131, 144).
+        Three declarations of one number, held together here rather than by a comment
+        asking a future author to remember the other two.
         """
         from reaper.api.schemas import ListConfigIn, ListConfigPatch
 
@@ -382,8 +384,8 @@ class TestWhatIsStored:
         assert json.loads(row.config_json) == {"tags": ["keep", "gold"], "match": "all"}
 
     async def test_an_unrecognized_match_reads_as_any(self, session: AsyncSession) -> None:
-        """ANY is the wider list, which is the keep direction, and it is the same default
-        ``ListDefinition.match`` applies -- the two spellings of it must agree."""
+        """*Any* is the wider list, which is the keep direction, and it is the same default
+        ``ListDefinition.match`` applies. The two spellings of it must agree."""
         row = await list_config.create(
             session, name="Keep", source="arr_tag", config={"tags": ["keep"], "match": "some"}
         )
@@ -418,7 +420,7 @@ class TestWhatIsStored:
         assert json.loads(row.config_json) == {"list_id": "ls005421403"}
 
     async def test_a_watchlist_stores_an_empty_config(self, session: AsyncSession) -> None:
-        """Nothing to configure: the watchlist is the signed-in account's own, so whatever
+        """Nothing to configure. The watchlist is the signed-in account's own, so whatever
         arrives in ``config`` is dropped rather than stored as meaningless keys."""
         row = await list_config.create(
             session, name="Mine", source="plex_watchlist", config={"stray": "key"}
@@ -428,8 +430,8 @@ class TestWhatIsStored:
 
     async def test_the_imdb_variant_reads_preset_then_list_id(self, session: AsyncSession) -> None:
         """The provider path for each stored shape, and the fallback for a body that names
-        neither: the Top 250, the list Reaper has always shipped, never a path the mirror
-        will 404."""
+        neither. That fallback is the Top 250, the list Reaper has always shipped, never a
+        path the mirror will 404."""
         preset = await list_config.create(
             session, name="P", source="imdb", config={"preset": "popular"}
         )
@@ -456,7 +458,7 @@ class TestRemoving:
     ) -> None:
         """A list acts through its keep rules now, and the API route deletes those in the
         same request (``list_rules.detach_list``), so no rule goes on naming a list that is
-        gone (rule 25). With the pairing in place there is nothing left to refuse."""
+        gone. With the pairing in place there is nothing left to refuse."""
         rows = await list_config.all_lists(session)
         for row in list(rows):
             await list_config.delete(session, row.id)
@@ -485,10 +487,10 @@ class TestDecodingForTheSync:
     stops protecting. Every drop here is deliberate and named."""
 
     async def test_a_disabled_list_is_returned_not_omitted(self, session: AsyncSession) -> None:
-        """The sync needs to SEE a disabled definition: it builds no provider for one, and
+        """The sync needs to *see* a disabled definition. It builds no provider for one, and
         the retire sweep then disables its stored membership. A definition simply missing
-        from this list is indistinguishable from one that never existed, and its membership
-        would go on protecting -- so the switch on the screen would do nothing."""
+        from this list is indistinguishable from one that never existed, and its
+        membership would go on protecting, so the switch on the screen would do nothing."""
         row = await list_config.create(
             session, name="Keep", source="arr_tag", config={"tags": ["keep"]}
         )
@@ -501,8 +503,8 @@ class TestDecodingForTheSync:
     async def test_a_body_that_will_not_parse_is_dropped_not_guessed(
         self, session: AsyncSession, tmp_path: Path
     ) -> None:
-        """Unreadable is not empty (rule 93). No provider is built, so the stored membership
-        is left exactly as the last good sync left it, rather than replaced by a sync of a
+        """Unreadable is not empty. No provider is built, so the stored membership is left
+        exactly as the last good sync left it, rather than replaced by a sync of a
         configuration nobody could read."""
         row = await list_config.create(
             session, name="Keep", source="arr_tag", config={"tags": ["keep"]}
@@ -512,9 +514,9 @@ class TestDecodingForTheSync:
             {"id": row.id},
         )
         await session.commit()
-        # A raw UPDATE goes around the identity map, which would otherwise keep handing back
-        # the instance this session already loaded, body and all. Production never sees this:
-        # every request opens its own session and reads the row from the file.
+        # A raw UPDATE goes around the identity map, which would otherwise keep handing
+        # back the instance this session already loaded, body and all. Production never
+        # sees this. Every request opens its own session and reads the row from the file.
         session.expire_all()
 
         found = await list_config.definitions(session)
@@ -522,7 +524,7 @@ class TestDecodingForTheSync:
         # Gone from what the sync builds providers from, so nothing overwrites its membership.
         assert row.id not in [d.id for d in found]
         # Still a row, so the operator can see it on the screen and Edit rewrites the body
-        # through `_clean_config` -- which is the only way back out of this state.
+        # through `_clean_config`, which is the only way back out of this state.
         assert row.id in [r.id for r in await list_config.all_lists(session)]
 
     async def test_the_tags_and_match_are_typed_for_the_provider(
@@ -546,10 +548,10 @@ class TestTheRoutes:
     def test_adding_answers_with_the_cleaned_row_and_no_policy_use(
         self, client: TestClient
     ) -> None:
-        """Rule 39: the form re-seeds from what was STORED, not from what it sent. Those
-        differ on every save that trimmed anything, and this one trims two tags. The
-        response carries an EMPTY policy use: adding a list writes no rule, so the row reads
-        "Not used by your policy yet" until the operator sets one on Policy."""
+        """The form re-seeds from what was *stored*, not from what it sent. Those differ on
+        every save that trimmed anything, and this one trims two tags. The response
+        carries an *empty* policy use. Adding a list writes no rule, so the row reads "Not
+        used by your policy yet" until the operator sets one on Policy."""
         r = client.post(
             "/api/lists/configured",
             json={"name": "  Keep  ", "source": "arr_tag", "config": {"tags": [" keep ", "gold"]}},
@@ -565,7 +567,7 @@ class TestTheRoutes:
         self, client: TestClient
     ) -> None:
         """Not reworded at the route. A second phrasing of one refusal is the copy that
-        drifts from the check enforcing it (rule 144)."""
+        drifts from the check enforcing it."""
         r = client.post(
             "/api/lists/configured",
             json={"name": "Keep", "source": "plex_collection", "config": {"library": "Films"}},
@@ -573,16 +575,16 @@ class TestTheRoutes:
 
         assert r.status_code == 400
         body = r.json()
-        # ListConfigError is now a Refusal subclass of its own (phase 8a's second wave): the
-        # code names the condition, with no params, rather than wrapping the service's
-        # English in a generic pass-through.
+        # ListConfigError is a Refusal subclass of its own. The code names the condition,
+        # with no params, rather than wrapping the service's English in a generic
+        # pass-through.
         assert body["code"] == "error.lists.collection_required"
         assert body["params"] == {}
         assert body["detail"] == "Say which collection in that library to read."
 
     def test_editing_the_config_leaves_the_name_alone(self, client: TestClient) -> None:
-        """Rule 1: an omitted field and an explicit one are different requests. The edit
-        sends `config` alone, so it cannot rename the list on the way past."""
+        """An omitted field and an explicit one are different requests. The edit sends
+        `config` alone, so it cannot rename the list on the way past."""
         made = client.post(
             "/api/lists/configured",
             json={
@@ -622,20 +624,20 @@ def _definition(**overrides: object) -> list_config.ListDefinition:
 
 
 class TestTheRegistryFingerprint:
-    """What a scan records so the simulator can tell its evidence went stale (#512).
+    """What a scan records so the simulator can tell its evidence went stale.
 
-    ``Snapshot.list_config_hash`` is this value, and ``api.simulate.simulate`` refuses when it
-    no longer matches. Every assertion below is about which edits an operator can make that
-    change what a scan would GATHER, so the cases are chosen from that question rather than
-    from the fields the function happens to read.
+    ``Snapshot.list_config_hash`` is this value, and ``api.simulate.simulate`` refuses when
+    it no longer matches. Every assertion below is about which edits an operator can make
+    that change what a scan would *gather*, so the cases are chosen from that question
+    rather than from the fields the function happens to read.
     """
 
     def test_every_edit_that_moves_membership_moves_it(self) -> None:
         """One table, written from what each edit does to a title's membership.
 
-        Retagging changes which titles match; repointing changes where they are read from;
-        the NAME changes what a keep rule matches, because ``lists.on_list_fact`` joins the
-        names rather than the ids; and switching one off withdraws it altogether.
+        Retagging changes which titles match. Repointing changes where they are read from.
+        The *name* changes what a keep rule matches, because ``lists.on_list_fact`` joins
+        the names rather than the ids. And switching one off withdraws it altogether.
         """
         base = _definition()
         moved = {
@@ -655,7 +657,7 @@ class TestTheRegistryFingerprint:
 
         The enabled rows are what the sync builds providers from, so this is the difference
         between a fingerprint that refuses when membership can have changed and one that
-        refuses whenever any row was touched -- and a panel that refuses too often is one an
+        refuses whenever any row was touched. A panel that refuses too often is one an
         operator stops reading.
         """
         off = _definition(enabled=False)
@@ -677,17 +679,17 @@ class TestTheRegistryFingerprint:
 
     @pytest.mark.anyio
     async def test_a_registry_that_cannot_be_read_answers_none(self, tmp_path: Path) -> None:
-        """Fail closed: unknown, never "no lists configured" (rules 65/91).
+        """Fail closed. This is unknown, never "no lists configured".
 
-        A fallback to the empty registry's hash would match any install that happens to have
-        no lists, and preview against membership nobody could confirm. ``None`` is not that,
-        and it is also not a value to COMPARE: a snapshot that degraded for the same
-        unreadable registry recorded ``None`` too, so each caller tests either side for it
-        and refuses (``api.simulate.simulate``, ``services.executor``), rather than resting on
-        an inequality that reads two unknowns as agreement.
+        A fallback to the empty registry's hash would match any install that happens to
+        have no lists, and preview against membership nobody could confirm. ``None`` is
+        not that, and it is also not a value to *compare*. A snapshot that degraded for the
+        same unreadable registry recorded ``None`` too, so each caller tests either side
+        for it and refuses (``api.simulate.simulate``, ``services.executor``), rather than
+        resting on an inequality that reads two unknowns as agreement.
 
         The same row is read twice, readable then not, so the ``None`` is pinned to the
-        decode failure and not to anything else about this database (rule 141).
+        decode failure and not to anything else about this database.
         """
         settings = Settings(data_dir=tmp_path, secret_key="k")
         sync_engine = sa_create_engine(settings.sync_database_url)
@@ -719,14 +721,14 @@ class TestTheRegistryFingerprint:
 
 
 class TestCheckingTheListsNow:
-    """``POST /api/lists/sync`` -- the Lists screen's "Check now".
+    """``POST /api/lists/sync``, the Lists screen's "Check now".
 
-    ``test_protection_sync.py`` covers ``sync_protection_lists`` itself at length. What had no
-    test at all is the route around it, which is where this pass can go wrong in the direction
-    that matters: it builds the sources, decides whether Plex answered, and decides whether to
-    run at all. Each of those resolves toward leaving the stored membership alone, because a
-    check that runs on half an answer retires slugs (rule 115) and a retired slug is a
-    protection that stopped covering.
+    ``test_protection_sync.py`` covers ``sync_protection_lists`` itself at length. What had
+    no test at all is the route around it, which is where this pass can go wrong in the
+    direction that matters. It builds the sources, decides whether Plex answered, and
+    decides whether to run at all. Each of those resolves toward leaving the stored
+    membership alone, because a check that runs on half an answer retires slugs, and a
+    retired slug is a protection that stopped covering.
     """
 
     @staticmethod
@@ -752,16 +754,17 @@ class TestCheckingTheListsNow:
     def test_a_list_saved_in_a_form_reaper_cannot_read_stops_the_whole_check(
         self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Not just that list: none of them.
+        """Not just that list. None of them.
 
-        This pass retires every slug the registry no longer produces, so a row that will not
-        decode is indistinguishable from one the operator deleted -- and running anyway would
-        switch off the membership it is still protecting with (rules 65/91).
+        This pass retires every slug the registry no longer produces, so a row that will
+        not decode is indistinguishable from one the operator deleted. Running anyway would
+        switch off the membership it is still protecting with.
         """
         self._sources(monkeypatch)
         seen = self._syncs(monkeypatch, {})
-        # Read once so the shipped lists are actually seeded -- the registry fills in lazily,
-        # and corrupting an empty table would leave a valid registry and prove nothing.
+        # Read once so the shipped lists are actually seeded. The registry fills in
+        # lazily, and corrupting an empty table would leave a valid registry and prove
+        # nothing.
         assert client.get("/api/lists/configured").json()
         engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)
         with engine.begin() as conn:
@@ -779,8 +782,8 @@ class TestCheckingTheListsNow:
     def test_plex_not_answering_is_said_plainly_and_retires_nothing(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Plex fails closed here exactly as it does in a scan: no live server, no collection
-        provider, so nothing is synced for one and nothing is retired either."""
+        """Plex fails closed here exactly as it does in a scan. No live server means no
+        collection provider, so nothing is synced for one and nothing is retired either."""
 
         class _Plex:
             async def connect(self) -> object:
@@ -814,9 +817,8 @@ class TestCheckingTheListsNow:
 
         assert response.status_code == 400, response.text
         body = response.json()
-        # ScanConfigError is now a Refusal subclass of its own (phase 8a's second wave): the
-        # route answers through refuse_from(exc) rather than wrapping its English in a
-        # generic pass-through code.
+        # ScanConfigError is a Refusal subclass of its own. The route answers through
+        # refuse_from(exc) rather than wrapping its English in a generic pass-through code.
         assert body["code"] == "error.scan.missing_sources"
         assert body["params"] == {}
         assert body["detail"] == (
@@ -846,7 +848,7 @@ class TestCheckingTheListsNow:
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The narrowed pass, which must reach the service as a narrowing rather than being
-        widened to everything here -- ``sync_protection_lists`` retires nothing when it is
+        widened to everything here. ``sync_protection_lists`` retires nothing when it is
         given one list, and that promise depends on the id arriving."""
         self._sources(monkeypatch)
         seen = self._syncs(monkeypatch, {"imdb:1": 5})
@@ -856,8 +858,8 @@ class TestCheckingTheListsNow:
 
 
 class TestThePlexErrorVocabulary:
-    """The route's one Plex-unreachable reason, both directions (rule 145's shape, scaled
-    to a population of one id: ``sync_lists`` has exactly one call site for it)."""
+    """The route's one Plex-unreachable reason, both directions. ``sync_lists`` has
+    exactly one call site for it."""
 
     def test_the_id_has_a_catalog_entry(self) -> None:
         assert "plexError" in catalog("lists")
@@ -870,11 +872,11 @@ class TestTheUniqueNameConstraintIsTheThingThatHolds:
     """The backstop under ``_refuse_name_twice``, driven rather than argued.
 
     The pre-check reads and then writes, and can be beaten between the two, so the NOCASE
-    unique column is what actually holds -- and what it raises, ``IntegrityError``, says
-    nothing an operator can act on. Losing the handler turns a lost race into a 500 on the
-    Lists screen. The race is simulated by taking the pre-check out of the way, which is the
-    only way to reach the constraint from one thread; both callers get their own case because
-    the handler is duplicated in each (rule 72).
+    unique column is what actually holds. What it raises, ``IntegrityError``, says nothing
+    an operator can act on. Losing the handler turns a lost race into a 500 on the Lists
+    screen. The race is simulated by taking the pre-check out of the way, which is the
+    only way to reach the constraint from one thread. Both callers get their own case
+    because the handler is duplicated in each.
     """
 
     @staticmethod
@@ -910,7 +912,7 @@ class TestTheUniqueNameConstraintIsTheThingThatHolds:
     async def test_the_rolled_back_session_still_works(
         self, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The rollback is why the refusal is usable: without it the session stays poisoned
+        """The rollback is why the refusal is usable. Without it the session stays poisoned
         and the operator's next save fails for a reason that has nothing to do with it."""
         await list_config.create(session, name="Keep", source="arr_tag", config={"tags": ["keep"]})
         self._lose_the_race(monkeypatch)
@@ -929,9 +931,9 @@ class TestTheUniqueNameConstraintIsTheThingThatHolds:
 class TestARowStaysOnScreenSoTheOperatorCanFixIt:
     """A definition Reaper cannot decode still renders, and deleting one that is gone says so.
 
-    Both are the same instinct on the screen an operator repairs a list from. Raising the bad
-    row off the list would hide the only control that rewrites it -- Edit saves through
-    ``_clean_config``, which is the way out -- so the body reads as empty instead (rule 96).
+    Both are the same instinct on the screen an operator repairs a list from. Raising the
+    bad row off the list would hide the only control that rewrites it. Edit saves through
+    ``_clean_config``, which is the way out, so the body reads as empty instead.
     """
 
     def test_a_body_that_will_not_parse_renders_as_an_empty_one(

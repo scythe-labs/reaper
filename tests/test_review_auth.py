@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Brute-force throttling and CPU-shedding on the login endpoints.
+"""Checks the throttle and CPU-shedding guards on the login endpoints.
 
-These guard the fix for the review finding that ``POST /api/auth/local`` ran a
-full Argon2id verification on every unauthenticated request with no lockout: a
-scripted attacker could both brute-force the admin password and pin the CPU. The
-unit tests pin the :class:`Throttle` / :class:`ConcurrencyGate` mechanics with an
-injected clock; the route tests prove the wiring -- a burst of wrong passwords
-earns a 429, and the lock lifts once its window elapses.
+``POST /api/auth/local`` runs a full Argon2id password check on every request. Without a
+lockout, a scripted attacker could brute-force the admin password while also pinning the
+CPU. The unit tests pin the :class:`Throttle` and :class:`ConcurrencyGate` mechanics using
+an injected clock. The route tests prove the wiring. A burst of wrong passwords earns a
+429, and the lock lifts once its window elapses.
 """
 
 from __future__ import annotations
@@ -32,7 +31,7 @@ CSRF = {"X-Reaper-CSRF": "1"}
 
 
 class _FakeClock:
-    """A monotonic clock the test drives by hand -- no real sleeping."""
+    """A monotonic clock the test drives by hand, so nothing here sleeps for real."""
 
     def __init__(self) -> None:
         self.now = 1000.0
@@ -92,15 +91,15 @@ class TestThrottle:
         assert t.retry_after("ip:x") > 0.0
         t.record_success("ip:x")
         assert t.retry_after("ip:x") == 0.0
-        # And the counter is genuinely back to zero, not merely unlocked.
+        # Confirms the failure counter reset to zero, not just that the lock cleared.
         assert t.record_failure("ip:x") == 0.0
 
     def test_an_idle_key_decays_so_the_counter_resets(self) -> None:
         clock = _FakeClock()
         t = Throttle(threshold=2, base_delay=5.0, decay=100.0, clock=clock)
-        t.record_failure("ip:x")  # one failure on the books
-        clock.advance(101.0)  # walk away past the decay window
-        # The next failure starts a fresh count rather than tipping into lockout.
+        t.record_failure("ip:x")  # records one failure
+        clock.advance(101.0)  # move the clock past the decay window
+        # The next failure starts a fresh count instead of triggering a lockout.
         assert t.record_failure("ip:x") == 0.0
 
     def test_keys_are_tracked_independently(self) -> None:
@@ -112,9 +111,12 @@ class TestThrottle:
 
 
 class TestConcurrencyGate:
-    """``acquire`` returns how many slots it took (0 when refused) rather than a bool, so a
-    caller running several hashes can charge the gate for all of them (S-4). Truthiness is
-    unchanged, which is what keeps the single-hash call sites reading the same."""
+    """``acquire`` returns the number of slots it took, 0 when refused, instead of a bool.
+
+    A caller running several hashes at once can charge the gate for all of them at once.
+    The return value is still truthy exactly when a slot was taken, so single-hash call
+    sites can keep reading it as a bool.
+    """
 
     def test_it_admits_up_to_the_limit_then_refuses(self) -> None:
         gate = ConcurrencyGate(2)
@@ -148,9 +150,11 @@ class TestConcurrencyGate:
 
 @pytest.fixture(autouse=True)
 def _clean_limiters() -> Iterator[None]:
-    """The throttle/gate singletons are process-wide. Reset them around every test
-    here so a deliberate lockout cannot bleed into the rest of the suite (which
-    logs in over the same TestClient host)."""
+    """The throttle and gate singletons are shared across the whole test process.
+
+    Reset them before and after every test here, so a lockout from one test does not
+    carry over into the rest of the suite, which logs in against the same TestClient host.
+    """
     login_throttle.reset()
     recover_throttle.reset()
     argon2_gate.reset()
@@ -171,9 +175,8 @@ class TestLocalLoginThrottle:
         self, client: TestClient, settings: Settings
     ) -> None:
         seed_admin(settings)
-        # The default threshold is 5 consecutive failures. The 6th attempt (or
-        # sooner, once the lock is set) is refused with 429 rather than reaching
-        # the Argon2 verify at all.
+        # The default threshold is 5 consecutive failures. Once locked, an attempt is
+        # refused with 429 before it ever reaches the Argon2 verification.
         statuses = []
         for _ in range(8):
             r = client.post(
@@ -195,8 +198,8 @@ class TestLocalLoginThrottle:
     def test_once_locked_even_the_right_password_is_refused(
         self, client: TestClient, settings: Settings
     ) -> None:
-        """Past the threshold, the endpoint stops answering credential questions
-        for a while -- correct or not."""
+        """Past the threshold, the endpoint refuses every login attempt for a while,
+        whether the password is correct or not."""
         seed_admin(settings)
         for _ in range(6):
             client.post(
@@ -244,8 +247,8 @@ class TestLocalLoginThrottle:
     def test_a_few_wrong_attempts_still_let_the_right_one_through(
         self, client: TestClient, settings: Settings
     ) -> None:
-        """Fat-fingering the password a couple of times must not lock the operator
-        out -- the throttle only bites past the threshold."""
+        """Mistyping the password a couple of times must not lock the operator out.
+        The throttle only takes effect once the failure count passes the threshold."""
         seed_admin(settings)
         for _ in range(3):  # under the threshold of 5
             assert (
@@ -269,7 +272,7 @@ class TestLocalLoginThrottle:
         self, client: TestClient, settings: Settings, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """With every verification slot held, a new login is turned away with 503
-        rather than piling more Argon2 work onto a saturated CPU."""
+        instead of adding more Argon2 work onto an already-busy CPU."""
         seed_admin(settings)
         monkeypatch.setattr(argon2_gate, "acquire", lambda: False)
         busy = client.post(

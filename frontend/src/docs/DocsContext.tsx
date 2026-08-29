@@ -17,9 +17,9 @@ import {
 } from "react";
 import { useBackGuard } from "../backnav";
 
-// Every word of every document, only once someone asks to read one. The docs are prose, not
-// app code, and they used to ride in the first chunk the queue waits on (P-4). Nothing is
-// rendered until `target` is set, so the fetch starts on the first Help press.
+// Every word of every document loads only once someone asks to read one. The docs are prose,
+// not app code, so they load separately instead of riding along in the chunk the queue waits
+// on. Nothing is rendered until `target` is set, so the fetch starts on the first Help press.
 const DocsModal = lazy(async () => ({ default: (await import("./DocsModal")).DocsModal }));
 
 type DocsApi = { openDoc: (id: string, anchor?: string) => void };

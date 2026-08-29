@@ -3,18 +3,17 @@
 
 The rules pinned here:
 
-* the stock ``/docs`` and ``/openapi.json`` are gone -- the API description is served
-  signed-in-only at ``/api/docs`` and ``/api/openapi.json`` (the second review pass's
-  lesson applied forward: nothing outside ``/api`` is authenticated, so nothing
-  sensitive may live outside ``/api``);
-* the API key authenticates without a cookie and without the CSRF header (no cookie,
-  no CSRF risk), backs off per address on bad guesses, and writes ONLY the automation
-  allowlist -- scanning, planning, the policy, the run limits -- so the deletion switch,
+* The stock ``/docs`` and ``/openapi.json`` are gone. The API description is served
+  signed-in-only at ``/api/docs`` and ``/api/openapi.json``, because nothing outside
+  ``/api`` is authenticated, so nothing sensitive may live outside ``/api``.
+* The API key authenticates without a cookie and without the CSRF header (no cookie, no
+  CSRF risk), backs off per address on bad guesses, and writes *only* the automation
+  allowlist (scanning, planning, the policy, the run limits), so the deletion switch,
   execute, sign-in and every other setting stay behind the browser, and the reference's
-  auth box says so in those terms;
-* reverse-proxy trust is off by default, applies immediately on save, and
-  ``client_ip`` only honors a forwarded chain when the peer itself is a listed proxy;
-* the log ring is redacted before storage, polls incrementally by sequence number, and
+  auth box says so in those terms.
+* Reverse-proxy trust is off by default, applies immediately on save, and ``client_ip``
+  only honors a forwarded chain when the peer itself is a listed proxy.
+* The log ring is redacted before storage, polls incrementally by sequence number, and
   the recording level applies instantly and persists (stored value over env seed).
 """
 
@@ -35,6 +34,7 @@ import structlog
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
+from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session as SyncSession
 from starlette.requests import Request
 
@@ -64,13 +64,13 @@ from reaper.services import app_settings
 from tests._auth import login
 
 #: How many served operations are fenced to the signed-in browser, hand-reconciled. Every
-#: irreversible authority plus every setting and credential write; an API key gets scanning,
-#: planning, the policy and the reap profile. The number is here rather than in a docstring
-#: because it was in one for two releases, drifting once per route added while
-#: ``test_the_session_scheme_is_declared`` said "counted, not remembered" and asserted
-#: nothing (rule 144).
-#: -1 for `PUT /api/settings/notifications/language`, gone: the language is one setting now and
-#: rides `PUT /api/settings/general`, which was already counted here.
+#: irreversible authority plus every setting and credential write. An API key gets
+#: scanning, planning, the policy and the reap profile. The number lives here rather than
+#: in a docstring, because a docstring copy drifted for two releases, one route at a time,
+#: while ``test_the_session_scheme_is_declared`` said "counted, not remembered" and
+#: asserted nothing.
+#: -1 for `PUT /api/settings/notifications/language`, now gone. The language is one
+#: setting now and rides `PUT /api/settings/general`, which was already counted here.
 FENCED_OPERATIONS = 48
 
 
@@ -82,7 +82,7 @@ class TestScanProgressPercent:
         from reaper.api.scan import _phase_percent
 
         # total=0 in the early phases must sit at the band start, never divide-by-zero to
-        # 100 -- the exact "starts full" bug.
+        # 100. That is the exact "starts full" bug.
         assert _phase_percent("starting", 0, 0) == 0
         assert _phase_percent("history", 0, 0) == 2
         assert _phase_percent("gathering", 0, 5) == 18
@@ -111,7 +111,7 @@ class TestScanProgressPercent:
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    """A logged-in client over an empty database: exactly a fresh install."""
+    """A logged-in client over an empty database. This is exactly a fresh install."""
     settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
@@ -123,8 +123,9 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
 
 def _store_raw(tmp_path: Path, key: str, value: object) -> None:
     """Put an app-setting row straight into the database the ``client`` fixture is on,
-    holding whatever shape an older build left there. Goes around the API deliberately: the
-    point is a stored value today's request models would never let through."""
+    holding whatever shape an older build left there. This goes around the API
+    deliberately. The point is a stored value today's request models would never let
+    through."""
     settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     with SyncSession(engine) as session:
@@ -135,24 +136,33 @@ def _store_raw(tmp_path: Path, key: str, value: object) -> None:
     engine.dispose()
 
 
+def _force_text_updated_at(tmp_path: Path, raw: str) -> None:
+    """Overwrite every app-setting row's ``updated_at`` with a TEXT value. Raw SQL because the
+    ORM type is what keeps these columns integer, so nothing else can put a string there."""
+    engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)
+    with engine.begin() as conn:
+        conn.execute(sa_text("UPDATE app_setting SET updated_at = :raw"), {"raw": raw})
+    engine.dispose()
+
+
 def _bare(client: TestClient) -> TestClient:
-    """A second client over the SAME app: no cookies, no CSRF header, no session."""
+    """A second client over the *same* app. No cookies, no CSRF header, no session."""
     return TestClient(client.app)
 
 
 class TestGeneralSettings:
     def test_fresh_install_defaults(self, client: TestClient) -> None:
         data = client.get("/api/settings/general").json()
-        # The fresh-install time zone is the host's own zone (no stored value, no env seed),
-        # so it varies by machine -- assert only that it is a real IANA name, then hold the
-        # rest to their fixed defaults.
+        # The fresh-install time zone is the host's own zone (no stored value, no env
+        # seed), so it varies by machine. Assert only that it is a real IANA name, then
+        # hold the rest to their fixed defaults.
         tz = data.pop("timezone")
         assert ZoneInfo(tz)
         assert data == {
             "application_name": "Reaper",
             "application_url": None,
             "accent_color": "#25c3ff",
-            # Null, not "en": nobody has chosen, and the browser seeds it on first sign-in.
+            # Null, not "en". Nobody has chosen, and the browser seeds it on first sign-in.
             # A default of "en" here would be the server asserting a choice it never saw.
             "language": None,
             "api_key_set": False,
@@ -160,8 +170,8 @@ class TestGeneralSettings:
             "default_spare_days": 0,
             "proxy_trust_enabled": False,
             "trusted_proxies": [],
-            # The suite runs from source, which is not a desktop build, so the
-            # Desktop app group is absent; TestDesktopSettings drives the other arm.
+            # The suite runs from source, which is not a desktop build, so the Desktop
+            # app group is absent. TestDesktopSettings drives the other arm.
             "desktop": None,
         }
 
@@ -172,11 +182,12 @@ class TestGeneralSettings:
 
     def test_a_language_with_no_backend_catalog_is_still_stored(self, client: TestClient) -> None:
         """The browser ships a translation a release before ``backend.json`` does, so the
-        picker offers tags this process cannot compose a notification in. Refusing one would
-        stop the operator setting the language they are already reading the app in; storing it
-        is what makes the notification start speaking it the release that catalog lands. Rule
-        141: ``de`` on purpose, a tag no fixture and no shipped backend catalog holds, so a
-        pass cannot come from the value happening to be the default."""
+        picker offers tags this process cannot compose a notification in. Refusing one
+        would stop the operator setting the language they are already reading the app in.
+        Storing it is what makes the notification start speaking it the release that
+        catalog lands. This uses ``de`` on purpose, a tag no fixture and no shipped
+        backend catalog holds, so a pass cannot come from the value happening to be the
+        default."""
         assert client.put("/api/settings/general", json={"language": "de"}).status_code == 200
         assert client.get("/api/settings/general").json()["language"] == "de"
 
@@ -185,8 +196,22 @@ class TestGeneralSettings:
         response = client.put("/api/settings/general", json={"language": "not a tag!"})
         assert response.status_code == 422
         assert response.json()["code"] == "error.settings.language_invalid"
-        # The bad value never landed; the previous language still stands.
+        # The bad value never landed. The previous language still stands.
         assert client.get("/api/settings/general").json()["language"] == "es"
+
+    def test_a_text_updated_at_does_not_take_this_page_down(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """``updated_at`` is an epoch integer, and a hand ``sqlite3`` edit leaves a string
+        there. ``session.get`` decodes every column of the row it fetches, so one such row
+        used to 500 this route over a column no setting reads."""
+        client.put("/api/settings/general", json={"language": "es"})
+        _force_text_updated_at(tmp_path, "2026-08-24T14:30:56.744603+00:00")
+
+        response = client.get("/api/settings/general")
+
+        assert response.status_code == 200
+        assert response.json()["language"] == "es"
 
     def test_a_valid_accent_is_saved_lowercased(self, client: TestClient) -> None:
         data = client.put("/api/settings/general", json={"accent_color": "#4F46E5"}).json()
@@ -199,7 +224,7 @@ class TestGeneralSettings:
         body = response.json()
         assert body["code"] == "error.settings.accent_color_invalid"
         assert "#" in body["detail"]
-        # The bad value never landed; the previous color still stands.
+        # The bad value never landed. The previous color still stands.
         assert client.get("/api/settings/general").json()["accent_color"] == "#4f46e5"
 
     def test_an_empty_accent_resets_to_the_default(self, client: TestClient) -> None:
@@ -280,12 +305,13 @@ class TestGeneralSettings:
         assert response.status_code == 422
 
     def test_one_bad_field_writes_none_of_the_others(self, client: TestClient) -> None:
-        """The General panel's save bar sends every unsaved field in ONE request, so a body
-        carrying five good fields and one bad one is the shape the operator actually produces.
-        This route's docstring promises "nothing is changed" on a refusal, and it holds because
-        all four validations run before the first write and one commit ends them -- but every
-        other test here sends a single field, so nothing pinned it. Moving any `set_*` above a
-        check would half-apply a six-field save with the operator told it failed."""
+        """The General panel's save bar sends every unsaved field in *one* request, so a
+        body carrying five good fields and one bad one is the shape the operator actually
+        produces. This route's docstring promises "nothing is changed" on a refusal, and it
+        holds because all four validations run before the first write and one commit ends
+        them. But every other test here sends a single field, so nothing pinned it. Moving
+        any `set_*` above a check would half-apply a six-field save with the operator told
+        it failed."""
         before = client.get("/api/settings/general").json()
 
         response = client.put(
@@ -340,12 +366,12 @@ class TestGeneralSettings:
         assert client.app.state.trusted_proxies == ()  # type: ignore[attr-defined]
 
     def test_every_general_field_is_a_row_or_a_declared_exception(self) -> None:
-        """The route walks ``_GENERAL_FIELDS`` twice, so a field added to the request model
-        and forgotten there is accepted, echoed back unchanged, and silently never stored.
-        That is the shape issue #90 had, and no route test can see it: a field nobody wrote
-        a case for is a field nobody sends.
+        """The route walks ``_GENERAL_FIELDS`` twice, so a field added to the request
+        model and forgotten there is accepted, echoed back unchanged, and silently never
+        stored. No route test can see this shape. A field nobody wrote a case for is a
+        field nobody sends.
 
-        Derived from the model rather than listed here (rule 103), so the reconciliation is
+        This is derived from the model rather than listed here, so the reconciliation is
         with the declaration and not with a second copy of it. A field that genuinely
         cannot be a row joins ``_GENERAL_FIELD_EXCEPTIONS`` with the reason, which is what
         makes this fail *loudly* rather than invite a silencing edit.
@@ -368,9 +394,9 @@ class TestGeneralSettings:
         cannot tell them apart. ``test_one_bad_field_writes_none_of_the_others`` above and
         ``test_a_refused_tray_writes_none_of_the_settings_beside_it`` below both hold whether
         the checks run before the writes or after them, because the single commit at the end
-        of the route rolls a half-applied save back either way. Measured, not argued: the
-        desktop checks were moved back below the write loop and both stayed green. So neither
-        one discriminates the layers, and neither is named as if it did (rule 118).
+        of the route rolls a half-applied save back either way. This was measured, not
+        argued: the desktop checks were moved back below the write loop and both stayed
+        green. So neither one discriminates the layers, and neither is named as if it did.
 
         This is the half that can be pinned. The checking pass takes the payload and nothing
         else, so it holds no session and cannot write through one. Thread a session into
@@ -407,7 +433,8 @@ class TestDesktopSettings:
     @pytest.fixture
     def desktop_env(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         """A clean slate for the two keys, restored even though the PUT route writes
-        os.environ directly (monkeypatch cannot see that write, rule 133)."""
+        os.environ directly. monkeypatch cannot see that write, so this restores the
+        values by hand."""
         import os
 
         monkeypatch.delenv("REAPER_TRAY", raising=False)
@@ -427,7 +454,7 @@ class TestDesktopSettings:
         """The other half of ``test_one_bad_field_writes_none_of_the_others``, for the one
         refusal that is not a settings row. The save bar sends every unsaved field at once,
         so a container operator with the Desktop group somehow on screen sends this shape,
-        and nothing pinned it: that test's body carries no ``tray``.
+        and nothing pinned it. That test's body carries no ``tray``.
 
         Named for what it pins, which is the operator-visible promise that a refusal changes
         nothing. It does not discriminate the two layers that deliver it, and
@@ -477,23 +504,24 @@ class TestDesktopSettings:
         desktop_env: None,
     ) -> None:
         """The route promises that a refusal changes nothing, and one write was outside the
-        transaction that delivers it (#748).
+        transaction that delivers it.
 
-        `launcher.conf` is a file and `os.environ` is process state, so neither rolls back.
-        Written before the commit, a commit that then failed left the switch on in the file
-        and echoed back by `_desktop_out` from the environment, while the five settings rows
-        saved beside it went back and the operator was told the save failed.
+        `launcher.conf` is a file and `os.environ` is process state, so neither rolls
+        back. Written before the commit, a commit that then failed left the switch on in
+        the file and echoed back by `_desktop_out` from the environment, while the five
+        settings rows saved beside it went back and the operator was told the save failed.
 
-        The commit is broken at the session rather than at the disk, because the window this
-        is about is the commit failing for any reason at all. The three things the failure
-        must leave untouched are asserted separately: the file, the environment, and the
-        rows. A test reading only the response would pass with all three still moved.
+        The commit is broken at the session rather than at the disk, because the window
+        this is about is the commit failing for any reason at all. The three things the
+        failure must leave untouched are asserted separately: the file, the environment,
+        and the rows. A test reading only the response would pass with all three still
+        moved.
 
-        **Only the route's own commit is broken**, found by frame name. A blanket patch on
+        Only the route's own commit is broken, found by frame name. A blanket patch on
         ``AsyncSession.commit`` takes the auth middleware's commit down first, so the
         request dies before ``put_general`` runs at all and the test passes against the
-        broken order it was written to catch (which is how it was written first, and it
-        passed).
+        broken order it was written to catch, which is how it was written first, and it
+        passed.
         """
         import os
         import traceback
@@ -533,9 +561,9 @@ class TestDesktopSettings:
         monkeypatch: pytest.MonkeyPatch,
         desktop_env: None,
     ) -> None:
-        """Nothing on Windows reads REAPER_DOCK_ICON, so accepting the field there
-        would persist an inert line that every later read echoes back as a live
-        switch — the schema's own docstring promises the refusal."""
+        """Nothing on Windows reads REAPER_DOCK_ICON, so accepting the field there would
+        persist an inert line that every later read echoes back as a live switch. The
+        schema's own docstring promises the refusal."""
         from reaper import launcher
 
         monkeypatch.setattr(launcher, "desktop_platform", lambda *a, **k: "windows")
@@ -556,8 +584,8 @@ class TestDesktopSettings:
         monkeypatch: pytest.MonkeyPatch,
         desktop_env: None,
     ) -> None:
-        """launcher.conf is the operator's file; Settings edits its own keys in place
-        and never rewrites the rest."""
+        """launcher.conf is the operator's file. Settings edits its own keys in place and
+        never rewrites the rest."""
         from reaper import launcher
 
         monkeypatch.setattr(launcher, "desktop_platform", lambda *a, **k: "macos")
@@ -573,8 +601,8 @@ class TestDesktopSettings:
 
 
 class TestReverseProxyEnvSeed:
-    """REAPER_PROXY_TRUST_ENABLED / REAPER_TRUSTED_PROXIES seed the first-boot default;
-    the stored value (Settings -> General) wins thereafter, exactly like the deletion
+    """REAPER_PROXY_TRUST_ENABLED / REAPER_TRUSTED_PROXIES seed the first-boot default.
+    The stored value (Settings -> General) wins thereafter, exactly like the deletion
     switch. A declarative deployment can ship trust configured with no UI visit."""
 
     def _seeded(self, tmp_path: Path) -> Settings:
@@ -603,7 +631,7 @@ class TestReverseProxyEnvSeed:
         settings = self._seeded(tmp_path)
         with TestClient(create_app(settings)) as c:
             login(c, settings)
-            # Turn it off in the UI: the stored false must win over the env seed, and take
+            # Turn it off in the UI. The stored false must win over the env seed, and take
             # effect immediately (an empty tuple ignores every forwarded header again).
             c.put("/api/settings/general", json={"proxy_trust_enabled": False})
             assert c.get("/api/settings/general").json()["proxy_trust_enabled"] is False
@@ -635,11 +663,11 @@ class TestTheApiKeyLane:
         key = self._issue(client)
         bare = _bare(client)
 
-        # No key, no cookie: the gate holds.
+        # No key, no cookie. The gate holds.
         assert bare.get("/api/settings/general").status_code == 401
-        # The key alone reads, with NO cookie and NO CSRF header: nothing ambient for a
-        # cross-site page to abuse. A setting *write* still needs the browser (see the
-        # fence test below) -- a config change can transmit a stored secret.
+        # The key alone reads, with *no* cookie and *no* CSRF header. Nothing ambient for
+        # a cross-site page to abuse. A setting *write* still needs the browser (see the
+        # fence test below), since a config change can transmit a stored secret.
         ok = bare.get("/api/settings/general", headers={"X-Api-Key": key})
         assert ok.status_code == 200
 
@@ -655,8 +683,8 @@ class TestTheApiKeyLane:
         """Rotating swaps one working key for another, so it never closes this lane.
 
         An operator who generated a key for a one-off script had no way to shut the header
-        credential off again. Removing it must also stop it authenticating immediately:
-        the check reads a digest held on the app, not the database, so a key deleted from
+        credential off again. Removing it must also stop it authenticating immediately.
+        The check reads a digest held on the app, not the database, so a key deleted from
         storage alone would have kept working until the next restart.
         """
         key = self._issue(client)
@@ -678,8 +706,8 @@ class TestTheApiKeyLane:
 
         A key encrypted under a secret that has since rotated cannot be decrypted, so nothing
         can authenticate with it and the reveal route 404s. Reading the row instead left the
-        General panel offering Show and Delete over a credential the operator's scripts were
-        already being refused on, and no screen said why. Rule 76: the flag resolves the way
+        General panel offering Show and Delete over a credential the operator's scripts
+        were already being refused on, and no screen said why. The flag resolves the way
         the runtime does.
         """
         rotated_away = SecretBox("a-secret-key-this-install-no-longer-holds")
@@ -711,9 +739,9 @@ class TestTheApiKeyLane:
                 for i in range(8)
             ]
             assert 429 in statuses
-            # Locked out means locked out for the RIGHT key too, until the backoff passes.
+            # Locked out means locked out for the *right* key too, until the backoff passes.
         finally:
-            # The throttle is process-global; leave it clean for other tests.
+            # The throttle is process-global. Leave it clean for other tests.
             api_key_throttle.record_success("api-key:testclient")
 
     def test_the_fence_names_what_a_key_may_never_do(self, client: TestClient) -> None:
@@ -735,7 +763,7 @@ class TestTheApiKeyLane:
             == 403
         )
         # And every other setting write. A general write could loosen the proxy trust the
-        # login lockout keys on; a Plex-connection write could hand the stored token to an
+        # login lockout keys on. A Plex-connection write could hand the stored token to an
         # attacker's address. Both were reachable before the allowlist inversion.
         assert (
             bare.put(
@@ -757,15 +785,16 @@ class TestTheApiKeyLane:
 
     def test_the_key_cannot_read_the_logs(self, client: TestClient) -> None:
         """The logs are a running transcript of the library, and the download concatenates
-        every rotating file, so one GET is the whole history (S-3).
+        every rotating file, so one GET is the whole history.
 
-        The privacy half of that reason holds now, and did not when this test was written:
-        S-3 argued a key is told it reads "your library", meaning the catalog and not
-        everyone's viewing, while ``/api/fairness/people/{identity}`` answered a bare key
-        with one person's whole viewing breakdown. #117 closed that by moving the fairness
-        reads behind the browser, so both descriptions of the fence can make the argument
-        again. What this pins is narrower and stood on its own either way: the log FILE
-        stays off a header credential.
+        The privacy half of that reason holds now, though it did not when this test was
+        written. The original argument was that a key is told it reads "your library",
+        meaning the catalog and not everyone's viewing, while
+        ``/api/fairness/people/{identity}`` answered a bare key with one person's whole
+        viewing breakdown. Moving the fairness reads behind the browser closed that gap,
+        so both descriptions of the fence can make the argument again. What this pins is
+        narrower and stood on its own either way. The log *file* stays off a header
+        credential.
         """
         key = self._issue(client)
         bare = _bare(client)
@@ -777,9 +806,9 @@ class TestTheApiKeyLane:
         assert client.get("/api/logs").status_code == 200
 
     def test_a_refused_write_hears_which_writes_a_key_can_make(self, client: TestClient) -> None:
-        """Rule 119: the expectation is the fence's contract, written out, not a read-back
-        of the generator. The refused caller is told what the key CAN write, because a list
-        of what it cannot is the one that falls behind the fence."""
+        """The expectation is the fence's contract, written out, not a read-back of the
+        generator. The refused caller is told what the key *can* write, because a list of
+        what it cannot is the one that falls behind the fence."""
         key = self._issue(client)
         bare = _bare(client)
         refused = bare.put(
@@ -808,23 +837,23 @@ class TestTheApiKeyLane:
         )
 
     def test_a_key_cannot_read_one_persons_viewing(self, client: TestClient) -> None:
-        """#117, driven the way it was found: with a live key and no cookie, against both
+        """Driven the way this bug was found, with a live key and no cookie, against both
         fairness routes. Both answered 200, so an operator handing a key to a third-party
         dashboard handed over who watched what.
 
         The per-person route is the one that needs the subtree match. It is templated in
         the schema and concrete in a request, and an exact-path denylist matches neither
-        spelling against the other -- so a denylist holding only ``/api/fairness`` would
-        pass the first assertion here and fail the second, which is precisely the shape of
-        the original bug.
+        spelling against the other. A denylist holding only ``/api/fairness`` would pass
+        the first assertion here and fail the second, which is precisely the shape of the
+        original bug.
 
-        **This test is also the guard on a hand-written sentence, and it is the only one
-        that can be.** ``test_the_sentence_leads_with_what_the_key_can_do`` pins the
-        Settings paragraph against the declaration's PHRASES; the refusal in that
-        paragraph ("it cannot ... see who watched what") rests on the declaration's PATHS,
-        which no phrase test can see. Emptying this entry's paths while keeping its phrase
-        leaves that guard green and both descriptions asserting a refusal the fence no
-        longer makes, so the failures here name the file to edit (rule 144).
+        This test is also the guard on a hand-written sentence, and it is the only one
+        that can be. ``test_the_sentence_leads_with_what_the_key_can_do`` pins the
+        Settings paragraph against the declaration's *phrases*. The refusal in that
+        paragraph ("it cannot ... see who watched what") rests on the declaration's
+        *paths*, which no phrase test can see. Emptying this entry's paths while keeping
+        its phrase leaves that guard green and both descriptions asserting a refusal the
+        fence no longer makes, so the failures here name the file to edit.
         """
         key = self._issue(client)
         bare = _bare(client)
@@ -843,10 +872,11 @@ class TestTheApiKeyLane:
         assert person_body["code"] == "error.auth.api_key_read_denied", twin
         assert "who watched what" in person_body["detail"], twin
 
-        # The browser still reaches it: this fenced a credential, it did not retire a page.
-        # 400 is the handler's own "Scales needs a Seerr and a Tautulli" on a fixture that
-        # configures neither, which is the proof -- the guard passed the cookie through and
-        # something behind it answered, where the key never got that far.
+        # The browser still reaches it. This fenced a credential, it did not retire a
+        # page. 400 is the handler's own "Scales needs a Seerr and a Tautulli" on a
+        # fixture that configures neither, which is the proof. The guard passed the
+        # cookie through and something behind it answered, where the key never got that
+        # far.
         signed_in = client.get("/api/fairness")
         assert signed_in.status_code == 400, signed_in.text
         signed_in_body = signed_in.json()
@@ -856,10 +886,10 @@ class TestTheApiKeyLane:
     def test_the_refusal_never_denies_a_write_the_fence_allows(self, client: TestClient) -> None:
         """The regression, driven from both ends in one test.
 
-        The refusal used to say "Changing any setting, arming deletion, and running a reap
-        stay behind your password" while ``/api/profile`` sat in the write allowlist -- so
-        it told the caller the run caps were out of reach in the request right before the
-        one that turned them off (S-2). Neither half alone can catch that: the copy reads
+        The refusal used to say "Changing any setting, arming deletion, and running a
+        reap stay behind your password" while ``/api/profile`` sat in the write allowlist.
+        That told the caller the run caps were out of reach in the request right before
+        the one that turned them off. Neither half alone can catch that. The copy reads
         true until you drive the write it denies.
         """
         key = self._issue(client)
@@ -897,7 +927,7 @@ class TestTheApiKeyLane:
         assert _api_key_allowed("GET", "/api/fairness") is False
         assert _api_key_allowed("GET", "/api/fairness/people/{identity}") is False
         assert _api_key_allowed("GET", "/api/fairness/people/someone") is False
-        # The subtree stops at a path boundary: a sibling starting with the same letters
+        # The subtree stops at a path boundary. A sibling starting with the same letters
         # is a different route and stays open.
         assert _api_key_allowed("GET", "/api/fairness-summary") is True
         # Writes are closed except the automation allowlist: scan, plan, policy.
@@ -908,23 +938,24 @@ class TestTheApiKeyLane:
         assert _api_key_allowed("PUT", "/api/settings/safety") is False
         assert _api_key_allowed("PUT", "/api/settings/general") is False
         assert _api_key_allowed("PUT", "/api/settings/plex/connection") is False
-        # Recording a decision by hand is a signed-in act, not an automation one. Pinned
-        # because #326 rests on it: the 404 these writes can raise is reachable from no
-        # script, which is what settled it as a wording fix rather than a behavior one.
-        # There used to be a third line here, `GET /api/whitelist` allowed, pinning that the
-        # read was the one part of the keep list a key got. That route is gone and so is the
-        # behavior, so the case retires rather than being handed a stand-in: `/api/candidates`
-        # is already asserted above, and it is not the same question anyway -- an override on
-        # an item the latest snapshot does not hold appears in neither.
+        # Recording a decision by hand is a signed-in act, not an automation one. This is
+        # pinned because the 404 these writes can raise is reachable from no script, which
+        # is what settled it as a wording fix rather than a behavior one.
+        # A third line here once asserted `GET /api/whitelist` allowed, pinning that the
+        # read was the one part of the keep list a key got. That route is gone and so is
+        # the behavior, so the case retires rather than being handed a stand-in.
+        # `/api/candidates` is already asserted above, and it is not the same question
+        # anyway. An override on an item the latest snapshot does not hold appears in
+        # neither.
         assert _api_key_allowed("POST", "/api/override") is False
         assert _api_key_allowed("DELETE", "/api/override/{media_key}") is False
 
 
 class TestTheDocsLockdown:
     def test_the_stock_docs_are_gone(self, client: TestClient) -> None:
-        """The old routes no longer serve the API description to the unauthenticated.
-        With the built SPA present they fall back to its index.html (any unknown path
-        does); what matters is that no schema and no reference UI comes back."""
+        """The old routes no longer serve the API description to the unauthenticated. With
+        the built SPA present they fall back to its index.html, as any unknown path does.
+        What matters is that no schema and no reference UI comes back."""
         bare = _bare(client)
         assert "swagger" not in bare.get("/docs").text.lower()
         assert '"openapi"' not in bare.get("/openapi.json").text
@@ -948,10 +979,10 @@ class TestTheDocsLockdown:
 
 class TestTheAuthBoxDescribesTheFence:
     """The reference offers the key on every operation, so its auth box is the only place
-    a script author learns which ones it will get through. It used to say the key could do
-    anything but turn deletion on, execute, or change sign-in -- while the fence refused
-    every settings write, sparing a title, and every override. Rule 103: the sentence is
-    generated from the allowlist, and these fail if a route slips past the generator.
+    a script author learns which ones it will get through. It used to say the key could
+    do anything but turn deletion on, execute, or change sign-in, while the fence refused
+    every settings write, sparing a title, and every override. The sentence is generated
+    from the allowlist, and these fail if a route slips past the generator.
     """
 
     def _writes(self, schema: dict[str, object]) -> list[tuple[str, str]]:
@@ -966,15 +997,15 @@ class TestTheAuthBoxDescribesTheFence:
     def test_every_write_the_fence_allows_is_named_in_the_sentence(
         self, client: TestClient
     ) -> None:
-        """Rule 118, named for what it actually discriminates: a second shape-matched
-        branch added to ``_api_key_allowed`` with no phrase behind it.
+        """Named for what it actually discriminates. A second shape-matched branch added
+        to ``_api_key_allowed`` with no phrase behind it.
 
-        It does NOT catch a path added to ``_API_KEY_WRITES`` without a phrase -- that
+        It does *not* catch a path added to ``_API_KEY_WRITES`` without a phrase. That
         drift is structurally impossible, because ``_API_KEY_WRITE_ALLOW`` is a
         comprehension over the very tuple that carries the phrases, so ``unnamed == []``
         is a theorem for any path-shaped entry. The derivation is the guard there. What is
         still hand-written is the dry run's ``startswith``/``endswith`` test, which is
-        admitted by shape and named by a phrase nothing ties to it; a third such branch
+        admitted by shape and named by a phrase nothing ties to it. A third such branch
         would ship an undocumented automation authority, and this is what says so.
         """
         schema = client.get("/api/openapi.json").json()
@@ -994,7 +1025,7 @@ class TestTheAuthBoxDescribesTheFence:
     def test_every_path_the_sentence_is_built_from_is_a_real_route(
         self, client: TestClient
     ) -> None:
-        """The other direction: a retired route leaves a phrase describing something the
+        """The other direction. A retired route leaves a phrase describing something the
         operator can no longer do, and nothing else would notice."""
         schema = client.get("/api/openapi.json").json()
         served = set(schema["paths"])
@@ -1010,18 +1041,18 @@ class TestTheAuthBoxDescribesTheFence:
         schema = client.get("/api/openapi.json").json()
         description = schema["components"]["securitySchemes"]["ApiKey"]["description"]
         assert description == api_key_scope_description()
-        # Rule 21: this renders in the reference, so it is operator copy.
+        # This renders in the reference, so it is operator copy.
         assert "—" not in description
 
     def test_the_sentence_leads_with_what_the_key_can_do(self) -> None:
-        """Rule 119: written from the fence's own contract, not read back off the
-        generator. A key reads all but five things and writes four.
+        """Written from the fence's own contract, not read back off the generator. A key
+        reads all but five things and writes four.
 
-        Rule 103, and the second job this test does: it is also the drift guard for the
-        sentence's HAND-WRITTEN twin, the API key help in Settings, General. That paragraph
-        is the surface an operator actually decides on, no test in either tree asserts it,
-        and nothing else fails when the fence moves under it. So every assertion here
-        carries the pointer rather than leaving it to a comment nobody runs.
+        This is also the second job this test does, the drift guard for the sentence's
+        *hand-written* twin, the API key help in Settings, General. That paragraph is the
+        surface an operator actually decides on, no test in either tree asserts it, and
+        nothing else fails when the fence moves under it. So every assertion here carries
+        the pointer rather than leaving it to a comment nobody runs.
         """
         twin = (
             "the fence moved, so the hand-written twin in "
@@ -1040,10 +1071,10 @@ class TestTheAuthBoxDescribesTheFence:
 
 
 class TestEveryOperationSaysWhichCredentialReachesIt:
-    """The auth box tells the truth once; these put it on the operation the reader is
+    """The auth box tells the truth once. These put it on the operation the reader is
     looking at. A scheme applied document-wide renders a working auth box over every
-    operation in the document, so try-it-out looked available on routes that answer 403 --
-    the reader had no way to tell which without sending the request.
+    operation in the document, so try-it-out looked available on routes that answer 403.
+    The reader had no way to tell which without sending the request.
     """
 
     def _operations(self, client: TestClient) -> list[tuple[str, str, dict[str, Any]]]:
@@ -1058,26 +1089,27 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
         """A fenced operation narrows to this scheme, so a missing declaration would leave
         every fenced operation pointing at a credential the document never defines.
 
-        **Counted here, not remembered.** This docstring used to name the figure (42, then
-        40 before #117 moved the two fairness reads behind the browser) and nothing asserted
-        it, so it read as measured while drifting once per route added: it was 42 against a
-        real 48. The count moved into the assertion below, where a wrong one fails.
+        This is counted here, not remembered. This docstring used to name the figure (42,
+        then 40 once the two fairness reads moved behind the browser) and nothing asserted
+        it, so it read as measured while drifting once per route added. It was 42 against
+        a real 48. The count moved into the assertion below, where a wrong one fails.
         """
         schema = client.get("/api/openapi.json").json()
         schemes = schema["components"]["securitySchemes"]
         assert schemes["Session"]["in"] == "cookie"
         assert schemes["Session"]["name"] == DOCUMENTED_SESSION_COOKIE
-        assert "—" not in schemes["Session"]["description"]  # rule 21
-        # Order, not just membership: Scalar preselects the first scheme and sends its
-        # placeholder, and a placeholder API key makes the guard answer its own reference
-        # "That API key is not valid." A cookie placeholder cannot be sent by a page
-        # script, so leading with Session is what leaves try-it-out working signed in.
+        assert "—" not in schemes["Session"]["description"]
+        # Order matters here, not just membership. Scalar preselects the first scheme
+        # and sends its placeholder, and a placeholder API key makes the guard answer its
+        # own reference "That API key is not valid." A cookie placeholder cannot be sent
+        # by a page script, so leading with Session is what leaves try-it-out working
+        # signed in.
         assert schema["security"] == [{"Session": []}, {"ApiKey": []}]
 
-        # The figure this docstring used to carry, now where a wrong one fails. Reconcile it
-        # by hand when a route is fenced or unfenced (rule 145): the walk below counts what
-        # the document declares, and a fence that never reached the schema is missing from
-        # both the count and the flag-shaped assertions above it.
+        # The figure this docstring used to carry now lives here, where a wrong one
+        # fails. Reconcile it by hand when a route is fenced or unfenced. The walk below
+        # counts what the document declares, and a fence that never reached the schema is
+        # missing from both the count and the flag-shaped assertions above it.
         fenced = sum(
             1 for _, _, op in self._operations(client) if op.get("security") == [{"Session": []}]
         )
@@ -1088,9 +1120,9 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
         )
 
     def test_the_routes_a_live_key_was_refused_on_are_marked(self, client: TestClient) -> None:
-        """Rule 119: the expectation is the evidence from issue #104, driven with a real
-        key against a real install, not a re-reading of the allowlist. Each of these
-        answered 403 while the reference offered the key on it.
+        """The expectation is the evidence, driven with a real key against a real install,
+        not a re-reading of the allowlist. Each of these answered 403 while the reference
+        offered the key on it.
         """
         marked = {
             (m, p)
@@ -1104,10 +1136,10 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
             ("POST", "/api/settings/notifications/test"),
             ("POST", "/api/runs/{run_id}/execute"),
             ("PUT", "/api/settings/safety"),
-            # Same evidence, from #117: these two answered a live key 200 until the fence
-            # took them, and the reference offered the key on them throughout. The reads
-            # are the case the marking is easiest to get wrong, because every other read
-            # in the document really is key-reachable.
+            # The same evidence as before. These two answered a live key 200 until the
+            # fence took them, and the reference offered the key on them throughout. The
+            # reads are the case the marking is easiest to get wrong, because every other
+            # read in the document really is key-reachable.
             ("GET", "/api/fairness"),
             ("GET", "/api/fairness/people/{identity}"),
         ):
@@ -1116,7 +1148,7 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
             )
 
     def test_the_automation_lane_is_left_reachable(self, client: TestClient) -> None:
-        """The other half of the same claim: marking everything session-only would pass
+        """The other half of the same claim. Marking everything session-only would pass
         the test above and make the key look useless. These inherit both credentials."""
         marked = {
             (m, p)
@@ -1137,14 +1169,14 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
     def test_a_signed_in_write_needs_the_header_the_session_scheme_names(
         self, client: TestClient
     ) -> None:
-        """Rule 119: the scheme's copy is checked against the guard, not against itself.
+        """The scheme's copy is checked against the guard, not against itself.
 
         A bare cookie reads and does not write. That asymmetry is why the Session
         description names the header, and it is what a script author writing their own
-        client meets on their first write. The reference page no longer meets it (#120,
-        the test below), which changes who needs telling and changes nothing about the
-        guard: if this stops being a refusal, the sentence naming the header is the line
-        to delete.
+        client meets on their first write. The reference page no longer meets it (see the
+        test below), which changes who needs telling and changes nothing about the guard.
+        If this stops being a refusal, the sentence naming the header is the line to
+        delete.
         """
         panel = _bare(client)
         panel.cookies.update(client.cookies)
@@ -1163,21 +1195,23 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
         assert "X-Reaper-CSRF: 1" in session_scheme["description"]
 
     def test_the_reference_page_sends_the_csrf_header_it_names(self, client: TestClient) -> None:
-        """#120: the only thing standing behind "reads and writes as you".
+        """The only thing standing behind "reads and writes as you".
 
         That clause is hand-written, and the hook that earns it lives in a JavaScript
         string no other Python test reads. Delete the hook and the Session scheme goes
-        back to promising a write that answers 403, with every gate still green -- the
-        drift rule 144 is about, in the copy that was never generated. Driving the button
-        needs a browser, so what is pinned here is narrower and still load-bearing: the
+        back to promising a write that answers 403, with every gate still green. That is
+        the same kind of drift as a generated sentence with no test behind its
+        hand-written twin, in copy that was never generated at all. Driving the button
+        needs a browser, so what is pinned here is narrower and still load-bearing. The
         page carries the hook, and it sends the header its own auth box names with the
-        VALUE the guard accepts.
+        *value* the guard accepts.
 
         Pinning the name alone was not enough, which is worth stating because it looked
-        like it was. ``_csrf_ok`` requires exactly ``"1"``; a hook setting any other value
-        leaves this file green while every try-it-out write 403s again -- the same silent
-        outcome as deleting the hook, reached through a one-character edit. So the value is
-        read out of the page and compared to what the guard demands, rather than assumed.
+        like it was. ``_csrf_ok`` requires exactly ``"1"``. A hook setting any other value
+        leaves this file green while every try-it-out write 403s again, the same silent
+        outcome as deleting the hook, reached through a one-character edit. So the value
+        is read out of the page and compared to what the guard demands, rather than
+        assumed.
         """
         page = client.get("/api/docs").text
         described = client.get("/api/openapi.json").json()["components"]["securitySchemes"][
@@ -1189,7 +1223,7 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
             "the Session scheme in main.openapi_with_api_key still promises they work"
         )
         # The exact call the hook makes, value included, built from the guard's own
-        # constants rather than restated here (rule 119).
+        # constants rather than restated here.
         assert f"headers.set('{CSRF_HEADER}', '{CSRF_VALUE}')" in page, (
             f"the reference page must send {CSRF_HEADER} with the value _csrf_ok accepts "
             f"({CSRF_VALUE!r}); any other value 403s every try-it-out write while the "
@@ -1203,13 +1237,13 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
     def test_the_open_route_that_refuses_a_key_is_marked_like_any_other(
         self, client: TestClient
     ) -> None:
-        """Rule 119: driven with a real key, not read back off the predicate that marks it.
+        """Driven with a real key, not read back off the predicate that marks it.
 
         ``/api/auth/me`` is open to the guard, so the key lane never judges it, and then
         the handler answers 401 because the cookie resolves to nobody. Marking the whole
-        open set "either credential" published this one as key-reachable: a document
-        written to stop the reference offering a key on routes that refuse it, offering a
-        key on a route that refuses it.
+        open set "either credential" published this one as key-reachable. A document
+        written to stop the reference offering a key on routes that refuse it ended up
+        offering a key on a route that refuses it.
         """
         key = client.post("/api/settings/general/api-key").json()["key"]
         bare = _bare(client)
@@ -1225,7 +1259,7 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
     def test_a_route_that_needs_no_credential_says_so(self, client: TestClient) -> None:
         """The third answer, also driven. The health probe and the sign-in endpoints have
         to answer before anyone is signed in, and inheriting the document default
-        published a credential requirement on all seven: the page a script author needs
+        published a credential requirement on all seven. The page a script author needs
         first read as one they could not call without already being past it.
         """
         bare = _bare(client)
@@ -1240,7 +1274,7 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
             ("POST", "/api/auth/recover"),
         ):
             assert open_route in anonymous, f"asks for no credential, but claims one: {open_route}"
-        # The exception, from the other side: it is open, and it is NOT credential-free.
+        # The exception, from the other side. It is open, and it is *not* credential-free.
         assert ("GET", "/api/auth/me") not in anonymous
 
     def test_no_operation_is_left_unclassified(self, client: TestClient) -> None:
@@ -1248,9 +1282,9 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
         one of the three answers. This agrees the served schema with ``api_key_refused``
         and ``no_credential_needed``, so it catches an operation the walk skipped (a
         method spelling it does not know, a cached schema built before the pass, a stock
-        ``FastAPI.openapi`` winning the race) -- NOT a wrong answer from the fence itself,
-        which is what ``test_the_allowlist_matches_by_method_and_shape`` pins from a
-        table. Rule 118: it is named for what it discriminates.
+        ``FastAPI.openapi`` winning the race). This is *not* a wrong answer from the
+        fence itself, which is what ``test_the_allowlist_matches_by_method_and_shape``
+        pins from a table. It is named for what it discriminates.
         """
         operations = self._operations(client)
         wrong = [
@@ -1275,7 +1309,7 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
         assert silent == [], f"fenced, but the operation never says it: {silent}"
 
     def test_the_note_does_not_displace_what_the_route_does(self, client: TestClient) -> None:
-        """Prepended, never substituted: a route's own description is the reason someone
+        """Prepended, never substituted. A route's own description is the reason someone
         is reading the entry at all."""
         _, _, override = next(
             (m, p, op)
@@ -1283,7 +1317,7 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
             if (m, p) == ("POST", "/api/override")
         )
         assert "Override an item's verdict by hand" in override["description"]
-        assert "—" not in override["description"]  # rule 21
+        assert "—" not in override["description"]
 
 
 def _request(
@@ -1404,8 +1438,8 @@ class TestTheRequestTraceSpendsNoHistoryOnItself:
 
     def test_every_other_route_is_still_traced(self, client: TestClient) -> None:
         """The skip is one path and one method, so a route that merely sorts nearby in the
-        tree keeps its trace. Driven per route rather than asserted as a flag over whatever
-        the walk collected (rule 145)."""
+        tree keeps its trace. Driven per route rather than asserted as a flag over
+        whatever the walk collected."""
         try:
             client.put("/api/logs/level", json={"level": "debug"})
             for path in ("/api/health", "/api/logs/download"):
@@ -1450,7 +1484,7 @@ class TestTheLogsRoutes:
         assert response.status_code == 422
 
     def test_the_response_reports_how_many_files_are_kept(self, client: TestClient) -> None:
-        # I-6: the Logs tab renders this instead of hardcoding "3", so the copy tracks the
+        # The Logs tab renders this instead of hardcoding "3", so the copy tracks the
         # backend retention constant.
         page = client.get("/api/logs").json()
         assert page["files_kept"] == logbuffer.LOG_BACKUP_COUNT + 1
@@ -1458,7 +1492,7 @@ class TestTheLogsRoutes:
 
 class TestTheEnvironmentsLogLevel:
     """``REAPER_LOG_LEVEL`` sets the level until the operator picks one in the UI, and it
-    may carry ERROR, which the picker deliberately does not offer (#700)."""
+    may carry ERROR, which the picker deliberately does not offer."""
 
     def test_error_from_the_environment_is_the_level_reaper_runs_at(
         self, _restore_logging: None
@@ -1466,8 +1500,8 @@ class TestTheEnvironmentsLogLevel:
         """Booting at ERROR left the app at INFO, with nothing said about it.
 
         ``LEVELS`` omitted ERROR, so ``normalize_level`` returned None for a value
-        ``Settings.log_level`` had already accepted, and ``set_level``'s fallback -- there
-        to survive a corrupt stored setting -- overrode an operator's choice instead of
+        ``Settings.log_level`` had already accepted, and ``set_level``'s fallback, there
+        to survive a corrupt stored setting, overrode an operator's choice instead of
         catching a bad one. Someone quieting a noisy log kept every INFO line.
         """
         configure_logging(level="ERROR")
@@ -1488,11 +1522,12 @@ class TestTheEnvironmentsLogLevel:
         assert client.put("/api/logs/level", json={"level": "ERROR"}).status_code == 422
 
     def test_the_env_and_the_logger_offer_the_same_levels(self) -> None:
-        """The two declarations behind #700, pinned against each other.
+        """The two declarations behind the picker's offered levels, pinned against each
+        other.
 
-        Prose asking a future author to keep them in step does nothing; this fails instead.
-        A level in one and not the other is accepted at boot and then silently resolved to
-        something the operator did not ask for.
+        Prose asking a future author to keep them in step does nothing. This fails
+        instead. A level in one and not the other is accepted at boot and then silently
+        resolved to something the operator did not ask for.
         """
         blessed = get_args(Settings.model_fields["log_level"].annotation)
 
@@ -1533,9 +1568,10 @@ class TestTheLogDownload:
     def test_a_degraded_sink_appends_the_ring_after_the_files(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # PR-2: when the on-disk mirror stopped accepting writes mid-run, the files end where
-        # writing failed. The download appends the in-memory ring behind a marker so recent
-        # lines that never reached disk are still carried, rather than ending silently.
+        # When the on-disk mirror stopped accepting writes mid-run, the files end where
+        # writing failed. The download appends the in-memory ring behind a marker so
+        # recent lines that never reached disk are still carried, rather than ending
+        # silently.
         marker = f"degraded.ring_tail_{time.time_ns()}"
         structlog.get_logger("test").info(marker)
         monkeypatch.setattr(logbuffer, "file_sink_healthy", lambda: False)
@@ -1545,6 +1581,7 @@ class TestTheLogDownload:
         assert marker in body
 
     def test_a_healthy_sink_does_not_append_the_ring(self, client: TestClient) -> None:
-        # The append marker is present only when degraded; a healthy download is the files alone.
+        # The append marker is present only when degraded. A healthy download is the
+        # files alone.
         body = client.get("/api/logs/download").text
         assert "Log file writing failed at some point above" not in body

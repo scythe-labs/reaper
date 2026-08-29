@@ -1,19 +1,19 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Structured logging.
 
-Reaper's logs are an audit trail, not just a debugging aid: "why did this get
-deleted" must be answerable from them. So every event is structured, and the
-score explanation is emitted as the same dict that the UI renders -- one source,
-two sinks, no drift between what the user was shown and what actually happened.
+Reaper's logs are an audit trail, not just a debugging aid: "why did this get deleted"
+must be answerable from them. So every event is structured, and the score explanation is
+emitted as the same dict that the UI renders: one source, two sinks, no drift between
+what the user was shown and what actually happened.
 
-Credentials must never reach a log. ``redact_secrets`` is a processor rather
-than a convention because MDBList only accepts its key as a *query parameter*,
-so a logged URL is a logged credential.
+Credentials must never reach a log. ``redact_secrets`` is a processor rather than a
+convention because MDBList only accepts its key as a query parameter, so a logged URL is
+a logged credential.
 
-**A ``log.debug(...)`` call evaluates its arguments even when the level is INFO.**
-The wrapper class passes everything through and `_drop_below_level` decides per event,
-which is what makes the operator's Settings choice apply instantly -- and it means the
-argument list has already been built by the time anything can drop it. Free for a line
+A ``log.debug(...)`` call evaluates its arguments even when the level is INFO. The
+wrapper class passes everything through and `_drop_below_level` decides per event, which
+is what makes the operator's Settings choice apply instantly, and it means the argument
+list has already been built by the time anything can drop it. This is free for a line
 made of locals already in hand, which is nearly all of them. Worth a thought before
 making a debug line's arguments out of a sort, a join, or a walk over the library.
 """
@@ -46,7 +46,7 @@ _SECRET_KEYS = frozenset(
         "x-api-key",
         "api_key_enc",
         "token_enc",
-        # A Discord webhook URL carries its token in the path, not a query string -- the
+        # A Discord webhook URL carries its token in the path, not a query string. The
         # whole URL is a credential, so never log it under these keys.
         "webhook",
         "webhook_url",
@@ -56,12 +56,12 @@ _SECRET_KEYS = frozenset(
 # Keys smuggled into a URL query string, e.g. Tautulli's ?apikey= and MDBList's.
 _SECRET_QS = re.compile(r"([?&](?:apikey|api_key|token|X-Plex-Token)=)[^&\s]+", re.IGNORECASE)
 
-# A Discord webhook carries its secret in the URL *path*, not a query string:
+# A Discord webhook carries its secret in the URL path, not a query string:
 # ``https://discord.com/api/webhooks/<id>/<token>``. Key-name matching (``_SECRET_KEYS``)
 # only catches it when the URL happens to be logged under one of those keys, and a URL is
-# just as likely to arrive as a bare string -- inside an exception message, or under a
-# neutral ``url=``. Match the shape itself so the token is scrubbed however it is logged
-# (S-2). The id is left visible: it identifies the channel, it is not the credential.
+# just as likely to arrive as a bare string, inside an exception message, or under a
+# neutral ``url=``. Matching the shape itself scrubs the token however it is logged. The
+# id is left visible: it identifies the channel, it is not the credential.
 #
 # Case-sensitive on purpose, matching the marker guard below exactly: the only webhook URL
 # that can reach a log is one the operator stored, and ``_validated_discord_webhook``
@@ -127,26 +127,25 @@ def redact_secrets(_logger: WrappedLogger, _method: str, event_dict: EventDict) 
 # Third-party loggers pinned to WARNING, so Reaper's own DEBUG level shows Reaper's events,
 # never a library's firehose. Two distinct harms, both cured at the source:
 #
-# * The HTTP clients log request URLs verbatim through the stdlib -- which the structlog
+# * The HTTP clients log request URLs verbatim through the stdlib, which the structlog
 #   redaction processor never sees, because it only runs on structlog events. httpx logs
 #   every request at INFO as "HTTP Request: GET https://host/...?apikey=SECRET", and
-#   Tautulli, Plex and MDBList all carry their credential in the query string -- while a
-#   Discord webhook carries its token in the PATH -- so an unquieted HTTP logger writes
+#   Tautulli, Plex and MDBList all carry their credential in the query string, while a
+#   Discord webhook carries its token in the path, so an unquieted HTTP logger writes
 #   those secrets straight to the log in cleartext. Both httpx and httpx2 are pinned here:
 #   Reaper is mid-migration off the unmaintained httpx onto httpx2 (see
-#   docs/history/PLAN-narrative.md), and
-#   httpx2 renames its loggers to "httpx2"/"httpcore2" -- quiet only "httpx" and the secret
-#   leak silently returns the moment a client moves over. (notify/discord.py is already on
-#   httpx2.)
-# * aiosqlite (and SQLAlchemy's engine) log one DEBUG line per SQL cursor operation. A single
-#   scan inserts thousands of candidate rows, so at DEBUG those tens of thousands of lines
-#   flood the ring and the on-disk file and EVICT every diagnostic that matters -- the
-#   per-item scan decisions, the Plex-match lines -- before the operator can read them,
-#   turning DEBUG mode against itself. (Observed live: a downloaded DEBUG log was 99.98%
-#   aiosqlite, with zero decision lines left.)
+#   docs/history/PLAN-narrative.md), and httpx2 renames its loggers to
+#   "httpx2"/"httpcore2", so quieting only "httpx" would let the secret leak silently
+#   return the moment a client moves over. (notify/discord.py is already on httpx2.)
+# * aiosqlite (and SQLAlchemy's engine) log one DEBUG line per SQL cursor operation. A
+#   single scan inserts thousands of candidate rows, so at DEBUG those tens of thousands
+#   of lines flood the ring and the on-disk file and push out every diagnostic that
+#   matters, the per-item scan decisions, the Plex-match lines, before the operator can
+#   read them, turning DEBUG mode against itself. A downloaded DEBUG log was observed at
+#   99.98% aiosqlite noise, with zero decision lines left.
 #
 # Reaper emits its own structured, redacted event for anything that matters, so none of these
-# libraries' own logs are needed. WARNING is an EXPLICIT level, so it survives a runtime root
+# libraries' own logs are needed. WARNING is an explicit level, so it survives a runtime root
 # switch to DEBUG (logbuffer.set_level only moves the root); genuine SQL/HTTP errors still
 # surface, because WARNING and above pass.
 _NOISY_LOGGERS = (
@@ -168,9 +167,9 @@ _RING_STRUCTURAL_KEYS = frozenset({"event", "level", "timestamp", "exception", "
 def _drop_below_level(_logger: WrappedLogger, _method: str, event_dict: EventDict) -> EventDict:
     """Dynamic level filtering, consulted per event.
 
-    The wrapper class passes everything through and THIS decides, so the operator's
-    Settings -> Logs choice takes effect immediately -- cached bound loggers and all --
-    instead of only applying to loggers bound after a reconfigure.
+    The wrapper class passes everything through and this function decides, so the
+    operator's Settings -> Logs choice takes effect immediately, cached bound loggers
+    included, instead of only applying to loggers bound after a reconfigure.
     """
     name = str(event_dict.get("level", "info")).upper()
     if getattr(logging, name, logging.INFO) < logbuffer.level_no():
@@ -181,10 +180,10 @@ def _drop_below_level(_logger: WrappedLogger, _method: str, event_dict: EventDic
 def _capture_to_ring(_logger: WrappedLogger, _method: str, event_dict: EventDict) -> EventDict:
     """Copy the (already redacted) event into the UI's log ring, render-ready.
 
-    Sits after ``format_exc_info`` AND then ``redact_secrets``, in that order, on purpose:
-    a traceback should arrive as text, and the scrubber has to run on it once it is text,
-    or the ring holds a secret the console would not. Read-only on the event dict -- the
-    real renderer still runs after this.
+    Sits after ``format_exc_info`` and then ``redact_secrets``, in that order, on
+    purpose: a traceback should arrive as text, and the scrubber has to run on it once
+    it is text, or the ring holds a secret the console would not. Read-only on the event
+    dict; the real renderer still runs after this.
     """
     parts = [str(event_dict.get("event", ""))]
     parts += [f"{k}={event_dict[k]}" for k in event_dict if k not in _RING_STRUCTURAL_KEYS]
@@ -204,8 +203,8 @@ class _RingHandler(logging.Handler):
     """The stdlib bridge: uvicorn, alembic, apscheduler and friends land in the same
     ring the structlog pipeline feeds, so the Logs tab shows one merged stream.
 
-    Redacts credentials itself -- these records never pass the structlog
-    processors -- and, like any logging handler, must never raise.
+    Redacts credentials itself, since these records never pass the structlog
+    processors, and, like any logging handler, must never raise.
     """
 
     def emit(self, record: logging.LogRecord) -> None:
@@ -213,14 +212,14 @@ class _RingHandler(logging.Handler):
             ts = datetime.fromtimestamp(record.created, tz=UTC).isoformat()
             text = f"{record.name}: {_redact_str(record.getMessage())}"
             if record.exc_info and record.exc_info[0] is not None:
-                # Format ONLY the traceback, and scrub it. This used to call
-                # ``self.format(record)``, which -- with no formatter set on this handler --
-                # falls back to "%(message)s" and re-rendered the message UNREDACTED beneath
-                # the redacted copy, so every exception line landed in the ring and on disk
-                # with its credentials in the clear (S2-1). The traceback needs the scrubber
-                # in its own right: httpx2.HTTPStatusError's str() embeds the full request
-                # URL, so any library reporting an *arr/Tautulli HTTP error with exc_info
-                # carries the query-string key even when the message itself is clean.
+                # Format only the traceback, and scrub it. Calling ``self.format(record)``
+                # here would fall back to "%(message)s", since no formatter is set on this
+                # handler, and re-render the message unredacted beneath the redacted copy,
+                # so every exception line would land in the ring and on disk with its
+                # credentials in the clear. The traceback needs the scrubber in its own
+                # right: httpx2.HTTPStatusError's str() embeds the full request URL, so any
+                # library reporting an *arr/Tautulli HTTP error with exc_info carries the
+                # query-string key even when the message itself is clean.
                 trace = "".join(traceback.format_exception(*record.exc_info))
                 text = f"{text}\n{_redact_str(trace)}"
             logbuffer.RING.append(ts=ts, level=record.levelname, text=text)
@@ -262,14 +261,13 @@ def configure_logging(
             structlog.processors.TimeStamper(fmt="iso", utc=True),
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
-            # AFTER format_exc_info, not before. That processor replaces ``exc_info`` with
-            # a rendered ``exception`` string, and running the scrubber first meant the
-            # traceback was born after the only thing that would have cleaned it -- the
-            # structlog twin of the stdlib handler's S2-1 leak. It matters because an
-            # httpx2.HTTPStatusError's str() embeds the full request URL, so any
-            # ``log.warning(..., exc_info=True)`` around an *arr/Tautulli call carried that
-            # query-string key into the ring and onto disk. Everything else in the event
-            # dict is scrubbed exactly as before; this only widens what is covered.
+            # After format_exc_info, not before. That processor replaces ``exc_info`` with
+            # a rendered ``exception`` string, so the scrubber must run after it to reach
+            # the traceback text at all. It matters because an httpx2.HTTPStatusError's
+            # str() embeds the full request URL, so any ``log.warning(..., exc_info=True)``
+            # around an *arr/Tautulli call would otherwise carry that query-string key into
+            # the ring and onto disk. Everything else in the event dict is scrubbed exactly
+            # as before; this only widens what is covered.
             redact_secrets,
             _capture_to_ring,
             renderer,

@@ -2,16 +2,17 @@
 //
 // Discord, in the shape every other connection wears.
 //
-// A connection should look like a connection wherever the operator meets it, so this is the
-// service editor's layout down to the class names: `ModalShell`, the `kind-badge` in the
-// title, one `.service-form` of `.field-sm` boxes, the shared `TestBadge`, and an
-// `.add-actions` footer of Cancel / Test / Save. What it is NOT is a second `ServiceModal`:
-// Discord is not an `Instance`, it has no host, port or API key, and it is stored as one
-// encrypted settings key rather than a row -- so it borrows the grammar and keeps its own
-// plumbing (rule 18: reuse the pattern, never fork the component to fit).
+// A connection should look like a connection wherever the operator meets it. This component
+// borrows the service editor's `ModalShell`, its `kind-badge` in the title, one `.service-form`
+// of `.field-sm` boxes, the shared `TestBadge`, and an `.add-actions` footer of Cancel, Test,
+// and Save.
 //
-// The webhook is write-only, exactly like an instance's API key: the URL is sent once,
-// encrypted on arrival, and never comes back, so the box is always blank and all Reaper can
+// Discord is not a `ServiceModal` `Instance`. It has no host, port, or API key, and it is
+// stored as one encrypted settings key rather than a row. So this component reuses the
+// pattern's layout instead of forking a new component to fit it.
+//
+// The webhook is write-only, exactly like an instance's API key. The URL is sent once,
+// encrypted on arrival, and never comes back, so the box stays blank, and all Reaper can
 // report is *whether* one is connected.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -24,8 +25,8 @@ import { ModalShell } from "./ModalShell";
 import { Notice } from "./Notice";
 import { TestBadge, useWebhookTest } from "./ServiceModal";
 
-/** The webhook box's format complaint, named once for both ends of the association
- *  (rule 67). */
+/** The webhook box's format complaint, named once so the input's `aria-describedby` and the
+ *  error `Notice`'s `id` point at the same element. */
 const WEBHOOK_ERROR_ID = "discord-modal-webhook-error";
 
 export function DiscordModal({ onClose }: { onClose: () => void }) {
@@ -75,8 +76,9 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
         </>
       }
       onClose={onClose}
-      // A close mid-save unmounts the only place a failure is ever shown, exactly as it would
-      // in the service editor (rule 80: the scrim, Escape and the ✕ all run this one guard).
+      // A close mid-save would unmount the only place a failure is ever shown, the same risk
+      // the service editor guards against. The scrim, Escape, and the close button all run
+      // this one guard.
       canClose={!busy}
       className="service-modal"
     >
@@ -111,15 +113,15 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
           <span className="help">{t("services.discord.field.help")}</span>
         </label>
 
-        {/* Beside the control that fixes it (rule 42), not in the shared slot at the foot
-            where a failed save also lands. */}
+        {/* This sits beside the field it explains. The failed-save notice below uses a
+            separate slot at the form's foot. */}
         {badFormat && (
           <Notice tone="error" id={WEBHOOK_ERROR_ID}>
             {t("services.discord.badFormat")}
           </Notice>
         )}
 
-        {/* Only while it still describes what is in the box (rule 85). */}
+        {/* Shows only while the test result still describes what is currently in the box. */}
         {test && test.of === testedWith() && <TestBadge result={test.result} />}
 
         {error && <Notice tone="error">{t("services.discord.saveError", { error })}</Notice>}

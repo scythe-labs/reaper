@@ -4,17 +4,14 @@
 //
 // Extracted from the Settings safety panel so the Policy workspace can carry it as the
 // last step of the decision pipeline. Turning deletion ON always takes the admin
-// password; turning it OFF never does, because the off direction can only make Reaper
-// safer. This is safety UI, so it never renders nothing: while the state is unknown it
+// password. Turning it OFF never does, because the off direction can only make Reaper
+// safer. This is safety UI, so it never renders nothing. While the state is unknown it
 // says so, in the amber "we could not look" tone, never in a way that reads as safe.
 //
-// **It says which way it went, out loud.** It used to signal the outcome the way the rest of
-// the app did: the form unmounted and a `<strong>` in an unfocused subtree rewrote itself.
-// Focus fell to `<body>`, nothing was announced, and an operator driving by ear could not
-// tell whether they had just armed the app to delete their library (#170). Both directions
-// now `announce()`, and focus goes back to the button that opened the form on both of its
-// exits -- the confirm and the cancel -- because the form takes the focused element with it
-// when it goes.
+// **It says which way it went, out loud.** Both directions call `announce()`, so an operator
+// driving by ear hears whether the app just armed to delete their library. Focus goes back to
+// the button that opened the form on both of its exits, the confirm and the cancel, because the
+// form takes the focused element with it when it unmounts.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
@@ -32,14 +29,14 @@ export function DeletionToggle() {
   const [confirming, setConfirming] = useState(false);
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  // Whichever button is holding the row's action slot -- "Turn on…" before, "Turn off" after.
-  // One ref for both, because it is one control position: what the operator wants back is the
-  // place they left, and after arming that place says the opposite thing.
+  // Whichever button is holding the row's action slot. It reads "Turn on…" before arming and
+  // "Turn off" after. One ref covers both, since it is one control position. What the operator
+  // wants back is the place they left, and after arming that place says the opposite thing.
   const rowButtonRef = useRef<HTMLButtonElement>(null);
-  // Set when the password form is about to go and focus has to follow it somewhere. Read in the
-  // effect below rather than acted on inline, because the button does not exist until the commit
-  // that unmounts the form has landed, and `.focus()` on a node that is not there is a silent
-  // no-op -- the exact shape that leaves focus on `<body>`.
+  // Set when the password form is about to close and focus has to follow it somewhere. Read in
+  // the effect below rather than acted on inline, because the button does not exist until the
+  // commit that unmounts the form has landed. `.focus()` on a node that is not there yet is a
+  // silent no-op, which is exactly what leaves focus on `<body>`.
   const returnToRow = useRef(false);
   useEffect(() => {
     if (!returnToRow.current || confirming) return;
@@ -53,11 +50,9 @@ export function DeletionToggle() {
     setPassword("");
   };
 
-  // ["safety"] is the whole list: it is the one query that carries whether deletion is on,
+  // ["safety"] is the whole list. It is the one query that carries whether deletion is on,
   // and every surface that gates on it (this switch, the app banner, the Reap page's
-  // Execute button) reads it through useSafety. There used to be a ["health"] line here
-  // too, left behind by the health-based safety read App.tsx retired, naming a cache no
-  // component subscribes to (B-35).
+  // Execute button) reads it through useSafety.
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["safety"] });
   };
@@ -68,15 +63,14 @@ export function DeletionToggle() {
       setPassword("");
       setConfirming(false);
       setError(null);
-      // The same two sentences the state block above shows, said out loud (rule 144: one fact,
-      // and the visible copy is a few lines up, so keep them reading alike). Announced from the
-      // settled mutation, never at issuance (rule 85) -- this is the switch that decides whether
-      // Reaper may delete, so a premature "on" would be the worst possible thing to be wrong
-      // about.
+      // The same two sentences the state block above shows, said out loud, so keep them reading
+      // alike. This announces from the settled mutation, never at issuance. This is the switch
+      // that decides whether Reaper may delete, so a premature "on" would be the worst possible
+      // thing to be wrong about.
       announce(vars.enabled ? t("deletion.stateOn") : t("deletion.stateOff"));
       // Arming happens from the password form, which unmounts on success and takes the focused
-      // Confirm button with it. Without this, focus lands on `<body>` and the next Tab restarts
-      // at the top of the page.
+      // Confirm button with it. Without this flag, focus would land on `<body>` and the next
+      // Tab press would restart at the top of the page.
       if (vars.enabled) returnToRow.current = true;
       refresh();
     },
@@ -86,19 +80,19 @@ export function DeletionToggle() {
   if (isLoading) {
     return <p className="muted">{t("common.checkingDeletion")}</p>;
   }
-  // Unknown must never read as safe: say it plainly, in amber, and still offer OFF -- no
-  // password, no prior state, the one direction that can only make Reaper safer -- so the
-  // operator who wants read-only RIGHT NOW has something to click. ON stays gone: it takes a
-  // password, and offering it against a state we could not read would be arming on a guess.
+  // Unknown must never read as safe. Say it plainly, in amber, and still offer OFF, since OFF
+  // needs no password and no prior state and can only make Reaper safer. That gives the operator
+  // who wants read-only right now something to click. ON stays hidden here, since it takes a
+  // password, and offering it against a state Reaper could not read would be arming on a guess.
   if (isError || !data) {
     return (
       <>
         {/* Only a toggle that turned deletion OFF may claim read-only here. `isSuccess` alone
-            records that a toggle landed, not which way it went: after a successful ARM whose
-            follow-up read then failed, it painted the green "read-only" block over a host that
-            was armed -- the one always-visible surface saying the opposite of the truth, in the
-            reassuring direction (rule 144). `SafetyBanner.tsx` already reads this state
-            correctly, and the two sit on screen together (rule 72). */}
+            records that a toggle landed, but not which way it went. If a successful ARM's
+            follow-up read then failed, checking `isSuccess` alone would paint the green
+            "read-only" block over a host that was actually armed, an always-visible surface
+            stating the opposite of the truth in the reassuring direction. `SafetyBanner.tsx`
+            reads this state correctly, and the two sit on screen together. */}
         {toggle.isSuccess && toggle.variables?.enabled === false ? (
           <div className="safety-state safe">
             <span className="banner-dot" aria-hidden="true" />
@@ -162,8 +156,8 @@ export function DeletionToggle() {
               toggle.mutate({ enabled: true, password });
             }}
           >
-            {/* The placeholder is a hint, not a name: it disappears the moment you type.
-                The label names the field either way. */}
+            {/* The placeholder is only a hint. It disappears the moment you type, so the
+                `aria-label` is what names this field. */}
             <input
               type="password"
               value={password}
@@ -177,9 +171,9 @@ export function DeletionToggle() {
             <button type="submit" className="primary sm" disabled={!password || toggle.isPending}>
               {t("deletion.confirmButton")}
             </button>
-            {/* Cancel drops the typed password with the form. Closing the form alone left the
-                admin password sitting in component state for as long as this panel stayed
-                mounted, and refilled the field the next time it was opened (S-5). */}
+            {/* Cancel clears the typed password along with the form state. Without this, the
+                password would stay in component state for as long as this panel is mounted,
+                and would refill the field the next time it opens. */}
             <button type="button" className="ghost sm" onClick={closeForm}>
               {t("common.cancel")}
             </button>

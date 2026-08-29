@@ -14,7 +14,8 @@ paths:
 
 # Auth, secrets, and the artifacts that carry them
 
-Blockers, not suggestions. **Rule numbers are permanent** (tests and comments cite them); where
+Blockers, not suggestions. **Rule numbers are permanent** (tests and the archived review passes
+cite them; code comments do not cite rule numbers); where
 two overlap, the more specific governs. Split out of `.claude/rules/backend.md` because these
 bind credentials, sessions, at-rest key material, and the backup/restore that moves it — and
 nothing else. Rules binding every backend file stay there; rules binding every file are in the

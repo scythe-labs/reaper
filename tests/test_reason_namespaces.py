@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""``_reasons.text``'s namespace argument, proven against a fixture (rule 119).
+"""Checks ``_reasons.text``'s namespace argument against a shared fixture.
 
-#868 moves the status chip and the policy warnings onto their own catalog sections, so
-``why.ts`` gained ``composeIn(namespace, key)`` and this module's twin gained
-``_reasons.text(reason, namespace=...)``. Neither section has production content yet. This
-test injects the two fixture messages ``why.test.ts``'s "composeIn" block uses and checks
-both composers render them the same way.
+``why.ts`` has ``composeIn(namespace, key)`` and this module has ``_reasons.text(reason,
+namespace=...)``. Both are composers that must render the same message for the same input.
+This test injects the two fixture messages ``why.test.ts``'s "composeIn" block uses and
+checks both composers render them the same way.
 """
 
 from __future__ import annotations
@@ -16,10 +15,10 @@ import tests._reasons as _reasons
 from reaper.engine.reason import Reason
 from tests._reasons import text
 
-#: The exact fixture frontend/src/why.test.ts's "composeIn" describe block adds to i18next
-#: at test time. Keeping the two literal (rather than sharing a file across languages) is
-#: the cheapest way to pin agreement between two runtimes; the pairing is what this
-#: docstring and that block's comment each cite.
+#: The Python copy of the fixture frontend/src/why.test.ts's "composeIn" describe block
+#: loads into i18next. The two files write the same fixture directly, in their own
+#: language, rather than sharing one file, so each runtime is checked on its own real code
+#: path. Keep them in sync by hand: this comment and that block's comment point at each other.
 _FIXTURE: dict[str, dict[str, object]] = {
     "chip.text": {"fixture_count": "{n, plural, one {# stray file} other {# stray files}}"},
     "warning": {"fixture_nested": "blocked because {cause}"},

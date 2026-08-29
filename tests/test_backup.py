@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Settings -> Backup: the download half of Backup & Restore.
+"""Settings -> Backup. This is the download half of Backup & Restore.
 
 What is pinned here:
 
-* the download is one gzip tar carrying the database AND the key material that
-  decrypts it, because a database-only backup silently loses every credential;
-* the cache database is never in it (it rebuilds itself, and is not a source of truth);
-* the snapshot inside is a real, openable SQLite file, not the torn live one;
-* downloading records "last backup" so the panel can report it;
-* the download is fenced off the API-key lane -- it is the master key in a file, and
-  a leaked automation key must not be able to pull it.
+* The download is one gzip tar carrying the database and the key material that decrypts
+  it, because a database-only backup silently loses every credential.
+* The cache database is never in it. It rebuilds itself, and is not a source of truth.
+* The snapshot inside is a real, openable SQLite file, not the torn live one.
+* Downloading records "last backup" so the panel can report it.
+* The download is fenced off the API-key lane. It carries the master key in a file, and a
+  leaked automation key must not be able to pull it.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from tests._auth import login
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    """A logged-in client over an empty database: exactly a fresh install."""
+    """A logged-in client over an empty database. This is exactly a fresh install."""
     settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
@@ -64,7 +64,7 @@ class TestDownload:
 
     def test_the_archive_carries_the_db_the_salt_and_the_manifest(self, client: TestClient) -> None:
         members = _members(client.get("/api/settings/backup/download").content)
-        # The database and the salt that keys it travel together; the env-supplied key
+        # The database and the salt that keys it travel together. The env-supplied key
         # ("k") is never written to a file, so there is no secret.key member to bundle.
         assert "reaper.db" in members
         assert "secret.salt" in members
@@ -92,14 +92,14 @@ class TestDownload:
             "launcher_conf": False,  # this fixture's data folder has no launcher.conf
             "cache_db": False,
         }
-        # A model-built test DB has no alembic_version row; production always does. Either
-        # way the field is present so the restore side can decide.
+        # A model-built test DB has no alembic_version row. Production always does. Either
+        # way, the field is present so the restore side can decide.
         assert "alembic_revision" in manifest
 
     def test_launcher_conf_travels_when_the_install_has_one(
         self, client: TestClient, tmp_path: Path
     ) -> None:
-        """On Windows, macOS and the snap this file IS the settings: the port, the bind
+        """On Windows, macOS and the snap this file *is* the settings. The port, the bind
         address and the icons live nowhere else, and the database carries none of them. A
         backup without it rebuilds an install that has forgotten all of them."""
         (tmp_path / "launcher.conf").write_text("REAPER_PORT=8421\n", encoding="utf-8")
@@ -111,7 +111,7 @@ class TestDownload:
 
     def test_an_install_without_one_carries_no_empty_member(self, client: TestClient) -> None:
         """A container has no launcher.conf and never reads one, so its backup must not
-        gain a member -- an empty file restored onto a desktop install would replace the
+        gain a member. An empty file restored onto a desktop install would replace the
         real settings with nothing."""
         members = _members(client.get("/api/settings/backup/download").content)
         assert "launcher.conf" not in members
@@ -119,9 +119,9 @@ class TestDownload:
     def test_a_stale_key_file_is_not_bundled_when_the_env_key_wins(
         self, client: TestClient, tmp_path: Path
     ) -> None:
-        # B-4: the env key ("k") wins over any file, so a lingering secret.key is inactive.
-        # It must not travel (bundling it would silently break decrypt on a target without
-        # the env var), and the manifest must say "env" so the operator sets it there.
+        # The env key ("k") wins over any file, so a lingering secret.key is inactive. It
+        # must not travel (bundling it would silently break decrypt on a target without the
+        # env var), and the manifest must say "env" so the operator sets it there.
         (tmp_path / "secret.key").write_text("staleoldkey\n", encoding="utf-8")
         members = _members(client.get("/api/settings/backup/download").content)
         assert "secret.key" not in members
@@ -145,7 +145,7 @@ class TestInfo:
 
 
 class TestSweepStaleTemp:
-    """PR-3: crash-leftover backup/restore temp is swept at boot, real state is spared."""
+    """Crash-leftover backup/restore temp is swept at boot. Real state is spared."""
 
     def test_it_clears_leftover_temp_and_spares_real_state(self, tmp_path: Path) -> None:
         settings = Settings(data_dir=tmp_path, secret_key="k")
@@ -156,7 +156,7 @@ class TestSweepStaleTemp:
         (tmp_path / ".backup-tmp-abc" / "reaper.db").write_bytes(b"partial")
         (tmp_path / ".restore-tmp-xyz").mkdir()
         (tmp_path / ".restore-upload-123").write_bytes(b"upload")
-        # Real state that must survive: the armed staging and a recovery copy carry no
+        # Real state that must survive. The armed staging and a recovery copy carry no
         # leading dot, so the prefix match never touches them.
         (tmp_path / "pending-restore").mkdir()
         (tmp_path / "pre-restore-20260101T000000Z").mkdir()
@@ -173,7 +173,8 @@ class TestSweepStaleTemp:
 
 class TestApiKeyIsFenced:
     """The download is the whole database plus the master key. A leaked automation key
-    reads plenty, but never this: it would hand over everything the key protects."""
+    reads plenty, but never this. Handing it over would give away everything the key
+    protects."""
 
     def test_an_api_key_may_not_download_the_backup(self) -> None:
         assert _api_key_allowed("GET", "/api/settings/backup/download") is False
@@ -189,5 +190,5 @@ def test_the_backup_download_needs_a_session(tmp_path: Path) -> None:
     Base.metadata.create_all(engine)
     engine.dispose()
     with TestClient(create_app(settings)) as c:
-        # No login, no cookie: the auth gate turns it away like every other /api route.
+        # No login, no cookie. The auth gate turns it away like every other /api route.
         assert c.get("/api/settings/backup/download").status_code == 401

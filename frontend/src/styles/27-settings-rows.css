@@ -1,13 +1,10 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The settings standard: switches and rows. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* ==========================================================================
-   The settings standard: switches and rows
-   ==========================================================================
-   Every on/off STATE renders as .switch; checkboxes remain only for picking items
-   from a list. .set-rows / .set-row is the standard settings layout: name on the
-   left, help under it, control on the right. */
+ * The settings standard: switches and rows. See `../index.css` for how this file fits into
+ * the stylesheet's load order. */
+/* Every on/off state renders as .switch. Checkboxes remain only for picking items from a
+   list. .set-rows / .set-row is the standard settings layout: name on the left, help under
+   it, control on the right. */
 
 .switch {
   position: relative;
@@ -106,13 +103,12 @@
 }
 .set-row {
   display: grid;
-  /* A FIXED control track, never `auto`. An `auto` track shrink-wraps its contents, so every
-     control used to size itself: a <select> to its widest option, an <input> to the browser's
-     default twenty-character width. Measured in one column, the same three rows came out at
-     168px (application name), 249px (time zone) and 147px (theme) -- the "boxes and drop downs
-     should be the same size" report. It also made the `width: 100%` in the 640px block below
-     inert, because 100% of a shrink-to-fit parent resolves back to the content width, which is
-     why a phone never showed a full-width field either. */
+  /* A fixed control track, never `auto`. An `auto` track shrink-wraps its contents, so every
+     control sizes itself instead: a <select> to its widest option, an <input> to the
+     browser's default twenty-character width, so controls in the same column land at
+     different widths instead of lining up. It would also make the `width: 100%` in the 640px
+     block below inert, because 100% of a shrink-to-fit parent resolves back to the content
+     width, so a phone would never show a full-width field either. */
   grid-template-columns: minmax(0, 1fr) minmax(0, var(--set-control-w));
   gap: var(--space-xs) var(--space-5xl);
   align-items: center;
@@ -137,8 +133,8 @@
 .set-row .set-control {
   grid-column: 2;
   grid-row: 1 / span 2;
-  /* `stretch`, not `end`: the box has to BE the track before a control can fill it. Under
-     `end` the box shrank to its contents and took every control's width down with it. The
+  /* `stretch`, not `end`: the box has to be the track before a control can fill it. Under
+     `end`, the box shrinks to its contents and takes every control's width down with it. The
      contents still sit against the row's right edge, so a Switch or a Segmented keeps its
      natural size on the same edge the boxes end on. */
   justify-self: stretch;
@@ -154,36 +150,33 @@
      buttons, which is wider than the control column gets on a tablet in portrait. */
   flex-wrap: wrap;
 }
-/* A row whose control is a CLUSTER rather than one box -- the API key's field plus its four
-   buttons -- keeps the old shrink-to-fit column. Capping it at the single-box width would
-   wrap those buttons onto two further lines for nothing, and a masked, read-only key is not
-   one of the boxes rule 40 is lining up.
-   The label column carries a FLOOR, because `auto` with no floor is unbounded and the API
-   key's cluster is wide: measured, that column went to 39.6px at 768px and to ZERO from 700px
-   down, taking the row to 4,895px tall -- one word per line for the longest help paragraph on
-   the page, the one an operator reads to decide whether to hand a key to a third-party
-   dashboard. The `auto` track bottoms out at 272px (the keyfield's own width), so at the
-   tightest two-column width the floor may reach about 16.9rem before the cluster starts
-   overhanging the label; 14rem clears that by 2.9rem and keeps the full 24px gutter. It cannot
-   overflow the PAGE at any value -- `justify-self: end` sends the squeeze leftward into the
-   label instead -- so a too-large floor here fails silently and `scrollWidth` will not catch
-   it. Measure the gutter, not the overflow. */
+/* A row whose control is a cluster rather than one box (the API key's field plus its four
+   buttons) keeps the old shrink-to-fit column. Capping it at the single-box width would wrap
+   those buttons onto two further lines for nothing, and a masked, read-only key is not one of
+   the boxes the control standard lines up.
+
+   The label column carries a floor, because `auto` with no floor is unbounded and the API
+   key's cluster is wide. Without a floor, the label column can shrink toward zero width,
+   which forces the longest help paragraph on the page into one word per line, the paragraph
+   an operator reads to decide whether to hand a key to a third-party dashboard. 14rem keeps
+   enough room before the cluster starts overhanging the label, with the full 24px gutter
+   intact. The floor cannot overflow the page at any value, since `justify-self: end` sends
+   the squeeze leftward into the label instead, so a too-large floor here fails silently and
+   `scrollWidth` will not catch it. Measure the gutter, not the overflow. */
 .set-row.set-row-cluster {
   grid-template-columns: minmax(14rem, 1fr) auto;
 }
 .set-row.set-row-cluster .set-control {
   justify-self: end;
 }
-/* A row whose control is not a BOX -- a Switch, a button, a link -- lets the fixed track go.
-   Rule 40 exists to line up every text, number and select box on one edge, and that is the whole
-   job the track does; a 40px Switch and a 68px link buy nothing measurable from it, while the
-   label and its help paragraph pay the difference in wrapped lines. Measured on the General
-   panel: 178.5px of height saved at 641px and 59.5px at 768px, and NOTHING at 900px and above,
-   where the row has room for both. The cost was worst where the screen is smallest, which is
-   backwards. Releasing it moves the control's right edge 0.00px at every width, because
-   `.set-control` is already `justify-content: flex-end` inside a stretched box, so nothing that
-   was lined up stops being lined up. Every box row stays on the shared track: this class is an
-   opt-out named per row, never the default. */
+/* A row whose control is not a box (a Switch, a button, a link) lets the fixed track go. The
+   control standard exists to line up every text, number, and select box on one edge, and that
+   is the whole job the track does. A 40px Switch or a 68px link buys nothing measurable from
+   it, while the label and its help paragraph pay the difference in wrapped lines, worst on
+   the smallest screens, which is backwards. Releasing the track does not move the control's
+   right edge, because `.set-control` is already `justify-content: flex-end` inside a
+   stretched box, so nothing that was lined up stops being lined up. Every box row stays on
+   the shared track: this class is an opt-out named per row, never the default. */
 .set-row.set-row-plain {
   grid-template-columns: minmax(0, 1fr) auto;
 }
@@ -238,7 +231,7 @@
 }
 /* The swatch and hex field fused into one box on the control standard (the .url-join
    pattern): the join carries the border and focus ring, the swatch is a prefix divided
-   from the field, and both are borderless inside it -- so the two never wrap apart on a
+   from the field, and both are borderless inside it. So the two never wrap apart on a
    phone, where the field would otherwise go full-width and bump the swatch to its own line. */
 .hex-join {
   display: flex;
@@ -334,39 +327,40 @@
   border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text);
-  /* `font: inherit` first, then the size. The size alone leaves an <input>'s FAMILY on the
-     browser's default form font, so every box in this column rendered in a different typeface
-     from the label beside it. The shorthand resets the size, so the step below comes after
-     it. */
+  /* `font: inherit` first, then the size. The size alone leaves an <input>'s font family on
+     the browser's default form font, so every box in this column would render in a different
+     typeface from the label beside it. The shorthand resets the size, so the step below comes
+     after it. */
   font: inherit;
   font-size: var(--text-md);
   /* A long value (a plex.direct hostname, say) must not squeeze the label column
      into a sliver: the control caps and ellipsizes, the full value stays readable
-     in the dropdown itself. The cap is the track width, so a cluster row -- which keeps a
-     shrink-to-fit column -- still stops at the same place a single box does. */
+     in the dropdown itself. The cap is the track width, so a cluster row, which keeps a
+     shrink-to-fit column, still stops at the same place a single box does. */
   max-width: var(--set-control-w);
   text-overflow: ellipsis;
 }
-/* A control that IS the row's box takes whatever the track leaves it: on its own it fills the
+/* A control that is the row's box takes whatever the track leaves it: on its own it fills the
    track, and beside a button it takes what the button does not, so the two stay on one line.
-   `flex`, not `width: 100%` -- a box at 100% leaves no room for a sibling and pushes it onto a
+   `flex`, not `width: 100%`: a box at 100% leaves no room for a sibling and pushes it onto a
    second line, which is how the Plex server row's Refresh button ended up under its picker.
-   Growing also means the box's LEFT edge holds still as a Save appears and goes: it gives the
+   Growing also means the box's left edge holds still as a Save appears and goes: it gives the
    width back from the right, where the text is not.
+
    Only a direct child: the accent hex field and a QuantityInput's number sit inside their own
    joined chrome and keep the widths those set.
+
    The basis is `0`, not `auto`, and that is the whole rule. `.set-control` wraps, and flex
-   line-breaking runs BEFORE shrinking: with an `auto` basis the box asks for its content width
-   first, so a long value pushed the sibling onto a second line instead of the box giving way --
-   which is the Refresh button above, back again on every screen wider than the phone. Measured
-   with a 37-character server name, `auto` wrapped it at all of 641-1400px and `0` at none of
-   them, the select settling at exactly what the button leaves (352 - 8 gap - 68 button). */
+   line-breaking runs before shrinking: with an `auto` basis, the box asks for its content
+   width first, so a long value pushes the sibling onto a second line instead of the box
+   giving way, the same Refresh-button problem, on every screen wider than the phone. A `0`
+   basis avoids it at every width this row reaches. */
 .set-row .set-control > input,
 .set-row .set-control > select {
   flex: 1 1 0;
   min-width: 0;
 }
-/* The boxes whose width IS their meaning do not grow: a port is four digits wide, and the API
+/* The boxes whose width is their meaning do not grow: a port is four digits wide, and the API
    key sets its own so the buttons beside it keep the room they need. */
 .set-row .set-control input.input-port,
 .set-row .set-control > input.keyfield {
@@ -383,9 +377,9 @@
 }
 /* The manual hostname, stated the way the API key states its own and for the same reason: it
    sits in a cluster row, whose column shrink-wraps, so there is nothing for a percentage or a
-   grown flex basis to resolve against. Left to the browser it fell back to the default
-   twenty-character size -- 167.7px, measured -- which is the exact fault the `.set-row` block
-   above exists to fix, reappearing in the one row that opted out of the fix. */
+   grown flex basis to resolve against. Left to the browser, it would fall back to the default
+   twenty-character size (167.7px), the same fault the `.set-row` block above exists to fix,
+   reappearing in the one row that opted out of that fix. */
 .set-row .set-control > input.input-host {
   width: 15rem;
   min-width: 0;
@@ -398,21 +392,20 @@
   }
 }
 @media (max-width: 640px) {
-  /* Every two-column VARIANT is named alongside the base one in every rule here. A media query
+  /* Every two-column variant is named alongside the base one in every rule here. A media query
      adds no specificity, so `.set-row` (0,1,0) alone would lose to `.set-row.set-row-cluster`
-     (0,2,0) above and that row alone would keep a two-column grid on a phone. `.set-row-plain`
-     is the same shape and joins for the same reason; a new variant does too. */
+     (0,2,0) above, and that row alone would keep a two-column grid on a phone. `.set-row-plain`
+     is the same shape and joins for the same reason. A new variant does too. */
   .set-row,
   .set-row.set-row-cluster,
   .set-row.set-row-plain {
     /* `minmax(0, 1fr)`, never a bare `1fr`, which means `minmax(auto, 1fr)`: that `auto` floor
-       is the content's MIN-content, and a <select>'s min-content is its widest option, which no
+       is the content's min-content, and a <select>'s min-content is its widest option, which no
        `min-width: 0` on the select itself can lower. Plex's connection picker holds a full
-       plex.direct address while the server list is still loading, and it forced this track to
-       593px inside a 350px card -- the select, and the help text sharing the track, both ran off
-       the side of a page that cannot scroll sideways. `.set-row` was named in LEARNINGS as one
-       of seven deferred bare-`1fr` collapses to fix the moment any commit touched it; this is
-       that commit (rule 72). */
+       plex.direct address while the server list is still loading, and it can force this track
+       to 593px inside a 350px card, running the select and the help text off the side of a
+       page that cannot scroll sideways. `docs/LEARNINGS.md` records this as one of several
+       deferred bare-`1fr` fixes across the stylesheet. */
     grid-template-columns: minmax(0, 1fr);
   }
   /* `.set-row.set-row-plain .set-control` is (0,3,0), so the `justify-self: end` it sets above
@@ -434,16 +427,15 @@
   .set-row .set-control > select {
     min-width: 0;
     /* Back to a content basis, which is what the stack wants. The `0` basis above exists to
-       stop a box shoving its sibling onto a second line, and here a second line is the LAYOUT:
-       the row has the full width, so host/port/SSL/Save are meant to wrap. With a zero basis
-       they all share one line instead and split it evenly, which took the manual hostname
-       field to 84px on a 390px screen -- about six characters. Measured: with this line the
-       narrow widths are byte-identical to not touching the basis at all. */
+       stop a box shoving its sibling onto a second line, and here a second line is the intended
+       layout: the row has the full width, so host/port/SSL/Save are meant to wrap. With a zero
+       basis they all share one line instead and split it evenly, which would shrink the manual
+       hostname field to about 84px on a 390px screen, roughly six characters. */
     flex-basis: auto;
     /* The cap has to go with the stack. It exists to stop a long value eating the label
-       column, and there is no label column here -- left in place it clamped the box at the
-       track width, so anything from about 400px to this breakpoint stopped short of the edge
-       while still calling itself full width. */
+       column, and there is no label column here. Left in place, it would clamp the box at the
+       track width, so anything from about 400px to this breakpoint would stop short of the
+       edge while still calling itself full width. */
     max-width: none;
   }
   .set-row .set-control input.input-port {
@@ -477,7 +469,7 @@
   font-weight: var(--weight-semi);
   font-size: var(--text-base);
   /* The library's name is whatever the operator called it in Plex, in a fixed grid track that
-     cannot widen to hold it (rule 139). */
+     cannot widen to hold it. */
   overflow-wrap: anywhere;
 }
 .lib-card .lib-kind {
@@ -630,7 +622,7 @@
   flex: none;
 }
 
-/* The password field rides the shared control standard (.field-sm); only its width differs. */
+/* The password field rides the shared control standard (.field-sm). Only its width differs. */
 .restore-pw {
   margin-top: var(--space-2xl);
   max-width: 22rem;
@@ -655,9 +647,9 @@
   }
 }
 
-/* The About version row's update pill. The accent, not a verdict color: an update is
-   information, and green or amber would read as protected or unknown in this app's
-   language. */
+/* The pill beside the version, drawn only when an update is waiting. It is amber rather
+   than accent, because it says the same thing the dev banner above it says, and two tones
+   for one fact would read as two facts. */
 .update-pill {
   display: inline-block;
   vertical-align: 1px;
@@ -666,7 +658,7 @@
   font-weight: var(--weight-semi);
   padding: var(--space-2xs) var(--space-lg);
   border-radius: var(--radius-pill);
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  border: 1px solid var(--accent-ring);
+  background: var(--unknown-soft);
+  color: var(--unknown);
+  border: 1px solid var(--unknown);
 }

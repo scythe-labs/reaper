@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The time helpers -- in particular ``humanize_days``, which is what turns a raw dormancy
-count into the phrase the why-panel and the review cards show. It is display-only (it never
-feeds a number back into a decision), so the contract that matters is simply that it reads
+"""The time helpers, in particular ``humanize_days``, which turns a raw dormancy count
+into the phrase the why-panel and the review cards show. It is display-only. It never
+feeds a number back into a decision, so the contract that matters is simply that it reads
 like a person wrote it."""
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ class TestHumanizeDays:
     @pytest.mark.parametrize(
         ("days", "expected"),
         [
-            # A length, never a date: every caller reads "not watched in <this>".
+            # A length, never a date. Every caller reads "not watched in <this>".
             (0, "less than a day"),
             (0.4, "less than a day"),
             (1, "1 day"),
@@ -33,5 +33,5 @@ class TestHumanizeDays:
         assert humanize_days(days) == expected
 
     def test_keeps_to_two_significant_units(self) -> None:
-        # 5 years, 7 months, 25 days -> the days are dropped; two units is enough to read.
+        # 5 years, 7 months, 25 days -> the days are dropped. Two units is enough to read.
         assert humanize_days(2060).count(",") == 1

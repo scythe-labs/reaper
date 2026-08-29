@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The gate in front of the whole API.
 
-The threat is concrete: before this, the API had no auth at all -- anyone who could
-reach the port could drive a tool that deletes a media library. These tests hold
-the line that every ``/api`` route requires a session, that the handful which must
-work logged-out are exactly the handful named, and that a cross-site page cannot
-forge a state-changing request.
+The threat is concrete. Without it, anyone who can reach the port could drive a tool that
+deletes a media library. These tests hold the line that every ``/api`` route requires a
+session, that the handful which must work logged-out are exactly the handful named, and
+that a cross-site page cannot forge a state-changing request.
 """
 
 from __future__ import annotations
@@ -115,10 +114,10 @@ class TestLocalLoginFlow:
 
 class TestOnlyHttpGetsThroughTheGate:
     """The guard authenticates by reading headers and cookies off an ``http`` scope, so
-    it refuses every other kind rather than passing it through (L-1).
+    it refuses every other kind rather than passing it through.
 
     Reaper declares no websocket route, so nothing is turned away that ever worked. The
-    point is the day someone adds one: it must not be born with no session check and no
+    point is the day someone adds one. It must not be born with no session check and no
     CSRF, silently, because the guard waved through everything that was not ``http``.
     """
 

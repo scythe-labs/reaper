@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The restore card takes the admin password, so it holds one only while it is being used.
-// The card is local to BackupPanel.tsx, so these drive it the way an operator reaches it: the
-// Backup panel, a staged file, then the password box that appears with the summary.
+// The card is local to BackupPanel.tsx, so these tests drive it the way an operator reaches
+// it, through the Backup panel, a staged file, then the password box that appears with the
+// summary.
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -42,9 +43,9 @@ function renderBackupPanel() {
   const queryClient = testQueryClient();
   const { unmount } = renderWithProviders(
     <>
-      {/* The app mounts this above every route (`App.tsx`), and `announce()` returns early when no
-          region is listening -- so without it here the card's sentences are dropped and a test
-          about them passes against silence. */}
+      {/* The app mounts this above every route (`App.tsx`), and `announce()` returns early
+          when no region is listening. Without it here, the card's sentences are dropped and a
+          test about them would pass against silence. */}
       <Announcer />
       {/* `App` owns which panel is open, so the address bar can name it (navUrl.ts).
           Nothing here switches panel, so the owner does nothing. */}
@@ -56,8 +57,8 @@ function renderBackupPanel() {
 }
 
 /** One bare `RestoreFlow` in its own tree and its own query cache, which is what two tabs are.
- *  The panel above cannot stand in for that: `Settings` mounts one card, and the state #387
- *  turns on needs two live at once, each holding the summary it staged. */
+ *  The panel above cannot stand in for that. `Settings` mounts one card, and the state this
+ *  tests needs two live at once, each holding the summary it staged. */
 function renderFlow() {
   const { container, unmount } = renderWithProviders(
     <>
@@ -89,8 +90,9 @@ async function stageIn(root: HTMLElement, name: string) {
 const spoken = () =>
   [...document.querySelectorAll('[aria-live="polite"]')].map((n) => n.textContent).join("");
 
-/** Stage, type the password, and confirm: the card's armed branch, reached the way an operator
- *  reaches it. Shared by the two describes that need it rather than transcribed into both. */
+/** Stages a file, types the password, and confirms, reaching the card's armed branch the way
+ *  an operator reaches it. Shared by the two describes that need it, rather than transcribed
+ *  into both. */
 async function arm() {
   apiMock.restoreConfirm.mockResolvedValue({ ok: true });
   const { person, queryClient } = renderBackupPanel();
@@ -121,8 +123,8 @@ describe("the admin password on the restore card", () => {
   });
 
   it("is gone after a confirm that failed", async () => {
-    // S-5. A wrong password is the likeliest reason to land here, and leaving it in the box
-    // to be retried is how it stays in state; the field clears the way a sign-in form does.
+    // A wrong password is the likeliest reason to land here. The field clears the way a
+    // sign-in form does, instead of leaving a rejected password sitting in the box to retry.
     apiMock.restoreConfirm.mockRejectedValue(new Error("That password didn't match."));
     const { person } = renderBackupPanel();
     const password = await stage("a.reaper");
@@ -135,8 +137,9 @@ describe("the admin password on the restore card", () => {
   });
 
   it("does not carry over to the next file staged", async () => {
-    // The password belongs to the summary it was typed against: staging another backup drops
-    // the summary, which unmounts the box, and used to refill it against a different file.
+    // The password belongs to the summary it was typed against. Staging another backup drops
+    // the summary, which unmounts the password box, so it never carries over to a different
+    // file.
     const { person } = renderBackupPanel();
     await person.type(await stage("a.reaper"), "a-password");
 
@@ -147,36 +150,37 @@ describe("the admin password on the restore card", () => {
 });
 
 describe("a staged backup nobody confirmed", () => {
-  // `prepare` uploads and stages the archive on the SERVER. An un-armed stage has no surface
-  // anywhere in the app -- the card only offers a Cancel once a restore is armed -- so a card
-  // that goes away without saying anything used to leave that archive sitting there until the
-  // next prepare replaced it.
+  // `prepare` uploads and stages the archive on the server. An un-armed stage has no surface
+  // anywhere in the app, since the card only offers a Cancel once a restore is armed. So a card
+  // that goes away without cleaning up would leave that archive sitting there until the next
+  // prepare replaced it.
   it("is canceled when the card goes, so nothing is left on the server", async () => {
-    // Awaited, not asserted straight after `unmount()`: the cleanup asks the server whether the
-    // restore was armed elsewhere before it sends anything (see the armed case below), so the
-    // cancel is one round trip behind the unmount rather than synchronous with it.
+    // This awaits the cancel instead of asserting right after `unmount()`. The cleanup asks
+    // the server whether the restore was armed elsewhere before it sends anything (see the
+    // armed case below), so the cancel is one round trip behind the unmount, not synchronous
+    // with it.
     const { person, unmount } = renderBackupPanel();
     await person.type(await stage("a.reaper"), "a-password");
 
     unmount();
 
     await waitFor(() => expect(apiMock.restoreCancel).toHaveBeenCalledTimes(1));
-    // Named, never bare: a tokenless cancel discards whatever is staged, and what is staged is
-    // not always what this card put there (#387, and the two-card case below).
+    // The cancel is named, never bare. A tokenless cancel discards whatever is staged, and
+    // what is staged is not always what this card put there (see the two-card case below).
     expect(apiMock.restoreCancel).toHaveBeenCalledWith(SUMMARY.token);
   });
 
   it("reclaims the archive it staged, never one a second card staged since", async () => {
-    // #387, driven as the two cards it takes. `RestoreFlow` is live in two places now --
-    // Settings, and the wizard's restore door -- so an operator can hold one in each tab, and
-    // `stage_upload` REPLACES the staging directory rather than adding to it. Tab 1 stages,
-    // tab 2 stages over it, tab 1 leaves at any later moment: no timing coincidence, and the
-    // first card's reclaim used to discard the second's archive. Tab 2 was then looking at a
-    // validated summary whose Restore had nothing behind it.
+    // `RestoreFlow` is live in two places now, Settings and the wizard's restore door, so an
+    // operator can hold one in each tab. `stage_upload` replaces the staging directory rather
+    // than adding to it. Tab 1 stages, tab 2 stages over it, and tab 1 can leave at any later
+    // moment. An unscoped reclaim there would discard the second tab's archive, leaving tab 2
+    // looking at a validated summary with nothing behind it.
     //
-    // What this half pins is the token the card SENDS. That the server then declines it is
-    // `test_cancel_scoped_to_a_replaced_staging_leaves_it` in `tests/test_restore.py`; neither
-    // test proves the pair alone, and the ownership check they share is the seam.
+    // This pins the token the card sends. That the server then declines a stale one is proven
+    // by `test_cancel_scoped_to_a_replaced_staging_leaves_it` in `tests/test_restore.py`.
+    // Neither test alone proves the pair works together. The ownership check they share is
+    // what does.
     const first = renderFlow();
     const second = renderFlow();
     apiMock.restorePrepare.mockResolvedValueOnce({ ...SUMMARY, token: "first-token" });
@@ -192,9 +196,9 @@ describe("a staged backup nobody confirmed", () => {
   });
 
   it("scopes the operator's own Remove to the file named on the card", async () => {
-    // Rule 72: `Remove` reaches the same discard from the same state, holding the same summary,
-    // so it strands the other card exactly as the unmount did. The armed Cancel is the one that
-    // stays unscoped, below -- it has no summary to take a token from.
+    // `Remove` reaches the same discard from the same state, holding the same summary, so it
+    // would strand the other card exactly as the unmount does. The armed Cancel below is the
+    // one that stays unscoped, since it has no summary to take a token from.
     const { person } = renderBackupPanel();
     await stage("a.reaper");
     const remove = await screen.findByRole("button", { name: /^remove$/i });
@@ -215,16 +219,17 @@ describe("a staged backup nobody confirmed", () => {
   });
 
   it("leaves an ARMED restore alone, because cancel discards that one too", async () => {
-    // The destructive direction: `/restore/cancel` discards a staged OR ARMED restore, so a
-    // cleanup that got this wrong would quietly undo a restore already confirmed with the admin
-    // password, and the operator would find out on the restart that changed nothing.
+    // `/restore/cancel` discards a staged OR armed restore, so a cleanup that got this wrong
+    // would quietly undo a restore already confirmed with the admin password. The operator
+    // would only find out on the restart that changed nothing.
     //
-    // The state that discriminates has to hold BOTH at once, which needs the arming to come from
-    // outside this card: staged here, armed elsewhere -- a second tab, or the same operator's
-    // phone. Nothing refreshes ["backup-info"] from another client (the query sets no
-    // `refetchInterval` and `main.tsx` turns `refetchOnWindowFocus` off app-wide), so this card is
-    // still rendering `armed: false` when it goes. No invalidation here, deliberately: reading the
-    // cache is the bug, and a test that hands the card the answer cannot see it.
+    // The state that discriminates this has to hold both at once, so the arming has to come
+    // from outside this card: staged here, armed elsewhere, such as a second tab or the same
+    // operator's phone. Nothing refreshes ["backup-info"] from another client (the query sets
+    // no `refetchInterval`, and `main.tsx` turns `refetchOnWindowFocus` off app-wide), so this
+    // card is still rendering `armed: false` when it goes. This test does not invalidate that
+    // query, deliberately: reading the stale cache is exactly the bug being guarded against,
+    // and a test that hands the card the fresh answer could not catch it.
     const { unmount, person } = renderBackupPanel();
     await person.type(await stage("a.reaper"), "a-password");
     expect(screen.queryByText(/A restore is ready/)).not.toBeInTheDocument();
@@ -239,11 +244,12 @@ describe("a staged backup nobody confirmed", () => {
   });
 
   it("sends no cancel while the confirm it was authorized with is still in flight", async () => {
-    // Leaving mid-confirm needs no discard click at all: `App` mounts Settings only while the
+    // Leaving mid-confirm needs no discard click at all. `App` mounts Settings only while the
     // settings view is open, so one press on the top nav unmounts the card. The confirm is a
-    // deliberately slow password verify behind a concurrency gate, so the window is real, and the
-    // card is still holding its summary for every millisecond of it -- the one send this cleanup
-    // must never make, because the operator already paid the admin password for it.
+    // deliberately slow password verify behind a concurrency gate, so this window is real, and
+    // the card is still holding its summary for every millisecond of it. This is the one send
+    // this cleanup must never make, because the operator already paid the admin password for
+    // it.
     let confirmed = () => {};
     apiMock.restoreConfirm.mockReturnValue(
       new Promise<void>((resolve) => {
@@ -264,9 +270,10 @@ describe("a staged backup nobody confirmed", () => {
   });
 
   it("cancels the archive an upload lands after the card is already gone", async () => {
-    // `prepare` stages on the SERVER when it resolves, which can be after the card goes. Reading
-    // the summary alone said "nothing staged" during that window, so the archive arrived with
-    // nothing left to reclaim it and no surface in the app to reach it.
+    // `prepare` stages on the server only when it resolves, which can be after the card is
+    // gone. During that window the summary alone reads "nothing staged," so an archive that
+    // lands after the card unmounts has nothing left to reclaim it and no surface in the app
+    // to reach it.
     let landed = (_: typeof SUMMARY) => {};
     apiMock.restorePrepare.mockReturnValue(
       new Promise<typeof SUMMARY>((resolve) => {
@@ -282,9 +289,10 @@ describe("a staged backup nobody confirmed", () => {
     fireEvent.change(input, { target: { files: [new File(["x"], "a.reaper")] } });
 
     unmount();
-    // The ordering IS the assertion, not just the eventual count: a cancel sent while the upload
-    // is still in flight arrives before there is anything on the server to reclaim, so the archive
-    // lands afterwards and stays. Asserting only "a cancel was sent" passes for both.
+    // The ordering is the assertion here, not just the eventual count. A cancel sent while the
+    // upload is still in flight arrives before there is anything on the server to reclaim, so
+    // the archive lands afterward and stays. Asserting only "a cancel was sent" would pass
+    // either way.
     expect(apiMock.restoreCancel).not.toHaveBeenCalled();
     landed(SUMMARY);
 
@@ -292,15 +300,15 @@ describe("a staged backup nobody confirmed", () => {
   });
 
   it("sends nothing when the confirm it waited on left no staging of ours to name", async () => {
-    // Rule 118, for the `!token` guard. A confirm that succeeds drops the summary and its token
-    // together, but `confirmRef` stays set until the refetch behind it settles -- so an unmount
-    // in that window walks past the early return with nothing of ours left to name. Held open
-    // here deliberately: with the refetch allowed to settle, the cleanup returns one line
-    // earlier and this test could not fail whatever the guard did.
+    // This tests the `!token` guard. A confirm that succeeds drops the summary and its token
+    // together, but `confirmRef` stays set until the refetch behind it settles, so an unmount
+    // in that window walks past the early return with nothing of ours left to name. The refetch
+    // is deliberately held open here: letting it settle would make the cleanup return one line
+    // earlier, and this test could not fail whatever the guard did.
     //
-    // The server is then made to answer "nothing armed", which is the only state where an
-    // unguarded cleanup reaches its send -- and that send is the unscoped cancel, on a server
-    // whose staging may by then belong to another card.
+    // The server is then made to answer "nothing armed," the only state where an unguarded
+    // cleanup reaches its send. That send is the unscoped cancel, on a server whose staging may
+    // by then belong to another card.
     apiMock.restoreConfirm.mockResolvedValue({ ok: true });
     let settle = (_: typeof INFO) => {};
     const { person, unmount } = renderBackupPanel();
@@ -321,8 +329,8 @@ describe("a staged backup nobody confirmed", () => {
   });
 
   it("sends no cancel when the upload itself failed, because it staged nothing", async () => {
-    // The other side of the window above: a prepare that rejected left no archive of ours on the
-    // server, so a cancel here would be reclaiming somebody else's stage.
+    // This is the other side of the window above. A prepare that rejects leaves no archive of
+    // ours on the server, so a cancel here would be reclaiming somebody else's stage.
     let failed = (_: Error) => {};
     apiMock.restorePrepare.mockReturnValue(
       new Promise<typeof SUMMARY>((_resolve, reject) => {
@@ -347,12 +355,12 @@ describe("a staged backup nobody confirmed", () => {
 
 describe("the backup panel's own read failing", () => {
   it("keeps the staged card and says the read is stale, not that the page never loaded", async () => {
-    // `Download backup` invalidates this very query, so a server that blinks lands here with an
-    // archive staged and a password typed against it. The never-loaded sentence tells the operator
-    // to reload, and a reload does not run the card's unmount cleanup, so following the panel's own
-    // advice was the one exit that left the archive on the server with nothing able to reach it.
-    // Same line as the other three panels, from one component, so the wording cannot drift
-    // (rules 72 and 144).
+    // `Download backup` invalidates this very query, so a server that blinks lands here with
+    // an archive staged and a password typed against it. The never-loaded sentence tells the
+    // operator to reload, but a reload does not run the card's unmount cleanup, so following
+    // that advice would leave the archive on the server with nothing able to reach it. This
+    // line comes from one shared component, the same as the other three panels, so the
+    // wording cannot drift between them.
     const { person, queryClient } = renderBackupPanel();
     await person.type(await stage("a.reaper"), "a-password");
 
@@ -365,9 +373,8 @@ describe("the backup panel's own read failing", () => {
     const stale = await screen.findByText(/Couldn't check these settings just now/);
     expect(stale).toHaveClass("notice-warn");
     expect(screen.getByLabelText(/admin password/i)).toHaveValue("a-password");
-    // And the line that replaced it does not repeat the advice (#153). It said "Reload to try
-    // again." above this staged archive and this typed password until then, which is the same
-    // orphaned-archive exit the comment above describes, reintroduced by the fix for it.
+    // The line that replaces it does not repeat the reload advice, since that would reopen the
+    // same orphaned-archive exit described above.
     expect(stale).not.toHaveTextContent(/reload/i);
   });
 
@@ -381,21 +388,24 @@ describe("the backup panel's own read failing", () => {
 });
 
 describe("what an operator is told when a restore arms", () => {
-  // A confirmed restore replaces the entire database on the next boot, and its ONLY signal was the
-  // card becoming a different card: no sentence, and the pressed Restore button gone with the form
-  // it lived on, so focus fell to `<body>` and the next Tab restarted above the whole page. An
-  // absence cannot be heard, and this is the costliest absence in Settings (#173).
+  // A confirmed restore replaces the entire database on the next boot. Without a sentence
+  // saying so, the only signal is the card becoming a different card, with the pressed Restore
+  // button gone along with the form it lived on. Focus would fall to `<body>` and the next Tab
+  // would restart above the whole page. This is the costliest silence on the Settings page, so
+  // it has to speak.
 
   it("says a restore is ready, in the same words the card shows", async () => {
-    // One pair of constants behind both, so the notice and the sentence cannot be reworded apart
-    // (rule 144). Asserted against the rendered notice rather than against a copy of the string,
-    // which is the only version of this assertion that can catch them drifting.
+    // One pair of constants sits behind both, so the notice and the spoken sentence cannot be
+    // reworded apart. This is asserted against the rendered notice, not against a copy of the
+    // string, since that is the only version of this assertion that can catch them drifting
+    // apart.
     await arm();
 
-    // Scoped to the notice on the card, because the live region holds these words too now --
-    // exactly what the change was for, and why an unscoped text query cannot be the assertion.
-    // Anchored on the bolded lead's parent, not on the first span in the card: `Notice` opens with
-    // its own visually-hidden "Warning: ", which belongs to the notice and not to this sentence.
+    // Scoped to the notice on the card, because the live region holds these same words too now,
+    // which is exactly what this is meant to check. An unscoped text query cannot tell them
+    // apart. Anchored on the bolded lead's parent, not on the first span in the card, since
+    // `Notice` opens with its own visually-hidden "Warning: " label, which belongs to the
+    // notice and not to this sentence.
     const notice = await waitFor(() => {
       const el = document.querySelector(".restore-armed strong")?.parentElement;
       if (!el) throw new Error("the card has not armed yet");
@@ -406,9 +416,9 @@ describe("what an operator is told when a restore arms", () => {
   });
 
   it("leaves the operator on the armed card's reversible control, not the one that stops the app", async () => {
-    // "Cancel restore" mounts a commit before `busy` clears, so the move has to wait for it to
-    // become actable rather than for it to exist. It takes the landing rather than "Restart now",
-    // which is the continuation an operator wants but also the one that ends the process: a
+    // "Cancel restore" mounts before `busy` clears, so the check waits for it to become
+    // actable, not just for it to exist. Focus lands on Cancel rather than on "Restart now,"
+    // which is the continuation an operator wants but also the one that ends the process. A
     // programmatic focus move puts whatever it lands on under the next key pressed.
     await arm();
 
@@ -420,13 +430,13 @@ describe("what an operator is told when a restore arms", () => {
 });
 
 describe("finishing the restore from the browser", () => {
-  // #386: the last step of a restore used to be a shell command in another window, at the end of a
-  // flow that is otherwise entirely in the browser -- and the first-run wizard now opens onto that
-  // flow, so a fresh operator met the instruction on their very first screen.
+  // A restore flow is otherwise entirely in the browser, so its last step has to be too. The
+  // first-run wizard can open directly onto this flow, putting a brand-new operator in front
+  // of it with no other tool at hand.
 
   it("stops Reaper, and claims only that", async () => {
-    // The 200 says the server accepted the stop. It does not say Reaper is back, and this page
-    // cannot find out: the connection it would ask over is the one going away (rule 85).
+    // The 200 response says the server accepted the stop. It does not say Reaper is back, and
+    // this page cannot find out, since the connection it would ask over is the one going away.
     const { person } = await arm();
     const restart = await screen.findByRole("button", { name: /restart now/i });
     await waitFor(() => expect(restart).toBeEnabled());
@@ -435,19 +445,20 @@ describe("finishing the restore from the browser", () => {
 
     expect(await screen.findByText(/Reaper is stopping/)).toBeInTheDocument();
     expect(apiMock.restoreRestart).toHaveBeenCalledTimes(1);
-    // Waited for, not read straight off: this is the second sentence this card speaks, and
-    // `announce` drains its queue one `MESSAGE_GAP_MS` apart so neither is lost to a batch.
+    // This is waited for, not read straight off, since it is the second sentence this card
+    // speaks, and `announce` drains its queue one `MESSAGE_GAP_MS` apart so neither is lost to
+    // a batch.
     await waitFor(() => expect(spoken()).toContain("Reaper is stopping."));
-    // Nothing anywhere on the card says it came back, and the button that stops it is gone: a
-    // second press would be asking a server that is already going.
+    // Nothing anywhere on the card says Reaper came back, and the button that stops it is
+    // gone, so a second press would be asking a server that is already going.
     expect(screen.queryByRole("button", { name: /restart now/i })).toBeNull();
     expect(screen.getByRole("button", { name: /reload/i })).toBeInTheDocument();
   });
 
   it("shows the server's refusal, on a card that had no failure surface at all", async () => {
-    // The armed branch rendered a notice and a Cancel and nothing else, so BOTH of its buttons
-    // could be refused in silence: a failed cancel set a sentence nothing drew, and the operator
-    // watched the button re-enable and never learned the archive was still staged.
+    // The armed branch renders only a notice and a Cancel, so both buttons need their own way
+    // to show a failure. Otherwise a failed action sets a sentence nothing draws, and the
+    // operator only sees the button re-enable, with no sign the archive is still staged.
     apiMock.restoreRestart.mockRejectedValue(
       new Error("A reap is running. Let it finish or stop it, then restart Reaper."),
     );
@@ -465,33 +476,33 @@ describe("finishing the restore from the browser", () => {
   });
 
   it("cancels unscoped, because an armed restore need not be the one this card staged", async () => {
-    // The other side of #387's fix, and the reason it is not applied to every discard: `armed`
-    // is server state that outlives this browser, so the card offering Cancel here may never
-    // have seen the summary behind it -- a restore armed from a phone shows on the desktop
-    // too. A token-scoped Cancel there would refuse the one press that clears it, and an armed
-    // restore with no way to cancel is a restore the operator cannot get out of.
+    // This is why a token-scoped cancel is not used everywhere. `armed` is server state that
+    // outlives this browser, so the card offering Cancel here may never have seen the summary
+    // behind it. A restore armed from a phone shows on the desktop too, and a token-scoped
+    // Cancel there would refuse the one press that clears it, leaving the operator with an
+    // armed restore and no way out.
     const { person } = await arm();
     const cancel = await screen.findByRole("button", { name: /cancel restore/i });
     await waitFor(() => expect(cancel).toBeEnabled());
 
     await person.click(cancel);
 
-    // The absence of a token is the assertion, not the argument count: `restoreCancel()` and
-    // `restoreCancel(undefined)` are one request on the wire, and pinning which spelling
+    // The absence of a token is the assertion here, not the argument count. `restoreCancel()`
+    // and `restoreCancel(undefined)` are one request on the wire, and pinning which spelling
     // reached the mock would fail on a refactor that changed nothing an operator can see.
     await waitFor(() => expect(apiMock.restoreCancel).toHaveBeenCalled());
     expect(apiMock.restoreCancel.mock.calls[0]?.[0]).toBeUndefined();
   });
 
   it("asks the server before an unscoped discard, so it cannot take a newer archive", async () => {
-    // #387 reached through the one discard a token cannot scope. `armed` is a cached read
-    // nothing refreshes from another client, so this card goes on drawing the armed branch
-    // after that restore was canceled elsewhere and a fresh archive staged in its place -- and
-    // an unconditional discard then destroys the new one. Same shape as the unmount reclaim's
-    // guard, and the same reason: reading the cache is the bug, so the SERVER is asked.
+    // This is the one discard a token cannot scope. `armed` is a cached read nothing refreshes
+    // from another client, so this card goes on drawing the armed branch after that restore was
+    // canceled elsewhere and a fresh archive staged in its place. An unconditional discard then
+    // destroys the new one. This is the same shape as the unmount reclaim's guard, and the same
+    // fix: reading the stale cache is the risk, so the server is asked directly instead.
     //
-    // No invalidation here, deliberately. Handing the card the answer would hide the defect,
-    // because the card would simply stop rendering the button under test.
+    // This test does not invalidate that query, deliberately. Handing the card the fresh answer
+    // would hide the defect, since the card would simply stop rendering the button under test.
     const { person } = await arm();
     const cancel = await screen.findByRole("button", { name: /cancel restore/i });
     await waitFor(() => expect(cancel).toBeEnabled());
@@ -499,10 +510,11 @@ describe("finishing the restore from the browser", () => {
 
     await person.click(cancel);
 
-    // The card saying what is true now IS the evidence the server was asked: nothing else in
-    // this branch can move it off the armed state. Asserted on the controls rather than on the
-    // armed sentence, which the live region is still holding from the confirm, and rather than
-    // on a call count, which the refetch behind the redraw makes a moving number.
+    // The card showing what is true now is the evidence that the server was asked, since
+    // nothing else in this branch can move it off the armed state. This is asserted on the
+    // controls, rather than on the armed sentence, which the live region is still holding from
+    // the confirm, and rather than on a call count, which the refetch behind the redraw makes
+    // a moving number.
     expect(await screen.findByText(/Drop a backup file here/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /cancel restore/i })).toBeNull();
     expect(apiMock.restoreCancel).not.toHaveBeenCalled();

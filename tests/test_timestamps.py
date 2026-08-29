@@ -1,17 +1,17 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Timestamp storage and conversion.
+"""Checks timestamp storage and conversion.
 
-Timestamps are stored as integer unix epoch. That is a deliberate choice to make
-a bug class *unrepresentable* rather than merely rejected.
+Timestamps are stored as an integer unix epoch. That choice makes a whole class of bugs
+impossible to write, not just easy to catch.
 
-SQLite has no date type and stores no timezone, so ``DateTime(timezone=True)`` is
-silently a no-op there: aware datetimes go in and naive ones come back. Comparing
-naive against aware raises TypeError at best -- and at worst, if both happen to be
-naive, compares a UTC instant against a local one and is quietly wrong by the UTC
-offset. In a tool whose every decision rests on "when was this last watched",
-quietly wrong is the failure mode that matters.
+SQLite has no date type and stores no timezone. ``DateTime(timezone=True)`` is silently a
+no-op there. Aware datetimes go in, and naive ones come back out. Comparing a naive datetime
+against an aware one raises a TypeError at best. At worst, if both happen to be naive, it
+compares a UTC instant against a local one and is silently wrong by the UTC offset. In a
+tool whose every decision rests on "when was this last watched", a silently wrong answer is
+the failure mode that matters most.
 
-An integer cannot carry that ambiguity. There is no tzinfo to lose.
+An integer has no timezone to get wrong.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ async def session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
 async def _store(session: AsyncSession, created: datetime, expires: datetime) -> RecoveryToken:
     session.add(RecoveryToken(token_hash="h" * 64, created_at=created, expires_at=expires))
     await session.flush()
-    session.expunge_all()  # force a real read back from SQLite, not the identity map
+    session.expunge_all()  # force SQLAlchemy to read the row back from SQLite
     row = await session.scalar(select(RecoveryToken).where(RecoveryToken.token_hash == "h" * 64))
     assert row is not None
     return row
@@ -76,13 +76,13 @@ class TestStorage:
         now = utcnow()
         row = await _store(session, now, now + timedelta(minutes=15))
 
-        # Whole-second precision; the instant must not move.
+        # Precision is whole seconds, so the round-tripped instant must match within one second.
         assert abs((row.created_at - now).total_seconds()) < 1
 
     async def test_a_non_utc_datetime_is_normalized_not_shifted(
         self, session: AsyncSession
     ) -> None:
-        """A caller handing us US/Eastern must not move the underlying instant."""
+        """Converting a US/Eastern datetime must not change the instant it names."""
         eastern = timezone(timedelta(hours=-5))
         instant = datetime(2026, 7, 14, 12, 0, 0, tzinfo=eastern)
 
@@ -94,7 +94,8 @@ class TestStorage:
     async def test_comparing_a_stored_timestamp_to_utcnow_works(
         self, session: AsyncSession
     ) -> None:
-        """The operation the whole product depends on: 'is this older than my floor?'"""
+        """The whole product depends on this comparison: whether a timestamp is older
+        than its floor."""
         past = utcnow() - timedelta(days=400)
         row = await _store(session, past, past + timedelta(minutes=15))
 
@@ -130,6 +131,64 @@ class TestStorage:
             await session.flush()
 
 
+#: The instant every text spelling below names.
+_INSTANT = datetime(2026, 8, 24, 14, 30, 56, tzinfo=UTC)
+
+
+async def _read_back_with_created_at(session: AsyncSession, raw: str) -> RecoveryToken:
+    """Store a row, overwrite ``created_at`` with a raw TEXT value, and read it back.
+
+    Using raw SQL is deliberate. It bypasses the ORM type, which is the only way one of
+    these columns can hold text at all.
+    """
+    now = utcnow()
+    await _store(session, now, now + timedelta(minutes=15))
+    await session.execute(text("UPDATE recovery_token SET created_at = :raw"), {"raw": raw})
+    session.expunge_all()
+    row = await session.scalar(select(RecoveryToken))
+    assert row is not None
+    return row
+
+
+class TestATextValueInAnEpochColumn:
+    """Nothing in Reaper writes a text value into this column. Only a hand ``sqlite3`` edit
+    would. A bad decode here raises for every reader of the row, since ``session.get``
+    decodes the whole row at once.
+    """
+
+    @pytest.mark.parametrize("raw", ["2026-08-24T14:30:56+00:00", "2026-08-24T10:30:56-04:00"])
+    async def test_an_iso_spelling_that_names_one_instant_decodes(
+        self, session: AsyncSession, raw: str
+    ) -> None:
+        row = await _read_back_with_created_at(session, raw)
+
+        assert row.created_at == _INSTANT
+
+    async def test_an_epoch_typed_as_text_is_an_integer_by_the_time_it_lands(
+        self, session: AsyncSession
+    ) -> None:
+        """SQLite's INTEGER affinity converts a well-formed numeric literal on the way in, so
+        the read side never sees an epoch stored as text. That is why the decode logic only
+        needs to handle ISO strings. This test pins that affinity behavior, not the decode
+        logic, so it passes even against a version of the read side without the ISO fix.
+        """
+        row = await _read_back_with_created_at(session, str(int(_INSTANT.timestamp())))
+
+        assert row.created_at == _INSTANT
+
+    @pytest.mark.parametrize("raw", ["2026-08-24T14:30:56", "yesterday", ""])
+    async def test_a_spelling_that_names_no_instant_raises(
+        self, session: AsyncSession, raw: str
+    ) -> None:
+        """This includes the naive spelling. Reading a bad value as ``None`` would be worse
+        than raising, since ``NULL`` means "never played" on ``WatchHighWater.last_played_at``.
+        Silently treating a bad value as "never played" would push that item toward deletion
+        instead of raising a clear error.
+        """
+        with pytest.raises(ValueError, match="Unreadable timestamp"):
+            await _read_back_with_created_at(session, raw)
+
+
 class TestEpochConversion:
     """The boundary with Tautulli and Plex, which both speak epoch ints."""
 
@@ -146,13 +205,12 @@ class TestEpochConversion:
 
     @pytest.mark.parametrize("value", [0, "0", None, "", "not-a-number", -1])
     def test_absent_stays_absent(self, value: object) -> None:
-        """The trap that would silently mis-delete.
+        """Checks that a missing play date is never coerced into a real date.
 
-        Tautulli and Plex use 0 (and sometimes "") for 'never played'. Coerced
-        naively, that becomes 1970-01-01 -- which the scoring engine reads as
-        *maximally stale*, the exact opposite of the truth, and precisely the
-        media it must not touch. Unknown must remain unknown, so that it can only
-        ever protect an item.
+        Tautulli and Plex use 0, and sometimes an empty string, for "never played". Coercing
+        that naively into a date gives 1970-01-01, which the scoring engine would read as
+        the most unwatched an item can possibly be, exactly the item it must protect.
+        Treating it as unknown instead means it can only ever help keep the item.
         """
         assert from_epoch(value) is None  # type: ignore[arg-type]
 

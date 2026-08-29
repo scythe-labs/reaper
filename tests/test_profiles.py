@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Profile persistence: the caps/grace settings a run obeys.
+"""Profile persistence, the caps and grace settings a run obeys.
 
-The fiddly bit is the foreign key -- a profile references a policy row, but a fresh
-install has never saved one (it runs on the in-code default). So saving a profile has to
-persist the default policy first. These prove that works, is idempotent, and that the
-domain's invariants hold through the service.
+The tricky part is the foreign key. A profile references a policy row, but a fresh
+install has never saved one, so it runs on the in-code default. Saving a profile has to
+persist the default policy first. These tests check that this works, that it is
+idempotent, and that the domain's invariants hold through the service.
 """
 
 from __future__ import annotations
@@ -53,8 +53,8 @@ async def session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
 
 class TestActiveProfileSettings:
     async def test_defaults_before_anything_is_saved(self, session: AsyncSession) -> None:
-        """A never-configured install reads the cautious built-ins -- it is not thereby
-        permitted to do more than the defaults allow."""
+        """A never-configured install reads the cautious built-in settings, and it is
+        never allowed to do more than those defaults permit."""
         settings = await active_profile_settings(session)
         assert settings.max_items_per_run == 10
         assert settings.caps_enabled is True
@@ -69,13 +69,13 @@ class TestActiveProfileSettings:
         self, session: AsyncSession
     ) -> None:
         """A profile written by an older build can carry a field this model has since
-        removed. Under extra='forbid' that would crash EVERY read -- including the settings
-        page an operator would use to fix it -- so the loader drops unknown keys and keeps
+        removed. Under extra='forbid' that would crash every read, including the settings
+        page an operator would use to fix it, so the loader drops unknown keys and keeps
         the operator's real settings, defaulting any new field to its cautious value. This
         is the upgrade path for the removed 'require_approval' setting."""
         # Create the profile normally (sets up the policy FK), then overwrite its blob with
-        # one an older build would have written: a departed 'require_approval', no
-        # 'caps_enabled'.
+        # one an older build would have written, carrying a departed 'require_approval' key
+        # and no 'caps_enabled'.
         await save_profile_settings(session, ProfileSettings(max_items_per_run=25, grace_days=30))
         row = (
             await session.execute(select(Profile).order_by(Profile.id.asc()).limit(1))
@@ -95,8 +95,9 @@ class TestActiveProfileSettings:
     async def test_an_unreadable_settings_blob_degrades_to_cautious_defaults(
         self, session: AsyncSession
     ) -> None:
-        """A blob that is not repairable (bad JSON, or a value out of range) must not crash
-        the read path either. It degrades to the built-in cautious defaults -- caps on."""
+        """A blob that is not repairable, whether bad JSON or a value out of range, must
+        not crash the read path either. It degrades to the built-in cautious defaults,
+        with caps on."""
         await save_profile_settings(session, ProfileSettings(max_items_per_run=25))
         row = (
             await session.execute(select(Profile).order_by(Profile.id.asc()).limit(1))
@@ -109,9 +110,10 @@ class TestActiveProfileSettings:
         assert loaded.caps_enabled is True
 
     async def test_an_unreadable_blob_is_flagged_fell_back(self, session: AsyncSession) -> None:
-        """The shipped defaults can be LOOSER than what the operator saved (a shorter grace,
-        a higher cap), so the fall-back is flagged: the scan degrades on it and the Pace page
-        shows a recovery notice, never a silent swap (rule 14)."""
+        """The shipped defaults can be looser than what the operator saved, for example a
+        shorter grace period or a higher cap, so the fall-back is flagged. The scan
+        degrades on it, and the Pace page shows a recovery notice instead of swapping
+        values silently."""
         await save_profile_settings(session, ProfileSettings(max_items_per_run=25, grace_days=30))
         row = (
             await session.execute(select(Profile).order_by(Profile.id.asc()).limit(1))
@@ -125,8 +127,9 @@ class TestActiveProfileSettings:
         assert active.settings.grace_days == 14  # the shipped default, looser than the saved 30
 
     async def test_a_key_only_migration_is_not_flagged(self, session: AsyncSession) -> None:
-        """Dropping a departed key keeps the operator's real values, so it is benign and must
-        NOT be flagged -- flagging it would degrade every scan after a routine upgrade."""
+        """Dropping a departed key keeps the operator's real values, so this case is benign
+        and must not be flagged. Flagging it would degrade every scan after a routine
+        upgrade."""
         await save_profile_settings(session, ProfileSettings(max_items_per_run=25, grace_days=30))
         row = (
             await session.execute(select(Profile).order_by(Profile.id.asc()).limit(1))
@@ -149,12 +152,10 @@ class TestSavingWritesNoPolicyRow:
     ) -> None:
         """Saving Pace settings is not saving a policy, and it must not write one.
 
-        It did, to satisfy the foreign key that retired in release M (rule 148,
-        ``Profile.active_policy_id``), and the body it wrote was bare
-        ``DEFAULT_MOVIE_POLICY``. Recency then returned that row forever, so an operator's
-        Plex keep collection lost its rule the first time they touched Pace
-        (``TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds`` drives that end). An empty
-        table is what keeps ``active_policy`` computing the wider body on every read."""
+        An empty policy table is what keeps ``active_policy`` computing the wider,
+        computed body on every read (see
+        ``TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds``), instead of reading
+        back a stale row."""
         await save_profile_settings(session, ProfileSettings())
 
         assert (await session.execute(select(func.count()).select_from(PolicyModel))).scalar() == 0
@@ -190,12 +191,13 @@ async def _store_policy(
 
 
 class TestACorruptPolicyBodyNeverRaises:
-    """``active_policy`` is read by the editor, the simulator and the scan alike, so an
-    unreadable stored body has to fall back -- a raise takes out the page that fixes it.
+    """``active_policy`` is read by the editor, the simulator, and the scan alike, so an
+    unreadable stored body has to fall back. A raise here would take out the page that
+    fixes it.
 
-    The two escapes this pins were both outside the handler: malformed JSON reaches the
-    ``ValidationError`` branch and used to blow up in ``json.loads`` there, and valid JSON
-    that is not an object used to reach ``rebalance`` and raise ``AttributeError``.
+    This pins two escapes that both sit outside the main handler. Malformed JSON must
+    not reach ``json.loads`` unguarded inside the ``ValidationError`` branch, and valid
+    JSON that is not an object must not reach ``rebalance`` and raise ``AttributeError``.
     """
 
     @pytest.mark.parametrize(
@@ -232,23 +234,24 @@ class TestACorruptPolicyBodyNeverRaises:
 
         assert active.repairs == (PolicyRepair.FELL_BACK,)
         assert active.repaired is True  # the scan degrades on it
-        # Alone: nothing of the stored body survived for a second repair to be about, and a
-        # notice saying their lists were converted would describe a body that is not on screen.
+        # Nothing of the stored body survives, so there is nothing left for a second
+        # repair to name. A notice saying their lists were converted would describe a
+        # body that is not on screen.
         assert active.body == DEFAULT_MOVIE_POLICY
         assert active.name == "default"
 
     async def test_a_body_that_only_misses_the_budget_is_still_rescaled(
         self, session: AsyncSession
     ) -> None:
-        """The fallback must not swallow the repairable case: a body written before removal
-        weights had to total 100 keeps the operator's own tuning.
+        """The fallback must not swallow the repairable case. A body written before weights
+        had to total 100 still keeps the operator's own tuning after it is rescaled.
 
         The gate row still carries the retired ``secondary`` key, because this is the one
-        path that reaches ``rebalance`` without ``recover_rating_rules`` having stripped it
-        first: a rating bar already moved, so no recovery fires, on a database the
-        ``secondary`` migration has not reached. ``PolicyBody`` is ``extra="forbid"``, so
-        without ``drop_retired_gate_keys`` in ``rebalance`` itself the repair returns
-        ``None`` and the operator's tuning is thrown away (rule 118).
+        path that reaches ``rebalance`` without ``recover_rating_rules`` stripping it
+        first. The rating bar already moved, so no recovery fires here, on a database the
+        ``secondary`` migration has not reached yet. ``PolicyBody`` is ``extra="forbid"``,
+        so without ``drop_retired_gate_keys`` inside ``rebalance`` itself, the repair
+        would return ``None`` and throw away the operator's tuning.
         """
         legacy = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
         for gate in legacy["gates"]:
@@ -266,11 +269,12 @@ class TestACorruptPolicyBodyNeverRaises:
         assert sum(s.weight for s in active.body.signals) == 100
 
     async def test_a_lost_rating_bar_is_restored_and_flagged(self, session: AsyncSession) -> None:
-        """The one recovery that runs on a body which validates PERFECTLY WELL.
+        """The one recovery that runs on a body that validates perfectly well.
 
         A body written before the rating bar moved off the gate row loads clean and keeps
-        nothing, so validation cannot see the loss. It is restored, and flagged: restoring
-        it changes what the scan decides, so the run degrades until the operator saves.
+        nothing, so validation cannot see the loss. The bar is restored and flagged,
+        because restoring it changes what the scan decides, so the run degrades until the
+        operator saves.
         """
         legacy = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
         del legacy["keep_rating_rules"]
@@ -292,14 +296,12 @@ class TestACorruptPolicyBodyNeverRaises:
     async def test_a_body_needing_both_repairs_keeps_the_rating_bar(
         self, session: AsyncSession
     ) -> None:
-        """The two shims used to race: the rebalance re-read the RAW body and lost the bar.
+        """A body needing both repairs keeps the restored rating bar through the rebalance.
 
-        A body that predates the rating-bar move AND carries weights that no longer total
-        100 needs both repairs. The recovery ran first and produced a body with the bar put
-        back, but that body still failed to validate -- on the weights -- so the code fell
-        through and rebalanced the ORIGINAL, dropping the recovered bar on the floor. The
-        operator was then told only that their units moved, and saving the draft the editor
-        opens on wrote the loss back permanently (rules 105 and 65).
+        A body that predates the rating-bar move and also carries weights that no longer
+        total 100 needs both repairs at once. The order matters: the rebalance must run
+        on the body with the bar already restored, not on the original body, or the
+        recovered bar is dropped and only the weight change is reported to the operator.
         """
         legacy = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
         del legacy["keep_rating_rules"]
@@ -313,8 +315,8 @@ class TestACorruptPolicyBodyNeverRaises:
 
         active = await active_policy(session, "movie")
 
-        # Both repairs, in the order they were applied: the bar survived the rebalance, and
-        # the operator's notices read in the order the repairs happened.
+        # Both repairs appear in the order they were applied. The bar survived the
+        # rebalance, and the operator's notices read in the order the repairs happened.
         assert active.repairs == (PolicyRepair.RATING_RULES_RESTORED, PolicyRepair.RESCALED)
         assert sum(s.weight for s in active.body.signals) == 100
         assert [(r.source, r.floor, r.min_votes) for r in active.body.keep_rating_rules] == [
@@ -324,9 +326,9 @@ class TestACorruptPolicyBodyNeverRaises:
     async def test_a_deliberately_empty_rating_bar_is_left_alone(
         self, session: AsyncSession
     ) -> None:
-        """An explicit empty list is an operator who cleared their bars, not a lost one
-        (rule 1: omitted is not the same as explicitly empty). Restoring it would put back a
-        protection they deliberately removed, and degrade every scan telling them so."""
+        """An explicit empty list means the operator cleared their bars on purpose, not
+        that the value is missing. Restoring it would put back a protection they
+        deliberately removed, and would degrade every scan to tell them so."""
         stored = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
         stored["keep_rating_rules"] = []
 
@@ -340,8 +342,8 @@ class TestACorruptPolicyBodyNeverRaises:
 
 
 def _legacy_list_body() -> dict[str, Any]:
-    """A stored body from before every list protected through its own keep rule: the keep
-    tags on the policy, plus the two retired list gates, both enabled."""
+    """A stored body from before every list protected through its own keep rule. It
+    carries the keep tags on the policy, plus the two retired list gates, both enabled."""
     body: dict[str, Any] = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
     body["protect_conditions"] = []
     body["keep_tags"] = ["reaper-keep"]
@@ -373,8 +375,9 @@ async def _add_list(
 
 async def _seed_list_rows(session: AsyncSession) -> None:
     """The registry rows the conversion's rules must point at, under names the operator may
-    have chosen: resolution is by what each row HOLDS -- these tags, that preset -- never by
-    spelling, which is theirs to change, and never by age, which is theirs to change too."""
+    have chosen. Resolution goes by what each row holds, these tags, that preset, never by
+    spelling, which is the operator's to change, and never by age, which is theirs to
+    change too."""
     await _add_list(session, "Films worth keeping", "imdb", {"preset": "top250"})
     await _add_list(
         session, "My tagged titles", "arr_tag", {"tags": ["reaper-keep"], "match": "any"}
@@ -382,11 +385,11 @@ async def _seed_list_rows(session: AsyncSession) -> None:
 
 
 class TestALegacyListBodyIsConvertedOnLoad:
-    """``active_policy`` composes ``convert_list_protections`` FIRST, on the raw dict:
+    """``active_policy`` composes ``convert_list_protections`` first, on the raw dict.
     ``keep_tags`` is a key ``Frozen`` forbids, so a merely-legacy body read without the
-    conversion falls back to the shipped default -- the silent substitution rule 65
-    forbids. The conversion is a repair like the others: flagged, degrading, never
-    silently adopted (rule 105)."""
+    conversion would fall back to the shipped default, a silent substitution that must
+    never happen. The conversion is a repair like the others. It is flagged, it degrades
+    the scan, and it is never adopted silently."""
 
     async def test_the_body_loads_with_its_gates_as_rules_and_is_flagged(
         self, session: AsyncSession
@@ -399,8 +402,8 @@ class TestALegacyListBodyIsConvertedOnLoad:
         assert active.repairs == (PolicyRepair.LISTS_MIGRATED,)
         assert active.repaired is True  # the scan degrades on it
         assert active.name == "stored"
-        # Each enabled gate became a rule naming the CURRENT list of its source -- the
-        # operator's own names, resolved from the registry rather than assumed.
+        # Each enabled gate became a rule naming the current list of its source, using
+        # the operator's own names, resolved from the registry rather than assumed.
         values = {str(c.value) for c in active.body.protect_conditions if c.field == "on_list"}
         assert values == {"My tagged titles", "Films worth keeping"}
         # ...and the retired gate rows left the body.
@@ -421,10 +424,10 @@ class TestALegacyListBodyIsConvertedOnLoad:
     async def test_a_migrated_tv_body_does_not_gain_the_imdb_rule(
         self, session: AsyncSession
     ) -> None:
-        """#539: the IMDb chart is movies only, so migrating a TV body carries over the tag
-        list but not the IMDb list -- a TV rule naming it can never match a season (rule 38).
-        The curated_list gate strips clean on the TV body, its protection was never live
-        there."""
+        """The IMDb chart is movies only, so migrating a TV body carries over the tag list
+        but not the IMDb list. A TV rule naming the IMDb list could never match a season.
+        The curated_list gate strips clean on the TV body, since its protection was never
+        live there."""
         await _seed_list_rows(session)
         body = json.loads(DEFAULT_TV_POLICY.model_dump_json())
         body["protect_conditions"] = []
@@ -447,23 +450,24 @@ class TestALegacyListBodyIsConvertedOnLoad:
 
 
 class TestTheConversionNamesTheListTheOperatorsProtectionBecame:
-    """A list they added for something else may not inherit a rule nothing gave it.
+    """A list added for something else must not inherit a rule nothing gave it.
 
-    The conversion runs on every load of a legacy body and re-reads the registry each time,
-    so which list it names is answered fresh whenever the registry changes. Answering it by
-    AGE gave the answer away: delete the tag list this converts and the next arr-tag list
-    becomes the oldest of its source, so it silently took over an outright keep. Settings ->
-    Lists reads that same conversion (``list_rules.usage``), so the row read "Keeps every
-    title on it" for a list no rule mentions, and Remove could not take it off -- the writer
-    behind it declines to touch a repaired policy on purpose.
+    The conversion runs on every load of a legacy body and re-reads the registry each
+    time, so which list it names is answered fresh whenever the registry changes.
+    Resolving by age instead would be wrong: delete the tag list this converts, and the
+    next arr-tag list becomes the oldest of its source, silently taking over an outright
+    keep. Settings -> Lists reads this same conversion (``list_rules.usage``), so a row
+    named this way would read "Keeps every title on it" for a list no rule mentions, and
+    Remove would not be able to take it off, since the writer behind it refuses to touch
+    a repaired policy on purpose.
     """
 
     async def test_a_decoy_older_than_the_tagged_list_does_not_take_its_rule(
         self, session: AsyncSession
     ) -> None:
-        """Age decides nothing. The decoy is added FIRST, and the list carries a tag the
-        operator added beside the stored one, so neither position nor an exact set match is
-        what finds it."""
+        """Age decides nothing. The decoy is added first, and the list carries a tag the
+        operator added beside the stored one, so neither position nor an exact set match
+        is what finds it."""
         await _add_list(session, "Saturday movie night", "arr_tag", {"tags": ["movie-night"]})
         await _add_list(session, "My tagged titles", "arr_tag", {"tags": ["reaper-keep", "gold"]})
         await _store_policy(session, json.dumps(_legacy_list_body()))
@@ -477,18 +481,18 @@ class TestTheConversionNamesTheListTheOperatorsProtectionBecame:
     async def test_removing_the_tagged_list_does_not_hand_its_rule_to_another(
         self, session: AsyncSession
     ) -> None:
-        """The operator's own sequence: add a list, remove the one their tags became.
+        """The operator's own sequence. Add a list, then remove the one their tags became.
 
-        Removing it takes the protection with it, and the scan then refuses rather than
-        running with a retired gate it cannot answer -- the loud, fail-closed exit rule 38
-        asks for, where the silent one handed the protection to a list nobody chose.
+        Removing it takes the protection with it, and the scan then refuses to run with a
+        retired gate it cannot answer. That is the loud, fail-closed exit this needs,
+        instead of silently handing the protection to a list nobody chose.
         """
         await _seed_list_rows(session)
         await _add_list(session, "Saturday movie night", "arr_tag", {"tags": ["movie-night"]})
         await _store_policy(session, json.dumps(_legacy_list_body()))
-        # Read straight from the table: `list_config.all_lists` seeds the shipped defaults on
-        # a registry that has never been seeded, which would put a second tag list on the
-        # screen this test is about.
+        # Reads straight from the table. `list_config.all_lists` seeds the shipped
+        # defaults on a registry that has never been seeded, which would put a second
+        # tag list on the screen this test is about.
         tagged = (
             await session.execute(
                 select(ListConfigModel).where(ListConfigModel.name == "My tagged titles")
@@ -513,7 +517,7 @@ class TestTheConversionNamesTheListTheOperatorsProtectionBecame:
     async def test_an_imdb_list_of_their_own_does_not_take_the_shipped_ones_rule(
         self, session: AsyncSession
     ) -> None:
-        """The retired CURATED_LIST gate named one shipped list, the IMDb Top 250. A list
+        """The retired curated_list gate named one shipped list, the IMDb Top 250. A list
         the operator pasted an id for is not that list, whatever order it sits in."""
         await _add_list(session, "My watchlist", "imdb", {"list_id": "ls000000000"})
         await _add_list(
@@ -530,8 +534,8 @@ class TestTheConversionNamesTheListTheOperatorsProtectionBecame:
     async def test_a_body_whose_tags_were_cleared_names_no_tag_list(
         self, session: AsyncSession
     ) -> None:
-        """An explicit empty ``keep_tags`` is an operator who cleared it (rule 1), so there
-        is no protection to carry and no list to find -- and the gate may leave, because
+        """An explicit empty ``keep_tags`` means the operator cleared it on purpose, so
+        there is no protection to carry and no list to find. The gate may leave, because
         nothing it covered is being dropped."""
         await _seed_list_rows(session)
         body = _legacy_list_body()
@@ -548,9 +552,9 @@ class TestTheConversionNamesTheListTheOperatorsProtectionBecame:
 class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
     """The shipped conditions name the lists ``list_config.DEFAULT_LISTS`` seeds. A Plex keep
     collection arrives by migration instead, and an install that has never saved a policy
-    returns before ``convert_list_protections`` can run -- so nothing pointed a rule at it,
-    while the WHITELISTED gate that used to spare its titles is retired. A protection that
-    fired on the previous release and cannot fire on this one, silently."""
+    returns before ``convert_list_protections`` can run. Nothing points a rule at that
+    collection, and the whitelisted gate that once covered it is retired, so a protection
+    that worked on the previous release would silently stop firing on this one."""
 
     @staticmethod
     async def _seed_plex_collection(
@@ -584,17 +588,18 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
     async def test_an_unsynced_collection_is_kept_outright_on_both(
         self, session: AsyncSession, media_type: str
     ) -> None:
-        """No library synced, so a collection's media type is unknown: it stays on both policies,
-        fail-open (#545, rules 65/91). The narrowed cases are the two below."""
+        """No library synced, so a collection's media type is unknown. It stays on both
+        policies, failing open. The narrowed cases are the two tests below."""
         await self._seed_plex_collection(session)
 
         active = await active_policy(session, media_type)
 
         values = {str(c.value) for c in active.body.protect_conditions if c.field == "on_list"}
         assert "Never Reap" in values
-        # Additive: the shipped conditions are still there, and nothing is flagged, because
-        # putting the rule back removes the loss rather than announcing it. The shipped set is
-        # the media type's own -- the IMDb chart is on the movie default alone (#539).
+        # The shipped conditions are still there on top of the new one, and nothing is
+        # flagged, because putting the rule back removes the loss rather than announcing
+        # it. The shipped set is specific to the media type, since the IMDb chart is on
+        # the movie default alone.
         default = DEFAULT_MOVIE_POLICY if media_type == "movie" else DEFAULT_TV_POLICY
         shipped = {str(c.value) for c in default.protect_conditions if c.field == "on_list"}
         assert shipped <= values
@@ -604,12 +609,11 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
     async def test_saving_the_pace_settings_does_not_take_the_collections_rule_away(
         self, session: AsyncSession
     ) -> None:
-        """The rule above is computed on the way out, so anything that WRITES a policy row has
-        to write the computed body and not the shipped one. ``save_profile_settings`` used to
-        persist bare ``DEFAULT_MOVIE_POLICY`` to satisfy a foreign key, and from that save on
-        recency returned the stored row: the operator's keep collection stopped protecting the
-        first time they touched Pace, with ``repaired`` still False, so nothing degraded and no
-        notice fired. The pointer retired in release M and the write went with it.
+        """The rule above is computed on the way out, so anything that writes a policy row
+        has to write the computed body, not the shipped one. Writing the shipped body
+        instead would silently drop the operator's keep-collection rule the moment
+        recency starts returning that stored row, with ``repaired`` still False, so
+        nothing would degrade and no notice would fire.
         """
         await self._seed_plex_collection(session)
 
@@ -623,9 +627,9 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
     async def test_a_collection_in_a_movie_library_lands_on_the_movie_policy_alone(
         self, session: AsyncSession
     ) -> None:
-        """#545: the library is synced as a movie library, so the collection holds movies only.
-        Its keep rule seeds on the movie policy and not the TV one, where it could never match a
-        season and would read as a protection the operator never chose (rule 38)."""
+        """The library is synced as a movie library, so the collection holds movies only.
+        Its keep rule seeds on the movie policy and not the TV one, where it could never
+        match a season and would read as a protection the operator never chose."""
         await self._seed_libraries(session, ("Films", "movie"))
         await self._seed_plex_collection(session, library="Films")
 
@@ -645,7 +649,7 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
     async def test_a_collection_in_a_show_library_lands_on_the_tv_policy_alone(
         self, session: AsyncSession
     ) -> None:
-        """The mirror: a collection in a show library seeds on the TV policy alone."""
+        """The mirror case. A collection in a show library seeds on the TV policy alone."""
         await self._seed_libraries(session, ("Shows", "show"))
         await self._seed_plex_collection(session, library="Shows")
 
@@ -666,12 +670,13 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
     async def test_a_corrupt_plex_libraries_setting_does_not_crash_the_load(
         self, session: AsyncSession, blob: str
     ) -> None:
-        """``active_policy`` is contractually total. A malformed or non-list ``plex_libraries``
-        value (a restored backup, a hand-edit) makes ``get_plex_libraries`` raise
-        ``ValueError``/``TypeError`` inside the scope read, which must not escape. It falls back
-        to no scoping, so the collection keeps both policies, fail-open, exactly as the migration
-        does on the same value (rule 104). Each blob is a real crash trigger: ``123``/``null``
-        parse to a non-iterable, and ``not json`` fails to parse at all."""
+        """``active_policy`` must never raise, for any stored input. A malformed or
+        non-list ``plex_libraries`` value, such as a restored backup or a hand-edit, makes
+        ``get_plex_libraries`` raise ``ValueError`` or ``TypeError`` inside the scope
+        read, which must not escape. It falls back to no scoping instead, so the
+        collection keeps both policies, failing open exactly as the migration does on the
+        same value. Each blob here is a real crash trigger. ``123`` and ``null`` parse to
+        a non-iterable, and ``not json`` fails to parse at all."""
         await self._seed_plex_collection(session)  # "Never Reap" in "Films"
         session.add(AppSetting(key="plex_libraries", value_json=blob, updated_at=utcnow()))
         await session.commit()
@@ -692,11 +697,12 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
     async def test_a_registry_it_cannot_read_leaves_the_shipped_rules_alone(
         self, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The direction this helper promises: it may ADD cover, never withdraw it.
+        """The direction this helper promises. It may add cover, never withdraw it.
 
-        A read failure here is not "no lists of your own" (rules 65/91), and the only safe
-        reading of an unanswerable registry is the shipped set unchanged -- returning the
-        default is what makes that true, so the failure is driven rather than argued.
+        A read failure here is not the same as "no lists of your own". The only safe
+        reading of a registry that cannot be read is the shipped set unchanged, so this
+        test drives a real read failure and checks the default is returned, rather than
+        only reasoning about it.
         """
         await self._seed_plex_collection(session)
 
@@ -717,17 +723,18 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
     async def test_a_registry_it_cannot_read_says_so_instead_of_scanning_quietly(
         self, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Leaving the shipped rules alone is right and is not enough on its own.
+        """Leaving the shipped rules alone is right, but it is not enough on its own.
 
-        The seeded collection above has no rule naming it in this body, so the scan is about
-        to judge the whole library with that keep list doing nothing. It used to carry a log
-        line and an empty ``repairs``, so the scan's degradation loop never fired -- and the
-        scan's OWN registry read is a separate query that can succeed on a transient error,
-        which is what let the run complete clean (rules 65/91).
+        The seeded collection above has no rule naming it in this body, so the scan is
+        about to judge the whole library with that keep list doing nothing. The scan's
+        own registry read is a separate query that can succeed even after a transient
+        error here, so this case must still be flagged: it needs a log line and a
+        degradation, not an empty ``repairs`` that lets the run complete clean.
 
-        Not a ``PolicyRepair``: every member of that enum is answered by saving the policy,
-        and saving fixes nothing here. It still reads as ``repaired``, because that is what
-        degrades the scan and what stops ``list_rules`` persisting a body missing the rules.
+        This is not a ``PolicyRepair``, since every member of that enum is answered by
+        saving the policy, and saving fixes nothing here. It still reads as ``repaired``,
+        because that is what degrades the scan and what stops ``list_rules`` from
+        persisting a body that is missing the rules.
         """
         await self._seed_plex_collection(session)
 
@@ -745,9 +752,9 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
         assert active.repairs == (), "nothing was repaired, so no save can clear it"
 
     async def test_a_registry_that_reads_fine_is_not_flagged(self, session: AsyncSession) -> None:
-        """The other side of rule 65's line: a read that SUCCEEDS and finds nothing of the
-        operator's own falls back to the shipped conditions silently, and must not degrade
-        every scan on an install that simply has no Plex lists."""
+        """A read that succeeds and finds nothing of the operator's own falls back to the
+        shipped conditions silently. It must not degrade every scan on an install that
+        simply has no Plex lists."""
         active = await active_policy(session, "movie")
 
         assert active.lists_unreadable is False
@@ -755,8 +762,9 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
 
     async def test_a_watchlist_definition_is_kept_too(self, session: AsyncSession) -> None:
         """The other source ``_conversion_list_names`` returns as the operator's own. A
-        watchlist spans the account and can hold both types, so its rule stays on both policies
-        even with libraries synced -- the scoping is a collection concern (#545)."""
+        watchlist spans the account and can hold both types, so its rule stays on both
+        policies even with libraries synced. Scoping to one policy is a collection
+        concern, not a watchlist one."""
         session.add(
             ListConfigModel(
                 name="My watchlist",
@@ -794,8 +802,8 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
     async def test_a_collection_the_default_already_names_gains_no_second_rule(
         self, session: AsyncSession
     ) -> None:
-        """Case-folded on both sides, the comparison every reader of a list name makes
-        (rule 88), so a duplicate rule cannot arrive by capitalization."""
+        """Both names are lower-cased before comparison, the same way every reader of a
+        list name does it, so a duplicate rule cannot arrive by capitalization alone."""
         await self._seed_plex_collection(session, name="imdb top 250")
 
         active = await active_policy(session, "movie")

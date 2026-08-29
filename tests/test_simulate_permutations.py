@@ -1,34 +1,35 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The simulator, swept over the policy space against real library shapes.
 
-``test_simulate_hardening.py`` pins the simulator's *shapes* on four hand-built rows;
-``test_policy_permutations.py`` sweeps the policy space against the ENGINE. Neither drives
-the route across that space, which is where a preview can be confidently wrong: the panel
-has two paths to an answer, they are chosen by a hash, and they are read by an operator
+``test_simulate_hardening.py`` pins the simulator's *shapes* on four hand-built rows.
+``test_policy_permutations.py`` sweeps the policy space against the engine directly.
+Neither drives the route across that space, which is where a preview can be confidently
+wrong: the panel has two paths to an answer, chosen by a hash, and read by an operator
 about to delete files.
 
-Three oracles, none of which re-implements a decision (rule 119):
+Four oracles, none of which re-implements a decision:
 
-* **The two tiers agree.** For one draft over one snapshot, the stored-score path and the
-  frozen-Facts replay must return the same panel. They share no arithmetic -- one re-compares
-  integers a scan wrote, the other re-runs the engine over frozen evidence -- so a
-  disagreement is a bug in whichever one moved.
-* **The replay is what the next scan will do.** For a draft the route says it can preview
-  exactly, every count must equal the one obtained by scoring the same vectors under that
-  draft with the scan's own ``judge_facts``. This is the panel's actual promise.
+* **The two tiers agree.** For one draft over one snapshot, the stored-score path and
+  the frozen-Facts replay must return the same panel. They share no arithmetic: one
+  re-compares integers a scan wrote, the other re-runs the engine over frozen evidence.
+  A disagreement is a bug in whichever one moved.
+* **The replay is what the next scan will do.** For a draft the route says it can
+  preview exactly, every count must equal the one obtained by scoring the same vectors
+  under that draft with the scan's own ``judge_facts``. This is the panel's actual
+  promise.
 * **The panel adds up.** Every answer, from either tier, satisfies the arithmetic the UI
-  reads off it -- the lanes partition the library, the histogram holds every row, and the
+  reads off it: the lanes partition the library, the histogram holds every row, and the
   saved-policy count the panel states is the one its two deltas imply.
+* **A round trip through the wire never changes the policy.** A policy field that does
+  not survive the wire round trip changes the hash the route compares, so the panel
+  refuses every edit forever. This is the failure mode of the upgraded-install bug in
+  ``test_simulate_hardening.py``, reached here through a field rather than through a
+  version.
 
-And one that needs no snapshot at all: a policy field that does not survive the wire round
-trip changes the hash the route compares, so the panel refuses every edit forever. That is
-the shape of the upgraded-install bug in ``test_simulate_hardening.py``, reached through a
-field rather than through a version.
-
-**This is the movie lane, and only the movie lane** (rule 132). A season's guard is replayed
-from a per-show bundle the scan freezes beside the Facts, which is a second input this
-fixture does not build; the same oracle for that input already exists, one setting at a time,
-in ``test_scan_pipeline.TestASeasonRuleReplaysExactlyOffTheFrozenBundle``. The panel
+This covers the movie lane only. A season's guard is replayed from a per-show bundle
+the scan freezes beside the Facts, which is a second input this fixture does not build.
+The same oracle for that input already exists, one setting at a time, in
+``test_scan_pipeline.TestASeasonRuleReplaysExactlyOffTheFrozenBundle``. The panel
 arithmetic below is shared by both lanes, so it is swept once here rather than twice.
 """
 
@@ -76,10 +77,10 @@ from . import _policy_lab as lab
 from ._auth import login
 from ._lists import seeded_fingerprint
 
-#: How many of the lab's movie shapes each snapshot carries: all 220 of them. The cap is
-#: stated rather than left implicit so a regenerated fixture that grows cannot quietly shrink
-#: the sweep, and `TestTheSweepIsWide` pins that the rows actually reach every lane the panel
-#: reports rather than assuming a wide fixture is a wide sweep (rule 145).
+#: Every snapshot in this sweep carries all 220 of the lab's movie shapes. Stating the cap
+#: rather than leaving it implicit means a regenerated fixture that grows cannot quietly
+#: shrink the sweep. `TestTheSweepReachesEveryLaneItClaimsTo` pins that the rows actually
+#: reach every lane the panel reports, rather than assuming a wide fixture is a wide sweep.
 SAMPLE = 220
 
 
@@ -92,8 +93,8 @@ def _rating_blind_condemned(vectors: list[dict[str, Any]], count: int = 3) -> fr
 
     A fixed stride cannot get there. Every fact a signal reads is read by a gate too, so a
     row that loses coverage abstains on the unchecked gate long before the floor is
-    consulted -- unless the row was CONDEMNED to start with and the gate reading that fact is
-    off, which is the shape `coverage_floor_bites` builds. Choosing the rows off the
+    consulted, unless the row was CONDEMNED to start with and the gate reading that fact
+    is off, which is the shape `coverage_floor_bites` builds. Choosing the rows off the
     baseline judgment rather than off an index is what makes the floor bite three rows
     instead of none.
     """
@@ -126,16 +127,17 @@ def _rating_blind_condemned(vectors: list[dict[str, Any]], count: int = 3) -> fr
 def _enriched(index: int, vector: dict[str, Any]) -> dict[str, Any]:
     """One recorded shape, with a fact or two knocked out.
 
-    The library behind the fixture is uniform in ways that matter here: every vector is
-    fully observed, every size is known, and nothing was playing when it was taken. Swept as
-    recorded, the panel's coverage floor never bites, ``unknown_size_items`` is 0 in all 220
-    rows, and no row reaches the branch where a protection could not be CHECKED -- the one
-    the stored-score path treats specially, and the one an operator is most exposed by.
-    Every knockout below is a state ``Facts`` already models and the scan already produces
-    (rule 93's Unknown), applied on a fixed stride so the sample is the same on every run.
+    The library behind the fixture is uniform in ways that matter here. Every vector is
+    fully observed, every size is known, and nothing was playing when it was taken. Swept
+    as recorded, the panel's coverage floor never bites, ``unknown_size_items`` is 0 in
+    all 220 rows, and no row reaches the branch where a protection could not be CHECKED,
+    the one the stored-score path treats specially and the one an operator is most
+    exposed by. Every knockout below is a state ``Facts`` already models as Unknown and
+    the scan already produces, applied on a fixed stride so the sample is the same on
+    every run.
     """
     if index % 5 == 0:
-        # Withheld: the popularity gate cannot be checked, and its signal leaves the
+        # Withheld. The popularity gate cannot be checked, and its signal leaves the
         # numerator while staying in the denominator, so coverage falls below the floor.
         vector = lab.degraded(vector, ["distinct_watchers"])
     if index % 9 == 0:
@@ -164,16 +166,16 @@ def _movie_vectors() -> list[dict[str, Any]]:
 VECTORS = _movie_vectors()
 
 
-#: The hand decisions laid over the sample, by row index. The lab's vectors carry none, and a
-#: sweep without them would leave the branch that outranks every threshold untested on both
-#: paths -- the two implement it separately, so it is also the one place they can disagree
-#: without either being obviously wrong. Deterministic, and the two strides are coprime with
-#: each other so neither decision ever lands on the same row twice.
+#: The hand decisions laid over the sample, by row index. The lab's vectors carry none, and
+#: a sweep without them would leave the branch that outranks every threshold untested on
+#: both paths. The two paths implement it separately, so it is also the one place they can
+#: disagree without either being obviously wrong. Deterministic, and the two strides are
+#: coprime with each other so neither decision ever lands on the same row twice.
 def override_for(index: int) -> str | None:
-    # The streaming rows are reaped FIRST, and deliberately: a reap the engine refuses is
+    # The streaming rows are reaped FIRST, and deliberately. A reap the engine refuses is
     # decided by different code on each path (`reap_is_effective` reads the stored
-    # explanation, `effective_fate` re-derives it), so with only honored reaps in the sample
-    # the two could disagree about a refusal and nothing here would notice.
+    # explanation, `effective_fate` re-derives it), so with only honored reaps in the
+    # sample the two could disagree about a refusal and nothing here would notice.
     if index % 23 == 0:
         return "reap"
     if index % 7 == 0:
@@ -186,9 +188,10 @@ def override_for(index: int) -> str | None:
 class Judged:
     """One vector as the scan would store it, plus the fate the scan would act on.
 
-    The stored verdict is pure policy and the hand decision is NOT frozen into it: the scan
-    stores what the policy decided and derives the fate live from the override map, which is
-    what both simulator tiers then have to reproduce (``services.snapshot._judge_item``).
+    The stored verdict is pure policy. The scan stores what the policy decided and
+    derives the fate live from the override map rather than freezing the hand decision
+    into it, which is what both simulator tiers then have to reproduce
+    (``services.snapshot._judge_item``).
     """
 
     __slots__ = (
@@ -254,10 +257,13 @@ def truth_of(rows: list[Judged]) -> dict[str, Any]:
     condemned = protected = abstained = 0
     reclaimable = 0
     unknown_size = 0
+    hand_reaped = 0
     for row in rows:
         histogram[min(row.score // 10, 9)] += 1
         if row.fate == "condemn":
             condemned += 1
+            if row.override == "reap":
+                hand_reaped += 1
             if row.size is None:
                 unknown_size += 1
             else:
@@ -272,12 +278,13 @@ def truth_of(rows: list[Judged]) -> dict[str, Any]:
         "abstained": abstained,
         "reclaimable_bytes": reclaimable,
         "unknown_size_items": unknown_size,
+        "hand_reaped": hand_reaped,
         "histogram": histogram,
     }
 
 
 def wire(policy: PolicyBody) -> dict[str, Any]:
-    """The policy as the editor sends it -- through the route's own serializer."""
+    """The policy as the editor sends it, through the route's own serializer."""
     out = _policy_out(
         policy,
         "Movies",
@@ -309,9 +316,8 @@ def _without(gate: GateId) -> PolicyBody:
 def _without_list(condition: ConditionSpec) -> PolicyBody:
     """`BASE` with one shipped list protection removed.
 
-    The successor to `_without` for the two retired list gates: membership protects through
-    a ``protect_conditions`` rule per list now, so dropping one drops one list's cover
-    rather than every list's at once.
+    Membership protects through a ``protect_conditions`` rule per list, so dropping one
+    drops that list's cover rather than every list's at once.
     """
     return BASE.model_copy(
         update={"protect_conditions": tuple(c for c in BASE.protect_conditions if c != condition)}
@@ -349,8 +355,8 @@ def _reweighted(first: int) -> PolicyBody:
 def _funded(rule: BooleanCondemnSpec | GradedCondemnSpec) -> PolicyBody:
     """`BASE` plus one operator-authored condemn rule, funded from the heaviest signal.
 
-    Removal weights total exactly 100, so a rule cannot be bolted on: its points come out of
-    a built-in, which is the trade the editor makes an operator make by hand.
+    Removal weights total exactly 100, so a rule cannot be bolted on. Its points come out
+    of a built-in, which is the trade the editor makes an operator make by hand.
     """
     heaviest = max(BASE.signals, key=lambda s: s.weight)
     return BASE.model_copy(
@@ -376,9 +382,9 @@ DRAFTS: list[tuple[str, PolicyBody]] = [
         for c in (0, 2_500, 7_500, 10_000)
     ],
     # --- every shipped gate, dropped ------------------------------------------------
-    # Except the two rows a validated body cannot NOT carry, either lane: the rewatch-odds
-    # row (`PolicyBody._rewatch_odds_row`) and the came-back row (`_returned_row`) are both
-    # re-appended on validation, so a dropped copy is a shape no wire round-trip can
+    # Except the two rows a validated body always carries, either lane. The rewatch-odds
+    # row (`PolicyBody._rewatch_odds_row`) and the came-back row (`_returned_row`) are
+    # both re-appended on validation, so a dropped copy is a shape no wire round trip can
     # preserve and no operator can produce.
     *[
         (f"drop:{g.gate.value}", _without(g.gate))
@@ -386,10 +392,9 @@ DRAFTS: list[tuple[str, PolicyBody]] = [
         if g.gate not in {GateId.REWATCH_ODDS, GateId.RETURNED}
     ],
     # --- every shipped list protection, dropped -------------------------------------
-    # Where `drop:whitelisted` and `drop:curated_list` used to sit. Those gates retired and
-    # list membership now protects through an `on_list` condition per list, so the lane is
-    # swept by dropping conditions; generated off the shipped policy, so a seeded list added
-    # later is swept without editing this.
+    # List membership protects through an `on_list` condition per list, so this lane is
+    # swept by dropping conditions. Generated off the shipped policy, so a seeded list
+    # added later is swept without editing this.
     *[(f"drop:on_list={c.value}", _without_list(c)) for c in BASE.protect_conditions],
     # --- gate thresholds ------------------------------------------------------------
     *[
@@ -464,10 +469,10 @@ DRAFTS: list[tuple[str, PolicyBody]] = [
     ),
     # The one shape that reaches the coverage floor, and the one draft here that edits two
     # fields. Every fact a signal reads is also read by a gate, so a row that lost coverage
-    # has a protection that could not be checked and abstains before the floor is consulted:
-    # the floor can only bite where the gate reading that fact is OFF. Turning the rating gate
-    # off is what lets the rows with no rating be condemned at 90% coverage, and the floor
-    # above them is then the only thing keeping them.
+    # has a protection that could not be checked and abstains before the floor is
+    # consulted. The floor can only bite where the gate reading that fact is OFF. Turning
+    # the rating gate off is what lets the rows with no rating be condemned at 90%
+    # coverage, and the floor above them is then the only thing keeping them.
     (
         "coverage_floor_bites",
         BASE.model_copy(
@@ -501,20 +506,19 @@ DRAFTS: list[tuple[str, PolicyBody]] = [
 def _client_over(tmp: Path, *, stored_scores_usable: bool) -> Iterator[TestClient]:
     """A booted app over a database that already holds the scan this sweep replays.
 
-    **Function-scoped, and that is load-bearing** (rule 37). ``conftest``'s ``_hermetic``
-    fixture is autouse at function scope, so a fixture declared at module or session scope
-    is set up outside it: ``Settings`` reads the developer's dotenv, and the lifespan runs
-    the real startup catch-up. This fixture was module-scoped for exactly one commit, and
-    what that bought was a CI run whose test step sat for 71 minutes against the previous
-    commit's 5, downloading a dataset in a job with no route to it.
+    Function-scoped, and that matters. ``conftest``'s ``_hermetic`` fixture is autouse at
+    function scope, so a fixture declared at module or session scope is set up outside
+    it: ``Settings`` would read the developer's dotenv, and the lifespan would run the
+    real startup catch-up against the network.
 
-    The snapshot is written BEFORE the app boots and never touched again while it is up. A
-    second engine writing to the same SQLite file under a live async pool is a lock waiting
-    to happen, and every draft in the battery replays the same stored scan anyway -- only
-    the request body varies -- so there is nothing to rewrite mid-flight.
+    The snapshot is written BEFORE the app boots and never touched again while it is up.
+    A second engine writing to the same SQLite file under a live async pool is a lock
+    waiting to happen, and every draft in the battery replays the same stored scan
+    anyway (only the request body varies), so there is nothing to rewrite mid-flight.
     """
     # The hermetic fixture has to be in effect by now, or this boots against a real dotenv
-    # and a real network. Cheap to assert, and it is the thing that actually went wrong.
+    # and a real network. Cheap to assert, and catching this here beats debugging a slow
+    # CI run downstream.
     assert Settings.model_config.get("env_file") is None, (
         "conftest's _hermetic fixture is not in effect: this fixture must be function-scoped"
     )
@@ -547,8 +551,8 @@ def load_snapshot(tmp: Path, policy: PolicyBody, rows: list[Judged]) -> None:
     """Replace the stored scan with one taken under `policy`."""
     tmp.mkdir(parents=True, exist_ok=True)
     settings = Settings(data_dir=tmp, secret_key="k")
-    # Before the sync session opens, for the reason the fixture's own docstring gives: two
-    # engines on one SQLite file is a lock waiting to happen.
+    # Computed before the sync session opens. Two engines on one SQLite file is a lock
+    # waiting to happen, which is the reason the fixture's own docstring gives.
     list_hash = seeded_fingerprint(settings)
     engine = sa_create_engine(settings.sync_database_url)
     now = utcnow()
@@ -562,8 +566,8 @@ def load_snapshot(tmp: Path, policy: PolicyBody, rows: list[Judged]) -> None:
             scoring_hash=combine_hashes(policy.scoring_hash(), DEFAULT_TV_POLICY.scoring_hash()),
             evidence_hash=combine_hashes(policy.evidence_hash(), DEFAULT_TV_POLICY.evidence_hash()),
             # What a scan records about the lists it gathered membership under. Omitting it
-            # would make every draft below refuse, which is the correct answer for a snapshot
-            # that cannot say (#512) and a useless one for a battery about the tiers.
+            # would make every draft below refuse, which is the correct answer for a
+            # snapshot that cannot say, but a useless one for a battery about the tiers.
             list_config_hash=list_hash,
             horizon_at=now,
             item_count=len(rows),
@@ -626,8 +630,8 @@ def assert_panel_adds_up(answer: dict[str, Any], rows: int) -> None:
     lanes = answer["condemned"] + answer["protected"] + answer["abstained"]
     assert lanes == rows, f"lanes hold {lanes} of {rows} rows"
     assert sum(answer["histogram"]) == rows, "the histogram lost a row"
-    # `condemned_before` is sent rather than derived, so the two must still agree: the panel
-    # prints it beside the deltas as one sentence.
+    # `condemned_before` is sent rather than derived, so the two must still agree. The
+    # panel prints it beside the deltas as one sentence.
     implied = answer["condemned"] - answer["newly_condemned"] + answer["no_longer_condemned"]
     assert answer["condemned_before"] == implied, "the saved-policy count contradicts the deltas"
     # A lane move is counted once and the two deltas are disjoint subsets of it.
@@ -648,6 +652,7 @@ NUMBERS = (
     "abstained",
     "reclaimable_bytes",
     "unknown_size_items",
+    "hand_reaped",
     "newly_condemned",
     "no_longer_condemned",
     "condemned_before",
@@ -659,14 +664,14 @@ NUMBERS = (
 
 
 def test_every_field_of_the_answer_is_compared_across_the_two_tiers() -> None:
-    """``NUMBERS`` mirrors ``SimulationOut``'s field list by hand (rule 103). A 16th field
+    """``NUMBERS`` mirrors ``SimulationOut``'s field list by hand. A 16th field
     populated at one ``return SimulationOut(`` and not the other leaves the parity test
     below green, which is the drift the two hand-written constructors can produce.
 
-    The three names added here are covered a different way rather than skipped:
-    ``assert_panel_adds_up`` asserts ``exact``, and ``stale_kind`` / ``stale_reason`` are
-    written only by ``api/simulate.py``'s ``_refused``, which is the refusal shape and
-    shares no keyword set with the two answering sites.
+    The three names left out of ``NUMBERS`` are covered a different way rather than
+    skipped. ``assert_panel_adds_up`` asserts ``exact``, and ``stale_kind`` /
+    ``stale_reason`` are written only by ``api/simulate.py``'s ``_refused``, which is the
+    refusal shape and shares no keyword set with the two answering sites.
     """
     compared = set(NUMBERS) | {"exact", "stale_kind", "stale_reason"}
     assert compared == set(SimulationOut.model_fields), (
@@ -709,18 +714,16 @@ class TestTheSimulatorAnswersTheSameWhicheverPathItTakes:
 
 
 class TestTheSweepReachesEveryLaneItClaimsTo:
-    """What the 220 shapes actually exercise, counted rather than assumed (rule 145).
+    """What the 220 shapes actually exercise, counted rather than assumed.
 
-    A sweep is only as wide as its rows: every assertion above is flag-shaped, and a fixture
-    that condemned nothing, protected nothing, or carried no hand decision would satisfy all
-    of them while covering none of the branches they are written for.
+    A sweep is only as wide as its rows. Every assertion above is flag-shaped, and a
+    fixture that condemned nothing, protected nothing, or carried no hand decision would
+    satisfy all of them while covering none of the branches they are written for.
 
-    **These counts are properties of the sample, so a regeneration moves them** and each one
-    is re-reconciled by hand rather than pasted (``scripts/policy_lab_extract.py``). What is
-    being checked is never the number itself: it is that each lane, each arm and each
-    quiet branch is still populated at all. The last regeneration moved two of them --
-    the lane split, and how many rows the coverage floor holds back -- both toward wider
-    coverage, and left the rest untouched.
+    **These counts are properties of the sample, so a regeneration moves them**, and each
+    one is re-reconciled by hand rather than pasted (``scripts/policy_lab_extract.py``).
+    What is being checked is never the number itself. It is that each lane, each arm,
+    and each quiet branch is still populated at all.
     """
 
     def test_the_rows_land_in_every_lane_and_carry_every_hand_decision(self) -> None:
@@ -736,7 +739,7 @@ class TestTheSweepReachesEveryLaneItClaimsTo:
         reaps = [r for r in rows if r.override == "reap"]
         assert len(spares) == 30
         assert len(reaps) == 27
-        # Both arms of the reap branch, because each path decides it with different code --
+        # Both arms of the reap branch, because each path decides it with different code:
         # the stored one reads the frozen explanation (`reap_is_effective`), the replay
         # re-derives it (`effective_fate`). With only honored reaps in the sample the two
         # could disagree about a refusal and every assertion here would stay green.
@@ -751,10 +754,11 @@ class TestTheSweepReachesEveryLaneItClaimsTo:
     def test_the_evidence_is_uneven_enough_to_reach_the_coverage_floor(self) -> None:
         """Partial coverage exists, and one draft in the battery is actually held by it.
 
-        Coverage is the quietest of the panel's inputs: on a fully observed library the floor
-        is inert whatever it is set to, so a sweep can carry four settings of it and exercise
-        the branch zero times. `coverage_floor_bites` is the shape that reaches it, and the
-        assertion is the difference it makes rather than its presence.
+        Coverage is the quietest of the panel's inputs. On a fully observed library the
+        floor is inert whatever it is set to, so a sweep can carry four settings of it
+        and exercise the branch zero times. `coverage_floor_bites` is the shape that
+        reaches it, and the assertion is the difference it makes rather than its
+        presence.
         """
         spread = {r.coverage_bp for r in judged_under(BASE)}
         assert spread == {7_000, 8_000, 9_000, 10_000}, sorted(spread)
@@ -769,11 +773,12 @@ class TestTheSweepReachesEveryLaneItClaimsTo:
     def test_the_drafts_move_the_answer_they_are_swept_for(self) -> None:
         """The drafts that shift no verdict are named, so none of them can vouch for a path.
 
-        Every oracle above compares two answers, and two answers that are both the baseline
-        agree trivially. A draft on this list still earns its place -- it exercises the
-        ROUTE, whose tier is chosen by a hash and not by whether anything moved -- but it
-        proves nothing about the arithmetic, and a battery that quietly became all-inert
-        would go on passing. If this set grows, the fixture stopped reaching a branch.
+        Every oracle above compares two answers, and two answers that are both the
+        baseline agree trivially. A draft on this list still earns its place: it
+        exercises the ROUTE, whose tier is chosen by a hash and not by whether anything
+        moved. But it proves nothing about the arithmetic, and a battery that quietly
+        became all-inert would go on passing. If this set grows, the fixture stopped
+        reaching a branch.
         """
         baseline = [r.fate for r in judged_under(BASE)]
         inert = {
@@ -784,24 +789,23 @@ class TestTheSweepReachesEveryLaneItClaimsTo:
             "base",
             "condemn_at=70",
             "coverage_floor_bp=0",
-            # A floor with the rating gate ON: every row that lost coverage lost it by losing
-            # a fact some gate reads, so it abstains on the unchecked gate before the floor is
-            # ever consulted. `coverage_floor_bites` is the same field reached the one way it
-            # can bite.
+            # A floor with the rating gate ON. Every row that lost coverage lost it by
+            # losing a fact some gate reads, so it abstains on the unchecked gate before
+            # the floor is ever consulted. `coverage_floor_bites` is the same field
+            # reached the one way it can bite.
             "coverage_floor_bp=2500",
             "coverage_floor_bp=7500",
             "coverage_floor_bp=10000",
-            # Protections whose rows another protection already covers. Real, and the reason
-            # the sweep drops protections one at a time rather than trusting any single one
-            # to move the library. The two list rules are the retired whitelist and curated
-            # gates, and they cover the same rows those gates did: 14 of the sampled 220
-            # carry a readable membership, and each is also held by a gate -- dormancy for
-            # 12 of them, the rating floor alone for the other 2.
+            # Protections whose rows another protection already covers. Real, and the
+            # reason the sweep drops protections one at a time rather than trusting any
+            # single one to move the library. The two list rules cover 14 of the sampled
+            # 220 rows, and each of those rows is also held by a gate: dormancy for 12 of
+            # them, the rating floor alone for the other 2.
             "drop:data_horizon",
             "drop:on_list=Titles you've tagged",
             "drop:on_list=IMDb Top 250",
-            # The popularity gate's threshold, which on this library changes who it protects
-            # without changing anyone's fate: dormancy covers the same rows.
+            # The popularity gate's threshold, which on this library changes who it
+            # protects without changing anyone's fate, since dormancy covers the same rows.
             "server_popularity=1",
             "server_popularity=10",
             # All 100 points on dormancy moves scores without moving one across the line.
@@ -813,10 +817,10 @@ class TestTheSweepReachesEveryLaneItClaimsTo:
 class TestEveryDraftSurvivesTheRoundTripTheRouteCompares:
     """A field the wire drops changes the hash, and the panel then refuses forever.
 
-    No snapshot needed: the route hashes what it parses back out of the request, and compares
-    that against what the scan recorded. A field the editor cannot carry therefore does not
-    merely fail to apply -- it makes every edit look like a different policy, which is the
-    upgraded-install failure reached through a field instead of a version.
+    No snapshot needed. The route hashes what it parses back out of the request and
+    compares that against what the scan recorded. A field the editor cannot carry makes
+    every edit look like a different policy, which is the upgraded-install failure
+    reached through a field instead of a version.
     """
 
     def test_the_wire_preserves_every_hash_the_route_reads(
@@ -832,15 +836,13 @@ class TestEveryDraftSurvivesTheRoundTripTheRouteCompares:
         assert again.policy_hash() == draft.policy_hash(), f"{name}: policy hash lost on the wire"
 
 
-#: Edits that change what a scan GATHERS rather than what it makes of what it gathered. The
-#: frozen evidence cannot answer these, and the panel's contract is to say so rather than to
-#: report a confident number off stale facts.
+#: Edits that change what a scan GATHERS rather than what it makes of what it gathered.
+#: The frozen evidence cannot answer these, and the panel's contract is to say so rather
+#: than to report a confident number off stale facts.
 #:
-#: `keep_tags` and `keep_tags_match` were the other two, and they left the policy rather than
-#: this list: the tags a title carries are gathered into `Facts.on_lists` now, and the rule
-#: naming them is `protect_conditions`, which replays. So the window is the only *policy*
-#: field that still moves the gathering half, and a second case cannot be invented -- swept
-#: at two windows instead, since one draft cannot show the refusal tracks the value.
+#: The window is the only *policy* field that moves the gathering half, so a second case
+#: cannot be invented. Swept at two windows instead, since one draft alone cannot show
+#: that the refusal tracks the value.
 NEEDS_A_SCAN: list[tuple[str, PolicyBody]] = [
     (
         "popularity_window=90",
@@ -864,11 +866,11 @@ class TestAnEditTheFrozenEvidenceCannotAnswerIsRefused:
 
 
 class TestTheThresholdBehavesLikeAThresholdThroughTheRoute:
-    """Monotonicity, asserted where the operator meets it: the drag itself.
+    """Monotonicity, asserted on the drag control itself, where the operator meets it.
 
     ``test_policy_permutations`` pins this against the engine. The panel reaches the same
-    answer through arithmetic of its own -- a re-comparison on one path, a re-decision on the
-    other -- and it is the panel's number the operator drags against.
+    answer through arithmetic of its own, a re-comparison on one path and a re-decision
+    on the other, and it is the panel's number the operator drags against.
     """
 
     def test_raising_the_threshold_never_grows_the_removal_list(

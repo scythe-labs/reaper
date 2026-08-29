@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The app shell and its split. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* ---- layout -------------------------------------------------------------- */
+ * The app shell and its split. See `../index.css` for how this file fits into the
+ * stylesheet's load order. */
 
 main.split {
   display: grid;
@@ -11,15 +10,15 @@ main.split {
   align-items: start;
 }
 
-/* Below this, a side-by-side panel would squeeze the cards into a ragged stack -- so
-   the panel rides OVER the list as a right-hand sheet instead, and the cards keep
-   their width. The list stays clickable: picking another card swaps the sheet.
+/* Below this width, a side-by-side panel would squeeze the cards into a ragged stack, so the
+   panel rides over the list as a right-hand sheet instead, and the cards keep their width.
+   The list stays clickable: picking another card swaps the sheet.
 
-   COUPLED (rule 67): this 1100 is also `PANEL_OVERLAY_QUERY` in useMediaQuery.ts, which is
-   where `WhyShell` starts claiming `role="dialog"`, taking focus and trapping Tab -- because
-   the cards this block hides under the sheet are otherwise still tabbable, Spare and Reap
-   included (#184). Move them together. Do NOT reach for the 900px block's number instead:
-   that one is `NARROW_SCREEN_QUERY` and means something else. */
+   This 1100 is coupled to `PANEL_OVERLAY_QUERY` in useMediaQuery.ts, and the two must change
+   together. That is where `WhyShell` starts claiming `role="dialog"`, taking focus and
+   trapping Tab, because the cards this block hides under the sheet would otherwise stay
+   tabbable, Spare and Reap buttons included. This value is not interchangeable with the
+   900px block's number below: that one is `NARROW_SCREEN_QUERY` and means something else. */
 @media (max-width: 1100px) {
   main.split {
     /* `minmax(0, ...)` for the same reason the two-column form above carries it, and the
@@ -47,24 +46,29 @@ main.split {
 }
 
 /* Under this width the rail leaves the masthead for a bar pinned to the bottom of the screen,
-   and the labels give way to the icons. Three things drove it off the top. The five labels are
-   wider than the row they sat in (~400px of tabs in a ~335px track on a 375px phone), so it had
-   become a sideways scroller whose clean edge read as a complete row -- Settings was there and
-   nothing said so, which is rule 138's failure reached by a third route. Nothing up there is
-   sticky, so it scrolled away entirely a screen into a queue. And the top of a phone is already
-   carrying the safety banner, the reap bar, the scan-freshness line and the queue's own list
-   switcher, which wore the identical pill. At the bottom it is always visible, always in the
-   same place, and under a thumb.
+   and the labels give way to icons, for three reasons. The five labels are wider than the row
+   they sat in (about 400px of tabs in a 335px track on a 375px phone), so the row became a
+   sideways scroller whose clean edge read as a complete row: Settings was still there, just
+   scrolled out of view, with nothing to show it. Nothing up there is sticky, so that whole
+   row scrolled away entirely once you scrolled a screen into a queue. And the top of a phone
+   is already carrying the safety banner, the reap bar, the scan-freshness line, and the
+   queue's own list switcher, which wore the identical pill. At the bottom, the bar is always
+   visible, always in the same place, and under a thumb.
 
-   The labels stay in the accessibility tree -- clipped, never `display: none` -- so every button
-   in the icon-only bar is still named by its section.
+   The labels stay in the accessibility tree, clipped rather than `display: none`, so every
+   button in the icon-only bar is still named by its section.
 
-   COUPLED (rule 67): this 900 is also `NARROW_SCREEN_QUERY` in useMediaQuery.ts, whose four JS
-   readers are named above the `main.split .why` sheet block below. Move them together. */
+   This 900 is coupled to `NARROW_SCREEN_QUERY` in useMediaQuery.ts, and the two must change
+   together. */
 @media (max-width: 900px) {
   .app {
     /* Scroll the end of a list out from under the bar. */
     padding-bottom: calc(var(--navbar-h) + env(safe-area-inset-bottom, 0px) + 1rem);
+    /* viewport-fit=cover (index.html) lets landscape content run under a phone's notch.
+       These insets keep it out, on top of the base padding (01-base.css). Zero in
+       portrait, so nothing else moves. */
+    padding-inline: calc(var(--space-4xl) + env(safe-area-inset-left, 0px))
+      calc(var(--space-4xl) + env(safe-area-inset-right, 0px));
   }
   .views {
     position: fixed;
@@ -72,12 +76,14 @@ main.split {
     bottom: 0;
     z-index: var(--z-nav);
     /* The bar's height is declared here and read by everything that has to clear it, so the
-       three can never drift apart (rule 67). Content-sized would make it a guess. */
+       three can never drift apart. Content-sized would make it a guess. */
     height: calc(var(--navbar-h) + env(safe-area-inset-bottom, 0px));
     align-items: stretch;
     gap: 0;
     margin: 0;
     padding-bottom: env(safe-area-inset-bottom, 0px);
+    /* Same notch clearance as .app above, for the bar's tabs in landscape. */
+    padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
     background: var(--surface);
     border-top: 1px solid var(--border);
   }

@@ -40,9 +40,9 @@ function logTime(ts: string): string {
 
 /** One kept line, with the text the search box actually matches against folded in once.
  *
- *  The search used to lowercase `text` and `level` for every one of up to 2000 lines on every
- *  render -- and this panel re-renders on each 2s poll and each keystroke (P-6). Lowercasing
- *  is done once, when the line arrives and never changes again. */
+ *  Lowercasing `text` and `level` for every one of up to 2000 lines on every render would be
+ *  wasted work, since this panel re-renders on each 2s poll and each keystroke. Lowercasing
+ *  is done once instead, when the line arrives, and never changes again. */
 type KeptLine = LogLine & { haystack: string };
 
 const keep = (line: LogLine): KeptLine => ({
@@ -97,11 +97,11 @@ export function LogsPanel() {
     }
   }, [logs.data]);
 
-  // The console below is the same sweep's sibling (#332), and it is the one that stays as it
-  // is: `role="log"` mounts holding its first batch, so that batch is not announced, and every
-  // line after it is. That is the behavior to want. A log region that announced on insertion
-  // would read the operator up to 2000 accumulated lines for opening the tab, which is why the
-  // sweep speaks the WAIT here and never the arrival.
+  // The console below is the sibling of the same sweep, and it is the one that stays as it
+  // is: `role="log"` mounts holding its first batch, so that batch is not announced, and
+  // every line after it is. That is the behavior to want. A log region that announced on
+  // insertion would read the operator up to 2000 accumulated lines for opening the tab, which
+  // is why the sweep speaks the wait here and never the arrival.
   useSlowWait(logs.isPending && lines.length === 0 ? t("logs.loadingWait") : null);
 
   // Memoized on exactly what the filter reads. Without it this whole pass ran on every
@@ -123,12 +123,12 @@ export function LogsPanel() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [visible.length, live]);
 
-  // Saves on change, so this panel holds no unsaved edit and reports no draft to the section rail
-  // (`dirtyPanels` in Settings.tsx classifies it `false` and says so). Everything else here is a
-  // view filter, which is not an edit. **Add a real draft to this panel and that classification is
-  // wrong from this file, where nothing mentions the rail**: leaving the section would then throw
-  // the draft away with no confirm, and the compiler cannot see it because the key already exists
-  // (#156). Report it upward the way `SecurityPanel` does, and read rule 146 first.
+  // Saves on change, so this panel holds no unsaved edit and reports no draft to the section
+  // rail (`dirtyPanels` in Settings.tsx classifies it `false` and says so). Everything else
+  // here is a view filter, which is not an edit. Adding a real draft to this panel would make
+  // that classification wrong, since nothing here mentions the rail: leaving the section would
+  // then throw the draft away with no confirm, and the compiler cannot catch it, since the key
+  // already exists. Report it upward the way `SecurityPanel` does.
   const setLevel = useMutation({
     mutationFn: api.setLogLevel,
     onSuccess: (page) => setRecordLevel(page.level),
@@ -138,11 +138,11 @@ export function LogsPanel() {
 
   /** Try again, and say how it went.
    *
-   *  The one genuine press in this panel's failure notices, and the one thing they never said.
-   *  `refetch()` on an already-errored query leaves `isError` true throughout, so the notice never
-   *  unmounts and its text never changes: a retry that failed again is indistinguishable from a
-   *  button that does nothing, which is the absence `announce.tsx` exists for. Both notices share
-   *  this, in sentences true of either -- one fact, one wording (rule 144).
+   *  The one genuine press in this panel's failure notices, and the one thing they never
+   *  said. `refetch()` on an already-errored query leaves `isError` true throughout, so the
+   *  notice never unmounts and its text never changes: a retry that failed again is
+   *  indistinguishable from a button that does nothing, which is the absence `announce.tsx`
+   *  exists for. Both notices share this, in sentences true of either: one fact, one wording.
    *
    *  `refetch` resolves with the result rather than rejecting, so the outcome is read off it. */
   const retry = async () => {
@@ -216,19 +216,19 @@ export function LogsPanel() {
         </Notice>
       ) : (
         // The log is rows of <span>, so there is nothing focusable to tab onto and carry the
-        // scroll with -- a keyboard operator could not move this pane at all (WCAG 2.1.1,
-        // #177). It already named itself, which is the worse half of that state: it advertised
-        // a destination the Tab order never visited. `tabIndex={0}` makes the pane its own
-        // stop; `.docs-content` was the first of these and the other five went the same way
-        // (rule 72).
+        // scroll with. A keyboard operator could not move this pane at all (WCAG 2.1.1). It
+        // already named itself, which is the worse half of that state: it advertised a
+        // destination the Tab order never visited. `tabIndex={0}` makes the pane its own
+        // stop. `.docs-content` was the first of these, and the other five went the same way.
         <div
           className={wrap ? "log-console log-wrap" : "log-console"}
           ref={consoleRef}
           tabIndex={0}
-          // Kept, unlike the six loading affordances swept in #332. This region mounts holding
-          // its first batch, so that batch is never announced -- and it must not be, or opening
-          // the tab would read out the whole accumulated window. What `role="log"` buys is every
-          // line AFTER it, which is exactly the part of a live log worth hearing.
+          // Kept, unlike the six loading affordances swept elsewhere. This region mounts
+          // holding its first batch, so that batch is never announced, and it must not be, or
+          // opening the tab would read out the whole accumulated window. What `role="log"`
+          // buys is every line after it, which is exactly the part of a live log worth
+          // hearing.
           role="log"
           aria-label={t("logs.consoleLabel")}
         >
@@ -285,7 +285,7 @@ export function LogsPanel() {
                   hiding warnings from a tool that deletes files serves nobody. Render it
                   while it is the live level anyway, or a box with no matching option shows
                   blank and the picker stops saying what Reaper is recording. Picking any
-                  other level stores that one and drops this option (#700). */}
+                  other level stores that one and drops this option. */}
               {recordLevel === "ERROR" && <option value="ERROR">{t("logs.levelError")}</option>}
             </select>
           </SetRow>

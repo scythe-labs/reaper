@@ -3,16 +3,16 @@
 // Settings -> General: what Reaper calls itself and where it lives, how it looks, what the
 // review queue opens on, the API key, and the reverse-proxy and desktop settings.
 //
-// The API key is write-only end to end -- it is sent once, encrypted on arrival, and never
-// comes back, so the field for it is always blank and "leave it empty to keep the current one".
-// One save bar covers the whole panel (rule 43), and it reports upward through `onDirtyChange`
-// so the section rail can hold a switch that would discard a draft (rule 146).
+// The API key is write-only end to end. It is sent once, encrypted on arrival, and never
+// comes back, so the field for it is always blank, and the help text says "leave it empty to
+// keep the current one". One save bar covers the whole panel, and it reports upward through
+// `onDirtyChange` so the section rail can hold a switch that would discard a draft.
 //
 // The copy lives in `locales/en/ui.json` under `general.*`. Two of the tables below
 // (`accentPresets`, `textFields`) are read outside a component, so they take the catalog from
-// the plain `i18next` import rather than the `useTranslation` hook. Each is a FUNCTION for the
-// reason `i18n-module-scope.test.ts` states: a string resolved in a module body keeps whatever
-// language was serving when the module first loaded.
+// the plain `i18next` import rather than the `useTranslation` hook. Each is a function, per
+// `i18n-module-scope.test.ts`: a string resolved in a module body keeps whatever language was
+// serving when the module first loaded.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, type RefObject, useEffect, useState } from "react";
@@ -43,7 +43,7 @@ function readTheme(): ThemeChoice {
   }
 }
 
-/** Apply and remember the theme. "system" removes the override so the device decides;
+/** Apply and remember the theme. "system" removes the override so the device decides.
  *  index.html applies the stored choice before first paint, so there is no flash. */
 function applyTheme(choice: ThemeChoice) {
   const root = document.documentElement;
@@ -56,16 +56,17 @@ function applyTheme(choice: ThemeChoice) {
     if (choice === "system") localStorage.removeItem("reaper-theme");
     else localStorage.setItem("reaper-theme", choice);
   } catch {
-    // Storage can be unavailable (private windows); the page still themes for now.
+    // Storage can be unavailable (private windows). The page still themes for this load, but
+    // the choice does not persist.
   }
 }
 
-// Quick-pick accents. The first is the built-in default; the rest are a spread of hues that
-// stay clear of the fixed red "remove" and green "keep" verdict colors. Any hex is allowed
-// via the field, so this is a shortcut.
-// Each carries the color's name, because the swatch is a bare colored circle: its only other
+// Quick-pick accents. The first is the built-in default, and the rest are a spread of hues
+// that stay clear of the fixed red "remove" and green "keep" verdict colors. Any hex is
+// allowed via the field, so this is just a shortcut.
+// Each carries the color's name, because the swatch is a bare colored circle. Its only other
 // name would be the hex, which a screen reader spells out one character at a time and which
-// rule 21 would not accept as operator copy either.
+// is not something an operator would recognize as a color name either.
 const accentPresets = (): { value: string; name: string }[] => [
   { value: DEFAULT_ACCENT, name: i18next.t("general.accentPresets.reaperBlue") },
   { value: "#4f46e5", name: i18next.t("general.accentPresets.indigo") },
@@ -94,21 +95,22 @@ function allTimeZones(): string[] {
 }
 
 // What the day box starts at while the stored default is Forever, so pressing Days opens on a
-// sensible length instead of an empty box. One declaration, because the seed and Discard have to
-// agree: Discard putting back a different number is how a discarded draft came back (issue #90).
+// sensible length instead of an empty box. One declaration, because the seed and Discard have
+// to agree. If Discard put back a different number than the box seeds, a discarded draft
+// would reappear on screen.
 const SPARE_DAYS_SEED = 30;
 
-/** The hex field's refusal message, named once so the box's `aria-describedby` and the message's
- *  own `id` are the same string rather than two that can drift (rule 67). A module constant and
- *  not a `useId`: this panel is a singleton, and the id is only useful while the message is
- *  rendered -- which is exactly when the box points at it. */
+/** The hex field's refusal message, named once so the box's `aria-describedby` and the
+ *  message's own `id` are the same string rather than two that can drift. A module constant,
+ *  not a `useId`: this panel is a singleton, and the id is only useful while the message
+ *  renders, which is exactly when the box points at it. */
 const ACCENT_ERROR_ID = "accent-hex-error";
 
 type TextFieldName = "application_name" | "application_url" | "timezone";
 
 /** One field of this panel whose whole draft is a string, compared one way and sent one way.
  *  `seed` reads the stored value, `clean` is the canonical form both the compare and the
- *  request use (rule 39), and `patch` is the request body naming the field. */
+ *  request use, and `patch` is the request body naming the field. */
 type TextField = {
   name: TextFieldName;
   /** What the save bar calls it while it is unsaved. */
@@ -120,21 +122,23 @@ type TextField = {
 
 /** The three fields a descriptor covers. Five echoes walk this instead of naming each field
  *  once apiece: the seed, the re-seed after a save, the dirty check, the save bar's entry, and
- *  Discard. The sixth the finding counted was the `useState`, which is one record now rather
- *  than one hook per field. The JSX below is deliberately not a sixth walker -- a row names its
- *  own field, its own label and its own control, and generating those is a different job from
- *  this one (rule 45: help binds to exactly one control). Adding a plain text setting is a row
- *  here plus a row on screen.
+ *  Discard. The state itself is one record rather than one hook per field, which removes a
+ *  sixth echo. The JSX below is deliberately not a sixth walker either. A row names its own
+ *  field, its own label, and its own control, and generating those is a different job from
+ *  this one, since help text has to bind to exactly one control. Adding a plain text setting
+ *  is a row here plus a row on screen.
  *
- *  THREE of this panel's six drafts are deliberately not in it, and each is hand-written just
- *  below with its reason: the accent alone blocks the save, the default spare length is one
- *  stored number held as two pieces of state, and the proxy list is counted unsaved exactly
- *  where it is kept OUT of the bar (rule 146). Folding those in would need a per-field escape
- *  hatch each, which is most of what the descriptor is here to remove -- and the third hatch
- *  would re-derive the bar from the dirty set, which is the defect rule 146 exists for.
+ *  Three of this panel's six drafts are deliberately not in this list, and each is
+ *  hand-written just below with its reason: the accent alone blocks the save, the default
+ *  spare length is one stored number held as two pieces of state, and the proxy list counts
+ *  as unsaved exactly where it is kept out of the bar. Folding those in would need a
+ *  per-field escape hatch each, which is most of what this descriptor exists to remove, and
+ *  one of those hatches would have to re-derive the bar from the dirty set instead of the
+ *  other way around.
  *
- *  #90 was this shape: one `> 0` condition shared by three of these echoes, plus a fourth that
- *  did not handle the field at all. */
+ *  Repeating a per-field check by hand across several places risks one of them drifting from
+ *  the rest, or a new place forgetting the field entirely. That is the failure this
+ *  descriptor removes. */
 const textFields = (): readonly TextField[] => [
   {
     name: "application_name",
@@ -146,7 +150,7 @@ const textFields = (): readonly TextField[] => [
   {
     name: "application_url",
     label: i18next.t("general.fields.applicationUrl.label"),
-    // Null on the wire means "no URL"; the box shows that as empty, and empty saves back as
+    // Null on the wire means "no URL". The box shows that as empty, and empty saves back as
     // the same nothing.
     seed: (data) => data.application_url ?? "",
     clean: (draft) => draft.trim(),
@@ -184,28 +188,29 @@ export function GeneralPanel({
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const general = useGeneralSettings();
-  // Save and Discard both unmount the bar holding the pressed button (#173), the twin of the
-  // policy editor's (rule 72). Declared ABOVE every early return, which is rule 146's shape:
-  // this panel returns a loading line and a failure notice before the form exists, and a hook
-  // below either is a different hook order on those renders.
+  // Save and Discard both unmount the bar holding the pressed button, the same as the policy
+  // editor's. Declared above every early return, since this panel returns a loading line and a
+  // failure notice before the form exists, and a hook declared below either would give those
+  // renders a different hook order.
   const bar = useSavebarFocus();
 
   // One record over `textFields`, not one `useState` per field: the echoes below walk the
   // descriptor, and a field it does not know about would still need its own state here.
   //
   // Every writer of this record uses the functional form, and that is load-bearing rather than
-  // style. Three `useState`s had three queues, so a keystroke could not collide with anything;
-  // one record has one, and a `setText({ ...text, ... })` built from the render's own value
-  // replays over a still-pending update and throws it away. The two that can be pending are
-  // the mount seed and the re-seed after a save, so what would be lost is a box snapping back
-  // to a pre-save draft, or `seeded` going true over boxes that were never filled -- which is
-  // the save bar naming fields nobody typed in, #139's shape, reported upward by rule 146.
+  // style. Three separate `useState`s would each have their own update queue, so a keystroke
+  // could not collide with anything. One record has one queue, so a `setText({ ...text, ... })`
+  // built from the render's own value would replay over a still-pending update and throw it
+  // away. The two updates that can be pending are the mount seed and the re-seed after a save,
+  // so the functional form is what stops a box from snapping back to a pre-save draft, or
+  // `seeded` going true over boxes that were never filled, which would report a draft the
+  // operator never typed.
   const [text, setText] = useState<Record<TextFieldName, string>>(EMPTY_TEXT);
   const [proxies, setProxies] = useState("");
   const [accent, setAccent] = useState(DEFAULT_ACCENT);
   // The default spare length, as a draft in two halves: which mode is chosen, and the box's
   // live number. They are held apart because Forever stores 0 and the typed number has to
-  // survive a trip through it; `spareValue` below folds them back into the one stored field.
+  // survive a trip through it. `spareValue` below folds them back into the one stored field.
   // The number seeds to a sensible 30 while the stored default is Forever, so switching to a
   // length starts somewhere reasonable.
   const [spareForever, setSpareForever] = useState(false);
@@ -219,24 +224,24 @@ export function GeneralPanel({
   const [copied, setCopied] = useState(false);
   const [confirmReplace, setConfirmReplace] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
-  // Removing the key unmounts the whole key-present block, taking the pressed Confirm with it, and
-  // the button is `disabled` while the write is in flight so focus is at `<body>` before that even
-  // happens (#173). Focus lands on "Generate API key", which is not a nearby neighbour but the one
-  // thing left to do in this row -- and it only mounts once the refetch says the key is gone, which
-  // is the round trip `useSuccessorFocus` exists to wait out.
+  // Removing the key unmounts the whole key-present block, taking the pressed Confirm with it.
+  // The button is `disabled` while the write is in flight, so focus is already at `<body>`
+  // before the unmount even happens. Focus lands on "Generate API key" instead, the one thing
+  // left to do in this row rather than a nearby neighbor, and it only mounts once the refetch
+  // says the key is gone. `useSuccessorFocus` exists to wait out that round trip.
   const afterKeyRemove = useSuccessorFocus();
 
-  // Seed the editable fields from the server once per load (and re-seed after saves,
-  // which return the canonical stored values -- rule 39).
+  // Seed the editable fields from the server once per load, and re-seed after saves, which
+  // return the canonical stored values.
   //
-  // State rather than a ref, because the RENDER has to read it. An effect runs after the
-  // commit, so the first pass where `general.data` exists paints with every box still on its
-  // initial value ("", the accent default, spare 0) while `data` already holds the stored
-  // ones -- and the dirty checks below then name four fields nobody typed in. `useEffect`
-  // runs after paint, so that frame reaches the screen: the save bar appeared on its own on
-  // every load of this panel and cleared itself a commit later. A ref would fix nothing here,
-  // since mutating one does not re-render and the value read during that first pass would
-  // still be the stale one.
+  // This uses state rather than a ref, because the render has to read it. An effect runs after
+  // the commit, so the first pass where `general.data` exists would paint with every box still
+  // on its initial value ("", the accent default, spare 0) while `data` already holds the
+  // stored ones, and the dirty checks below would then name four fields nobody typed in.
+  // `useEffect` runs after paint, so that frame would still reach the screen: the save bar
+  // would appear on its own on every load of this panel, then clear itself a commit later. A
+  // ref would fix nothing here, since mutating one does not re-render, and the value read
+  // during that first pass would still be the stale one.
   const [seeded, setSeeded] = useState(false);
   useEffect(() => {
     if (!general.data || seeded) return;
@@ -251,19 +256,19 @@ export function GeneralPanel({
   const save = useMutation({
     mutationFn: api.saveGeneral,
     onSuccess: (data, sent) => {
-      // Re-seed from the canonical stored values (rule 39) -- but only the fields this Save
-      // actually sent. The save bar sends every dirty field at once, so it no longer takes one
-      // row's Save to reach here; the two controls that still save on the spot do. A Switch or
-      // a select (the reverse-proxy toggle, the expand-seasons mode) writes immediately, and
-      // re-seeding every field on its response would wipe whatever text was half-typed at the
-      // time, with nothing on screen to say why (B-18).
+      // Re-seed from the canonical stored values, but only the fields this Save actually sent.
+      // The save bar sends every dirty field at once, so reaching this handler no longer takes
+      // one row's own Save. The two controls that still save on the spot do reach it that way:
+      // a Switch or a select (the reverse-proxy toggle, the expand-seasons mode) writes
+      // immediately, and re-seeding every field on its response would wipe whatever text was
+      // half-typed elsewhere at the time, with nothing on screen to say why.
       //
-      // Setting the query cache stays unconditional: it is the canonical stored state, and it
+      // Setting the query cache stays unconditional. It is the canonical stored state, and it
       // is what re-applies the accent app-wide so a save re-tints everything.
       //
-      // Two shapes reach here and both were silent: the savebar, whose success was the bar
-      // unmounting under the button that had focus, and the two controls that save on the spot,
-      // whose success was nothing at all.
+      // Two shapes reach here, and neither is otherwise announced: the save bar, whose only
+      // success signal is the bar unmounting under the button that had focus, and the two
+      // controls that save on the spot, whose success signal is nothing at all.
       announce(t("general.notices.settingsSaved"));
       queryClient.setQueryData(["general-settings"], data);
       setText((current) => {
@@ -283,19 +288,19 @@ export function GeneralPanel({
   });
 
   // Three buttons (Show, Generate/Replace, Copy) share one notice, and a mutation holds its
-  // error until its OWN next call -- so rendering `reveal.error ?? generate.error ?? copy.error`
-  // left a failure on screen beside a key that had since worked: fail Copy on a plain-http LAN
-  // page, then press Show, and the red notice was still the copy failure (B-33). The three
-  // report through this one piece of state instead, cleared the moment any of them starts, so
-  // the notice always describes the last thing the operator did.
+  // error until its own next call. Rendering `reveal.error ?? generate.error ?? copy.error`
+  // would leave a failure on screen beside a key that had since worked: failing Copy on a
+  // plain-http LAN page, then pressing Show, would still show the copy failure as the red
+  // notice. The three report through this one piece of state instead, cleared the moment any
+  // of them starts, so the notice always describes the last thing the operator did.
   const [keyError, setKeyError] = useState<string | null>(null);
   const reveal = useMutation({
     mutationFn: api.revealApiKey,
     onMutate: () => setKeyError(null),
     // Show swaps a readonly box from dots to the live secret and flips its own button to
-    // Hide. Revealing a credential on screen is worth saying out loud -- not least because
-    // the operator may be somewhere they would rather it stayed hidden. The key itself is
-    // never announced: it is in the box, and a live region is the wrong place for a secret.
+    // Hide. Revealing a credential on screen is worth saying out loud, since the operator may
+    // be somewhere they would rather it stayed hidden. The key itself is never announced: it
+    // is in the box, and a live region is the wrong place for a secret.
     onSuccess: (r) => {
       setRevealedKey(r.key);
       announce(t("general.notices.apiKeyShown"));
@@ -314,38 +319,39 @@ export function GeneralPanel({
     onError: (e) => setKeyError(describeError(e)),
   });
 
-  // Generating REPLACES whatever key the server holds, the moment it returns and with no undo,
-  // which is why Replace two branches down is a two-step confirm reading "The old key stops
-  // working immediately". The bare one-click Generate renders on `api_key_set === false` -- and
-  // that is a CACHED answer: `["general-settings"]` has a 30-second staleTime,
-  // `refetchOnWindowFocus` is off app-wide, and nothing else evicts it, so a key made from
-  // another tab, a phone, or by another admin left this panel offering a one-click revoke of a
-  // live key with none of the confirmation its own design says the action needs (#203).
+  // Generating replaces whatever key the server holds, the moment it returns, with no undo.
+  // That is why Replace two branches down is a two-step confirm reading "The old key stops
+  // working immediately". The bare one-click Generate renders on `api_key_set === false`, and
+  // that answer is cached: `["general-settings"]` has a 30-second staleTime,
+  // `refetchOnWindowFocus` is off app-wide, and nothing else evicts it. A key made from another
+  // tab, a phone, or by another admin would leave this panel offering a one-click revoke of a
+  // live key, with none of the confirmation its own design says the action needs.
   //
-  // So this proves the absence rather than assuming it: re-read, and only a FRESH "no key"
-  // generates straight away. That keeps the first-run flow at one click, which matters -- the
-  // honest reading of a page parked for a minute is "I don't know yet", not "this is dangerous",
-  // and putting a danger confirm in front of every setup is its own false claim. Neither other
-  // answer generates:
+  // So this proves the absence instead of assuming it: it re-reads first, and only a fresh "no
+  // key" answer generates straight away. That keeps the first-run flow at one click, which
+  // matters. The honest reading of a page parked for a minute is "I don't know yet", not "this
+  // is dangerous", and putting a danger confirm in front of every setup would be its own false
+  // claim. Neither other answer generates:
   //   - a key exists: the row has already re-rendered into its key-present layout, Replace and
   //     all, on the fresh data. Say so and stop.
-  //   - the re-read failed: nothing is provable, so fall back to the confirm. Rule 53's class --
-  //     a control whose gate is derived from a value that went stale -- for a destructive button
-  //     rather than a rendered limit.
+  //   - the re-read failed: nothing is provable, so fall back to the confirm. This is the same
+  //     class of problem as a destructive button whose gate is derived from a value that went
+  //     stale.
   //
-  // Only the un-armed press comes through here. The two armed buttons call `generate` straight,
+  // Only the un-armed press comes through here. The two armed buttons call `generate` directly,
   // the way `Confirm replace` beside them does, so there is no `if (confirmReplace)` arm at the
-  // top of this function: the only handler that reaches it renders on the branch where the flag
-  // is false, so such an arm is unreachable, and one that reads as though it routes the confirmed
-  // press earns a later author the belief that path re-proves absence too.
-  // A mutation, not a bare async onClick, the shape `copy` below uses for the same reason (rule
-  // 17/36): the re-read is a round trip, and `retry: 1` app-wide means a failing one costs two
-  // requests and a backoff between them. Through all of it `generate` has not started, so
-  // `generate.isPending` -- the button's only pending input -- was false, and the button sat
-  // enabled under its idle label looking dead. A second press then ran a second check, and both
-  // cleared, so two keys were minted back to back: the second revokes the first, and whichever
-  // RESPONSE landed last is the one left in the box, which need not be the key the server kept.
-  // The operator copies it and it returns 401.
+  // top of this function. The only handler that reaches this one renders on the branch where the
+  // flag is false, so such an arm would be unreachable, and one that reads as though it routes
+  // the confirmed press would wrongly suggest that path also re-proves absence.
+  //
+  // This is a mutation, not a bare async onClick, the same shape `copy` below uses for the same
+  // reason: the re-read is a round trip, and `retry: 1` app-wide means a failing one costs two
+  // requests and a backoff between them. Through all of that, `generate` itself has not started,
+  // so `generate.isPending`, the button's only pending input, would stay false, and the button
+  // would sit enabled under its idle label looking dead. A second press would then run a second
+  // check, and if both cleared, two keys would be minted back to back: the second revokes the
+  // first, and whichever response lands last is the one left in the box, which need not be the
+  // key the server kept. The operator copies it and it returns 401.
   const requestGenerate = useMutation({
     onMutate: () => setKeyError(null),
     mutationFn: async () => {
@@ -375,7 +381,7 @@ export function GeneralPanel({
       throw new Error(t("general.apiKey.copyNeedsHttps"));
     }
     await navigator.clipboard.writeText(key);
-    // The only feedback was the button's own label reading "Copied" for two seconds -- a
+    // The only other feedback is the button's own label reading "Copied" for two seconds, a
     // change to the name of the control the operator is standing on, which is not announced.
     announce(t("general.notices.apiKeyCopied"));
     setCopied(true);
@@ -393,36 +399,34 @@ export function GeneralPanel({
     onSuccess: () => {
       setRevealedKey(null);
       setConfirmRemove(false);
-      // And the OTHER confirm, which this row also renders. Cleared here as well as in the effect
-      // below, because the effect waits on the refetch: for that round trip `api_key_set` is still
-      // true, so a Replace armed before the operator changed their mind to Remove would sit armed
-      // over a key that is already gone.
+      // And the other confirm, which this row also renders. This clears it here as well as in
+      // the effect below, because the effect waits on the refetch. For that round trip
+      // `api_key_set` is still true, so a Replace armed before the operator changed their mind
+      // to Remove would sit armed over a key that is already gone.
       setConfirmReplace(false);
-      // The three neighbours above all announce; this one's entire success signal was the key
-      // block unmounting and taking the pressed Confirm with it, which is an absence and cannot
-      // be heard (#192's shape, missed in its sweep).
+      // The three neighboring mutations above all announce. This one's only other success
+      // signal is the key block unmounting and taking the pressed Confirm with it, an absence
+      // that cannot be heard.
       //
-      // It names the consequence, not the wire mechanism (#221). "Nothing gets in on the header
-      // now" was the one announcement here carrying a definite reference with no antecedent in
-      // its own sentence: "the header" resolved only against the help paragraph below, and an
-      // announcement is delivered through a live region, so it is HEARD ALONE and cannot borrow
-      // a referent from elsewhere on the page (rule 21). The wording is that paragraph's own
-      // phrase for what the key is for, so the two read alike (rule 144), and it follows the
-      // house pattern the Discord `remove` mutation sets in `NotificationsPanel`: say what the
-      // operator loses, not what stops working on the wire.
+      // This names the consequence, not the wire mechanism. An announcement is delivered
+      // through a live region and is heard alone, with nothing else on the page for context, so
+      // it cannot rely on a word like "the header" being explained somewhere else on screen.
+      // The wording matches the help paragraph's own phrase for what the key is for, so the two
+      // read alike, and it follows the house pattern the Discord `remove` mutation sets in
+      // `NotificationsPanel`: say what the operator loses, not what stops working on the wire.
       announce(t("general.notices.apiKeyRemoved"));
       void queryClient.invalidateQueries({ queryKey: ["general-settings"] });
     },
   });
 
-  // A confirm belongs to the row that raised it. `api_key_set` decides WHICH row renders, and one
-  // flag arms a danger button on each of them, so it must not cross: a Replace armed on the
-  // key-present row was still armed when Remove took the key away, and the no-key row then opened
-  // on "Confirm generate" with no notice to explain it. The other direction is the worse one --
-  // the fallback arms this flag while no key exists, so a key arriving from another tab (#203's
-  // own scenario, pointed back the other way) re-rendered the key-present row with "Confirm
-  // replace" ALREADY armed, leaving a live key one press from a confirm the operator never opened.
-  // Whichever way the row changes, nothing destructive stays pressed.
+  // A confirm belongs to the row that raised it. `api_key_set` decides which row renders, and
+  // one flag arms a danger button on each of them, so it must not carry across the switch. If
+  // it did, a Replace armed on the key-present row would still be armed when Remove took the
+  // key away, and the no-key row would open on "Confirm generate" with no notice to explain
+  // it. The other direction is worse: a key arriving from another tab could re-render the
+  // key-present row with "Confirm replace" already armed, leaving a live key one press from a
+  // confirm the operator never opened. This effect resets both flags on every change, so
+  // whichever way the row changes, nothing destructive stays pressed.
   const keyPresent = general.data?.api_key_set;
   useEffect(() => {
     setConfirmReplace(false);
@@ -435,14 +439,14 @@ export function GeneralPanel({
   // narrows to non-null for the whole render beneath it.
   const data = general.data;
 
-  // `seeded`, not just `data`: between the commit that first has `data` and the effect above
-  // that copies it into these boxes, every one of them still holds its initial value and so
-  // differs from the stored one. Comparing there reports a draft the operator never typed
-  // (#139). The same one-frame report reached `Settings` through `onDirtyChange`, which is
-  // what makes this two claims rather than a cosmetic flash (rule 146). `PlexPanel` carries
-  // the same defect on its two mirrored fields and is fixed beside this one (rule 72), by a
-  // different guard: it re-seeds on every change of the stored value where this seeds once,
-  // so it has to ask which value it was seeded FROM rather than merely whether it has been.
+  // This checks `seeded`, not just `data`. Between the commit that first has `data` and the
+  // effect above that copies it into these boxes, every box still holds its initial value and
+  // so would differ from the stored one. Comparing at that frame would report a draft the
+  // operator never typed. Since the same one-frame report reaches `Settings` through
+  // `onDirtyChange`, this is two separate claims rather than one cosmetic flash. `PlexPanel`
+  // guards the same risk on its two mirrored fields with a different check: it re-seeds on
+  // every change of the stored value where this seeds once, so it has to ask which value it
+  // was seeded from rather than merely whether it has been seeded at all.
   const ready = !!data && seeded;
 
   const dirtyText = ready
@@ -455,26 +459,25 @@ export function GeneralPanel({
     .map((p) => p.trim())
     .filter(Boolean);
   const proxiesDirty = ready && proxyList.join(", ") !== data.trusted_proxies.join(", ");
-  // The two halves of the draft fold back into the one stored number before anything compares
-  // them, because Forever IS 0 in that field. Pressing Forever therefore reads as a change to
-  // the same field the box edits, and one Discard puts both back. It used to write 0 on the
-  // press while the bar, gated on the stored value, unmounted and took its Discard with it --
-  // so the number the bar had just called unsaved went in on the next press, without a Save.
+  // The two halves of the draft fold back into the one stored number only here, at compare
+  // time, since Forever is 0 in that field. Pressing Forever therefore reads as a change to
+  // the same field the box edits, and one Discard puts both back. Writing 0 directly on the
+  // press instead would let the save bar, gated on the stored value, unmount its own Discard
+  // as soon as the two matched, carrying the unsaved number into the next press without a
+  // Save.
   const spareValue = spareForever ? 0 : spareDays;
   const spareDirty = ready && spareValue !== data.default_spare_days;
 
-  // One save for the panel (rule 43). Each of these rows used to carry its own Save, rendered
-  // inside the right-aligned control box, so the first keystroke made the button appear and
-  // shoved the field being typed in 71px to the left -- then back again on undo. The bar names
-  // what is unsaved and sends all of it in one request. The controls that take effect the
-  // moment they change are not drafts and do not join it: three of them call `save` themselves
-  // -- the reverse-proxy `Switch`, the expand-seasons `<select>` and the language `<select>` --
-  // and the theme `<select>` writes this browser's own localStorage and never reaches the
-  // server, so none has a draft to hold. The language one reloads the page once its save lands
-  // (see `setLanguage`), which would take this bar's contents with it, so it is disabled while
-  // the bar has any: that is why it reads `pending` rather than being a self-contained control
-  // like the theme beside it. The spare-length `Segmented` was a third
-  // until it started staging `default_spare_days` here instead (see `spareValue` above).
+  // One save affordance for the whole panel. The bar names what is unsaved and sends all of it
+  // in one request. The controls that take effect the moment they change are not drafts and do
+  // not join it. Three of them call `save` themselves: the reverse-proxy `Switch`, the
+  // expand-seasons `<select>`, and the language `<select>`. The theme `<select>` writes this
+  // browser's own localStorage and never reaches the server, so it has no draft to hold either.
+  // The language select reloads the page once its save lands (see `setLanguage`), which would
+  // take this bar's contents with it, so it is disabled while the bar has any. That is why it
+  // reads `pending` rather than being a self-contained control like the theme beside it. The
+  // spare-length `Segmented` stages `default_spare_days` here instead of saving on the spot
+  // (see `spareValue` above).
   const pending: { label: string; patch: Parameters<typeof api.saveGeneral>[0] }[] = [];
   for (const field of dirtyText) {
     pending.push({ label: field.label, patch: field.patch(field.clean(text[field.name])) });
@@ -500,19 +503,19 @@ export function GeneralPanel({
   // it rather than silently dropping that one field from a bar that just named it.
   const accentBlocks = accentDirty && !accentValid;
 
-  // What this panel would LOSE, reported up to `Settings` so that leaving the section can stop
-  // and ask first. Nearly always that is the bar (rule 43), but not quite, so the two are
-  // computed apart rather than one read off the other. A proxy list typed and then parked behind
-  // its own switch is dropped from `pending` on purpose just above, because the bar must not name
-  // a field the operator cannot reach to fix -- yet the text is still sitting in the disabled
-  // box, still unsaved, and still gone on unmount. Reading the bar alone let exactly that one
-  // walk out silently, on the panel that had just promised to ask.
+  // What this panel would lose, reported up to `Settings` so that leaving the section can stop
+  // and ask first. Nearly always that is the same as the bar, but not quite, so the two are
+  // computed apart rather than one read off the other. A proxy list typed and then parked
+  // behind its own switch is dropped from `pending` on purpose just above, because the bar must
+  // not name a field the operator cannot reach to fix. The text is still sitting in the
+  // disabled box, though, still unsaved and still gone on unmount, so reading the bar alone
+  // would let exactly that field walk out silently on a panel that had just promised to ask.
   //
-  // Rule 146: this reports two things at once, that there is something to lose and that the
-  // operator can still reach it, so both are read against every early return below -- the
-  // report fires while this renders "Loading…" (nothing is dirty yet, `data` is undefined) and
-  // it must not outlive the form, which is why the failure branch below now keeps the form
-  // whenever there is a row to render.
+  // This reports two things at once: that there is something to lose, and that the operator can
+  // still reach it. Both are read against every early return below. The report fires while this
+  // renders "Loading…" (nothing is dirty yet, `data` is undefined), and it must not outlive the
+  // form, which is why the failure branch below keeps the form whenever there is a row to
+  // render.
   const hasDrafts = pending.length > 0 || (proxiesDirty && !data?.proxy_trust_enabled);
   useEffect(() => {
     onDirtyChange?.(hasDrafts);
@@ -522,28 +525,28 @@ export function GeneralPanel({
   if (general.isPending) {
     return <p className="muted">{t("common.loading")}</p>;
   }
-  // Only when there is nothing to render. A refetch that fails AFTER a good load leaves `data` in
-  // place (React Query keeps the last good row and raises `isError` beside it), and trading the
-  // whole form for this paragraph there took the save bar and its Discard with it while the
-  // drafts stayed in state -- still reported unsaved to `Settings`, which then asked to discard
-  // edits the operator could no longer see, save, or put back. Pressing Generate API key on a
-  // server that blinks is enough to reach it, because that invalidates this very query. So a
-  // failed refetch keeps the form on the last good values; this is for a load that never
-  // landed one.
+  // Only when there is nothing to render. A refetch that fails after a good load leaves `data`
+  // in place (React Query keeps the last good row and raises `isError` beside it). Trading the
+  // whole form for this paragraph there would take the save bar and its Discard away while the
+  // drafts stayed in state, still reported unsaved to `Settings`, which would then ask to
+  // discard edits the operator could no longer see, save, or put back. Pressing Generate API
+  // key on a server that blinks is enough to trigger that refetch, since it invalidates this
+  // very query. So a failed refetch keeps the form on the last good values. This branch is for
+  // a load that never landed one at all.
   if (!data) {
     return <Notice tone="error">{t("common.loadError")}</Notice>;
   }
 
   // The current zone may not be in the browser's list (an older engine, or a server-only
-  // zone); keep it selectable so a save never silently drops it.
+  // zone). Keep it selectable so a save never silently drops it.
   const zoneOptions =
     data.timezone && !allTimeZones().includes(data.timezone)
       ? [data.timezone, ...allTimeZones()]
       : allTimeZones();
 
-  // Computed here rather than inline in the JSX below so the Switch's `ariaLabel` and the
-  // SetRow's `label` read the same value (rule 67); guarded on `data.desktop` even though
-  // both uses are gated the same way, so the ICU `select` below is never asked to format an
+  // Computed here rather than inline in the JSX below, so the Switch's `ariaLabel` and the
+  // SetRow's `label` read the same value. This is guarded on `data.desktop` even though both
+  // uses are gated the same way, so the ICU `select` below is never asked to format an
   // undefined `platform` on the far more common run where there is no desktop build at all.
   const trayLabel = data.desktop
     ? t("general.desktop.trayLabel", { platform: data.desktop.platform })
@@ -558,10 +561,11 @@ export function GeneralPanel({
     setAccent(data.accent_color);
     setProxies(data.trusted_proxies.join(", "));
     setSpareForever(data.default_spare_days === 0);
-    // BOTH halves, unlike the mount seed and the save response above, which leave the number
-    // alone under a stored Forever so the last length is remembered. Discard is a full undo, so
-    // it goes back to the stored length or to the same number the box seeds at. Skipping it left
-    // the discarded figure in the hidden box, and the next press of Days re-staged it.
+    // Both halves reset here, unlike the mount seed and the save response above, which leave
+    // the number alone under a stored Forever so the last length is remembered. Discard is a
+    // full undo, so it goes back to the stored length or to the same number the box seeds at.
+    // Without this reset, the discarded figure would stay in the hidden box, and the next
+    // press of Days would re-stage it.
     setSpareDays(data.default_spare_days > 0 ? data.default_spare_days : SPARE_DAYS_SEED);
   };
 
@@ -572,8 +576,8 @@ export function GeneralPanel({
       </h2>
       <p className="muted">{t("general.subheading")}</p>
 
-      {/* Same obligation as the twin in `PlexPanel` (rule 72): the `!data` branch above keeps the
-          form through a failed refetch so the drafts in it stay reachable, which leaves this line
+      {/* Same obligation as the twin in `PlexPanel`: the `!data` branch above keeps the form
+          through a failed refetch so the drafts in it stay reachable, which leaves this line
           the only thing saying the values below may be stale. */}
       {general.isError && <StaleReadNotice />}
 
@@ -674,12 +678,12 @@ export function GeneralPanel({
                       ? ({
                           "--accent": accent,
                           "--accent-ink": accentInk(accent),
-                          // --accent-text as well, or the link in the preview keeps the SAVED
-                          // accent's ink while the button beside it moves. It is not derived
-                          // from --accent at use time: the stylesheet computes it once on
-                          // :root, from the values accent.ts writes there, so a child
-                          // overriding --accent alone inherits an ink belonging to a different
-                          // color (rule 67).
+                          // --accent-text is set here too, or the link in the preview would
+                          // keep the saved accent's ink while the button beside it moves. It is
+                          // not derived from --accent at use time: the stylesheet computes it
+                          // once on :root, from the values accent.ts writes there, so a child
+                          // overriding --accent alone would inherit an ink belonging to a
+                          // different color.
                           "--accent-text": accentText(accent, shownTheme),
                         } as CSSProperties)
                       : undefined
@@ -715,8 +719,8 @@ export function GeneralPanel({
                 spellCheck={false}
                 maxLength={7}
                 aria-label={t("general.accent.hexFieldAriaLabel")}
-                // The box refuses the save and the sentence saying why sits below it, out of
-                // reach of anyone who arrived at the box by keyboard (#174).
+                // The box refuses the save, and the sentence saying why sits below it, out of
+                // reach of anyone who arrived at the box by keyboard.
                 aria-invalid={accentValid ? undefined : true}
                 aria-describedby={accentValid ? undefined : ACCENT_ERROR_ID}
                 onChange={(e) => setAccent(e.target.value)}
@@ -732,17 +736,17 @@ export function GeneralPanel({
           <SetRow label={t("general.language.label")} help={t("general.language.help")}>
             {/* The server holds the choice, because a notification is composed there with no
                 browser to ask. So this saves first and repaints second: `setLanguage` writes
-                this browser's copy and reloads onto it, and reaching it only from `mutateAsync`
-                means a refused save leaves both halves on the old language rather than a page
+                this browser's copy and reloads onto it. Reaching it only from `mutateAsync`
+                means a refused save leaves both halves on the old language, rather than a page
                 speaking one language while the server stores another.
 
-                No "match my browser" entry. The browser still decides on a fresh install --
-                `App` seeds the server from `preferredLanguage()` the first time it finds
-                nothing stored -- but as a seed, not a standing mode, so what the picker shows
-                is always what a notification will be written in.
+                There is no "match my browser" entry. The browser still decides on a fresh
+                install: `App` seeds the server from `preferredLanguage()` the first time it
+                finds nothing stored, but only as a one-time seed, not a standing mode, so what
+                the picker shows is always what a notification will be written in.
 
-                Disabled while the save bar holds anything, because the reload would discard it
-                with no ask. */}
+                This is disabled while the save bar holds anything, because the reload would
+                discard it with no chance to ask first. */}
             <select
               value={data.language ?? preferredLanguage()}
               aria-label={t("general.language.label")}
@@ -753,7 +757,7 @@ export function GeneralPanel({
                   .mutateAsync({ language: tag })
                   .then(() => setLanguage(tag))
                   // The refusal is already on screen through `save.error`. This only keeps the
-                  // rejection from going unhandled, which rule 135 makes a test failure.
+                  // rejected promise from going unhandled, which a test would otherwise fail on.
                   .catch(() => {});
               }}
             >
@@ -787,7 +791,7 @@ export function GeneralPanel({
         <h3>{t("general.sections.reviewQueue")}</h3>
         <div className="set-rows">
           <SetRow label={t("general.expandSeasons.label")} help={t("general.expandSeasons.help")}>
-            {/* Four choices, so a select rather than a Segmented (rule 41), on the same control
+            {/* Four choices, so this is a select rather than a Segmented, on the same control
                 standard as the Theme picker above. */}
             <select
               value={data.expand_seasons_mode}
@@ -804,14 +808,14 @@ export function GeneralPanel({
             </select>
           </SetRow>
           <SetRow label={t("general.spareLength.label")} help={t("general.spareLength.help")}>
-            {/* Both halves read and write the DRAFT, never the stored value. A press stages
+            {/* Both halves read and write the draft, never the stored value. A press stages
                   the mode in the save bar beside the number, so the bar names one field, one
                   Discard puts both back, and neither is written until Save.
 
                   Both halves also stop taking presses while the save is in flight, for the
-                  same reason: `save`'s `onSuccess` re-seeds this mode from the response, so a
-                  press landing in the gap was overwritten and the bar cleared in the same
-                  flush, leaving nothing that said so (#151). */}
+                  same reason: `save`'s `onSuccess` re-seeds this mode from the response. A
+                  press landing in that gap would be overwritten and the bar cleared in the same
+                  flush, with nothing on screen to explain why. */}
             <Segmented
               value={spareForever ? "forever" : "days"}
               options={[
@@ -822,7 +826,7 @@ export function GeneralPanel({
               disabled={save.isPending}
               onChange={(mode) => setSpareForever(mode === "forever")}
             />
-            {/* Only while the draft is a length -- Forever hides the box, matching how a
+            {/* Only while the draft is a length. Forever hides the box, matching how a
                   group's sub-controls disappear when its toggle is off. */}
             {!spareForever && (
               <FixedQuantity
@@ -843,37 +847,33 @@ export function GeneralPanel({
       <div className="set-group">
         <h3>{t("general.sections.apiAccess")}</h3>
         <div className="set-rows">
-          {/* A cluster, not a box: the key field plus four buttons. It keeps a shrink-to-fit
-              control column so those buttons stay on one line (see `.set-row-cluster`).
+          {/* This is a cluster, not a box: the key field plus four buttons. It keeps a
+              shrink-to-fit control column so those buttons stay on one line (see
+              `.set-row-cluster`).
 
-              The `help` sentence below is the whole basis on which an operator decides to
-                hand a key to a third-party dashboard, so it names what the fence in
-                api/middleware.py (_API_KEY_READS_DENIED / _API_KEY_WRITES) actually allows,
-                not a rounder claim. Two roundings have already been wrong here, both in the
-                safe-sounding direction:
+              The `help` sentence below is the whole basis on which an operator decides to hand
+                a key to a third-party dashboard, so it names exactly what the fence in
+                api/middleware.py (`_API_KEY_READS_DENIED` / `_API_KEY_WRITES`) allows, never a
+                rounder claim. Which direction of rounding is safe differs by clause:
 
-                - it said a key "cannot change any setting" while /api/profile sat in the
-                  write allowlist, so a key holder could turn the run limits off (S-2);
-                - it said a key "reads your library", which is most of what a key reads and
-                  not the part that decides the question. A key also reads every settings
-                  page, and it read one person's whole viewing breakdown until #117 moved
-                  /api/fairness behind the browser.
+                - What a key can WRITE must never claim less access than the fence actually
+                  allows. Understating write access is what lets a key holder change something
+                  the sentence promised was off-limits, unnoticed.
+                - What a key can READ should round toward more rather than less, since "more
+                  than you think" is the safer way to be wrong on a screen where a key is being
+                  handed out. A key reads more than just the library: every settings page too.
+                - A stated REFUSAL is the opposite case: naming a refusal the fence does not
+                  actually enforce is what gets someone hurt, since the operator will trust it
+                  and act accordingly. Any refusal named here must be checked against the
+                  current fence before it ships. The closing list stays generic ("any other
+                  setting") rather than enumerating specifics, since naming a few would read as
+                  a promise that the rest are allowed.
 
-                So the read clause overstates rather than understates: on the screen where a
-                key is handed out, "more than you think" is the direction that fails safe.
-                Note which way that cuts on the viewing clause. It is now a REFUSAL, so it
-                moved to the closing list, where the safe direction reverses: naming a
-                refusal the fence does not make is the rounding that gets someone hurt, and
-                this one is only true while /api/fairness stays denied. The list still ends
-                with "any other setting" rather than enumerating the rest, for the reason
-                api_key_scope_description exists: the fence is far tighter than any short
-                list of what it refuses, and naming four of them read as a promise that the
-                rest were allowed.
-
-                This paragraph is hand-written and its twin in the API reference is
-                generated, so nothing here fails when the fence moves. The guard is on the
-                other side: test_the_sentence_leads_with_what_the_key_can_do pins the twin
-                phrase for phrase and names this file in every failure message. */}
+                This paragraph is hand-written, and its twin in the API reference is generated,
+                so nothing here fails automatically when the fence moves.
+                `test_the_sentence_leads_with_what_the_key_can_do` guards the other side: it
+                pins the twin phrase for phrase and names this file in every failure
+                message. */}
           <SetRow
             variant="cluster"
             label={t("general.apiKey.label")}
@@ -907,11 +907,11 @@ export function GeneralPanel({
                     >
                       {t("general.apiKey.confirmReplace")}
                     </button>
-                    {/* Backing out clears the notice too. It is the shared one (above), and the
-                          only thing that clears it otherwise is the NEXT mutation starting -- so a
-                          notice raised to explain a confirm outlived the confirm it explained, and
-                          went on describing a button no longer on the page. Same on the twin
-                          Cancel below (rule 72). */}
+                    {/* Backing out clears the notice too. It is the shared one above, and the
+                          only other thing that clears it is the next mutation starting.
+                          Without this, a notice raised to explain a confirm would outlive the
+                          confirm it explained, and keep describing a button no longer on the
+                          page. The twin Cancel below does the same. */}
                     <button
                       onClick={() => {
                         setConfirmReplace(false);
@@ -960,12 +960,12 @@ export function GeneralPanel({
             ) : confirmReplace ? (
               /* Reached only when the re-read in `requestGenerate` could not answer, so this
                    panel cannot prove there is no key to destroy. Same two-step shape as Replace
-                   above, because it is the same act with a worse-known target; the notice under
+                   above, because it is the same act with a worse-known target. The notice under
                    the group says why it is being asked.
-                   "Only" is true because the flag is reset whenever `api_key_set` changes (the
-                   effect beside the mutations) and again the moment Remove succeeds. Without
-                   those it was false in both directions, and this branch opened with no notice
-                   after a Remove -- a danger confirm over a key the panel had just proved gone. */
+                   "Only" holds because the flag resets whenever `api_key_set` changes (the
+                   effect beside the mutations), and again the moment Remove succeeds. Without
+                   those resets it would stay true after a Remove too, opening this branch with
+                   no notice, a danger confirm over a key the panel had just proved gone. */
               <>
                 <button
                   className="danger"
@@ -1001,13 +1001,13 @@ export function GeneralPanel({
           {/* A link, not a box, so it releases the control track (`.set-row-plain`).
 
               The `help` sentence says "as you", not "with your key", because the page
-                preselects your SESSION: 35 of the 47 writes do not offer the key at all,
-                and the button reaches them
-                all, arming included. Naming the key here would size the blast radius by the
-                fence two rows up, which is far tighter than what this button spends (rule
-                144). The key clause above is generated and guarded; this one is hand-written
-                and its guard is test_the_reference_page_sends_the_csrf_header_it_names, which
-                names this file. */}
+                preselects your session: 35 of the 47 writes do not offer the key at all, and
+                the button reaches them all, arming included. Naming the key here would size
+                the blast radius by the fence two rows up, which is far tighter than what this
+                button actually spends. The key clause above is generated and guarded. This one
+                is hand-written, and its guard is
+                test_the_reference_page_sends_the_csrf_header_it_names, which names this
+                file. */}
           <SetRow
             variant="plain"
             label={t("general.apiReference.label")}
@@ -1092,16 +1092,16 @@ export function GeneralPanel({
       )}
 
       {/* Only when there is no bar to put it in. A control that saves on the spot fails with
-          nothing unsaved, so its refusal has nowhere else to go; a refused BAR save renders
+          nothing unsaved, so its refusal has nowhere else to go. A refused bar save renders
           inside the bar instead, beside the fields it just refused to write. */}
       {save.error && pending.length === 0 && (
         <Notice tone="error">{describeError(save.error)}</Notice>
       )}
 
-      {/* The one save affordance on this panel (rule 43), the same bar the policy editor uses:
-          it names what is unsaved, saves all of it in one press, and offers Discard. Rendered
-          only while there is something to save, and sticky at the foot of the screen, so the
-          field being typed in never moves. */}
+      {/* The one save affordance on this panel, the same bar the policy editor uses: it names
+          what is unsaved, saves all of it in one press, and offers Discard. Rendered only
+          while there is something to save, and sticky at the foot of the screen, so the field
+          being typed in never moves. */}
       {pending.length > 0 && (
         <div className="savebar">
           <span className="savebar-what">
@@ -1122,12 +1122,12 @@ export function GeneralPanel({
           >
             {save.isPending ? t("common.saving") : t("common.saveChanges")}
           </button>
-          {/* Inside the bar, not below the panel (rule 42, and the same slot
-              `PolicyEditor`'s bar uses): the route refuses the whole body before writing any
-              of it, so this sentence is the only thing standing between the operator and the
-              belief that all six fields went in. The bar is sticky, so a notice outside it
-              renders at the document foot -- off screen for anyone editing the top group,
-              which is where five of these six fields are. */}
+          {/* Inside the bar, not below the panel, the same slot `PolicyEditor`'s bar uses. The
+              route refuses the whole body before writing any of it, so this sentence is the
+              only thing standing between the operator and the belief that all six fields went
+              in. The bar is sticky, so a notice outside it renders at the document foot,
+              off screen for anyone editing the top group, which is where five of these six
+              fields are. */}
           {save.error && <Notice tone="error">{describeError(save.error)}</Notice>}
         </div>
       )}

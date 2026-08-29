@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Adding and editing a protection list.
 //
-// Adding walks the Arr-style two-step flow: a type picker, then the one form that type needs,
-// and each form's job is to make a list that could never match anything impossible to save --
-// saying which box is empty while the operator is looking at it. Every refusal it renders is
-// one `services.list_config._clean_config` also enforces; these pin that the form states them,
-// and `tests/test_list_config.py` pins that the server refuses them, so neither half can be
-// the only thing standing between an operator and a list that protects nothing.
+// Adding walks a two-step flow, matching Sonarr/Radarr's own list forms: a type picker, then
+// the one form that type needs. Each form's job is to refuse saving a list that could never
+// match anything, and to say which box is empty while the operator is looking at it. Every
+// refusal it renders is one `services.list_config._clean_config` also enforces on the server:
+// this file checks the form states them, and `tests/test_list_config.py` checks the server
+// refuses them, so neither half is the only thing standing between an operator and a list that
+// protects nothing.
 //
-// The library picker is the #483 fix at the surface: the library stops being a name Reaper
-// guessed ("Movies") and becomes one picked off the operator's own server.
+// The library picker lets the operator choose their own library by name, read off their own
+// server, instead of Reaper guessing one.
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -77,8 +78,8 @@ describe("the type picker", () => {
   });
 
   it("reveals the shipped charts behind Presets, as the app's anchored menu", async () => {
-    // The one menu grammar (`FilterMenu`, rule 18): the same popover the queue's filter
-    // pickers render, not a second row of card buttons.
+    // The same shared popover component (`FilterMenu`) the queue's filter pickers use, not a
+    // second row of card buttons.
     const user = userEvent.setup();
     renderModal();
 
@@ -92,8 +93,8 @@ describe("the type picker", () => {
   });
 
   it("Escape closes the menu and leaves the modal standing", async () => {
-    // The menu is the newest layer, so it consumes the press; without the stop the same
-    // Escape reaches ModalShell's window listener and tears the whole modal down.
+    // The menu is the topmost layer, so it consumes the Escape press. If it did not, the same
+    // press would reach `ModalShell`'s window listener and close the whole modal.
     const user = userEvent.setup();
     const { onClose } = renderModal();
     await user.click(await screen.findByRole("button", { name: "Presets" }));
@@ -148,9 +149,9 @@ describe("adding a Plex collection", () => {
   });
 
   it("saves the library the operator picked, not one Reaper guessed", async () => {
-    // #483, at the surface. The keep collection used to be read out of a library hardcoded to
-    // "Movies", so an operator whose library is called anything else had it silently never
-    // read -- and, it being a HARD list, could not reap at all.
+    // The keep collection must be read from the library the operator picked, since an
+    // operator whose library is not called "Movies" would otherwise have it silently never
+    // read, and being a HARD list, could not reap at all.
     const user = userEvent.setup();
     await openForm(user, "Add a Plex collection");
     await user.type(await screen.findByLabelText("Name"), "Keep");
@@ -174,7 +175,7 @@ describe("adding a Plex collection", () => {
     await openForm(user, "Add a Plex collection");
 
     // Waited for, not read off the first paint: the box is already an input while the read is
-    // in flight, so asserting on it alone would pass before Plex had failed at all (rule 137).
+    // in flight, so asserting on it right away would pass before Plex had actually failed.
     expect(
       await screen.findByText(/type the name exactly as it appears in Plex/),
     ).toBeInTheDocument();
@@ -195,8 +196,9 @@ describe("adding a Plex collection", () => {
   });
 
   it("shows the server's refusal rather than a phrasing of its own", async () => {
-    // Rule 144: one requirement written twice in two places is the copy that drifts from the
-    // check that enforces it. The form pre-empts what it can; anything else is the server's.
+    // A requirement written twice, once here and once on the server, is copy that can drift
+    // from the check that enforces it. The form pre-empts what it can; anything else is shown
+    // in the server's own words.
     const user = userEvent.setup();
     apiMock.addList.mockRejectedValue(new Error("You already have a list with that name."));
     await openForm(user, "Add a Plex collection");
@@ -229,9 +231,9 @@ describe("adding a Plex watchlist", () => {
 
 describe("what a save hands back", () => {
   it("names the stored row, so the list is checked without a second press", async () => {
-    // The panel runs the check, and it needs the id, which only the server's row carries. A
-    // list nobody has read protects nothing, so a save that ends with the operator hunting
-    // for Check now is a list left unprotecting for as long as they take to find it.
+    // The panel runs the check, and it needs the id, which only the server's stored row
+    // carries. A list nobody has read protects nothing, so a save that leaves the operator
+    // hunting for a Check button leaves the list unprotecting for as long as that search takes.
     const user = userEvent.setup();
     const { onSaved, onClose } = await openForm(user, "Add a Plex watchlist");
 
@@ -242,8 +244,8 @@ describe("what a save hands back", () => {
   });
 
   it("does the same for an edit, which re-points what the list reads", async () => {
-    // An edit changes where the membership comes from, so the stored copy is the old
-    // definition's until something re-reads it (rule 72: one save, both paths).
+    // An edit changes where the membership comes from, so the stored copy still reflects the
+    // old definition until something re-reads it. One save path covers both add and edit.
     const user = userEvent.setup();
     const { onSaved } = renderModal(PLEX_DEF);
 
@@ -255,8 +257,9 @@ describe("what a save hands back", () => {
   });
 
   it("hands nothing back when the save was refused", async () => {
-    // A check of a list that was not stored would report on the definition it replaced, or
-    // on nothing at all, and the row would say a check ran for an edit that never landed.
+    // A check of a list that was not actually stored would report on the definition it was
+    // meant to replace, or on nothing at all, wrongly telling the operator a check ran for an
+    // edit that never landed.
     const user = userEvent.setup();
     apiMock.editList.mockRejectedValue(new Error("You already have a list with that name."));
     const { onSaved, onClose } = renderModal(PLEX_DEF);
@@ -284,9 +287,8 @@ describe("adding a tag list", () => {
     await openForm(user, "Add a tag list");
 
     // Visible before a single tag is typed, so the form never has a blank where a control
-    // belongs. It is the shared `Segmented` wearing the mockup's flat chrome, not a second
-    // either-or control: this asserted a `.seg2` of its own, which is exactly what rules 18
-    // and 41 refuse.
+    // belongs. It is the shared `Segmented` control wearing the flat style, not a second,
+    // one-off either-or control with its own `.seg2` class.
     const toggle = await screen.findByRole("group", {
       name: "How many of these tags a title needs",
     });
@@ -332,9 +334,9 @@ describe("adding a tag list", () => {
   });
 
   it("takes one tag once however it is capitalized", async () => {
-    // Sonarr and Radarr lower-case every label, so "Keep" and "keep" are one tag there. Both
-    // chips saved left the list reporting a count of zero against the spelling that lost, on
-    // the screen whose subject is whether a list is protecting anything (#509).
+    // Sonarr and Radarr lower-case every label, so "Keep" and "keep" are one tag there. Saving
+    // both as separate chips would leave the list reporting a zero count against whichever
+    // spelling lost, on the one screen whose subject is whether a list protects anything.
     const user = userEvent.setup();
     await openForm(user, "Add a tag list");
     await user.type(await screen.findByLabelText("Name"), "Keep");
@@ -414,9 +416,9 @@ describe("editing a list", () => {
   });
 
   it("states where a list comes from rather than offering to change it", async () => {
-    // The stored membership is keyed on a slug carrying the source, so re-pointing a list
-    // would leave the old membership enabled and still protecting from a definition the
-    // operator has already replaced.
+    // The stored membership is keyed on a slug that carries the source, so re-pointing a list
+    // to a different source would leave the old membership enabled and still protecting from
+    // a definition the operator has already replaced.
     renderModal(PLEX_DEF);
 
     expect(await screen.findByText(/Where it comes from: Plex collection/)).toBeInTheDocument();
@@ -431,11 +433,11 @@ describe("editing a list", () => {
   });
 
   it("sends only the name when only the name changed", async () => {
-    // `ListConfigPatch` is omitted-means-keep, and this form seeds ONCE from a
-    // `lists-configured` row the cache may have held for up to its 30s staleTime with focus
-    // refetching off. Sending `config` back unchanged is still a WRITE of a value read
-    // minutes ago, so a rename here silently reverted a collection another admin had
-    // repointed in the meantime (the `cached-value-drives-a-write` shape of #203/#204).
+    // `ListConfigPatch` treats an omitted field as "keep the stored value," and this form
+    // seeds ONCE from a `lists-configured` row the cache may have held for up to its 30s
+    // staleTime with focus refetching off. Sending `config` back unchanged is still a WRITE of
+    // a value read minutes ago, so a rename here could silently revert a collection someone
+    // else had repointed in the meantime.
     const user = userEvent.setup();
     renderModal(PLEX_DEF);
 
@@ -449,8 +451,8 @@ describe("editing a list", () => {
   });
 
   it("sends the config when a config field changed", async () => {
-    // The other half, and the reason this is a dirty check rather than "never send config":
-    // an edit to the collection has to reach the server.
+    // The other half of the same check: an edit to the collection has to reach the server, so
+    // this cannot be simplified to "never send config."
     const user = userEvent.setup();
     renderModal(PLEX_DEF);
 
@@ -467,8 +469,9 @@ describe("editing a list", () => {
   });
 
   it("tells the panel to rescan when a keep rule names the edited list", async () => {
-    // Editing a used list can move its membership or re-spell its rule, so a fate can change
-    // and the queue must re-score. The modal only signals it; the panel starts the scan.
+    // Editing a used list can move its membership or change what it matches, so an item's
+    // fate can change and the queue must re-score. The modal only signals this; the panel
+    // starts the scan.
     const user = userEvent.setup();
     apiMock.editList.mockResolvedValue({
       ...PLEX_DEF,
@@ -485,8 +488,9 @@ describe("editing a list", () => {
   });
 
   it("does not signal a rescan for a list no rule names", async () => {
-    // PLEX_DEF carries no policy_use, so editing it moves no fate: the panel must not scan the
-    // whole library. This is what keeps a plain add -- which also names no rule -- from scanning.
+    // PLEX_DEF carries no policy_use, so editing it changes no fate, and the panel must not
+    // scan the whole library. A plain add also names no rule and must not trigger a scan
+    // either.
     const user = userEvent.setup();
     const { onChanged } = renderModal(PLEX_DEF);
 
@@ -498,10 +502,10 @@ describe("editing a list", () => {
   });
 
   it("stops the name at the length the server refuses", async () => {
-    // The schema's `max_length` is checked before `_clean_name` runs, so its sentence
-    // ("That name is too long. Keep it under 100 characters.") could never fire and the
-    // operator met Pydantic's "String should have at most 100 characters" instead (rule 21).
-    // Reachable by paste, since nobody types 101 characters.
+    // The server's length check runs before its own plain-language "too long" message would
+    // apply, so a name over the limit would otherwise hit a raw validation error instead of
+    // plain language. The box's own maxLength must stop that before it can happen. Reachable
+    // by paste, since nobody types 101 characters.
     renderModal(PLEX_DEF);
 
     expect(await screen.findByLabelText("Name")).toHaveAttribute("maxLength", "100");

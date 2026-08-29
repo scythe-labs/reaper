@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The top-of-page safety banners. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* ---- banners ------------------------------------------------------------- */
+ * The top-of-page safety banners. See `../index.css` for how this file fits into the
+ * stylesheet's load order. */
 
 .banner {
   display: flex;
@@ -23,7 +22,7 @@
 }
 /* Soft-surface tones shared by the top-of-page banner and the Settings safety panel, so a
    color tweak lands in both instead of silently diverging. The banner sets its own text
-   color; the safety panel inherits. */
+   color. The safety panel inherits it. */
 .banner-safe,
 .safety-state.safe {
   background: var(--protect-soft);
@@ -50,11 +49,12 @@
 .banner-unknown {
   color: var(--text);
 }
-/* Recovery mode: deletion is held off, and the operator cannot clear it from the UI. The
-   shared amber, not a fourth tone -- `--unknown` is this stylesheet's one "attention, and
-   not the normal state" ink (rule 18), and the sentence carries the difference between not
-   being able to look and having deliberately opened a door. Green would be wrong for the
-   same reason it is wrong on `.banner-unknown`: this is a state to leave, not to rest in. */
+/* Recovery mode: deletion is held off, and the operator cannot clear it from the UI. It uses
+   the shared amber, not a fourth color: `--unknown` is this stylesheet's one color for
+   "needs attention, not the normal state". The banner text itself says whether the app
+   could not check, or the operator turned protection off on purpose. Green would be wrong
+   here for the same reason it is wrong on `.banner-unknown`: this state is meant to be
+   temporary. */
 .banner-recovery {
   background: var(--unknown-soft);
   border-color: color-mix(in srgb, var(--unknown) 45%, transparent);
@@ -63,8 +63,9 @@
   background: var(--unknown);
   color: var(--unknown);
 }
-/* The fallback tone when the safety regime can't be read at all (the health fetch failed).
-   Amber, like every other "we could not look" state -- it must never read as "safe". */
+/* The fallback tone for when the safety state can't be read at all (the health fetch
+   failed). It uses amber, like every other "could not check" state, so it never reads as
+   "safe". */
 .banner-unknown {
   background: var(--unknown-soft);
   border-color: color-mix(in srgb, var(--unknown) 45%, transparent);
@@ -72,6 +73,63 @@
 .banner-unknown .banner-dot {
   background: var(--unknown);
   color: var(--unknown);
+}
+
+/* On a phone the safety notice collapses to one line and expands on tap, so it stops eating
+   three lines at the top of every screen. SafetyBanner.tsx gates this markup to the narrow
+   layout; the chevron is the real toggle and the whole line is a tap target too. The state
+   lead is first in every message, so the regime still reads while collapsed. */
+.banner.collapsible {
+  width: 100%;
+  align-items: start;
+  cursor: pointer;
+}
+.banner.collapsible .banner-dot {
+  margin-top: 0.42em;
+}
+.banner-body {
+  flex: 1;
+  min-width: 0;
+}
+.banner-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+  /* The clamp gives the one-line ellipsis; the max-height is what animates, so the reveal is
+     a smooth grow rather than a snap. */
+  max-height: 1.5em;
+  transition: max-height 0.28s var(--ease);
+}
+.banner.collapsible.open .banner-text {
+  -webkit-line-clamp: 20;
+  max-height: 9em;
+}
+/* The link sits in the sentence's tail, past the one-line clamp, and clipped content stays
+   in the tab order: without this, keyboard focus lands on a control nobody can see. Hidden,
+   not clipped, drops it from the tab order until the banner is expanded. */
+.banner.collapsible:not(.open) .banner-text .link {
+  visibility: hidden;
+}
+.banner-chev {
+  flex: none;
+  margin-top: 0.15em;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  transition: transform 0.28s var(--ease);
+}
+.banner.collapsible.open .banner-chev {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .banner-text,
+  .banner-chev {
+    transition: none;
+  }
 }
 
 /* The "kept to be safe" match notice: the shared amber tone, with the lead in the amber ink
@@ -98,8 +156,8 @@
   color: var(--muted);
   font-size: var(--text-sm);
 }
-/* Each row's two pills stay together when the row wraps -- "Plex 2" and "Tautulli 2" name
-   the same Plex entry, and splitting them across lines pairs each with the wrong number. */
+/* Each row's two pills stay together when the row wraps. "Plex 2" and "Tautulli 2" name the
+   same Plex entry, and splitting them across lines would pair each with the wrong number. */
 .candidate-group {
   display: inline-flex;
   align-items: center;

@@ -1,17 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Closing the Plex sign-in window, without letting plex.tv reach the page that takes
-the operator's Reaper password.
+"""Closes the Plex sign-in window without letting plex.tv reach Reaper's sign-in page.
 
-The window is opened with ``noopener``, so plex.tv holds no handle on Reaper's sign-in
-page -- and Reaper holds no handle on the window either, because that is the same
-relationship. It was read as a trade for a while: keep the operator safe OR close the
-window (#372, and the comment this replaced in ``Login.tsx``). It is not one. A
-script-opened window may close *itself* with no opener at all, so the close moves into
-the window: plex.tv is told to forward it to Reaper's own page, and that page closes it.
+The window opens with ``noopener``, so plex.tv holds no handle on Reaper's page, and
+Reaper holds no handle on the window either. Because neither side holds a handle, closing
+the window from outside is not possible. A script-opened window can still close itself, so
+the close happens from inside: plex.tv forwards the window to Reaper's own page, and that
+page closes itself.
 
-What is pinned here is the half a Python test can see -- that both start routes put the
-browser's own address into the URL handed to plex.tv. The page's own ``window.close()``
-is pinned by ``test_repo_hygiene``, which also checks the two agree on the path.
+This file pins the half a Python test can see: both start routes put the browser's own
+address into the URL handed to plex.tv. ``test_repo_hygiene`` pins the page's own
+``window.close()`` call and checks that the two agree on the path.
 """
 
 from __future__ import annotations
@@ -42,8 +40,8 @@ CSRF = {"X-Reaper-CSRF": "1"}
 def _forward_url(auth_url: str) -> str | None:
     """The ``forwardUrl`` plex.tv is being handed, or None if there is none.
 
-    plex.tv's auth page takes its parameters in the FRAGMENT, so this parses the part
-    after ``#``: reading the query would find nothing and quietly pass.
+    plex.tv's auth page takes its parameters in the fragment, after ``#``, not in the
+    query string. Reading the query string instead would find nothing and quietly pass.
     """
     fragment = urlparse(auth_url).fragment.lstrip("?")
     values = parse_qs(fragment).get("forwardUrl")
@@ -53,24 +51,26 @@ def _forward_url(auth_url: str) -> str | None:
 class TestTheOriginTheBrowserNames:
     """``PlexStartIn`` takes an origin and appends the path itself.
 
-    The browser has to name the address because the server cannot: Vite's dev proxy and
-    any reverse proxy rewrite ``Host``, so a URL built from the request forwards the
-    window to somewhere the operator is not. Taking an origin rather than a URL is what
-    keeps a caller able to name a host but never a target.
+    The browser has to name the address because the server cannot. Vite's dev proxy and
+    any reverse proxy rewrite ``Host``, so a URL built from the request would forward the
+    window to somewhere the operator is not. Taking an origin rather than a full URL lets
+    a caller name a host, but never a target path.
     """
 
     def test_an_origin_becomes_the_forward_address(self) -> None:
         assert PlexStartIn(forward_origin=ORIGIN).forward_url() == ORIGIN + PLEX_FORWARD_PATH
 
     def test_no_origin_forwards_nowhere(self) -> None:
-        """An older cached SPA calls without one. The sign-in still works; its window
-        just stays open, exactly as before this existed."""
+        """An older cached SPA calls without an origin, and the sign-in still works.
+
+        Its window just stays open instead of closing itself.
+        """
         assert PlexStartIn().forward_url() is None
 
     @pytest.mark.parametrize(
         "value",
         [
-            "https://reaper.example.net/somewhere",  # a path: this names a target
+            "https://reaper.example.net/somewhere",  # a path also names a target
             "https://reaper.example.net?next=x",  # so does a query
             "https://reaper.example.net#frag",
             "javascript:alert(1)",  # not a browser origin at all
@@ -98,8 +98,8 @@ def pins(httpx2_mock: respx.Router) -> respx.Route:
 
 
 class TestBothStartRoutesForwardTheWindowHome:
-    """Sign-in and the Settings re-link are the same flow twice, and the window is left
-    open by whichever one does not carry the address (rule 72)."""
+    """Sign-in and the Settings re-link are the same flow twice, and either one leaves the
+    window open if it skips the browser's address."""
 
     def test_sign_in_hands_plex_the_browsers_address(
         self, client: TestClient, pins: respx.Route
@@ -121,15 +121,17 @@ class TestBothStartRoutesForwardTheWindowHome:
     def test_a_caller_that_names_no_origin_still_signs_in(
         self, client: TestClient, pins: respx.Route
     ) -> None:
-        """The window not closing must never be the reason a sign-in cannot start, so the
-        body stays optional: a cached SPA from before this change sends none at all."""
+        """A sign-in must still work even if the window never closes itself.
+
+        The origin field stays optional because an older cached SPA can send none at all.
+        """
         response = client.post("/api/auth/plex/start", headers=CSRF)
 
         assert response.status_code == 200, response.text
         assert _forward_url(response.json()["auth_url"]) is None
-        # The other half of this route's response body. Nothing else reads it back over
-        # HTTP, so renaming the field would break `api.ts`'s poll call with the backend
-        # suite green.
+        # The other half of this route's response body. Only `api.ts`'s poll call reads
+        # `pin_id`, so renaming the field would break the frontend while the backend
+        # suite stayed green.
         assert response.json()["pin_id"] == 77
 
     def test_an_origin_naming_a_target_is_refused(
@@ -155,16 +157,16 @@ def _stored_purpose(settings: Settings) -> str:
 
 
 class TestEachStartRouteClaimsItsOwnPurpose:
-    """The other property the two start routes hold apart, on the same rule 72 footing.
+    """The other property the two start routes must keep separate.
 
-    ``purpose`` decides which poller can spend the row, and the sign-in poller is reached
-    from an open route where the link one is not. It used to be a literal inside each
-    flow's own function; both functions are now one ``start_pin`` and the literal moved
-    out to these two calls, one keyword apart. So the value is pinned where it is now
-    written, at the routes, and not only at the pollers that read it.
+    ``purpose`` decides which poller can consume the pending-login row. The sign-in
+    poller is reached from an open route, and the settings-relink poller is not, so a
+    wrong purpose would let the wrong poller claim a row. Both routes share one
+    ``start_pin`` function and pass ``purpose`` as an argument, so this test pins the
+    value at the call site, not only at the poller that reads it.
 
-    Both routes are swept, because a shared helper hardcoding either value is green
-    against the route that wanted that value (rule 141).
+    Both routes are checked, because a shared helper hardcoding one value would still
+    pass a test that only checked the route that wanted that value.
     """
 
     def test_signing_in_writes_a_login_pin(

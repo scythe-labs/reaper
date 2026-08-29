@@ -1,10 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The Settings shell and its panels. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* ==========================================================================
-   Settings
-   ========================================================================== */
+ * The Settings shell and its panels. See `../index.css` for how this file fits into the
+ * stylesheet's load order. */
 
 .settings {
   margin-top: var(--space-4xl);
@@ -35,11 +32,11 @@
   border-bottom-color: var(--accent);
   font-weight: var(--weight-semi);
 }
-/* The rail wraps, so it never overflows -- but it pays for its padding in LINES, and each line
-   is height `.policy-section`'s scroll-margin has to clear on a jump. This trim holds it to two
-   from 330px up, which is where the labels can still pair; below that they cannot pair at any
-   padding, so the third line is genuine and the scroll-margin step at 328px is what answers it
-   (see the note beside `.policy-section`). */
+/* The rail wraps, so it never overflows, but it pays for its padding in lines, and each line
+   is height `.policy-section`'s scroll-margin has to clear on a jump. This trim holds it to
+   two lines from 330px up, which is where the labels can still pair. Below that they cannot
+   pair at any padding, so the third line is genuine, and the scroll-margin step at 328px is
+   what answers it (see the note beside `.policy-section`). */
 @media (max-width: 400px) {
   .settings-tab {
     padding-inline-start: 0.45rem;
@@ -47,27 +44,26 @@
   }
 }
 
-/* The settings rail's narrow-screen form: one picker instead of nine wrapped tabs. Measured
-   with the nine shipped labels, `Backup & Restore` included: the rail holds one line down to
-   880px, takes a second from 860px, and a third from 470px -- 131px of a short screen
-   restating where you already are. (It drops back to two lines under 400px, where the padding
-   trim above buys a line back. Re-measure these if a label is renamed: the longest one sets
-   them, which is why renaming that tab moved the first threshold 50px.)
-   `Settings` swaps the two in JS on NARROW_SCREEN_QUERY rather than showing both and hiding
-   one, so only one of them is ever in the accessibility tree; there is deliberately no CSS
-   media query here to keep in step with that constant.
+/* The settings rail's narrow-screen form: one picker instead of nine wrapped tabs. With the
+   nine shipped labels, the wrapped rail can grow to three lines on a short screen, which
+   restates where you already are. Re-measure this if a label is renamed, since the longest
+   label sets where the rail wraps.
+
+   `Settings` swaps the picker and the rail in JS on NARROW_SCREEN_QUERY, instead of showing
+   both and hiding one, so only one of them is ever in the accessibility tree. There is
+   deliberately no CSS media query here, to keep this in step with that constant.
+
    A native <select> is the right control: nine sections is an open list, not a binary hidden
-   in a dropdown (rule 41), and the phone draws the list itself, so nothing has to be measured
-   against the viewport edge (rule 138). The POLICY rail shares `.settings-nav` /
-   `.settings-tab` and is deliberately NOT changed with it (rule 72): four labels rather than
-   nine, and it reports which section you have scrolled to, which a closed dropdown cannot
-   show. */
+   in a dropdown, and the phone draws the list itself, so nothing has to be measured against
+   the viewport edge. The policy rail shares `.settings-nav` / `.settings-tab` and is
+   deliberately not changed the same way: it has four labels rather than nine, and it reports
+   which section you have scrolled to, which a closed dropdown cannot show. */
 .settings-picker {
   display: block;
   margin-bottom: var(--space-4xl);
 }
-/* The control standard, unforked -- only the width and the weight are its own. The weight is
-   the `.settings-tab.active` treatment carried over: this names the section you are on. */
+/* The control standard, unforked: only the width and the weight are its own. The weight is
+   the `.settings-tab.active` treatment carried over, to name the section you are on. */
 .settings-picker select {
   width: 100%;
   padding: var(--control-pad);
@@ -83,7 +79,7 @@
   outline-offset: 1px;
 }
 
-/* Settings panels fill the page frame like every other page; the row grid keeps labels
+/* Settings panels fill the page frame like every other page. The row grid keeps labels
    readable on the left and controls on the right however wide the card runs. */
 .panel {
   max-width: none;
@@ -238,7 +234,7 @@ button.danger:hover:not(:disabled) {
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   /* A failed connection test quotes the upstream error, which usually contains the URL it tried.
-     .instance-url on the same card already wraps; this is its sibling line (rule 139, rule 72). */
+     .instance-url on the same card already wraps. This is its sibling line, so it wraps too. */
   overflow-wrap: anywhere;
 }
 .test-badge.ok {
@@ -248,7 +244,6 @@ button.danger:hover:not(:disabled) {
   color: var(--condemn);
 }
 
-/* the service add/edit modal */
 .service-form {
   display: flex;
   flex-direction: column;
@@ -340,14 +335,15 @@ button.danger:hover:not(:disabled) {
 }
 
 /* The HD/4K library map inside the service modal: each root folder paired with the Plex
-   library it lands in. One grid with a shared folder column and a library select per row
-   (rule 44). The select rides the .field-sm control standard already; only its width and the
-   suggested pill are new. */
+   library it lands in. One grid with a shared folder column and a library select per row.
+   The select rides the .field-sm control standard already. Only its width and the suggested
+   pill are new. */
 .plex-map-grid {
   display: grid;
-  /* The folder column sizes to its path, but its MIN is 0, not max-content: a long root path
-     must be able to shrink and wrap (.pl-root is overflow-wrap: anywhere) instead of forcing the
-     grid wider than the modal, which on touch turned the whole panel into a sideways pan. */
+  /* The folder column sizes to its path, but its minimum is 0, not max-content: a long root
+     path must be able to shrink and wrap (.pl-root is overflow-wrap: anywhere) instead of
+     forcing the grid wider than the modal, which on touch turns the whole panel into a
+     sideways pan. */
   grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
   gap: 0.5rem 0.8rem;
   align-items: center;
@@ -379,11 +375,12 @@ button.danger:hover:not(:disabled) {
   color: var(--muted);
 }
 /* The chosen library or connection, restated as text the box cannot clip. A native <select>
-   trims its selected option to its own width and no property reaches inside it, so this is the
-   only surface in this grid where rule 139's `overflow-wrap` can actually apply -- which is why
-   the name is said here rather than merely given a wider control. `flex-basis: 100%` puts it on
-   its own line under the picker; quiet, because it is a second copy of something already on
-   screen, and the row it rescues is the one where that copy is the only legible one. */
+   trims its selected option to its own width, and no property reaches inside it to fix that,
+   so this is the only surface in this grid where `overflow-wrap` can actually apply. That is
+   why the name is said here, rather than merely given a wider control. `flex-basis: 100%`
+   puts it on its own line under the picker. It stays quiet, because it is a second copy of
+   something already on screen, and the row it rescues is the one where that copy is the only
+   legible one. */
 .pl-echo {
   flex-basis: 100%;
   font-size: var(--text-sm);
@@ -402,9 +399,9 @@ button.danger:hover:not(:disabled) {
   border-radius: var(--radius-pill);
   white-space: nowrap;
 }
-/* The muted markers on a Seerr service row -- what it asks for ("TV"/"Movies") and, where the
-   portal draws one, "4K" -- so two services sharing a name read apart. Both wear this one pill;
-   a row can show either, or both. */
+/* The muted markers on a Seerr service row: what it asks for ("TV"/"Movies") and, where the
+   portal draws one, "4K", so two services sharing a name read apart. Both wear this one pill.
+   A row can show either, or both. */
 .pl-tag {
   margin-inline-start: 0.4rem;
   font-size: var(--text-2xs);
@@ -415,22 +412,21 @@ button.danger:hover:not(:disabled) {
   border-radius: var(--radius-pill);
   vertical-align: middle;
 }
-/* Below the width the modal stops getting its full 560px, the two columns above stop fitting:
-   the folder path takes what it needs and the picker takes the remainder, and a native <select>
-   cannot wrap, so the remainder is what the operator gets to read. Measured on a 390px phone,
-   the shipped two-column form leaves the picker 41.4px -- its own border, padding and arrow, and
-   not one character of the chosen library -- so two libraries sharing a prefix render as the
-   same empty control on the screen that decides which folder Reaper matches to which library
-   (#250). One column gives the picker the whole row (220.1px measured, against the 186.2px that
-   name needs). Rule 139 says wrap rather than truncate and has no reach inside a <select>, so
-   this does not make a long enough title safe; it takes the demonstrated collision off every
-   width a phone actually has.
+/* Below this width, the modal stops getting its full 560px, so the two columns above stop
+   fitting: the folder path takes what it needs and the picker takes the remainder, and a
+   native <select> cannot wrap, so the remainder is what the operator gets to read. On a
+   390px phone, the shipped two-column form can leave the picker as little as 41.4px, just
+   its own border, padding, and arrow, with not one character of the chosen library visible.
+   That means two libraries sharing a prefix can render as the same empty control, on the
+   screen that decides which folder Reaper matches to which library. Wrapping instead of
+   truncating has no reach inside a <select>, so it does not make a long enough title safe
+   here. Stacking the two columns takes this collision off every width a phone actually has.
 
-   640px is the breakpoint this file already collapses its two-column forms at, and for the
-   reason stated there: on a phone a two-column form is too cramped to read a value that came
-   from somewhere else. Stacked, the path has to stay glued to its OWN picker, or the pairing
-   the grid exists to state is the thing that goes ambiguous -- hence the tight row gap and the
-   space moved between pairs instead. */
+   640px is the breakpoint this file already collapses its two-column forms at, for the same
+   reason: on a phone, a two-column form is too cramped to read a value that came from
+   somewhere else. Stacked, the path has to stay glued to its own picker, or the pairing the
+   grid exists to state goes ambiguous. That is why the row gap is tight and the space moves
+   between pairs instead. */
 @media (max-width: 640px) {
   .plex-map-grid {
     grid-template-columns: minmax(0, 1fr);
@@ -441,10 +437,9 @@ button.danger:hover:not(:disabled) {
   }
 }
 
-/* plex */
-/* The Jobs page: one row per job inside a .set-rows card. Left is what it is, its stats and
-   schedule; right is an Edit column and a run column, both fixed width so they line up down
-   the list whatever a row's labels are (rule 51: the columns hold still). */
+/* The Jobs page: one row per job inside a .set-rows card. Left holds what it is, its stats
+   and schedule. Right holds an Edit column and a run column, both fixed width so they line up
+   down the list whatever a row's labels are: the columns hold still. */
 .jobrow {
   display: flex;
   align-items: flex-start;
@@ -462,10 +457,10 @@ button.danger:hover:not(:disabled) {
   font-weight: var(--weight-semi);
   font-size: var(--text-base);
 }
-/* Both lines carry text nobody in this app typed -- an *arr instance's display name and its
+/* Both lines carry text nobody in this app typed: an *arr instance's display name and its
    own refusal on `.jobrow-desc`, a Plex collection and library name or a pasted IMDb list id
-   on `.jobrow-sched` (Settings, Lists `sourceHint`) -- so both get a break opportunity rather
-   than painting through the box holding them (rule 139). `max-width` is not one: a single
+   on `.jobrow-sched` (Settings, Lists `sourceHint`). Both get a break opportunity, instead of
+   painting through the box holding them. `max-width` alone would not be enough: a single
    unbroken token runs straight past 70ch, and `.jobrow-main { min-width: 0 }` lets the flex
    item get narrower than its content besides. Wrap, never truncate: these name the thing to
    go and fix, and two instance names can differ only in their tail. */
@@ -499,8 +494,9 @@ button.danger:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 0.45rem;
-  /* The scan's live line carries status.detail, which is the library or path it is reading right
-     now (ScanBar's runLabel) -- a file system string, so rule 139 applies. */
+  /* The scan's live line carries status.detail, which is the library or path it is reading
+     right now (ScanBar's runLabel), a file system string, so it needs the same break
+     opportunity. */
   overflow-wrap: anywhere;
 }
 .jobrow-link {
@@ -531,7 +527,7 @@ button.danger:hover:not(:disabled) {
 /* On a phone the two fixed 8rem action buttons eat the width and crush the text column to
    nothing, wrapping the title and description one word per line. Below phone width the row
    stacks: text full width, then Edit and Run as one equal-split button row. The desktop
-   columns (rule 51: they hold still) are untouched above the breakpoint. */
+   columns, which hold still, are untouched above the breakpoint. */
 @media (max-width: 640px) {
   .jobrow {
     flex-direction: column;
@@ -548,19 +544,18 @@ button.danger:hover:not(:disabled) {
   }
   /* An empty slot on a phone would hold half the row's width for nothing, leaving an
      orphaned row's one button squeezed into the other half while every other row's two fill
-     it. The desktop columns keep the reserved slot; here there is no column to hold. */
+     it. The desktop columns keep the reserved slot. Here there is no column to hold. */
   .jobrow-actions .slot-edit:empty {
     display: none;
   }
 }
 
 /* The one status line every job wears (JobStatus.tsx), used by the scan row, the Leaving
-   Soon row, and every upkeep job. Every state -- the resting "Last run ..." line, the
-   running spinner, and the manual-run confirmation -- lives in this ONE fixed-height slot,
-   vertically centered, so swapping between them never changes the slot's height or margin
-   and nothing below it moves. The inner element is keyed by state in the TSX, so React
-   remounts it on a change and it fades in on OPACITY ALONE -- no transform, no height
-   change, no reflow. */
+   Soon row, and every upkeep job. Every state, the resting "Last run ..." line, the running
+   spinner, and the manual-run confirmation, lives in this one fixed-height slot, vertically
+   centered, so swapping between them never changes the slot's height or margin, and nothing
+   below it moves. The inner element is keyed by state in the TSX, so React remounts it on a
+   change, and it fades in on opacity alone: no transform, no height change, no reflow. */
 .jobrow-status {
   margin: 0.42rem 0 0;
   min-height: 1.45rem;
@@ -591,7 +586,7 @@ button.danger:hover:not(:disabled) {
   font-variant-numeric: tabular-nums;
 }
 /* The outcome dot, in Reaper's verdict colors: a success is green, a failure red, and a job
-   that has never run is a hollow ring -- "nothing to report" reads differently from "ran". */
+   that has never run is a hollow ring. "Nothing to report" reads differently from "ran". */
 .last-dot {
   width: 7px;
   height: 7px;
@@ -625,8 +620,8 @@ button.danger:hover:not(:disabled) {
 .jobrow-last.is-fail .last-exact {
   color: color-mix(in srgb, var(--condemn) 78%, var(--muted));
 }
-/* The manual-run confirmation. The chip carries ONLY horizontal padding, and its border is
-   an inset box-shadow, so it is exactly as tall as the plain text line -- the slot never
+/* The manual-run confirmation. The chip carries only horizontal padding, and its border is
+   an inset box-shadow, so it is exactly as tall as the plain text line. The slot never
    grows when the chip appears. */
 .jobrow-last.is-flash {
   color: var(--protect);
@@ -679,14 +674,15 @@ button.danger:hover:not(:disabled) {
 }
 .scan-freshness {
   font-size: var(--text-md);
-  margin: var(--space-lg) 0 0;
+  /* A bottom margin, because the h2 under this has none: the queue's age was sitting on the
+     "Review queue" heading with nothing between them. */
+  margin: var(--space-lg) 0 var(--space-xl);
 }
 .freshness-warn {
   color: var(--unknown);
   font-weight: var(--weight-semi);
 }
 
-/* safety */
 .safety-state {
   display: flex;
   align-items: center;
@@ -697,7 +693,7 @@ button.danger:hover:not(:disabled) {
   margin: 0.75rem 0 1.25rem;
 }
 /* The .safe / .armed tones (soft fill + color-mix border + dot color) are shared with the
-   top-of-page banner near the top of this file; only the panel-specific spacing lives here. */
+   top-of-page banner in 03-banners.css. Only the panel-specific spacing lives here. */
 .safety-state p {
   margin: 0.2rem 0 0;
   font-size: var(--text-md);

@@ -1,30 +1,28 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// A cross-page jump aims one view, and the aim dies when that view goes off screen.
+// A cross-page jump aims one view, and the aim must be dropped once that view goes off screen.
 //
 // `App` holds where the app is pointed as one `Focus`, acted on once per nonce by whichever
-// view it names. The load-bearing half is the DROP: a Back press restores `view` through the
+// view it names. The load-bearing half is the drop: a Back press restores `view` through the
 // raw setter and runs no handler, and the view unmounts on the way out, taking the ref that
-// counts the nonce with it. So an aim left behind is replayed in full the next time that view
-// mounts -- which is how an operator who backed out of a Scales jump landed on a one-title
-// Review list wearing a search chip they never typed.
+// counts the nonce with it. So an aim left behind would replay in full the next time that view
+// mounts, landing an operator who backed out of a Scales jump on a one-title Review list
+// wearing a search chip they never typed.
 //
 // The Review arm of that is pinned in `App.test.tsx`, end to end through the real queue. This
-// file is Policy, which had nothing: `App` used to hold three parallel focuses and drop them by
-// name, and the line doing it had already been wrong once, dropping only the one that had been
-// shown to replay.
+// file is Policy.
 //
-// Settings was the third and is not aimed any more: `App` owns its open panel so the address bar
-// can name it (navUrl.ts), and a panel you can come back to is a place rather than a one-shot
-// aim. What that walk proved about it now belongs to `AppUrl.test.tsx`, where the panel is read
-// off the URL. The route is driven the same way here:
+// Settings is not aimed at all: `App` owns its open panel so the address bar can name it
+// (navUrl.ts), and a panel you can come back to is a place rather than a one-shot aim. What
+// that walk proved about it now belongs to `AppUrl.test.tsx`, where the panel is read off the
+// URL. The route is driven the same way here:
 //
 //   jump in, leave by the section nav, press Back, land on the page unaimed
 //
-// **Leave by the NAV, and come back by BACK.** Both halves are load-bearing and each was got
-// wrong once here. Leaving by another JUMP proves nothing: a jump writes its own aim over the
-// old one, so the page reads unaimed whether or not anything drops it. And returning by the nav
-// proves nothing either, because the nav is the one route out that runs a handler. Only Back
-// restores `view` through the raw setter, which is the shape a leftover aim replays through.
+// **Leave by the nav, and come back by Back.** Both halves are load-bearing. Leaving by
+// another jump proves nothing: a jump writes its own aim over the old one, so the page reads
+// unaimed whether or not anything drops it. And returning by the nav proves nothing either,
+// because the nav is the one route out that runs a handler. Only Back restores `view` through
+// the raw setter, which is the shape a leftover aim replays through.
 import { act, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -103,9 +101,9 @@ beforeEach(() => {
   apiMock.update.mockResolvedValue(DEFAULT_UPDATE);
   apiMock.reapBreakdown.mockResolvedValue({ has_snapshot: true, will_reap: 0, condemned_by: [] });
   // Nothing running, and the queue's two filter suggesters have nothing to suggest. These three
-  // are rule 135's documented blind spot rather than its gate: all three reads go through an
-  // arrow or return a bare value, so an unanswered one renders the tree's empty branch and says
-  // so only on the console. Answered here, or this file ships noise it exists to notice.
+  // reads go through an arrow or return a bare value, so a mock gap here would render the
+  // tree's empty branch and say so only on the console. Answered here, or this file ships noise
+  // it exists to notice.
   apiMock.reapStatus.mockResolvedValue({ running: false });
   apiMock.vocabularyValues.mockImplementation((field: string) =>
     Promise.resolve({ field, values: [] }),
@@ -118,11 +116,11 @@ beforeEach(() => {
 // the ones it means to send. Drain them while nothing is listening, then clear the marker the
 // provider's mount-time reconcile keys on, the same reset `App.test.tsx` and `backnav.test.tsx`
 // do between their tests. There is one test below and it ends with two layers unpopped, so this
-// is here for the second one (rule 72, and the file's own shape invites it).
+// is here for the second one.
 beforeEach(async () => {
   // The path is reset with it: `App` reads its section from it at mount (navUrl.ts), and those
-  // deferred steps land jsdom on whichever entry's URL, which is regularly another section's
-  // (rule 72 -- `App.test.tsx` carries the same reset for the same reason).
+  // deferred steps land jsdom on whichever entry's URL, which is regularly another section's.
+  // `App.test.tsx` carries the same reset for the same reason.
   for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0));
   history.replaceState(null, "", "/");
 });

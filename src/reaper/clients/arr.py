@@ -1,22 +1,22 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Sonarr and Radarr.
 
-They are close cousins but differ in exactly the places that delete files, and
-each **silently ignores the other's parameter and returns 200**. Getting this
-wrong does not raise -- it just fails to add the exclusion, and the *arr
-re-downloads what you just deleted:
+They are close cousins, but they differ in exactly the places that delete files.
+Each one silently ignores the other's parameter and still returns 200. Getting this
+wrong does not raise an error. It just fails to add the exclusion, and the *arr
+re-downloads the file you just deleted:
 
     Radarr   DELETE /api/v3/movie/{id}?deleteFiles=&addImportExclusion=
              exclusions at GET/POST /api/v3/exclusions
     Sonarr   DELETE /api/v3/series/{id}?deleteFiles=&addImportListExclusion=
              exclusions at GET/POST /api/v3/importlistexclusion
 
-Both are confirmed from the projects' own OpenAPI specs. The names live in the
-subclasses so a call site cannot pick the wrong one, and after any
-delete-with-exclusion we re-read the exclusion list and assert the id is present
--- because a 200 here means nothing.
+These names come from the projects' own OpenAPI specs. Each subclass holds its own
+spelling, so a call site cannot pick the wrong one. After any delete-with-exclusion,
+this client re-reads the exclusion list and confirms the id is present, because a
+200 response does not prove the exclusion was added.
 
-The API path prefix is discovered from ``system/status``, never hardcoded:
+The API path prefix comes from ``system/status`` rather than a hardcoded value:
 Sonarr's v5-develop branch ships a real ``/api/v5`` with a structurally different
 SeriesResource.
 """
@@ -33,18 +33,17 @@ class ArrClient(BaseClient):
     """Shared Sonarr/Radarr behavior.
 
     Every read below goes through ``get_list`` or ``get_dict``, which raise on a body of
-    the wrong shape rather than coercing it. That guard was written out eleven times here
-    and the reasoning six times; ``get_list``'s docstring now holds it once.
+    the wrong shape instead of coercing it to something empty. See ``get_list``'s
+    docstring for why.
     """
 
     service: ClassVar[str] = "arr"
     default_prefix: ClassVar[str] = "/api/v3"
 
-    # Declared, never assigned. The annotation gives ``exclusions`` below a type without
-    # giving the base class a value, so no call can send the wrong *arr's spelling: the
-    # subclass answers with its own, and a bare ``ArrClient`` raises ``AttributeError``
-    # rather than picking one. Reaching the method on the base class is possible and is
-    # not what this prevents.
+    # Declared here but never assigned a value. This gives ``exclusions`` below a type
+    # without picking a default: each subclass assigns its own spelling, so a bare
+    # ``ArrClient`` can still call the method, but it raises ``AttributeError`` instead
+    # of silently using the wrong *arr's spelling.
     exclusion_param: ClassVar[str]
     exclusion_path: ClassVar[str]
 
@@ -66,43 +65,45 @@ class ArrClient(BaseClient):
         self.prefix = api_path_prefix or self.default_prefix
 
     async def system_status(self) -> dict[str, Any]:
-        """Connectivity + version check.
+        """Check connectivity and read the version.
 
-        Reaching it proves the URL, the key and the API path all work, and it reports the
-        version Reaper shows beside the instance. It does NOT gate the API path: the path
-        comes from the instance's stored ``api_path_prefix``, which nothing derives from
-        this response (rule 24 -- the comment used to claim a gate that is not here).
+        A successful call proves the URL, the key and the API path all work, and it
+        returns the version Reaper shows beside the instance. This does not set the API
+        path: that comes from the instance's stored ``api_path_prefix``, and nothing
+        derives it from this response.
         """
         return await self.get_dict(f"{self.prefix}/system/status")
 
     async def tags(self) -> list[dict[str, Any]]:
-        """Tags. A `reaper-keep` tag is a zero-integration whitelist: the owner
-        applies it in a UI they already use.
+        """Tags. A ``reaper-keep`` tag works as a keep-list with no extra setup: the
+        owner applies it in the Sonarr or Radarr UI they already use.
 
-        The shape guard is what stops a keep-tag sync reading an empty whitelist out of
-        an error page and atomically replacing a populated one with nothing.
+        Raising on a malformed response, rather than returning an empty list, stops a
+        keep-tag sync from reading an error page as an empty keep-list and wiping out a
+        real one.
         """
         return await self.get_list(f"{self.prefix}/tag")
 
     async def root_folders(self) -> list[dict[str, Any]]:
-        """Root folders, including `accessible`.
+        """Root folders, including ``accessible``.
 
-        Two consumers, and neither is a scan-time preflight:
+        Two things read this:
 
-        * `identity.root_folder_paths` takes the `path` of each, so the folder
-          corroborator can measure a path below the instance's real root instead of
-          guessing where a container mount ends. It ignores `accessible`.
-        * `executor._mount_is_up` reads `accessible` before the post-reap trash purge,
-          because an unmounted volume makes media look vanished and a purge would then
-          destroy library records.
+        * ``identity.root_folder_paths`` uses each folder's ``path`` so the folder
+          corroborator can measure a path below the instance's real root, instead of
+          guessing where a container mount ends. It ignores ``accessible``.
+        * ``executor._mount_is_up`` reads ``accessible`` before the post-reap trash
+          purge. An unmounted volume makes media look like it vanished, and a purge
+          would then destroy library records.
         """
         return await self.get_list(f"{self.prefix}/rootfolder")
 
     async def exclusions(self) -> list[dict[str, Any]]:
         """The import exclusions this *arr holds, at its own spelling of the path.
 
-        Read after every delete-with-exclusion: the *arr answers 200 whether or not the
-        exclusion landed, so the executor re-reads this list and asserts the id is in it.
+        Read after every delete-with-exclusion, because the *arr answers 200 whether or
+        not the exclusion landed. The executor re-reads this list and confirms the id is
+        in it.
         """
         return await self.get_list(f"{self.prefix}{self.exclusion_path}")
 
@@ -110,7 +111,8 @@ class ArrClient(BaseClient):
 class SonarrClient(ArrClient):
     service: ClassVar[str] = "sonarr"
 
-    # Sonarr's spelling. Radarr's differs, and each ignores the other's silently.
+    # Sonarr's own spelling. Radarr uses a different one, and each ignores the other's
+    # parameter silently.
     exclusion_param: ClassVar[str] = "addImportListExclusion"
     exclusion_path: ClassVar[str] = "/importlistexclusion"
 
@@ -121,16 +123,16 @@ class SonarrClient(ArrClient):
         return await self.get_dict(f"{self.prefix}/series/{series_id}")
 
     async def episode_files(self, series_id: int) -> list[dict[str, Any]]:
-        """Episode files for a series -- the unit of deletion for season pruning.
+        """Episode files for a series. This is the unit of deletion for season pruning.
 
-        There is no "delete season" endpoint. Pruning is:
+        There is no "delete season" endpoint. Pruning a season is three steps:
             POST /seasonpass  (unmonitor)
-              -> GET /series/{id}, ASSERT seasons[n].monitored is False
+              -> GET /series/{id}, confirm seasons[n].monitored is False
               -> DELETE /episodefile/bulk
 
-        The order is not arbitrary. The two half-applied states are asymmetric:
-        "unmonitored, files intact" is benign and resumable, while "files gone,
-        still monitored" makes the *arr re-download everything we just removed.
+        The order matters. The two half-applied states are not equally safe:
+        "unmonitored, files intact" is safe and can resume later, while "files gone,
+        still monitored" makes Sonarr re-download everything just removed.
         """
         return await self.get_list(f"{self.prefix}/episodefile", params={"seriesId": series_id})
 
@@ -138,13 +140,13 @@ class SonarrClient(ArrClient):
         return await self.get_list(f"{self.prefix}/episode", params={"seriesId": series_id})
 
     async def unmonitor_season(self, series_id: int, season_number: int) -> None:
-        """Stop monitoring one season, via the season-pass edit. Reversible.
+        """Stop monitoring one season, through the season-pass edit. Reversible.
 
-        This is the FIRST step of a season prune and the safe one: unmonitoring touches
-        no files. It must be *verified* (re-read the series, assert the season is no longer
-        monitored) before any file is deleted, because Sonarr returns 200 for a season-pass
-        edit whether or not it took -- and 'files gone, still monitored' makes Sonarr
-        re-download everything just removed.
+        This is the first, safe step of a season prune: unmonitoring touches no files.
+        It must be verified, by re-reading the series and confirming the season is no
+        longer monitored, before any file is deleted. Sonarr returns 200 for a
+        season-pass edit whether or not it actually took effect, and "files gone, still
+        monitored" makes Sonarr re-download everything just removed.
         """
         await self._mutate(
             "POST",
@@ -163,11 +165,11 @@ class SonarrClient(ArrClient):
     async def delete_episode_files(self, episode_file_ids: list[int]) -> None:
         """Delete a specific set of episode files in one bulk call.
 
-        The LAST step of a season prune, reached only after the unmonitor is verified. The
-        ids are resolved live from :meth:`episode_files` immediately before this call --
-        never frozen at plan time -- so a file Sonarr grabbed between plan and run is
-        included and a file already gone is not re-requested. An empty list is a no-op:
-        there is nothing to delete, and sending an empty bulk delete is meaningless.
+        This is the last step of a season prune, reached only after the unmonitor is
+        verified. The ids come from a live call to :meth:`episode_files` made right
+        before this one, never from ids frozen at plan time, so a file Sonarr added
+        between plan and run is included, and a file already gone is not requested
+        again. An empty list is a no-op, because there is nothing to delete.
         """
         if not episode_file_ids:
             return
@@ -181,19 +183,21 @@ class SonarrClient(ArrClient):
 class RadarrClient(ArrClient):
     service: ClassVar[str] = "radarr"
 
-    # Radarr's spelling. Both differ from Sonarr's.
+    # Radarr's own spelling. Both fields differ from Sonarr's.
     exclusion_param: ClassVar[str] = "addImportExclusion"
     exclusion_path: ClassVar[str] = "/exclusions"
 
     async def movies(self) -> list[dict[str, Any]]:
-        """Every movie, with `ratings` already attached.
+        """Every movie, with ``ratings`` already attached.
 
-        Radarr returns a real ratings object -- imdb, tmdb, metacritic,
-        rottenTomatoes, trakt -- so movie ratings cost us no extra call and no
-        extra API key. (Sonarr does not: its ratings are flat TVDB.)
+        Radarr returns a full ratings object (imdb, tmdb, metacritic, rottenTomatoes,
+        trakt), so movie ratings cost no extra call and no extra API key. Sonarr does
+        not: its ratings are flat TVDB only.
 
-        This is the read the shape guard was written for: coerced to [], an auth proxy's
-        error page read as an empty library.
+        This is the read that first showed why ``get_list`` must raise instead of
+        returning an empty list: an auth proxy's error page, read as an empty list,
+        once looked like an empty library and silently dropped every movie from the
+        scan.
         """
         return await self.get_list(f"{self.prefix}/movie")
 
@@ -203,17 +207,19 @@ class RadarrClient(ArrClient):
     async def delete_movie(
         self, movie_id: int, *, delete_files: bool = True, add_exclusion: bool = True
     ) -> None:
-        """Remove a movie, its files, and (by default) add an import exclusion.
+        """Remove a movie, its files, and, by default, add an import exclusion.
 
-        This is the destructive call. It goes through :meth:`_mutate`, so the transport
-        guard refuses it unless deletion is enabled on the host AND the executor declared
-        the intent -- there is no unguarded path to it.
+        This is the destructive call. It goes through :meth:`_mutate`, so
+        :class:`~reaper.clients.base.GuardedTransport` refuses it unless deletion is
+        enabled on the host and the executor has declared the intent. There is no path
+        to this call that skips the guard.
 
-        ``addImportExclusion`` is Radarr's spelling; Sonarr's differs and each silently
-        ignores the other's, so it lives on the subclass as ``exclusion_param`` and the
-        caller cannot pick the wrong one. **A 200 here does not prove the exclusion
-        landed** -- the executor re-reads :meth:`exclusions` and asserts the tmdbId is
-        present, because that footgun returns 200 while doing nothing.
+        ``addImportExclusion`` is Radarr's spelling. Sonarr's differs, and each
+        silently ignores the other's, so it lives on the subclass as
+        ``exclusion_param`` and the caller cannot pick the wrong one. A 200 response
+        here does not prove the exclusion was added: the executor re-reads
+        :meth:`exclusions` and confirms the tmdbId is present, because Radarr returns
+        200 even when it silently did nothing.
         """
         await self._mutate(
             "DELETE",

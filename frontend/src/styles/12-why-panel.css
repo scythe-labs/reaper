@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The reasoning panel. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* ---- why panel ----------------------------------------------------------- */
+ * The reasoning panel. See `../index.css` for how this file fits into the stylesheet's load
+ * order. */
 
 .why {
   background: var(--surface);
@@ -22,8 +21,8 @@
 /* The panel's own loading state: the same ring Scales' first load uses, centered in the
    reserved column and scaled to the panel (spinner-lg, not the full-page spinner-xl), so the
    wait reads as the app working rather than a bare word. Shared by the Scales person panel
-   and the Review why-panel, which ride this same .why shell. Eases up on appear so it does
-   not snap in -- gentler on a phone, where the panel is the whole screen. */
+   and the Review why-panel, which both use this same .why shell. It eases in on appear
+   instead of snapping in, which is gentler on a phone, where the panel is the whole screen. */
 .why-loading {
   display: flex;
   flex-direction: column;
@@ -70,7 +69,7 @@
   padding: 0.7rem 1.1rem 0.9rem;
   background: var(--surface);
   border-top: 1px solid var(--border);
-  /* A column so the "kept by the whole show" note can sit above the buttons; the buttons
+  /* A column so the "kept by the whole show" note can sit above the buttons. The buttons
      and any error keep their own row inside it. */
   display: flex;
   flex-direction: column;
@@ -88,7 +87,7 @@
 
 /* The note beside a season's Spare/Reap when a whole-show decision is what keeps or reaps it:
    a quiet well, so the buttons stay the loud thing. The glyph tracks the season's real fate
-   (green ∞ kept, red scythe removed) so it never contradicts the row's chip; the copy itself
+   (green ∞ kept, red scythe removed), so it never contradicts the row's chip. The copy itself
    carries the meaning. Used in the season why-panel footer and under an expanded season row. */
 .kept-note {
   display: flex;
@@ -134,7 +133,7 @@
   font-size: var(--text-sm);
 }
 
-/* The full sentence behind the show's status chip -- a keep-rule conflict's complete
+/* The full sentence behind the show's status chip: a keep-rule conflict's complete
    wording, under the show it belongs to. */
 .show-reason {
   margin: 0.55rem 0 0;
@@ -145,7 +144,7 @@
   line-height: 1.5;
 }
 
-/* The show panel's season rows: score, name, chip, size -- each a button that opens
+/* The show panel's season rows: score, name, chip, size, each a button that opens
    the season's full reasoning. */
 .panel-seasons {
   list-style: none;
@@ -175,10 +174,10 @@
 .panel-season .status-chip {
   min-width: 0;
 }
-/* Almost always "Season 3" or "Specials", which the panel composes itself: app text, short, and
-   nowrap costs it nothing while holding the row one line tall. The server's own title reaches
-   this element on one branch only -- a season with no number -- and that is the branch nowrap
-   hurts, so it is the branch that carries the break opportunity (rule 139). Splitting the two
+/* Almost always "Season 3" or "Specials", which the panel composes itself: app text, short,
+   and nowrap costs it nothing while holding the row one line tall. The server's own title
+   reaches this element on one branch only, a season with no number, and that is the branch
+   nowrap hurts. So that is the branch that carries the break opportunity. Splitting the two
    apart beats choosing between them: ShowPanel adds .is-server-title on exactly that branch. */
 .panel-season-name {
   font-weight: var(--weight-semi);
@@ -230,14 +229,14 @@
 }
 /* A panel with no hero art floats the close disc over its header's top-right corner, so that
    header reserves the disc's width on the right and the title can never tuck under it. The
-   adjacency matches only when no .why-hero sits between the close and the head; the art panels
+   adjacency matches only when no .why-hero sits between the close and the head. The art panels
    float the disc over the poster instead, well clear of the header. */
 .why-close + .why-head {
   padding-inline-end: var(--space-6xl);
 }
-/* The panel's title is the same media title the queue card carries in .card-title, and takes the
-   same break opportunity (rule 139, rule 72). Here it matters more: the panel clips, so a title
-   that paints past its box leaves a tail no scroll reaches. */
+/* The panel's title is the same media title the queue card carries in .card-title, and takes
+   the same break opportunity. Here it matters more: the panel clips, so a title that paints
+   past its box leaves a tail no scroll reaches. */
 .why-head h2 {
   overflow-wrap: anywhere;
 }
@@ -247,7 +246,7 @@
 }
 /* The panel's close: a media-sheet button floated over the hero art rather than a boxed
    glyph in the title row, where it read as a stray form control. A translucent dark disc,
-   blurred, with a hairline, so a stroked white X stays legible on any poster; over a title
+   blurred, with a hairline, so a stroked white X stays legible on any poster. Over a title
    with no art it rests on the surface top-right the same way. Scrolls with the hero, like the
    header close it replaced. The hover pair carries :not(:disabled) so it outranks the base
    button:hover, which would otherwise repaint the fill and border with the theme grays. */
@@ -312,9 +311,10 @@
   flex-wrap: wrap;
 }
 /* A link, so --tap-min is a min-height rather than a box: the pill keeps the width its text
-   gives it and grows only downward to the 24px floor (SC 2.5.8). It was 21.3px with 7.2px
-   between neighbors, too close for the spacing exception. The padding stays as it was -- the
-   min-height absorbs the difference, so the pill does not visibly change size. */
+   gives it and grows only downward to the 24px floor (WCAG 2.2 SC 2.5.8). It measured
+   21.3px with 7.2px between neighbors, too close for the spacing exception. The padding
+   stays unchanged: the min-height absorbs the difference, so the pill does not visibly
+   change size. */
 .jump-pill {
   display: inline-flex;
   align-items: center;
@@ -351,8 +351,8 @@
   color: var(--text);
 }
 
-/* External ratings, no stars. Quiet chips; IMDb wears its brand badge because it is
-   the one number the score itself uses. */
+/* External ratings, no stars. Quiet chips, except IMDb, which wears its brand badge because
+   it is the one number the score itself uses. */
 .why-ratings {
   display: flex;
   align-items: center;
@@ -374,7 +374,7 @@
   color: var(--text);
   text-decoration: none;
 }
-/* A chip with a link opens the number's source; the border says so on hover. */
+/* A chip with a link opens the number's source. The border says so on hover. */
 a.rating-chip:hover {
   border-color: var(--accent);
   color: var(--text);
@@ -431,11 +431,11 @@ a.rating-chip:hover {
   overflow: hidden;
 }
 /* Open or closed, the synopsis text keeps its own line, so the disclosure under it holds one
-   position. `.clamp-2` above is `display: -webkit-box`, which is block-level, and the open state
-   used to carry no class at all -- so pressing `more` turned the span inline and the control
-   landed after the last word, 328px right of where it had just been on a phone-width panel
-   (#407). The pair only ever meet on the collapsed state, where `.clamp-2` is what has to win,
-   so this claims the open state by name rather than by source order. */
+   position. `.clamp-2` above is `display: -webkit-box`, which is block-level. Without an
+   explicit class on the open state, pressing `more` would turn the span inline and move the
+   control to after the last word, far from where it had just been on a phone-width panel.
+   The pair only ever meet on the collapsed state, where `.clamp-2` is what has to win, so
+   this claims the open state by name rather than by source order. */
 .why-synopsis:not(.clamp-2) {
   display: block;
 }
@@ -461,35 +461,34 @@ a.rating-chip:hover {
   text-decoration: underline;
 }
 
-/* On a phone the panel is not a side column -- there is no room for one -- so it becomes a
-   full-screen sheet over the queue, with its own scroll and the close button up top. This
-   is the fix for "the side card does not work on mobile": before, it was pushed off the
-   bottom of a single column where it could not be seen.
+/* On a phone, the panel has no room to be a side column, so it becomes a full-screen sheet
+   over the queue, with its own scroll and the close button up top.
 
-   This block must match `main.split .why` from the 1100px block, not the bare `.why`:
-   below 900px BOTH blocks apply, and a media query adds no specificity, so the bare
-   selector (0-1-0) lost every shared property to the right-hand-sheet rules (0-2-1) and
-   the full-screen sheet silently never applied. Equal specificity plus later source order
-   is what wins here, so keep this block below that one. `width: auto` is the one property
-   the 1100px block sets that `inset: 0` alone cannot undo.
+   This block must match `main.split .why` from the 1100px block, not the bare `.why`: below
+   900px both blocks apply, and a media query adds no specificity, so the bare selector
+   (0-1-0) would lose every shared property to the right-hand-sheet rules (0-2-1), and the
+   full-screen sheet would silently never apply. Equal specificity plus later source order is
+   what wins here, so keep this block below that one. `width: auto` is the one property the
+   1100px block sets that `inset: 0` alone cannot undo.
 
-   COUPLED (rule 67): THREE JS readers ask whether this rule is in force, and all of them take
-   the query from `NARROW_SCREEN_QUERY` in useMediaQuery.ts -- the one declaration of this width
-   on that side, so change this 900 and change that constant with it. App.tsx's `fullSheet`
-   stops tracking the list's scroll behind a sheet that covers it; the review queue's
-   "expand seasons by default" mode opens a show's season list on one screen size and not the
-   other -- which makes this number the stored meaning of the operator's "Mobile" and
-   "Desktop" choices, not just a layout detail; and Settings swaps its rail for a select. This
-   side once carried no reference at all, so someone editing the query here had nothing telling
-   them a hook depends on it (R-8).
+   This 900 is coupled to `NARROW_SCREEN_QUERY` in useMediaQuery.ts, the one declaration of
+   this width on that side. Three JS readers ask whether this rule is in force, and all of
+   them take the query from that constant, so change this 900 and change that constant with
+   it. App.tsx's `fullSheet` stops tracking the list's scroll behind a sheet that covers it.
+   The review queue's "expand seasons by default" mode opens a show's season list on one
+   screen size and not the other, which makes this number the stored meaning of the
+   operator's "Mobile" and "Desktop" choices, not just a layout detail. And Settings swaps
+   its rail for a select.
 
-   `WhyShell` is deliberately NOT on that list, and used to be: it decides whether the panel is
-   a dialog that takes focus and keeps Tab inside itself, and the question it is really asking
-   is "does the panel cover cards the operator can still reach", which the 1100px block above
-   answers and this one does not. Keyed here, the 200px between the two blocks left a panel
-   floating over the right of the cards announcing itself as a plain aside (issue #171 at 900,
-   #184 in the band above it). It now reads `PANEL_OVERLAY_QUERY` and the 1100px block carries
-   that coupling. */
+   `WhyShell` deliberately does not read this 900px query: it decides whether the panel is a
+   dialog that takes focus and keeps Tab inside itself, and the real question there is "does
+   the panel cover cards the operator can still reach". The 1100px block above answers that
+   question, not this one: from 1100px down, the panel already covers the cards as a
+   right-hand sheet. Keying `WhyShell`'s dialog behavior to this 900px query instead would
+   leave the panel floating over the cards as a sheet for the 200px between the two
+   breakpoints, but still announcing itself as a plain aside rather than a dialog, letting a
+   keyboard operator tab into cards hidden underneath it. `WhyShell` reads
+   `PANEL_OVERLAY_QUERY` instead, and the 1100px block carries that coupling. */
 @media (max-width: 900px) {
   main.split .why {
     position: fixed;
@@ -500,26 +499,26 @@ a.rating-chip:hover {
     border: none;
     border-radius: 0;
   }
-  /* Full-screen sheet: no rounded top, and the hero KEEPS the base -1rem top margin
-     (it is not reset here) so the art still bleeds under the panel's 1rem top padding to
-     the very top edge, the same top-bleed every wider breakpoint already gets. Resetting
-     it to 0 left a 1rem band of panel surface above the art -- a gap on phones only. */
+  /* Full-screen sheet: no rounded top, and the hero keeps the base -1rem top margin (it is
+     not reset here), so the art still bleeds under the panel's 1rem top padding to the very
+     top edge, the same top-bleed every wider breakpoint already gets. Resetting it to 0
+     would leave a 1rem band of panel surface above the art, a gap on phones only. */
   .why-hero {
     border-radius: 0;
   }
 }
 
-/* The per-title escape inside the watch-blind warning (WhyPanel). It sits INSIDE the notice
+/* The per-title escape inside the watch-blind warning (WhyPanel). It sits inside the notice
    for the same reason `.trash-ack` does: the control is bound to the warning that motivates
    it, the way help text binds to the one control it explains. Its rule is drawn from the
    notice's own border color, so it reads as part of the warning rather than a separate
-   control -- amber here, because a `warn` notice's border is `--unknown`. */
+   control: amber here, because a `warn` notice's border is `--unknown`. */
 .watch-blind-act {
   margin-top: 0.55rem;
   padding-top: var(--space-md);
   border-top: 1px solid color-mix(in srgb, var(--unknown) 35%, transparent);
 }
-/* The help sits directly beneath its one button (rule 45), not beside it: the notice is as
+/* The help sits directly beneath its one button, not beside it: the notice is as
    narrow as the panel, and a second column would put the sentence on four lines. */
 .watch-blind-act .help {
   margin-top: var(--space-sm);
@@ -543,9 +542,9 @@ a.rating-chip:hover {
   background: var(--bg);
   border-color: var(--border);
 }
-/* A hand reap the engine can't honor yet: the condemn-soft ground, but a DASHED condemn
-   border, never the solid one that means "removed" (rule 49). Amber stays reserved for
-   "left for you to decide", so a held reap never wears it. */
+/* A hand reap the engine can't honor yet: the condemn-soft ground, but a dashed condemn
+   border, never the solid one that means "removed". Amber stays reserved for "left for you
+   to decide", so a held reap never wears it. */
 .verdict-held {
   background: var(--condemn-soft);
   border: 1px dashed var(--condemn);
@@ -593,8 +592,6 @@ a.rating-chip:hover {
   margin-top: var(--space-md);
 }
 
-/* signals */
-
 .signals,
 .gates {
   list-style: none;
@@ -617,13 +614,13 @@ a.rating-chip:hover {
   min-width: 4.2rem;
 }
 .signal-detail {
-  /* Names the rule that argued the keep, exactly as its twin .sig-detail below does, and takes
-     the same break opportunity (rule 139, rule 72). */
+  /* Names the rule that argued the keep, exactly as its twin .sig-detail below does, and
+     takes the same break opportunity. */
   overflow-wrap: anywhere;
   flex: 1;
 }
 
-/* A keep Reaper could not check is visually quieter AND explicitly labeled: it took the
+/* A keep Reaper could not check is visually quieter and explicitly labeled: it took the
  * full discount, and that is worth a sentence, not just a dimmed row. */
 .signal-unknown {
   opacity: 0.75;

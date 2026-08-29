@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The app's one always-visible safety surface. Its whole promise is that the regime is stated
-// at all times, so every branch is driven here rather than only the one a change touched: a
-// state with no test is one refactor away from silently becoming another state's copy, and the
-// question this banner answers is "can this thing delete my library right now?" (rule 118).
+// The app's one always-visible safety surface. Its whole promise is that it always states
+// whether deletion is on, so every branch is driven here, not just the one a change touched.
+// A state with no test is one refactor away from silently becoming another state's copy, and
+// the question this banner answers is "can this thing delete my library right now?"
 import { screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Safety } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { renderWithProviders } from "../test/renderWithProviders";
@@ -35,6 +36,12 @@ describe("the safety banner", () => {
     apiMock.safety.mockReset();
   });
 
+  // The one phone-layout test stubs `matchMedia`; restore it so no later test inherits the
+  // narrow layout (rule 133).
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("says read-only when deletion is off", async () => {
     apiMock.safety.mockResolvedValue(READ_ONLY);
     renderBanner();
@@ -50,8 +57,9 @@ describe("the safety banner", () => {
   });
 
   it("has no accessibility violations in the state that asks for something", async () => {
-    // The recovery branch, not the resting ones: it is the only state carrying an instruction,
-    // so it is the one where a lost name or a color-only signal costs the operator the action.
+    // This is the recovery branch, not one of the resting states. It is the only state
+    // carrying an instruction, so a lost name or a color-only signal here costs the operator
+    // the action.
     apiMock.safety.mockResolvedValue({ ...READ_ONLY, recovery_mode: true });
     renderBanner();
 
@@ -61,9 +69,9 @@ describe("the safety banner", () => {
 
   it("names recovery mode rather than plain read-only", async () => {
     // The server reports `destructive_enabled: false` in recovery mode too, so the read-only
-    // branch would happily render here -- and it points at Policy, Deletion, where the switch
-    // answers 409. The operator would follow the only instruction on screen and be refused by
-    // it. The distinct state is what makes the sentence actionable (#433).
+    // branch would otherwise render here, and it points at Policy, Deletion, where the switch
+    // refuses the request. The operator would follow the only instruction on screen and be
+    // refused. Recovery mode needs its own distinct state so the sentence stays actionable.
     apiMock.safety.mockResolvedValue({ ...READ_ONLY, recovery_mode: true });
     renderBanner();
 
@@ -75,11 +83,39 @@ describe("the safety banner", () => {
   });
 
   it("says the state is unknown rather than disappearing when the read fails", async () => {
-    // An absent banner reads as "nothing to worry about", which is the fail-open direction on
-    // the one surface that must never take it.
+    // An absent banner reads as "nothing to worry about." That is the wrong direction to be
+    // wrong in, on the one surface that must never make deletion look safer than it is.
     apiMock.safety.mockRejectedValue(new Error("no"));
     renderBanner();
 
     expect(await screen.findByText(/safety state unknown/i)).toBeInTheDocument();
+  });
+
+  it("collapses to one line on a phone and expands on tap", async () => {
+    // jsdom ships no `matchMedia`, so `useMediaQuery` reads the wide layout by default. Report
+    // the narrow one, which is where the notice collapses to a single tappable line. The state
+    // lead still leads, so the regime reads while collapsed. `stubGlobal` restores in afterEach.
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockReturnValue({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    );
+    apiMock.safety.mockResolvedValue({ ...READ_ONLY, destructive_enabled: true });
+    const user = userEvent.setup();
+    renderBanner();
+
+    const toggle = await screen.findByRole("button", { name: /show the full safety notice/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    // The regime is still on screen while collapsed.
+    expect(screen.getByText(/deletion is on/i)).toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(screen.getByRole("button", { name: /show less/i })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
   });
 });

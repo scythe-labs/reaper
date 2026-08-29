@@ -1,33 +1,30 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Background maintenance: keeping the caches fresh so a scan can actually judge.
 
-Reaper's scoring rests on data that goes stale: the IMDb ratings dataset (refreshed
-daily at the source) and the curated protection lists. If nobody refreshes them, a
-fresh install degrades every snapshot forever -- the ratings gate cannot evaluate, so
-nothing may be reaped -- and an old install slowly drifts onto stale ratings.
+Reaper's scoring rests on data that goes stale: the IMDb ratings dataset, refreshed daily
+at the source, and the curated protection lists. If nobody refreshes them, a fresh install
+marks every scan untrusted forever, since the ratings gate cannot evaluate and nothing may
+be reaped, and an old install slowly drifts onto stale ratings.
 
-So this scheduler exists to do the unglamorous upkeep:
+This scheduler does that upkeep:
 
-* **Refresh the IMDb ratings dataset** nightly, and **once on startup if it is stale or
-  missing**. The startup catch-up is what makes a fresh install work: without it the
-  first scan (and every scan until a day boundary happened to pass) would degrade.
-* **Refresh every list on Settings, Lists** daily, independent of scans -- the same pass a
-  scan runs, so a tag or a collection edited between scans starts protecting within a day.
-* **Check whether a newer Reaper exists**, daily. Not upkeep for the scan like the two
-  above: it is here because a check that only ran when someone opened the UI never ran at
-  all on the servers most likely to need it (#464).
+* **Refreshes the IMDb ratings dataset** nightly, and once on startup if it is stale or
+  missing. The startup catch-up is what makes a fresh install work: without it the first
+  scan, and every scan until a day boundary happened to pass, would run untrusted.
+* **Refreshes every list on Settings, Lists** daily, independent of scans. This is the same
+  pass a scan runs, so a tag or a collection edited between scans starts protecting within
+  a day.
+* **Checks whether a newer Reaper exists**, daily, so an install nobody signs in to for
+  weeks still learns a release exists.
 
-**This scheduler never deletes media.** Deletion runs happen through the executor, under
-the destructive-action guard, and are not scheduled here -- automated deletion is an M8
-concern gated behind an earned autonomy grant, and wiring it to a timer before that
-machinery exists would be exactly the wrong shortcut. It does delete Reaper's *own*
-bookkeeping, which is a different thing entirely and needs no arming: expired auth
-sessions, and scans older than the retention window (``services.retention``). Neither
-touches a file, an *arr, or Plex.
+This scheduler never deletes media. Deletion runs happen through the executor, under the
+destructive-action guard, and are never scheduled here. It does delete Reaper's own
+bookkeeping, which needs no arming: expired auth sessions, and scans older than the
+retention window (``services.retention``). Neither touches a file, an *arr, or Plex.
 
-APScheduler 3.x (4.x is still alpha). ``AsyncIOScheduler`` shares the app's event loop,
-and ``coalesce=True`` + ``max_instances=1`` mean a job that overruns its interval -- a
-first ratings load can take a while -- never stacks a second copy on top of itself.
+Built on APScheduler 3.x. ``AsyncIOScheduler`` shares the app's event loop, and
+``coalesce=True`` plus ``max_instances=1`` mean a job that overruns its interval, such as a
+slow first ratings load, never stacks a second copy of itself on top.
 """
 
 from __future__ import annotations
@@ -70,28 +67,30 @@ from reaper.services.update_check import UpdateChecker
 log = structlog.get_logger(__name__)
 
 #: The job id for the optional automatic scan. One job, reconciled in place when the
-#: owner changes the schedule -- never stacked.
+#: owner changes the schedule, never stacked.
 SCAN_JOB_ID = "scheduled_scan"
 
 #: The background upkeep jobs and the cron they run on out of the box. Every one is
-#: read-only (refresh/sweep), staggered off peak hours, and now operator-editable: a
+#: read-only (refresh or sweep), staggered off peak hours, and operator-editable: a
 #: stored override (see ``app_settings.get_maintenance_schedules``) wins over these, and
 #: an owner may turn any of them off entirely. Absence of a stored value falls back here.
 #:
-#: **The history sweep is the one that is not daily**, and its two numbers are separate
-#: decisions. *Every three days*: it exists to catch a play Tautulli recorded with an old
-#: timestamp, which needs someone to import or edit history on the Tautulli side, and that
-#: is not a thing that happens on a schedule. Every scan's incremental sync already re-asks
-#: the last two days (``history_sync.INCREMENTAL_OVERLAP``), so only a row backdated FURTHER
-#: than that waits for a sweep at all. An operator who does import history has Run now
-#: (``POST /api/settings/jobs/{id}/run``) and does not have to wait for any of this.
-#: *05:00*: clear of both scan presets (02:00 and 03:00 in ``JobsPanel``) and of the upkeep
-#: block above it, so the two do not routinely land together. Which is belt and braces, not
-#: the safeguard: the operator picks the scan cron, so no default can promise they miss each
-#: other, and ``history_sync._sync_lock`` is what actually makes an overlap safe.
+#: The history sweep runs every three days rather than daily, because it exists to catch a
+#: play Tautulli recorded with an old timestamp, which needs someone to import or edit
+#: history on the Tautulli side, not a thing that happens on a schedule. Every scan's
+#: incremental sync already re-checks the last two days
+#: (``history_sync.INCREMENTAL_OVERLAP``), so only a row backdated further than that waits
+#: for a sweep at all. An operator who does import history can use Run now
+#: (``POST /api/settings/jobs/{id}/run``) instead of waiting.
 #:
-#: ``*/3`` on day-of-month restarts at the 1st, so a 31-day month gives one 1-day gap
-#: instead of 3. That is the direction that sweeps more often, never less.
+#: It runs at 05:00, clear of both scan presets (02:00 and 03:00 in ``JobsPanel``) and of
+#: the upkeep jobs above it, so the two do not routinely land together. The operator still
+#: picks the actual scan cron, so nothing here guarantees they never overlap;
+#: ``history_sync._sync_lock`` is what makes an overlap safe if it happens.
+#:
+#: ``*/3`` on day-of-month restarts counting at the 1st of every month, so a 31-day month
+#: ends with a 1-day gap before the next run instead of a 3-day one. That is the direction
+#: that sweeps more often, never less.
 DEFAULT_MAINTENANCE_CRONS: dict[str, str] = {
     "refresh_ratings": "30 3 * * *",
     "refresh_curated_lists": "45 3 * * *",
@@ -105,55 +104,52 @@ MAINTENANCE_JOB_IDS: tuple[str, ...] = tuple(DEFAULT_MAINTENANCE_CRONS)
 #: Every job whose schedule the owner may edit, scan first. Drives the Jobs settings list.
 SCHEDULABLE_JOB_IDS: tuple[str, ...] = (SCAN_JOB_ID, *MAINTENANCE_JOB_IDS)
 
-#: Housekeeping that deliberately does NOT appear in that list. Deleting sessions whose
+#: Housekeeping that deliberately does not appear in that list. Deleting sessions whose
 #: 30-day window has already closed is not a choice an operator should have to make, and
-#: an off switch on it would only ever let the table grow (PR-13). It is on an interval
-#: rather than a cron for the same reason it has no switch: there is no hour of the day
-#: this belongs at, so it never has to be re-based when the server time zone changes.
+#: an off switch on it could only ever let the table grow. It runs on an interval rather
+#: than a cron for the same reason it has no switch: there is no hour of the day this
+#: belongs at, so it never has to be re-based when the server time zone changes.
 SESSION_SWEEP_JOB_ID = "sweep_expired_sessions"
 SESSION_SWEEP_INTERVAL_S = 12 * 60 * 60
 
 #: Trimming the scan history is housekeeping for the same reason, and stays off the
 #: schedulable list on the same argument: an off switch here could only ever let the
-#: database grow, which is the state that made it grow without limit in the first place
-#: (#315). Nothing reads a scan older than the newest one, so there is no window an
-#: operator would want to widen and nothing they lose by this running. Twelve-hourly on
-#: an interval rather than a cron, again like the session sweep -- there is no hour of the
-#: day this belongs at, so a time-zone change never has to re-base it.
+#: database grow without limit. Nothing reads a scan older than the newest one, so there is
+#: no window an operator would want to widen and nothing they lose by this running.
+#: Twelve-hourly on an interval rather than a cron, again like the session sweep: there is
+#: no hour of the day this belongs at, so a time-zone change never has to re-base it.
 SNAPSHOT_SWEEP_JOB_ID = "sweep_old_snapshots"
 SNAPSHOT_SWEEP_INTERVAL_S = 12 * 60 * 60
 
 #: The floor on how long after boot the first sweep runs; ``SNAPSHOT_SWEEP_JITTER_S`` adds
-#: up to half an hour on top. An ``IntervalTrigger`` given no start date
-#: first fires a whole interval in, which for the session sweep is fine -- an expired
-#: session authorizes nothing whether or not its row is still there, so the table sitting
-#: there another twelve hours costs nothing. This one is different in exactly the case it
-#: was written for: an install upgrading with months of scans behind it has a database
-#: that is mostly dead weight *now*, and making the operator wait half a day to see any of
-#: it come back is the wrong answer. Minutes, not seconds, so the first sweep and its
-#: possible vacuum stay out of the way of the startup ratings catch-up.
+#: up to half an hour on top. An ``IntervalTrigger`` given no start date fires only after a
+#: whole interval has passed, which is fine for the session sweep: an expired session
+#: authorizes nothing whether or not its row is still there, so waiting twelve hours costs
+#: nothing. This sweep is different: an install upgrading with months of scans behind it has
+#: a database that is mostly dead weight right now, and making the operator wait half a day
+#: to see any of it come back is the wrong answer. Minutes, not seconds, so the first sweep
+#: and its possible vacuum stay out of the way of the startup ratings catch-up.
 SNAPSHOT_SWEEP_STARTUP_DELAY_S = 5 * 60
 
 #: Spread on every firing, so the sweep never settles at a fixed time of day. Without it an
 #: ``IntervalTrigger`` fires at the same second forever: twelve hours is an exact multiple of
 #: an hour, and a firing that runs late does not shift the phase, because the next one is
-#: computed from the scheduled time and not the actual one. A scan on a cron whose period
-#: divides twelve hours therefore either misses every firing or collides with all of them.
-#: That was harmless until the compaction was gated on a live scan or reap (#325): now a
-#: collision skips ``retention.compact_if_fragmented`` at *every* firing, so an upgraded
-#: install's freed pages stay on disk for the life of the process and the gate's own promise
-#: that the next firing reattempts is false. APScheduler adds ``uniform(0, jitter)`` to the
-#: previous *jittered* time, so the phase walks forward instead of settling anywhere new.
-#: The session sweep shares the interval and needs none of this: it has no skip branch, so
-#: it runs whatever it collides with, and a fixed phase costs it nothing (rule 72).
+#: computed from the scheduled time, not the actual one. A scan on a cron whose period
+#: divides twelve hours would then either miss every firing or collide with all of them, and
+#: a collision skips ``retention.compact_if_fragmented`` for that firing, so an upgraded
+#: install's freed disk pages could stay unreclaimed indefinitely. APScheduler adds
+#: ``uniform(0, jitter)`` to the previous jittered time, so the phase keeps moving instead of
+#: settling anywhere new. The session sweep shares the same interval and needs none of this:
+#: it has no skip branch, so it simply runs whatever it collides with, and a fixed phase
+#: costs it nothing.
 SNAPSHOT_SWEEP_JITTER_S = 30 * 60
 
 
 #: Skip a scheduled ratings refresh when the dataset was synced this recently. IMDb
 #: publishes the ratings dataset once a day, so a re-download inside a day fetches identical
-#: bytes: this is what makes an aggressive schedule (the shared presets go down to hourly)
-#: harmless -- roughly one download a day whatever the cron -- rather than 24 full downloads
-#: for no new data. A day-apart schedule is always older than this, so it always runs.
+#: bytes. This is what makes an aggressive schedule harmless, roughly one download a day
+#: whatever the cron, rather than many downloads a day for no new data. A day-apart schedule
+#: is always older than this, so it always runs.
 RATINGS_MIN_REFRESH_INTERVAL = timedelta(hours=20)
 
 
@@ -166,12 +162,12 @@ async def _record_run(
 ) -> None:
     """Persist an upkeep job's last completion so the Jobs page can show its last-run line.
 
-    ``result`` is a typed reason, a bare id under ``jobs.result.*`` plus raw params: the
-    server states the fact, the browser composes the sentence (``JobStatus.tsx``'s
-    ``jobResultText``). A no-op when ``session_factory`` is ``None`` -- the startup catch-up
-    calls the job callables directly, without one, and a catch-up refresh is not an
-    on-schedule/by-hand run. Never lets this bookkeeping break the job it records: a failed
-    write is logged and swallowed, exactly like each job's own error handling.
+    ``result`` is a typed reason, a bare id under ``jobs.result.*`` plus raw parameters: the
+    server states the fact, and the browser turns it into a sentence
+    (``JobStatus.tsx``'s ``jobResultText``). A no-op when ``session_factory`` is ``None``,
+    which is how the startup catch-up calls the job functions directly, since a catch-up
+    refresh is not an on-schedule or by-hand run. Never lets this bookkeeping break the job
+    it records: a failed write is logged and swallowed, like each job's own error handling.
     """
     if session_factory is None:
         return
@@ -190,12 +186,12 @@ async def refresh_ratings(
     data_dir: Path,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> None:
-    """Download and load the IMDb ratings dataset. Idempotent; safe to run any time.
+    """Download and load the IMDb ratings dataset. Safe to run more than once.
 
-    Short-circuits when the dataset was refreshed within ``RATINGS_MIN_REFRESH_INTERVAL``, so
-    an aggressive schedule cannot re-pull the same daily-published data on repeat. The startup
-    catch-up gates on the 14-day staleness itself, so a genuinely stale dataset (which is far
-    older than the window) still refreshes there.
+    Skips the download when the dataset was refreshed within
+    ``RATINGS_MIN_REFRESH_INTERVAL``, so an aggressive schedule cannot re-pull the same
+    daily-published data on repeat. The startup catch-up checks staleness itself instead, so
+    a genuinely stale dataset, far older than that window, still refreshes there.
     """
     try:
         state = await ImdbRatings(cache_engine).state()
@@ -211,17 +207,17 @@ async def refresh_ratings(
         loaded = await imdb_dataset.refresh(cache_engine, data_dir)
         log.info("scheduler.ratings_refreshed", rows=loaded.rows, skipped=loaded.skipped)
         # A load that dropped an unusual share of rows still "succeeded", and the rows it
-        # kept are good -- but the ratings it lost are protections that stop keeping
-        # titles, so the operator is told rather than left with a green tick.
+        # kept are good, but the ratings it lost are protections that stop keeping some
+        # titles, so the operator is told rather than left with a plain green tick.
         result = (
             Reason("ratings_refreshed_partial") if loaded.drifted else Reason("ratings_refreshed")
         )
         await _record_run(session_factory, "refresh_ratings", ok=True, result=result)
     except Exception as exc:
-        # Leaves the previous dataset in place (load swaps atomically). A stale dataset
-        # is caught by the snapshot's own degradation check; a crashed scheduler would
-        # silently stop all upkeep, which is worse. The state read is inside this try too,
-        # so a broken cache (locked/corrupt cache.db) is recorded as a failed run instead of
+        # Leaves the previous dataset in place, since the load swaps atomically. A stale
+        # dataset is caught by the snapshot's own check; a crashed scheduler that silently
+        # stopped all upkeep would be worse. The state read sits inside this try too, so a
+        # broken cache (a locked or corrupt cache.db) is recorded as a failed run instead of
         # escaping unrecorded.
         log.warning("scheduler.ratings_refresh_failed", error=str(exc))
         await _record_run(
@@ -238,39 +234,34 @@ async def refresh_curated_lists(
     settings: Settings | None = None,
     secret_box: SecretBox | None = None,
 ) -> None:
-    """Refresh EVERY list on Settings, Lists, the way a scan does.
+    """Refresh every list on Settings, Lists, the way a scan does.
 
-    It used to refresh only the IMDb ones, because those need no client -- and that left the
-    other three sources with no automatic refresh between scans at all, while the screen
-    presents all four as one uniform thing. So this now runs the same pass a scan runs
-    (``snapshot.sync_protection_lists``), which is also what the screen's own "Check now"
-    calls: a second way to refresh a protection list would be a second set of fail-closed
-    rules to keep in step (rule 3/22's shape for the safety path).
+    This runs the same pass a scan runs (``snapshot.sync_protection_lists``), which is also
+    what the screen's own "Check now" calls, so there is only one set of fail-closed rules
+    for refreshing a protection list to keep in step.
 
-    The job id is still ``refresh_curated_lists``. It is a stored schedule key, so renaming it
-    would orphan the cron an operator saved; only what it does and what it is called on screen
-    have changed.
+    The job id is ``refresh_curated_lists``. It is a stored schedule key, so renaming it
+    would orphan a cron an operator already saved.
 
-    **This pass retires**, unlike the old one, and that is a durable protection-DISABLING
-    write. It is safe here for the reasons ``sync_protection_lists`` states and enforces, not
-    on trust: a family is retired only when the configuration it is judged against was
-    actually readable, and only when its own sync did not raise -- so an *arr that is down at
-    3:45 AM keeps every list it feeds (rule 115).
+    This pass can retire a list, which is a durable protection-disabling write. That is safe
+    because ``sync_protection_lists`` retires a family only when the configuration it is
+    judged against was actually readable, and only when its own sync did not raise, so an
+    *arr that is down when this runs keeps every list it feeds.
 
-    Plex is optional and fails CLOSED exactly as it does in a scan and on the Lists screen:
-    with no live server no collection provider is built, so nothing is synced for one and
+    Plex is optional and fails closed exactly as it does in a scan and on the Lists screen:
+    with no live server, no collection provider is built, so nothing is synced for it and
     nothing is retired either, and the stored membership stays as the last good check left it.
 
-    ``session_factory``, ``settings`` and ``secret_box`` are optional only because the
-    last-run bookkeeping tolerates their absence; with no way to read the definitions or reach
-    the sources there is nothing to refresh.
+    ``session_factory``, ``settings``, and ``secret_box`` are optional only because the
+    last-run bookkeeping tolerates their absence; with no way to read the definitions or
+    reach the sources, there is nothing to refresh.
 
-    **Once it is wired, every failing exit records a run.** The shape is what holds that: the
-    whole body is one call to :func:`_refresh_curated_lists` under one catch-all, and the one
-    handler inside that function (Plex unreachable) changes what the result says instead of
-    ending the pass. APScheduler has no failure listener writing these rows, so a raise left
-    the Jobs row reading green from the last successful night while nothing had refreshed
-    since. Same shape as ``refresh_ratings``.
+    Every failing exit records a run, because the whole body is one call to
+    :func:`_refresh_curated_lists` under one catch-all, and the one handler inside that
+    function (Plex unreachable) changes what the result says instead of ending the pass.
+    APScheduler has no failure listener writing these rows, so an unrecorded raise would
+    leave the Jobs row reading green from the last successful night while nothing had
+    refreshed since. Same shape as ``refresh_ratings``.
     """
     if session_factory is None or settings is None or secret_box is None:
         log.warning("scheduler.lists_refresh_skipped", reason="not wired")
@@ -279,10 +270,10 @@ async def refresh_curated_lists(
     try:
         await _refresh_curated_lists(cache_engine, session_factory, settings, secret_box)
     except Exception as exc:
-        # The stored membership is untouched: `lists.sync` swaps atomically, and a family is
-        # retired only when its own syncs landed (rule 115). So the cost of a failure here is
-        # a night of staleness, which the scan's own bound catches -- provided this row says
-        # it happened.
+        # The stored membership is untouched, since `lists.sync` swaps atomically and a
+        # family is retired only when its own sync succeeds. So the cost of a failure here
+        # is one night of staleness, which the scan's own check catches, provided this row
+        # says it happened.
         log.warning("scheduler.lists_refresh_failed", error=str(exc))
         await _record_run(
             session_factory,
@@ -300,18 +291,16 @@ async def _refresh_curated_lists(
 ) -> None:
     """The refresh itself. Split out so its caller's catch-all covers every line of it.
 
-    **No handler here records anything.** A refusal from ``build_sources`` and an unreadable
-    list registry were each caught where they happened and recorded with the caller's own
-    event name, ``ok=False`` and result string, so the two arms decided nothing and were a
-    second place for that copy to drift. The one row this function writes is the last line,
-    off the ``ok`` and ``result`` the pass worked out, and those three ``ok=False`` branches
-    are outcomes rather than raises, so the caller's catch-all never sees them. The Plex
-    handler below stays: it changes what that result says rather than ending the pass.
+    No handler in this function records a run. Recording happens once, on the last line,
+    off the ``ok`` and ``result`` this pass works out. A raise from ``build_sources`` or an
+    unreadable list registry still propagates up to the caller's catch-all, which records
+    the failure there instead. The Plex handler below is different: it changes what the
+    result says rather than ending the pass, so it stays inside this function.
     """
     async with AsyncExitStack() as stack:
-        # Not a scan: this reads the *arr and Plex and nothing else, so it does not carry
-        # a scan's Tautulli precondition -- an install with Plex linked and no Tautulli
-        # still gets its collections refreshed.
+        # Not a scan: this reads the *arr and Plex and nothing else, so it does not need a
+        # scan's Tautulli precondition. An install with Plex linked and no Tautulli still
+        # gets its collections refreshed.
         radarrs, sonarrs, _tautulli, _seerrs, plex = await scan_runner.build_sources(
             session_factory,
             settings,
@@ -330,8 +319,8 @@ async def _refresh_curated_lists(
                 log.warning("scheduler.lists_refresh_plex_unreachable", error=str(exc))
 
         async with session_factory() as session:
-            # ``strict``: this pass retires, so a row that will not decode has to stop it
-            # rather than read as one the operator deleted (rules 65/91, 115).
+            # ``strict``: this pass can retire a list, so a row that will not decode must
+            # stop it rather than read as one the operator deleted.
             definitions = await list_config.definitions(session, strict=True)
 
         synced = await snapshot_service.sync_protection_lists(
@@ -344,13 +333,12 @@ async def _refresh_curated_lists(
 
     failed = sum(1 for v in synced.values() if isinstance(v, str) and v.startswith("error:"))
     checked = sum(1 for v in synced.values() if isinstance(v, int))
-    # With no live server no Plex provider is built, so those lists produce no entry at all:
-    # they are not in `failed`, not in `checked`, and the job used to record "Lists refreshed"
-    # while every one of them went unchecked. Keyed on a Plex-sourced definition EXISTING,
-    # never on `plex` being None, so an install with no Plex lists still reports a clean pass.
-    # The manual route says the same thing through `plex_error` and a scan degrades outright,
-    # so this row is the third copy of one fact and had been the only cheerful one (rules
-    # 72, 144).
+    # With no live server, no Plex provider is built, so Plex-sourced lists produce no
+    # entry at all: they show up in neither `failed` nor `checked`. This check is keyed on
+    # a Plex-sourced definition existing, never on `plex` being None, so an install with no
+    # Plex lists still reports a clean pass. The manual route reports the same failure
+    # through `plex_error`, and a scan marks itself untrusted outright, so all three must
+    # agree.
     plex_lists = [
         d
         for d in definitions
@@ -378,9 +366,9 @@ async def _refresh_curated_lists(
         result = Reason("lists_refresh_failed")
         ok = False
     else:
-        # Only the partial outcome needs the count: a total failure and a clean pass each say
-        # so in one phrase, and restating the per-list reasons here would be the same refusal
-        # written twice -- every one of them is already on the row it belongs to (rule 144).
+        # Only the partial outcome needs the count: a total failure and a clean pass each
+        # say so in one phrase, and restating the per-list reasons here would repeat a
+        # refusal that is already recorded on the row it belongs to.
         result = Reason("lists_partial", {"checked": checked, "failed": failed})
         ok = False
     await _record_run(session_factory, "refresh_curated_lists", ok=ok, result=result)
@@ -391,15 +379,16 @@ async def full_history_sweep(
     cache_engine: AsyncEngine,
     secret_box: SecretBox,
 ) -> None:
-    """A FULL re-walk of Tautulli's history, to catch backfilled old events.
+    """A full re-walk of Tautulli's history, to catch backfilled old events.
 
-    Per-scan syncs are incremental (fast, date-filtered) and therefore blind to a row
-    Tautulli backfills with an *old* timestamp -- a manual history import, or a delayed
-    play. This full sweep re-reads everything and reconciles. It also re-runs the
-    regression check against Tautulli's real total.
+    Per-scan syncs are incremental, fast and date-filtered, so they are blind to a row
+    Tautulli backfills with an old timestamp, such as a manual history import or a delayed
+    play. This full sweep re-reads everything and reconciles it. It also re-runs the check
+    against Tautulli's real total.
 
-    Every three days rather than nightly, for the reason on ``DEFAULT_MAINTENANCE_CRONS``,
-    and only rows backdated past ``history_sync.INCREMENTAL_OVERLAP`` wait for it.
+    Runs every three days rather than nightly, for the reason given on
+    ``DEFAULT_MAINTENANCE_CRONS``; only rows backdated past
+    ``history_sync.INCREMENTAL_OVERLAP`` wait for it.
 
     Read-only. If no Tautulli is configured, there is nothing to sweep. It does not check
     whether a scan is running: ``history_sync.sync`` serializes the two, so an overlap
@@ -438,16 +427,17 @@ async def full_history_sweep(
             state = await history_sync.sync(cache_engine, client, full=True)
         log.info("scheduler.history_swept", rows=state.rows, unservable=state.unservable)
         if state.unservable:
-            # A partial outcome, recorded the way the lists job records one: the count, and
-            # not ok, so the Jobs page keeps saying so until Tautulli is repaired.
+            # A partial outcome, recorded the way the lists job records one: the count,
+            # marked not ok, so the Jobs page keeps saying so until Tautulli is repaired.
             result = Reason("history_partial", {"unservable": state.unservable})
             ok = False
         else:
             result, ok = Reason("history_updated"), True
         await _record_run(session_factory, "full_history_sweep", ok=ok, result=result)
     except Exception as exc:
-        # The instance lookup and client construction are inside this try too, so a broken
-        # DB read or a bad decrypt is recorded as a failed run instead of escaping unrecorded.
+        # The instance lookup and client construction sit inside this try too, so a broken
+        # database read or a bad decrypt is recorded as a failed run instead of escaping
+        # unrecorded.
         log.warning("scheduler.history_sweep_failed", error=str(exc))
         await _record_run(
             session_factory,
@@ -463,23 +453,22 @@ async def check_for_updates(
 ) -> None:
     """Ask GitHub whether a newer Reaper exists, on a schedule rather than on a page load.
 
-    This is the job that makes the About panel's promise true. The check used to run only
-    when the UI asked for it, so an install nobody signs in to for weeks never checked at
-    all and sat on an old build with nothing to say so (#464).
+    This is the job that makes the About panel's promise true: an install nobody signs in
+    to for weeks still checks and can say so, instead of silently sitting on an old build.
 
     Read-only, and the lightest job here: one anonymous GET, no credentials, nothing about
-    the library in it. It takes :meth:`UpdateChecker.refresh` rather than ``status`` so a
-    firing (or a Run now) genuinely asks instead of repeating a cached answer, and it fills
+    the library in it. It calls :meth:`UpdateChecker.refresh` rather than ``status``, so a
+    firing, or a Run now, genuinely asks instead of repeating a cached answer, and it fills
     the same cache the About route reads, so the answer is already there when someone does
     open Reaper.
 
-    ``REAPER_UPDATE_CHECK=false`` governs this path as it governs the route (rule 55): the
+    ``REAPER_UPDATE_CHECK=false`` governs this path exactly as it governs the route: the
     checker returns the disabled answer without sending anything, and the run is recorded
     saying so rather than reading as a check that happened.
 
-    The result strings are the Jobs page's own copy for these states; the About row
+    The result strings are the Jobs page's own copy for these states. The About row
     (`frontend/src/components/AboutPanel.tsx`, ``UpdateCell``) says the same six things in
-    its own words, and the two are edited together (rule 144).
+    its own words, and the two must be edited together.
     """
     try:
         status = await update_checker.refresh()
@@ -494,7 +483,7 @@ async def check_for_updates(
         if status.update_available is None:
             # Not a crash: an unreachable GitHub, a rate limit, or a version pair that
             # cannot be ordered all land here, and the checker has already logged why.
-            # Recorded as a failed run so the Jobs page shows it rather than a green tick
+            # Recorded as a failed run, so the Jobs page shows it rather than a green tick
             # over a check that answered nothing.
             await _record_run(
                 session_factory,
@@ -505,8 +494,8 @@ async def check_for_updates(
             return
         dev = status.channel == "dev"
         if status.update_available:
-            # INFO, not DEBUG: on a headless install the log is the only place this can
-            # land between one sign-in and the next.
+            # Logged at INFO, not DEBUG: on a headless install the log is the only place
+            # this can land between one sign-in and the next.
             log.info(
                 "scheduler.update_available",
                 channel=status.channel,
@@ -516,19 +505,19 @@ async def check_for_updates(
             result = (
                 Reason("update_dev_behind")
                 if dev
-                # `latest` is unset only when the checker could not answer, which is the
-                # `update_available is None` branch above -- never reached with it True. The
-                # empty-string fallback is only for the type checker, which cannot see that
-                # invariant across two independent fields.
+                # `latest` is unset only when the checker could not answer, the
+                # `update_available is None` branch above, which is never reached here. The
+                # empty-string fallback exists only for the type checker, which cannot see
+                # that invariant across two independent fields.
                 else Reason("update_available", {"latest": status.latest or ""})
             )
         else:
             result = Reason("update_dev_current") if dev else Reason("update_up_to_date")
         await _record_run(session_factory, "check_for_updates", ok=True, result=result)
     except Exception as exc:
-        # The checker maps its own network failures to "unknown" above, so reaching here
-        # means something unexpected -- and an unexpected failure in the least important
-        # job on the scheduler must not stop the ones that keep scans working.
+        # The checker already maps its own network failures to "unknown" above, so
+        # reaching here means something unexpected, and an unexpected failure in the least
+        # important job on the scheduler must not stop the ones that keep scans working.
         log.warning("scheduler.update_check_failed", error=str(exc))
         await _record_run(
             session_factory,
@@ -543,15 +532,12 @@ async def sweep_expired_sessions(
 ) -> None:
     """Delete auth state whose window has closed. Not operator-schedulable (see the id).
 
-    Two tables, one job. Auth sessions were here first; pending Plex PINs were swept only
-    inside `plex_link.start_pin`, which runs when somebody starts ANOTHER PIN, so an
-    abandoned sign-in on an install where nobody starts one again sat there indefinitely
-    (#710). They are the same shape with the same TTL and the same argument for having no
-    off switch, so they share the firing rather than growing a second job with a second
-    interval to keep in step.
+    Two tables, one job. Auth sessions and pending Plex PINs are the same shape with the
+    same TTL and the same argument for having no off switch, so they share one firing
+    rather than growing a second job with a second interval to keep in step.
 
     Swallows its own failures like every other job here: a locked database must not stop
-    the scheduler, and nothing depends on this having run -- an expired session is refused
+    the scheduler, and nothing depends on this having run. An expired session is refused
     on sight, and an expired PIN cannot be spent, whether or not the row is still there.
     """
     try:
@@ -582,36 +568,32 @@ async def sweep_old_snapshots(
     three pragmas; on the first firing after an install upgrades with months of scans
     behind it, that is the run that hands the disk space back.
 
-    **Gating it on this firing's sweep would make that run the only one.** The upgrade
-    drains the whole backlog at once, so every later firing removes nothing -- and a
-    compaction lost to a full disk, a locked database or a canceled shutdown would never
-    be reattempted until a new scan pushed the count past the window again, which on an
-    install whose auto-scan is off is never.
+    Compaction is not gated on this firing's own sweep having removed anything, because the
+    upgrade drains the whole backlog at once and every later firing would otherwise remove
+    nothing. A compaction lost to a full disk, a locked database, or a canceled shutdown
+    would then never be reattempted until a new scan pushed the count past the window again,
+    which on an install whose auto-scan is off never happens.
 
-    **It is gated on a live scan or reap, though, and that is a different argument.** The
-    ``VACUUM`` rewrites the whole file under the write lock, and every app connection waits
-    only 5s for it (``db.session``). Measured on local NVMe with the app's own pragmas, a
-    2.4 GB database vacuums for 8s and the concurrent write fails -- and 2.4 GB is inside the
-    range ``retention.KEEP_SNAPSHOTS`` documents as the steady state, so this needs no unusual
-    storage to bite (#325). A scan loses every source read it made, since it commits once at
-    the end; a reap loses a journal step and wedges (#327). Both outrank housekeeping, so the
-    housekeeping yields. This skips the compaction, never the sweep, whose batches are short
-    writes that take the lock no longer than the app's own.
+    Compaction is gated on a live scan or reap, for a different reason. ``VACUUM`` rewrites
+    the whole file under the write lock, and every app connection waits only 5s for it
+    (``db.session``). A scan loses every source read it made, since it commits once at the
+    end; a reap loses a journal step and wedges. Both outrank housekeeping, so the
+    housekeeping yields. This skips only the compaction, never the sweep, whose batches are
+    short writes that take the lock no longer than the app's own.
 
-    **What makes the next firing a real reattempt is the jitter, not the interval.** A bare
-    twelve-hour interval fires at the same second of the same two hours forever, so a scan on
-    a cron whose period divides twelve hours would collide with every firing or none -- and a
-    collision would mean the compaction never ran again, not that it ran twelve hours later.
-    ``SNAPSHOT_SWEEP_JITTER_S`` is what keeps that from being a permanent skip; the reasoning
-    is on the constant.
+    ``SNAPSHOT_SWEEP_JITTER_S`` is what makes the next firing a real reattempt rather than a
+    repeat of the same skip: a bare twelve-hour interval fires at the same time forever, so a
+    scan on a cron whose period divides twelve hours would collide with every firing or
+    none, and a collision would mean the compaction never runs again rather than running
+    twelve hours later. See the reasoning on that constant.
     """
     try:
         removed = await retention.sweep_old_snapshots(session_factory)
         if removed:
             log.info("scheduler.snapshots_swept", removed=removed)
         # Checked here rather than at the top of the job: the sweep runs first and, on the
-        # upgrade drain this feature exists for, it runs for a while. A check made before it
-        # would be answering about a moment that has passed.
+        # upgrade drain this feature exists for, can take a while. Checking before it would
+        # answer about a moment that has already passed.
         busy = "a scan is running" if scan_runner.scan_running() else None
         if busy is None and reap_running():
             busy = "a reap is running"
@@ -621,7 +603,7 @@ async def sweep_old_snapshots(
             log.info("scheduler.database_compacted")
     except Exception as exc:
         # The sweep commits per batch, so a failure part-way through keeps whatever it
-        # already dropped and the next firing continues from there.
+        # already dropped, and the next firing continues from there.
         log.warning("scheduler.snapshot_sweep_failed", error=str(exc))
 
 
@@ -633,9 +615,10 @@ async def scheduled_scan(
 ) -> None:
     """Run one automatic scan. Read-only, exactly like the button in the UI.
 
-    A scan never deletes -- it refreshes the review queue -- so scheduling one is safe and
-    needs no arming. A misconfigured install (no Radarr/Tautulli yet) is a quiet skip, not
-    an error: the schedule may have been set before the services were added.
+    A scan never deletes, it only refreshes the review queue, so scheduling one is safe and
+    needs no arming. A misconfigured install, such as one with no Radarr or Tautulli yet, is
+    a quiet skip rather than an error, since the schedule may have been set before those
+    services were added.
     """
     try:
         snapshot = await scan_runner.run_scan(
@@ -647,13 +630,13 @@ async def scheduled_scan(
         log.info("scheduler.scan_complete", snapshot=snapshot.id, items=snapshot.item_count)
     except scan_runner.ScanInProgressError:
         # A scan started from the browser is still running; landing a second one on top
-        # would double-read every source and race the grace clock. Skip this firing --
-        # the next scheduled one runs normally.
+        # would double-read every source and race the grace clock. Skip this firing; the
+        # next scheduled one runs normally.
         log.info("scheduler.scan_skipped", reason="a scan is already running")
     except scan_runner.ScanConfigError as exc:
         log.info("scheduler.scan_skipped", reason=str(exc))
     except Exception as exc:
-        # A genuine crash (unlike the two quiet skips above) writes no snapshot, so the
+        # A genuine crash, unlike the two quiet skips above, writes no snapshot, so the
         # Jobs page would otherwise keep showing whatever the last snapshot said forever.
         # Recorded here so ScanRow can prefer this over a stale snapshot (see get_schedule).
         log.warning("scheduler.scan_failed", error=str(exc))
@@ -670,13 +653,13 @@ def apply_scan_schedule(
     secret_box: SecretBox,
     timezone: tzinfo,
 ) -> None:
-    """Reconcile the automatic-scan job to a cron string (or remove it if ``None``).
+    """Reconcile the automatic-scan job to a cron string, or remove it if ``cron`` is ``None``.
 
-    ``cron`` is a standard 5-field crontab expression, read in ``timezone`` -- the server
-    zone from ``app_settings.get_timezone`` -- so "0 2 * * *" fires at 2 AM there, not in
-    the container's own zone. A malformed cron raises ``ValueError`` (surfaced to the caller
-    as a 422) rather than being silently dropped -- an owner who thinks they scheduled a
-    nightly scan should not find nothing ran.
+    ``cron`` is a standard 5-field crontab expression, read in ``timezone``, the server zone
+    from ``app_settings.get_timezone``, so "0 2 * * *" fires at 2 AM there, not in the
+    container's own zone. A malformed cron raises ``ValueError``, surfaced to the caller as
+    a 422, rather than being silently dropped: an owner who thinks they scheduled a nightly
+    scan should not find that nothing ran.
     """
     if cron is None:
         if scheduler.get_job(SCAN_JOB_ID) is not None:
@@ -705,13 +688,12 @@ def _maintenance_specs(
     """The (callable, args) each upkeep job is added with. One place, so wiring a job at
     build time and re-wiring it on a schedule change can never drift apart.
 
-    ``update_checker`` is the app's own instance, not a fresh one: the job and the About
-    route share one cache, so a scheduled check leaves the answer ready for the next page
-    load instead of the two asking GitHub separately.
+    ``update_checker`` is the app's own instance, not a fresh one, so the job and the About
+    route share one cache: a scheduled check leaves the answer ready for the next page load
+    instead of the two asking GitHub separately.
 
-    The data folder comes off ``settings`` rather than beside it. Every caller in this family
-    passed ``settings.data_dir`` next to the same ``settings``, and two sources for one folder
-    is how the ratings download and the snapshot sweep end up in different directories.
+    The data folder comes from ``settings.data_dir`` here, in one place, so the ratings
+    download and the snapshot sweep can never end up pointed at different directories.
     """
     return {
         "refresh_ratings": (refresh_ratings, [cache_engine, settings.data_dir, session_factory]),
@@ -746,10 +728,11 @@ def apply_maintenance_schedule(
 ) -> None:
     """Reconcile one upkeep job to a cron string, or remove it when ``cron`` is ``None``.
 
-    ``cron`` is read in ``timezone`` (the server zone), so every timed job shares one clock
-    with the scan. ``None`` means the owner turned the job off; the job is dropped from the
-    scheduler but can still be run once by hand (see :func:`run_maintenance_now`). A malformed
-    cron raises ``ValueError`` (surfaced as a 422) rather than being silently dropped.
+    ``cron`` is read in ``timezone``, the server zone, so every timed job shares one clock
+    with the scan. ``None`` means the owner turned the job off: the job is dropped from the
+    scheduler but can still be run once by hand (see :func:`run_maintenance_now`). A
+    malformed cron raises ``ValueError``, surfaced as a 422, rather than being silently
+    dropped.
     """
     specs = _maintenance_specs(
         cache_engine,
@@ -783,9 +766,9 @@ def run_maintenance_now(
 ) -> None:
     """Fire an upkeep job immediately, whether or not it is on a schedule.
 
-    A scheduled job is nudged in place (its cron is untouched, so the next regular run still
-    happens). A job the owner turned off is run as a one-shot that removes itself afterward,
-    so "run now" never quietly turns the schedule back on.
+    A scheduled job is nudged in place: its cron stays untouched, so the next regular run
+    still happens. A job the owner turned off runs as a one-shot that removes itself
+    afterward, so "run now" never quietly turns the schedule back on.
     """
     specs = _maintenance_specs(
         cache_engine,
@@ -809,10 +792,11 @@ def run_maintenance_now(
 def track_running_jobs(scheduler: AsyncIOScheduler) -> set[str]:
     """Return a live set of the job ids currently executing.
 
-    APScheduler emits ``SUBMITTED`` when a job hands off to the executor and
-    ``EXECUTED``/``ERROR`` when it finishes; mirroring those into a set gives the Jobs page an
-    honest "running now" signal for each job without inventing a status store. Register this
-    before the scheduler starts so the very first firing is seen.
+    APScheduler emits ``SUBMITTED`` when a job hands off to the executor, and
+    ``EXECUTED`` or ``ERROR`` when it finishes. Mirroring those into a set gives the Jobs
+    page an honest "running now" signal for each job, with no separate status store to
+    keep in sync. Register this before the scheduler starts, so the very first firing is
+    seen.
     """
     running: set[str] = set()
     scheduler.add_listener(lambda e: running.add(e.job_id), EVENT_JOB_SUBMITTED)
@@ -823,11 +807,11 @@ def track_running_jobs(scheduler: AsyncIOScheduler) -> set[str]:
 
 
 async def catch_up_on_startup(cache_engine: AsyncEngine, data_dir: Path) -> None:
-    """Run the refreshes that a fresh (or long-idle) install needs *now*, not at 3am.
+    """Run the refreshes that a fresh or long-idle install needs now, not at 3am.
 
     Only refreshes the ratings dataset if it is actually stale or missing, so a warm
-    install that restarts does not re-download 280 MB it already has. This is the single
-    step that turns "fresh install degrades every snapshot" into "fresh install works".
+    install that restarts does not re-download a dataset it already has. This is the one
+    step that turns "a fresh install cannot trust any scan" into "a fresh install works".
     """
     state = await ImdbRatings(cache_engine).state()
     if state.degraded():
@@ -847,11 +831,11 @@ def build_scheduler(
 ) -> AsyncIOScheduler:
     """Wire the upkeep jobs. The caller starts it and holds it on app state.
 
-    Times are staggered and run in ``timezone`` -- the server zone from
-    ``app_settings.get_timezone`` -- so 03:30 means 03:30 there, the same clock the scan
-    uses. IMDb publishes the dataset once a day; there is no value in hammering it, and 03:30
-    keeps the heavy download off peak viewing hours. The history sweep sits last and is the
-    one that does not run daily; ``DEFAULT_MAINTENANCE_CRONS`` carries both reasons.
+    Times are staggered and run in ``timezone``, the server zone from
+    ``app_settings.get_timezone``, so 03:30 means 03:30 there, the same clock the scan
+    uses. IMDb publishes the dataset once a day, so there is no value in asking more often,
+    and 03:30 keeps the heavy download off peak viewing hours. The history sweep runs last
+    and is the one job that does not run daily; ``DEFAULT_MAINTENANCE_CRONS`` explains why.
     """
     scheduler = AsyncIOScheduler(
         timezone=timezone,
@@ -909,23 +893,22 @@ def apply_stored_schedules(
 ) -> None:
     """Apply every timed job the owner has stored a schedule for, under ``timezone``.
 
-    **Both replays of this data go through here** -- boot, and the timezone save -- because
-    they are one ladder and used to be two: `main.py` open-coded the same guards and the same
-    log events beside a docstring here claiming startup already shared them (rule 87, rule
-    7/24). What made them look different is that boot iterated the *stored* dict while this
-    iterated every known job; that difference is preserved below and is now the only place it
-    is written down.
+    Both boot and a timezone save replay this same data through this one function, so they
+    can never disagree about which jobs run or how a bad cron is handled. Boot applies only
+    the jobs present in the stored dict, and this loop applies every known job, falling back
+    to the built-in default for one with no stored override; that difference is preserved
+    below.
 
-    The stored crons decide what runs: a job the owner turned off stays off, an overridden one
-    keeps its override, and an untouched one falls back to its built-in default. Each cron
-    trigger carries its own zone, so a zone change means rebuilding every trigger, which is
-    why re-applying a job already on its default is not wasted work -- at boot it re-wires
-    what ``build_scheduler`` set to the same value, and on a save it moves the clock.
+    The stored crons decide what runs: a job the owner turned off stays off, an overridden
+    one keeps its override, and an untouched one falls back to its built-in default. Each
+    cron trigger carries its own zone, so a zone change means rebuilding every trigger. That
+    is why re-applying a job already on its default is not wasted work: at boot it re-wires
+    what ``build_scheduler`` already set to the same value, and on a save it moves the clock.
 
-    Each ``apply_*`` is wrapped in a ``ValueError`` guard: a stored-but-malformed cron
-    (hand-edited, or a future parser tightening) is logged and skipped, so one bad cron can
-    never 500 the timezone save or half-apply the zone -- moving some jobs and leaving the
-    rest -- and boot serves a UI the owner can fix it from.
+    Each ``apply_*`` call is wrapped in a ``ValueError`` guard: a stored-but-malformed cron,
+    from a hand-edit or a future parser change, is logged and skipped, so one bad cron can
+    never fail the timezone save or half-apply the zone across some jobs and not others, and
+    boot still serves a UI the owner can fix it from.
     """
     try:
         apply_scan_schedule(
@@ -940,12 +923,10 @@ def apply_stored_schedules(
     except ValueError:
         log.warning("scheduler.bad_scan_cron", cron=scan_cron)
 
-    # A stored row naming a job this build does not have -- a job retired between releases, or
-    # a hand-edited settings table. It cannot be applied and it is not an error the owner
-    # caused, but it is the answer to "I turned that off and it came back", so it is said out
-    # loud rather than skipped. Boot used to reach this as a `KeyError` out of
-    # `apply_maintenance_schedule` and the timezone save never saw it at all, which is the half
-    # of rule 87 a shared guard does not cover on its own.
+    # A stored row can name a job this build does not have: one retired between releases,
+    # or a hand-edited settings table. It cannot be applied, and it is not an error the
+    # owner caused, but it is the answer to "I turned that off and it came back", so it is
+    # logged rather than silently skipped.
     for job_id in sorted(set(maintenance) - set(MAINTENANCE_JOB_IDS)):
         log.warning("scheduler.unknown_maintenance_job", job=job_id, cron=maintenance[job_id])
 
@@ -964,8 +945,8 @@ def apply_stored_schedules(
                 timezone=timezone,
             )
         except ValueError:
-            # `KeyError` is deliberately not caught: `apply_maintenance_schedule` raises it for
-            # a job id absent from `_maintenance_specs`, and `build_scheduler` dereferences
-            # `specs[job_id]` over this same population before either caller reaches here, so
-            # that mismatch is already a boot failure and cannot arrive at this line.
+            # `KeyError` is deliberately not caught here: `apply_maintenance_schedule` raises
+            # it for a job id absent from `_maintenance_specs`, and `build_scheduler` reads
+            # `specs[job_id]` over the same population before either caller reaches this
+            # line, so that mismatch would already be a boot failure.
             log.warning("scheduler.bad_maintenance_cron", job=job_id, cron=cron)

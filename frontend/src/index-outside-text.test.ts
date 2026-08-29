@@ -1,34 +1,31 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Rule 139, held as a table instead of a comment: an element rendering text the operator did not
-// choose -- a media title, a portal handle, a path, a host, an upstream error -- carries a break
-// opportunity, because such a value can be one long unbroken string and on a phone it paints
-// straight through the box holding it.
+// An element rendering text the operator did not choose (a media title, a portal handle, a path,
+// a host, an upstream error) needs a break opportunity, because such a value can be one long
+// unbroken string, and on a phone it would paint straight through the box holding it.
 //
-// This is a test rather than prose because the rule already decayed once. It was applied at the
-// twelve blocks that existed when it was written and never carried across (rule 72), and the tell
-// was three pairs where one half had the fix and the other did not: `.sig-detail`/`.signal-detail`
-// 76 lines apart in one panel, `.instance-url`/`.test-badge` two lines apart on one card, and
-// `.plan-steps code`/`.dryrun-outcomes li code` in two subtrees of one report. #219 and #220 are
-// what that cost; SITES below is what replaces the remembering.
+// This is a table checked by a test, not a rule stated in prose, because a rule in prose does not
+// stay applied: a new site can be added without anyone re-reading it. The tell was three pairs
+// where one half had the fix and the other did not: `.sig-detail`/`.signal-detail` 76 lines apart
+// in one panel, `.instance-url`/`.test-badge` two lines apart on one card, and `.plan-steps
+// code`/`.dryrun-outcomes li code` in two subtrees of one report. SITES below replaces the
+// remembering.
 //
-// **What this guard can and cannot do.** Whether an element renders text from outside the app is
-// a fact about the TSX, not about the stylesheet, so no grep over the CSS can discover a NEW
-// site -- only a person adding a row here can. What the table does hold, for every site already
-// in it:
-//   - the block still exists (a rename fails, rather than dropping the site out of the walk
-//     while the flag-shaped assertions stay green -- rule 145);
-//   - the component still renders the class, so removing a surface without its style is caught
-//     (rule 64);
+// What this guard can and cannot do: whether an element renders text from outside the app is a
+// fact about the TSX, not about the stylesheet, so no grep over the CSS can discover a new site;
+// only a person adding a row here can. What the table does check, for every site already in it:
+//   - the block still exists (a rename fails the test, rather than dropping the site out of the
+//     walk while every other check still passes);
+//   - the component still renders the class, so removing a surface without its style is caught;
 //   - the break opportunity is still granted, and nothing declared after it takes it back;
-//   - a site recorded as a deliberate exception still IS one, so a stale exemption cannot sit
+//   - a site recorded as a deliberate exception still is one, so a stale exemption cannot sit
 //     here vouching for a decision somebody has since reversed.
 //
-// **Two limits, named rather than implied** (rule 118: a check that cannot discriminate must not
-// read as a proof). Selectors are compared whole, so an element also targeted by a compound or
-// descendant selector is only covered if that selector is listed in its `selectors` too. And the
-// cascade is resolved by source order alone, which is right while a site's selectors are declared
-// at equal-or-rising specificity -- as they are today -- and would miss a higher-specificity
-// `nowrap` added ABOVE the block that grants the wrap.
+// Two limits are named here rather than left implicit, since a check that cannot tell one case
+// from another must not read as proof of both. Selectors are compared whole, so an element also
+// targeted by a compound or descendant selector is only covered if that selector is listed in its
+// `selectors` too. And the cascade is resolved by source order alone, which is correct while a
+// site's selectors are declared at equal or rising specificity, as they are today, but would miss
+// a higher-specificity `nowrap` added above the block that grants the wrap.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,7 +43,7 @@ type Site = {
   selectors: string[];
   /** The class the components write, checked to still be there. */
   classInTsx: string;
-  /** Files rendering it. Every one is checked, not just the first (rule 72). */
+  /** Files rendering it. Every one is checked, not just the first. */
   seenIn: string[];
   /** Set when the element takes its value from its parent instead of declaring one. */
   forwards?: string[];
@@ -58,8 +55,8 @@ type Site = {
   onAFlexRow?: string;
 };
 
-// Every element known to render text from outside Reaper. Grouped by where the fix came from, so
-// the pre-existing dozen are visibly under the same guard as the ones #219 and #220 added.
+// Every element known to render text from outside Reaper. Grouped by when each group was added,
+// so the pre-existing dozen are visibly under the same guard as the ones added later.
 const SITES: Site[] = [
   // ---- already correct when the sweep started -------------------------------------------
   {
@@ -89,7 +86,7 @@ const SITES: Site[] = [
     seenIn: ["components/CardOpen.tsx"],
     // It declares `inherit` rather than a value: the button must wrap exactly as the heading
     // around it does, whichever heading that is. So its guarantee is really its parents', and
-    // each of them is a row here in its own right -- including `.season-name`, whose recorded
+    // each of them is a row here in its own right, including `.season-name`, whose recorded
     // exemption this button correctly forwards.
     forwards: [".card-title", ".fair-name", ".season-name"],
   },
@@ -100,11 +97,11 @@ const SITES: Site[] = [
     seenIn: ["components/ServicesPanel.tsx"],
   },
   {
-    // The grid around this is not a row of its own: `.plex-map-grid` renders no text, and floors
-    // its folder column at `minmax(0, max-content)` precisely so this cell can shrink and wrap.
-    // Under 640px that grid stacks and this cell heads its own picker, which is a margin and
-    // nothing else -- listed because a selector that reaches this element and is NOT listed is
-    // the hole limit two above names, not because that block does anything yet (#250).
+    // The grid around this is not a row of its own: `.plex-map-grid` renders no text, and sets
+    // its folder column to `minmax(0, max-content)` precisely so this cell can shrink and wrap.
+    // Under 640px that grid stacks and this cell heads its own picker, which only adds a margin.
+    // It is listed here because a selector that reaches this element and is not listed would be
+    // the coverage gap named above, not because that block does anything else yet.
     what: "a root folder's filesystem path, and a Seerr service's name",
     selectors: [".pl-root", ".plex-map-grid > .pl-root:not(:first-child)"],
     classInTsx: "pl-root",
@@ -131,9 +128,9 @@ const SITES: Site[] = [
       "control. #306",
   },
   {
-    // Why a second row rather than a wider `.pl-select` one: these are two elements carrying
-    // one value, and only this one can honor the rule. Keeping them apart is what makes the
-    // exemption above narrow -- it now exempts a control, not a value.
+    // This is a second row rather than a wider `.pl-select` one because these are two elements
+    // carrying one value, and only this one can wrap. Keeping them apart is what keeps the
+    // exemption above narrow: it exempts a control, not a value.
     what:
       "the chosen Plex library and the chosen Sonarr or Radarr connection again, restated " +
       "under the picker as text, because the picker itself cannot wrap them",
@@ -145,8 +142,8 @@ const SITES: Site[] = [
     what: "the name of the backup file the operator dropped or picked",
     selectors: [".chosen-file"],
     classInTsx: "chosen-file",
-    // The restore flow left Settings for its own module when the first-run wizard grew a
-    // door onto it (#385); one component draws this in both places.
+    // The restore flow moved out of Settings into its own module once the first-run wizard
+    // grew a path to it; one component draws this in both places.
     seenIn: ["components/RestoreCard.tsx"],
   },
   {
@@ -159,11 +156,11 @@ const SITES: Site[] = [
     what: "help text, app-authored except on the Plex row, which appends the server's URL",
     selectors: [".set-row .help"],
     classInTsx: "help",
-    // `SetRow` writes the class for all twenty-six settings rows now, so it is the file this
-    // site lives in. `PlexPanel.tsx` still spells `help` on a paragraph outside `.set-rows`,
-    // which is a DIFFERENT element from the one this selector styles, so listing it here would
-    // keep the entry green off a token that moved. What PlexPanel still supplies is the value:
-    // the linked row passes the server's URL in as `help`.
+    // `SetRow` writes this class for every settings row now, so it is the file this site lives
+    // in. `PlexPanel.tsx` still spells `help` on a paragraph outside `.set-rows`, which is a
+    // different element from the one this selector styles, so listing it here would check the
+    // wrong element. What PlexPanel still supplies is the value: the linked row passes the
+    // server's URL in as `help`.
     seenIn: ["components/SetRow.tsx"],
   },
   {
@@ -173,7 +170,7 @@ const SITES: Site[] = [
     seenIn: ["components/AboutPanel.tsx"],
   },
 
-  // ---- #219: eleven blocks, one declaration each ------------------------------------------
+  // ---- eleven blocks, one declaration each ------------------------------------------------
   {
     what: "a media title on a queue card",
     selectors: [".card-title"],
@@ -184,12 +181,11 @@ const SITES: Site[] = [
     what: "the same media title at the head of a panel",
     selectors: [".why-head h2"],
     classInTsx: "why-head",
-    // One file, and it used to be two: the item panel and the show panel drew this head
-    // separately until `PanelHead` collapsed them, and the show panel renders it from there
-    // now. A media TITLE reaches this selector through `PanelHead` alone. `ScalesPanel.tsx`
-    // also puts outside text under `.why-head h2` -- a requester's display name, through
-    // `ProfileName` -- and that is covered by its own row on `.scales-head-id h2` rather
-    // than here. The other two `.why` heads carry app-written copy.
+    // One file: `PanelHead` renders this head for both the item panel and the show panel, so a
+    // media title reaches this selector through `PanelHead` alone. `ScalesPanel.tsx` also puts
+    // outside text under `.why-head h2`, a requester's display name through `ProfileName`, but
+    // that is covered by its own row on `.scales-head-id h2` rather than here. The other two
+    // `.why` heads carry app-written copy.
     seenIn: ["components/WhyPanel.tsx"],
   },
   {
@@ -211,15 +207,11 @@ const SITES: Site[] = [
     seenIn: ["components/ServiceModal.tsx"],
   },
   {
-    what: "the title, or the media key when there is none, on the screen confirming a deletion",
-    selectors: [".reap-item-title"],
-    classInTsx: "reap-item-title",
-    seenIn: ["components/ReapConfirm.tsx"],
-  },
-  {
-    what: "the executor's own words for one item",
-    selectors: [".dryrun-outcomes li code"],
-    classInTsx: "dryrun-outcomes",
+    what: "the title, or the media key when there is none, in the reap's item-status log and result",
+    selectors: [".feed-title"],
+    classInTsx: "feed-title",
+    // `OutcomeFeedRow` renders it in all three of the Reap tab's outcome lists: the live log
+    // while a run executes, the done card's kept-by-checks list, and the read-only run detail.
     seenIn: ["components/ReapPlan.tsx"],
   },
   {
@@ -251,7 +243,7 @@ const SITES: Site[] = [
       "it on, and the spinner carries no text to break",
   },
 
-  // ---- #220: the five that needed a layout decision ---------------------------------------
+  // ---- five blocks that needed a layout decision ------------------------------------------
   {
     what: "a media title on the Scales card, which used to be cut with an ellipsis",
     selectors: [".scales-title-name"],
@@ -288,12 +280,12 @@ const SITES: Site[] = [
       "branch to split, and truncating instead is what rule 139 forbids outright. #220",
   },
 
-  // ---- Settings, Lists (#475) ------------------------------------------------------------
-  // A whole screen of outside text arrived and registered none of it. Two of these were
-  // genuinely missed rather than merely unregistered: `.jobrow-sched` and `.jobrow-desc` had
-  // no break opportunity at all, and the stylesheet comment beside them named "a Plex
-  // collection's name" as a value it was protecting while granting the wrap to `.list-name`,
-  // which is the operator's own words.
+  // ---- Settings, Lists --------------------------------------------------------------------
+  // A whole screen of outside text needed rows added here. Two of these needed the stylesheet
+  // fixed too: `.jobrow-sched` and `.jobrow-desc` had no break opportunity at all, even though
+  // the stylesheet comment beside them named "a Plex collection's name" as a value it was
+  // protecting, while the wrap it actually granted only covered `.list-name`, the operator's
+  // own words.
   {
     what:
       "the list's source line: a Plex collection and library name, or a pasted IMDb list id " +
@@ -439,9 +431,8 @@ function resolve(site: Site) {
       if (v === "nowrap" || v === "ellipsis") defeats.push({ at: rule.at, prop, value: v });
     }
   }
-  // `>=`, not `>`: a `nowrap` sitting in the SAME block as the break opportunity defeats it just
-  // as completely as one in a later block, and reads even more like a fix than it does. The first
-  // version of this check compared strictly and let exactly that mutation through.
+  // `>=`, not `>`: a `nowrap` in the SAME block as the break opportunity defeats it just as
+  // completely as one in a later block, and reads even more like a fix than it does.
   const defeatedAfterGrant =
     grantedAt === null ? [] : defeats.filter((d) => d.at >= (grantedAt as number));
   return { grantedAt, defeats, defeatedAfterGrant };
@@ -460,16 +451,16 @@ describe("the stylesheet: text the operator did not choose", () => {
       }
     }
     // A selector that stopped matching would otherwise drop its site out of every check below
-    // while they all stayed green (rule 145). If one was renamed, rename it here too.
+    // while they all stayed green. If a selector was renamed, rename it here too.
     expect(missing).toEqual([]);
   });
 
   it("still renders every class the table names, in every file it names", () => {
     const gone: string[] = [];
     for (const site of SITES) {
-      // A whole token, not a substring: `includes("gate-detail")` is satisfied by
-      // `"gate-detail-x"`, so a rename -- the likeliest way a class and its style part company --
-      // read as still present. `\b` is no help when the name itself contains a hyphen.
+      // A whole token, not a substring: `includes("gate-detail")` matches `"gate-detail-x"` too,
+      // so a rename, the likeliest way a class and its style part company, would still read as
+      // present. `\b` does not help here since the class name itself contains a hyphen.
       const token = new RegExp(String.raw`(?<![\w-])${site.classInTsx}(?![\w-])`);
       for (const file of site.seenIn) {
         const source = readFileSync(join(HERE, file), "utf8");
@@ -478,7 +469,7 @@ describe("the stylesheet: text the operator did not choose", () => {
         }
       }
     }
-    // Rule 64: a surface removed takes its style, and its row here, with it.
+    // A surface that is removed takes its style, and its row here, with it.
     expect(gone).toEqual([]);
   });
 
@@ -501,8 +492,8 @@ describe("the stylesheet: text the operator did not choose", () => {
         );
       }
     }
-    // This is #220's whole shape: a `nowrap` or an ellipsis makes `overflow-wrap` a no-op, so a
-    // site can carry the declaration and still paint out of its box.
+    // A `nowrap` or an ellipsis makes `overflow-wrap` a no-op, so a site can carry the
+    // declaration and still paint out of its box.
     expect(undone).toEqual([]);
   });
 
@@ -527,9 +518,8 @@ describe("the stylesheet: text the operator did not choose", () => {
       }
     }
     // `anywhere` counts its break opportunities in min-content sizing, unlike `break-word`, so a
-    // flex item that inherits it has an automatic minimum of one character and the row is free to
-    // squeeze it to that. The simulator's example list is what this cost: the grant sat on the
-    // row, and a title long enough to wrap broke the score beside it into a 6 above a 4.
+    // flex item that inherits it gets an automatic minimum width of one character, and the row
+    // is free to squeeze it down to that width.
     expect(misplaced).toEqual([]);
     expect(stale).toEqual([]);
   });
@@ -541,8 +531,8 @@ describe("the stylesheet: text the operator did not choose", () => {
         stale.push(`${named(site)} wraps now -- drop its \`exempt\` reason, it is no longer true`);
       }
     }
-    // The table has to be wrong in neither direction: an exemption left behind after somebody
-    // fixed the site is a written decision vouching for the opposite of what ships.
+    // The table must be accurate in both directions: an exemption left in place after a site is
+    // fixed vouches, in writing, for the opposite of what actually ships.
     expect(stale).toEqual([]);
   });
 
@@ -561,34 +551,21 @@ describe("the stylesheet: text the operator did not choose", () => {
   });
 
   it("walks the population it claims to, and says how big that is", () => {
-    // Rule 145: a flag-shaped assertion cannot tell a member that complies from one that fell out
-    // of the walk, so the size of the walk is pinned by hand. Reconciled against the table above:
-    // 10 sites that already carried the fix, 11 from #219, 5 from #220 (one of them exempt),
-    // `.pl-select` from #250 (exempt: the shape rule 139 has no remedy for), `.pl-echo` from
-    // #306, the wrapping restatement that carries the value the exempt control cannot, and 8
-    // from Settings, Lists (#475) -- a screen that arrived carrying a whole population of
-    // outside text and registered none of it. The per-server counts are a matrix now, whose Tag
-    // column and server headers scroll sideways in their box rather than wrap, so two of those 8
-    // are exempt (nowrap, reachable by scroll) where the old comma-joined server name wrapped --
-    // which is what moves the exempt tally from 2 to 4.
-    expect(SITES.length).toBe(36);
+    // A flag-shaped assertion cannot tell a member that complies from one that fell out of the
+    // walk, so the size of the walk is pinned by hand: 35 sites in the table, 4 of them exempt.
+    expect(SITES.length).toBe(35);
     expect(SITES.filter((s) => s.exempt).length).toBe(4);
-    // And the blocks those sites actually resolve to. Twenty-three of the original sites
-    // resolve to one block
-    // each; the other five are `.about-kv dd` (its own, plus a margin under 560px), the requested
-    // chip (`.chip`, its own, and the rule it shares with `.lib-chip`), `.lib-chip` (its own and
-    // that shared rule again), the unnumbered season (the base and the modifier), and `.pl-root`
-    // (its own, plus the stacked-grid margin under 640px) -- and `.pl-select`, which is three:
-    // the control standard every `.field-sm` box rides, its own width rule, and the unset tint.
-    // The eight Settings, Lists rows resolve to one block each.
-    // If this moves, a selector joined or left a row -- check it was meant to, then update it.
+    // This also counts the CSS blocks each site actually resolves to. Most sites match one
+    // block; a few match more than one, for a total of 43. If this number moves, a selector
+    // joined or left a row: check that the change was intended, then update the number.
     const blocks = SITES.reduce((n, s) => n + matchesOf(s).length, 0);
-    expect(blocks).toBe(44);
+    expect(blocks).toBe(43);
   });
 });
 
-// Rule 147: a guard reading source text is bounded by the syntax it can parse, so the parser is
-// run against every spelling the stylesheet actually uses before it is trusted with the checks above.
+// A guard reading source text is bounded by the syntax it can parse, so the parser is run
+// against every spelling the stylesheet actually uses before it is trusted with the checks
+// above.
 describe("the stylesheet walk", () => {
   it("reads every selector spelling the file uses", () => {
     const fixture = `

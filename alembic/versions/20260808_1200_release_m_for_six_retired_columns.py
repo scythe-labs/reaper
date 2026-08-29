@@ -1,52 +1,58 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """let six write-only columns survive their ORM attributes leaving
 
-Rule 148's **release M**. Six columns are write-only across ``src/``, ``tests/`` and
-``frontend/src/``, and this release removes their ORM attributes. Five of them are
-``NOT NULL`` with no server default, so the Python-side ``default=`` is what has been
-filling them -- and that dies with the attribute, leaving the next ``INSERT`` omitting a
-column SQLite will refuse. That is a fresh install failing its first Plex link or its
-first settings save, which is why the schema moves BEFORE the attributes and not with
-them.
+This is release M of a two-release column removal: six columns are write-only
+across ``src/``, ``tests/``, and ``frontend/src/``, and this release removes their
+ORM attributes while keeping the columns. Five of them are ``NOT NULL`` with no
+server default, so the Python-side ``default=`` is what has been filling them,
+and that default dies with the attribute. Without a schema change first, the next
+``INSERT`` would omit a column SQLite refuses, which is a fresh install failing
+its first Plex link or its first settings save. That is why the schema changes
+before the attributes leave, not alongside them.
 
-**Nothing is dropped here, deliberately.** One release where both images work is what makes
-the operator's rollback survivable: every column release M-1 writes is still there, still
-holds its old values, and still accepts the writes that image makes.
+Nothing is dropped here, deliberately. One release where both images can read
+the same schema is what makes an operator's rollback survivable: every column
+release M-1 writes is still there, still holds its old values, and still accepts
+the writes that image makes.
 
-**Rolling back is two steps, and the second alone does not work.** Run ``alembic downgrade
-d5e6f7a8b9c0`` from the M image FIRST, then start M-1. Going straight to M-1 leaves a
-database stamped at a revision that image's script directory does not contain, so its boot
-migration exits with ``Can't locate revision`` and ``docker-entrypoint.sh`` stops the
-container. Fail-closed, and recoverable by coming back to M and downgrading, but it is not
-the unchanged-start this paragraph used to promise.
+Rolling back is two steps, and the second alone does not work. Run ``alembic
+downgrade d5e6f7a8b9c0`` from the M image first, then start M-1. Going straight
+to M-1 leaves a database stamped at a revision that image's script directory
+does not contain, so its boot migration exits with ``Can't locate revision`` and
+``docker-entrypoint.sh`` stops the container. That fails closed, and is
+recoverable by coming back to M and downgrading, but the rollback is not a
+plain, unchanged restart.
 
-Release M+1 drops the six, under rule 148's three obligations.
+Release M+1 drops the six columns.
 
-**Two shapes, chosen per column rather than uniformly.**
+Each column takes one of two shapes, chosen per column rather than uniformly.
 
-*A server default*, where the value the Python side was writing is a real answer this
-release still means: ``profile.enabled`` and ``list_config.built_in`` both carried
-``default=False``, so ``sa.false()`` writes exactly what the retiring code wrote.
+A server default, where the value the Python side was writing is a real answer
+this release still means: ``profile.enabled`` and ``list_config.built_in`` both
+carried ``default=False``, so ``sa.false()`` writes exactly what the retiring
+code wrote.
 
-*Nullable*, where there is no honest default: ``pending_plex_login.pin_code``,
-``plex_server.owner_plex_account_id`` and ``profile.active_policy_id``. Inventing ``""``
-or ``0`` would put a wrong definite value in a column an older image can still read,
-where NULL says the only true thing -- this image did not write it. ``active_policy_id``
-forces the question rather than merely inviting it: it is a ``FOREIGN KEY`` to
-``policy.id`` and ``PRAGMA foreign_keys`` is ON (``db/session.py``), so a
-``server_default`` of ``0`` would point every new profile at a policy row that does not
-exist and the insert would fail -- the exact first-save break this revision exists to
-prevent. A NULL foreign key is permitted and checks clean.
+Nullable, where there is no honest default: ``pending_plex_login.pin_code``,
+``plex_server.owner_plex_account_id``, and ``profile.active_policy_id``.
+Inventing ``""`` or ``0`` would put a wrong, definite value in a column an older
+image can still read, where NULL says the only true thing: this image did not
+write it. ``active_policy_id`` forces the question rather than merely inviting
+it, since it is a ``FOREIGN KEY`` to ``policy.id`` and ``PRAGMA foreign_keys`` is
+on (``db/session.py``). A ``server_default`` of ``0`` would point every new
+profile at a policy row that does not exist, and the insert would fail, which is
+the exact first-save break this revision exists to prevent. A NULL foreign key
+is permitted and checks clean.
 
-``candidate.poster_url`` needs nothing here. It is already nullable with a Python-side
-``default=None``, so the omitted column simply reads NULL; it appears in this docstring
-only because it is the sixth attribute leaving, and it still needs its ``include_name``
-arm in ``alembic/env.py`` or ``alembic check`` reports a pending ``drop_column`` forever.
+``candidate.poster_url`` needs no change here. It is already nullable with a
+Python-side ``default=None``, so the omitted column simply reads NULL. It
+appears in this docstring only because it is the sixth attribute leaving, and it
+still needs its ``include_name`` arm in ``alembic/env.py``, or ``alembic check``
+reports a pending ``drop_column`` forever.
 
-**One ``batch_alter_table`` block per table.** Each block is a full copy of the table
-under ``render_as_batch``, so ``profile``'s two columns move together; four blocks, four
-rebuilds. ``recreate`` is left at its default, which already recreates for an
-``alter_column`` on SQLite.
+One ``batch_alter_table`` block per table. Each block is a full copy of the
+table under ``render_as_batch``, so ``profile``'s two columns move together:
+four blocks, four rebuilds. ``recreate`` is left at its default, which already
+recreates for an ``alter_column`` on SQLite.
 
 Revision ID: e6f7a8b9c0d1
 Revises: d5e6f7a8b9c0
@@ -65,14 +71,17 @@ down_revision: str | None = "d5e6f7a8b9c0"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-# Copy the database aside before this runs (`reaper.db.schema_gate.SNAPSHOT_ATTR`, #566).
-# Four `batch_alter_table` blocks are four full table copies taken from SQLite's reflection,
-# and the `list_config` comment below is the accident that shape produces: reflection does not
-# report a collation, so a rebuild that does not restate one drops it, and the table comes out
-# of the migration looking fine. Release M+1's `drop_column` sweep will carry this too, and will
-# need it harder -- there, `downgrade()` recreates the column and cannot bring its data back.
-# That revision does not exist yet; `test_repo_hygiene`'s
-# `test_a_revision_that_cannot_be_undone_asks_for_a_snapshot` is what will refuse it without one.
+# Copy the database aside before this runs (see
+# `reaper.db.schema_gate.SNAPSHOT_ATTR`). Four `batch_alter_table` blocks are
+# four full table copies taken from SQLite's reflection, and the
+# `list_config` comment below is the accident that shape produces: reflection
+# does not report a collation, so a rebuild that does not restate one drops
+# it, and the table comes out of the migration looking fine. Release M+1's
+# `drop_column` sweep carries this same risk, and needs a snapshot even more,
+# since its `downgrade()` recreates the column but cannot bring its data
+# back. `test_repo_hygiene`'s
+# `test_a_revision_that_cannot_be_undone_asks_for_a_snapshot` is the gate
+# that catches a revision missing one.
 needs_snapshot = True
 
 
@@ -104,14 +113,16 @@ def upgrade() -> None:
             nullable=True,
         )
 
-    # `name` is re-declared with its collation on purpose, and dropping this line silently
-    # un-protects the table. A batch rebuild copies the table from SQLite's REFLECTION, and
-    # reflection does not report collations (`20260804_1400`'s own comment says so, having
-    # learned it) -- so a rebuild that does not restate `COLLATE NOCASE` recreates `name` as
-    # a case-SENSITIVE unique column, and "Holiday" and "holiday" become two lists answering
-    # to one keep rule. Nothing in the shape of this migration hints at that; the behavioral
-    # test is what caught it (`test_migrations.TestAListNameIsUniqueWithoutRegardToCase`), and
-    # it is why rule 148 asks for surviving constraints to be asserted rather than eyeballed.
+    # `name` is re-declared with its collation on purpose, and dropping this
+    # line would silently un-protect the table. A batch rebuild copies the
+    # table from SQLite's reflection, and reflection does not report
+    # collations (see `20260804_1400`'s own comment). A rebuild that does not
+    # restate `COLLATE NOCASE` recreates `name` as a case-sensitive unique
+    # column, and "Holiday" and "holiday" become two lists answering to one
+    # keep rule. Nothing in the shape of this migration hints at that. The
+    # behavioral test that catches it is
+    # `test_migrations.TestAListNameIsUniqueWithoutRegardToCase`, which is why
+    # surviving constraints here are asserted rather than eyeballed.
     with op.batch_alter_table("list_config", schema=None) as batch_op:
         batch_op.alter_column(
             "name",
@@ -128,23 +139,25 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Restores the old shape over a backfill, because a row this release wrote may hold a
-    NULL the old shape forbids.
+    """Restores the old shape over a backfill, because a row this release wrote may
+    hold a NULL the old shape forbids.
 
-    Reversible, unlike the M+1 drop this precedes: nothing was removed, so nothing has to
-    come back. The backfilled values are the ones the retiring Python defaults would have
-    written. ``active_policy_id`` is the exception and has no correct value to invent, so
-    it is pointed at the lowest real ``policy.id`` -- a live row beats both a dangling
-    foreign key and a failed constraint. A database holding a profile and no policy at all
-    cannot be reversed honestly, and says so rather than guessing.
+    Reversible, unlike the M+1 drop this precedes: nothing was removed, so nothing
+    has to come back. The backfilled values are the ones the retiring Python
+    defaults would have written. ``active_policy_id`` is the exception, since it
+    has no correct value to invent, so it is pointed at the lowest real
+    ``policy.id``. A live row beats both a dangling foreign key and a failed
+    constraint. A database holding a profile and no policy at all cannot be
+    reversed honestly, and this says so instead of guessing.
     """
     with op.batch_alter_table("list_config", schema=None) as batch_op:
-        # Restated here for the same reason the upgrade restates it, and forgetting it here is
-        # worse than forgetting it there. A rollback would leave `name` case-SENSITIVE, admit
-        # "Holiday" beside "holiday", and the re-upgrade's rebuild would then die on `UNIQUE
-        # constraint failed` with the disambiguation pass (`e5f6a7b8c9d0`) already applied and
-        # never re-run -- so the container fails its migration on every restart until someone
-        # renames a row by hand.
+        # Restated here for the same reason the upgrade restates it. Forgetting
+        # it here is worse than forgetting it there: a rollback would leave
+        # `name` case-sensitive, admit "Holiday" beside "holiday", and the
+        # re-upgrade's rebuild would then die on `UNIQUE constraint failed`,
+        # since the disambiguation pass (`e5f6a7b8c9d0`) already ran and never
+        # runs again. The container would then fail its migration on every
+        # restart until someone renames a row by hand.
         batch_op.alter_column(
             "name",
             existing_type=sa.String(length=100),

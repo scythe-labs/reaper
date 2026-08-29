@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The review queue's filters: search, media type, and requested-only.
 
-Filters narrow the frozen snapshot, they never re-decide it. Each one is a display-side
+Filters narrow the frozen snapshot. They never re-decide it. Each one is a display-side
 convenience over candidates that were already judged, and the queue also carries the
 display fields (poster, blurb, requested-by, show grouping) captured at scan time.
 """
@@ -69,10 +69,10 @@ def client(settings: Settings, sync_db: Engine) -> Iterator[TestClient]:
                     year=1995,
                     requested_by=None,
                     # "Comedy Special" proves the genre filter matches whole terms, not
-                    # substrings; a filter for Comedy must not drag this row along.
+                    # substrings. A filter for Comedy must not drag this row along.
                     genres_json='["Comedy Special"]',
-                    # A distinct library whose name contains "Movies": the library filter must
-                    # match the whole name, not drag this in on a filter for "Movies".
+                    # A distinct library whose name contains "Movies". The library filter
+                    # must match the whole name, not drag this in on a filter for "Movies".
                     library_title="4K Movies",
                 ),
                 _candidate(
@@ -130,15 +130,15 @@ class TestFilters:
         assert _titles(rows) == {"Example Alpha"}
 
     def test_search_understands_a_year_typed_after_the_title(self, client: TestClient) -> None:
-        # The queue prints the year in its own span beside the title, so the operator reads
-        # "Example Alpha 1979" as one string and types it back. It used to match nothing: the
-        # year lives in its own column and was never in `title`.
+        # The queue prints the year in its own span beside the title, so the operator
+        # reads "Example Alpha 1979" as one string and types it back. It used to match
+        # nothing, since the year lives in its own column and was never in `title`.
         for term in ("Example Alpha 1979", "Example Alpha (1979)", "alpha 1979"):
             rows = client.get(f"/api/candidates?verdict=condemn&search={term}").json()["items"]
             assert _titles(rows) == {"Example Alpha"}, term
 
     def test_search_with_the_wrong_year_finds_nothing(self, client: TestClient) -> None:
-        # The year narrows; it is not decoration. Example Alpha is 1979.
+        # The year narrows. It is not decoration. Example Alpha is 1979.
         rows = client.get("/api/candidates?verdict=condemn&search=Example Alpha 1980").json()[
             "items"
         ]
@@ -175,17 +175,17 @@ class TestFilters:
         rows = client.get("/api/candidates?verdict=condemn&media_type=movie&requested=yes").json()[
             "items"
         ]
-        assert _titles(rows) == {"Example Alpha"}  # a movie AND requested; the season is excluded
+        assert _titles(rows) == {"Example Alpha"}  # a movie AND requested, the season is out
 
 
 class TestGenreFilter:
     def test_a_genre_matches_the_whole_term_only(self, client: TestClient) -> None:
-        # "Comedy" must match ["Comedy", ...] and NOT ["Comedy Special"].
+        # "Comedy" must match ["Comedy", ...], not ["Comedy Special"].
         rows = client.get("/api/candidates?verdict=condemn&genre=Comedy").json()["items"]
         assert _titles(rows) == {"Example Alpha"}
 
     def test_a_malformed_genre_row_is_skipped_not_an_error(self, client: TestClient) -> None:
-        # The season row's genres_json does not parse; it never matches and never 500s.
+        # The season row's genres_json does not parse. It never matches and never 500s.
         response = client.get("/api/candidates?verdict=condemn&genre=Horror")
         assert response.status_code == 200
         assert _titles(response.json()["items"]) == {"Example Alpha"}
@@ -197,10 +197,9 @@ class TestGenreFilter:
 
 
 class TestCollectionFilter:
-    """``collection`` is genre's sibling (rule 72): same predicate, over
-    ``collections_json`` instead of ``genres_json``. Collections are navigation, never
-    protection -- this filter only narrows the frozen snapshot, same as every other one
-    on this route (#816 phase 3)."""
+    """``collection`` is genre's sibling: same predicate, over ``collections_json``
+    instead of ``genres_json``. Collections are navigation, never protection. This
+    filter only narrows the frozen snapshot, same as every other one on this route."""
 
     @pytest.fixture
     def client(self, settings: Settings, sync_db: Engine) -> Iterator[TestClient]:
@@ -223,8 +222,8 @@ class TestCollectionFilter:
                         snapshot_id=snap.id,
                         media_key="radarr:1:51",
                         title="Example Juliet",
-                        # Malformed on purpose: the collection filter must skip it, never
-                        # 500 -- the same defense the genre filter already has.
+                        # Malformed on purpose: the collection filter must skip it,
+                        # never 500, the same defense the genre filter already has.
                         collections_json="not json",
                     ),
                 ]
@@ -267,8 +266,8 @@ class TestCollectionFilter:
 
 
 class TestCollectionSizesOnTheSnapshot:
-    """``collection_sizes_json`` rides the snapshot route as ``collection_sizes`` -- the
-    collection screen's header reads it for Plex's own member count (#816 phase 5)."""
+    """``collection_sizes_json`` rides the snapshot route as ``collection_sizes``. The
+    collection screen's header reads it for Plex's own member count."""
 
     @pytest.fixture
     def client(self, settings: Settings, sync_db: Engine) -> Iterator[TestClient]:
@@ -291,19 +290,18 @@ class TestCollectionSizesOnTheSnapshot:
 
     def test_the_map_rides_the_snapshot_route(self, client: TestClient) -> None:
         body = client.get("/api/snapshots/latest").json()
-        # The non-int value is dropped rather than guessed at: it was never a size Plex
+        # The non-int value is dropped rather than guessed at. It was never a size Plex
         # reported, so a wrong number is worse than a missing one.
         assert body["collection_sizes"] == {"Alpha Trilogy": 8}
 
 
 class TestSearchReachesCollectionNames:
-    """``search`` gains collection names, matched partially -- typing a franchise finds its
-    members (#816 phase 3b). A row lands in one of three blocks (0 exact title, 1 partial
-    title/show, 2 collection-name), carried on the response as ``search_rank``, and the
-    three blocks always sort ahead of each other regardless of the operator's chosen
-    ``sort`` -- only the order WITHIN a block follows it. A block-2 row's
-    ``matched_collection`` is the collection that actually matched, never the chip's usual
-    smallest-first pick."""
+    """``search`` gains collection names, matched partially. Typing a franchise finds its
+    members. A row lands in one of three blocks (0 exact title, 1 partial title/show, 2
+    collection-name), carried on the response as ``search_rank``, and the three blocks
+    always sort ahead of each other regardless of the operator's chosen ``sort``. Only
+    the order *within* a block follows it. A block-2 row's ``matched_collection`` is the
+    collection that actually matched, never the chip's usual smallest-first pick."""
 
     @pytest.fixture
     def client(self, settings: Settings, sync_db: Engine) -> Iterator[TestClient]:
@@ -343,8 +341,9 @@ class TestSearchReachesCollectionNames:
                         score=10,
                         size_bytes=700,
                     ),
-                    # Block 2: the title itself never mentions the term, only a collection
-                    # does -- this is search "reaching" a collection name at all.
+                    # Block 2: the title itself never mentions the term, only a
+                    # collection does. This is search "reaching" a collection name at
+                    # all.
                     _candidate(
                         snapshot_id=snap.id,
                         media_key="radarr:1:73",
@@ -374,7 +373,7 @@ class TestSearchReachesCollectionNames:
             yield c
 
     def test_a_collection_only_match_is_found_at_all(self, client: TestClient) -> None:
-        # Neither "Reel Delta" nor "Reel Alpha" mentions "nova" in its own title -- only
+        # Neither "Reel Delta" nor "Reel Alpha" mentions "nova" in its own title. Only
         # their collections do. Search reaching collection names is what puts them here.
         rows = client.get("/api/candidates?verdict=condemn&search=nova").json()["items"]
         assert _titles(rows) == {"Nova", "Nova Prime", "Nova Zulu", "Reel Delta", "Reel Alpha"}
@@ -406,7 +405,7 @@ class TestSearchReachesCollectionNames:
         ).json()["items"]
         ranks = [int(r["search_rank"]) for r in rows]
         # Non-decreasing: every block-0 row precedes every block-1 row precedes every
-        # block-2 row, whatever the operator asked the REST of the ordering to do.
+        # block-2 row, whatever the operator asked the *rest* of the ordering to do.
         assert ranks == sorted(ranks), (sort, order, ranks)
         assert ranks == [0, 1, 1, 2, 2]
 
@@ -419,23 +418,23 @@ class TestSearchReachesCollectionNames:
             "/api/candidates",
             params={"verdict": "condemn", "search": "nova", "sort": "title", "order": "asc"},
         ).json()["items"]
-        # Block 1 (indices 1-2): score-desc puts "Nova Prime" (90) before "Nova Zulu" (10);
-        # title-asc puts them in the same order ("Prime" < "Zulu"), so this pair alone
-        # cannot tell the two sorts apart.
+        # Block 1 (indices 1-2): score-desc puts "Nova Prime" (90) before "Nova Zulu"
+        # (10), and title-asc puts them in the same order ("Prime" < "Zulu"), so this
+        # pair alone cannot tell the two sorts apart.
         assert [r["title"] for r in by_score[1:3]] == ["Nova Prime", "Nova Zulu"]
         assert [r["title"] for r in by_title[1:3]] == ["Nova Prime", "Nova Zulu"]
         # Block 2 (indices 3-4) is where the two sorts disagree: score-desc wants "Reel
-        # Delta" (99) before "Reel Alpha" (1); title-asc wants "Reel Alpha" before "Reel
-        # Delta". Matching flip proves the block is sorted by the operator's OWN key, not
-        # by some fixed order the server picked for it.
+        # Delta" (99) before "Reel Alpha" (1), and title-asc wants "Reel Alpha" before
+        # "Reel Delta". The flip proves the block is sorted by the operator's *own* key,
+        # not by some fixed order the server picked for it.
         assert [r["title"] for r in by_score[3:5]] == ["Reel Delta", "Reel Alpha"]
         assert [r["title"] for r in by_title[3:5]] == ["Reel Alpha", "Reel Delta"]
 
 
 class TestSearchMatchedCollectionOnlyAppliesToBlockTwo:
-    """A title match's own collections can independently contain the search term too --
-    that must not leak a ``matched_collection`` onto a row that did not need one to be
-    found. Only a block-2 row (search_rank == 2) carries it (#816 phase 3b)."""
+    """A title match's own collections can independently contain the search term too.
+    That must not leak a ``matched_collection`` onto a row that did not need one to be
+    found. Only a block-2 row (search_rank == 2) carries it."""
 
     @pytest.fixture
     def client(self, settings: Settings, sync_db: Engine) -> Iterator[TestClient]:
@@ -451,8 +450,8 @@ class TestSearchMatchedCollectionOnlyAppliesToBlockTwo:
                     snapshot_id=snap.id,
                     media_key="radarr:1:80",
                     title="Nova",
-                    # The row's own collection also matches "nova" -- exactly the case a
-                    # naive "did any collection match" read would misreport.
+                    # The row's own collection also matches "nova". This is exactly the
+                    # case a naive "did any collection match" read would misreport.
                     collections_json='["Nova Boxset"]',
                 )
             )
@@ -471,9 +470,9 @@ class TestSearchMatchedCollectionOnlyAppliesToBlockTwo:
 
 
 class TestVerdictAny:
-    """``verdict=any`` is every stored lane at once, unfiltered -- what the collection
-    screen needs so a title's siblings show up whatever fate each one got (#816 phase 3).
-    No hand-override lane-shift step runs for it: nothing is excluded from one named lane,
+    """``verdict=any`` is every stored lane at once, unfiltered. This is what the
+    collection screen needs so a title's siblings show up whatever fate each one got. No
+    hand-override lane-shift step runs for it. Nothing is excluded from one named lane,
     so there is nothing to move in or out of."""
 
     @pytest.fixture
@@ -553,15 +552,15 @@ class TestLibraryFilter:
 
 class TestOverrideFilter:
     def test_spared_by_hand(self, client: TestClient) -> None:
-        # A hand spare moves the item onto the Kept lane (its stored verdict stays pure policy);
-        # the spare filter finds it there, not on the Condemned lane it left.
+        # A hand spare moves the item onto the Kept lane (its stored verdict stays pure
+        # policy). The spare filter finds it there, not on the Condemned lane it left.
         page = client.get("/api/candidates?verdict=protect&override=spare").json()
         assert _titles(page["items"]) == {"Example Zulu"}
         # The totals describe the filtered set, exactly what the page is drawn from.
         assert page["total"] == 1
 
     def test_a_show_level_reap_covers_its_season(self, client: TestClient) -> None:
-        # The override sits on the SHOW key (sonarr:1:5); the season row inherits it.
+        # The override sits on the *show* key (sonarr:1:5). The season row inherits it.
         rows = client.get("/api/candidates?verdict=condemn&override=reap").json()["items"]
         assert _titles(rows) == {"Example Mid · Season 5"}
 
@@ -579,10 +578,10 @@ class TestOverrideFilter:
     def test_a_season_spared_on_its_own_key_beats_its_shows_reap(self, client: TestClient) -> None:
         """The precedence still lives in one function, not in SQL.
 
-        The filter now narrows in SQL to the rows that could possibly carry a decision and
-        asks the real ``effective_override`` about each, rather than resolving every row in
-        the lane in Python. This is the case that would break if the narrowing ever tried
-        to decide as well: the season's own key must win over its show's.
+        The filter narrows in SQL to the rows that could possibly carry a decision, and
+        asks the real ``effective_override`` about each, rather than resolving every row
+        in the lane in Python. This is the case that would break if the narrowing ever
+        tried to decide as well. The season's own key must win over its show's.
         """
         assert (
             client.post(
@@ -600,17 +599,19 @@ class TestOverrideFilter:
     def test_a_row_reports_both_the_spare_it_toggles_and_the_one_that_covers_it(
         self, client: TestClient
     ) -> None:
-        """Two spares, two questions, two fields -- and the wire must carry both.
+        """Two spares, two questions, two fields. The wire must carry both.
 
-        The season is spared for a day and its show forever. ``spare_expires_at`` is the spare
-        in force by precedence, which is what the row's Spare control toggles and clears (rule
-        50), so it must stay the season's own date. ``spare_covers_until`` is when the file
-        stops being kept, which is what every color and every sentence about its fate reads
-        (rules 49/61), and the show's forever spare outlasts the season's day: it must be null.
+        The season is spared for a day and its show forever. ``spare_expires_at`` is the
+        spare in force by precedence, which is what the row's Spare control toggles and
+        clears, so it must stay the season's own date. ``spare_covers_until`` is when the
+        file stops being kept, which is what every color and every sentence about its
+        fate reads, and the show's forever spare outlasts the season's day. It must be
+        null.
 
-        Reading one field for both jobs is what drew "expired" over a file the show keeps and
-        promised a re-judgment that changes nothing. Pinned at the route because the derivation
-        being right (``test_whitelist``) does not mean it is plumbed.
+        Reading one field for both jobs is what drew "expired" over a file the show
+        keeps and promised a re-judgment that changes nothing. This is pinned at the
+        route because the derivation being right (``test_whitelist``) does not mean it
+        is plumbed.
         """
         for key, title, days in (
             ("sonarr:1:5", "Example Mid", 0),  # the whole show, forever
@@ -639,9 +640,10 @@ class TestOverrideFilter:
     ) -> None:
         """The other side of the same branch, and the one that keeps the fix honest.
 
-        The show above this season is set to REAP, so it contributes no cover: when the
-        season's own spare runs out the file really is handed back. Both fields must answer
-        with the season's own date, or every expired season spare would read as covered.
+        The show above this season is set to *reap*, so it contributes no cover. When
+        the season's own spare runs out the file really is handed back. Both fields must
+        answer with the season's own date, or every expired season spare would read as
+        covered.
         """
         assert (
             client.post(
@@ -668,8 +670,8 @@ class TestOverrideFilter:
         operator's decisions now, so what must not change is which rows it names.
         """
         rows = client.get("/api/candidates?verdict=condemn&override=none").json()["items"]
-        # Alpha has no decision at any level. The season is covered by its SHOW's reap and
-        # Zulu by its own spare, so neither is untouched.
+        # Alpha has no decision at any level. The season is covered by its *show*'s
+        # reap and Zulu by its own spare, so neither is untouched.
         assert _titles(rows) == {"Example Alpha"}
 
 
@@ -679,9 +681,9 @@ class TestTheShowKeyInvariantTheFilterRelieson:
     The override filter narrows in SQL with ``group_key IN (decided keys)`` before asking
     the real decision function about each row. That narrowing is only a superset if a
     season's stored ``group_key`` is exactly the key ``show_key`` derives from its
-    media_key -- if the two ever drifted, a season kept by a whole-show spare would fall
+    media_key. If the two ever drifted, a season kept by a whole-show spare would fall
     out of the narrowed set and be reported as untouched. The season scan builds
-    ``group_key`` as ``sonarr:{instance}:{series}``; this pins that they agree.
+    ``group_key`` as ``sonarr:{instance}:{series}``. This pins that they agree.
     """
 
     def test_a_seasons_group_key_is_its_show_key(self, client: TestClient) -> None:
@@ -711,8 +713,9 @@ class TestSort:
 
     def test_by_year_descending_is_newest_first(self, client: TestClient) -> None:
         rows = client.get("/api/candidates?verdict=condemn&sort=year&order=desc").json()["items"]
-        # Newest first; the season carries no year and sorts last. Example Zulu (1995) is spared by
-        # hand and rides the Kept lane, so Example Alpha now leads the condemned lane.
+        # Newest first. The season carries no year and sorts last. Example Zulu (1995)
+        # is spared by hand and rides the Kept lane, so Example Alpha now leads the
+        # condemned lane.
         assert [r["title"] for r in rows] == ["Example Alpha", "Example Mid · Season 5"]
 
 
@@ -724,13 +727,13 @@ class TestYearInSearch:
     lives in its own column and was never inside ``title``, so every such search used to come
     back empty.
 
-    Two rows the fixture below is built to tell apart, because a number on the end of a title
-    has two readings and the predicate has to try both:
+    Two rows the fixture below is built to tell apart, because a number on the end of a
+    title has two readings and the predicate has to try both:
 
-    * **Example Delta 2049**, released 2017 -- the number is part of the *name*. Only the
-      whole-string arm finds it; the stem-plus-year arm asks for year 2049 and it is 2017.
-    * **Example Echo**, released 2049 -- the number is the *year*. Only the stem-plus-year arm
-      finds it; the whole string is not in its title.
+    * **Example Delta 2049**, released 2017. The number is part of the *name*. Only the
+      whole-string arm finds it. The stem-plus-year arm asks for year 2049 and it is 2017.
+    * **Example Echo**, released 2049. The number is the *year*. Only the stem-plus-year
+      arm finds it. The whole string is not in its title.
 
     Either arm alone leaves one of them unfindable by the exact string the UI prints.
     """
@@ -788,10 +791,10 @@ class TestYearInSearch:
     def test_a_year_alone_asks_for_that_year_and_still_reads_as_text(
         self, client: TestClient
     ) -> None:
-        # Both readings again: Echo came out in 2049 and only the year arm finds it; Delta has
-        # 2049 in its NAME and was released in 2017, so only the text arm does. Answering with
-        # one half read as a broken search when it matched titles only, and would lose a title
-        # named after a year if it matched the column only.
+        # Both readings again: Echo came out in 2049 and only the year arm finds it.
+        # Delta has 2049 in its *name* and was released in 2017, so only the text arm
+        # does. Answering with one half read as a broken search when it matched titles
+        # only, and would lose a title named after a year if it matched the column only.
         assert self._found(client, "2049") == {"Example Delta 2049", "Example Echo"}
 
     def test_a_year_alone_narrows_to_that_year(self, client: TestClient) -> None:
@@ -802,10 +805,10 @@ class TestYearInSearch:
 class TestSearchIsLiteralText:
     """What the operator types means itself, not a SQL pattern.
 
-    ``%`` and ``_`` are the two characters ``LIKE`` reserves, and the term went into the
-    pattern unescaped, so both were live wildcards: ``a_pha`` matched "Example Alpha". It only
-    ever over-matched -- a title genuinely containing ``%`` still found itself, because the
-    wildcard matches the empty string -- which is why it went unnoticed. Issue #303.
+    ``%`` and ``_`` are the two characters ``LIKE`` reserves. The term went into the
+    pattern unescaped, so both were live wildcards: ``a_pha`` matched "Example Alpha".
+    It only ever over-matched. A title genuinely containing ``%`` still found itself,
+    because the wildcard matches the empty string, which is why it went unnoticed.
 
     The fixture holds the pairs that tell a literal from a wildcard: two titles one underscore
     apart, and one containing a real ``%`` and a real backslash.
@@ -856,10 +859,10 @@ class TestSearchIsLiteralText:
         assert self._found(client, "Example%Complete") == set()
 
     def test_a_title_containing_a_percent_is_found_by_typing_it(self, client: TestClient) -> None:
-        # The direction the old behavior got right by accident, and the one an escape can
-        # break: this also pins that the backslash is escaped BEFORE the `%`. Escaping them
-        # the other way round turns the escape into a literal backslash plus a live wildcard,
-        # and this row stops matching its own name.
+        # The direction the old behavior got right by accident, and the one an escape
+        # can break: this also pins that the backslash is escaped *before* the `%`.
+        # Escaping them the other way round turns the escape into a literal backslash
+        # plus a live wildcard, and this row stops matching its own name.
         assert self._found(client, "100% Complete") == {"Example 100% Complete"}
 
     def test_a_backslash_means_a_backslash(self, client: TestClient) -> None:
@@ -876,10 +879,10 @@ class TestSearchIsLiteralText:
 class TestSplitSearchYear:
     """The trailing-year split stays linear in the term, and keeps its readings.
 
-    The separator run ahead of the year used to live in the pattern as ``[\\s,·-]*``, which
-    backtracks quadratically when the term is mostly whitespace -- a string an operator can
-    paste into search (CodeQL alert 11). The run is stripped in code now, and the flood case
-    pins the complexity: quadratic needs minutes on that input where linear needs
+    The separator run ahead of the year used to live in the pattern as ``[\\s,·-]*``,
+    which backtracks quadratically when the term is mostly whitespace, a string an
+    operator can paste into search. The run is stripped in code now. The flood case
+    pins the complexity. Quadratic needs minutes on that input where linear needs
     microseconds, so the bound sits a thousandfold above one and far under the other.
     """
 

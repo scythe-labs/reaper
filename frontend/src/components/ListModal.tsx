@@ -1,24 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Add or edit one protection list. Settings owns what a list IS and where it comes from;
-// Policy owns what it does, through a keep rule naming the list.
+// Add or edit one protection list. Settings defines what a list is and where it comes from.
+// Policy defines what it does, through a keep rule naming the list.
 //
 // Adding walks two steps, the way the *arrs add an import list: a type picker (Plex
 // collection, Plex watchlist, Sonarr and Radarr tags, IMDb), then the one form that type
-// needs. The source is chosen once and is fixed afterwards: the stored membership is keyed
+// needs. The source is chosen once and is fixed afterwards. The stored membership is keyed
 // on a slug that carries the source, so re-pointing a Plex collection at an *arr tag would
-// leave the old membership enabled under the old slug -- still protecting from a definition
-// the operator has already replaced, which is the failure `retire_absent` exists to prevent.
+// leave the old membership enabled under the old slug, still protecting from a definition
+// the operator has already replaced. That is the failure `retire_absent` exists to prevent.
 //
-// Removing lives INSIDE Edit, as the third view of this one modal, so a row's actions stay
-// two buttons and the destructive one sits behind the form that names what it destroys.
+// Removing lives inside Edit, as the third view of this one modal, so a row's actions stay
+// two buttons, and the destructive one sits behind the form that names what it destroys.
 //
-// The `blocked` sentences below are a SECOND copy of refusals `services.list_config` also
+// The `blocked` sentences below are a second copy of refusals `services.list_config` also
 // writes, said here so the operator reads them while looking at the empty box rather than
-// after a round trip. Two copies of one requirement is rule 144's hazard, and this file used
-// to carry a comment claiming there was only one, which is worse than the duplication: each
-// side was pinned by its own test, nothing bound the pair, and a one-sided edit left both
-// suites green. `tests/test_list_config.py` names this file in the failure message that
+// after a round trip. Keeping two copies of one requirement in sync is a real risk: each side
+// can be pinned by its own test with nothing binding the pair, so a one-sided edit can leave
+// both suites green. `tests/test_list_config.py` names this file in the failure message that
 // fires when the server's wording moves, so the copies cannot drift silently.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -44,9 +43,9 @@ type BlockedField = "name" | "library" | "collection" | "tags" | "imdb";
 const BLOCKED_ID = "list-modal-blocked";
 
 /** How long a list name may be, the number `ListConfigIn.name` and `list_config._clean_name`
- *  both hold. Exported so the pairing test can read it rather than transcribe it: the
+ *  both hold. Exported so the pairing test can read it rather than transcribe it. The
  *  schema's bound is checked first, so `_clean_name`'s "That name is too long" only ever
- *  reaches an operator who got past this box (rules 131, 144). */
+ *  reaches an operator who got past this box. */
 export const LIST_NAME_MAX = 100;
 
 /** What the operator is told each source is, in their words. */
@@ -105,18 +104,19 @@ export function ListModal({
    *  edit and remove alike. Separate from `onSaved` because removing changes what protects
    *  the library just as much as saving does and hands back no row to check.
    *
-   *  `rescore` says whether the change moved what a KEEP RULE protects, which is the only kind
-   *  of change the queue's stored fates were scored under: true when a rule names the list
-   *  (an edit or a remove of a used list), false for a list nothing uses -- every add, since an
-   *  added list carries no rule. The panel starts a scan only when it is true, so adding a list
-   *  the operator has not wired to Policy does not kick off a full library scan for nothing.
+   *  `rescore` says whether the change moved what a keep rule protects, which is the only kind
+   *  of change the queue's stored fates were scored under. It is true when a rule names the
+   *  list (an edit or a remove of a used list), and false for a list nothing uses, every add
+   *  included, since an added list carries no rule. The panel starts a scan only when it is
+   *  true, so adding a list the operator has not wired to Policy does not kick off a full
+   *  library scan for nothing.
    *
    *  The panel does the acting, for the same reason the check runs there: this modal is
    *  unmounting, and a mutation started on the way out loses the surface that would report
    *  it. */
   onChanged?: ((rescore: boolean) => void) | undefined;
   /** The panel's mirror of `canClose`, so its Back guard refuses exactly what the scrim,
-   *  Escape and the ✕ refuse rather than a stale copy of one of the reasons (rule 80).
+   *  Escape and the close button refuse, rather than a stale copy of one of the reasons.
    *  Written by `useBackCloseMirror`, which is the only writer of any of these. */
   blockCloseRef?: RefObject<boolean> | undefined;
 }) {
@@ -124,8 +124,8 @@ export function ListModal({
   const queryClient = useQueryClient();
 
   // The any/all pair, there from the start so the form never has a blank where a control
-  // belongs. The shared `Segmented` in its flat variant: the mockup's chrome, one either-or
-  // control (rules 18, 41).
+  // belongs. This uses the shared `Segmented` in its flat variant, the mockup's chrome, one
+  // either-or control.
   const MATCH_OPTIONS = [
     ["any", t("lists.matchAny")],
     ["all", t("lists.matchAll")],
@@ -142,8 +142,8 @@ export function ListModal({
 
   // Back closes the open presets menu rather than the layer beneath it, the same contract the
   // queue's filter popover and the spare menu keep (`ReviewQueue`, `OverrideControls`). Without
-  // it the press skipped the menu, was spent on the Settings section frame, and the panel
-  // behind the modal navigated while the menu was still drawn (rules 80, 72).
+  // this, the press would skip the menu, land on the Settings section frame instead, and
+  // navigate the panel behind the modal while the menu was still drawn.
   useBackGuard(presetsOpen, () => setPresetsOpen(false));
 
   // Close the open presets menu on an outside click or Escape, the queue's menu contract.
@@ -177,7 +177,7 @@ export function ListModal({
   const openForm = (next: Source) => {
     setSource(next);
     setPreset(null);
-    // The watchlist form has nothing to set up, so the name is the one box -- give it a
+    // The watchlist form has nothing to set up, so the name is the one box. Give it a
     // starting value the operator can keep.
     setName(next === "plex_watchlist" ? t("lists.watchlistDefaultName") : "");
     setView("form");
@@ -189,10 +189,10 @@ export function ListModal({
     setView("form");
   };
 
-  // The operator's real Plex libraries, so the one field that made an install unable to reap
-  // at all is picked rather than typed (#483: the keep collection was read out of a library
-  // hardcoded to "Movies", so a library named anything else was never read). Optional and
-  // soft -- see `libraryOptions` for what happens when Plex cannot be asked.
+  // The operator's real Plex libraries, so the one field that could make an install unable to
+  // reap at all is picked rather than typed. A hardcoded library name would go unread the
+  // moment a library is named anything else. This is optional and soft: see `libraryOptions`
+  // for what happens when Plex cannot be asked.
   const { libraries } = usePlexLibraries({
     enabled: view === "form" && source === "plex_collection",
   });
@@ -220,17 +220,17 @@ export function ListModal({
 
   /** Whether any configuration field has moved since the form was seeded.
    *
-   *  `ListConfigPatch` is omitted-means-keep and `list_config.update` replaces only the
+   *  `ListConfigPatch` is omitted-means-keep, and `list_config.update` replaces only the
    *  fields it is given, so a save that sends `config` at all writes the whole thing back.
-   *  This form seeds ONCE, from a `lists-configured` row the cache may have held for a
+   *  This form seeds once, from a `lists-configured` row the cache may have held for a
    *  while: `main.tsx` sets `refetchOnWindowFocus: false` with a 30 second `staleTime`, and
-   *  nothing refetches between the panel rendering and this modal opening. So a rename typed
-   *  against a stale row silently reverted a collection someone else had repointed, or tags
-   *  they had changed, in another tab (the `cached-value-drives-a-write` shape of #203/#204).
+   *  nothing refetches between the panel rendering and this modal opening. Saving
+   *  unconditionally against that stale row would silently revert a collection someone else
+   *  had repointed, or tags they had changed, in another tab.
    *
-   *  Compared field by field against the same expressions that seeded each piece of state,
-   *  which is what makes these the canonical forms rule 39 asks for: comparing the whole
-   *  stored `config` instead would read a defaulted `match` as an edit on every save. */
+   *  This compares field by field against the same expressions that seeded each piece of
+   *  state, which is what makes these the canonical forms a dirty check needs. Comparing the
+   *  whole stored `config` instead would read a defaulted `match` as an edit on every save. */
   const configDirty =
     source !== (editing?.source ?? source) ||
     preset !== (editing?.config.preset ?? null) ||
@@ -251,17 +251,17 @@ export function ListModal({
     },
     onSuccess: async (saved) => {
       // Three halves: the definitions this modal wrote, the health rows keyed on them, and
-      // the policies -- adding a list writes no rule, but a rename re-spells every rule
-      // naming it, so a stale policy cache would render rules about a list name that no
-      // longer exists (rule 79).
+      // the policies. Adding a list writes no rule, but a rename re-spells every rule naming
+      // it, so a stale policy cache would render rules about a list name that no longer
+      // exists.
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["lists-configured"] }),
         queryClient.invalidateQueries({ queryKey: ["lists"] }),
         queryClient.invalidateQueries({ queryKey: ["policy"] }),
       ]);
       // After the refetch, so the row this names is already on screen to report the check.
-      // The server's row, not the form's fields: it carries the id, and it is the cleaned
-      // copy the save actually stored (rule 39).
+      // This uses the server's row, not the form's fields, since it carries the id and is the
+      // cleaned copy the save actually stored.
       onSaved?.(saved);
       // A rescan is warranted only when a keep rule names the list: an add writes none, so
       // `policy_use` is empty and no fate moved; an edit of a used list can move membership or
@@ -280,8 +280,8 @@ export function ListModal({
         queryClient.invalidateQueries({ queryKey: ["lists"] }),
         queryClient.invalidateQueries({ queryKey: ["policy"] }),
       ]);
-      // Removing a list that a rule named drops that protection, so the queue must re-score;
-      // removing one nothing used changes no fate.
+      // Removing a list that a rule named drops that protection, so the queue must re-score.
+      // Removing one nothing used changes no fate.
       onChanged?.((editing?.policy_use.length ?? 0) > 0);
       onClose();
     },
@@ -317,21 +317,21 @@ export function ListModal({
   /** `aria-describedby` for the one control the blocking sentence is about. */
   const describedBy = (field: BlockedField) => (blocked?.on === field ? BLOCKED_ID : undefined);
 
-  /** Whether a dismissal is allowed, computed ONCE and handed to every path that can dismiss.
+  /** Whether a dismissal is allowed, computed once and handed to every path that can dismiss.
    *
-   *  A close mid-save unmounts the only place the refusal is ever shown -- the scrim swallows
-   *  the server's sentence, the invalidations never run, and the operator walks away believing
-   *  the list saved.
+   *  A close mid-save would unmount the only place the refusal is ever shown: the scrim would
+   *  swallow the server's sentence, the invalidations would never run, and the operator would
+   *  walk away believing the list saved.
    *
-   *  Cancel is deliberately NOT gated on this, the arrangement `ServiceModal` states and this
-   *  modal reversed: both Cancels were disabled while their mutation was in flight, so in the
-   *  one state this guard refuses a close, the scrim, Escape, the ✕ AND Cancel were all
-   *  refused and the only live control on the confirm view was Remove. A guard whose only exit
-   *  is the destructive button is a trap, not a guard (rule 146). What this refuses is the
-   *  ACCIDENTAL dismissals: scrim, Escape, ✕, Back. */
+   *  Cancel is deliberately not gated on this, unlike `ServiceModal`, where both Cancels are
+   *  disabled while their mutation is in flight. Disabling Cancel here too would mean that in
+   *  the one state this guard refuses a close, the scrim, Escape, the close button, and Cancel
+   *  would all be refused, leaving Remove as the only live control on the confirm view. A
+   *  guard whose only exit is the destructive button is a trap, not a guard. What this
+   *  refuses is only the accidental dismissals: scrim, Escape, close button, Back. */
   const canClose = !save.isPending && !remove.isPending;
 
-  // Up to ListsPanel's Back guard, whole rather than by term (rule 80).
+  // Up to ListsPanel's Back guard, whole rather than by term.
   useBackCloseMirror(blockCloseRef, canClose);
 
   const title =
@@ -370,8 +370,8 @@ export function ListModal({
               <PickCard
                 name={t("lists.picker.watchlistName")}
                 // No second sentence about another user's watchlist: there is no way to sign
-                // Reaper into a second Plex account, so naming one advertised a route that
-                // does not exist (rule 25).
+                // Reaper into a second Plex account, so naming one would advertise a route
+                // that does not exist.
                 blurb={t("lists.plexWatchlistDescription")}
               >
                 <div className="acts">
@@ -417,10 +417,10 @@ export function ListModal({
                     {t("lists.picker.custom")}
                   </button>
                   {/* The menu is anchored on this wrapper, so it aligns to the button that
-                      opens it rather than to the whole row (rule 138). */}
+                      opens it rather than to the whole row. */}
                   <span className="preset-anchor">
                     {/* The name is "Presets" alone: the arrow is decoration a reader may voice
-                        as a shape name, and aria-expanded already says what it draws (rule 21). */}
+                        as a shape name, and aria-expanded already says what it draws. */}
                     <button
                       type="button"
                       className="ghost sm"
@@ -482,11 +482,11 @@ export function ListModal({
               autoFocus={!editing}
               // The same 100 the schema and `_clean_name` bound, so the operator meets the
               // limit as a box that stops taking characters rather than as Pydantic's
-              // "String should have at most 100 characters" (rule 21): the schema's bound is
-              // checked before the service runs, so the sentence written for this refusal
-              // could never fire. Reachable by paste without it, since nothing here typed
-              // 101 characters (rule 131: producer and consumer read one number, and
-              // `test_list_config.py` is where the two are held together).
+              // "String should have at most 100 characters". The schema's bound is checked
+              // before the service runs, so the sentence written for this refusal could
+              // never fire from typing alone. It is still reachable by paste without this
+              // limit, since nothing here typed 101 characters. `test_list_config.py` is
+              // where the producer and consumer are held to the same number.
               maxLength={LIST_NAME_MAX}
               aria-describedby={describedBy("name")}
             />
@@ -560,8 +560,8 @@ export function ListModal({
                 describedBy={describedBy("tags")}
               />
               {/* Directly beneath the box it is about, and above the any/all pair, which is a
-                  separate question. It sat under the pair, so it read as covering both and the
-                  pair got none of its own (rule 45). */}
+                  separate question. Placed under the pair instead, it would read as covering
+                  both, leaving the pair with no help text of its own. */}
               <p className="help">{t("lists.help.tagsFormat")}</p>
               <Segmented
                 value={match}
@@ -604,7 +604,7 @@ export function ListModal({
             )}
             <span className="flex-spacer" />
             {/* Live through the save: it is the deliberate way out, and it is what keeps
-                `canClose` a guard rather than a trap (see `canClose` above, rule 146). */}
+                `canClose` a guard rather than a trap (see `canClose` above). */}
             <button type="button" className="ghost" onClick={onClose}>
               {t("common.cancel")}
             </button>
@@ -638,7 +638,7 @@ export function ListModal({
               {t("common.cancel")}
             </button>
             {/* `danger` alone is the app's destructive button, the one the reap confirmation
-                and the restore card use (rule 18). */}
+                and the restore card use. */}
             <button
               type="button"
               className="danger"

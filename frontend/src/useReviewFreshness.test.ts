@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The rule that keeps the review queue honest when a scan finishes underneath it. Load-bearing:
-//   - a newer scan is decided ONCE, at the instant it appears, from the busy state THEN --
-//     a later scroll must not re-decide a scan already handled;
-//   - busy at that instant holds the reviewer's place (a nudge); idle refreshes quietly;
-//   - dismiss defers to a marker, never a silent stale list;
-//   - the list catching up (any refetch) resets everything, and the next scan decides afresh.
+// How the review queue behaves when a new scan finishes while it's open:
+//   - a newer scan is decided once, at the moment it appears, using the busy state at that
+//     moment. A later scroll never re-decides a scan that was already handled.
+//   - if the reviewer is busy at that moment, a nudge banner appears and holds their place.
+//     If idle, the list refreshes quietly instead.
+//   - dismissing the nudge leaves a small marker instead of silently showing a stale list.
+//   - once the list catches up (any refetch), everything resets, and the next scan is decided
+//     fresh.
 
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
@@ -40,10 +42,10 @@ describe("useReviewFreshness", () => {
   });
 
   it("refreshes quietly when a newer scan lands and the reviewer is idle", async () => {
-    // The refresh is held in flight, then landed and settled, so both moments are the test's to
-    // name. The default mock resolves on its own in a microtask nothing here awaits: these
-    // assertions would then describe a refresh that had already ended -- and the settle would
-    // update state after the test, outside act.
+    // This test controls both when the refresh lands and when it settles, since the test needs
+    // to check state at each moment separately. The default mock would otherwise resolve on its
+    // own in a microtask nothing here awaits, so the refresh would already be finished by the
+    // time the assertions run, and its state update would land outside `act`.
     let settle = () => {};
     const onSilentRefresh = vi.fn(() => new Promise<void>((resolve) => (settle = resolve)));
     const props = {
@@ -117,7 +119,7 @@ describe("useReviewFreshness", () => {
     expect(hook.result.current.showBar).toBe(false);
     expect(hook.result.current.showMarker).toBe(false);
 
-    // A further scan (44) is a fresh decision, not suppressed by the earlier dismiss.
+    // A further scan (44) is decided fresh, independent of the earlier dismiss.
     act(() => hook.rerender({ viewSnapshotId: 43, latestSnapshotId: 44, ...base }));
     expect(hook.result.current.showBar).toBe(true);
   });
@@ -130,10 +132,10 @@ describe("useReviewFreshness", () => {
 
   it("confirms a silent swap only after the list actually catches up, never at issuance", async () => {
     const onSilentCaughtUp = vi.fn();
-    // The refresh settles when its refetches do -- what the queue's invalidation returns. The
-    // hook waits on THIS, not on a fetching flag it happens to catch mid-render: a refetch that
-    // rejects in the same microtask flush never renders as fetching at all, and the nudge below
-    // silently never came (found when the queue stopped re-rendering so freely, P-1/P-7).
+    // The refresh settles when its underlying refetches do, which is what the query
+    // invalidation actually returns. The hook waits on that promise, not on a "fetching" flag
+    // caught mid-render: a refetch that rejects within the same microtask flush never renders
+    // as fetching at all, so a flag-based check would miss it and the nudge would never appear.
     let settle = () => {};
     const onSilentRefresh = vi.fn(() => new Promise<void>((resolve) => (settle = resolve)));
     const base = { isBusy: () => false, onSilentRefresh, onSilentCaughtUp };
@@ -156,7 +158,7 @@ describe("useReviewFreshness", () => {
     const onSilentRefresh = vi.fn(() => new Promise<void>((resolve) => (settle = resolve)));
     const base = { isBusy: () => false, onSilentRefresh, onSilentCaughtUp };
     const { hook } = setup({ viewSnapshotId: 42, latestSnapshotId: 43, ...base });
-    // Nothing yet -- the refetch is still in flight, and an early nudge would be a lie.
+    // Nothing shows yet: the refetch is still in flight, and a nudge here would be wrong.
     expect(hook.result.current.showBar).toBe(false);
     // It finishes with the list STILL on snapshot 42 (a network blip).
     await act(async () => {
@@ -166,11 +168,9 @@ describe("useReviewFreshness", () => {
     expect(hook.result.current.showBar).toBe(true);
   });
 
-  // Two silent refreshes on ONE mount. The settle signal used to be a monotonic counter guarded
-  // with "nothing has settled yet", which is true only before the FIRST refresh: from the second
-  // on, the nudge went up in the same commit that issued the refresh, and the arm that raised it
-  // also cleared the awaiting flag, so no swap was ever confirmed again for the rest of the
-  // session (B-2).
+  // Two silent refreshes on one mount, tracked independently: a flag that just says "something
+  // has settled" would work for the first refresh but stay permanently true after it, hiding
+  // whether the second one has confirmed anything.
   describe("a second silent refresh on the same mount", () => {
     /** Idle, with each refresh's settle held so the test decides when it lands. */
     const twoRefreshes = () => {
@@ -216,9 +216,9 @@ describe("useReviewFreshness", () => {
   });
 
   it("still nudges when the refresh never renders as fetching at all", async () => {
-    // The regression this signal exists for: a refetch that rejects synchronously. There is no
-    // window in which any flag reads "fetching", so a hook watching one would leave the reviewer
-    // on a stale list with nothing on screen to say so (PR-5).
+    // A refetch that rejects synchronously never has a moment where a "fetching" flag would
+    // read true, so a hook that watches such a flag would leave the reviewer on a stale list
+    // with nothing on screen to say so.
     const onSilentCaughtUp = vi.fn();
     const base = {
       isBusy: () => false,

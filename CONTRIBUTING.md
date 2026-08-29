@@ -83,9 +83,8 @@ first.
 
 Two failure modes read as correct and survive a green test run:
 
-- **A comment that claims a safeguard the code does not implement.** Assistants write
-  confident prose about protections that were discussed and never built. When a comment names
-  a guard, point at the function that is the guard.
+- **A comment that claims a safeguard the code does not implement.** This is rule 7/24, in
+  `CLAUDE.md`: point a comment naming a guard at the function that is the guard.
 - **A test that runs code without asserting anything about it.** It passes forever and proves
   nothing.
 
@@ -99,8 +98,8 @@ Requires [uv](https://docs.astral.sh/uv/) and Python 3.13 or newer.
 git clone https://github.com/scythe-labs/reaper.git
 cd reaper
 
-uv venv && source .venv/bin/activate
-uv pip install -e ".[dev]"
+scripts/worktree-setup.sh       # .venv with the dev extras, frontend/node_modules from the lockfile
+source .venv/bin/activate
 
 cp .env.example .env.local      # no key needed; one is generated on first boot
 
@@ -113,11 +112,15 @@ Preflight runs first, and before migrations, exactly as `docker-entrypoint.sh` o
 Skip it and a restore staged in the UI is never applied, so the banner asks for a restart
 that cannot finish however many times it is given one (#381).
 
+Run the same script in every new worktree. It is safe to re-run, and it is the whole setup
+an agent needs before the gates run. A worktree gets no `.env.local` of its own:
+`scripts/dev-local.sh` reads the main checkout's, since that file holds the key for the
+shared `data/`.
+
 The web interface is a separate dev server that proxies to it:
 
 ```bash
 cd frontend
-npm install
 npm run dev          # http://localhost:5173, proxies /api to the app on :8420
 ```
 
@@ -331,7 +334,7 @@ migrations fail and the only repair is rewriting the entire migration history.
 `tests/test_migrations.py` guards both halves. It imports the real naming convention and
 proves a named constraint can be dropped under batch mode, and it runs the real
 `alembic/env.py` to capture what that file passes to `context.configure()`. There is one call
-site: the offline (`--sql`) branch had no invoker and could not have worked, since 10
+site: the offline (`--sql`) branch had no invoker and could not have worked, since
 revisions call `op.get_bind()`, so it was removed rather than kept as a second path nothing
 exercises. Flipping `render_as_batch` to `False` fails that test today, which is a great deal
 better than discovering it years from now in the first migration that needs it.
@@ -376,7 +379,8 @@ editing the line that is now wrong.
 Reaper ships to operators whose servers nobody here will ever see, so nothing identifying
 goes into the repository: no real titles, hostnames, paths, usernames, or library
 statistics, in code, docs, tests, or commit messages alike. Findings from real data are
-recorded as ratios and shapes.
+recorded as ratios and shapes. CLAUDE.md's Golden rules carry the one exception, screenshots
+of the maintainer's own instance.
 
 ---
 

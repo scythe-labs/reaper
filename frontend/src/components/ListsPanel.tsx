@@ -1,27 +1,27 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Settings -> Lists. Every protection list, whether each is still protecting anything, and
-// the controls to add, edit and check them (#475).
+// the controls to add, edit and check them.
 //
-// **Settings owns what a list IS and where it comes from; Policy owns what it does.** Nothing
-// is configured in two places: what a list does is a keep rule on Policy naming it, and each
-// row here says how the policies are using it right now (`policy_use`), because a defined
-// list no rule names is a list that protects nothing.
+// **Settings defines what a list is and where it comes from. Policy defines what it does.**
+// Nothing is configured in two places: what a list does is a keep rule on Policy naming it,
+// and each row here says how the policies are using it right now (`policy_use`), because a
+// defined list no rule names is a list that protects nothing.
 //
 // **One row per definition, never one per stored list.** Reaper stores a tag list per *arr
 // instance, so two Radarrs and two Sonarrs are four stored rows for the single thing the
 // operator did. They collapse into one row carrying the family's worst state, which names only
 // the servers that need attention. The join is `ProtectionList.list_id`, derived on the server
-// beside the slug spellings; this component never parses a slug (rule 63).
+// beside the slug spellings. This component never parses a slug.
 //
-// The verdict is the server's (`lists.ListHealth`), not this component's. Two surfaces deciding
-// for themselves what `last_error` plus `last_synced_at` means is how the screen and the scan
-// end up telling the operator different stories about one failed check (rule 144). What is
-// decided here is only the sentence.
+// The verdict is the server's (`lists.ListHealth`), not this component's. Two surfaces
+// deciding for themselves what `last_error` plus `last_synced_at` means is how the screen and
+// the scan could end up telling the operator different stories about one failed check. What
+// is decided here is only the sentence.
 //
 // The row grammar is the Jobs tab's (`.jobrow`), not a second settings-row shape. Both pages
-// answer the same question -- is this thing working, and when did it last run -- so a reader
-// moving between them should not have to learn two layouts (rule 18).
+// answer the same question, is this thing working and when did it last run, so a reader
+// moving between them should not have to learn two layouts.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, type ReactNode } from "react";
@@ -31,23 +31,12 @@ import { announce } from "../announce";
 import { api, type ListConfig, type ProtectionList } from "../api";
 import { useBackGuard } from "../backnav";
 import { describeError } from "../errors";
+import { since } from "../format";
 import i18next from "../i18n";
 import { composeIn } from "../why";
 import { ListModal } from "./ListModal";
 import { Notice } from "./Notice";
 import { rescanHeading, rescanQueuedLead } from "./PolicySimulator";
-
-/** How long ago, in the app's usual plain phrasing. Null stamps are handled by the caller,
- *  which has a whole sentence to say about a list that has never checked in. */
-function ago(iso: string): string {
-  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
-  if (minutes < 1) return i18next.t("lists.ago.justNow");
-  if (minutes < 60) return i18next.t("lists.ago.minutes", { n: minutes });
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return i18next.t("lists.ago.hours", { n: hours });
-  const days = Math.round(hours / 24);
-  return i18next.t("lists.ago.days", { n: days });
-}
 
 function titles(n: number): string {
   return i18next.t("lists.titleCount", { n });
@@ -56,8 +45,9 @@ function titles(n: number): string {
 type MediaType = "movie" | "tv";
 
 /** The words for a set of media types, movies before shows so the sentence reads the same
- *  order every time: "movies", "shows", or "movies and shows". Never "movie"/"tv": the
- *  operator sees their libraries, not the rating-key spaces underneath (rule 21). */
+ *  order every time: "movies", "shows", or "movies and shows". This says "movies"/"shows",
+ *  never "movie"/"tv": the operator sees their libraries, not the rating-key spaces
+ *  underneath. */
 function mediaWords(types: MediaType[]): string {
   const hasMovie = types.includes("movie");
   const hasTv = types.includes("tv");
@@ -65,12 +55,12 @@ function mediaWords(types: MediaType[]): string {
   return i18next.t("lists.mediaWords", { which });
 }
 
-/** What a list protects, and what is still exposed on it -- the two sets a mixed list is
- *  read against (#533). A keep rule protects a media TYPE, and a list holds whichever types
- *  its members do, so a rule naming a mixed list on one policy leaves the other side
- *  deletable. `protectedTypes` are the types a rule names AND the list is confirmed to hold;
- *  `exposed` are types on the list no rule covers. Both empty until a sync fills `spanned`,
- *  so an unchecked list claims neither. */
+/** What a list protects, and what is still exposed on it: the two sets a mixed list is read
+ *  against. A keep rule protects a media type, and a list holds whichever types its members
+ *  do, so a rule naming a mixed list on one policy leaves the other side deletable.
+ *  `protectedTypes` are the types a rule names and the list is confirmed to hold.
+ *  `exposed` are types on the list no rule covers. Both are empty until a sync fills
+ *  `spanned`, so an unchecked list claims neither. */
 type Coverage = { protectedTypes: MediaType[]; exposed: MediaType[]; hasSplitPill: boolean };
 
 function coverageOf(
@@ -113,11 +103,11 @@ function protectingTitle({ protectedTypes, exposed }: Coverage): string | undefi
 type Tone = "ok" | "warn" | "bad" | "idle";
 type State = ProtectionList["state"];
 
-/** This screen's four states in the app's ONE chip family (`.status-chip`,
- *  23-queue-chips.css). They were a `.list-state` family of their own re-declaring the same
- *  token pairs, which rules 18 and 72 refuse: a color meaning "kept" has to move everywhere at
- *  once. Worn with `.status-chip-wrap`, the family's non-truncating variant, because these
- *  labels are not in a fixed column here. */
+/** This screen's four states in the app's one chip family (`.status-chip`,
+ *  23-queue-chips.css), rather than a `.list-state` family of its own re-declaring the same
+ *  token pairs: a color meaning "kept" has to move everywhere at once. Worn with
+ *  `.status-chip-wrap`, the family's non-truncating variant, because these labels are not in
+ *  a fixed column here. */
 const STATE_CHIP: Record<Tone, string> = {
   ok: "status-kept",
   warn: "status-warn",
@@ -135,12 +125,12 @@ function worst(rows: ProtectionList[]): State {
 
 /** The chip and the count line under it, for one row or one collapsed family.
  *
- *  The row says one true thing: whether a keep rule uses the list (the chip), and how many titles
- *  are on it (the line). It does NOT restate the rule's STRENGTH, where "Keeps every title on it"
- *  is wrong the moment the rule is a lean -- that lives on Policy, read there. The count is
- *  "on it" when the last check just succeeded and "cached" when the figure is the last good one a
- *  failed, stale, or not-yet-run check left behind. No "protecting" claim, which the strength
- *  could make false either way. */
+ *  The row says one true thing: whether a keep rule uses the list (the chip), and how many
+ *  titles are on it (the line). The strength of the rule is a separate fact that belongs on
+ *  Policy, read there: "Keeps every title on it" would be wrong the moment the rule is a
+ *  lean. The count reads "on it" when the last check just succeeded, and "cached" when the
+ *  figure is the last good one a failed, stale, or not-yet-run check left behind. Neither
+ *  line makes a "protecting" claim, which the rule's strength could make false either way. */
 function describe(
   state: State,
   items: number,
@@ -150,11 +140,11 @@ function describe(
   const onIt = i18next.t("lists.describe.onIt", { titles: titles(items) });
   const cached = i18next.t("lists.describe.cached", { titles: titles(items) });
 
-  // A list no keep rule names protects nothing, whatever its sync says, so the chip -- the
-  // screen's answer to "is this keeping my titles" -- reads "Not in use", never the green "In
-  // use". The empty guard below is the same fail-toward-keeping check from the other side: full,
-  // checked, and keeping nothing. Orphan rows pass no `used` and default to true -- they carry no
-  // definition to hold a rule, and may still protect through a legacy one.
+  // A list no keep rule names protects nothing, whatever its sync says, so the chip, the
+  // screen's answer to "is this keeping my titles", reads "Not in use", never the green "In
+  // use". The empty guard below is the same fail-toward-keeping check from the other side:
+  // full, checked, and keeping nothing. Orphan rows pass no `used` and default to true, since
+  // they carry no definition to hold a rule, and may still protect through a legacy one.
   if (!used) {
     return {
       label: i18next.t("lists.describe.notInUseLabel"),
@@ -162,9 +152,9 @@ function describe(
       detail: items > 0 ? onIt : i18next.t("lists.describe.nothingOnItDetail"),
     };
   }
-  // Empty and checked is never green. A "Never Reap" collection sitting green at 0 titles told an
-  // operator covered by nothing that they were covered, indistinguishable from Reaper reading the
-  // wrong library (#483) or a list whose entries it cannot identify (#474).
+  // Empty and checked is never green. A "Never Reap" collection sitting green at 0 titles
+  // would tell an operator covered by nothing that they were covered, indistinguishable from
+  // Reaper reading the wrong library or a list whose entries it cannot identify.
   if (items === 0 && (state === "working" || state === "stale")) {
     return {
       label: i18next.t("lists.describe.nothingOnItLabel"),
@@ -174,11 +164,11 @@ function describe(
   }
   switch (state) {
     case "working":
-      // A keep rule covers one side of a mixed list and leaves the other still deletable
-      // (#533). The chip stays "In use" -- the list IS in use -- and the partial cover is
-      // carried two ways: the split pill dims its exposed half, and this line names it. The
-      // chip goes amber only where there is no split pill to dim (a flat IMDb/Plex badge),
-      // so that lane still has an at-a-glance warning.
+      // A keep rule covers one side of a mixed list and leaves the other still deletable.
+      // The chip stays "In use", since the list is in use, and the partial cover is carried
+      // two ways: the split pill dims its exposed half, and this line names it. The chip goes
+      // amber only where there is no split pill to dim (a flat IMDb/Plex badge), so that lane
+      // still has an at-a-glance warning.
       if (coverage && coverage.exposed.length > 0) {
         return {
           label: i18next.t("lists.describe.inUseLabel"),
@@ -208,20 +198,20 @@ function describe(
  *  colors. A tag list reads Sonarr and Radarr at once, so its pill is half of each.
  *
  *  When `coverage` is given, each half is bright only where a keep rule covers that side and
- *  the list is confirmed to hold it; the exposed half fades (#533). Sonarr is shows, Radarr
- *  is movies. The dim is not the only carrier of that fact -- the sr-only name states the
- *  exposed side, and the count line names it in a sentence -- because dim alone is a color
- *  cue a reader never gets (rule 21). */
+ *  the list is confirmed to hold it. The exposed half fades. Sonarr is shows, Radarr is
+ *  movies. The dim is not the only carrier of that fact: the sr-only name states the exposed
+ *  side, and the count line names it in a sentence, because dim alone is a color cue a reader
+ *  never gets. */
 function kindBadge(source: ListConfig["source"], coverage?: Coverage): ReactNode {
   if (source === "arr_tag") {
     // One span per half, so each name is centered in its own color instead of riding a
     // gradient stop that falls near, but not on, the space between them.
     //
-    // The halves are hidden from a reader and the name is said once, in text: the two spans
+    // The halves are hidden from a reader and the name is said once, in text. The two spans
     // are flex items, and whether the whitespace between two flex items reaches the
-    // accessibility tree is not something to bet a name on -- a whitespace-only anonymous
-    // item generates no box at all. Said outright, it cannot come out as one invented word,
-    // and the claim does not rest on layout behavior no test here can observe.
+    // accessibility tree is not something to bet a name on: a whitespace-only anonymous item
+    // generates no box at all. Said outright, it cannot come out as one invented word, and
+    // the claim does not rest on layout behavior no test here can observe.
     const bright = (t: MediaType) => !coverage || coverage.protectedTypes.includes(t);
     // Only when one side is covered and the other is not: a list nothing covers already reads
     // "Not in use" on the chip, so the badge saying "not kept" too would be the same fact twice.
@@ -281,9 +271,8 @@ function ListRow({
   onCheck: () => void;
   /** Absent for a row stored before its definition existed, which has nothing to edit. */
   onEdit?: (() => void) | undefined;
-  /** Why the last check pressed on THIS row failed. Rendered here rather than in a page-level
-   *  slot, because it is about this list and the button that retries it is on this row
-   *  (rule 42). */
+  /** Why the last check pressed on this row failed. Rendered here rather than in a page-level
+   *  slot, because it is about this list and the button that retries it is on this row. */
   checkError?: string | null | undefined;
   /** The row's own extras: tag pills, the per-server fold-out, the Configure in Policy action. */
   children?: ReactNode;
@@ -294,7 +283,7 @@ function ListRow({
     <div className="jobrow">
       <div className="jobrow-main">
         {/* The name arrives from Plex or an *arr, or from the operator's own keyboard, so it
-            wraps rather than running through the box holding it (rule 139). */}
+            wraps rather than running through the box holding it. */}
         <div className="list-head">
           <span className="jobrow-title list-name">{title}</span>
           {badge}
@@ -344,8 +333,8 @@ function ListRow({
 }
 
 /** The tag pills and the per-server fold-out, for a tag list's row. Counts are summed across
- *  the family's rows -- one per *arr instance -- and a tag no row has counted yet renders as
- *  the bare pill, never as zero (the counts are unknown, not empty). */
+ *  the family's rows, one per *arr instance, and a tag no row has counted yet renders as the
+ *  bare pill, never as zero (the counts are unknown, not empty). */
 function TagCounts({ definition, mine }: { definition: ListConfig; mine: ProtectionList[] }) {
   const { t } = useTranslation();
   const tags = definition.config.tags ?? [];
@@ -391,13 +380,13 @@ function TagCounts({ definition, mine }: { definition: ListConfig; mine: Protect
         <details className="per-server">
           <summary>{t("lists.tagCounts.countsByServer")}</summary>
           {/* Tags down the side, servers across the top, counts at the intersections: a tag
-              reads across its row and a server down its column, and the figures line up. The old
-              one-comma-joined-line-per-server turned to mush as tags and servers multiplied. The
-              box scrolls sideways when it outgrows the screen (many servers) and the Tag column
-              stays pinned; the table sizes to its content rather than being forced to the box
-              width, which on a phone squeezed a tag name to one glyph per line. The cells do not
-              wrap -- they are reached by scrolling -- which the outside-text guard records as a
-              deliberate exception (rule 139). */}
+              reads across its row and a server down its column, and the figures line up. A
+              single comma-joined line per server would turn to mush as tags and servers
+              multiply. The box scrolls sideways when it outgrows the screen (many servers),
+              and the Tag column stays pinned. The table sizes to its content rather than
+              being forced to the box width, which on a phone would squeeze a tag name to one
+              glyph per line. The cells do not wrap. They are reached by scrolling instead,
+              which the outside-text guard records as a deliberate exception. */}
           {/* tabIndex so a keyboard operator can focus the box and scroll it: no cell is
               focusable, so without it the matrix is unreadable past its first screenful on a
               narrow pane (WCAG 2.1.1). */}
@@ -429,7 +418,7 @@ function TagCounts({ definition, mine }: { definition: ListConfig; mine: Protect
                       return (
                         <td key={r.slug} className={n ? undefined : "empty"}>
                           {/* A "no value" placeholder, so a screen reader hears an empty cell
-                              rather than voicing a dash (rule 21). A real zero is spoken. */}
+                              rather than voicing a dash. A real zero is spoken. */}
                           {n === undefined ? <span aria-hidden="true">—</span> : n.toLocaleString()}
                         </td>
                       );
@@ -460,10 +449,10 @@ function TagCounts({ definition, mine }: { definition: ListConfig; mine: Protect
   );
 }
 
-/** Which rows a check is running for. A number is one definition; `"all"` is the whole-pass
- *  target, which only an ORPHAN row uses now -- a stored row no definition owns has no id to
- *  check by, so checking everything is the only pass that can reach it. The screen's
- *  "Check all now" was removed with it: the nightly job checks every list and has its own
+/** Which rows a check is running for. A number is one definition. `"all"` is the whole-pass
+ *  target, which only an orphan row uses now, since a stored row no definition owns has no
+ *  id to check by, so checking everything is the only pass that can reach it. This screen has
+ *  no "Check all now" button of its own: the nightly job checks every list and has its own
  *  Run now on Settings, Jobs. */
 type CheckTarget = number | "all";
 
@@ -484,10 +473,10 @@ export function ListsPanel({
   // than an open flag beside a subject, so the two cannot disagree about what is on screen.
   const [modal, setModal] = useState<{ list: ListConfig | null } | null>(null);
   // The modal decides when it may be dismissed and mirrors that whole answer here, the
-  // arrangement the service and schedule editors use. Nothing registered here at all once,
-  // so Back fell through to the Settings section frame: the panel navigated, this component
-  // unmounted, and an in-flight save's refusal went with it while the operator walked away
-  // believing the list saved (rule 80).
+  // arrangement the service and schedule editors use. Without this, Back would fall through
+  // to the Settings section frame: the panel would navigate, this component would unmount,
+  // and an in-flight save's refusal would go with it while the operator walked away believing
+  // the list saved.
   const blockCloseRef = useRef(false);
   useBackGuard(
     modal !== null,
@@ -495,33 +484,35 @@ export function ListsPanel({
     () => !blockCloseRef.current,
   );
 
-  // Editing or removing a list that a KEEP RULE names changes which titles are protected, and
-  // the queue is showing fates scored under the lists as they were. Nothing here re-scores
-  // them: a check refreshes MEMBERSHIP, which is a different thing, so the queue kept its stale
-  // fates with no stale notice and an approved plan met the executor's list interlock at the
-  // far end. `PolicyEditor` starts a scan on save for exactly this class of change, and a list
-  // is the half of the policy that moved out of the policy body (rules 72, 144).
+  // Editing or removing a list that a keep rule names changes which titles are protected,
+  // and the queue is showing fates scored under the lists as they were. Nothing here
+  // re-scores them: a check refreshes membership, which is a different thing, so the queue
+  // would keep its stale fates with no stale notice, and an approved plan would meet the
+  // executor's list interlock at the far end. `PolicyEditor` starts a scan on save for
+  // exactly this class of change, and a list is the half of the policy that moved out of the
+  // policy body.
   //
-  // The modal decides WHETHER a fate moved (`onChanged`'s `rescore`) and this fires only then,
-  // so adding a list nothing uses -- which writes no rule and can change no fate -- does not
-  // scan the whole library for nothing. It lives on the panel rather than in the modal because
-  // the modal is unmounting: a mutation started on the way out loses the surface that would
-  // report it. Idempotent server-side, so a scan already running is simply followed.
+  // The modal decides whether a fate moved (`onChanged`'s `rescore`), and this fires only
+  // then, so adding a list nothing uses, which writes no rule and can change no fate, does
+  // not scan the whole library for nothing. It lives on the panel rather than in the modal
+  // because the modal is unmounting: a mutation started on the way out loses the surface that
+  // would report it. This is idempotent server-side, so a scan already running is simply
+  // followed.
   const startScan = useMutation({
     mutationFn: () => api.startScan(),
     onSuccess: (started) => {
       queryClient.setQueryData(["scanStatus"], started);
       // Spoken, because starting a scan is otherwise invisible from this screen: the
       // progress it drives is on another tab. Same two sentences `PolicyEditor` says, from
-      // the panel that owns them, and branching for the same reason -- a scan that was
-      // already running is scoring the lists as they were before this edit.
+      // the panel that owns them, branching for the same reason. A scan already running is
+      // scoring the lists as they were before this edit.
       announce(started.followup_queued ? rescanQueuedLead() : `${rescanHeading()}.`);
     },
   });
 
   const check = useMutation({
     mutationFn: (target: CheckTarget) => api.syncLists(target === "all" ? {} : { list_id: target }),
-    // Rule 85: the row's chip is the result, and it is only true once the refetch has landed.
+    // The row's chip is the result, and it is only true once the refetch has landed.
     // Awaiting the invalidation inside the mutation keeps `isPending` true until then, so the
     // button says "Checking…" for exactly as long as the answer on screen is the old one.
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["lists"] }),
@@ -531,14 +522,14 @@ export function ListsPanel({
   /** Whether `target`'s button is the one to show as busy. "Check all now" really is
    *  checking every row, so every row says so and none of them can be pressed again while
    *  it runs. Found by driving it: the footer and the rows disagreed, and a row still
-   *  offering "Check now" during the pass it was already part of invites a second check
-   *  that would race the first (rule 85's shape -- the button reports the state it is in).
-   *  Reachable from an orphan row's own button now that the footer's is gone. */
+   *  offering "Check now" during the pass it was already part of would invite a second check
+   *  that could race the first. Reachable from an orphan row's own button now that the
+   *  footer's is gone. */
   const busy = (target: CheckTarget) => running === target || running === "all";
 
-  // Both reads, explicitly (rules 17/36). This panel's contract is "always visible", so a
-  // failure renders a fallback saying what is unknown rather than an empty screen implying
-  // there is nothing to protect.
+  // Both reads, explicitly. This panel's contract is "always visible", so a failure renders
+  // a fallback saying what is unknown rather than an empty screen implying there is nothing
+  // to protect.
   if (health.isPending || definitions.isPending) {
     return (
       <div className="panel">
@@ -566,9 +557,9 @@ export function ListsPanel({
             polled, so it mounts once with something the operator has not been told yet. */}
         <Notice tone="error">
           {/* Says it is retrying while it is. The query's status stays `error` across a
-              refetch -- only `isFetching` moves -- so the press changed nothing on screen
-              until it settled, which reads as a dead button (rule 85's shape: the control
-              reports the state it is in, as the check buttons on the rows do). */}
+              refetch, and only `isFetching` moves, so the press would change nothing on
+              screen until it settled, which reads as a dead button. The control reports the
+              state it is in, the same as the check buttons on the rows. */}
           {fetching ? (
             <Trans i18nKey="lists.loadErrorRetrying" components={{ btn: retry }} />
           ) : (
@@ -585,8 +576,8 @@ export function ListsPanel({
 
   // Anything stored before a definition existed to own it. The server re-homes such rows
   // onto their definitions before answering (`lists.adopt_legacy`), so what reaches here is
-  // only what no definition could safely claim; the next successful check retires it. It is
-  // still protecting until then, so it is rendered rather than hidden -- a row that holds
+  // only what no definition could safely claim. The next successful check retires it. It is
+  // still protecting until then, so it is rendered rather than hidden. A row that holds
   // titles and is invisible here is the failure this screen exists to fix.
   const orphans = rows.filter((r) => r.list_id === null);
 
@@ -601,13 +592,12 @@ export function ListsPanel({
           const state = worst(mine);
           const items = mine.reduce((n, r) => n + r.item_count, 0);
           // A list no keep rule names protects nothing, so its chip reads "Not in use", never
-          // green "In use", however its sync went (rule 79's direction, from the used/unused
-          // side).
+          // green "In use", however its sync went.
           const used = definition.policy_use.length > 0;
           // The media types the list's members actually span, unioned across the family's
-          // rows -- a tag list is one row per *arr, so movies come off the Radarr rows and
-          // shows off the Sonarr ones. Compared against the types a keep rule names to tell a
-          // fully-covered list from one covered on a single side (#533).
+          // rows. A tag list is one row per *arr, so movies come off the Radarr rows and
+          // shows off the Sonarr ones. This is compared against the types a keep rule names,
+          // to tell a fully-covered list from one covered on a single side.
           const spanned = new Set<MediaType>(mine.flatMap((r) => r.media_types));
           const coverage = coverageOf(
             definition.policy_use,
@@ -618,7 +608,7 @@ export function ListsPanel({
             mine.length === 0
               ? describe("never_checked", 0, used)
               : describe(state, items, used, coverage);
-          // What the chip says on hover -- only for a list a rule actually covers.
+          // What the chip says on hover, only for a list a rule actually covers.
           const chipTitle = used ? protectingTitle(coverage) : undefined;
           // A row with nothing stored is the one whose count a running check contradicts:
           // "Runs with your next scan" beside a button that says "Checking…". That pair is now
@@ -627,9 +617,9 @@ export function ListsPanel({
           // true while the next one runs.
           const count =
             busy(definition.id) && mine.length === 0 ? t("lists.checkingItNow") : shown.detail;
-          // An in-use list links to its rule to adjust it; a not-in-use one offers the setup
-          // action below. Both go to Policy -- you change the policy there, never "on" it from
-          // here.
+          // An in-use list links to its rule to adjust it, and a not-in-use one offers the
+          // setup action below. Both go to Policy: you change the policy there, never "on" it
+          // from here.
           const detail =
             used && onGoToPolicy ? (
               <>
@@ -664,7 +654,7 @@ export function ListsPanel({
               tone={shown.tone}
               chipTitle={chipTitle}
               meta={
-                (checked.length ? t("lists.meta.lastChecked", { when: ago(checked[0]!) }) : "") +
+                (checked.length ? t("lists.meta.lastChecked", { when: since(checked[0]!) }) : "") +
                 across +
                 sourceHint(definition)
               }
@@ -697,7 +687,7 @@ export function ListsPanel({
               tone={shown.tone}
               meta={
                 (row.last_checked_at
-                  ? t("lists.meta.lastChecked", { when: ago(row.last_checked_at) })
+                  ? t("lists.meta.lastChecked", { when: since(row.last_checked_at) })
                   : "") + t("lists.orphanNote")
               }
               error={row.error}
@@ -708,32 +698,32 @@ export function ListsPanel({
         })}
       </div>
 
-      {/* The sink for a failed check of EVERYTHING, whether it was started here or from an
+      {/* The sink for a failed check of everything, whether it was started here or from an
           orphan row, whose button drives the "all" target. Every row's own sink compares
           `failedTarget` against a definition id, which is a number and can never equal "all",
-          so before this the whole-pass failure had nowhere to land at all: the button went
-          back to rest, every row kept its stale chip, and nothing said the check had not run
-          (rules 17/36, 42). */}
+          so without this, the whole-pass failure would have nowhere to land: the button
+          would go back to rest, every row would keep its stale chip, and nothing would say
+          the check had not run. */}
       {failedTarget === "all" && (
         <Notice tone="error">
           {t("lists.checkFailed", { error: check.error ? describeError(check.error) : "" })}
         </Notice>
       )}
 
-      {/* Only while the check it came from is the last thing that happened. `check.data` holds
-          the previous result until the next mutation replaces it, so a Plex warning from one
-          check stayed on screen through an unrelated Edit or Add, reading as though it were
-          about those (rule 85). A check in flight has not answered yet, so it says nothing. */}
+      {/* Only while the check it came from is the last thing that happened. `check.data`
+          holds the previous result until the next mutation replaces it, so a Plex warning
+          from one check could stay on screen through an unrelated Edit or Add, reading as
+          though it were about those. A check in flight has not answered yet, so it says
+          nothing. */}
       {!check.isPending && check.data?.plex_error_reason && (
         <Notice tone="warn">{composeIn("lists", check.data.plex_error_reason)}</Notice>
       )}
 
-      {/* No "Check all now" here. Checking everything is the upkeep job's whole purpose --
-          it runs nightly and has its own Run now on Settings, Jobs -- and it used to be the
-          IMDb lists only, which is why this screen grew a second way to do it. Now that the
-          job covers every source, two buttons meaning "refresh all of them" in two places is
-          the same job offered twice. Per-row Check now stays: it is the one thing the job
-          cannot do, which is check the single list you just edited. */}
+      {/* No "Check all now" here. Checking everything is the upkeep job's whole purpose: it
+          runs nightly and has its own Run now on Settings, Jobs. A second button meaning
+          "refresh all of them" here would be the same job offered twice. Per-row Check now
+          stays: it is the one thing the job cannot do, which is check the single list you
+          just edited. */}
       <div className="list-foot">
         <span className="flex-spacer" />
         <button className="primary" onClick={() => setModal({ list: null })}>
@@ -753,8 +743,9 @@ export function ListsPanel({
           // back, a count or the source's own refusal, which is the answer to the question
           // they were really asking when they saved.
           onSaved={(list) => check.mutate(list.id)}
-          // Only when the change moved what a keep rule protects: an edit or a remove of a list
-          // a rule names re-judges the queue, and an add -- which writes no rule -- does not.
+          // Only when the change moved what a keep rule protects: an edit or a remove of a
+          // list a rule names re-judges the queue, and an add, which writes no rule, does
+          // not.
           onChanged={(rescore) => rescore && startScan.mutate()}
         />
       )}

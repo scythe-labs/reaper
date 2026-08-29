@@ -60,8 +60,8 @@ class TestTheEnvBooleanVocabulary:
 
     @pytest.mark.parametrize("raw", ["ture", "enabled", "2", "yes please"])
     def test_an_unrecognized_value_falls_to_the_default(self, raw: str) -> None:
-        """The ``default=True`` half is the load-bearing one (rule 141): where the default
-        is False, a hardcoded False and a fall-to-default are the same output.
+        """The ``default=True`` half is the load-bearing one. Where the default is False, a
+        hardcoded False and a fall-to-default are the same output.
 
         ``""`` and ``"  "`` are deliberately not in this table. Both already fell to the
         default at every site before this helper existed, so they cannot fail here and
@@ -94,11 +94,11 @@ class TestProjectRoot:
     def test_a_source_checkout_reaches_the_directory_holding_src(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Asserted on what the root must CONTAIN, not on a second count of the levels.
+        """Asserted on what the root must *contain*, not on a second count of the levels.
 
         The two callers that inlined this walk read ``frontend/`` and ``alembic/`` out of
         the answer, and both sit beside ``src/`` in the checkout. Counting parents here
-        instead would agree with a wrong depth as readily as with the right one (rule 119).
+        instead would agree with a wrong depth as readily as with the right one.
         """
         monkeypatch.delenv("REAPER_HOME", raising=False)
         root = buildinfo.project_root()

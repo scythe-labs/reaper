@@ -1,17 +1,20 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Overriding a verdict by hand -- sparing or reaping an item.
+"""Override a verdict by hand. Spare an item, or force it onto the reap list.
 
-The review queue answers "what would Reaper delete?"; these routes let the owner answer
-back. A **spare** takes effect in two places (see ``services.whitelist``): the next scan
-judges the item PROTECT, and any plan built in the meantime excludes it regardless of a
-frozen snapshot's stale verdict. A **reap** is the inverse: the owner has looked and wants
-the file gone, so the next scan forces it onto the list -- short of a hard safety gate
-(something streaming now, or a file no *arr manages), which still wins.
+The review queue answers "what would Reaper delete?" These routes let the owner
+answer back. A spare takes effect in two places (see ``services.whitelist``). The
+next scan judges the item PROTECT, and any plan built in the meantime excludes it,
+regardless of a frozen snapshot's stale verdict. A reap is the inverse. The owner has
+looked and wants the file gone, so the next scan forces it onto the list, unless a
+hard safety gate still applies (something streaming now, or a file no *arr manages),
+which always wins.
 
-A media_key may identify a whole show, in which case the decision covers every season.
+A media_key can identify a whole show, in which case the decision covers every
+season.
 
-Nothing here deletes. Removing an override does not reap anything -- it merely returns the
-file to being *judged* by the policy again; it re-enters the review queue as a candidate.
+Nothing here deletes. Removing an override does not reap anything. It returns the
+file to being judged by the policy again, so it re-enters the review queue as a
+candidate.
 """
 
 from __future__ import annotations
@@ -51,24 +54,25 @@ def _out(entry: WhitelistEntry) -> WhitelistEntryOut:
 
 
 async def _resolve_title(session: AsyncSession, media_key: str) -> str:
-    """The display title for an override key, read from its latest surviving candidate.
+    """Return the display title for an override key, read from its latest surviving
+    candidate.
 
-    The title is never trusted from the client -- the media_key is the identity, and an
-    override for a key none of the kept scans holds is more likely a bug than an intention
-    (404). A show-level key matches on ``group_key`` and prefers the show's title over a
-    season's.
+    The title is never trusted from the client. The media_key is the identity, and an
+    override for a key none of the kept scans holds is more likely a bug than an
+    intention, so this refuses with 404. A show-level key matches on ``group_key`` and
+    prefers the show's title over a season's.
 
-    **``services.retention`` is what bounds "kept".** The select spans every snapshot
-    deliberately, because the question is "do we know this item" and not "is it in the
-    queue" -- but the sweep leaves only the newest ``KEEP_SNAPSHOTS`` to span. So the
-    refusal claims no more than that, a missing record, never that no scan ever held one,
-    and it names the window it speaks for. A scan COUNT, not a duration, which is why the
-    copy reads it off the constant the sweep honors (#326).
+    ``services.retention`` is what bounds "kept". The select spans every snapshot
+    deliberately, because the question is "do we know this item", not "is it in the
+    queue". The sweep leaves only the newest ``KEEP_SNAPSHOTS`` to span, though, so the
+    refusal claims no more than a missing record. It never claims that no scan ever
+    held one, and it names the window it speaks for as a scan count, not a duration,
+    reading that count off the same constant the sweep honors.
 
-    Nothing reaches the refusal today. Every SPA path passes a key drawn from the current
-    queue (``WhyPanel``, ``ShowPanel``, and ``ReviewQueue``'s bulk bar), and an API key is
-    refused both write routes outright by ``api.middleware._API_KEY_WRITES``, which admits
-    scanning, planning, the policy and the profile and nothing else.
+    Nothing reaches this refusal today. Every SPA path passes a key drawn from the
+    current queue (``WhyPanel``, ``ShowPanel``, and ``ReviewQueue``'s bulk bar). An API
+    key is refused outright on both write routes by ``api.middleware._API_KEY_WRITES``,
+    which admits scanning, planning, the policy, and the profile, and nothing else.
     """
     candidate = (
         await session.execute(
@@ -86,8 +90,8 @@ async def _resolve_title(session: AsyncSession, media_key: str) -> str:
 
 
 async def _affected_candidates(session: AsyncSession, media_key: str) -> list[Candidate]:
-    """The latest snapshot's rows a decision on this key covers: the item itself, or
-    every season of a show-level key. Empty before the first scan."""
+    """Return the latest snapshot's rows a decision on this key covers. This is the
+    item itself, or every season of a show-level key. Empty before the first scan."""
     latest = (
         await session.execute(select(Snapshot).order_by(Snapshot.id.desc()).limit(1))
     ).scalar_one_or_none()
@@ -105,33 +109,40 @@ async def _affected_candidates(session: AsyncSession, media_key: str) -> list[Ca
 async def _sync_grace_clocks(
     session: AsyncSession, media_key: str, *, cleared_spare: bool = False
 ) -> None:
-    """Grace bookkeeping for an override change, so the countdown matches the click.
-
-    The grace clock tracks one thing: how long an item has been on the reap list. An
-    override moves an item on or off that list at once, so the clock moves with it rather
-    than waiting for the next scan.
-
-    ON the list -- effectively condemned: a scan condemnation with no override, or a hand
-    reap the engine honors. Its clock is (re)recorded through the scan's own decision
-    (``snapshot.record_first_flagged_bulk``: set once, and reset only on a genuine return),
-    so "on the list since" and the Leaving Soon warning read true from the moment of the
+    """Update grace bookkeeping for an override change, so the countdown matches the
     click.
 
-    OFF the list -- spared, or judged keep/abstain: its clock is deleted. That is a cleanup
-    (a stale hand-reap timestamp can never shorten a later real condemnation) and, just as
-    important, a safety reset: a scan-condemned item the owner SPARES leaves the list and
-    loses its clock, so a later un-spare re-enters it with a FRESH window instead of coasting
-    on a weeks-old timestamp that would drop it straight past grace with no Leaving Soon
-    warning (rule 4). ``_apply_first_flag`` alone would not reset here -- a deliberate spare
-    is indistinguishable from a brief scan outage by gap -- so the delete forces the reset.
+    The grace clock tracks how long an item has been on the reap list. An override
+    moves an item on or off that list at once, so the clock moves with it instead of
+    waiting for the next scan.
 
-    ``cleared_spare`` closes the one path the OFF-list delete cannot see: clearing a spare that
-    left an item invisibly condemned (an expired timed spare whose scans re-condemned it and
-    burned a clock down while every surface still showed "spared" -- B-2). On such a clear the
-    item lands back ON the list carrying a stale clock ``record_first_flagged_bulk`` would honor,
-    so when a protective spare is the override being removed we delete every affected clock FIRST
-    and let the recorder write a fresh window (rule 71). Phase 1's durable expiry purge already
-    prevents the burn-down from arising; this is the belt to that suspenders.
+    When the item lands on the list, because a scan condemned it with no override, or
+    because a hand reap the engine honors put it there, its clock is recorded, or
+    re-recorded, through the scan's own decision
+    (``snapshot.record_first_flagged_bulk``, which sets it once and resets it only on
+    a genuine return to the list). That keeps "on the list since" and the Leaving Soon
+    warning true from the moment of the click.
+
+    When the item leaves the list, because it was spared or judged keep or abstain,
+    its clock is deleted. This is a cleanup, since a stale hand-reap timestamp can
+    never shorten a later real condemnation. It is also a safety reset: sparing a
+    scan-condemned item takes it off the list and clears its clock, so a later
+    un-spare re-enters it with a fresh window instead of coasting on a weeks-old
+    timestamp that would drop it straight past grace with no Leaving Soon warning.
+    ``_apply_first_flag`` alone would not reset the clock here, since a deliberate
+    spare looks the same as a brief scan outage from a gap in the timeline alone, so
+    this function forces the reset by deleting it.
+
+    ``cleared_spare`` covers a path the logic above cannot see on its own. It handles
+    clearing a spare that left an item invisibly condemned. This happens when a timed
+    spare expires and a later scan re-condemns the item while every surface in the UI
+    still shows it as "spared", burning down a hand-reap clock nobody knew was
+    running. When that spare is cleared, the item lands back on the list carrying
+    that stale clock, which ``record_first_flagged_bulk`` would otherwise honor. So
+    when the override being removed is a protective spare, this function deletes
+    every affected clock first and lets the recorder write a fresh window. A separate
+    durable expiry purge already stops this burn-down from happening in the first
+    place. Deleting the clock here is a second layer of protection.
     """
     decisions = await whitelist.overrides(session)
     rows = await _affected_candidates(session, media_key)
@@ -139,9 +150,10 @@ async def _sync_grace_clocks(
         return
 
     def on_reap_list(candidate: Candidate) -> bool:
-        # What the grace clock tracks: effectively condemned. A hand spare takes an item off
-        # the list even when the scan condemned it; a hand reap puts it on only if the engine
-        # honors it; with no override, the frozen scan verdict decides.
+        # This is what counts as effectively condemned, what the grace clock tracks. A
+        # hand spare takes an item off the list even when the scan condemned it. A
+        # hand reap puts it on only if the engine honors it. With no override, the
+        # frozen scan verdict decides.
         ov = whitelist.effective_override(candidate.media_key, decisions)
         if ov == "spare":
             return False
@@ -150,8 +162,9 @@ async def _sync_grace_clocks(
         return candidate.verdict == "condemn"
 
     if cleared_spare:
-        # Never trust a timestamp accrued while the item was invisible to the operator: wipe
-        # every affected clock so whatever lands back on the list below earns a fresh window.
+        # Never trust a timestamp accrued while the item was invisible to the operator.
+        # This wipes every affected clock, so whatever lands back on the list below
+        # earns a fresh window.
         for candidate in rows:
             clock = await session.get(FirstFlagged, candidate.media_key)
             if clock is not None:
@@ -174,18 +187,17 @@ async def _sync_grace_clocks(
 def _log_override(
     media_key: str, decision: str, *, prior: str | None, spare_days: int | None
 ) -> None:
-    """Record a hand decision, at INFO.
+    """Record a hand decision, at INFO level.
 
-    The operator's own overrides were the one action in the app that left no trace.
-    Setting one at least leaves a `WhitelistEntry` row, but `remove_override` DELETEs
-    that row and `_sync_grace_clocks` wipes the grace clock in the same call, so after
-    an un-spare nothing anywhere records that the spare ever existed. "This was spared
-    last month and Reaper deleted it" had no answer.
+    This is the only durable record of the operator's override once it is cleared.
+    Setting an override leaves a `WhitelistEntry` row, but `remove_override` deletes
+    that row and `_sync_grace_clocks` wipes the grace clock in the same call. This log
+    line is what still says the override ever existed.
 
-    INFO rather than DEBUG: this is the highest-stakes thing a person does by hand here,
-    it happens a few times a session, and nobody turns Debug on before making a decision
-    they later want explained. `prior` is what makes the line a transition rather than a
-    snapshot.
+    INFO, not DEBUG, because this is the highest-stakes thing a person does by hand
+    here. It happens only a few times a session, and nobody turns on Debug before
+    making a decision they want explained later. `prior` is what makes the line show
+    a transition, not just a snapshot.
     """
     log.info(
         "whitelist.override",
@@ -198,10 +210,11 @@ def _log_override(
 
 @router.post("/override")
 async def set_override(request: Request, payload: OverrideIn) -> WhitelistEntryOut:
-    """Override an item's verdict by hand -- spare it, or force it onto the reap list.
+    """Override an item's verdict by hand. Spare it, or force it onto the reap list.
 
-    Switching decision in place is fine: reaping an already-spared item flips it to reap.
-    A reap never overrides a hard safety gate; that is enforced at scan time, not here.
+    Switching decision in place is fine. Reaping an already-spared item flips it to
+    reap. A reap never overrides a hard safety gate. That gate is enforced at scan
+    time, not here.
     """
     async with session_factory(request)() as session:
         title = await _resolve_title(session, payload.media_key)
@@ -224,9 +237,32 @@ async def set_override(request: Request, payload: OverrideIn) -> WhitelistEntryO
 
 
 @router.delete("/override/{media_key}")
-async def clear_override(request: Request, media_key: str) -> RemovedOut:
-    """Remove any override (spare or reap) -- the decision-neutral name for the same action."""
+async def clear_override(
+    request: Request, media_key: str, include_seasons: bool = False
+) -> RemovedOut:
+    """Remove any override, spare or reap. This is the decision-neutral name for the
+    same action.
+
+    ``include_seasons`` widens a show key's clear to its season-level rows too. The
+    review queue's bulk bar sends it, because a selected show card shows every season's
+    hand mark, so its clear must cover what it showed. The level-scoped controls (show
+    panel, season rows) never send it, so each still reverses only the key it lit.
+    ``cleared_spare`` fires if ANY removed row was a spare: a spare among them may have
+    been keeping a season off the list, so every affected clock resets to a fresh
+    window rather than trusting one accrued while the item was covered.
+    """
     async with session_factory(request)() as session:
+        if include_seasons:
+            cleared = await whitelist.remove_show_overrides(session, show_key=media_key)
+            await _sync_grace_clocks(
+                session,
+                media_key,
+                cleared_spare=any(decision == "spare" for _, decision in cleared),
+            )
+            await session.commit()
+            for key, decision in cleared:
+                _log_override(key, "cleared", prior=decision, spare_days=None)
+            return RemovedOut(removed=bool(cleared))
         prior = await whitelist.override_for(session, media_key)
         removed = await whitelist.remove_override(session, media_key=media_key)
         await _sync_grace_clocks(session, media_key, cleared_spare=prior == "spare")

@@ -1,46 +1,46 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Runs axe-core against the tree a test just rendered, and FAILS on what it finds.
 //
-// Why a runtime audit rather than a lint rule: every accessibility bug this project has
-// actually shipped lived in the *computed* tree, not in the JSX. A name assembled from
-// props, a role that prunes its own children from the accessibility tree, a control that
-// only exists after a query resolves -- a static linter reads the source and sees none of
-// them. `eslint-plugin-jsx-a11y` was measured against the real tree and caught none of the
-// filed bugs (docs/LEARNINGS.md), because it cannot see through <Switch> to the <input> it
-// renders. axe reads the DOM the browser built, so a custom component is not a blind spot.
+// This uses a runtime audit instead of a lint rule because every accessibility bug this
+// project has actually shipped lived in the computed tree, not in the JSX. A name assembled
+// from props, a role that prunes its own children from the accessibility tree, a control that
+// only exists after a query resolves. A static linter reads the source and sees none of them.
+// `eslint-plugin-jsx-a11y` was measured against the real tree and caught none of the filed bugs
+// (docs/LEARNINGS.md), because it cannot see through <Switch> to the <input> it renders. axe
+// reads the DOM the browser built, so a custom component is not a blind spot.
 //
-// It fails rather than warns, for the reason the whole of setup.ts fails rather than warns
-// (rule 135): vitest drops console output on some Node versions, so a warning is invisible
-// exactly where someone could act on it.
+// This fails rather than warns for the same reason setup.ts does: vitest drops console output
+// on some Node versions, so a warning is invisible exactly where someone could act on it.
 import { act } from "@testing-library/react";
 import axe from "axe-core";
 
 // jsdom builds a DOM but never lays it out or paints it, so every rule that needs geometry or a
-// computed color reports against a fiction. None of these three can reach `violations` here --
-// `color-contrast` reads pixels, gets none, and defers; `scrollable-region-focusable` is
-// inapplicable with no scroll box; `target-size` is off by default in axe-core and outside the
-// tags below twice over. They are listed anyway, because a rule this gate cannot answer should
-// say so by name rather than be absent, and because turning any of them on in a real browser is
-// then one line. What actually covers them is looking at the running app.
+// computed color reports against a fiction. None of these three rules can fail here.
+// `color-contrast` reads pixels, gets none, and defers. `scrollable-region-focusable` does not
+// apply with no scroll box. `target-size` is off by default in axe-core and outside the tags
+// below as well. They are listed here anyway, because a rule this gate cannot answer should say
+// so by name rather than be silently absent, and because turning any of them on for a real
+// browser is then one line. What actually covers them is looking at the running app.
 //
-// The list is short, and it is NOT the ledger of what jsdom cannot decide -- `incomplete` is,
-// and it is read below. Treating this list as the whole ledger is what let a serious rule pass.
+// This list is short, and it is not the ledger of every rule jsdom cannot decide. That larger
+// ledger is `incomplete`, read below. Treating this short list as the whole ledger would let a
+// serious rule pass unnoticed.
 const NEEDS_A_REAL_BROWSER = [
-  // Reads rendered pixels; jsdom paints nothing. Checked against the running app.
+  // Reads rendered pixels. jsdom paints nothing. Checked against the running app.
   "color-contrast",
   // Both need layout to know what is on screen and what is behind it.
   "scrollable-region-focusable",
   "target-size",
 ];
 
-// Rules a panel cannot satisfy on its own, because what satisfies them is the shell ABOVE it.
+// Rules a panel cannot satisfy on its own, because what satisfies them is the shell above it.
 // `region` wants every node inside a landmark, and the landmark is `App`'s `<main>`/`<nav>`/
-// `<header>` -- so mounting `SecurityPanel` alone reports a defect the running app does not
-// have. Suppressing it everywhere would then cover the one tree where it IS answerable, so it
-// is off by default and back on for `pageLevel` callers. Two tests pass `pageLevel`:
-// `AppStaleRead.test.tsx`, the one test that mounts the whole authenticated shell, and
-// `Login.test.tsx`, where the sign-in card IS the page. Removing the flag from either retires
-// the only guard on a landmark this suite ships, so both are named here on purpose.
+// `<header>`, so mounting `SecurityPanel` alone reports a defect the running app does not have.
+// Suppressing it everywhere would then hide it in the one tree where it is answerable, so it is
+// off by default and back on for `pageLevel` callers. Two tests pass `pageLevel`.
+// `AppStaleRead.test.tsx` mounts the whole authenticated shell, and `Login.test.tsx`'s sign-in
+// card is the whole page. Removing the flag from either retires the only guard this suite ships
+// on a landmark, so both are named here on purpose.
 const ANSWERED_BY_THE_APP_SHELL = ["region"];
 
 export type A11yOptions = {
@@ -50,33 +50,35 @@ export type A11yOptions = {
   pageLevel?: boolean;
 };
 
-/** One thing the gate reports: a rule axe failed, or one it could not rule out. */
+/** One thing the gate reports, either a rule axe failed or one it could not rule out. */
 export type A11yFinding = axe.Result & {
-  /** True when axe filed this under `incomplete` -- it could not decide, so neither can we. */
+  /** True when axe filed this under `incomplete`. It could not decide, so this function can't
+   *  either. */
   deferred: boolean;
 };
 
 /**
  * Audits `container` and returns what axe found, worst first.
  *
- * "Found" is both buckets. axe files a rule it cannot settle under `incomplete` rather than
- * `violations`, and under jsdom that is where a whole class of REAL failures lands:
- * `aria-hidden-focus` -- a focusable element inside `aria-hidden`, which is the invariant the
- * app maintains by hand at every one of its `aria-hidden` sites -- comes back
- * `incomplete` here and `violations` in a browser. A gate reading only `violations` therefore
- * passes `<div aria-hidden="true"><button>Reap</button></div>`, a serious WCAG 4.1.2 failure,
- * without a word. So the deferred set fails the test too, and a caller that has looked at one
- * and decided it cannot apply says so through `skip`, with its reason, like any other rule.
+ * "Found" covers both buckets axe reports. axe files a rule it cannot settle under
+ * `incomplete` rather than `violations`, and under jsdom that is where a whole class of real
+ * failures lands. `aria-hidden-focus` catches a focusable element inside `aria-hidden`, an
+ * invariant the app maintains by hand at every `aria-hidden` site. That check reports
+ * `incomplete` here and `violations` in a real browser. A gate that reads only `violations`
+ * would pass `<div aria-hidden="true"><button>Reap</button></div>`, a serious WCAG 4.1.2
+ * failure, without a word. So the deferred set fails the test too, and a caller that has
+ * looked at one and decided it cannot apply says so through `skip`, with its reason, like any
+ * other rule.
  */
 export async function findA11yViolations(
   container: HTMLElement = document.body,
   options: A11yOptions = {},
 ): Promise<A11yFinding[]> {
   for (const [id, why] of Object.entries(options.skip ?? {})) {
-    // `skip` is a map rather than a list exactly so it carries the reason: a suppressed rule
-    // has to stay arguable by whoever reads it next. A type cannot ask for a reason that means
-    // something, but it can refuse an empty one, so the discipline is carried by code and not
-    // only by the docstring underneath (rule 7/24).
+    // `skip` is a map rather than a list so it carries the reason. A suppressed rule has to
+    // stay arguable by whoever reads it next. A type cannot ask for a reason that means
+    // something, but it can refuse an empty one, so the discipline is carried by code, not
+    // only by the comment above.
     if (!why.trim()) {
       throw new Error(
         `expectNoA11yViolations was told to skip "${id}" with no reason. Say why the rule ` +
@@ -89,11 +91,11 @@ export async function findA11yViolations(
     ...(options.pageLevel ? [] : ANSWERED_BY_THE_APP_SHELL),
     ...Object.keys(options.skip ?? {}),
   ];
-  // The audit runs INSIDE `act`, and that is not tidiness: it is the longest await most of
-  // these tests contain, so every read still in flight when it starts lands during it. Outside
-  // `act` those arrivals are state updates outside one, which `setup.ts` fails the test for
-  // (rule 136) -- naming components the test never touched, so the failure reads as a bug in
-  // the tree rather than in the wait. Doing it here means no caller has to know that.
+  // The audit runs inside `act`, which is not tidiness. It is the longest await most of these
+  // tests contain, so every read still in flight when it starts lands during it. Outside
+  // `act`, those arrivals are state updates outside one, which `setup.ts` fails the test for,
+  // naming components the test never touched, so the failure reads as a bug in the tree rather
+  // than in the wait. Doing it here means no caller has to know that.
   let results!: axe.AxeResults;
   await act(async () => {
     results = await axe.run(container, {
@@ -105,10 +107,10 @@ export async function findA11yViolations(
         values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"],
       },
       // `passes` and `inapplicable` are never read, and collecting them means building a node
-      // report for every passing element on the page. On the settings panel that was the
-      // difference between 5.1s -- over vitest's 5s default, so the test failed as a timeout
-      // rather than on anything it found -- and well under a second. `incomplete` is cheap by
-      // comparison: across every audit in this suite it holds a single node.
+      // report for every passing element on the page. On the settings panel that took 5.1
+      // seconds, over vitest's 5-second default, so the test failed as a timeout rather than
+      // on anything it found. Excluding them brings it to well under a second. `incomplete` is
+      // cheap by comparison. Across every audit in this suite it holds a single node.
       resultTypes: ["violations", "incomplete"],
     });
   });
@@ -123,7 +125,8 @@ export async function findA11yViolations(
   );
 }
 
-/** Formats findings the way setup.ts formats its own: what broke, where, and what to do. */
+/** Formats findings the same way setup.ts formats its own, stating what broke, where, and
+ *  what to do. */
 export function describeA11yViolations(violations: A11yFinding[]): string {
   return violations
     .map((violation) => {
@@ -133,9 +136,9 @@ export function describeA11yViolations(violations: A11yFinding[]): string {
         .join("\n");
       const more =
         violation.nodes.length > 3 ? `\n      ...and ${violation.nodes.length - 3} more` : "";
-      // A deferred rule is not a lesser one, it is an undecided one, and saying which is which
+      // A deferred rule is not a lesser one. It is an undecided one, and saying which is which
       // is the difference between "fix this" and "go and look". Reading a deferred entry as a
-      // failed assertion sends someone hunting for a defect axe never claimed to have found.
+      // failed assertion sends someone hunting for a defect axe never claimed to find.
       const lead = violation.deferred
         ? `${violation.impact ?? "unknown"}, axe could not decide`
         : (violation.impact ?? "unknown");

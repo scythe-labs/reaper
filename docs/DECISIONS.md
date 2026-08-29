@@ -789,6 +789,24 @@ The exclusion list in `alembic/env.py` is a one-release bridge and empties with 
 column that outlives its sweep is how a dead column becomes permanent behind a growing list of
 silencers, which is the direction rule 148 exists to refuse.
 
+**What "rollback" means for a two-release removal (rule 148) is putting the image back, not
+moving the database back.** A database is only ever carried forward: it stays at whatever
+revision it reached, and the older image has to serve that revision. Release M therefore ships
+its own revision rather than nothing, and that buys survivability exactly when M+1 ships no new
+revision, which is the ordinary case since M is where the schema work happens. When M+1 does
+ship one, its database sits at a revision M has never heard of, and `db/schema_gate.refusal`
+refuses the boot in plain words (#565); Alembic refused it before that too, with
+`Can't locate revision identified by …`. The way back is then M's own backup, not M's image, so
+a removal's release note says which of the two it costs.
+
+**The two-release sequence is measured against the alternative, not against zero.** Under
+`render_as_batch`, SQLite rebuilds the whole table for anything outside
+`add_column`/`create_index`/`drop_index`, so the `server_default` revision that lets a release
+KEEP a dead column copies the table exactly as dropping it would. Where both cost the same
+rebuild, keeping the column buys only a permanent `include_object` arm and a registry entry, and
+defers the drop forever. That symmetry is why rule 148 exists; it does not hold for a nullable
+column, which can be abandoned for free.
+
 ## Gate retirement
 
 **Choice: the upgrade persists the heal where it can, a load-time shim covers what it cannot,
@@ -1005,6 +1023,14 @@ versioned image, and the GitHub release all bake the same string via `buildinfo.
 in-app update check compares against it, so an operator is only ever told about a version whose
 artifacts exist. Dev builds stay sha-named (`dev (abc1234)`): the rolling `dev-build`
 prerelease is replaced nightly and never enters winget or the snap stable channel.
+
+**The dev channel follows the published `:dev` image, not the tip of the dev branch.** Same
+promise, reached the other way: CI builds an image only when the push touched code, so a docs
+or rules merge moves the branch and ships nothing. Following the tip announced an update on
+every one of those, and the link went to a page of commits the operator already had. The
+registry is where "what is published" is actually written down, so the check reads the commit
+CI baked into the image (`REAPER_GIT_SHA`) out of the image config, per architecture, since
+amd64 is rebuilt on every code push and arm64 nightly.
 
 The notes are GitHub's own generation, sectioned by label through `.github/release.yml`, over
 the pull requests between the previous tag and this one. That range only exists on `dev`: the

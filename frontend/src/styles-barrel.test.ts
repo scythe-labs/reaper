@@ -9,9 +9,8 @@
 //      test ever reads, and it looks exactly like working code in the editor.
 //   2. `siteOf` naming the wrong place. Three tests print it in their failure messages, so a
 //      drifting resolver sends the next reader to a line that has nothing to do with the
-//      problem -- and it does that only when a test is already failing, which is the worst
-//      moment to be lied to (rule 144). So it is checked against the files themselves rather
-//      than trusted.
+//      problem, and it does that only when a test is already failing, which is the worst
+//      moment to be lied to. So it is checked against the files themselves rather than trusted.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -47,10 +46,9 @@ describe("the styles barrel", () => {
   });
 
   it("keeps every file under the size that made the last one unnavigable", () => {
-    // A file this size can only be added to, never filed into, which is what the split fixed
-    // and what nothing otherwise stops recurring a file at a time. 20-queue-cards.css had
-    // reached 1,044 lines across four unrelated features before it was cut into 20-23. STATUS.md
-    // is the precedent: a budget nobody enforces reads green while the file it measures grows.
+    // A file this size can only be added to, never filed into. `20-queue-cards.css` once reached
+    // 1,044 lines across four unrelated features before it was split. STATUS.md is the
+    // precedent: a budget nobody enforces reads green while the file it measures grows.
     //
     // Raising the cap is a decision, and costs a line here and a sentence in the pull request.
     const CAP = 800;
@@ -72,7 +70,7 @@ describe("siteOf", () => {
     // Sampled across the whole concatenation, so every file is probed many times over.
     const wrong: string[] = [];
     for (let offset = 0; offset < CSS.length; offset += 419) {
-      // Split on the LAST colon: the file name is the part before it, the line the part after.
+      // Split on the last colon. The file name is the part before it, the line the part after.
       const site = siteOf(offset);
       const colon = site.lastIndexOf(":");
       const actual = disk.get(site.slice(0, colon))?.[Number(site.slice(colon + 1)) - 1];

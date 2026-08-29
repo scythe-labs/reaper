@@ -8,8 +8,9 @@ paths:
 
 # Test blockers
 
-Blockers, not suggestions. **Rule numbers are permanent** — cite them in test docstrings the way
-the existing suite does (`rule 88`, `rule 118`). Holds 37, 118, 119, 132, 133, 135–137, 141, 145, 147.
+Blockers, not suggestions. **Rule numbers are permanent** — the archived review passes cite
+them. Test docstrings state their contract in plain language and do not cite rule numbers.
+Holds 37, 118, 119, 132, 133, 135–137, 141, 145, 147.
 
 **37. Tests that boot the app are hermetic.** Use the shared autouse `_hermetic` fixture in
 `tests/conftest.py`, which stubs env seeding and startup network. Never let a test read the
@@ -47,13 +48,11 @@ reads is rule 119's environmental accident on a timer: freeze the clock or asser
 never sample twice and compare.
 
 **Where the suite has already neutered the delay, elapsed time cannot fail at all** — so the
-range is not the safe half of that choice. `conftest.py` makes every `asyncio.sleep` instant,
-which returns an unclipped `sleep(86400)` exactly as fast as a clipped one: three pin-poll
-tests asserting the call came back quickly passed with the deadline interlock deleted, and a
-fourth read a real 200ms window that held ~1,073 polls idle and 11 under load (#346). Take
-`conftest.py`'s `slept` fixture, which owns `loop.time()` and advances it by each delay, and
-assert the delay that was asked for: that is the behavior, where elapsed time is a
-measurement of the machine (rule 118, for anything bounded by a deadline).
+range is not the safe half of that choice. `conftest.py` makes every `asyncio.sleep` instant, so
+a clipped and an unclipped delay return equally fast (#346). Take `conftest.py`'s `slept`
+fixture, which owns `loop.time()` and advances it by each delay, and assert the delay that was
+asked for: that is the behavior, where elapsed time is a measurement of the machine (rule 118,
+for anything bounded by a deadline).
 
 **135. A module mock answers everything the tree under test reads, and a gap fails the run —
 because a warning cannot.** `vi.mock("../api", …)` hands every consumer `undefined` for what it
@@ -80,15 +79,11 @@ just its hooks.
 - **Seed with `seedSettings()`** the settings a test does not vary: a mock alone answers a
   microtask late, so a synchronous body asserts the pending panel. Never seed a key the test
   *does* vary — seeded data is fresh, so a read it means to reject or stall is quietly answered.
-- **Measured and rejected:** `waitFor` around the assertions (returns on the first check),
-  seeding the query the test is ABOUT (its fetch is the point), a synchronous scheduler
-  (`notifyManager.setScheduler(cb => cb())`: more warnings, and the suite stops terminating).
-  Fix the async.
+- **Fix the async, not the scheduler.**
 
 `setup.ts` fails a third thing, **two siblings sharing a key**: React 19 paints both, so no
 assertion catches it and rule 19's reconciliation guarantee is lost silently. Without the gate a
-test proving a key fix would read as a proof (rule 118). General form, in CLAUDE.md: a test with
-something to tell you must fail, never warn.
+test proving a key fix would read as a proof (rule 118).
 
 **137. A test acts on a control only once the control can be acted on, because user-event
 reports "disabled" as success.** `click`, `selectOptions` and `upload` return having dispatched
@@ -104,32 +99,23 @@ read it starts, so a synchronous query after it asserts on markup that has not a
 
 **141. A fixture that pins the same value as the production default cannot prove the value was
 passed.** An omission and a correct pass produce identical output, so the assertion holds either
-way: a caller used `score()`'s 365-day default while every fixture pinned that same 365,
-behind 2,578 green tests, and the omission was found by reading the caller rather than by any
-test. So **choose fixture values that differ from the default, and sweep more than one.** One
+way. So **choose fixture values that differ from the default, and sweep more than one.** One
 non-default value proves the argument reaches the callee; a sweep proves the *right* one does,
 and catches a caller passing a constant. Exclude the default from a sweep deliberately and say
 why, or it silently contributes a case that cannot fail. **A sweep that lives on the wrong lane
-is the same hole** — that 365 sat on a lab engine, and deleting it left the live scan with no
-non-default window under test at all until one was written
-(`test_scan_pipeline.py::TestTheWindowScoredAgainstIsThePolicysOwn`).
-Read the captured value with `.get` and assert on the value,
-never `kwargs["name"]`: an omission there raises `KeyError`, failing for the wrong reason and
-pinning *that* an argument was passed rather than *which* (rule 118, for defaulted arguments).
+is the same hole.** Read the captured value with `.get` and assert on the value, never
+`kwargs["name"]`: an omission there raises `KeyError`, failing for the wrong reason and pinning
+*that* an argument was passed rather than *which* (rule 118, for defaulted arguments).
 
 **145. A guard that SCANS the tree is proven against the population it claims to cover, not
 only against a mutation of one member it already found.** A mutation test can only break a member
-the *matcher* already collected, so one it never saw is missing from both guard and proof: the
-`--no-proxy-headers` guard went red on cue while blind to the one launch site still missing the
-flag. So **count what the scan collects, reconcile that number by hand against the members you
+the *matcher* already collected, so one it never saw is missing from both guard and proof. So
+**count what the scan collects, reconcile that number by hand against the members you
 believe exist, then pin the count** — a flag-shaped assertion cannot tell a member that complies
 from one that dropped out of the walk. **That count covers a member that left the walk, not a
 field dropped from one that stayed, and it says nothing about the STATE each member was driven
-in.** The policy anchor walk pinned eight anchors and still read green when a mount-condition
-declaration was deleted from one of them, because the single page state it drove that anchor in
-happened to hold the condition, and the deletion took the only case naming the anchor away with
-it — 40 green instead of 41 red (#167). So where a member's behavior forks on a branch, drive
-every branch, and treat the branch the default state hands you for free as the one a missing
+in** (#167). So where a member's behavior forks on a branch, drive every branch, and treat the
+branch the default state hands you for free as the one a missing
 declaration hides behind. Scope the walk, too: `rglob` honors no ignore file, so it descends
 into gitignored agent worktrees, whole repo copies inside the repo root, and into session
 scratch beside them. `_repo_text_files` asks git for the checkout's files instead, which is the
@@ -139,12 +125,8 @@ absolute one matches the worktree the suite is *running in* and silently empties
 
 **147. A guard that scans SOURCE TEXT is bounded by the syntax it can parse, so it is proven
 against every FORM the tree spells the thing in, not only against every member the walk found.**
-The hand-rolled-notice ban matched `className=` followed immediately by a quote, reading a
-literal but neither a ternary nor a template literal — both ordinary here — so a plan loader
-shipped mute past a green test. Its count could not catch that: the count was of a different
-population than the ban — `<Notice>` call sites versus `className` strings — so a site never
-converted is absent from both halves, and the two figures agree while disagreeing with the tree.
-So **pin the count of the population the ban itself scans**, and before shipping a matcher write
+So **pin the count of the population the ban itself
+scans**, and before shipping a matcher write
 down the spellings it accepts and run it against the ones it rejects. Prefer reading the whole
 attribute or call and inspecting inside it, over anchoring on a delimiter that only one spelling
 puts there.

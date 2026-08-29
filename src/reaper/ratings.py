@@ -1,42 +1,36 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Ratings, and the provenance that makes them meaningful.
 
-**Never assume what a rating field contains. Read its provenance.**
+Never assume what a rating field contains. Read its provenance instead.
 
-The published guidance says Plex's ``rating`` / ``audience_rating`` on a modern
-library are Rotten Tomatoes scores. Probing a real server on 2026-07-14 found the
-opposite: across every movie sampled, ``rating_image`` was *empty* and
-``audience_rating_image`` was ``imdb://image.rating`` -- so ``audience_rating`` was
-an **IMDb** score, and there was no Rotten Tomatoes value at all.
+Plex's published guidance says its ``rating`` and ``audience_rating`` fields hold
+Rotten Tomatoes scores on a modern library. A live probe found the opposite:
+every sampled movie had an empty ``rating_image`` and an
+``audience_rating_image`` of ``imdb://image.rating``, so ``audience_rating``
+held an IMDb score and no Rotten Tomatoes value existed at all.
 
-Both shapes exist in the wild; it depends on the Plex agent the library uses. A
-rule that wired an "IMDb threshold" to a field holding a Tomatometer percentage
-would compare 7.5 against 96 and protect nothing, silently, forever. So the source
-is *read from the data*, never inferred from the field name.
+Both shapes exist in the wild, depending on the Plex agent the library uses. A
+rule that wired an "IMDb threshold" to a field actually holding a Tomatometer
+percentage would compare 7.5 against 96 and silently protect nothing, forever.
+So the source is read from the data, never inferred from the field name.
 
-The corollary for the UI: a score is never displayed as a bare number. It is
-displayed with where it came from and when, so a wrong source is visible rather
-than merely wrong.
+The UI never shows a bare number for the same reason: it always shows where a
+score came from and when, so a wrong source is visible instead of just wrong.
 
-Three further facts, all measured:
+Three more measured facts:
 
-* **Vote counts are mandatory.** A 9.5 from 12 votes is noise. Radarr reports
-  ``votes: 0`` for Rotten Tomatoes and Metacritic (they are percentages, not vote
-  averages), so a vote floor must apply only to sources that actually have votes.
-* **Radarr's ``type`` field lies.** It reports ``"user"`` for Rotten Tomatoes on a
-  value that is plainly the critic Tomatometer (96). Do not trust it.
-* **Scale is a property of the provider, not the source.** Plex serves *every*
-  rating slot on a 0-10 scale whatever the source: a 96% Tomatometer arrives as
-  ``9.6``, never ``96``. A follow-up probe of a live server (2026-07-16) swept
-  every movie and show section and found thousands of rating values across
-  ``imdb://``, ``themoviedb://`` and ``rottentomatoes://`` images with **not one
-  above 10** -- including Rotten Tomatoes values that Plex's own UI displays as
-  percentages. Radarr hands the very same score through raw (``96``). The same
-  number therefore needs opposite handling depending on who delivered it, so
-  normalization happens per provider, never per field name. Re-measured by source
-  on 2026-08-03: that sweep ran ~78% IMDb and ~22% TMDb, with under 0.1% Rotten
-  Tomatoes and no Metacritic at all, so it evidences the 0-10 contract but says
-  little about a *percentage* source specifically (see ``from_plex`` and #244).
+* Vote counts are mandatory. A 9.5 from 12 votes is noise. Radarr reports
+  ``votes: 0`` for Rotten Tomatoes and Metacritic, because they are
+  percentages, not vote averages, so a vote floor must apply only to sources
+  that actually count votes.
+* Radarr's ``type`` field is unreliable. It reports ``"user"`` for a Rotten
+  Tomatoes value that is plainly the critic Tomatometer (96).
+* Scale is a property of the provider, not the source. Plex serves every
+  rating slot on a 0-10 scale no matter the source: a 96% Tomatometer arrives
+  as ``9.6``, never ``96``. Radarr hands the same score through raw, as
+  ``96``. So the same number needs opposite handling depending on who
+  delivered it, and normalization happens per provider, never per field name.
+  See ``from_plex`` and docs/LEARNINGS.md for how this was measured.
 """
 
 from __future__ import annotations
@@ -84,14 +78,15 @@ def is_percentage_source(source: RatingSource) -> bool:
     return source in _PERCENTAGE_SOURCES
 
 
-#: Operator-facing names for each source. Never a raw enum value or an id in the UI.
+#: Operator-facing names for each source. Never shown as a raw enum value or an id.
 #:
-#: **Every label is written for the position after a preposition** -- ``on {label}``, ``no
-#: rating on {label}`` -- which is why ``UNKNOWN`` carries its own article. Putting one
-#: after an article instead produces "A IMDb bar" and "A an unknown source bar", both of
-#: which shipped (#338). So place a label after a preposition, never after ``a``/``an``/
-#: ``the``: the article then governs a literal noun and cannot disagree with the value.
-#: ``test_engine_invariants`` drives every member through the sentences that render one.
+#: Every label is written to follow a preposition (``on {label}``, ``no rating on
+#: {label}``), which is why ``UNKNOWN`` reads as "an unknown source" rather than
+#: just "unknown source". Putting a label after an article like "a" or "an"
+#: instead can produce a mismatch, such as "A IMDb bar" or "A an unknown source
+#: bar". Placing a label after a preposition avoids that, since the preposition
+#: never disagrees with the label's own grammar. ``test_engine_invariants``
+#: drives every member through the sentences that render one.
 SOURCE_LABELS: dict[RatingSource, str] = {
     RatingSource.IMDB: "IMDb",
     RatingSource.TMDB: "TMDb",
@@ -118,7 +113,7 @@ class Rating:
     votes: int | None
     """None where the source has no vote concept (Rotten Tomatoes, Metacritic)."""
     provider: str
-    """Which integration handed us this -- 'radarr', 'plex', 'imdb-dataset'."""
+    """Which integration provided this rating: 'radarr', 'plex', 'imdb-dataset'."""
     as_of: datetime | None = None
 
     @property
@@ -127,20 +122,19 @@ class Rating:
         return self.source not in _PERCENTAGE_SOURCES
 
     def short_of_vote_floor(self, min_votes: int) -> bool:
-        """Does a vote floor bite on this rating? The one derivation of that question.
+        """Whether a vote floor rules out this rating. The one place that question is
+        answered.
 
-        Two readers ask it: ``meets``, which decides whether a bar is cleared, and
-        ``engine.gates.RatingFloorGate._miss_phrase``, which tells the operator why it was
-        not. Each used to spell out the same three clauses, and each spelling carried the same
-        three inclusive edges -- ``0`` is no floor at all, ``1`` is the smallest floor
-        ``engine.policy.RatingRuleSpec`` accepts on a source that counts votes, and a count
-        exactly AT the floor clears it. Two copies that merely agree are one edit away from a
-        panel telling the operator a bar was missed on votes the decision counted as enough
-        (rule 104).
+        Two callers ask it: ``meets``, which decides whether a bar is cleared, and
+        ``engine.gates.RatingFloorGate._miss_phrase``, which tells the operator why
+        it was not. Both need to agree on the same edge cases: ``0`` means no floor
+        at all, ``1`` is the smallest floor ``engine.policy.RatingRuleSpec`` accepts
+        on a source that counts votes, and a count exactly at the floor clears it.
 
-        A missing count is short of any floor. ``from_plex`` returns ``votes=None`` for every
-        Plex-sourced rating, so on a Plex-only library that is the ordinary case rather than an
-        edge, and it resolves toward not protecting.
+        A missing vote count always falls short of the floor. ``from_plex`` returns
+        ``votes=None`` for every Plex-sourced rating, so on a Plex-only library
+        that is the ordinary case, not an edge case, and it resolves toward not
+        protecting the item.
         """
         return (
             self.has_meaningful_vote_count
@@ -161,21 +155,21 @@ class Rating:
         return self.value >= floor
 
     def describe(self) -> str:
-        """Provenance-carrying form for a log line or a debugger. Nothing renders this.
+        """Form for a log line or a debugger, with full provenance. No UI renders this.
 
-        It used to say the why-panel showed it, which no code has done: the panel's rating
-        strings come from ``describe_for_user`` and the stored projection from
-        ``services.display_meta.build_ratings_json`` (rule 7/24).
+        The why-panel's rating strings come from ``describe_for_user``, and the
+        stored projection comes from ``services.display_meta.build_ratings_json``.
         """
         votes = describe_votes(self.votes)
         return f"{self.source.value} {self.value:.1f}/10{votes} (via {self.provider})"
 
     def describe_for_user(self) -> str:
-        """Plain-language form for operator-facing copy: no id, no provider, native scale.
+        """Plain-language form for operator-facing copy, with no id, no provider name,
+        and the source's native scale.
 
-        Percentage sources read as a percentage (``Rotten Tomatoes critics 84%``); the 0-10
-        sources read on their own scale with the vote count that makes the number mean
-        something (``8.2 on IMDb from 120,000 votes``).
+        A percentage source reads as a percentage (``Rotten Tomatoes critics
+        84%``). A 0-10 source reads on its own scale with the vote count that
+        makes the number mean something (``8.2 on IMDb from 120,000 votes``).
         """
         label = source_label(self.source)
         if self.source in _PERCENTAGE_SOURCES:
@@ -186,19 +180,18 @@ class Rating:
 def describe_votes(count: int | None) -> str:
     """The vote clause an operator reads, or nothing at all: `` from 1 vote``.
 
-    The one derivation of this phrase (rule 104), for the two callers that render a count a
-    title really has: ``Rating.describe`` and ``Rating.describe_for_user``. It had three
-    copies, and every one said "from 1 votes", because each was only ever exercised at a
-    count in the thousands. A title with a single vote is ordinary, so all three were
-    reachable.
+    The one place this phrase is built, for the two callers that render a count a
+    title actually has: ``Rating.describe`` and ``Rating.describe_for_user``. It
+    handles the singular case ("from 1 vote") separately from the plural ("from
+    12 votes"), since a title with a single vote is ordinary, not an edge case.
 
-    ``engine.gates.RatingRule.describe_bar`` was the third, and it is not a caller any more:
-    it renders a vote *floor*, and the why-panel prints a floor and a count one line apart,
-    so one wording for both said "from 1,000 votes" for a bar the operator set and for a
-    number a title measured (#623). Its clause carries a "+" and lives there.
+    ``engine.gates.RatingRule.describe_bar`` builds its own version for a vote
+    *floor* rather than a count, since a floor's clause carries a "+" (as in
+    "from 1,000+ votes").
 
-    A falsy count (``None`` or ``0``) yields the empty string: there is no honest clause to
-    print, and "from 0 votes" reads as a measurement rather than as its absence.
+    A falsy count (``None`` or ``0``) returns the empty string, since there is
+    no honest clause to print. "from 0 votes" would read as a measurement
+    rather than as an absence.
     """
     if not count:
         return ""
@@ -219,23 +212,24 @@ def from_plex(
 ) -> Rating | None:
     """Read a Plex ``rating`` / ``audience_rating`` pair.
 
-    ``image`` is load-bearing: it is what tells us whether the number is IMDb,
-    Rotten Tomatoes or TMDb. Without it the value is uninterpretable, and an
-    uninterpretable rating must not be used to justify a deletion -- so we return
-    None rather than guessing.
+    ``image`` decides everything: it says whether the number is IMDb, Rotten
+    Tomatoes, or TMDb. Without it the value cannot be interpreted, and an
+    uninterpretable rating must never justify a deletion, so this returns
+    ``None`` instead of guessing.
 
-    ``audience=True`` marks the value as coming from the ``audience_rating`` slot, so
-    a Rotten Tomatoes image resolves to the audience score, not the Tomatometer --
-    the prefix map alone cannot tell them apart, since both arrive as
-    ``rottentomatoes://image.rating.*``. (An IMDb or TMDb image in that slot is
-    still just an IMDb/TMDb value; only RT keeps two distinct populations.)
+    ``audience=True`` marks the value as coming from the ``audience_rating``
+    slot, so a Rotten Tomatoes image resolves to the audience score instead of
+    the Tomatometer. The prefix map alone cannot tell them apart, since both
+    arrive as ``rottentomatoes://image.rating.*``. An IMDb or TMDb image in
+    that slot is still just an IMDb or TMDb value. Only Rotten Tomatoes keeps
+    two distinct populations.
 
     Values arrive already normalized: Plex serves every rating slot on a 0-10
-    scale whatever the source (measured -- see the module docstring), so an 84%
-    Rotten Tomatoes score is ``"8.4"`` here. Raw percentages are a Radarr shape,
-    handled in :func:`from_radarr`. One exception below rescales a Plex value
-    anyway, for a percentage-shaped source arriving above 10; what that is for,
-    and the band where it is not known to be right, is written at the branch.
+    scale no matter the source (see the module docstring), so an 84% Rotten
+    Tomatoes score arrives here as ``"8.4"``. Raw percentages are a Radarr
+    shape, handled in :func:`from_radarr`. One exception below rescales a Plex
+    value anyway, for a percentage-shaped source arriving above 10. What that
+    is for, and where it is not known to be right, is written at that branch.
     """
     if value in (None, ""):
         return None
@@ -252,34 +246,38 @@ def from_plex(
             source = RatingSource.ROTTEN_TOMATOES_AUDIENCE
 
     if source is RatingSource.UNKNOWN:
-        # We know a number but not what it means. Unknown may only protect,
-        # never condemn -- so it is dropped rather than guessed at.
+        # A number with no known source might mean anything, so it must never
+        # count toward deletion. It is dropped instead of guessed at.
         return None
 
-    # Plex's contract is 0-10 for every slot, so a value at or below 10 passes through
-    # undivided: dividing a Tomatometer here (as Radarr's raw percentages need) turned an
-    # 84% audience score into 0.84, displayed as 8%. Above 10 the contract is already
-    # broken, and this rescales defensively, on the reasoning that a percentage-shaped
-    # source that high can only be a raw percentage from an agent which skipped Plex's
-    # normalization -- the value itself proving the scale.
+    # Plex already normalizes every slot to 0-10, so a value at or below 10
+    # passes through unchanged. Dividing it here, the way Radarr's raw
+    # percentages need, would turn an 84% audience score (already 8.4) into
+    # 0.84, displayed as 8%. Above 10 the contract is already broken. This
+    # branch rescales anyway, on the reasoning that a percentage-shaped source
+    # reporting above 10 can only be a raw percentage from an agent that
+    # skipped Plex's own normalization: the value itself reveals the scale.
     #
-    # Right for the shapes it was written for (84, 96, 100) and for a genuinely low
-    # Tomatometer, where 11 means 11% and 1.1 is the correct reading. **Not known to be
-    # right just above the boundary** (issue #244): 10.1 becomes 1.01 and the panel prints
-    # "10%" for a title the server reported 10.1 for, where the competing reading is that a
-    # value a hair over 10 is a 0-10 score with a rounding artifact and is out of contract,
-    # which is what already happens to a NON-percentage source at 10.1 four lines down -- it
-    # is dropped, and the panel says there is no rating rather than printing a number nothing
-    # produced (rule 96). Both readings withdraw the protection, so no file turns on this;
-    # they differ in what the operator is told. Settling it needs the distribution a real
-    # library serves in (10, 15], which no stored evidence here retains -- `ratings_json`
-    # keeps a display projection with no provenance and no raw value. Until then neither
-    # answer is pinned by a test, because a test asserting either would read as a proof that
-    # it is correct (rule 118). What IS measured, in docs/LEARNINGS.md: a live sweep of every
-    # movie and show section found thousands of values with not one above 10 -- but under 0.1%
-    # of them carried a percentage source at all, and none carried Metacritic. So that sweep
-    # leaves this branch unreached rather than unnecessary, and settling it needs a server
-    # running the Rotten Tomatoes or Metacritic agent.
+    # Correct for the values seen so far (84, 96, 100), and for a genuinely low
+    # Tomatometer, where 11 means 11% and 1.1 is the right reading. Not
+    # confirmed correct just above the boundary. 10.1 becomes 1.01 here, and
+    # the panel then shows "10%" for a title Plex reported as 10.1. A
+    # competing reading says a value just over 10 is really a 0-10 score with
+    # a rounding error and is out of contract, the same way a non-percentage
+    # source at 10.1 is already dropped a few lines down, where the panel
+    # shows no rating rather than a number nothing produced. Both readings
+    # withdraw the protection either way, since neither can turn into a false
+    # positive. They only differ in what number the operator sees.
+    #
+    # Settling this needs the distribution of real values in (10, 15], which
+    # nothing stored here retains: `ratings_json` keeps a display projection
+    # with no provenance and no raw value. A live sweep found thousands of
+    # Plex rating values with none above 10, but under 0.1% carried a
+    # percentage source at all, and none carried Metacritic (see
+    # docs/LEARNINGS.md), so that sweep leaves this branch unreached rather
+    # than proven unnecessary. Settling it needs a server running the Rotten
+    # Tomatoes or Metacritic agent. Neither answer is pinned by a test,
+    # because asserting either would wrongly claim it is correct.
     if number > 10 and source in _PERCENTAGE_SOURCES:
         number /= 10.0
     if not 0.0 <= number <= 10.0:
@@ -293,13 +291,14 @@ def from_plex(
 def from_radarr(ratings: dict[str, Any] | None, *, provider: str = "radarr") -> list[Rating]:
     """Read Radarr's ``ratings`` object.
 
-    Measured coverage over a full production Radarr library: IMDb ~99%, Rotten
-    Tomatoes ~88%, Metacritic ~85%. So for movies these are essentially free and
-    essentially complete -- no extra API key and no extra request, since we already
-    fetch this payload for other reasons.
+    Measured across a full production Radarr library: IMDb covers about 99% of
+    movies, Rotten Tomatoes about 88%, and Metacritic about 85%. So for movies
+    this data is close to free and close to complete. It costs no extra API
+    key and no extra request, since this payload is already fetched for other
+    reasons.
 
-    Radarr's ``type`` field is ignored: it reports ``"user"`` for a Rotten Tomatoes
-    value of 96, which is unambiguously the critic Tomatometer.
+    Radarr's ``type`` field is ignored: it reports ``"user"`` for a Rotten
+    Tomatoes value of 96, which is unambiguously the critic Tomatometer.
     """
     if not isinstance(ratings, dict):
         return []
@@ -327,21 +326,25 @@ def from_radarr(ratings: dict[str, Any] | None, *, provider: str = "radarr") -> 
 
         value_on_ten = _to_ten(number, source)
         if not 0.0 <= value_on_ten <= 10.0:
-            # A 0-10 average above 10, a percentage above 100: outside every
-            # scale we know how to read, so it is dropped rather than guessed at.
+            # A 0-10 average above 10, or a percentage above 100, is outside
+            # every scale this code knows how to read, so it is dropped
+            # instead of guessed at.
             continue
 
-        # Radarr reports votes: 0 for percentage sources. Zero is "no vote
-        # concept", not "zero people voted" -- conflating them would make a vote
-        # floor reject every Rotten Tomatoes score.
+        # Radarr's `votes` field reports 0 for percentage sources, but that
+        # means "no vote concept," not "zero people voted." Treating it as an
+        # actual zero would make a vote floor reject every Rotten Tomatoes
+        # score.
         raw_votes = entry.get("votes")
         try:
             votes = int(raw_votes) if raw_votes and source not in _PERCENTAGE_SOURCES else None
         except (TypeError, ValueError):
-            # A fork, a proxy, or a future schema serializing votes as "1,234" or a list
-            # must cost this one rating, never the operator's whole scan: a bare int() here
-            # raised straight out of the fact build (rule 32). None already fails a vote
-            # floor closed in ``Rating.meets``, so the safe reading is preserved.
+            # A fork, a proxy, or a future schema might serialize votes as
+            # "1,234" or as a list. That must cost this one rating, never the
+            # operator's whole scan, so the failure is caught here instead of
+            # raising out of the fact build. ``Rating.meets`` already treats
+            # ``None`` as failing the vote floor closed, so this keeps the
+            # safe reading.
             votes = None
 
         out.append(
@@ -360,14 +363,15 @@ def pick(ratings: list[Rating], source: RatingSource) -> Rating | None:
 
 
 def merge_by_source(*groups: list[Rating] | tuple[Rating, ...]) -> tuple[Rating, ...]:
-    """One rating per source, first writer wins, UNKNOWN dropped.
+    """One rating per source: the first one seen wins, and UNKNOWN is dropped.
 
-    The scan holds several rating lists for one item (the IMDb dataset value, Radarr's
-    ``ratings`` object, Plex's two slots). They overlap: a film can carry an IMDb score
-    from both the dataset and Radarr. Pass the groups in **precedence order** (most
-    authoritative first, e.g. the dataset's IMDb, then Radarr, then Plex) and the first
-    rating seen for a source wins. An ``UNKNOWN``-source rating is never admitted, so a
-    protection can never be decided on a number we cannot interpret.
+    The scan holds several rating lists for one item: the IMDb dataset value,
+    Radarr's ``ratings`` object, and Plex's two slots. They overlap, since a
+    film can carry an IMDb score from both the dataset and Radarr. Pass the
+    groups in precedence order, most authoritative first (for example the
+    dataset's IMDb, then Radarr, then Plex), and the first rating seen for a
+    source wins. A rating with an ``UNKNOWN`` source is never admitted, so a
+    protection can never rest on a number this code cannot interpret.
     """
     out: dict[RatingSource, Rating] = {}
     for group in groups:

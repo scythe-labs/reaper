@@ -5,12 +5,12 @@
 // api.ts stays free of i18next: every failure it throws is an ApiError carrying the server's
 // own catalog code(s) and raw params beside the English `message` a client with no catalog
 // still reads. This is where that gets composed into ui.json's `error.*` namespace, the same
-// way why.ts composes a Reason under `why.*` -- `composeIn` is what derives `field_label` etc.
+// way why.ts composes a Reason under `why.*`. `composeIn` is what derives `field_label` etc.
 // from the raw params either way, so this reuses it rather than re-deriving them.
 //
 // A refusal's `code` is already the catalog's full dotted path (`error.policy.unknown_field`,
-// matching `reaper.refusal.MESSAGES`'s own key), where `composeIn(namespace, key)` looks
-// entries up under `${namespace}.${key.k}` -- the same shape `why.ts` uses for a bare reason
+// matching `reaper.refusal.MESSAGES`'s own key), and `composeIn(namespace, key)` looks
+// entries up under `${namespace}.${key.k}`, the same shape `why.ts` uses for a bare reason
 // id ("blocked", not "why.blocked"). So the leading "error." is stripped before handing the
 // rest to `composeIn("error", ...)`, or the lookup would double it.
 //
@@ -34,9 +34,9 @@ function composeItem(item: ApiErrorItem): string {
 }
 
 /** The operator's sentence for a failed request, in the active locale: an `ApiError` with a
- *  code (or several, for a 422) composes through the catalog; anything else -- a plain
- *  `Error`, a thrown non-error -- falls back to its own English `message`. Every render of a
- *  caught error's `.message` goes through this instead now (rule 147's gate holds that). */
+ *  code (or several, for a 422) composes through the catalog; anything else, a plain `Error`
+ *  or a thrown non-error, falls back to its own English `message`. Every render of a caught
+ *  error's `.message` goes through this. */
 export function describeError(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.items && err.items.length > 0) return err.items.map(composeItem).join(" ");

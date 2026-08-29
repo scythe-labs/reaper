@@ -1,15 +1,13 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The in-app docs viewer. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* ------------------------------------------------------------------------------------ *
- * In-app docs (src/docs). The Help button and per-section "Learn more" links open the
+ * The in-app docs viewer. See `../index.css` for how this file fits into the stylesheet's
+ * load order. */
+/* In-app docs (src/docs). The Help button and per-section "Learn more" links open the
  * docs center, a wide ModalShell with an index and a reading pane. Content styling is
- * scoped under .docs-content so it reuses the app's tokens without touching the app's
- * global table / list styles.
- * ------------------------------------------------------------------------------------ */
+ * scoped under .docs-content, so it reuses the app's tokens without touching the app's
+ * global table / list styles. */
 
-/* --- entry points on the Policy page --- */
+/* Entry points on the Policy page. */
 .policy-head-actions {
   display: flex;
   align-items: center;
@@ -60,7 +58,7 @@
 }
 
 /* A cross-reference inside doc prose. Same ink and hover as .doc-learn, which is the same
-   thing at the end of a heading row; this one sits in a sentence, so it takes no margin and
+   thing at the end of a heading row. This one sits in a sentence, so it takes no margin and
    inherits the paragraph metrics rather than setting its own. */
 .doc-ref {
   border: none;
@@ -76,7 +74,7 @@
   text-decoration: underline;
 }
 
-/* --- the docs modal: wider than the standard modal, and it owns its own scrolling --- */
+/* The docs modal: wider than the standard modal, and it owns its own scrolling. */
 .modal.docs-modal {
   width: min(1040px, 100%);
   height: min(86dvh, 860px);
@@ -99,7 +97,7 @@
   min-height: 0;
 }
 
-/* --- index (left) --- */
+/* The index (left column). */
 .docs-index {
   border-inline-end: 1px solid var(--border);
   overflow-y: auto;
@@ -145,7 +143,7 @@
    wash: equal specificity with .active declared later would otherwise leave hover a no-op. */
 .docs-index-item.active:hover {
   /* The other 22% accent tint, and the tightest ground accent-colored text lands on: it is
-     what accent.ts's TINT stands for. Change one, change both (rule 67). */
+     what accent.ts's TINT stands for. Change one, change the other. */
   background: color-mix(in srgb, var(--accent) 22%, var(--surface));
   color: var(--accent-text);
 }
@@ -192,7 +190,7 @@
   font-size: var(--text-xs);
 }
 
-/* --- reading pane (right) --- */
+/* The reading pane (right column). */
 .docs-content {
   overflow-y: auto;
   padding: 1.5rem clamp(1.1rem, 3vw, 2.1rem) 3rem;
@@ -209,8 +207,8 @@
   color: var(--accent-text);
 }
 /* The doc title, its sections and its subsections. The tags are h3/h4/h5 rather than h1/h2/h3
- * because the pane sits inside a dialog whose own title is an h2 (see DocsModal); the sizes
- * below are unchanged, so this is an outline fix and not a visual one. */
+ * because the pane sits inside a dialog whose own title is an h2 (see DocsModal). The sizes
+ * below are unchanged, so this is an outline fix, not a visual one. */
 .docs-content h3 {
   margin: 0 0 0.4rem;
   font-size: var(--text-3xl);
@@ -394,11 +392,11 @@
   font-weight: var(--weight-semi);
 }
 
-/* flowcharts (the `diagram` block). Hand-drawn from the app's tokens, no Mermaid dependency:
+/* Flowcharts (the `diagram` block). Hand-drawn from the app's tokens, no Mermaid dependency:
  * a fixed-width spine lane (nodes and vertical links centered in it) plus a branch lane to its
- * right. The flow sizes to its content and centers; when it is wider than the pane it scrolls
- * sideways inside .doc-diagram rather than clipping. Tone speaks the app's verdict language:
- * keep = protect (green), stop = condemn (red); endpoints stay neutral. */
+ * right. The flow sizes to its content and centers. When it is wider than the pane, it
+ * scrolls sideways inside .doc-diagram rather than clipping. Tone speaks the app's verdict
+ * language: keep is protect (green), stop is condemn (red). Endpoints stay neutral. */
 .docs-content .doc-diagram {
   margin: 1.1rem 0;
   border: 1px solid var(--border);
@@ -592,12 +590,10 @@
   flex: 1;
 }
 
-/* On the file's 1100/900/640/560 grid, not a stop of its own. This was 720px, the one width
-   query off the grid and a reintroduction of the sort of one-off the previous review removed:
-   with two narrow breakpoints 80px apart, a change made at 640px silently missed the docs
-   modal (R-7). Below 900px the modal is already a full-screen sheet, so at 640px the split
-   still has the whole viewport to divide -- the 236px index and ~400px of prose -- and the
-   index only stacks above the text once even that runs out. */
+/* On the file's 1100/900/640/560 grid, not a stop of its own. Below 900px the modal is
+   already a full-screen sheet, so at 640px the split still has the whole viewport to divide:
+   the 236px index and about 400px of prose. The index only stacks above the text once even
+   that runs out. */
 @media (max-width: 640px) {
   .docs-body {
     grid-template-columns: minmax(0, 1fr);

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The one status chip a card (or season row) wears. The server sends a typed reason --
-// the protection that keeps a Sanctuary item, or what stopped Reaper short on a Limbo one
-// -- and this composes it into the chip's text through `why.ts`'s `composeIn`, then picks
-// the tone's color: green for "kept", gray for "nothing to act on", amber outline for
-// "deliberately left for you to decide".
+// The one status chip a card (or season row) wears. The server sends a typed reason: the
+// protection that keeps a Sanctuary item, or what stopped Reaper short on a Limbo one. This
+// composes it into the chip's text through `why.ts`'s `composeIn`, then picks the tone's
+// color: green for "kept", gray for "nothing to act on", amber outline for "deliberately
+// left for you to decide".
 //
 // The chips an owner's own decision puts on an item live here too, so the queue and the
 // show panel say the same words about a spare or a reap.
@@ -37,22 +37,22 @@ export function CondemnedChip() {
 /** The refused-reap chip's sentence: why the item is still being kept, capitalized and
  *  full-stopped, ready to stand alone or to sit after "Reap requested, kept for now.".
  *
- *  A reap is refused in two different lanes, and their chips read nothing alike -- a
+ *  A reap is refused in two different lanes, and their chips read nothing alike: a
  *  structural protection that fired ("Kept, playing right now") and a row Reaper cannot
- *  identify ("it couldn't be found in Plex") -- so both compose from the chip's own typed
+ *  identify ("it couldn't be found in Plex"). Both compose from the chip's own typed
  *  `reason`, through `chip.sentence.<id>` (`why.ts`'s `composeIn`). A check that merely
- *  could not RUN is no longer one of the lanes: it stopped refusing a reap
- *  (`engine/verdict.py`). Null only when `chip` itself is null -- every id has a sentence,
- *  so a chip that exists always composes one, including a score chip that names no reason
- *  a reap would be refused (that sentence just never reaches the screen: a fired
- *  protection or an unresolved check is what makes `override_effective` false, and either
- *  one sends `verdict="protect"`/its own "look"/"match" chip instead of a score chip). */
+ *  could not run is no longer one of the lanes: it stopped refusing a reap
+ *  (`engine/verdict.py`). Null only when `chip` itself is null. Every id has a sentence, so
+ *  a chip that exists always composes one, including a score chip that names no reason a
+ *  reap would be refused (that sentence just never reaches the screen: a fired protection
+ *  or an unresolved check is what makes `override_effective` false, and either one sends
+ *  `verdict="protect"` and its own "look" or "match" chip instead of a score chip). */
 export function chipWhy(chip: Chip | null): string | null {
   return chip ? composeIn("chip.sentence", chip.reason) : null;
 }
 
 /** Which class family an override chip is drawn in. Cards use the `.chip` family that
- *  sits on a card's meta line; the season rows in the show panel use the `.status-chip`
+ *  sits on a card's meta line. The season rows in the show panel use the `.status-chip`
  *  family they share with the scan chip they replace. The wording is the same either way,
  *  which is the point of having one component. */
 export type ChipFamily = "chip" | "status-chip";
@@ -76,12 +76,12 @@ const OVERRIDE_CLASSES: Record<
 };
 
 /** The chip an item shows once the owner has overridden it by hand. Solid fills are the
- *  owner's decisions; outlined chips are Reaper's. A reap takes effect on the server the
+ *  owner's decisions. Outlined chips are Reaper's. A reap takes effect on the server the
  *  moment it is saved, and the views that show it (the queue and its counts, the show
  *  panel, the why panel, the grace countdown) refresh together through
  *  `useOverrideMutations`' refresh(). The engine still refuses a reap it must not honor
  *  (someone is watching right now, the file isn't managed, or Reaper can't tell which file
- *  this is); that reads dashed red (held, not a done removal) and says why, via `chipWhy`
+ *  this is). That reads dashed red (held, not a done removal) and says why, via `chipWhy`
  *  above. Amber is reserved for "left for you to decide" and never marks a held reap. */
 export function OverrideChip({
   override,
@@ -94,19 +94,19 @@ export function OverrideChip({
   override: Override | null;
   effective?: boolean | null | undefined;
   keptWhy?: string | null | undefined;
-  /** For a whole-show chip: how many seasons carry their OWN opposing decision. When any do,
+  /** For a whole-show chip: how many seasons carry their own opposing decision. When any do,
    *  the chip drops its unqualified "will be kept/removed" claim, since a season inside goes
-   *  the other way (U-3). Zero for movies and single seasons. */
+   *  the other way. Zero for movies and single seasons. */
   exceptions?: number;
-  /** When the LAST spare covering this item stops keeping it (ISO), or null for a forever one.
-   *  Read only on a spare chip: it turns "will be kept" into a countdown ("27 days left"), and
-   *  then into "expired" on the dashed fill once the clock has passed.
+  /** When the last spare covering this item stops keeping it (ISO), or null for a forever
+   *  one. Read only on a spare chip: it turns "will be kept" into a countdown ("27 days
+   *  left"), and then into "expired" on the dashed fill once the clock has passed.
    *
-   *  Named for the covering spare, not the effective one, because this chip states the item's
-   *  FATE and so must outlive precedence: a candidate passes `spare_covers_until`, never
-   *  `spare_expires_at` (which is the spare a control toggles, rule 50, and can run out while
-   *  a show-level spare keeps the file). A whole-show chip passes the show's own expiry, which
-   *  is both -- a show has no parent to inherit a longer spare from. */
+   *  Named for the covering spare, not the effective one, because this chip states the
+   *  item's fate and so must outlive precedence: a candidate passes `spare_covers_until`,
+   *  never `spare_expires_at` (which is the spare a control toggles, and can run out while a
+   *  show-level spare keeps the file). A whole-show chip passes the show's own expiry,
+   *  which is both, since a show has no parent to inherit a longer spare from. */
   spareCoversUntil?: string | null;
   family?: ChipFamily;
 }) {
@@ -114,15 +114,16 @@ export function OverrideChip({
   const classes = OVERRIDE_CLASSES[family];
   const except = exceptions > 0 ? t("shell.statusChip.exceptSeasons", { n: exceptions }) : null;
   if (override === "spare") {
-    // A forever spare keeps "will be kept"; a timed one counts down; an expired one says so.
-    // The exceptions clause, when present, still wins -- a mixed whole-show claim needs
+    // A forever spare keeps "will be kept". A timed one counts down. An expired one says
+    // so. The exceptions clause, when present, still wins: a mixed whole-show claim needs
     // qualifying first, and then the countdown is not the thing to lead with.
     //
-    // An expired spare is NOT a spare that has stopped working: the item is still kept until a
-    // scan realizes the clock, so the chip stays in the spare family and keeps saying "Spared
-    // by hand". What changes is the clause and the fill -- dashed rather than solid, because
-    // this is no longer a live decision. `note` carries the rest into the tooltip; `until` is
-    // empty here by construction, so the chip can never promise a keep-until day already gone.
+    // An expired spare is not a spare that has stopped working: the item is still kept
+    // until a scan realizes the clock, so the chip stays in the spare family and keeps
+    // saying "Spared by hand". What changes is the clause and the fill: dashed rather than
+    // solid, because this is no longer a live decision. `note` carries the rest into the
+    // tooltip. `until` is empty here by construction, so the chip can never promise a
+    // keep-until day already gone.
     const remaining = spareRemaining(spareCoversUntil);
     const suffix =
       except ?? (remaining.forever ? t("shell.statusChip.willBeKept") : remaining.phrase);

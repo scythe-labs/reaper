@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Buttons and the segmented pill track. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* ---- buttons ------------------------------------------------------------- */
+ * Buttons and the segmented pill track. See `../index.css` for how this file fits into the
+ * stylesheet's load order. */
 
 button {
   font: inherit;
@@ -57,6 +56,21 @@ button.link:hover:not(:disabled) {
   background: none;
   text-decoration: underline;
 }
+/* A solid condemn button, for the one control on a page that starts a real deletion (the
+ * Reap tab's head button). `.danger` alone stays the quieter red-on-gray reserved for a
+ * destructive action beside other ordinary ones (a service row's Remove, the queue's bulk
+ * Reap now); this is for the single button a screen leads with. */
+button.danger.fill {
+  background: var(--condemn);
+  border-color: transparent;
+  color: var(--condemn-soft);
+  font-weight: var(--weight-semi);
+}
+button.danger.fill:hover:not(:disabled) {
+  background: var(--condemn);
+  border-color: transparent;
+  filter: brightness(1.06);
+}
 .btn-block {
   width: 100%;
   justify-content: center;
@@ -64,27 +78,26 @@ button.link:hover:not(:disabled) {
 }
 
 /* The ✕ that removes a chip: one shape, four controls, declared once. The queue's two filter
-   pills (22-queue-filters), the list modal's tag chips (34-lists) and the setup wizard's
-   instance chips (29-setup) all draw the same bare, pill-shaped hit area. Three of them carried
-   these thirteen declarations verbatim, two of those under a comment naming another.
+   pills (22-queue-filters), the list modal's tag chips (34-lists), and the setup wizard's
+   instance chips (29-setup) all draw the same bare, pill-shaped hit area.
 
-   It is chrome-free on purpose: the chip around it owns the border and the fill, so the control
-   standard's box (rule 40) would draw a second border inside the pill. A --tap-min square for
-   the 24px touch floor. On `.fchip-x` and `.inst-chip .chip-x` it does a second job, keeping a
-   touch meaning "change this" off the ✕ sitting flush against the control that edits the same
-   thing (00-tokens.css's own note on --tap-min).
+   It is chrome-free on purpose: the chip around it already owns the border and the fill, so
+   giving it the control standard's box would draw a second border inside the pill. It is a
+   --tap-min square, for the 24px touch floor. On `.fchip-x` and `.inst-chip .chip-x` that
+   square does a second job: it keeps a touch meaning "change this" off the ✕ that sits flush
+   against the control editing the same thing (00-tokens.css has the note on --tap-min).
 
-   Declared here, before every file that uses it, so the two rules that stay behind override at
-   equal specificity on load order: `.fchip-x` fades to 0.75 at rest, and `.inst-chip .chip-x`
-   is a bold muted glyph at the chip's own text size rather than an inherited-color one at
-   --text-lg. The other two keep only a `:hover`, which outranks this rule anyway.
+   Declared here, before every file that uses it, so the two rules that override it can win at
+   equal specificity through load order alone: `.fchip-x` fades to 0.75 at rest, and
+   `.inst-chip .chip-x` is a bold muted glyph at the chip's own text size instead of an
+   inherited-color one at --text-lg. The other two override only `:hover`, which outranks
+   this rule anyway.
 
-   Six controls draw this shape and two are deliberately out. `.bar-x` (14-policy-editor) is a
-   chip ✕ like these four and is now the same 24x24 circle -- it resets this file's `button`
-   padding itself, which is what #736 fixed -- but it keeps a visible border and a hover that
-   turns it red, so folding it in would take both. `.nudge-x` (11-queue-chrome) dismisses a
-   notice rather than a chip and draws a square corner around an SVG. Both read --tap-min
-   directly. */
+   Two controls of this shape stay out of this rule on purpose. `.bar-x` (14-policy-editor) is
+   a chip ✕ like these four, and is now the same 24x24 circle, but it keeps a visible border
+   and a hover that turns it red, so folding it in would force both changes onto it. `.nudge-x`
+   (11-queue-chrome) dismisses a notice rather than a chip, and draws a square corner around
+   an SVG. Both read --tap-min directly instead. */
 .filter-chip button,
 .fchip-x,
 .tag-chip button,
@@ -105,8 +118,7 @@ button.link:hover:not(:disabled) {
 }
 
 /* The pill inside the segmented track: the queue's lane tab (.tab) and the policy toggle
-   button (.seg) are the same control, so they share one definition. The masthead's section nav
-   used to be a third member and is now the .views rail instead. */
+   button (.seg) are the same control, so they share one definition. */
 .tab,
 .seg {
   background: none;
@@ -130,7 +142,7 @@ button.link:hover:not(:disabled) {
   box-shadow: var(--shadow-sm);
   font-weight: var(--weight-semi);
 }
-/* Hovering the section, lane, or option you are ALREADY on keeps its raised pill: the plain
+/* Hovering the section, lane, or option you are already on keeps its raised pill. The plain
    :hover rules above outrank .active (the :not() adds a class's weight) and would repaint the
    fill to transparent, which in dark mode drops the pill to the track color and reads as a
    deselect. Same hazard, same shape as the .ov-spare.active:hover block. */
@@ -140,23 +152,24 @@ button.link:hover:not(:disabled) {
   box-shadow: var(--shadow-sm);
   color: var(--text);
 }
-/* Reserve the ACTIVE (600) width at every weight, so selecting an item -- which bumps 500 -> 600
-   -- never widens it and shoves its neighbors sideways (the tab/nav "wiggle"). A hidden,
-   zero-height copy of the label at the bold weight sets the width; the visible text rides above
-   it. `visibility: hidden` keeps the strut out of the accessibility tree. Each control needs a
-   `data-label` of its visible text, and one without simply keeps the old behavior.
+/* Reserve the active (600) width at every weight, so selecting an item, which bumps the
+   weight from 500 to 600, never widens it and shoves its neighbors sideways (the tab/nav
+   "wiggle"). A hidden, zero-height copy of the label at the bold weight sets the width. The
+   visible text rides above it. `visibility: hidden` keeps the strut out of the accessibility
+   tree. Each control needs a `data-label` of its visible text, and one without simply keeps
+   the old behavior.
 
-   Applied to every control that bolds when active AND sits in a ROW, which is five: queue lane
-   tabs `.tab`, policy toggle `.seg`, the settings/policy rails `.settings-tab`, the docs index
-   `.docs-index-item`, and the masthead sections `.view-tab`. That last one is strutted in
-   `02-masthead.css` rather than here, because it is the masthead's control and its phone bar
-   turns the strut back off; the rule there is byte-identical to this one, so a change to the
-   strut is a change to both. `.filter-mi` bolds when selected and is deliberately NOT here: it
-   is a vertical menu item, so the extra weight has no neighbor to shove.
+   Applied to every control that bolds when active and sits in a row: five in total. Queue
+   lane tabs `.tab`, policy toggle `.seg`, the settings/policy rails `.settings-tab`, the docs
+   index `.docs-index-item`, and the masthead sections `.view-tab`. That last one is strutted
+   in `02-masthead.css` instead of here, because it is the masthead's own control and its
+   phone bar turns the strut back off. The rule there is byte-identical to this one, so a
+   change to the strut is a change to both. `.filter-mi` bolds when selected and stays out of
+   this rule on purpose: it is a vertical menu item, so the extra weight has no neighbor to
+   shove.
 
-   This list read as four for as long as `.view-tab` existed, which is the failure rule 144
-   describes -- so `test_repo_hygiene.py` now reconciles the sentence against the selectors
-   both ways, and names the file when they disagree. */
+   `test_repo_hygiene.py` checks this list of five against the selectors below in both
+   directions, and names the file when they disagree. */
 .tab[data-label]::after,
 .seg[data-label]::after,
 .settings-tab[data-label]::after,
@@ -176,12 +189,10 @@ button.link:hover:not(:disabled) {
   min-width: 5.25rem;
   text-align: center;
 }
-/* The `flat` variant (Segmented `variant="flat"`): one bordered box split by a hairline, the
-   chosen half tinted with the operator's accent, which is the shape the approved mockup
-   settled for the list forms. It arrived as a second control (`MatchToggle` + `.seg2`)
-   reproducing this file's semantics and strut; a variant keeps the look and leaves one
-   either-or control (rules 18, 41). Every declaration here overrides the pill track above it,
-   so the two never half-apply. */
+/* The `flat` variant (Segmented `variant="flat"`): one bordered box split by a hairline, with
+   the chosen half tinted in the operator's accent. This is the shape the approved mockup
+   settled on for the list forms. Every declaration here overrides the pill track above it, so
+   the two variants never half-apply. */
 .segmented.flat {
   display: inline-flex;
   align-self: flex-start;
@@ -213,13 +224,13 @@ button.link:hover:not(:disabled) {
   box-shadow: none;
 }
 /* A pill track is a flex row, and a flex item floors at its own min-content, so the track
-   itself cannot get narrower than its labels laid end to end however narrow the screen is:
-   the lane switcher held 300px and the preset picker 304px at every viewport, and both ran
-   straight off a narrow phone. Buy the room back from the padding rather than from the
-   labels -- this control is there so every option can be read at once, so truncating one,
-   hiding one behind a sideways scroll, or dropping one into a dropdown all defeat it
-   (rule 41). Clearing the SCREEN is the wrong test on its own, though: the preset picker sits
-   inside a card, and at 0.55rem it still ran past `.intent-band`'s content box below 340px. */
+   itself cannot get narrower than its labels laid end to end, however narrow the screen is.
+   The lane switcher and the preset picker both ran wider than a narrow phone screen for this
+   reason. The fix buys the room back from the padding, not the labels: this control exists
+   so every option can be read at once, and truncating one, hiding one behind a sideways
+   scroll, or dropping one into a dropdown all defeat that. Clearing the screen alone is not
+   enough of a test: the preset picker sits inside a card, and at 0.55rem it still ran past
+   `.intent-band`'s content box below 340px. */
 @media (max-width: 400px) {
   .tab,
   .seg {
@@ -227,9 +238,10 @@ button.link:hover:not(:disabled) {
     padding-inline-end: 0.55rem;
   }
 }
-/* So below 340px the pills give up a little more, and the band gives up padding to meet them
-   (see the note beside `.intent-band`); measured, the two together leave the track inside the
-   card at 320px with room to spare. The lane switcher sits in no card and keeps its width. */
+/* Below 340px the pills give up a little more padding, and the band gives up padding to meet
+   them (see the note beside `.intent-band`). Together, the two changes leave the track inside
+   the card with room to spare down to 320px. The lane switcher sits in no card, so it keeps
+   its own width. */
 @media (max-width: 340px) {
   .seg {
     padding-inline-start: 0.45rem;

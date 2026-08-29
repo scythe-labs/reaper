@@ -62,8 +62,8 @@ describe("what a signal's ramp says", () => {
   });
 
   it("gives a shortfall signal the same line for every pair with the same gap", () => {
-    // The engine scores these three identically -- the fraction works out to depend on
-    // `saturate_at - floor` alone -- so the operator must be shown one number, not two.
+    // The engine scores these three identically, since the fraction works out to depend on
+    // `saturate_at - floor` alone. So the operator must be shown one number, not two.
     const said = rampScale("low_rating", 0, 60, 10);
     expect(rampScale("low_rating", 10, 70, 10)).toBe(said);
     expect(rampScale("low_rating", 40, 100, 10)).toBe(said);
@@ -84,8 +84,8 @@ describe("what a signal's ramp says", () => {
   });
 
   it("says nothing about a row the scan never recorded a line for", () => {
-    // Null arrives from two places -- a boolean rule, and a row frozen before the fields
-    // shipped -- and neither may be guessed into a line.
+    // Null arrives from two places, a boolean rule and a row frozen before the fields shipped,
+    // and neither may be guessed into a line.
     expect(rampScale("low_rating", null, null, 10)).toBeNull();
     expect(rampScale("low_rating", 0, null, 10)).toBeNull();
     expect(rampScale("low_rating", null, 60, 10)).toBeNull();
@@ -216,13 +216,12 @@ describe("where the fill reaches full strength", () => {
   });
 });
 
-// SIZE is the one signal whose BOUND and whose FACT are in different units, and this entry
-// had both wrong in the same direction. `engine/signals.py:_branch_signal` rescales
-// `size_bytes` to gigabytes before ramping it, so the stored `floor`/`saturate_at` the engine
-// compares against are GB. This module read them as bytes, so a 20 GB floor stored as
-// 20000000000 was ramped against a value that tops out in the low thousands: the signal paid
-// 0 at every file size that can exist, while its weight stayed in the score denominator, and
-// nothing on the page said so (#417).
+// SIZE is the one signal whose BOUND and whose FACT are in different units. `engine/signals.py:
+// _branch_signal` rescales `size_bytes` to gigabytes before ramping it, so the stored
+// `floor`/`saturate_at` the engine compares against are GB. Reading them as bytes instead would
+// ramp a 20 GB floor, stored as 20000000000, against a value that tops out in the low
+// thousands: the signal would pay 0 at every file size that can exist, while its weight stayed
+// in the score denominator, with nothing on the page saying so.
 describe("the size signal's bounds are gigabytes, and its fact is not", () => {
   it("words a stored bound as the gigabytes the engine ramps it as", () => {
     expect(rampScale("size", 20, 80, 20)).toBe("Nothing until 20 GB, all 20 at 80 GB.");
@@ -243,7 +242,7 @@ describe("the size signal's bounds are gigabytes, and its fact is not", () => {
 
   it("leaves every other signal's probe value in the unit its bounds are in", () => {
     // The other direction, so the conversion above cannot spread to a signal that reads its
-    // fact and its bounds in one unit (rule 72's sweep, stated as a test).
+    // fact and its bounds in one unit.
     for (const id of ["unwatched", "few_watchers", "low_rating", "season_rank"]) {
       expect(rampUnits(id)?.probeValue).toBeUndefined();
     }

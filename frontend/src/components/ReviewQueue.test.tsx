@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The bulk paths of the review queue, where one press writes the override that decides
-// whether many files are reaped or spared. Three behaviors are load-bearing:
-//   - a bulk override that partly fails refreshes anyway, keeps ONLY the failed items
-//     picked, and says how many failed (a clean-up that cleared the whole selection would
-//     silently drop them from the next plan);
-//   - "select everything matching" that cannot reach the end of the list selects nothing
-//     and says so, rather than quietly meaning "the first page";
-//   - nothing else can be pressed while a bulk write is in flight.
+// whether many files are reaped or spared. Three behaviors matter here:
+//   - A bulk override that partly fails still refreshes, keeps only the failed items picked,
+//     and says how many failed. A cleanup that cleared the whole selection would silently
+//     drop them from the next plan.
+//   - "Select everything matching" selects nothing and says so when it cannot reach the end
+//     of the list, rather than quietly meaning "the first page".
+//   - Nothing else can be pressed while a bulk write is in flight.
 // The compact dormancy span is pinned here too: it rewrites the humanized string the
 // frontend composes from a fresh row's raw day count.
 import { useQuery } from "@tanstack/react-query";
@@ -49,8 +49,8 @@ vi.mock("../api", async (importOriginal) => ({
   api: apiMock,
 }));
 
-/** A row frozen before details were typed: the stored sentence wrapped as the one legacy
- *  reason, composed verbatim (docs/history/I18N_PLAN.md §5, #899). */
+/** A row saved before details were tracked separately: the stored sentence is wrapped as the
+ *  one legacy reason and shown verbatim. */
 function legacy(text: string): ReasonKey {
   return { k: "legacy", p: { text } };
 }
@@ -110,10 +110,9 @@ function season(n: number, verdict: Verdict, extra: Partial<Candidate> = {}): Ca
 
 /** One show's whole-snapshot rollup, which the server sends once per show beside the rows.
  *
- *  The three figures default to zero rather than being derived from `seasons`: deriving them
- *  would re-implement the server's actable-season rule here, and every test that asserts one
- *  of these numbers would then pass whether or not it was ever sent (rules 119 and 141). A
- *  test that is about a count states it. */
+ *  The three figures default to zero rather than being derived from `seasons`, since deriving
+ *  them would reimplement the server's actable-season rule here. Every test that asserts one
+ *  of these numbers states it explicitly instead of relying on the default. */
 function rollup(seasons: GroupSeasonMark[], extra: Partial<GroupRollup> = {}): GroupRollup {
   return {
     group_key: "sonarr:show:1",
@@ -128,9 +127,9 @@ function rollup(seasons: GroupSeasonMark[], extra: Partial<GroupRollup> = {}): G
 /** One page of candidates, with `total` deciding whether another page is claimed to exist and
  *  `snapshotId` naming which scan the page came from (so a refetch can land a newer one).
  *
- *  Annotated, so a field added to or renamed on the envelope fails the build here rather than
- *  reaching 57 call sites as `undefined`: `apiMock.candidates` is a bare `vi.fn()`, which
- *  checks nothing about what it is handed. */
+ *  The return type is annotated, so a field added to or renamed on the envelope fails the
+ *  build here instead of reaching every call site as `undefined`: `apiMock.candidates` is a
+ *  bare `vi.fn()`, which checks nothing about what it is handed. */
 function page(
   items: Candidate[],
   groups: GroupRollup[] = [],
@@ -173,9 +172,9 @@ function renderQueue(verdict: Verdict = "condemn", latestScanSnapshotId: number 
   );
 }
 
-/** What the bulk bar says is picked -- "N selected", or "N cards, M items" once a show card
- *  stands for more than itself. Scoped to the bar: the queue header carries a count of its
- *  own, and the two are different numbers. */
+/** What the bulk bar says is picked: "N selected", or "N cards, M items" once a show card
+ *  stands for more than itself. Scoped to the bar, since the queue header carries a count of
+ *  its own, and the two are different numbers. */
 function pickedCount(): string {
   const bar = screen.getByRole("region", { name: "Bulk actions" });
   return within(bar).getByText(/selected|Tap or drag|cards?,/).textContent ?? "";
@@ -190,7 +189,7 @@ async function selectAllDrawn() {
   return user;
 }
 
-// The queue watches a sentinel to reveal more cards; jsdom has no observer, and the list
+// The queue watches a sentinel to reveal more cards. jsdom has no observer, and the list
 // under test is short enough that never firing is the honest behavior.
 class NoopObserver {
   observe() {}
@@ -201,16 +200,16 @@ class NoopObserver {
   }
 }
 
-// A test that stubs matchMedia must not leave it stubbed for the next one (rule 133); the
-// beforeEach re-stubs IntersectionObserver either way.
+// A test that stubs matchMedia must not leave it stubbed for the next one. The beforeEach
+// re-stubs IntersectionObserver either way.
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** The queue REMEMBERS its filters (`saveFilters` -> window.localStorage, keyed per tab), so a
- *  test that adds one hands it to every test after it in this file: the next render starts with a
- *  chip already on the toolbar and one fewer dimension addable, which reads as a component bug in
- *  whichever test trips first (rule 133). Drop that one key, not the whole store -- the season
+/** The queue remembers its filters (`saveFilters` -> window.localStorage, keyed per tab), so a
+ *  test that adds one hands it to every test after it in this file: the next render starts with
+ *  a chip already on the toolbar and one fewer dimension addable, which reads as a component
+ *  bug in whichever test trips first. Drops that one key, not the whole store, since the season
  *  expansion preference lives there too and the tests around it seed it themselves. */
 function forgetFilters(verdict: Verdict = "condemn") {
   try {
@@ -232,10 +231,9 @@ beforeEach(() => {
     will_reap: 0,
     condemned_by: [],
   });
-  // Read unconditionally now, by every card's collection picker as well as the collection
-  // screen's own header (#816 phase 4/5) -- referencing `baseSnapshot`, declared further down,
-  // is safe: this callback only runs once the whole module (including that declaration) has
-  // finished loading.
+  // Read by every card's collection picker, as well as the collection screen's own header.
+  // Referencing `baseSnapshot`, declared further down, is safe: this callback only runs once
+  // the whole module (including that declaration) has finished loading.
   apiMock.latestSnapshot.mockResolvedValue(baseSnapshot);
 });
 
@@ -250,9 +248,9 @@ describe("keeping the list in step with the latest scan", () => {
   });
 
   it("confirms a quiet refresh with a toast only once the swap has landed", async () => {
-    // This view loads snapshot 1; the newest completed scan is snapshot 2, so the list is a scan
-    // behind. Idle at the top (jsdom scrollY 0, nothing open or selected): it refreshes quietly,
-    // the refetch lands snapshot 2, and only THEN does a toast say so -- never at issuance (PR-5).
+    // This view loads snapshot 1. The newest completed scan is snapshot 2, so the list is a
+    // scan behind. Idle at the top (jsdom scrollY 0, nothing open or selected), it refreshes
+    // quietly, the refetch lands snapshot 2, and only then does a toast say so.
     apiMock.candidates
       .mockResolvedValueOnce(page([movie(1), movie(2)], [], 2, 0, 1))
       .mockResolvedValue(page([movie(1), movie(2)], [], 2, 0, 2));
@@ -264,9 +262,9 @@ describe("keeping the list in step with the latest scan", () => {
   });
 
   it("does not claim a swap when the refetch fails to catch up; it nudges instead", async () => {
-    // The list is a scan behind and the reviewer is idle, so a silent refresh is attempted -- but
-    // the refetch errors, so the list never reaches snapshot 2. The toast must not lie that it
-    // did; a nudge appears so the reviewer is not left silently stale (PR-5).
+    // The list is a scan behind and the reviewer is idle, so a silent refresh is attempted, but
+    // the refetch errors and the list never reaches snapshot 2. The toast must not lie that it
+    // did. A nudge appears instead, so the reviewer is not left silently stale.
     apiMock.candidates
       .mockResolvedValueOnce(page([movie(1), movie(2)], [], 2, 0, 1))
       .mockRejectedValue(new Error("network blip"));
@@ -280,7 +278,7 @@ describe("keeping the list in step with the latest scan", () => {
   it("Show latest closes an open why-panel, whose row belongs to the replaced scan", async () => {
     // A panel open is a busy condition, so a newer scan raises the nudge instead of swapping
     // quietly. Pressing Show latest must close the panel: its candidate id is from the old
-    // snapshot, so keeping it open would leave the operator deciding from stale evidence (B-7).
+    // snapshot, so keeping it open would leave the operator deciding from stale evidence.
     const onClearItemSelection = vi.fn();
     apiMock.candidates.mockResolvedValue(page([movie(1), movie(2)], [], 2, 0, 1));
     renderWithProviders(
@@ -296,23 +294,16 @@ describe("keeping the list in step with the latest scan", () => {
       />,
     );
     const user = userEvent.setup();
-    // Settle the two states this control's EXISTENCE depends on, in order, before reaching
-    // for it (#149). The nudge is not rendered with the list: `nudging` is set by an effect
-    // that runs only once the candidates read has resolved and the snapshot mismatch has been
-    // observed, so the button is two commits behind the render. A single
-    // `findByRole("button", { name })` had to cover that whole chain on one budget, then 1000ms,
-    // while re-computing accessible names across both cards and the open panel on every poll,
-    // which is the most expensive query Testing Library has. It lost the race on a loaded CI
-    // runner about one run in a few, on branches that do not touch this file at all, and the
-    // dumped DOM showed exactly this: both cards rendered, no nudge yet. The budget is 5000ms
-    // now (`src/test/setup.ts`, #887), which widens the margin and does not make the one query
-    // any cheaper.
+    // Settles the two states this control's existence depends on, in order, before reaching
+    // for it. The nudge is not rendered with the list: `nudging` is set by an effect that runs
+    // only once the candidates read has resolved and the snapshot mismatch has been observed,
+    // so the button appears two commits behind the render.
     //
-    // Two cheap text waits instead, each with its own budget, so a genuine regression
-    // in this chain fails naming the step that broke rather than the button at the end of it.
-    // Rule 137's margin sweep is how a step with no headroom is found: hold every React Query
-    // notification back 200ms and re-run. That is a diagnostic to apply and revert, not
-    // something the suite carries, so nothing here is running behind a delay.
+    // Two cheap text waits are used instead of one `findByRole("button", { name })`, so a
+    // genuine regression in this chain fails by naming the step that broke, rather than timing
+    // out on the button at the end of it. Recomputing accessible names across both cards and
+    // the open panel on every poll is the most expensive kind of query Testing Library can run,
+    // and is worth avoiding here.
     await screen.findByText("Example Movie 1");
     await screen.findByText("A newer scan just finished");
     await user.click(screen.getByRole("button", { name: "Show latest" }));
@@ -375,9 +366,33 @@ describe("a bulk override", () => {
     await waitFor(() => expect(apiMock.reapBreakdown).toHaveBeenCalledTimes(2));
   });
 
+  it("widens a show card's clear to its season-level rows, and keeps a movie's exact", async () => {
+    // A selected show card shows every season's hand mark, so its bulk clear must cover
+    // the season-level rows too (include_seasons); without it, a show whose marks were
+    // all season-level cleared nothing. A movie has no children and stays exact.
+    apiMock.candidates.mockResolvedValue(
+      page([movie(1), season(1, "condemn"), season(2, "condemn")]),
+    );
+    apiMock.clearOverride.mockResolvedValue({ removed: true });
+    renderQueue();
+    const user = await selectAllDrawn();
+
+    await user.click(screen.getByRole("button", { name: "Clear override" }));
+
+    await waitFor(() => expect(apiMock.clearOverride).toHaveBeenCalledTimes(2));
+    const calls = apiMock.clearOverride.mock.calls.map((c) => [c[0], c[1]]).sort() as [
+      string,
+      boolean,
+    ][];
+    expect(calls).toEqual([
+      ["radarr:1:1", false],
+      ["sonarr:show:1", true],
+    ]);
+  });
+
   it("blocks the other actions while it is in flight", async () => {
     apiMock.candidates.mockResolvedValue(page([movie(1), movie(2)]));
-    // Both writes hang until the test lets them go; one then fails, so a pick survives and
+    // Both writes hang until the test lets them go. One then fails, so a pick survives and
     // the buttons have something to be enabled for once the write is no longer in flight.
     const settle: (() => void)[] = [];
     apiMock.override.mockImplementation(
@@ -406,8 +421,9 @@ describe("the per-card override buttons", () => {
   it("offers Spare but not Reap on the Condemned lane, since the item is already on the block", async () => {
     apiMock.candidates.mockResolvedValue(page([movie(1)]));
     renderQueue();
-    // The card's own Spare (rescue) is here; there is no per-card Reap on this lane -- it
-    // would force onto a list the item is already on. The bulk bar's Reap is another surface.
+    // The card's own Spare (rescue) is here. There is no per-card Reap on this lane, since it
+    // would force the item onto a list it is already on. The bulk bar's Reap is a separate
+    // control.
     expect(await screen.findByRole("button", { name: "Spare" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Reap$/ })).not.toBeInTheDocument();
   });
@@ -422,8 +438,8 @@ describe("the per-card override buttons", () => {
 
 describe("the whole-show override buttons", () => {
   it("keeps Reap on a part-condemned show on the Condemned lane, unlike a condemned movie", async () => {
-    // The show is here because SOME season is condemned; a whole-show Reap still takes the
-    // seasons the scan kept, so it is not the movie's no-op and both buttons stay.
+    // The show is here because at least one season is condemned. A whole-show Reap still
+    // takes the seasons the scan kept, so it is not the movie's no-op, and both buttons stay.
     apiMock.candidates.mockResolvedValue(
       page([season(1, "condemn"), season(2, "condemn"), season(3, "protect")]),
     );
@@ -433,10 +449,10 @@ describe("the whole-show override buttons", () => {
   });
 
   it("keeps Reap when the kept seasons are on other lanes, absent from the Condemned page", async () => {
-    // The real shape on the Condemned lane: every FETCHED row is condemned (the kept seasons
+    // The real shape on the Condemned lane: every fetched row is condemned (the kept seasons
     // sit on other lanes and never load here), but the show's rollup still carries the whole
-    // show, including a kept one. A whole-show Reap takes that kept season, so Reap must stay
-    // -- the card judges over the rollup's seasons, not the tab-filtered page.
+    // show, including a kept one. A whole-show Reap takes that kept season, so Reap must stay.
+    // The card judges over the rollup's seasons, not the tab-filtered page.
     const marks: GroupSeasonMark[] = [
       {
         id: 1,
@@ -479,8 +495,8 @@ describe("the whole-show override buttons", () => {
 
   it("does not light the whole-show Reap when only some seasons are reaped", async () => {
     // On the Condemned lane the fetched rows are the reaped/condemned seasons, which all agree
-    // "reap". But across the whole show (the rollup) the override is mixed -- other seasons
-    // are untouched -- so the whole-show control must NOT read as "Reaping" (its active state).
+    // "reap". But across the whole show (the rollup) the override is mixed, since other seasons
+    // are untouched, so the whole-show control must read as "Reap", never its active "Reaping".
     const marks: GroupSeasonMark[] = [
       {
         id: 5,
@@ -567,8 +583,8 @@ describe("the expand-seasons-by-default preference", () => {
   });
 
   // Every combination of the "expand seasons by default" preference and the screen it is read
-  // on, written from the spec rather than from the branch (rule 119). The decision is pure, so
-  // the table is exhaustive and instant; the two renders below prove it is actually wired.
+  // on, written from the spec rather than from the branch. The decision is pure, so the table
+  // is exhaustive and instant. The two renders below prove it is actually wired into the UI.
   it.each([
     { mode: "off", narrow: false, expanded: false },
     { mode: "off", narrow: true, expanded: false },
@@ -585,10 +601,10 @@ describe("the expand-seasons-by-default preference", () => {
     },
   );
 
-  // The two renders that prove the table above is actually consulted, and consulted with BOTH
-  // of its arguments. Each asserts an expansion that only happens if its argument arrived, so
-  // neither can pass against a preference that never loaded -- which a "stays collapsed"
-  // assertion would do quite happily.
+  // The two renders that prove the table above is actually consulted, with both of its
+  // arguments. Each asserts an expansion that only happens if its argument arrived, so neither
+  // can pass against a preference that never loaded, which a "stays collapsed" assertion would
+  // do quite happily.
   it("opens a show's season list when the preference covers this screen", async () => {
     // jsdom has no matchMedia, so useMediaQuery reports false: the wide screen, which
     // "desktop" covers. This pins that the stored mode reaches the card.
@@ -596,14 +612,14 @@ describe("the expand-seasons-by-default preference", () => {
     apiMock.candidates.mockResolvedValue(page([season(1, "condemn"), season(2, "condemn")]));
     renderQueue("condemn");
     // The preference resolves on its own query, so the card may mount collapsed and expand a
-    // tick later; wait for the expanded state rather than asserting the first frame.
+    // tick later. Wait for the expanded state rather than asserting the first frame.
     const expander = await screen.findByRole("button", { name: "2 seasons" });
     await waitFor(() => expect(expander).toHaveAttribute("aria-expanded", "true"));
   });
 
   it("opens it on a narrow screen when the preference is the phone one", async () => {
     // The same card under "mobile", with the viewport reporting narrow. It can only expand if
-    // the media query reached the decision too -- ignore that argument and this stays shut.
+    // the media query reached the decision too. Ignore that argument and this stays shut.
     vi.stubGlobal("matchMedia", () => ({
       matches: true,
       media: NARROW_SCREEN_QUERY,
@@ -623,7 +639,7 @@ describe("the bulk Reap override", () => {
     apiMock.candidates.mockResolvedValue(page([movie(1)]));
     renderQueue();
     await selectAllDrawn();
-    // The redundant bulk Reap override is gone on this lane; Reap now (the real delete) stays.
+    // The bulk Reap override is gone on this lane. Reap now (the real delete) stays.
     expect(screen.queryByRole("button", { name: /^Reap$/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Reap now/ })).toBeInTheDocument();
   });
@@ -640,7 +656,7 @@ describe("the bulk Reap override", () => {
 describe("the bulk bar's count", () => {
   it("states the items a show card stands for, not just the card", async () => {
     // "1 selected" beside a Reap now that plans ten seasons is not the set the server acts
-    // on (U-13, rule 30). The show's count is the server's own actable total.
+    // on. The show's count is the server's own actable total.
     const marks: GroupSeasonMark[] = [
       {
         id: 1,
@@ -699,9 +715,9 @@ describe("select everything matching", () => {
 
   it("gives a show first seen on a later page the rollup that arrived with it", async () => {
     // A show's rollup rides the page its rows ride. Reading `pages[0].groups` would leave every
-    // show past the first page with none, and the card would then draw no strip and print the
+    // show past the first page with none, so the card would draw no strip and print only the
     // seasons this page happened to fetch under "would be removed", beside the control that
-    // reaps the whole show (rule 30). Six seasons across the show, two of them on this page.
+    // reaps the whole show. Six seasons across the show, two of them on this page.
     const marks: GroupSeasonMark[] = [1, 2, 3, 4, 5, 6].map((n) => ({
       id: n,
       season: n,
@@ -736,18 +752,16 @@ describe("select everything matching", () => {
 
 describe("a reap the engine refused", () => {
   it("reads as one sentence whichever lane kept the item", async () => {
-    // Two lanes refuse a hand reap: a FIRED safety stop, and a row Reaper cannot identify
-    // (`StatusChip.chipWhy`). Their chips read nothing alike -- one leads "Kept, ", the
-    // other is a capitalized sentence of its own -- and both have to land in the same
-    // sentence. A protection that merely could not be CHECKED is not one of the lanes: it
-    // stopped refusing a reap in the #96 reversal, so an abstain row carrying its conflict
-    // chip is reaped, not held, and pinning it here would pin a pairing the server can no
-    // longer send (rule 119).
+    // Two lanes refuse a hand reap: a safety stop that fired, and a row Reaper cannot identify
+    // (`StatusChip.chipWhy`). Their chips read nothing alike: one leads "Kept, ", the other is
+    // a capitalized sentence of its own, and both have to land in the same overall sentence. A
+    // protection that merely could not be checked is not one of these lanes: an abstain row
+    // carrying its conflict chip is reaped, not held.
     //
     // The clause is the chip's own `chip.sentence.<id>`, a different catalog entry than
     // `chip.text.<id>`. These fixtures pick ids whose text and sentence forms read nothing
-    // alike, so a test that passed by rendering the chip TEXT here would fail: this asserts
-    // the sentence is composed, not the text re-used.
+    // alike, so a test that passed by rendering the chip text here would fail. This asserts
+    // the sentence is composed, not the text reused.
     const streaming = movie(1, {
       override: "reap",
       override_effective: false,
@@ -772,7 +786,7 @@ describe("a reap the engine refused", () => {
       screen.getByText(i18next.t("shell.statusChip.reapRequestedKept", { why: unreadableWhy })),
     ).toBeInTheDocument();
     // The chip's own display wording never lands mid-sentence: the clause is the composed
-    // sentence, never the chip text ("Kept, ..."/"Couldn't read...") pasted in raw (H-1).
+    // sentence, never the chip text ("Kept, ..."/"Couldn't read...") pasted in raw.
     expect(screen.queryByText(/kept for now\. Kept,/)).not.toBeInTheDocument();
     expect(
       screen.queryByText(/kept for now\. Couldn't read its Plex match/),
@@ -783,7 +797,7 @@ describe("a reap the engine refused", () => {
 describe("the score badge's color follows the fate", () => {
   // The number cannot keep the scan verdict while the row says "will be removed": it wears
   // the fate a hand decision forces. Solid reap/spare when it takes effect, dashed red when
-  // a reap is held (never amber -- amber means "left for you to decide").
+  // a reap is held. Never amber: amber means "left for you to decide".
   async function scoreClassFor(item: Candidate): Promise<string> {
     apiMock.candidates.mockResolvedValue(page([item]));
     const { container } = renderQueue();
@@ -820,10 +834,10 @@ describe("the score badge's color follows the fate", () => {
   });
 
   it("goes dashed green once the spare's clock has passed", async () => {
-    // Neither of its neighbors. Not solid green -- the decision has run out. Not the scan's
-    // red either -- only a scan realizes a spare's expiry, so until one runs the item really
-    // is still kept and nothing will reap it. Painting it condemned would tell the operator
-    // it is back on the block when it is not (rule 61).
+    // Neither of its neighbors. Not solid green, since the decision has run out. Not the scan's
+    // red either, since only a scan realizes a spare's expiry, so until one runs the item is
+    // still kept and nothing will reap it. Painting it condemned would tell the operator it is
+    // back on the block when it is not.
     const expired = new Date(Date.now() - 3 * 86_400_000).toISOString();
     const cls = await scoreClassFor(
       movie(1, {
@@ -839,11 +853,11 @@ describe("the score badge's color follows the fate", () => {
   });
 
   it("stays solid green when a longer spare still covers the spent one", async () => {
-    // A season spared 3 days ago inside a show spared forever. Its OWN spare has run out, and
-    // the badge used to read that key and draw the dashed "your decision ran out" green -- a
-    // warning about a file the show spare keeps regardless, and one no scan will change. The
-    // server answers the fate question in `spare_covers_until`; the badge must read THAT and
-    // nothing else, so the two fields are set in opposition here.
+    // A season spared 3 days ago inside a show spared forever. Its own spare has run out, but
+    // the show's forever spare still covers it, so the badge must not draw the dashed "your
+    // decision ran out" green: that would warn about a file the show spare keeps regardless.
+    // The server answers the fate question in `spare_covers_until`. The badge must read that
+    // field and nothing else, so the two fields are set in opposition here.
     const cls = await scoreClassFor(
       movie(1, {
         verdict: "condemn",
@@ -864,7 +878,7 @@ describe("the season strip's colors follow the fate", () => {
   // A show card's strip draws one square per season from the show's rollup. Each square must
   // agree with its row: solid for an effective hand decision, dashed red (with a scythe
   // mark) for a reap the engine can't honor yet, the scan verdict otherwise. Amber is never
-  // used here -- it means only "left for you to decide".
+  // used here: it means only "left for you to decide".
   function mark(
     id: number,
     verdict: Verdict,
@@ -913,8 +927,8 @@ describe("the season strip's colors follow the fate", () => {
 
   it("paints an expired spare dashed green, apart from a live one and from its scan color", async () => {
     // The strip and the score badge both route through handFate, so the square must draw the
-    // same three-way distinction the badge does -- otherwise a show's strip and its rows
-    // disagree about what is keeping a season (rule 49).
+    // same three-way distinction the badge does. Otherwise a show's strip and its rows would
+    // disagree about what is keeping a season.
     const past = new Date(Date.now() - 3 * 86_400_000).toISOString();
     const future = new Date(Date.now() + 30 * 86_400_000).toISOString();
     const { classes } = await stripRender([
@@ -928,7 +942,7 @@ describe("the season strip's colors follow the fate", () => {
       mark(3, "condemn", { override: "spare", spare_expires_at: null, spare_covers_until: null }),
       mark(4, "condemn"),
     ]);
-    // Live and forever spares stay solid; only the expired one goes dashed. The lookahead is
+    // Live and forever spares stay solid. Only the expired one goes dashed. The lookahead is
     // what separates the two class names, since one is the other's prefix.
     const solid = /strip-ov-spare(?!-)/;
     expect(classes[0]).toMatch(solid);
@@ -937,9 +951,9 @@ describe("the season strip's colors follow the fate", () => {
     expect(classes[1]).not.toMatch(solid);
     expect(classes[2]).toMatch(solid);
     expect(classes[2]).not.toContain("strip-ov-spare-expired");
-    // Every square keeps its scan-verdict base class and the override paints over it in CSS,
-    // so "not condemned-looking" is the ABSENCE of an override class, which is what the plain
-    // condemned square below has. The expired one must not look like that.
+    // Every square keeps its scan-verdict base class, and the override paints over it in CSS.
+    // So "not condemned-looking" means the absence of an override class, which is what the
+    // plain condemned square below has. The expired one must not look like that.
     expect(classes[3]).not.toContain("strip-ov-");
     expect(classes[1]).not.toBe(classes[3]);
   });
@@ -949,7 +963,7 @@ describe("the season strip's colors follow the fate", () => {
       mark(14, "condemn"),
       mark(19, "abstain", { override: "reap", override_effective: false }),
     ]);
-    // Only the held reap carries the mark; the plain condemned square must not.
+    // Only the held reap carries the mark. The plain condemned square must not.
     expect(squares[0]!.querySelector(".strip-mark")).toBeNull();
     expect(squares[1]!.querySelector(".strip-mark")).not.toBeNull();
   });
@@ -994,8 +1008,7 @@ describe("the dormancy span", () => {
   });
 
   it("shows the ordinary reason when the size is known", async () => {
-    // The hold-back line must not become permanent furniture: it appears only for the
-    // items it is about.
+    // The hold-back line appears only for the items it actually applies to, not on every card.
     apiMock.candidates.mockResolvedValue(page([movie(1, { dormant_days: 0 })]));
     renderQueue();
 
@@ -1004,9 +1017,9 @@ describe("the dormancy span", () => {
   });
 });
 
-// The collection chip (#816 phase 4): navigation only, never a verdict input, so these tests
-// are about reachability and honesty, not fate. The screen the picker will eventually open is
-// phase 5's; here the caret only has to open, list every collection, and stay accessible.
+// The collection chip is navigation only, never a verdict input, so these tests are about
+// reachability and honesty, not fate. Here the caret only has to open, list every collection,
+// and stay accessible.
 describe("the collection chip", () => {
   it("renders no chip when the scan recorded no collections", async () => {
     apiMock.candidates.mockResolvedValue(page([movie(1, { collections: null })]));
@@ -1033,8 +1046,7 @@ describe("the collection chip", () => {
     await user.click(caret);
     expect(caret).toHaveAttribute("aria-expanded", "true");
     // Scoped to the picker: the smallest collection's name is on the card's own chip too, and
-    // the picker lists the full array including it (rule 138's sibling clamp, not this test's
-    // concern), so an unscoped query would match both.
+    // the picker lists the full array including it, so an unscoped query would match both.
     const picker = screen.getByRole("list", { name: "Collections" });
     for (const name of names) {
       expect(within(picker).getByRole("button", { name })).toBeInTheDocument();
@@ -1091,9 +1103,9 @@ describe("the collection chip", () => {
     expect(await screen.findByRole("heading", { name: "Example Franchise" })).toBeInTheDocument();
   });
 
-  // A collection-name search hit (#816 phase 3b, `search_rank === 2`) carries the collection
-  // that actually matched -- an operator who typed "Director" cannot explain a chip reading
-  // "Example Franchise" (the smallest one, unrelated to what they typed). The frontend end of
+  // A collection-name search hit (`search_rank === 2`) carries the collection that actually
+  // matched. An operator who typed "Director" cannot explain a chip reading "Example
+  // Franchise" (the smallest one, unrelated to what they typed). This is the frontend half of
   // the comment on `CandidateOut.matched_collection` (`src/reaper/api/schemas.py`).
   it("renders the collection that matched a search, not the smallest one", async () => {
     apiMock.candidates.mockResolvedValue(
@@ -1127,8 +1139,8 @@ describe("the collection chip", () => {
     expect(screen.queryByRole("button", { name: "Director Spotlight" })).not.toBeInTheDocument();
   });
 
-  // The picker's counts (#816 phase 4/5): Plex's own member count, read off the same snapshot
-  // the collection screen's header already trusts. A collection the scan never got a count for
+  // The picker's counts: Plex's own member count, read off the same snapshot the collection
+  // screen's header already trusts. A collection the scan never got a count for
   // (`_collection_membership` leaves it out of `collection_sizes` rather than folding it to 0,
   // because unknown and empty are different facts) must render no number, never a false "0".
   it("shows each collection's known size beside its name in the picker", async () => {
@@ -1155,7 +1167,7 @@ describe("the collection chip", () => {
     apiMock.candidates.mockResolvedValue(page([movie(1, { collections: names })]));
     apiMock.latestSnapshot.mockResolvedValue({
       ...baseSnapshot,
-      // Only one of the two is known -- the other is genuinely absent, not zero.
+      // Only one of the two is known. The other is genuinely absent, not zero.
       collection_sizes: { "Example Franchise": 3 },
     });
     renderQueue();
@@ -1169,11 +1181,11 @@ describe("the collection chip", () => {
   });
 });
 
-/** An ordinary finished scan, no collection sizes known -- the `beforeEach` above seeds every
+/** An ordinary finished scan, no collection sizes known. The `beforeEach` above seeds every
  *  test in this file with it, since every card's collection picker reads `["snapshot"]`
- *  unconditionally now (#816 phase 4/5), not just a test that opens the collection screen. A
- *  test about a collection's own size (the fate-summary block below, or the picker's counts
- *  above) sets its own `collection_sizes` on top of this. */
+ *  unconditionally, not just a test that opens the collection screen. A test about a
+ *  collection's own size (the fate-summary block below, or the picker's counts above) sets its
+ *  own `collection_sizes` on top of this. */
 const baseSnapshot: Snapshot = {
   id: 1,
   created_at: "2026-01-01T00:00:00+00:00",
@@ -1190,9 +1202,9 @@ const baseSnapshot: Snapshot = {
   unknown_size_items: 0,
 };
 
-// The collection screen (#816 phase 5): a jump names a collection, the queue drops the lane
-// tabs for a back link and a fate summary, and the bulk bar -- a selection spanning three
-// fates is not one decision (rule 48) -- never renders there at all.
+// The collection screen: a jump names a collection, the queue drops the lane tabs for a back
+// link and a fate summary, and the bulk bar never renders there at all, since a selection
+// spanning three fates is not one decision.
 describe("the collection screen", () => {
   const openOnCollection = (name: string) => (
     <ReviewQueue
@@ -1206,8 +1218,9 @@ describe("the collection screen", () => {
     />
   );
 
-  /** Every scanned member of "Example Franchise", split across all three fates -- what makes
-   *  a collection screen mixed rather than the single-lane shape every other queue test drives. */
+  /** Every scanned member of "Example Franchise", split across all three fates. This is what
+   *  makes a collection screen mixed, rather than the single-lane shape every other queue test
+   *  drives. */
   function mixedFateFixture() {
     return {
       condemned: [movie(1), movie(2)],
@@ -1271,9 +1284,9 @@ describe("the collection screen", () => {
     await screen.findByText(/8 in the collection, 4 in the last scan\./);
   });
 
-  // The sentence exists for the GAP: Plex can hold titles this scan never saw, in an unscanned
-  // library or unmatched. With nothing missing it restates the "N items" line under the search
-  // box, so it does not render at all.
+  // The sentence exists for the gap: Plex can hold titles this scan never saw, in an unscanned
+  // library or unmatched. With nothing missing it would only restate the "N items" line under
+  // the search box, so it renders nothing at all.
   it("says nothing about counts when the scan saw the whole collection", async () => {
     mockMixedFates({ plexCount: 4 });
     renderWithProviders(openOnCollection("Example Franchise"));
@@ -1291,11 +1304,10 @@ describe("the collection screen", () => {
     expect(screen.queryByRole("heading", { name: "Example Franchise" })).not.toBeInTheDocument();
   });
 
-  // Found on a real library. A card's chip set the collection directly and left the lane's
-  // search applied, so the screen opened on a NARROWED subset under a fate summary that counts
-  // the whole collection, wearing a search chip the operator set for the lane. The why panel's
-  // chip routed through App's jump, which clears the search, so one chip did two things. Both
-  // doors go through `openCollection` now; this drives the one that was wrong.
+  // A card's chip opens a collection directly. If it left the lane's search applied, the
+  // screen would open on a narrowed subset under a fate summary that counts the whole
+  // collection, while still wearing a search chip the operator set for the lane. Both doors
+  // now go through `openCollection`, which clears the search.
   it("drops the lane's search when a card's chip opens a collection, and puts it back", async () => {
     // Members that actually carry the chip, which is the control this test presses.
     const members = [
@@ -1324,7 +1336,7 @@ describe("the collection screen", () => {
     await user.type(box, "Example");
     await waitFor(() => expect(box).toHaveValue("Example"));
 
-    // The card's own chip, the door that used to keep the search.
+    // The card's own chip, one of the two doors into a collection.
     await user.click((await screen.findAllByRole("button", { name: "Example Franchise" }))[0]!);
 
     expect(await screen.findByRole("heading", { name: "Example Franchise" })).toBeInTheDocument();
@@ -1339,8 +1351,8 @@ describe("the collection screen", () => {
   });
 
   // The exit takes the lane tabs' own slot, so it reads as a control rather than as the tabs
-  // having gone missing. Pinned by what it is NOT: a `.link-btn` is the lighter treatment this
-  // replaced, and the tabs must be gone from the row it now occupies.
+  // having gone missing. It must use the real button treatment, never the lighter `.link-btn`
+  // style, and the tabs must be gone from the row it now occupies.
   it("puts a real control where the lane tabs were, not a lighter link", async () => {
     mockMixedFates();
     renderWithProviders(openOnCollection("Example Franchise"));
@@ -1368,9 +1380,9 @@ describe("the collection screen", () => {
     ).toBeInTheDocument();
   });
 
-  // Rule 17/36: `isPending` alone clears on an ERROR exactly as it does on a success, so a fate
-  // lane that exhausted its retries must not read as loaded with its count defaulted to 0 --
-  // that undercounts "N in the last scan" and silently states a false zero for the failed lane.
+  // `isPending` alone clears on an error exactly as it does on a success, so a fate lane that
+  // exhausted its retries must not read as loaded with its count defaulted to 0. That would
+  // undercount "N in the last scan" and silently state a false zero for the failed lane.
   it("says the counts could not be read, rather than a false zero, when a lane's read fails", async () => {
     const { condemned, abstained } = mixedFateFixture();
     apiMock.candidates.mockImplementation((verdict: string) => {
@@ -1390,16 +1402,16 @@ describe("the collection screen", () => {
       await screen.findByText("Couldn't read the counts for this collection."),
     ).toBeInTheDocument();
     // Not "2 in the last scan" (an undercount of the real 3), and not one fate's real count
-    // sitting beside the failed lane's missing one -- the whole summary is withheld together.
+    // sitting beside the failed lane's missing one. The whole summary is withheld together.
     expect(screen.queryByText(/in the last scan\./)).not.toBeInTheDocument();
     expect(screen.queryByText(/condemned/)).not.toBeInTheDocument();
     expect(screen.queryByText(/in Limbo/)).not.toBeInTheDocument();
   });
 });
 
-// The note that keeps a season's Spare/Reap honest when a WHOLE-SHOW decision is what really
-// governs it: the control toggles the season's own decision, and this note says what the show
-// is doing so the operator never fights a toggle that cannot reach the show-level choice. Its
+// The note that keeps a season's Spare/Reap honest when a whole-show decision is what really
+// governs it. The control toggles the season's own decision, and this note says what the show
+// is doing, so the operator never fights a toggle that cannot reach the show-level choice. Its
 // wording turns on the relationship between the season's own decision and its show's.
 describe("the kept-by-the-whole-show note", () => {
   const render1 = (
@@ -1437,15 +1449,15 @@ describe("the kept-by-the-whole-show note", () => {
     render1("spare", "reap");
     expect(screen.getByText(/stays/i)).toBeInTheDocument();
     expect(screen.getByText(/even though the whole show is set to reap/i)).toBeInTheDocument();
-    // The clause this note exists for: the control beside it is the ONLY thing keeping the
-    // file, so clearing it drops the season onto the reap list. Without this the note warned
-    // the operator in the harmless direction and went quiet in the destructive one.
+    // The control beside this note is the only thing keeping the file, so clearing it drops
+    // the season onto the reap list. The note must say so, not just warn about the harmless
+    // direction and go quiet about the destructive one.
     expect(screen.getByText(/goes back on the list/i)).toBeInTheDocument();
   });
 
   it("names the consequence of clearing in BOTH directions, never only the safe one", () => {
-    // The asymmetry this pins: when clearing is harmless the note said so, and when clearing
-    // put a file on the block it said nothing. Whichever way the sentences are later reworded,
+    // The note must state the consequence for both directions: when clearing is harmless, and
+    // when clearing puts a file on the block. Whichever way the sentences are later reworded,
     // neither clearable direction may go silent about what the click does.
     const safe = render1("spare", "spare");
     expect(safe.container.textContent).toMatch(/clear/i);
@@ -1474,10 +1486,10 @@ describe("the kept-by-the-whole-show note", () => {
 // why-panel). Keydown from the buttons must not bubble into that handler, whose preventDefault
 // would cancel the button's own activation and open the panel instead of saving the override.
 describe("what a screen reader hears on a queue card", () => {
-  // Every card WAS its own control -- `<article role="button" aria-label="Why … scored …">` --
-  // and ARIA gives `role="button"` Children Presentational: True, so everything inside was
-  // pruned from the accessibility tree and replaced by that one label. The card's evidence IS
-  // the case for deleting the file (#169). These drive the tree the way a reader reads it:
+  // The card is a plain container, not `role="button"`: ARIA gives `role="button"` "Children
+  // Presentational: True", which would prune everything inside it from the accessibility tree
+  // and replace it with one label. The card's evidence is the case for deleting the file, so it
+  // must stay in that tree. These tests drive the tree the way a reader reads it:
   // `getByRole`/`getByText` under Testing Library resolve against the accessibility tree, so a
   // pruned chip is a query that finds nothing.
 
@@ -1495,12 +1507,12 @@ describe("what a screen reader hears on a queue card", () => {
     );
     renderQueue();
 
-    // The control the card opens through, named as the card used to name itself.
+    // The control the card opens through, named the way the whole card is described.
     expect(
       await screen.findByRole("button", { name: "Why Example Movie 1 scored 80" }),
     ).toBeInTheDocument();
-    // ...and everything the old label replaced. Each of these is a signal the operator is
-    // deciding on; under the pruned card a reader reached none of them.
+    // Each of these is a signal the operator is deciding on, and each must be reachable in the
+    // accessibility tree on its own, not folded into one card-wide label.
     expect(screen.getByText("Films")).toBeInTheDocument();
     expect(screen.getByText("1080p")).toBeInTheDocument();
     expect(screen.getByText(/someone/)).toBeInTheDocument();
@@ -1508,14 +1520,14 @@ describe("what a screen reader hears on a queue card", () => {
   });
 
   it("leaves no button nested inside another button", async () => {
-    // `nested-interactive`: the real Spare and Reap controls sat inside the card's
-    // `role="button"`, which is invalid and which leaves what a reader does with them undefined.
+    // `nested-interactive`: a button nested inside another `role="button"` element is invalid,
+    // and leaves what a reader does with the inner control undefined.
     apiMock.candidates.mockResolvedValue(page([movie(1)]));
     renderQueue();
     await screen.findByRole("button", { name: "Why Example Movie 1 scored 80" });
 
-    // Rule 145: every button the card renders, counted rather than sampled -- a control that
-    // dropped out of the walk is missing from the proof as surely as from the guard.
+    // Every button the card renders, counted rather than sampled. A control that dropped out
+    // of the walk is missing from the proof as surely as from the guard.
     const buttons = screen.getAllByRole("button");
     expect(buttons.length).toBeGreaterThan(3);
     for (const b of buttons) {
@@ -1573,9 +1585,9 @@ describe("what a screen reader hears on a queue card", () => {
   });
 
   it("picks a card in Select mode from the keyboard, exactly once", async () => {
-    // The other half of that: in Select mode the CARD's own pointerdown acts on a press, so the
-    // control stands its click down and only the key path acts. Both firing toggled the card
-    // straight back off, which is a selection that silently refuses to happen.
+    // The other half of that: in Select mode the card's own pointerdown acts on a press, so the
+    // control suppresses its click and only the key path acts. If both fired, the card would
+    // toggle straight back off, silently refusing the selection.
     apiMock.candidates.mockResolvedValue(page([movie(1), movie(2)]));
     renderQueue();
     const user = userEvent.setup();
@@ -1610,29 +1622,27 @@ describe("what a screen reader hears on a queue card", () => {
 });
 
 describe("keyboard activation of a revealed Spare/Reap button", () => {
-  // These buttons used to sit INSIDE a `role="button"` card whose own key handler called
-  // preventDefault, cancelling their activation -- so each carried a `stopPropagation` guard
-  // (B-7, rule 60). The cards are plain containers now (#169) and the guards are gone with the
-  // handler they guarded against; what these still pin is that the buttons work from a keyboard
-  // and that pressing one never opens the panel behind it.
+  // The cards are plain containers with no key handler of their own, so these buttons need no
+  // `stopPropagation` guard. What these tests pin is that the buttons work from a keyboard, and
+  // that pressing one never opens the panel behind it.
   it("saves the override", async () => {
     const onSet = vi.fn();
     // OverrideControls reads the default spare length from the general-settings query, so it
-    // needs a client even in isolation; unresolved, the default reads as 0 (forever).
+    // needs a client even in isolation. Unresolved, the default reads as 0 (forever).
     renderWithProviders(
       <OverrideControls override={null} onSet={onSet} onClear={vi.fn()} pending={false} />,
     );
     screen.getByRole("button", { name: "Spare" }).focus();
     await userEvent.keyboard("{Enter}");
 
-    // A plain Spare press carries the operator's default length; unknown settings read as 0
+    // A plain Spare press carries the operator's default length. Unknown settings read as 0
     // (forever), the safe default.
     expect(onSet).toHaveBeenCalledWith("spare", 0);
   });
 
   it("spares from the keyboard without also opening the card's reasons", async () => {
-    // The whole failure B-7 named, driven through the real card rather than a stand-in row: a
-    // press on Spare must save the decision and leave the operator where they are.
+    // Driven through the real card rather than a stand-in row: a press on Spare must save the
+    // decision and leave the operator where they are.
     apiMock.candidates.mockResolvedValue(page([movie(1)]));
     const onSelect = vi.fn();
     renderWithProviders(
@@ -1655,8 +1665,8 @@ describe("keyboard activation of a revealed Spare/Reap button", () => {
   });
 
   it("expands a show from the keyboard", async () => {
-    // Enter on the season pill expands the show. It used to open the show panel instead,
-    // because the card head canceled the pill's activation.
+    // Enter on the season pill must expand the show, not open the show panel: the card head
+    // must not cancel the pill's own activation.
     apiMock.candidates.mockResolvedValue(page([season(1, "condemn"), season(2, "condemn")]));
     renderQueue("condemn");
     const expander = await screen.findByRole("button", { name: "2 seasons" });
@@ -1668,7 +1678,7 @@ describe("keyboard activation of a revealed Spare/Reap button", () => {
   });
 });
 
-// An item-level control asks the ITEM, never the tab: lane membership is the effective
+// An item-level control asks the item, never the tab: lane membership is the effective
 // verdict, so a row can sit on Condemned with a stored verdict that is not "condemn", and a
 // spared condemnation has to stay flippable.
 describe("a per-row control on the lane it does not match", () => {
@@ -1677,15 +1687,15 @@ describe("a per-row control on the lane it does not match", () => {
       page([movie(1, { override: "spare", override_own: "spare" })]),
     );
     renderQueue("condemn");
-    // `reapIsNoop` is false here (a spare is not already-condemned), so Reap stays. The tab
-    // test hid it and stranded the spare with nothing to undo it (B-1).
+    // `reapIsNoop` is false here (a spare is not already-condemned), so Reap stays: hiding it
+    // would strand the spare with nothing to undo it.
     expect(await screen.findByRole("button", { name: "Spared" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Reap$/ })).toBeInTheDocument();
   });
 
   it("keeps the Reap control on a movie the lane holds by an honored hand reap", async () => {
     // Stored verdict abstain, on Condemned because the hand reap is honored. Hiding Reap here
-    // left a resting scythe with no control to clear it.
+    // would leave a resting scythe mark with no control to clear it.
     apiMock.candidates.mockResolvedValue(
       page([
         movie(1, {
@@ -1701,7 +1711,7 @@ describe("a per-row control on the lane it does not match", () => {
   });
 });
 
-// A card's prose follows the decision in EFFECT. A whole-show decision settles the card's
+// A card's prose follows the decision in effect. A whole-show decision settles the card's
 // story before its seasons' verdicts do, and a per-item spare must not silently drop a line.
 describe("what a card says after a hand decision", () => {
   it("stops asserting removal the moment the whole show is spared", async () => {
@@ -1751,17 +1761,16 @@ describe("what a card says after a hand decision", () => {
 
     await user.click(screen.getByRole("button", { name: "Spare" }));
 
-    // The whole-show patch touches `show_override` only, by design, so a card reading its
-    // seasons' verdicts kept promising removal under a "will be kept" chip, all session
-    // (B-12, rule 61).
+    // The whole-show patch touches `show_override` only, by design, so the card must not keep
+    // reading its seasons' stale verdicts and promising removal under a "will be kept" chip.
     await waitFor(() => expect(screen.queryByText(/would be removed/)).not.toBeInTheDocument());
   });
 
   it("counts the whole show the moment it is reaped by hand", async () => {
-    // The reap direction of the case above. A Sanctuary show's rollup is a real 0, and the
-    // whole-show patch refetches nothing by design, so reading the rollup here printed
-    // "0 of 3 would be removed, 0 B" beneath a "will be removed" chip for the rest of the
-    // session, while the server would in fact plan every season it honors (B-1).
+    // The reap direction of the case above. A Sanctuary show's rollup starts at a real 0, and
+    // the whole-show patch refetches nothing by design, so reading the rollup here would print
+    // "0 of 3 would be removed, 0 B" beneath a "will be removed" chip, even though the server
+    // would in fact plan every season it honors.
     const marks: GroupSeasonMark[] = [
       {
         id: 1,
@@ -1813,10 +1822,10 @@ describe("what a card says after a hand decision", () => {
   it("counts only the seasons a whole-show reap actually reaches", async () => {
     // The settled state, once the refetch has put the inherited reap and its refusals on the
     // marks. A whole-show decision is not atomic: a season the operator spared individually
-    // keeps its own decision (rule 50), and one the engine refuses comes back
-    // override_effective false and is dropped from the server rollup AND the planner's
-    // expansion. Counting the show whole printed "3 of 3 would be removed" above a chip
-    // reading "kept for now" and dashed-red refused squares, and left it there (rules 49/61).
+    // keeps its own decision, and one the engine refuses comes back override_effective false
+    // and is dropped from both the server rollup and the planner's expansion. Counting the show
+    // as a whole would print "3 of 3 would be removed" above a chip reading "kept for now" and
+    // dashed-red refused squares.
     const gb = 1024 ** 3;
     const marks: GroupSeasonMark[] = [
       // Honored: the only one that will actually go.
@@ -1830,7 +1839,7 @@ describe("what a card says after a hand decision", () => {
         spare_expires_at: null,
         spare_covers_until: null,
       },
-      // Refused by the engine -- a hand reap it cannot honor yet.
+      // Refused by the engine: a hand reap it cannot honor yet.
       {
         id: 2,
         season: 2,
@@ -1869,9 +1878,9 @@ describe("what a card says after a hand decision", () => {
   it("still counts out a season whose own spare has expired", async () => {
     // An expired spare keeps the season exactly as a live one does: the server drops it from
     // the show's rollup on "is it spared", and the planner reads the same live whitelist,
-    // where the row survives until a scan purges it. Counting it as removable printed a
+    // where the row survives until a scan purges it. Counting it as removable would print a
     // number the reap would not act on, one line under the dashed-green square that says the
-    // season is kept (rules 30/62). The card's count and its strip must agree.
+    // season is kept. The card's count and its strip must agree.
     const gb = 1024 ** 3;
     const past = new Date(Date.now() - 3 * 86_400_000).toISOString();
     const marks: GroupSeasonMark[] = [
@@ -1911,8 +1920,8 @@ describe("what a card says after a hand decision", () => {
   });
 
   it("keeps the dormancy line when a condemned movie is spared", async () => {
-    // A condemned row carries no chip by construction, so the spare flipped the card to the
-    // chip branch and it lost a line and reflowed under the cursor (B-24).
+    // A condemned row carries no chip by construction, so a spare that flips the card to the
+    // chip branch must not drop the dormancy line and reflow under the cursor.
     apiMock.candidates.mockResolvedValue(page([movie(1, { dormant_days: 1155 })]));
     apiMock.override.mockResolvedValue({});
     const user = userEvent.setup();
@@ -1957,9 +1966,9 @@ describe("the Spare length menu", () => {
     const onSet = renderControls();
     await user.click(screen.getByRole("button", { name: "Choose how long to keep it" }));
     await user.click(screen.getByRole("button", { name: /Custom length/ }));
-    // "Custom spare length", not "...in days": the box is `FixedQuantity` now, which binds the
-    // visible "days" suffix as its description, so the unit is spoken after the value instead of
-    // being folded into the name.
+    // "Custom spare length", not "...in days": the box is a `FixedQuantity`, which binds the
+    // visible "days" suffix as its description, so the unit is spoken after the value instead
+    // of being folded into the name.
     const box = screen.getByLabelText("Custom spare length");
     await user.clear(box);
     await user.type(box, "45");
@@ -1973,9 +1982,8 @@ describe("the Spare length menu", () => {
   });
 });
 
-// One ＋ Filter control replaces the old row of fixed dropdowns: any filter is added from a
-// menu, shows as an editable chip, and is removed from the chip. A new filter is a registry
-// entry, so this one flow covers them all.
+// The ＋ Filter control: any filter is added from a menu, shows as an editable chip, and is
+// removed from the chip. A new filter is a registry entry, so this one flow covers them all.
 describe("the unified filter bar", () => {
   it("adds a filter from the ＋ Filter menu, edits its value, then removes it", async () => {
     apiMock.vocabularyValues.mockImplementation((field: string) =>
@@ -2002,7 +2010,7 @@ describe("the unified filter bar", () => {
     );
     expect(screen.getByRole("button", { name: "Remove the Library filter" })).toBeInTheDocument();
 
-    // Clicking the chip opens its value picker; choosing another value re-filters in place.
+    // Clicking the chip opens its value picker. Choosing another value re-filters in place.
     await user.click(screen.getByRole("button", { name: "Movies" }));
     await user.click(await screen.findByRole("button", { name: "4K Movies" }));
     await waitFor(() =>
@@ -2031,10 +2039,10 @@ describe("the unified filter bar", () => {
 });
 
 describe("switching tabs", () => {
-  // Each tab remembers its own filters, and the new tab's set is adopted during the render
-  // that brings the new verdict in. When that adoption lived in an effect, the new verdict
-  // was paired with the OLD tab's filters for one commit: the queue drew a wrong list and
-  // the server answered the same switch twice (B-30).
+  // Each tab remembers its own filters, and the new tab's set must be adopted during the same
+  // render that brings the new verdict in. Adopting it in an effect instead would pair the new
+  // verdict with the old tab's filters for one commit, drawing a wrong list and asking the
+  // server for the same switch twice.
   const store = new Map<string, string>();
 
   function installStorage(): void {
@@ -2068,7 +2076,7 @@ describe("switching tabs", () => {
   it("never asks the server for the new tab with the old tab's filters", async () => {
     store.clear();
     installStorage();
-    // Condemned remembers a genre; Sanctuary remembers nothing.
+    // Condemned remembers a genre. Sanctuary remembers nothing.
     store.set(
       "reaper.queue.filters.condemn",
       JSON.stringify({ ...DEFAULT_FILTERS, genre: "Example Genre" }),
@@ -2094,8 +2102,8 @@ describe("switching tabs", () => {
         expect.anything(),
       ),
     );
-    // The wrong pair is never requested at all -- not even for the one render it used to
-    // survive: it would have both drawn a list and cost the server a query.
+    // The wrong pair is never requested at all, not even for one render: that would both draw
+    // a list and cost the server a query.
     const wrongPair = apiMock.candidates.mock.calls.filter(
       (c) => c[0] === "protect" && (c[1] as { genre: string }).genre === "Example Genre",
     );
@@ -2103,14 +2111,15 @@ describe("switching tabs", () => {
   });
 });
 
-// Both filter popovers used to render `role="menu"`/`menuitem` and `role="listbox"`/`option`
-// while implementing neither contract: no arrow keys, no roving focus, no `aria-activedescendant`,
-// and every option its own Tab stop, which is not the listbox pattern at all. A listbox is
-// ANNOUNCED as an arrow-key widget, so the role told an operator to press keys that did nothing.
+// Neither filter popover uses `role="menu"`/`menuitem` or `role="listbox"`/`option`, since
+// neither implements that contract: no arrow keys, no roving focus, no
+// `aria-activedescendant`, and every option its own Tab stop. A listbox is announced as an
+// arrow-key widget, so that role would tell an operator to press keys that do nothing.
 describe("the filter popovers' keyboard contract", () => {
-  // These add filters on purpose, and the queue remembers them. Runs even on a failing test.
-  // Wrapped, not passed bare: vitest hands the hook its test context, which would arrive as the
-  // `verdict` and clear a key spelled after an object.
+  // These add filters on purpose, and the queue remembers them, so this runs even on a failing
+  // test. Wrapped, not passed bare: vitest calls the hook with its own test context, which
+  // would then arrive as `forgetFilters`'s `verdict` argument, and clear a key spelled with
+  // that context object.
   afterEach(() => forgetFilters());
 
   it("hands focus back to the trigger when Escape closes the ＋ Filter menu", async () => {
@@ -2131,10 +2140,10 @@ describe("the filter popovers' keyboard contract", () => {
   });
 
   it("consumes Escape rather than letting an open reasons panel close too", async () => {
-    // The popover's Escape sits on `document`, which bubbles on to `window`, where an open `.why`
-    // panel's own Escape sits (WhyShell) -- and the queue and that panel are on screen together in
-    // split view. One press must not close both layers (rule 72: the spare-length menu stops the
-    // same key for the same reason).
+    // The popover's Escape sits on `document`, which bubbles on to `window`, where an open
+    // `.why` panel's own Escape sits (WhyShell). The queue and that panel can be on screen
+    // together in split view, so one press must not close both layers. The spare-length menu
+    // stops the same key for the same reason.
     apiMock.candidates.mockResolvedValue(page([movie(1)]));
     const user = userEvent.setup();
     renderQueue();
@@ -2151,10 +2160,11 @@ describe("the filter popovers' keyboard contract", () => {
   });
 
   it("moves focus to the new chip when the last filter takes the ＋ Filter button with it", async () => {
-    // The button renders only while something is still addable, so adding the LAST dimension
-    // unmounts the very control the focus return aims at: `.focus()` lands on a node React removes
-    // in the next commit and the operator is dropped on <body>. The chip the press just created is
-    // the successor. Escape's exit above cannot catch this -- it never removes the trigger.
+    // The button renders only while something is still addable, so adding the last dimension
+    // unmounts the very control the focus return aims at: `.focus()` lands on a node React
+    // removes in the next commit, and the operator is dropped on <body>. The chip the press
+    // just created is the successor. Escape's exit above cannot catch this, since it never
+    // removes the trigger.
     apiMock.candidates.mockResolvedValue(page([movie(1)]));
     const user = userEvent.setup();
     renderQueue();
@@ -2192,7 +2202,7 @@ describe("the filter popovers' keyboard contract", () => {
       screen.getByRole("list", { name: "Add a filter" }).id,
     );
 
-    // The chip's value picker, the one that claimed to be a listbox.
+    // The chip's value picker.
     await user.click(await screen.findByRole("button", { name: "Library" }));
     const chip = screen.getByRole("button", { name: "Movies" });
     expect(chip).not.toHaveAttribute("aria-haspopup");
@@ -2202,17 +2212,17 @@ describe("the filter popovers' keyboard contract", () => {
     const picker = screen.getByRole("list", { name: "Library" });
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
     expect(within(picker).queryAllByRole("option")).toHaveLength(0);
-    // Which value is in force is still stated -- as `aria-current`, which promises no arrow keys.
+    // Which value is in force is still stated, as `aria-current`, which promises no arrow keys.
     expect(screen.getByRole("button", { name: "Movies", current: true })).toBeInTheDocument();
   });
 });
 
 describe("one row's write does not disable another row's controls", () => {
-  // `pending` was the OR of every in-flight override mutation, so a spare on ANY row disabled
-  // the Spare and Reap on ALL of them. Disabling the focused element drops focus to `<body>` in
-  // every major browser, and the `aria-pressed` flip on Spare is the app's only announcement
-  // that a spare succeeded -- so by the time the state settled there was no focused element to
-  // announce it, and the press that KEEPS a file confirmed itself to nobody (#173).
+  // `pending` must scope to the row actually writing, never the OR of every in-flight override
+  // mutation: disabling the focused element drops focus to `<body>` in every major browser, and
+  // the `aria-pressed` flip on Spare is the app's only announcement that a spare succeeded. If
+  // every row's controls disabled together, the state would settle with no focused element to
+  // announce it, and the press that keeps a file would confirm itself to nobody.
   it("keeps the pressed row's own button focused, so its aria-pressed flip is announced", async () => {
     let settle: (v: unknown) => void = () => {};
     apiMock.candidates.mockResolvedValue(page([movie(1), movie(2)]));
@@ -2226,8 +2236,8 @@ describe("one row's write does not disable another row's controls", () => {
     await user.click(mine);
 
     // Disabling the pressed button is what drops focus to `<body>`, and the row's own write is
-    // exactly when that happens -- so scoping `pending` per row does not cover this case and
-    // `OverrideControls` re-issues the focus when its own wait ends.
+    // exactly when that happens. Scoping `pending` per row does not cover this case on its own,
+    // so `OverrideControls` re-issues the focus when its own wait ends.
     await act(async () => {
       settle({});
       await Promise.resolve();
@@ -2255,11 +2265,11 @@ describe("one row's write does not disable another row's controls", () => {
     });
   });
 
-  // Scoping `pending` per row keyed it on the key each surface WRITES -- and the season rows
-  // inside a show card were handed the SHOW's boolean, which their own `media_key` can never
-  // equal. So the one row where a per-season keep-or-delete decision is made was the one row
-  // whose buttons stayed live through their own round trip, and a second press sent a second,
-  // contradicting decision (rule 72: `MovieCard` and the whole-show control were both keyed).
+  // `pending` is keyed on the key each surface writes. A season row inside a show card must be
+  // keyed on its own `media_key`, never the show's boolean, since a season's key can never
+  // equal the show's. Otherwise the one row where a per-season decision is made would be the
+  // one row whose buttons stay live through their own round trip, and a second press would
+  // send a second, contradicting decision.
   it("disables a season row's own controls while that season's write is in flight", async () => {
     let settle: (v: unknown) => void = () => {};
     apiMock.candidates.mockResolvedValue(page([season(1, "condemn"), season(2, "condemn")]));
@@ -2290,12 +2300,12 @@ describe("one row's write does not disable another row's controls", () => {
     await user.click(mine);
 
     // The acting row says it is acting, and cannot be asked a second time. `user-event` reports
-    // a click on a disabled control as success (rule 137), so the write count is what proves it.
+    // a click on a disabled control as success, so the write count is what proves it.
     expect(mine).toBeDisabled();
     await user.click(mine);
     expect(apiMock.override).toHaveBeenCalledTimes(1);
-    // The show's other season is not writing and stays pressable, which is what scoping the
-    // wait buys over restoring the old list-wide `pending`.
+    // The show's other season is not writing and stays pressable, which is what a per-row wait
+    // buys over one list-wide `pending`.
     expect(other).toBeEnabled();
 
     await act(async () => {
@@ -2306,11 +2316,10 @@ describe("one row's write does not disable another row's controls", () => {
 });
 
 describe("what a reviewer hears when a scan lands under an open review", () => {
-  // The nudge and the catch-up toast were bare `role="status"` nodes mounted in the same commit as
-  // their own text. Several readers only watch regions that were already there, so both looked
-  // correct and said nothing -- the bug `Notice` reached for `role="alert"` to avoid. The role is
-  // gone (it was also wrapping two focusable buttons) and the sentence goes through the shared
-  // region instead (#177).
+  // The nudge and the catch-up toast carry no live-region role of their own, since a screen
+  // reader that only watches regions already present on the page would announce nothing for a
+  // `role="status"` node mounted together with its own text. The sentence goes through the
+  // shared `Announcer` region instead, the same reason `Notice` uses `role="alert"`.
   const spoken = () =>
     [...document.querySelectorAll('[aria-live="polite"]')].map((n) => n.textContent).join("");
 
@@ -2342,8 +2351,8 @@ describe("what a reviewer hears when a scan lands under an open review", () => {
   });
 
   it("does not leave a live-region role on a node mounted with its text", async () => {
-    // The role is what made this read as solved. Pinned by absence, with the reason in the
-    // comment above, so re-adding it fails here rather than shipping a second silent region.
+    // Pinned by absence, with the reason in the comment above, so re-adding a live-region role
+    // here fails this test rather than shipping a second silent region.
     renderWithAnnouncer();
     await screen.findByText("A newer scan just finished");
 
@@ -2354,10 +2363,10 @@ describe("what a reviewer hears when a scan lands under an open review", () => {
 });
 
 describe("the search box a jump aims at this queue", () => {
-  // A jump from another section (Scales today) names a whole destination -- lane, what to open,
-  // and what to search for -- and this queue is the half that reads the search. The lane alone
+  // A jump from another section (Scales, currently) names a whole destination: lane, what to
+  // open, and what to search for. This queue is the half that reads the search. The lane alone
   // can be thousands of rows deep, so seeding the box is what puts the opened title's own card
-  // on screen behind its panel instead of leaving the operator to find it.
+  // on screen behind its panel, instead of leaving the operator to find it.
   const focused = (search: string, nonce: number) => (
     <ReviewQueue
       verdict="condemn"
@@ -2375,11 +2384,11 @@ describe("the search box a jump aims at this queue", () => {
     apiMock.candidates.mock.calls.map((c) => (c[1] as { search?: string } | undefined)?.search);
 
   it("asks for the searched list and never the whole lane first", async () => {
-    // The load-bearing part, and why the term seeds `useState` rather than arriving in an
-    // effect: this queue is UNMOUNTED while the operator is on Scales, so a jump mounts it.
-    // An effect runs after the first render has already fired its query, which means one
-    // request for the whole condemned lane -- and one paint of it -- before the seeded one
-    // replaces it. The list must arrive filtered.
+    // Why the term seeds `useState` rather than arriving in an effect: this queue is unmounted
+    // while the operator is on Scales, so a jump mounts it fresh. An effect runs after the
+    // first render has already fired its query, which would mean one request for the whole
+    // condemned lane, and one paint of it, before the seeded search replaces it. The list must
+    // arrive filtered from the start.
     apiMock.candidates.mockResolvedValue(page([movie(1)]));
     renderWithProviders(focused("Example Movie 1 2011", 7));
     await screen.findByText("Example Movie 1");
@@ -2412,12 +2421,12 @@ describe("the search box a jump aims at this queue", () => {
 });
 
 describe("what the search box calls itself", () => {
-  // The placeholder is this box's only visible label -- there is no <label> and no visible
-  // heading naming it -- so the accessible name has to repeat it word for word. Someone driving
+  // The placeholder is this box's only visible label: there is no <label> and no visible
+  // heading naming it, so the accessible name has to repeat it word for word. Someone driving
   // the page by voice says what they can read, and a name reading "and years" where the screen
-  // reads "years" is a control they cannot ask for (WCAG 2.5.3 Label in Name). Derived from the
-  // element rather than spelled twice here, so the two can only be changed together; LogsPanel's
-  // box is the sibling that already pairs this way.
+  // reads "years" is a control they cannot ask for (WCAG 2.5.3 Label in Name). The accessible
+  // name is derived from the element rather than spelled twice here, so the two can only change
+  // together. LogsPanel's search box is the sibling that already pairs this way.
   it("names itself with the words on screen, so it can be asked for by voice", async () => {
     apiMock.candidates.mockResolvedValue(page([movie(1)]));
     renderWithProviders(

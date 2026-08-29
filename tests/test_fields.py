@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The field registry, and the asymmetry it enforces.
 
-The condemn lane is locked down; the protect lane is open. That is not a
-convenience -- it is the safety property. A badly written protect rule cannot delete
-anything, so the owner can be trusted with real expressive power there. A badly
-written condemn rule deletes 4 TB.
+The condemn lane is locked down. The protect lane is open. That is not a convenience. It
+is the safety property. A badly written protect rule cannot delete anything, so the owner
+can be trusted with real expressive power there. A badly written condemn rule deletes 4 TB.
 """
 
 from __future__ import annotations
@@ -44,10 +43,10 @@ def _facts(**overrides: object) -> Facts:
         "is_whitelisted": Known(value=False, source="plex"),
         # A mirror deeper than any window or arrival age these tests use, so a watcher
         # count reads as the answer it is written to be rather than as a lower bound
-        # (``fields.reach_shortfall``). Left at the ``_UNSET`` default every one of them
+        # (``fields.reach_shortfall``). Left at the ``_UNSET`` default, every one of them
         # would block instead, and pass or fail for a reason that is not what it is
-        # testing. ``tests/_policy_lab.py`` seeds the reach the same way; the tests that
-        # are ABOUT the bound override these two.
+        # testing. ``tests/_policy_lab.py`` seeds the reach the same way. The tests that
+        # are *about* the bound override these two.
         "history_reach_days": Known(value=4000.0, source="tautulli"),
         "days_since_added": Known(value=800.0, source="plex"),
     }
@@ -55,12 +54,12 @@ def _facts(**overrides: object) -> Facts:
 
 
 class TestTheLaneAsymmetry:
-    """The registry makes a dangerous condition UNCONSTRUCTABLE, not merely
+    """The registry makes a dangerous condition *unconstructable*, not merely
     rejected."""
 
     def test_an_all_time_watcher_count_cannot_be_used_to_condemn(self) -> None:
-        """It is a fine reason to KEEP something and a terrible reason to delete it:
-        condemning on it would make the recency signal meaningless."""
+        """It is a fine reason to *keep* something and a terrible reason to delete it.
+        Condemning on it would make the recency signal meaningless."""
         condition = Condition(field="watchers_all_time", op=Op.LTE, value=1)
 
         with pytest.raises(ValueError, match="cannot be used to remove things"):
@@ -71,9 +70,9 @@ class TestTheLaneAsymmetry:
         condition.validate_for(Lane.PROTECT)  # does not raise
 
     def test_the_condemn_vocabulary_never_offers_a_protect_only_field(self) -> None:
-        """The API filters by lane BEFORE serializing, so the browser is never even
-        shown a field it must not use. A condemn rule referencing one is not
-        rejected -- it cannot be built."""
+        """The API filters by lane *before* serializing, so the browser is never even
+        shown a field it must not use. A condemn rule referencing one is not rejected.
+        It cannot be built."""
         condemn_keys = {spec.key for spec in vocabulary(Lane.CONDEMN)}
 
         assert "watchers_all_time" not in condemn_keys
@@ -105,7 +104,7 @@ class TestTheLaneAsymmetry:
 
         assert "show_ended" in tv_condemn
         # season_rank stays a condemn field for TV, even though a built-in signal covers
-        # it in the editor -- the vocabulary offers it; the frontend hides the duplicate.
+        # it in the editor. The vocabulary offers it. The frontend hides the duplicate.
         assert "season_rank" in tv_condemn
 
     def test_a_field_that_applies_to_both_is_offered_either_way(self) -> None:
@@ -122,8 +121,9 @@ class TestTheLaneAsymmetry:
         assert "show_ended" in {s.key for s in vocabulary(Lane.CONDEMN)}
 
     def test_a_protect_only_field_is_refused_in_the_condemn_lane(self) -> None:
-        # Through ``validate_for`` directly, which is where a real condemn rule meets it:
-        # ``policy.BooleanCondemnSpec`` calls exactly this on every rule the operator saves.
+        # This goes through ``validate_for`` directly, which is where a real condemn rule
+        # meets it. ``policy.BooleanCondemnSpec`` calls exactly this on every rule the
+        # operator saves.
         with pytest.raises(ValueError, match="cannot be used to remove things"):
             Condition(field="whitelisted", op=Op.EQ, value=True).validate_for(Lane.CONDEMN)
 
@@ -133,20 +133,20 @@ class TestTheLaneAsymmetry:
 
 
 class TestProtectIsAnOr:
-    """Any reason to keep a file is sufficient. Safe by construction -- which is
-    precisely why this lane may be user-authored.
+    """Any reason to keep a file is sufficient. Safe by construction, which is precisely
+    why this lane may be user-authored.
 
-    Through the shape production uses: one ``CustomProtectGate`` per condition, all of them
-    handed to ``evaluate_all`` (``services.scan_runner.build_gates``). The OR is
-    ``Evaluation.protected``, not a combinator inside a rule -- there is no rule-set type
+    This is the shape production uses. One ``CustomProtectGate`` per condition, all of
+    them handed to ``evaluate_all`` (``services.scan_runner.build_gates``). The OR is
+    ``Evaluation.protected``, not a combinator inside a rule. There is no rule-set type
     for the operator to compose, which is the whole of the condemn lane's asymmetry."""
 
     def test_a_single_matching_protection_is_enough(self) -> None:
         gates = [
-            CustomProtectGate(Condition(field="imdb_rating", op=Op.GTE, value=90)),  # 9.0 -- fails
+            CustomProtectGate(Condition(field="imdb_rating", op=Op.GTE, value=90)),  # 9.0, fails
             CustomProtectGate(
                 Condition(field="imdb_votes", op=Op.GTE, value=500_000)
-            ),  # 900k -- fires
+            ),  # 900k, fires
         ]
         assert evaluate_all(gates, _facts()).protected is True
 
@@ -155,12 +155,12 @@ class TestProtectIsAnOr:
         anything with more than half a million IMDb votes, however unwatched it is
         here.'
 
-        This is not hypothetical. Measurement on a real library surfaced blockbusters --
-        famous, heavily rated, dormant on this particular server -- that the default policy
-        condemned and that a user then watched months later. The item is globally beloved and
-        locally quiet, which no built-in gate catches: the rating floor rejects it
-        (its score is merely good, not great) and the popularity gate rejects it
-        (nobody here watched it *recently*). Vote count is the signal that saves it,
+        This is not hypothetical. A real library once surfaced blockbusters, famous,
+        heavily rated, dormant on this particular server, that the default policy
+        condemned and that a user then watched months later. The item is globally beloved
+        and locally quiet, which no built-in gate catches. The rating floor rejects it,
+        since its score is merely good, not great, and the popularity gate rejects it too,
+        since nobody here watched it *recently*. Vote count is the signal that saves it,
         and only the owner knows to ask for it.
         """
         famous_but_dormant = _facts(
@@ -190,7 +190,7 @@ class TestUnitsAreRendered:
 
 class TestCustomProtectGate:
     """A user-authored condition, wearing the built-in Gate interface. It can only ever
-    PROTECT or ABSTAIN -- there is no path to a delete -- which is what makes it safe."""
+    PROTECT or ABSTAIN. There is no path to a delete, which is what makes it safe."""
 
     def test_a_matched_condition_fires_protect(self) -> None:
         # "Keep anything with at least a million IMDb votes." This film has 900k, so raise it.
@@ -212,8 +212,9 @@ class TestCustomProtectGate:
         assert result.blocked is True  # amber, not green: we could not look
 
     def test_it_has_no_condemn_constructor(self) -> None:
-        # The structural guarantee: whatever the condition, the outcome is only ever one of
-        # these two. A mis-authored protection can at worst fail to keep something.
+        # This is the structural guarantee. Whatever the condition, the outcome is only
+        # ever one of these two. A mis-authored protection can at worst fail to keep
+        # something.
         for value in (0, 1, 999):
             outcome = (
                 CustomProtectGate(Condition(field="imdb_votes", op=Op.GTE, value=value))
@@ -225,8 +226,8 @@ class TestCustomProtectGate:
 
 class TestSeasonPruningNeedsNoBooleanCleverness:
     def test_keep_the_last_two_seasons_is_one_condition(self) -> None:
-        """The condemn lane needs no OR or nesting because this was never a logic
-        problem, it is a derived field."""
+        """The condemn lane needs no OR or nesting, because this was never a logic
+        problem. It is a derived field."""
         older_season = _facts(season_rank=Known(value=5, source="sonarr"))
         newest_two = _facts(season_rank=Known(value=2, source="sonarr"))
 
@@ -237,10 +238,10 @@ class TestSeasonPruningNeedsNoBooleanCleverness:
 
 
 class TestTextMatchingIsForgiving:
-    """Plex title-cases stored text and owners type targets by hand, so ``in`` and
-    ``eq`` must not fail on a capital letter or the space after a comma. And genres
-    are comma-joined lists: eq/in evaluate per element there, or a multi-genre title
-    could never match any single genre and the protection would silently never fire."""
+    """Plex title-cases stored text and owners type targets by hand, so ``in`` and ``eq``
+    must not fail on a capital letter or the space after a comma. Genres are also
+    comma-joined lists, so eq/in evaluate per element there, or a multi-genre title could
+    never match any single genre and the protection would silently never fire."""
 
     def test_in_survives_spaces_and_case(self) -> None:
         facts = _facts(quality=Known(value="Bluray-1080p", source="radarr"))
@@ -274,11 +275,10 @@ class TestTextMatchingIsForgiving:
         that names a list and does not cover it.
 
         ``contains`` used to lower-case without trimming while its two siblings trimmed and
-        case-folded, so ``contains "Kids "`` missed the list named ``Kids`` (#657). Missing
-        is not neutral here: ``on_list`` is protect-only, so the item stays in the condemn
-        lane while Policy still shows the rule as live. The UI trims the box, the API key
-        lane does not, and the trailing space is what an editor's autocomplete leaves
-        behind.
+        case-folded, so ``contains "Kids "`` missed the list named ``Kids``. Missing is not
+        neutral here. ``on_list`` is protect-only, so the item stays in the condemn lane
+        while Policy still shows the rule as live. The UI trims the box, the API key lane
+        does not, and the trailing space is what an editor's autocomplete leaves behind.
         """
         facts = _facts(on_lists=Known(value="Kids", source="lists"))
 
@@ -286,7 +286,7 @@ class TestTextMatchingIsForgiving:
 
     @pytest.mark.parametrize("op", [Op.EQ, Op.IN, Op.CONTAINS])
     def test_every_text_operator_folds_past_ascii(self, op: Op) -> None:
-        """The narrower half of #657, reachable from the trimmed UI box too:
+        """A narrower version of the same bug, reachable from the trimmed UI box too.
         ``str.lower`` leaves ``ß`` alone where ``str.casefold`` maps it to ``ss``, so only
         ``contains`` used to miss."""
         facts = _facts(on_lists=Known(value="Straße", source="lists"))
@@ -294,9 +294,9 @@ class TestTextMatchingIsForgiving:
         assert evaluate(Condition(field="on_list", op=op, value="STRASSE"), facts).matched is True
 
     def test_contains_still_misses_a_name_that_is_not_there(self) -> None:
-        """The other arm, so the two above cannot pass by ``contains`` matching everything
-        (rule 118). ``fold`` trims the haystack as well, and that must not make a needle
-        match a list it is not part of."""
+        """The other arm, so the two above cannot pass by ``contains`` matching everything.
+        ``fold`` trims the haystack as well, and that must not make a needle match a list
+        it is not part of."""
         facts = _facts(on_lists=Known(value="Kids", source="lists"))
 
         cond = Condition(field="on_list", op=Op.CONTAINS, value="Holiday")
@@ -317,7 +317,7 @@ class TestAnExplanationSaysWhatItFound:
         cond = Condition(field="show_ended", op=Op.EQ, value=True)
 
         assert text(evaluate(cond, ended).detail) == "The show has ended"
-        # The miss must not read as though the show HAD ended. It says the opposite,
+        # The miss must not read as though the show *had* ended. It says the opposite,
         # which is what we actually know.
         assert text(evaluate(cond, going).detail) == "The show is still going"
 
@@ -349,7 +349,7 @@ class TestAnExplanationSaysWhatItFound:
         assert "900" not in detail
 
     def test_a_days_rule_echoes_the_number_the_owner_typed(self) -> None:
-        """The measured span is humanized; the rule's own number is not. Rounding both
+        """The measured span is humanized. The rule's own number is not. Rounding both
         sides makes a marginal title read as sitting under a number equal to itself."""
         facts = _facts(days_observed_unwatched=Known(value=396.0, source="tautulli"))
         detail = text(
@@ -415,7 +415,7 @@ class TestAnExplanationSaysWhatItFound:
         assert detail == "1 person watched it recently, under your 3"
 
     def test_a_count_lands_on_its_bar_often_enough_to_say_at_or(self) -> None:
-        """A size or a rating never sits exactly on its number; a watcher count does it
+        """A size or a rating never sits exactly on its number. A watcher count does it
         constantly, and "over your 2" with exactly 2 watchers is simply false."""
         facts = _facts(distinct_watchers=Known(value=2, source="tautulli"))
         detail = text(
@@ -491,8 +491,8 @@ class TestAnExplanationSaysWhatItFound:
         )
 
     def test_no_explanation_leaks_an_operator_key_or_a_raw_bool(self) -> None:
-        """The whole matrix, both readings. This is the regression that mattered: the
-        old builder interpolated ``condition.op.value`` straight into the sentence."""
+        """The whole matrix, both readings. This is the regression that mattered. The old
+        builder interpolated ``condition.op.value`` straight into the sentence."""
         facts = _facts(
             days_observed_unwatched=Known(value=900.0, source="tautulli"),
             distinct_watchers=Known(value=2, source="tautulli"),
@@ -516,8 +516,8 @@ class TestAnExplanationSaysWhatItFound:
         for spec in BY_KEY.values():
             for op in spec.ops:
                 # Stated, so the watcher fields explain their comparison rather than
-                # reporting it unchecked -- this is the explanation matrix, and the
-                # reach bound has its own tests.
+                # reporting it unchecked. This is the explanation matrix, and the reach
+                # bound has its own tests.
                 result = evaluate(
                     Condition(field=spec.key, op=op, value=targets[spec.type]),
                     facts,
@@ -534,8 +534,8 @@ class TestAnExplanationSaysWhatItFound:
                 assert "{" not in detail, f"{spec.key}/{op}: {detail}"
                 assert "|" not in detail, f"{spec.key}/{op}: {detail}"
                 # "in" and "contains" are ordinary English in the new copy ("Not
-                # watched in 3 years"); the keys that could only be machine vocabulary
-                # are not. The old shape -- "Label: value op target" -- is checked whole.
+                # watched in 3 years"). The keys that could only be machine vocabulary are
+                # not. The old shape, "Label: value op target", is checked whole.
                 for jargon in (" gte ", " lte ", " eq ", "True", "False"):
                     assert jargon not in detail, f"{spec.key}/{op} leaked {jargon!r}: {detail}"
                 assert not re.search(r": \S+ (gte|lte|eq|in|contains) ", detail), detail
@@ -552,7 +552,7 @@ class TestValueTypesAreValidatedAtTheBoundary:
             Condition(field="size_bytes", op=Op.GTE, value="500").validate_for(Lane.PROTECT)
 
     def test_a_bool_on_a_numeric_field_is_refused(self) -> None:
-        """bool is an int subclass in Python; it must not slip through as 0 or 1."""
+        """bool is an int subclass in Python. It must not slip through as 0 or 1."""
         with pytest.raises(ValueError, match="whole number"):
             Condition(field="days_unwatched", op=Op.GTE, value=True).validate_for(Lane.PROTECT)
 
@@ -572,13 +572,13 @@ class TestValueTypesAreValidatedAtTheBoundary:
 
 
 class TestARuleThatCouldNeverMatchIsRefusedAtSave:
-    """Rule 108's three spellings of the same defect, all refused by
+    """Three spellings of the same defect, all refused by
     ``Condition._validate_value_type``.
 
     Each one saves, hashes, and renders on Policy as an ordinary live protection while
     covering nothing, which is the state this codebase treats as worse than no rule at
-    all: the operator counts on it. The loud sibling (``contains ""``, which matches the
-    ENTIRE library) is here too, because one check refuses both directions.
+    all. The operator counts on it. The loud sibling (``contains ""``, which matches the
+    *entire* library) is here too, because one check refuses both directions.
     """
 
     def test_an_empty_text_value_is_refused(self) -> None:
@@ -599,14 +599,15 @@ class TestARuleThatCouldNeverMatchIsRefusedAtSave:
     def test_an_eq_target_carrying_the_separator_is_refused_on_a_multi_field(self) -> None:
         """The quietest of the three. ``on_lists`` is one comma-joined string and
         ``_compare`` splits it back to test membership, so a list named "Kids, Holiday"
-        is never an element of its own fact -- the keep rule reads live and keeps nothing.
-        ``list_config._clean_name`` refuses the comma where the name is typed; this is the
+        is never an element of its own fact. The keep rule reads live and keeps nothing.
+        ``list_config._clean_name`` refuses the comma where the name is typed. This is the
         boundary a hand-written or imported policy body arrives through."""
         with pytest.raises(ValueError, match="comma"):
             Condition(field="on_list", op=Op.EQ, value="Kids, Holiday").validate_for(Lane.PROTECT)
 
     def test_the_same_refusal_covers_the_other_multi_field(self) -> None:
-        """``genre`` is the multi field on BOTH lanes, so the refusal is not on_list's alone."""
+        """``genre`` is the multi field on *both* lanes, so the refusal is not on_list's
+        alone."""
         with pytest.raises(ValueError, match="comma"):
             Condition(field="genre", op=Op.EQ, value="Anime, Comedy").validate_for(Lane.CONDEMN)
 
@@ -616,16 +617,16 @@ class TestARuleThatCouldNeverMatchIsRefusedAtSave:
         Condition(field="quality", op=Op.EQ, value="Bluray-1080p, Remux").validate_for(Lane.PROTECT)
 
     def test_a_comma_is_still_fine_where_it_is_the_separator_doing_its_job(self) -> None:
-        """``in`` splits its target on commas by design; only ``eq`` reads the whole string
+        """``in`` splits its target on commas by design. Only ``eq`` reads the whole string
         as one element."""
         Condition(field="on_list", op=Op.IN, value="Kids, Holiday").validate_for(Lane.PROTECT)
         Condition(field="on_list", op=Op.EQ, value="Holiday").validate_for(Lane.PROTECT)
 
 
 class TestABadStoredValueDegradesInsteadOfCrashing:
-    """Belt and suspenders under the boundary check: a rule that somehow carries an
+    """A second layer under the boundary check. A rule that somehow carries an
     uncomparable value (stored before the type check existed) must degrade that item as
-    blocked -- amber, could-not-check -- never raise out of a scan."""
+    blocked, amber, could-not-check, never raise out of a scan."""
 
     def test_evaluate_returns_blocked_not_an_exception(self) -> None:
         bad = Condition.__new__(Condition)  # bypass validation, as a legacy stored rule would
@@ -640,7 +641,7 @@ class TestABadStoredValueDegradesInsteadOfCrashing:
         assert "could not check" in text(result.detail)
 
     def test_a_blocked_bad_value_cannot_protect_or_condemn(self) -> None:
-        """Through the gate wrapper: the worst a corrupt stored rule can do is abstain
+        """Through the gate wrapper. The worst a corrupt stored rule can do is abstain
         with an amber detail. It can never fire, and it can never crash the judge."""
         bad = Condition.__new__(Condition)
         object.__setattr__(bad, "field", "size_bytes")

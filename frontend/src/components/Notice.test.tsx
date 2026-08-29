@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The notice contract, pinned once. Rule 18's point in doing this as a component rather than a
-// convention is that the invariant is provable in one place instead of at 109 call sites, so
-// this file is what makes the rest of the sweep hold.
+// Pins the Notice component's contract in one place. Building this as a shared component,
+// rather than a convention every call site has to follow, means the contract can be proven
+// here once instead of checked at every call site by hand.
 import { render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -10,9 +10,8 @@ import { Notice } from "./Notice";
 import { SwitchConfirm, useSwitchConfirm } from "./SwitchConfirm";
 
 describe("a notice", () => {
-  // The defect this whole component exists for: 109 hand-rolled notices, zero live regions.
-  // A screen reader was told nothing when a save failed, when a password was refused, or when
-  // a section switch was blocked.
+  // A screen reader must be told when a save fails, a password is refused, or a section
+  // switch is blocked. This component is what makes that happen.
   it("is announced by default, in both tones", () => {
     render(
       <>
@@ -22,9 +21,10 @@ describe("a notice", () => {
     );
     const announced = screen.getAllByRole("alert");
     expect(announced).toHaveLength(2);
-    // The lead is part of what is announced (#174). Severity used to be `notice-error` against
-    // `notice-warn` and nothing else, so "this blocks you" and "this is advice" were the same
-    // sentence to anyone not reading the color -- a 1.4.1 failure as much as a 4.1.3 one.
+    // The lead word ("Problem:"/"Warning:") is part of what gets announced. Without it, a
+    // screen reader has no way to tell "this blocks you" from "this is advice" apart from
+    // color, which fails WCAG's use-of-color rule (1.4.1) as much as its status-message rule
+    // (4.1.3).
     expect(announced.map((n) => n.textContent)).toEqual([
       "Problem: The scan didn't start.",
       "Warning: Check this before saving.",
@@ -32,9 +32,8 @@ describe("a notice", () => {
   });
 
   it("carries severity in words, not only in the color class", () => {
-    // Pinned apart from the assertion above so the reason survives: a later edit that drops the
-    // lead leaves both notices reading identically, which is the defect, and the class it would
-    // still be setting is invisible to a reader.
+    // A separate test from the one above: if a later edit drops the lead word, both notices
+    // read identically to a screen reader, even though the CSS class still differs.
     render(
       <>
         <Notice tone="error">Same sentence.</Notice>
@@ -48,10 +47,10 @@ describe("a notice", () => {
     expect(problem!.textContent).not.toBe(warning!.textContent);
   });
 
-  // `role="alert"` and not `role="status"` is the load-bearing choice, and it is not style: these
-  // notices are mounted at the moment they have something to say, and a polite region inserted
-  // together with its text is unreliably announced. Asserting the role by name is what stops a
-  // later edit "tidying" it to status and silently reverting the fix.
+  // Must use role="alert", never role="status": these notices mount at the same moment they
+  // have something to say, and a screen reader announces a newly-inserted polite region
+  // unreliably. Checking the role by name stops a later edit from quietly changing it to
+  // status.
   it("uses alert rather than a polite region, because it mounts with its text", () => {
     render(<Notice tone="error">Couldn&apos;t save that.</Notice>);
     const el = screen.getByRole("alert");
@@ -59,7 +58,7 @@ describe("a notice", () => {
     expect(el).not.toHaveAttribute("aria-live");
   });
 
-  // The opt-out has to stay an opt-out: silent only where the author said so.
+  // The `standing` prop is the only way to make a notice silent, and it must stay opt-in.
   it("is silent only when the call site declares it standing", () => {
     render(
       <Notice tone="warn" standing>
@@ -85,9 +84,10 @@ describe("a notice", () => {
 });
 
 describe("the confirm that refuses a switch away from unsaved edits", () => {
-  // Driven through `useSwitchConfirm`, the caller half Settings and the policy editor share, so
-  // these are tests of what ships rather than of a fixture that re-implements it (rule 119). The
-  // harness stands in for Settings: "general" is open, "Security" is the press being refused.
+  // Driven through `useSwitchConfirm`, the same hook Settings and the policy editor both call,
+  // so these tests exercise the real shipped logic rather than a fixture that reimplements it.
+  // The harness below stands in for Settings: "general" is the open section, and "Security" is
+  // the press being refused.
   function Harness({
     commit = vi.fn(),
     dirty = true,
@@ -124,15 +124,14 @@ describe("the confirm that refuses a switch away from unsaved edits", () => {
 
     const confirm = screen.getByRole("alert");
     expect(confirm).toHaveFocus();
-    // Both ways out are now one Tab away instead of past the whole section rail.
+    // Both ways out sit one Tab away from the alert.
     expect(within(confirm).getByRole("button", { name: "Discard and switch" })).toBeInTheDocument();
     expect(within(confirm).getByRole("button", { name: "Keep editing" })).toBeInTheDocument();
   });
 
-  // This component takes a nonce because pressing the same refused section a second time sets
-  // `pendingSwitch` to the value it already holds, which React treats as no change at all --
-  // so an effect keyed on the pending value would not re-fire, and the second press stayed the
-  // literal no-op the issue measured (byte-identical DOM, same activeElement).
+  // This component takes a nonce so pressing the same refused section twice still moves focus.
+  // Setting `pendingSwitch` to the value it already holds is not a state change to React, so an
+  // effect keyed on that value alone would not fire again on the second press.
   it("moves focus again on a repeat press, which changes no state at all", async () => {
     const user = userEvent.setup();
     render(<Harness />);
@@ -148,9 +147,10 @@ describe("the confirm that refuses a switch away from unsaved edits", () => {
   });
 
   it("hands focus back to the control that was pressed when the refusal closes", async () => {
-    // Moving focus in is a loan. Dropped on the way out, `activeElement` is `<body>` and the
-    // next Tab starts at the masthead, so the operator walks the whole section rail back to the
-    // field they were editing -- the exact cost this component was added to remove.
+    // Moving focus into the alert must be paired with moving it back out. Without that,
+    // `activeElement` becomes `<body>` and the next Tab starts at the masthead, forcing the
+    // operator to walk through the whole section rail again to reach the field they were
+    // editing.
     const user = userEvent.setup();
     render(<Harness />);
 
@@ -176,8 +176,7 @@ describe("the confirm that refuses a switch away from unsaved edits", () => {
     expect(commit).toHaveBeenCalledExactlyOnceWith("security");
   });
 
-  // B-31, whose history is on `useSwitchConfirm`. Saving is not a decision to leave, so the
-  // notice goes and nothing switches.
+  // Saving is not a decision to leave the section, so the notice closes and nothing switches.
   it("goes away when the edits do, without switching", async () => {
     const user = userEvent.setup();
     const commit = vi.fn();

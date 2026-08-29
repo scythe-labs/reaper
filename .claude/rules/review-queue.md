@@ -9,7 +9,8 @@ paths:
 
 # The review queue: fate, overrides, and the two-level spare
 
-Blockers, not suggestions. **Rule numbers are permanent** (tests and comments cite them); where
+Blockers, not suggestions. **Rule numbers are permanent** (tests and the archived review passes
+cite them; code comments do not cite rule numbers); where
 two overlap, the more specific governs. Split out of `.claude/rules/frontend.md` because these
 seven bind one cluster — the queue, its override controls, the show panel, and the `reviewFate`
 helpers they share — and were loading on every Settings, Policy, Plex, and Logs session for
@@ -17,32 +18,31 @@ nothing. The SPA's general UI grammar stays in `frontend.md`; rules binding ever
 the root `CLAUDE.md`. Holds 48–50, 120–123.
 
 **Read this with `frontend.md`, not instead of it.** Rule 51 governs the row layout these
-controls sit in and stays there, because the stylesheet cites it eight times.
+controls sit in and stays there.
 
 **48. Reap is dropped wherever the item is already condemned; keep-first colors the pair.** A
 hand Reap does nothing to an already-condemned item, so it is hidden in every surface carrying
-`OverrideControls` (card, panel, season list, bulk bar) via `hideReap`, judged by the item's OWN
-verdict (`verdict === "condemn"`), never the tab's — so a mixed season expansion drops Reap on
-exactly the condemned rows. The bulk bar is the one exception and keys on the tab verdict (a
-heterogeneous selection is not one item). Never reimplement that test inline. Spare is never a
-no-op and is never hidden; "Reap now" (the real deletion) is a different control and is never
+`OverrideControls` (card, panel, season list, bulk bar) via `hideReap`. `hideReap` judges the
+item's OWN verdict (`verdict === "condemn"`), never the tab's, so a mixed season expansion drops
+Reap on exactly the condemned rows. The bulk bar is the one exception and keys on the tab verdict
+(a heterogeneous selection is not one item). Never reimplement that test inline. Spare is never a
+no-op and is never hidden. "Reap now" (the real deletion) is a different control and is never
 hidden. Spare invites in green, Reap stays the quiet gray of a plain button until hovered, and a
 chosen decision is the solid hand-decision chip.
 - **A whole show is not atomic, so it uses its own no-op test.** A movie/season on the Condemned
   lane is fully condemned. A show is on that lane because *some* season is, and a whole-show Reap
   still takes the seasons the scan kept, so both buttons stay until *every* season is condemned.
   That test is `showReapIsNoop` (`components/reviewFate.ts`, re-exported by `ReviewQueue.tsx`),
-  the one place it lives; the show
-  card's whole-show control and `ShowPanel` both call it, never a fourth inline copy.
+  the one place it lives. The show card's whole-show control and `ShowPanel` both call it, never
+  a fourth inline copy.
 - **Every whole-show `hideReap` computation runs over the whole show, every lane.**
   `showReapIsNoop` and `groupReapEffective` take `group.seasons` in the panel and the page's
   per-show rollup (the strip marks, held as `showSeasons`) on the card, never the tab-filtered
-  page — which on the
-  Condemned lane holds only the show's condemned seasons, and would hide the one control that
-  reaps the show's kept seasons. The whole-show control's *lit* state is a separate question and
-  is never an aggregate: it reads the show's OWN `show_override` (rule 50). `ShowPanel` carries
-  the whole-show Spare/Reap in its own bottom `.why-actions` footer, the placement the
-  movie/season panel uses.
+  page. The Condemned lane's tab-filtered page holds only the show's condemned seasons, and
+  using it would hide the one control that reaps the show's kept seasons. The whole-show
+  control's *lit* state is a separate question and is never an aggregate: it reads the show's
+  OWN `show_override` (rule 50). `ShowPanel` carries the whole-show Spare/Reap in its own bottom
+  `.why-actions` footer, the placement the movie/season panel uses.
 
 **49. A fate-bearing cell colors by the item's fate, never by the scan verdict alone.** The score
 badge (`Score`) and the season strip square (`SeasonStrip`) both route color through the one
@@ -53,10 +53,9 @@ corner-mark (`.strip-mark`), so it reads as YOUR ask and never blends into the p
 outline beside it; an untouched cell keeps its scan verdict. **Amber (`--unknown`) means exactly
 one thing — "left for you to decide" (the abstain `status-look` chip) — and never a held reap.** A
 held reap must never wear the solid red that means "removed," and a hand decision must never leave
-the number the color the scan first gave it. Held-reap language stays consistent across movies and
-seasons: a movie carries the scythe via its resting `OverrideMark`, the strip square via the
-corner-mark, and both wear the dashed-red `.score-refused` / `.strip-ov-reap-refused` /
-`.status-reap-held` / `.chip-reap-refused` classes. Never recolor these cells by `verdict` inline:
+the number the color the scan first gave it. Held-reap treatment stays consistent across movies
+and seasons through the `.score-refused` / `.strip-ov-reap-refused` / `.status-reap-held` /
+`.chip-reap-refused` classes. Never recolor these cells by `verdict` inline:
 add the surface to `handFate`, and its class after the scan-verdict classes so it wins.
 
 **50. An override control reflects and acts on its OWN level; the effective (inherited) decision
@@ -70,13 +69,14 @@ one `whitelist.effective_override` + `show_key`, never recomputed as a client-si
 - `show_override` — the show's own decision, which lights the whole-show control (card +
   `ShowPanel`).
 
-Each control clears the key it lit — a season control the season key, a whole-show control the
-show key — so it can only ever reverse what it showed. Lighting a control from effective/aggregate
-state it *cannot* clear was the dead toggle this rule exists to prevent. When a whole-show decision
-keeps or reaps a season, `KeptByShowNote` (`components/OverrideControls.tsx`) names it beside that
-season's control, its wording turning on whether the season's own decision is absent, the same, or
-opposite. A season-level clear NEVER silently un-decides the whole show: that strips protection
-from every other season, which is fail-open and forbidden. The grace clock follows the same
+Each control clears the key it lit: a season control clears the season key, and a whole-show
+control clears the show key. So it can only ever reverse what it showed. Lighting a control from
+effective/aggregate state it *cannot* clear was the dead toggle this rule exists to prevent. When
+a whole-show decision keeps or reaps a season, `KeptByShowNote`
+(`components/OverrideControls.tsx`) names it beside that season's control. Its wording turns on
+whether the season's own decision is absent, the same, or opposite. A season-level clear NEVER
+silently un-decides the whole show: that strips protection from every other season, which is
+fail-open and forbidden. The grace clock follows the same
 effective set (`_sync_grace_clocks` in `api/whitelist.py`), so a scan-condemned item the owner
 spares and later un-spares re-enters on a FRESH window, never a spent one (rule 4/71).
 

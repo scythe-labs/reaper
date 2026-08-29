@@ -1,38 +1,37 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Flattens the brand mark's RECIPE into the finished shape it draws.
+// Flattens the brand mark's recipe into the finished shape it draws.
 //
 //   npm run mark
 //
 // `src/brand/dissolve.ts` describes the mark as a composition: take a hood, cut a band below
 // the shoulders, lay blocks on the band, cut a face cavity through them, scatter more blocks.
-// Every consumer used to perform that composition at render time, and `BrandMark` -- the
-// shell-less form, whose cut-outs must be genuinely transparent -- could only do it with an SVG
-// `mask`. A mask is rasterized into an offscreen buffer sized to the element's layout box, so
-// pinch-zoom scales a bitmap: the figure went soft while the eyes, the only part outside the
-// mask, stayed sharp.
+// Performing that composition at render time forces `BrandMark`, the shell-less form whose
+// cut-outs must be genuinely transparent, onto an SVG `mask`. A mask is rasterized into an
+// offscreen buffer sized to the element's layout box, so pinch-zoom scales a bitmap: the
+// figure goes soft while the eyes, the only part outside the mask, stay sharp.
 //
-// So the composition happens ONCE, here, and what ships is geometry: one path, on the default
-// nonzero rule. The silhouette is a single closed contour -- the hood, with the cowl opening
+// So the composition happens once, here, and what ships is geometry: one path, on the default
+// nonzero rule. The silhouette is a single closed contour, the hood with the cowl opening
 // spliced into its bottom edge as a notch and the two blocks that meet the cut spliced in as
-// detours -- followed by the remaining blocks, which only ever overlap what is already drawn.
+// detours, followed by the remaining blocks, which only ever overlap what is already drawn.
 //
 // One contour, because an edge shared between two outlines is the one thing a rasterizer is
-// free to disagree about, and two of them disagreed. The opening used to be an evenodd hole
-// whose bottom edge lay exactly on the hood's, and the blocks used to abut the hood from a
-// second path: the first showed on iOS as a faint LIGHT line across an opening that is empty,
-// the second as a DARK line under the shoulders, each only at the zoom levels where the cut
-// fell between two device pixels. Nothing shares an edge now, and no fill rule is needed.
+// free to disagree about. An evenodd opening whose bottom edge lies exactly on the hood's
+// renders on iOS as a faint light line across an empty opening, and blocks abutting the hood
+// from a second path render as a dark line under the shoulders, each only at the zoom levels
+// where the cut falls between two device pixels. With one contour, nothing shares an edge,
+// and no fill rule is needed.
 //
-// The only geometry operations involved are splitting a cubic at a parameter (de Casteljau) and
-// ordering x along a horizontal line. There is no boolean here and none is needed, which is
-// worth stating because it looks like there should be: everything that meets the cut meets it
-// on the hood's own straight bottom edge, so splicing by x unions them exactly; below the cut,
-// the right-hand and scattered blocks sit clear of the cavity, and only the left column is
-// trimmed -- by a single bezier segment.
+// The only geometry operations involved are splitting a cubic at a parameter (de Casteljau)
+// and ordering x along a horizontal line. There is no boolean operation here and none is
+// needed, which is worth stating because it looks like there should be: everything that meets
+// the cut meets it on the hood's own straight bottom edge, so splicing by x unions them
+// exactly. Below the cut, the right-hand and scattered blocks sit clear of the cavity, and
+// only the left column is trimmed, by a single bezier segment.
 //
-// `appIcon.test.ts`'s sibling drift test is what keeps this honest: it re-runs the flattening
-// and fails if the committed output no longer matches the recipe.
+// `appIcon.test.ts`'s drift test keeps this honest: it re-runs the flattening and fails if
+// the committed output no longer matches the recipe.
 
 import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -225,8 +224,8 @@ function excursion(segs, idx) {
 
 /** One side of an outline between two heights, oriented top-to-bottom.
  *
- *  Both sides of the cowl opening span the heights a block covers, so the side is CHOSEN by x
- *  rather than by whichever segment the walk reaches first -- picking the wrong one puts the
+ *  Both sides of the cowl opening span the heights a block covers, so the side is chosen by
+ *  x rather than by whichever segment the walk reaches first. Picking the wrong one puts the
  *  trim on the far side of the opening, which draws a wedge across the whole figure. And the
  *  opening's outline runs upward in path order, so the piece is reversed to run downward,
  *  matching the direction the caller draws in. */
@@ -280,8 +279,8 @@ const CUT_Y = DISSOLVE_CUT.y;
 const hood = parsePath(DISSOLVE_HOOD_D);
 const face = parsePath(DISSOLVE_FACE_D);
 
-// Below the cut. A block is trimmed by the cowl opening only where it reaches into it; the
-// rest are rectangles. Which is which is DERIVED, never assumed -- the opening's edges are
+// Below the cut. A block is trimmed by the cowl opening only where it reaches into it, and
+// the rest are rectangles. Which is which is derived, never assumed: the opening's edges are
 // sampled across each block's own height, so moving a block changes what comes out.
 const blocks = [...DISSOLVE_BLOCKS_UPPER, ...DISSOLVE_BLOCKS_LOWER].map(([x, y, s]) => ({
   x,
@@ -346,7 +345,7 @@ for (const b of blocks) {
     trimmed = b.x < opensLeft;
   }
 
-  // A block whose top edge lies ON the cut is not a separate shape at all: it is the hood
+  // A block whose top edge lies on the cut is not a separate shape at all: it is the hood
   // continuing downward. Hand it to the splice below as a detour rather than drawing it beside
   // the hood, because two shapes that share an edge are antialiased independently and
   // composited one over the other, which leaves a hairline of the background between them.
@@ -365,20 +364,17 @@ for (const b of blocks) {
   pieces.push(`M${n(b.x)} ${n(b.y)}H${n(b.x + b.s)}V${n(b.y + b.s)}H${n(b.x)}Z`);
 }
 
-// The figure as ONE closed contour, plus the blocks that touch nothing but each other.
+// The figure as one closed contour, plus the blocks that touch nothing but each other.
 //
-// The hood's bottom edge is a single straight line along the cut, and everything that meets the
-// cut meets it there: the cowl opening reaches it from above, the two blocks below it reach it
-// from below. So each is spliced into that edge as a detour and the whole silhouette closes in
-// one walk -- which needs no boolean, only the ordering of x along a horizontal line.
+// The hood's bottom edge is a single straight line along the cut, and everything that meets
+// the cut meets it there: the cowl opening reaches it from above, the two blocks below it
+// reach it from below. So each is spliced into that edge as a detour and the whole silhouette
+// closes in one walk, which needs no boolean operation, only the ordering of x along a
+// horizontal line.
 //
-// That is the difference between a shape and a stack of shapes. Before this, the opening was an
-// evenodd hole whose bottom edge lay exactly on top of the hood's, and the blocks abutted the
-// hood from a second path; both are edges shared between two outlines, and a rasterizer is free
-// to disagree about them. It did: the shared bottom edge showed as a faint LIGHT line across
-// the opening on iOS, and the abutting blocks as a DARK one, each appearing only at the zoom
-// levels where the cut fell between two device pixels. A single outline has no shared edge to
-// disagree about, and needs no fill rule either.
+// That is the difference between a shape and a stack of shapes. A single outline has no
+// shared edge for a rasterizer to seam, and needs no fill rule either. The module header
+// describes the seam lines that shared edges produce on iOS.
 const outer = truncateAbove(hood, CUT_Y);
 const bottomIdx = bottomEdge(outer, CUT_Y);
 const bottom = outer[bottomIdx];

@@ -1,18 +1,17 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Wire formats.
 
-Route return types must be **resolvable at runtime**. ``from __future__
-import annotations`` turns them into strings, and FastAPI builds a response model by
-resolving them -- so a type imported only under ``TYPE_CHECKING`` yields a 500 at
-request time rather than an error at import time. There is a test that walks every
-route and forces its response model to resolve.
+Route return types must be resolvable at runtime. ``from __future__ import annotations``
+turns them into strings, and FastAPI builds a response model by resolving them, so a type
+imported only under ``TYPE_CHECKING`` fails at request time instead of at import time.
+There is a test that walks every route and forces its response model to resolve.
 """
 
 from __future__ import annotations
 
 import enum
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -34,11 +33,11 @@ from reaper.engine.policy_migrations import PolicyRepair
 from reaper.engine.signals import SignalId
 from reaper.engine.verdict import Override
 
-# The why-panel document moved to ``engine.explanation`` so the reap path could run the same
-# validation the panel does, which is the whole of #142; it may not import this layer. The
-# names stay bound here because they are wire formats and half the tree refers to them as
-# ``api.schemas.X`` -- and because the OpenAPI components are named off the classes, so
-# nothing about the published document moves with them.
+# The why-panel document lives in ``engine.explanation`` so the reap path can run the same
+# validation the panel does. ``engine.explanation`` may not import this layer. The names
+# stay bound here too because they are wire formats, half the tree refers to them as
+# ``api.schemas.X``, and the OpenAPI components are named off the classes, so nothing about
+# the published document moves with them.
 __all__ = [
     "Explanation",
     "GateOutcomeOut",
@@ -103,10 +102,10 @@ class CandidateLinkOut(BaseModel):
 class LinksOut(BaseModel):
     """Where this item can be opened. Each link is ``None`` when it cannot be built
     (unmatched in Plex, instance removed, a row scanned before the coordinates were
-    captured) -- the UI hides a missing link, never renders a broken one. At most one
-    of ``radarr``/``sonarr`` is set. The rating-site links back the chips in the
-    ratings row; Rotten Tomatoes is a title search (no integration provides RT's
-    hand-curated slugs)."""
+    captured), and the UI hides a missing link rather than rendering a broken one. At
+    most one of ``radarr``/``sonarr`` is set. The rating-site links back the chips in the
+    ratings row. Rotten Tomatoes is a title search: no integration provides its own
+    hand-curated slugs."""
 
     plex: str | None = None
     tautulli: str | None = None
@@ -127,7 +126,7 @@ class LinksOut(BaseModel):
 
 class RatingsOut(BaseModel):
     """The external-ratings row. ``imdb`` is the same dataset number the scoring signal
-    used (never a second source); the percentage fields are 0-100 ints. ``tmdb`` and
+    used, never a second source. The percentage fields are 0-100 ints. ``tmdb`` and
     ``trakt`` are 0-10 scores stored in tenths, shown as the percentages both sites
     themselves display."""
 
@@ -147,13 +146,13 @@ class ChipOut(BaseModel):
     ``chip.sentence.<id>`` for the standalone sentence form (the season row, and the
     override frame ``shell.statusChip.reapRequestedKept`` nests it as ``{why}``), both in
     ``frontend/src/locales/en/ui.json`` via ``why.ts``'s ``composeIn``. Derived server-side
-    from the stored explanation (never a re-decision): a Sanctuary card's chip names the
-    protection that fired, a Limbo card's names what stopped Reaper short. Condemned cards
-    carry no chip here -- their amber dormancy pill is built from ``dormant_days``.
+    from the stored explanation, never a re-decision: a Sanctuary card's chip names the
+    protection that fired, and a Limbo card's names what stopped Reaper short. Condemned
+    cards carry no chip here. Their amber dormancy pill is built from ``dormant_days``.
 
     Every id ``api.review._chip`` can emit has a ``chip.text`` entry and a ``chip.sentence``
-    entry, checked by the two-way walk in ``tests/test_review_chips.py`` (rule 145): there is
-    no id with no sentence, so a reader may always compose one."""
+    entry, checked by the two-way walk in ``tests/test_review_chips.py``. There is no id
+    with no sentence, so a reader may always compose one."""
 
     tone: Literal["kept", "quiet", "look", "held"]
     """``kept`` renders green (a protection fired), ``quiet`` gray (nothing to act on),
@@ -165,19 +164,19 @@ class ChipOut(BaseModel):
     amber means only "left for you to decide"."""
 
     reason: ReasonKey
-    """The typed id plus raw params -- day counts as integers, ratings exactly as the
+    """The typed id plus raw params: day counts as integers, ratings exactly as the
     reason carries them, never humanized. The frontend composes both catalog forms from it
     (``frontend/src/why.ts``'s ``composeIn("chip.text", reason)`` /
-    ``composeIn("chip.sentence", reason)``); the server never renders English here (rule 92:
-    a chip must not be pre-worded for the frontend to parse back apart)."""
+    ``composeIn("chip.sentence", reason)``). The server never renders English here: a chip
+    must not be pre-worded for the frontend to parse back apart."""
 
 
 class GroupSeasonMarkOut(BaseModel):
     """One square of a show card's season strip: the lightest possible per-season mark.
 
-    ``season`` is None for a row whose media_key did not carry a season number -- the
-    strip shows it unnumbered rather than dropping it (display extraction never errors
-    a row off the queue)."""
+    ``season`` is None for a row whose media_key did not carry a season number. The strip
+    shows it unnumbered instead of dropping it. Display extraction never errors a row off
+    the queue."""
 
     id: int
     """The candidate id for this season, so clicking its square opens that season's own
@@ -186,26 +185,27 @@ class GroupSeasonMarkOut(BaseModel):
     verdict: str
     override: str | None = None
     override_effective: bool | None = None
-    """For a ``"reap"`` override: whether the engine honors it (True paints the square
-    solid red), or refuses it for a safety stop, or for a row Reaper cannot identify -- a
-    bad Plex match, or an explanation it could not read (False keeps the square in its scan
-    color). None when there is no reap override."""
+    """For a ``"reap"`` override: whether the engine honors it. True paints the square solid
+    red. False keeps the square in its scan color, either because the engine refused the
+    reap for a safety stop, or because Reaper cannot identify the row (a bad Plex match, or
+    an explanation it could not read). None when there is no reap override."""
     size_bytes: int | None = None
     """The season's size on disk, so the card can state whole-show totals without a
     second fetch. None when nothing would report one, which is not zero: the strip still
     shows the square, and the show's totals leave it out and say so."""
     spare_expires_at: str | None = None
     """For a ``"spare"`` override: when it stops keeping this season, ISO-8601, or None for
-    a forever spare. The strip square colors by the item's fate (rule 49), and a spare whose
-    clock has PASSED is a fate of its own -- still keeping the file until a scan realizes the
-    expiry, but no longer a live decision, so it wears the dashed green rather than the solid
-    one. None when there is no spare override."""
+    a forever spare. The strip square colors by the item's fate, and a spare whose clock has
+    passed is a fate of its own. It still keeps the file until a scan realizes the expiry,
+    but is no longer a live decision, so it wears the dashed green instead of the solid one.
+    None when there is no spare override."""
     spare_covers_until: str | None = None
-    """When the LAST spare covering this season stops keeping it, ISO-8601, or None for a
-    forever one. What the square's COLOR reads, where ``spare_expires_at`` above is the spare a
-    control on the row toggles. They differ when both levels spare a season and the season's own
-    spare runs out first: kept for as long as the show's says, not expired. See
-    ``CandidateOut.spare_covers_until``. None when there is no spare override."""
+    """When the last spare covering this season stops keeping it, ISO-8601, or None for a
+    forever one. This is what the square's color reads, where ``spare_expires_at`` above is
+    the spare a control on the row toggles. They differ when both levels spare a season and
+    the season's own spare runs out first: the season stays kept for as long as the show's
+    spare says, not expired. See ``CandidateOut.spare_covers_until``. None when there is no
+    spare override."""
 
 
 class CandidateOut(BaseModel):
@@ -222,7 +222,7 @@ class CandidateOut(BaseModel):
     score: int
     coverage_bp: int
     first_flagged_at: str | None = None
-    # Display fields captured at scan time. None of them change the verdict; they are
+    # Display fields captured at scan time. None of them change the verdict. They are
     # what the review queue draws around it.
     year: int | None = None
     summary: str | None = None
@@ -234,29 +234,31 @@ class CandidateOut(BaseModel):
     """Canonical file resolution ("2160", "1080", ..., "sd") for the card's quality
     badge. None hides the badge (TV seasons, unmatched items, pre-rescan rows)."""
     library: str | None = None
-    """The Plex library (section) this item lives in, as the operator named it -- the
-    show's for a season row. Powers the card/panel library chip and the library filter.
-    None when unknown (unmatched, or a row from before this shipped); the chip is hidden."""
+    """The Plex library (section) this item lives in, as the operator named it. For a
+    season row this is the show's library. Powers the card and panel library chip and the
+    library filter. None when unknown (unmatched, or a row from before this shipped), and
+    the chip is hidden."""
     dormant_days: float | None = None
-    """The raw dormancy day count on a fresh row; the frontend composes the span in the
+    """The raw dormancy day count on a fresh row. The frontend composes the span in the
     active locale. ``None`` on a row frozen before typed reasons, which shows no amber
     pill."""
     reason_key: ReasonKey | None = None
     """The one-line "why", drawn from the explanation: the protection that keeps a spared
     item, or the top reason a reaped one scored. It is what the card shows in place of a
-    plot synopsis -- on the review queue you want to know why Reaper judged it, not what it
-    is. Composed from the catalog by the frontend (``frontend/src/why.ts``). A row whose
-    snapshot predates typed reasons carries a ``legacy`` key wrapping its stored sentence,
-    which composes to that sentence verbatim; ``None`` only where the row has no reason to
-    show at all."""
+    plot synopsis, since on the review queue the operator wants to know why Reaper judged
+    it, not what it is. Composed from the catalog by the frontend (``frontend/src/why.ts``).
+    A row whose snapshot predates typed reasons carries a ``legacy`` key wrapping its
+    stored sentence, which composes to that sentence verbatim. ``None`` only where the row
+    has no reason to show at all."""
     override: str | None = None
-    """The owner's manual decision *in effect* on this item -- ``"spare"``, ``"reap"``, or
+    """The owner's manual decision in effect on this item: ``"spare"``, ``"reap"``, or
     ``None``. Set the moment they click, so the card can show the pending intent before the
-    next scan bakes it into the stored verdict. This is the EFFECTIVE decision: a season with
-    no decision of its own inherits its show's. It colors the row's chip and score, which show
-    the item's real fate. To decide what a control can toggle, read ``override_own``."""
+    next scan bakes it into the stored verdict. This is the effective decision: a season
+    with no decision of its own inherits its show's. It colors the row's chip and score,
+    which show the item's real fate. To decide what a control can toggle, read
+    ``override_own``."""
     override_own: str | None = None
-    """This item's OWN manual decision, ignoring any it inherits from its show -- what a
+    """This item's own manual decision, ignoring any it inherits from its show: what a
     Spare/Reap control on this row can actually toggle. Equals ``override`` for a movie (no
     show to inherit from). ``None`` for a season kept only because the whole show is spared:
     its control rests un-lit, and ``show_override`` says why it is still kept."""
@@ -266,65 +268,64 @@ class CandidateOut(BaseModel):
     control, so the operator knows a season-level toggle will not change a show-level choice.
     Always ``None`` for a movie."""
     override_effective: bool | None = None
-    """For a ``"reap"`` override: whether the engine honors it (it joins the counts, the
-    grace countdown and the next plan), or refuses it for a safety stop, or for a row Reaper
-    cannot identify -- a bad Plex match, or an explanation it could not read. None when there
-    is no reap override. The UI shows red only on True."""
+    """For a ``"reap"`` override: whether the engine honors it. When it does, the item joins
+    the counts, the grace countdown, and the next plan. It refuses for a safety stop, or for
+    a row Reaper cannot identify (a bad Plex match, or an explanation it could not read).
+    None when there is no reap override. The UI shows red only when this is True."""
     spare_expires_at: str | None = None
-    """When the spare *in effect* on this item stops keeping it, ISO-8601. ``None`` means the
-    spare is forever -- read it only when ``override`` is ``"spare"``, where ``None`` is "kept
-    for good" and a value drives the "N days left" countdown on the card. Mirrors ``override``:
-    a season with no spare of its own carries the expiry of the show spare that keeps it."""
+    """When the spare in effect on this item stops keeping it, ISO-8601. ``None`` means the
+    spare is forever. Read it only when ``override`` is ``"spare"``, where ``None`` is "kept
+    for good" and a value drives the "N days left" countdown on the card. Mirrors
+    ``override``: a season with no spare of its own carries the expiry of the show spare
+    that keeps it."""
     spare_covers_until: str | None = None
-    """When the LAST spare covering this item stops keeping it -- its own or its show's,
-    whichever runs longer -- ISO-8601, ``None`` for a forever one.
+    """When the last spare covering this item stops keeping it, its own or its show's,
+    whichever runs longer, ISO-8601, ``None`` for a forever one.
 
-    The fate question, where ``spare_expires_at`` above is the precedence question. That one
-    names the spare Reaper is reading right now, which is what a control toggles and clears
-    (rule 50). This one names when the file stops being kept, which is what a color or a
-    sentence about its fate must say (rules 49/61). They differ whenever both levels spare an
-    item and the higher-precedence spare runs out first: a season spared ten days inside a show
-    spared forever is kept forever, and reading the own key alone drew "expired" over a file
+    This is the fate question, where ``spare_expires_at`` above is the precedence question.
+    That one names the spare Reaper is reading right now, which is what a control toggles
+    and clears. This one names when the file stops being kept, which is what a color or a
+    sentence about its fate must say. They differ whenever both levels spare an item and the
+    higher-precedence spare runs out first: a season spared ten days inside a show spared
+    forever is kept forever, and reading the own key alone would show "expired" over a file
     nothing would remove.
 
-    A spare must be in force at a level for that level to count, so a season spare lapsing under
-    a show set to REAP still reads as expired -- there, the file really is handed back. Read only
-    when ``override`` is ``"spare"``."""
+    A spare must be in force at a level for that level to count, so a season spare lapsing
+    under a show set to reap still reads as expired. There, the file really is handed back.
+    Read only when ``override`` is ``"spare"``."""
     show_spare_expires_at: str | None = None
     """When the whole-show spare covering this season stops keeping it, ISO-8601, or ``None``
     for a forever show-spare (or none at all). The show-level twin of ``spare_expires_at``,
-    read only when ``show_override`` is ``"spare"`` -- the show card's countdown. Always ``None``
-    for a movie."""
+    read only when ``show_override`` is ``"spare"``: the show card's countdown. Always
+    ``None`` for a movie."""
     chip: ChipOut | None = None
     """The card's one short status chip (Sanctuary and Limbo lanes). None on condemned
     rows, whose card leads with the amber dormancy pill instead."""
     season_number: int | None = None
     """The season this row is (from its media_key), for season rows. None for movies and
-    for a key that did not parse -- display only, never identity."""
+    for a key that did not parse. Display only, never identity."""
     show_status: str | None = None
     """Whether the show is finished: ``"ended"``, ``"continuing"`` or ``"unknown"``. None
     for a movie, where the question does not apply. Three states, not a bool, so "the
-    server did not say" can never be drawn as a definite answer -- ``"unknown"`` renders
+    server did not say" can never be drawn as a definite answer: ``"unknown"`` renders
     in the "we could not check" treatment. ``"continuing"`` is labeled "Still going",
     because that arm also covers a show that has not started airing yet."""
     collections: list[str] | None = None
-    """This item's Plex collection names (a season's are its SHOW's), sorted smallest
-    collection first by the scan that wrote them -- the chip takes element 0. Navigation
-    only: nothing reads this to decide a verdict (#816's fence). ``None`` means "not
-    recorded for this scan" (no Plex configured, a section read that failed, a row from
-    before this shipped), which is NOT the same as "in no collection" -- the UI must not
-    draw an empty chip for it."""
+    """This item's Plex collection names (a season's are its show's), sorted smallest
+    collection first by the scan that wrote them: the chip takes element 0. Navigation
+    only. Nothing reads this to decide a verdict. ``None`` means "not recorded for this
+    scan" (no Plex configured, a section read that failed, a row from before this shipped).
+    That is different from "in no collection": the UI must not draw an empty chip for it."""
     search_rank: int | None = None
     """Which of the three search blocks this row matched: 0 exact title, 1 partial title or
-    show name, 2 collection-name only. ``None`` outside a search -- there is no relevance
-    order to carry when nothing was typed. The client sorts within a block by the operator's
-    chosen ``sort``, never across blocks; a divider marks where block 2 starts (#816 phase
-    3b)."""
+    show name, 2 collection name only. ``None`` outside a search, since there is no
+    relevance order to carry when nothing was typed. The client sorts within a block by the
+    operator's chosen ``sort``, never across blocks. A divider marks where block 2 starts."""
     matched_collection: str | None = None
     """For a ``search_rank == 2`` row, the collection name that actually matched the typed
-    term -- NOT ``collections[0]``, which would show the operator's smallest collection
+    term. Not ``collections[0]``, which would show the operator's smallest collection
     instead of the one their search found, on a row they could not otherwise explain.
-    ``None`` for a row that matched by title, and outside a search (#816 phase 3b)."""
+    ``None`` for a row that matched by title, and outside a search."""
 
 
 class CandidateDetail(CandidateOut):
@@ -341,15 +342,14 @@ class CandidateDetail(CandidateOut):
 
 
 class GroupRollupOut(BaseModel):
-    """What one show on this page looks like across the WHOLE snapshot.
+    """What one show on this page looks like across the whole snapshot.
 
-    Sent once per show rather than stamped onto each of its season rows. It used to be four
-    fields on ``CandidateOut``, so a show with twelve seasons on a page shipped its whole
-    season strip twelve times.
+    Sent once per show rather than stamped onto each of its season rows, so a show with
+    twelve seasons on a page ships its whole season strip once rather than twelve times.
 
     Every figure here spans the whole snapshot, never the fetched page: on a long sorted
     list a page can hold some of a show's seasons and not the rest, and the card's numbers
-    sit beside "Reap now" (rule 5/30).
+    sit beside "Reap now".
     """
 
     group_key: str
@@ -361,7 +361,7 @@ class GroupRollupOut(BaseModel):
     """The byte total over that same set."""
     unknown_size: int
     """How many of those actable seasons have no size. The planner holds each one back, so
-    they are left out of both figures above and counted here instead -- the card says what
+    they are left out of both figures above and counted here instead. The card says what
     it is leaving out rather than quietly shrinking."""
     seasons: list[GroupSeasonMarkOut]
     """Every season of the show, all lanes, sorted by season number (unnumbered last). The
@@ -372,9 +372,9 @@ class CandidatePageOut(BaseModel):
     """One page of the review queue, plus the size of the whole filtered set.
 
     The totals are measured over every row the filters keep, *before* the page window, so
-    the queue can head the list with a count and a byte total it has not loaded. They rode
-    in four custom response headers until this model existed, which meant the one thing a
-    reader of the published document could not see was the shape of the answer.
+    the queue can head the list with a count and a byte total it has not loaded. Carrying
+    them as fields here, rather than response headers, is what lets the published document
+    describe their shape.
     """
 
     items: list[CandidateOut]
@@ -388,7 +388,7 @@ class CandidatePageOut(BaseModel):
     """Summed over the rows that have a size. ``unknown_size`` counts the rest."""
     unknown_size: int
     """How many of those rows have no size at all. A SUM skips them without saying so, so
-    the count is taken in the same query and reported beside the total -- otherwise an
+    the count is taken in the same query and reported beside the total. Otherwise an
     unmeasured library is indistinguishable from an empty one."""
     offset: int
     """Where this page starts. The queue asks for ``offset + len(items)`` next."""
@@ -400,13 +400,13 @@ class CandidatePageOut(BaseModel):
 
 class GroupOut(BaseModel):
     """One show, whole: the show-level header the info panel draws, plus every season
-    row in the latest snapshot regardless of verdict. Read-only display; the seasons
+    row in the latest snapshot regardless of verdict. Read-only display. The seasons
     are the same frozen candidate rows the queue lists, never a re-decision."""
 
     group_key: str
     title: str
     year: int | None = None
-    """The earliest season year on record -- the year the show reads as."""
+    """The earliest season year on record: the year the show reads as."""
     poster_url: str | None = None
     summary: str | None = None
     size_bytes: int
@@ -428,9 +428,9 @@ class GroupOut(BaseModel):
     same member the collapsed card leads with."""
     show_override: str | None = None
     """The show's own manual decision (``"spare"``/``"reap"`` on the show key), or ``None``.
-    What the panel's whole-show control toggles, and what lights it -- never an aggregate of
-    the seasons' own decisions, which the control cannot clear. Seasons overridden one by one
-    keep their marks in the strip; this stays ``None`` until the whole show is decided."""
+    What the panel's whole-show control toggles, and what lights it. Never an aggregate of
+    the seasons' own decisions, which the control cannot clear. Seasons overridden one by
+    one keep their marks in the strip. This stays ``None`` until the whole show is decided."""
     show_spare_expires_at: str | None = None
     """When the whole-show spare stops keeping the show, ISO-8601, or ``None`` for a forever
     spare (read only when ``show_override`` is ``"spare"``). The panel's whole-show countdown."""
@@ -453,7 +453,7 @@ class SnapshotOut(BaseModel):
     item_count: int
 
     degraded: bool
-    """No run may execute against a degraded snapshot. It may still be VIEWED -- the
+    """No run may execute against a degraded snapshot. It may still be viewed: the
     owner should be able to see exactly what went wrong."""
 
     degraded_reason: str | None = None
@@ -473,15 +473,15 @@ class SnapshotOut(BaseModel):
     at zero, so a healthy library shows nothing new."""
 
     collection_sizes: dict[str, int] | None = None
-    """Every collection this scan saw, name to Plex's own member count -- the collection
-    screen's header reads it for "N titles in this collection" beside the scan's own count
-    (#816 phase 5). ``None`` when none were read, whether none exist or the read failed;
-    the two are indistinguishable on purpose (docs/history/COLLECTIONS_PLAN.md's fence), and the
-    header omits that clause rather than guessing. Navigation only, never a verdict input."""
+    """Every collection this scan saw, name to Plex's own member count. The collection
+    screen's header reads it for "N titles in this collection" beside the scan's own count.
+    ``None`` when none were read, whether none exist or the read failed. The two are
+    indistinguishable on purpose (docs/history/COLLECTIONS_PLAN.md), and the header omits
+    that clause rather than guessing. Navigation only, never a verdict input."""
 
 
 class ProfileSettingsIO(BaseModel):
-    """The caps, whether they are enforced, grace, and the unknown-size allowance -- how
+    """The caps, whether they are enforced, grace, and the unknown-size allowance: how
     much Reaper may do, and how long it waits. Deliberately not part of the policy hash:
     tightening a cap never voids a pending approval. Validation (a run cap above the
     rolling cap, a grace under a week) is enforced by the domain, so an out-of-range value
@@ -501,7 +501,7 @@ class ProfileSettingsIO(BaseModel):
     settings_recovered: bool = False
     """Read-only (GET). True when the stored settings could not be read and these are the
     shipped defaults, which can be looser than what was saved. The Pace page shows a recovery
-    notice; a scan degrades until the operator saves again. Ignored on save."""
+    notice. A scan degrades until the operator saves again. Ignored on save."""
 
 
 class ActionStepOut(BaseModel):
@@ -525,12 +525,11 @@ class ActionStepOut(BaseModel):
     """Why this step failed or was skipped, as a typed reason the browser composes.
     ``None`` on a step that has not run or that succeeded.
 
-    Durable, not just the live report's: the report lives in memory on ``app.state``, so
-    before this a restart left the table saying a step failed with nothing saying why,
-    while the reason sat in the row the whole time (#260). Read off ``ActionStep.error``
-    through ``engine.reason.from_stored`` -- a row written before #899 holds a bare
-    English sentence and thaws as a ``legacy`` reason (rule 96) rather than come back
-    empty."""
+    Durable, not just the live report's: the report lives in memory on ``app.state``, so a
+    restart would otherwise lose why a step failed even though the reason sits in the row
+    the whole time. Read off ``ActionStep.error`` through ``engine.reason.from_stored``: a
+    row written before typed reasons holds a bare English sentence and thaws as a
+    ``legacy`` reason instead of coming back empty."""
 
 
 class RunOut(BaseModel):
@@ -557,12 +556,13 @@ class RunOut(BaseModel):
     never the size of the plan. It is NOT ``item_count`` either, which counts deduplicated
     candidates: a season is three steps sharing one key, so the two differ by 3x on a show."""
 
-    # The approval audit -- ``policy_hash``, ``approved_manifest_hash``, ``approved_by`` and
-    # ``approved_at`` -- is deliberately NOT on this response. Every interlock reads the stored
-    # row rather than the wire model, so nothing enforcing an approval loses anything: the
-    # manifest re-check and the policy re-check both read ``run.`` off the ORM object, and
-    # ``approved_at`` reaches ``_watched_since_approval`` the same way. ``approved_by`` was the
-    # constant string "api" on every response an operator could obtain.
+    # The approval audit (``policy_hash``, ``approved_manifest_hash``, ``approved_by`` and
+    # ``approved_at``) is deliberately not on this response. Every interlock reads the
+    # stored row rather than the wire model, so nothing enforcing an approval loses
+    # anything: the manifest re-check and the policy re-check both read ``run.`` off the
+    # ORM object, and ``approved_at`` reaches ``_watched_since_approval`` the same way.
+    # ``approved_by`` was the constant string "api" on every response an operator could
+    # obtain.
     steps: list[ActionStepOut]
     """The first :data:`api.runs.STEP_PAGE` rows of the journal, not all of them. A plan of 500
     seasons is 1,500 rows carrying a path and a request body each, and the table draws 50.
@@ -577,7 +577,7 @@ class RunStepsOut(BaseModel):
     ``RunOut`` re-reads the whole effective condemned set and re-derives the confirmation
     phrase, so paging through it would pay that per page. And the browser holds the run detail
     under one cache key with an infinite stale time, which is what lets the confirmation sheet
-    keep the exact plan it opened with; an offset in that key would move the object under it.
+    keep the exact plan it opened with. An offset in that key would move the object under it.
     """
 
     steps: list[ActionStepOut]
@@ -590,23 +590,55 @@ class RunSummaryOut(BaseModel):
     """One line of the run history: what a list of past plans can honestly say cheaply.
 
     Every field is read straight off the stored row. The full ``RunOut`` is a different
-    shape on purpose -- its ``item_count``, ``total_bytes`` and ``confirmation_phrase``
-    are all derived from the effective condemned set, re-read NOW, which costs the whole
+    shape on purpose. Its ``item_count``, ``total_bytes`` and ``confirmation_phrase`` are
+    all derived from the effective condemned set, re-read now, which costs the whole
     candidate table of that run's snapshot per run. Producing them for a list of fifty
-    loaded the same thousands of rows dozens of times on every visit to the Reap page
-    (P-3). It was also dishonest for a finished run: recomputing the phrase against
-    today's overrides describes a plan that never existed.
+    would load the same thousands of rows dozens of times on every visit to the Reap page.
+    It would also be dishonest for a finished run: recomputing the phrase against today's
+    overrides describes a plan that never existed.
 
-    Open a run to see what it holds; the detail route derives those numbers for one.
+    Open a run to see what it holds. The detail route derives those numbers for one.
     """
 
     id: int
     state: str
     approved_at: str
+    finished_at: str | None = None
+    """When the run reached a terminal state (COMPLETED or ABORTED). ``None`` while a run
+    is PLANNED or EXECUTING."""
+
     aborted_reason: ReasonKey | None = None
-    """Why the run stopped early, as a typed reason the browser composes. Thawed off
+    """Why the run stopped early, as a typed reason the browser composes. Read off
     ``ReapRun.aborted_reason`` through ``engine.reason.from_stored``: a row written before
-    #899 holds a bare English sentence and thaws as a ``legacy`` reason (rule 96)."""
+    typed reasons holds a bare English sentence and thaws as a ``legacy`` reason."""
+
+    deleted_items: int | None = None
+    """How many items this run actually deleted. ``None`` until the run reaches a
+    terminal state, read as unknown, never as zero: a run still PLANNED or EXECUTING has
+    not deleted a knowable number of anything yet."""
+
+    deleted_bytes: int | None = None
+    """Bytes reclaimed by ``deleted_items``. ``None`` on the same terms."""
+
+    deleted_unmeasured: int | None = None
+    """How many of ``deleted_items`` had no size, so are absent from ``deleted_bytes``.
+    ``None`` on the same terms; above zero only when the operator's unmeasured allowance
+    was open."""
+
+    skipped: int | None = None
+    """How many planned items this run left alone. ``None`` on the same terms."""
+
+
+class RunListOut(BaseModel):
+    """A page of the run history, plus how many rows match the request as a whole.
+
+    ``total`` counts every row ``executed_only`` and the rest of the request would match,
+    not just the page returned: the history footer's "Showing N of M" and its "Show 50
+    more" button both read it, and neither can page correctly off ``len(runs)`` alone.
+    """
+
+    runs: list[RunSummaryOut]
+    total: int
 
 
 class RunCheckOut(BaseModel):
@@ -615,7 +647,7 @@ class RunCheckOut(BaseModel):
 
     label_reason: ReasonKey
     """The live :class:`~reaper.engine.reason.Reason` the executor recorded this checklist
-    line with, as a typed reason the browser composes. Always present -- a check without one
+    line with, as a typed reason the browser composes. Always present: a check without one
     would have nothing to render."""
     ok: bool
 
@@ -633,15 +665,15 @@ class RunOutcomeOut(BaseModel):
     ``RunCheckOut.label_reason`` is."""
     checks: list[RunCheckOut]
     is_canary: bool
-    """True when this item was the run's canary -- the smallest item, executed (or, in a dry
+    """True when this item was the run's canary: the smallest item, executed (or, in a dry
     run, proven) first. The same fact ``ActionStepOut.is_canary`` carries for the journal's
     step table, carried here too so the report and result lists can mark it without a
-    server-composed English fragment in ``detail_reason`` (rule 21)."""
+    server-composed English fragment in ``detail_reason``."""
 
 
 class RunReportOut(BaseModel):
-    """What a run did, or -- in a dry run -- would do. Every mutating step in a dry run is
-    proven and none is sent; in a real run each was issued and its result verified."""
+    """What a run did, or, in a dry run, would do. Every mutating step in a dry run is
+    proven and none is sent. In a real run each was issued and its result verified."""
 
     run_id: int
     dry_run: bool
@@ -651,24 +683,69 @@ class RunReportOut(BaseModel):
     executor recorded on ``RunReport``, as a typed reason the browser composes."""
 
     would_delete_items: int
-    """The count of items removed. In a real run this is what was actually deleted; in a
-    dry run it is 0, because a dry run proves the plan by skipping every send."""
+    """In a real run, the count of items actually deleted. In a dry run, the count the
+    run proved it would delete: every item it walked to the send and stopped, minus the
+    ones a check kept (those are ``skipped``), the frozen-size gate included."""
 
     deleted_bytes: int = 0
-    """Bytes reclaimed by a real run. 0 for a dry run.
+    """Bytes reclaimed by a real run, or, in a dry run, the bytes behind
+    ``would_delete_items``.
 
     Summed from the frozen ``Candidate.size_bytes``, so for movies it is a close lower
-    bound on what the disk got back rather than an exact figure (#317). Under-stating is
-    the harmless direction here: the operator is never told they freed more than they did."""
+    bound on what the disk got back rather than an exact figure. Under-stating is the
+    harmless direction here: the operator is never told they freed more than they did."""
 
     deleted_unmeasured: int = 0
     """How many of the deleted items had no size, so are absent from ``deleted_bytes``.
     Above zero only when the operator allowed unmeasured items. Hidden at zero."""
 
     skipped: int
+    """Items a check kept, in a real run and a dry run alike. A dry run's own
+    prove-don't-send outcomes count into ``would_delete_items``, never here."""
+
     outcomes: list[RunOutcomeOut]
     """Per item: what happened, with a typed-reason checklist of the steps performed and
     which (if any) failed, for the browser to compose."""
+
+
+class RunOutcomeReadOut(BaseModel):
+    """One item's outcome, reconstructed from the durable journal rather than the live
+    in-memory report ``RunOutcomeOut`` carries.
+
+    ``error_reason`` is optional here, unlike ``RunOutcomeOut.detail_reason``: a VERIFIED
+    step's success sentence (the exact wording, with its params) lives only in the report
+    a real send builds in memory, and ``ActionStep.error`` is NULL on a step that
+    succeeded, so this mirrors ``ActionStepOut.error_reason``'s own convention instead of
+    inventing a persisted equivalent for a success that was never written down.
+    """
+
+    media_key: str
+    title: str
+    kind: str
+    size_bytes: int | None
+    state: str  # verified | failed | skipped
+    error_reason: ReasonKey | None = None
+    is_canary: bool
+    file_removed: bool
+    """Whether the file's removal was confirmed, off the journal's durable stamp. A FAILED
+    step can carry True: the delete landed and a follow-up (the import exclusion, the Plex
+    refresh) did not, and the browser must say "removed" for it, never "kept"."""
+
+
+class RunOutcomesOut(BaseModel):
+    """One window of a run's outcomes so far: the reconstructed sibling of
+    ``RunStepsOut``, from ``GET /api/runs/{id}/outcomes``.
+
+    Answers a run still executing exactly as it answers one long finished, since both
+    read the same journal rows: an item with no terminal step yet is left out, so the
+    list simply grows as a run in flight goes and is complete once the run ends.
+    """
+
+    outcomes: list[RunOutcomeReadOut]
+    outcome_count: int
+    """How many items have a decided outcome so far. Not the plan's whole item count: an
+    item still PENDING or SENT is not counted here yet."""
+    offset: int
 
 
 #: A media_key's storage bound (``ActionStep.media_key`` / ``WhitelistEntry.media_key`` are
@@ -677,17 +754,17 @@ class RunReportOut(BaseModel):
 #: ``sonarr:<instance>:<series>:<season>``.
 _MAX_MEDIA_KEY = 100
 
-#: The most items one "reap selected" request may name. Far above any real selection -- a
-#: first big cleanup is hundreds, not thousands -- and low enough that a leaked API key
+#: The most items one "reap selected" request may name. Far above any real selection (a
+#: first big cleanup is hundreds, not thousands), and low enough that a leaked API key
 #: cannot push a multi-megabyte list into a plan build and the whitelist queries under it.
-#: The whole condemned set is requested by OMITTING the field, so this never truncates a
+#: The whole condemned set is requested by omitting the field, so this never truncates a
 #: legitimate "reap everything".
 _MAX_SELECTED_ITEMS = 5000
 
 
 class CreateRunIn(BaseModel):
-    """Optional body for building a plan. Omit for a plan over the whole condemned set;
-    pass ``media_keys`` to reap just those items -- the safe path for a first, single,
+    """Optional body for building a plan. Omit for a plan over the whole condemned set.
+    Pass ``media_keys`` to reap just those items: the safe path for a first, single,
     hand-picked deletion, and the future 'reap selected' action."""
 
     media_keys: list[str] | None = Field(default=None, max_length=_MAX_SELECTED_ITEMS)
@@ -706,15 +783,15 @@ class ExecuteRunIn(BaseModel):
 
 
 class GateSettingOut(BaseModel):
-    """One protection's row as it is SERVED, which is every id a stored body can hold.
+    """One protection's row as it is served, which is every id a stored body can hold.
 
     Wider than ``GateSettingIn`` below by exactly one thing: it does not ask whether the id
     is authorable. A stored body may carry ``whitelisted`` or ``curated_list`` long after
     both stopped being switches, because ``policy_migrations.convert_list_protections``
-    leaves an ENABLED one in place when its replacement keep rule cannot be named -- keeping
-    the cover and letting ``scan_runner.build_gates`` refuse the scan loudly, rather than
-    withdrawing a live protection in silence (rule 38). That row has to reach the editor, or
-    the one page that can clear it 500s on the way to rendering (#627).
+    leaves an enabled one in place when its replacement keep rule cannot be named. That
+    keeps the protection active and lets ``scan_runner.build_gates`` refuse the scan
+    loudly, instead of withdrawing a live protection in silence. That row has to reach the
+    editor, or the one page that can clear it fails on the way to rendering.
     """
 
     gate: GateId
@@ -733,32 +810,28 @@ class GateSettingIn(GateSettingOut):
 
         ``GateId`` is wider than what a policy may carry: it also holds retired ids (so a
         stored explanation still decodes) and ids the engine emits on its own
-        (``SEASON_PROGRESSION``, ``CUSTOM``). Typing this field as a bare ``GateId`` let a
-        hand-crafted save store one of those, and ``build_gates`` then refused to construct
-        it -- correctly, but on every subsequent scan, so the install went offline with no
-        self-heal and nothing pointing at the save that did it.
+        (``SEASON_PROGRESSION``, ``CUSTOM``). A hand-crafted save could otherwise store one
+        of those, and ``build_gates`` would then refuse to construct it on every later
+        scan, taking the install offline with nothing pointing at the save that caused it.
 
-        Rejecting here rather than dropping it: this is operator input asking for a
+        This rejects rather than drops the id: it is operator input asking for a
         protection that does not exist, so the honest answer is to say so. The load path
-        deliberately still only drops ``PolicyBody.RETIRED_GATES``, because silently
-        dropping an id from a *stored* body is safe only for a gate that could never keep a
-        file, and widening that would put a real protection one typo away from vanishing
-        (rule 38/117).
+        still only drops ``PolicyBody.RETIRED_GATES``, because silently dropping an id from
+        a stored body is safe only for a gate that could never keep a file. Widening that
+        would put a real protection one typo away from vanishing.
 
-        **Input only, which is why the served body is typed off the parent.** This ran on
-        the way out too, since ``PolicyOut.body`` was a ``PolicyIn``, so a stored row this
-        refuses took ``GET /api/policy`` down with it -- and the operator's one exit is that
-        page (#627). The refusal itself is unchanged: nothing may WRITE one of these ids.
+        Input only, which is why the served body is typed off the parent: nothing may
+        write one of these ids, but a stored row that already carries one must still be
+        readable so the operator can open the editor and clear it.
         """
         if v not in POLICY_AUTHORABLE_GATES:
-            # No gate id in the sentence. An operator reads this as "Can't save this: ..." on
-            # the policy page, where the row it is about is labeled in their own words ("On a
-            # list you curate yourself"), so the slug names nothing on screen (rule 21).
-            # ``scan_runner.build_gates`` already refuses to print the same id for the same
-            # state and says why; this is that decision applied to its sibling (rule 144).
-            # It went from unreachable to routine when the response stopped being validated
-            # through here: the editor re-validates the loaded draft on mount, so an upgraded
-            # install meets this before touching anything. The 422's ``loc`` still carries
+            # No gate id in the message. An operator reads this as "Can't save this: ..." on
+            # the policy page, where the row it is about is labeled in their own words ("On
+            # a list you curate yourself"), so the slug names nothing on screen.
+            # ``scan_runner.build_gates`` already refuses to build the same id for the same
+            # reason and says why. This applies the same decision to its sibling. The
+            # editor re-validates the loaded draft on mount, so an upgraded install meets
+            # this refusal before touching anything. The 422's ``loc`` still carries
             # ``body.gates.<i>.gate``, so an API caller can still tell which row.
             raise PydanticCustomError(
                 "error.policy.retired_gate",
@@ -779,31 +852,31 @@ class SignalProbeIn(SignalSettingIn):
     """Try one signal's settings against one value.
 
     Inherits the settings half rather than restating it, so a probe refuses exactly what a
-    save refuses (rule 131): answering for a pair the editor could not then store would
-    describe a policy that cannot exist.
+    save refuses: answering for a pair the editor could not then store would describe a
+    policy that cannot exist.
     """
 
     kind: Literal["signal"] = "signal"
 
     value: float = Field(ge=0, le=1e15)
     """The value to try, in the units the signal is stored in: days, watchers, a season's
-    rank, a rating in tenths, or bytes. The ceiling is a boundary bound rather than a real
-    one (rule 95) -- above any file anyone has, and below where a float stops counting whole
-    numbers."""
+    rank, a rating in tenths, or bytes. The ceiling is a safety bound rather than a real
+    one: above any file anyone has, and below where a float stops counting whole numbers."""
 
 
 #: What ``POST /api/policy/probe`` accepts.
 #:
-#: One member today, and typed as a discriminated ``kind`` anyway, which is the whole point:
-#: a second probe -- what a keep rule would discount, what a graded rule of the operator's
-#: own would add -- becomes ``Annotated[SignalProbeIn | KeepProbeIn,
-#: Field(discriminator="kind")]`` and every client that already sends ``kind`` keeps working.
-#: Inferring the shape from which fields happened to be present is the thing rule 142 exists
-#: to stop, and it is far cheaper to type it now than to add the discriminator to a wire
-#: format that already shipped without one.
+#: One member today, and typed as a discriminated ``kind`` anyway, which is the whole
+#: point: a second probe (what a keep rule would discount, what a graded rule of the
+#: operator's own would add) becomes ``Annotated[SignalProbeIn | KeepProbeIn,
+#: Field(discriminator="kind")]``, and every client that already sends ``kind`` keeps
+#: working. Inferring the shape from which fields happened to be present would make a
+#: later, ambiguous body impossible to route correctly, and it is far cheaper to type
+#: this now than to add the discriminator to a wire format that already shipped without
+#: one.
 #:
-#: No speculative members: a probe kind arrives with the surface that asks it and the tests
-#: that pin it, or it does not exist (rule 38/117).
+#: No speculative members: a probe kind arrives with the surface that asks it and the
+#: tests that pin it, or it does not exist.
 PolicyProbeIn = SignalProbeIn
 
 
@@ -812,13 +885,13 @@ class PolicyProbeOut(BaseModel):
     the same way and a new kind needs no new rendering path."""
 
     points: float
-    """What this rule would move the score by, in the rule's own direction: pressure for a
-    signal, and a discount for a keep rule when one is added.
+    """What this rule would move the score by, in the rule's own direction: how much it
+    raises the score for a signal, and how much it discounts it for a keep rule when one
+    is added.
 
-    The only field. The engine's own wording for the answer used to ride beside it and no
-    client ever rendered it: ``signalRamp.ts`` words both the editor's sentence and the
-    panel's row, which is where those two are held in step, so a second wording arriving
-    over the wire would have been a third copy rather than the thing reconciling them."""
+    The only field. ``signalRamp.ts`` on the frontend words both the editor's sentence and
+    the panel's row from this number, so the two stay in step. A second, server-worded copy
+    of the same answer would only be a third version to keep in sync with those two."""
 
 
 class ConditionIn(BaseModel):
@@ -830,7 +903,7 @@ class ConditionIn(BaseModel):
 
 
 class RewatchOddsBlockOut(BaseModel):
-    """One measured rung of the fitted rewatch ladder (#554 stage 2)."""
+    """One measured rung of the fitted rewatch ladder."""
 
     lo_days: float
     hi_days: float | None
@@ -848,9 +921,9 @@ class RewatchOddsFitOut(BaseModel):
     """The latest scan's fitted rewatch curve, for the Policy page's ladder and echo.
 
     Aggregated from the per-candidate ``rewatch_odds`` explanation blocks of the newest
-    snapshot, so the page states exactly what the scan froze (rule 104: the fit is never
-    recomputed a second way here). Empty ``blocks`` with ``total_items == 0`` means no
-    scan has run on this build yet."""
+    snapshot, so the page states exactly what the scan froze. The fit is never recomputed a
+    second way here. Empty ``blocks`` with ``total_items == 0`` means no scan has run on
+    this build yet."""
 
     blocks: list[RewatchOddsBlockOut]
     total_items: int
@@ -858,17 +931,77 @@ class RewatchOddsFitOut(BaseModel):
     consequence echo states its protected count out of."""
 
 
+class ThresholdCurveMeasuredRowOut(BaseModel):
+    """One legal delete-threshold score, from a scan with a trusted rewatch cohort
+    somewhere in it: what the Policy page's consequence sentence reads off, for whichever
+    score the slider currently sits on.
+    """
+
+    score: int = Field(ge=1, le=100)
+    flagged: int = Field(gt=0)
+    """How many titles the newest scan would put in front of the operator at ``score``."""
+    expected_mistakes: int = Field(ge=1)
+    """About how many of ``flagged`` the operator's own history says come back, rounded up
+    (never down) so the sentence never understates the risk. Never zero: every candidate's
+    contribution is strictly positive (``_measured_or_thin_rate``'s own Wilson-bound
+    guarantee), so at least one flagged title always adds something above zero."""
+
+
+class ThresholdCurveMeasuredOut(BaseModel):
+    """The whole score-to-consequence curve, from a scan with a trusted rewatch cohort
+    somewhere in it. One row per legal score that flags anything at all, in ascending score
+    order. A score between two rows, above the highest one, or below 1 flags nothing this
+    scan measured, and the frontend reads that as the zero-flagged sentence.
+    """
+
+    state: Literal["measured"] = "measured"
+    rows: list[ThresholdCurveMeasuredRowOut]
+
+
+class ThresholdCurveCountsOnlyRowOut(BaseModel):
+    """One legal delete-threshold score's flagged count, from a scan with no rewatch cohort
+    this server trusts anywhere. The count is real. A comeback estimate would not be."""
+
+    score: int = Field(ge=1, le=100)
+    flagged: int = Field(gt=0)
+
+
+class ThresholdCurveCountsOnlyOut(BaseModel):
+    """No candidate anywhere in this scan has a cohort large enough to trust (mirrors the
+    resolver's own NOT_ENOUGH_HISTORY guard), so the sentence renders its count clause
+    alone, never a made-up comeback estimate with nothing behind it."""
+
+    state: Literal["counts_only"] = "counts_only"
+    rows: list[ThresholdCurveCountsOnlyRowOut]
+
+
+class ThresholdCurveNoScanOut(BaseModel):
+    """No scan has run on this build yet, so there is nothing to read a curve from. The
+    frontend renders nothing rather than a locked or error state: this is a readout, not a
+    setting, and the slider keeps working exactly as it does today."""
+
+    state: Literal["no_scan"] = "no_scan"
+
+
+#: What ``GET /api/policy/threshold-curve`` answers: exactly one of the three states above,
+#: never inferred from which optional fields happen to be present. The same
+#: discriminated-union shape ``PolicyProbeIn`` documents above is the pattern to copy.
+ThresholdCurveOut = Annotated[
+    ThresholdCurveMeasuredOut | ThresholdCurveCountsOnlyOut | ThresholdCurveNoScanOut,
+    Field(discriminator="state"),
+]
+
+
 class PolicyBodyOut(BaseModel):
-    """A policy body as it is SERVED: exactly what is loaded, gate rows included.
+    """A policy body as it is served: exactly what is loaded, gate rows included.
 
     ``PolicyIn`` below is this model with the gate ids narrowed to the ones a save may
-    write, and that is the only difference between the two. The split exists because the
-    response used to be typed as the request: ``_policy_out`` rebuilt every loaded row as a
-    ``GateSettingIn``, so the one stored shape the loader deliberately preserves -- an
-    enabled ``whitelisted`` or ``curated_list`` whose replacement keep rule cannot be named
-    -- raised out of ``GET /api/policy`` and locked the operator out of the editor that
-    clears it (#627). Serving it is what makes ``PolicyEditor``'s leftover-row notice
-    reachable.
+    write, and that is the only difference between the two. Typing the response this
+    widely matters for one stored shape the loader deliberately preserves: an enabled
+    ``whitelisted`` or ``curated_list`` whose replacement keep rule cannot be named.
+    Narrowing the response the same way as the request would fail to serve that row at
+    all, locking the operator out of the editor that clears it. Serving it is what makes
+    ``PolicyEditor``'s leftover-row notice reachable.
 
     Widening on the way out only. Saving that body back is still refused, so the row can
     leave a stored policy only by the operator's own act.
@@ -878,13 +1011,13 @@ class PolicyBodyOut(BaseModel):
     media_type: str = "movie"
     condemn_at: int = Field(ge=1, le=100)
     coverage_floor_bp: int = Field(default=5000, ge=0, le=10_000)
-    # Ceilings, not policy opinions (rule 95). `active_progress` computes
+    # These are safety ceilings, not policy opinions. `active_progress` computes
     # `now - timedelta(days=hold_days)` and `sequential_protections` builds
     # `range(lookahead + 1)` per anchor per viewer per show, so an unbounded value raises
     # OverflowError out of a scan and out of `/policy/simulate`, or allocates inside the
     # event loop. Each ceiling sits far above any real setting, so adding them cannot
     # invalidate a body an operator already saved. `engine.policy.PolicyBody` declares the
-    # same three, and `test_policy.py` fails when the two stop agreeing (rule 131).
+    # same three, and `test_policy.py` fails when the two stop agreeing.
     keep_last_seasons: int = Field(default=2, ge=0, le=1_000)
     keep_first_season: bool = True
     keep_last_scope: Literal["all", "requested"] = "all"
@@ -901,8 +1034,8 @@ class PolicyBodyOut(BaseModel):
     # validation runs on the wire and the two cannot drift.
     custom_condemn: list[CustomCondemnSpec] = Field(default_factory=list)
     graded_keeps: list[GradedKeepSpec] = Field(default_factory=list)
-    # The built-in rewatch keep's knobs, bounds mirroring engine.policy.PolicyBody
-    # (rule 131; test_policy.py fails when the two declarations drift).
+    # The built-in rewatch keep's knobs, bounds mirroring engine.policy.PolicyBody.
+    # test_policy.py fails when the two declarations drift.
     rewatch_keep_enabled: bool = True
     rewatch_keep_discount: int = Field(default=20, ge=1, le=50)
     rewatch_min_viewings: int = Field(default=10, ge=1, le=1_000)
@@ -914,12 +1047,12 @@ class PolicyBodyOut(BaseModel):
 
 
 class PolicyIn(PolicyBodyOut):
-    """A policy body on the way IN: every field above, with the gate ids narrowed.
+    """A policy body on the way in: every field above, with the gate ids narrowed.
 
     Narrowing, never widening, so anything that accepts a served body accepts this one and
-    the save boundary is the strict end of the pair. ``list`` is invariant, which is the
-    whole of the ignore below -- ``GateSettingIn`` is a subclass of ``GateSettingOut``, and
-    a redeclaration is how Pydantic is told to run the stricter row model here.
+    the save boundary is the strict end of the pair. ``list`` is invariant, which is why the
+    ignore below is needed: ``GateSettingIn`` is a subclass of ``GateSettingOut``, and this
+    redeclaration is how Pydantic is told to run the stricter row model here.
     """
 
     gates: list[GateSettingIn]  # type: ignore[assignment]
@@ -929,15 +1062,15 @@ class PolicyValidateIn(PolicyIn):
     """A policy draft to check, plus the one profile value whose warning is anchored to a
     control in the same editor.
 
-    ``inspect`` reads the operator's SAVED profile, which is right nearly everywhere: a
+    ``inspect`` reads the operator's saved profile, which is right nearly everywhere: a
     warning about a cap should describe what is in force. The unknown-size allowance is the
-    exception, because its warning renders directly beneath the box that sets it and that box
-    shows the DRAFT. Every other warning in the editor describes the draft, so this one read
-    the saved value while sitting under the changed one: drag it from 5 to 0 and the warning
-    kept saying Reaper would delete up to 5 (B-26, rule 42).
+    exception, because its warning renders directly beneath the box that sets it, and that
+    box shows the draft value. Reading the saved value there instead would sit the warning
+    under the wrong number: drag the box from 5 to 0 and the warning would still say Reaper
+    would delete up to 5.
 
     Omitted (``None``) means "use the saved profile", which is what every other caller of
-    ``inspect`` wants and what this route did before."""
+    ``inspect`` wants."""
 
     draft_max_unmeasured_per_run: int | None = Field(default=None, ge=0, le=25)
 
@@ -947,8 +1080,8 @@ class PolicyWarningOut(BaseModel):
 
     ``reason`` is the catalog id plus its raw params (docs/history/I18N_PLAN.md §5): the
     frontend composes ``warning.<id>`` (``PolicyEditor.tsx``'s ``WarnBlock``, via
-    ``why.ts``'s ``composeIn("warning", reason)``). The server never renders English here
-    (rule 92), the same posture ``ChipOut.reason`` takes.
+    ``why.ts``'s ``composeIn("warning", reason)``). The server never renders English here,
+    the same posture ``ChipOut.reason`` takes.
     """
 
     field: str
@@ -958,7 +1091,7 @@ class PolicyWarningOut(BaseModel):
 
 class SeasonShapeOut(BaseModel):
     """How many content-bearing seasons each show has in the latest snapshot, so the policy
-    editor can show live how many shows a keep-last-N value fully protects -- without a new
+    editor can show live how many shows a keep-last-N value fully protects, without a new
     scan, since the season shape is independent of the keep-last value."""
 
     total_shows: int
@@ -970,23 +1103,25 @@ class PolicyOut(BaseModel):
     policy_hash: str
     name: str
     body: PolicyBodyOut
-    """The body the editor opens on, which is what was LOADED and not what a save accepts.
+    """The body the editor opens on, which is what was loaded, not what a save accepts.
 
     Typed off the served model rather than the request one: a stored gate row the loader
-    kept on purpose has to reach the page that removes it, and typing this as ``PolicyIn``
-    made the response validate through the save boundary and 500 instead (#627).
+    kept on purpose has to reach the page that removes it. Typing this as ``PolicyIn``
+    instead would validate the response through the save boundary and fail to serve that
+    row at all.
     """
 
     default_signals: list[SignalSettingIn] = []
-    """The SHIPPED bounds for this media type's signals, so the editor can offer a way back.
+    """The shipped bounds for this media type's signals, so the editor can offer a way
+    back to them once the operator has edited a ramp bound.
 
-    Making the ramp bounds editable made them losable: nothing on the page said what 1825
-    had been, and the presets restore weights only. Derived from ``DEFAULT_MOVIE_POLICY`` /
-    ``DEFAULT_TV_POLICY`` on the way out rather than copied into the browser, so there is no
-    second declaration of a number the scorer reads (rule 103).
+    Derived from ``DEFAULT_MOVIE_POLICY`` / ``DEFAULT_TV_POLICY`` on the way out rather
+    than copied into the browser, so there is no second declaration of a number the scorer
+    reads.
 
-    Weights are carried but the editor restores only the bounds: removal weights must total
-    exactly 100, so putting one back on its own would break the budget the save bar enforces.
+    Weights are carried but the editor restores only the bounds: removal weights must
+    total exactly 100, so putting one back on its own would break the budget the save bar
+    enforces.
     """
 
     history_reach_days: float | None = None
@@ -994,33 +1129,28 @@ class PolicyOut(BaseModel):
     bounds.
 
     The dormancy ramp is the one it bounds hard: `dormancy.reference_instant` anchors a
-    never-played item at the LATER of its arrival and the mirror's edge, so the largest
-    dormancy any item can present IS this number. Setting "full points" past it therefore
-    caps what that signal can ever pay, and until the editor could say this, nothing on the
-    page could tell the operator so.
+    never-played item at the later of its arrival and the mirror's edge, so the largest
+    dormancy any item can present is this number. Setting "full points" past it caps what
+    that signal can ever pay.
 
-    ``None`` when the scan did not record it, which the editor renders as not knowing rather
-    than as a reach of zero."""
+    ``None`` when the scan did not record it, which the editor renders as not knowing
+    rather than as a reach of zero."""
 
     repairs: list[PolicyRepair] = []
-    """Every way this body had to be changed to load it, so it is NOT what is stored.
+    """Every way this body had to be changed to load it, so it is not what is stored.
 
-    One list rather than a boolean per repair, and the editor reads its LENGTH to decide
-    whether to open dirty. That is the fix for the shape this used to have: three booleans,
-    each of which had to be remembered at four sites, and the fourth repair remembered at
-    one. A stored body from before the lists move then degraded every scan while the editor
-    stayed clean, so the page held no Save and the degradation named an exit that was not
-    there (#516). A member added to ``PolicyRepair`` now raises the savebar whether or not
-    anyone wrote copy for it, and ``tests/test_policy_repairs.py`` fails until they do.
+    One list rather than a boolean per repair, and the editor reads its length to decide
+    whether to open dirty. A member added to ``PolicyRepair`` raises the savebar whether or
+    not anyone wrote copy for it, and ``tests/test_policy_repairs.py`` fails until they do.
 
     A field rather than a ``warnings`` entry, like the flags before it: the editor builds
-    its warning list by re-validating the *draft*, so anything attached to this response is
-    never read -- a load-time warning put there is silently dropped.
+    its warning list by re-validating the draft, so anything attached to this response is
+    never read. A load-time warning put here would be silently dropped.
     """
     warnings: list[PolicyWarningOut]
     """Things that are legal but probably not what you meant. A validator cannot tell
     an IMDb floor of 96 (meaning 9.6) from a Rotten Tomatoes 96 typed into the wrong
-    box -- both are legal -- so it says so instead of pretending to know."""
+    box. Both are legal, so it says so instead of pretending to know."""
 
 
 class SimExampleOut(BaseModel):
@@ -1039,41 +1169,42 @@ class GateCountOut(BaseModel):
 
 
 class SimStale(enum.StrEnum):
-    """Why the simulator would not answer -- as a value, not as a sentence.
+    """Why the simulator would not answer, as a value, not as a sentence.
 
-    Three refusals with three different remedies, and until this existed the panel showed
-    one paragraph naming every cause at once, so nine season controls, the protection lists
-    and the popularity window shared a sentence that could only be right about one of them.
-    The operator's heading lives in ``PolicySimulator.tsx`` and branches on this; the body
-    paragraph is ``stale_reason`` beside it, composed from the catalog.
+    Three refusals, three different remedies: nine season controls, the protection lists
+    and the popularity window each need their own sentence, since only one of them can be
+    right about any given cause. The operator's heading lives in ``PolicySimulator.tsx``
+    and branches on this. The body paragraph is ``stale_reason`` beside it, composed from
+    the catalog.
     """
 
     GATHERS_DIFFERENTLY = "gathers_differently"
-    """What a scan would collect no longer matches what this one did -- the span watching
+    """What a scan would collect no longer matches what this one did: the span watching
     counts over, or the protection lists an ``on_list`` rule reads. The frozen evidence
     answers a different question, and only a scan fixes it.
 
-    The lists reach this without any policy edit at all, which is why the sentence says the
-    numbers do not match the last scan rather than naming something the operator changed."""
+    The lists can reach this state without any policy edit at all, which is why the
+    sentence says the numbers do not match the last scan rather than naming something the
+    operator changed."""
 
     SEASONS_NOT_RECORDED = "seasons_not_recorded"
     """This snapshot holds no per-show season-prune evidence, holds some it cannot read, or
     holds some that does not describe the rows being judged.
 
-    Reached only *after* a scan that wrote the table: a snapshot older than it cannot match
+    Reached only after a scan that wrote the table: a snapshot older than that cannot match
     the re-scoped ``evidence_hash`` either, so it refuses one tier earlier as
     :attr:`GATHERS_DIFFERENTLY` (``api.simulate.simulate`` states the same thing at length).
-    Like every refusal it zeroes the whole lane rather than the season card alone --
+    Like every refusal, it zeroes the whole lane rather than the season card alone.
     ``simulate._SeasonEvidenceMissingError`` says why holding the rest at their scan-time
     verdicts would be worse."""
 
     IN_PROGRESS_NOT_READ = "in_progress_not_read"
     """The draft holds a season someone is part-way through, over a scan that recorded no
-    episode map to place them in. Two scans leave it unread -- one that ran with the hold off,
-    and one that ran with it on and got no answer from Sonarr for some show -- so the copy
-    states the absence rather than either cause. Turning the hold OFF replays fine: the guard
-    is short-circuited before the missing map is touched, which is why this names the one
-    direction that cannot be answered rather than the whole control."""
+    episode map to place them in. Two scans leave it unread: one that ran with the hold
+    off, and one that ran with it on and got no answer from Sonarr for some show. The copy
+    states the absence rather than either cause. Turning the hold off replays fine, since
+    the guard is short-circuited before the missing map is touched, which is why this names
+    the one direction that cannot be answered rather than the whole control."""
 
 
 class SimulationOut(BaseModel):
@@ -1086,14 +1217,14 @@ class SimulationOut(BaseModel):
     exact: bool
     """Whether these numbers actually answer the question that was asked.
 
-    The simulator re-compares **stored** scores and verdicts against new thresholds.
-    That is exact for ``condemn_at`` and ``coverage_floor_bp``, and **wrong for
-    anything else**: change a signal weight or a gate and the stored scores were
-    produced by the old ones, so every count below would be confidently stale.
+    The simulator re-compares stored scores and verdicts against new thresholds. That is
+    exact for ``condemn_at`` and ``coverage_floor_bp``, and wrong for anything else: change
+    a signal weight or a gate and the stored scores were produced by the old ones, so every
+    count below would be confidently stale.
 
-    When this is false the counts are zeroed, ``stale_kind`` says which refusal it is and
+    When this is false the counts are zeroed, ``stale_kind`` says which refusal it is, and
     ``stale_reason`` carries the same fact as a typed reason. Reaper would rather show
-    nothing than show a number it cannot stand behind -- a plausible wrong answer is worse
+    nothing than show a number it cannot stand behind. A plausible wrong answer is worse
     than a blank, because the owner acts on it.
     """
 
@@ -1104,8 +1235,8 @@ class SimulationOut(BaseModel):
     stale_reason: ReasonKey | None = None
     """The catalog id for the refusal (docs/history/I18N_PLAN.md §5): the frontend composes
     ``policySim.staleReason.<id>`` (``PolicySimulator.tsx``'s ``StaleNotice``, via
-    ``why.ts``'s ``composeIn``). One id per :class:`SimStale` value; the server never renders
-    English here (rule 92)."""
+    ``why.ts``'s ``composeIn``). One id per :class:`SimStale` value. The server never
+    renders English here."""
 
     condemned: int
     protected: int
@@ -1115,6 +1246,11 @@ class SimulationOut(BaseModel):
     """How many of the condemned have no size, and so are left out of the total above
     rather than folded in as zeros. Hidden at zero."""
 
+    hand_reaped: int = 0
+    """How many of ``condemned`` are titles the owner marked to reap by hand. A hand reap
+    condemns at any threshold, so these never move with the sliders. The panel says so,
+    because a removal count that quietly includes them reads as the policy's doing."""
+
     newly_condemned: int
     """Items this policy would condemn that the current one does not. The number the
     owner actually needs before saving."""
@@ -1122,36 +1258,36 @@ class SimulationOut(BaseModel):
     no_longer_condemned: int
 
     condemned_before: int = 0
-    """How many titles the LAST SCAN flags, so the panel can compare against it directly.
+    """How many titles the last scan flags, so the panel can compare against it directly.
 
     The scan, not the saved policy: both tiers count it as
-    ``effective_verdict(row, decisions) == "condemn"`` -- the stored verdicts, with live
+    ``effective_verdict(row, decisions) == "condemn"``, the stored verdicts with live
     overrides applied. Saving a policy starts a scan rather than being one, so between the
-    save and that scan finishing, or after it fails, the saved policy is not the policy these
-    rows were judged under. ``changed_titles`` below names the same set the same way ("the
-    lane they are in now"), and the panel's sentence follows both.
+    save and that scan finishing, or after it fails, the saved policy is not the policy
+    these rows were judged under. ``changed_titles`` below names the same set the same way
+    ("the lane they are in now"), and the panel's sentence follows both.
 
-    Equal to ``condemned - newly_condemned + no_longer_condemned``, which is how the panel
-    used to reconstruct it. That derivation is only sound while both deltas count every way
-    into and out of the removal list, and it printed a confident wrong number the moment one
-    of them did not: ``no_longer_condemned`` missed condemn -> protect, so an outright keep
-    rule put the draft's own count on both sides of a sentence built to contrast them. The
-    server counts the pre-edit lane per row either way, so sending it costs one line per tier
-    and leaves the browser with no server fact to re-derive (rule 144).
+    Do not reconstruct this as ``condemned - newly_condemned + no_longer_condemned`` on the
+    client. That arithmetic only holds while both deltas account for every way into and out
+    of the removal list, and a delta that misses one direction (for example a keep rule
+    that moves a row straight from condemn to protect) makes it silently wrong. The server
+    counts the pre-edit lane per row directly, so sending it here costs one field and
+    removes that derivation entirely.
     """
 
     changed_titles: int = 0
     """How many titles this draft puts in a different lane than the one they are in now.
 
-    A superset of ``newly_condemned`` + ``no_longer_condemned``, and it exists because those
-    two are blind to the move that prompted it: a protection edit can take a title from
-    spared to not judged without going near the threshold, so both deltas stay at zero while
-    a sixth of the spared set moves, and the panel shows the other rows as absolute counts
-    rather than deltas -- two different outcomes, one indistinguishable screen (#488).
+    A superset of ``newly_condemned`` plus ``no_longer_condemned``. Those two are blind to
+    a move that changes neither delta: a protection edit can take a title from spared to
+    not judged without touching the threshold, moving a real share of the spared set while
+    both deltas stay at zero. The panel shows the other rows as absolute counts, not deltas,
+    so this field is what tells it something moved at all.
 
-    Zero while the draft differs from the saved policy is the useful case, not the empty one:
-    it is the only form in which the panel can say a rule carries no weight on THIS library,
-    which is a true and load-bearing fact about a protection the operator is considering.
+    Zero while the draft differs from the saved policy is the useful case, not the empty
+    one: it is the only form in which the panel can say a rule carries no weight on this
+    library, which is a true and load-bearing fact about a protection the operator is
+    considering.
     """
 
     histogram: list[int]
@@ -1159,12 +1295,12 @@ class SimulationOut(BaseModel):
     the shape of the library rather than guessed."""
 
     examples_newly_condemned: list[SimExampleOut] = Field(default_factory=list)
-    """The top few titles this draft would newly flag, highest score first -- the
-    "New on the list" block. Populated only when ``exact``; a count is abstract, but
+    """The top few titles this draft would newly flag, highest score first, the
+    "New on the list" block. Populated only when ``exact``. A count is abstract, but
     a title the owner recognizes is what actually stops a bad threshold."""
 
     protected_by: list[GateCountOut] = Field(default_factory=list)
-    """How many protected items each protection saved, busiest first -- the "Why
+    """How many protected items each protection saved, busiest first, the "Why
     titles were spared" block, aggregated from the stored explanations. Populated
     only when ``exact``."""
 
@@ -1174,7 +1310,7 @@ class FieldValuesOut(BaseModel):
 
     Suggestions for the rule editors' inputs, nothing more: an unknown field or a
     missing scan comes back as an empty list, never an error, and typing a value that
-    is not listed stays valid -- validation is by type, not by membership here.
+    is not listed stays valid. Validation is by type, not by membership here.
     """
 
     field: str
@@ -1183,12 +1319,12 @@ class FieldValuesOut(BaseModel):
 
 class FieldOut(BaseModel):
     """A field's key, type and operators only. The browser says the words: the catalog's
-    ``why.field.<key>`` is the label the policy editor renders, ``policyRules.fieldHelp.<key>``
-    and ``policyRules.fieldUnit.<key>`` the help paragraph and unit where the field carries one
-    (#868 phase 4). The save-boundary refusals in ``engine/fields.py`` and ``engine/policy.py``
-    carry the raw ``field`` key as a param instead of a server-composed label (phase 8a): the
-    browser composes ``why.field.<key>`` for the sentence, and an API client reads the key it
-    sent."""
+    ``why.field.<key>`` is the label the policy editor renders, and
+    ``policyRules.fieldHelp.<key>`` and ``policyRules.fieldUnit.<key>`` are the help
+    paragraph and unit where the field carries one. The save-boundary refusals in
+    ``engine/fields.py`` and ``engine/policy.py`` carry the raw ``field`` key as a param
+    instead of a server-composed label: the browser composes ``why.field.<key>`` for the
+    sentence, and an API client reads the key it sent."""
 
     key: str
     type: FieldType
@@ -1199,8 +1335,8 @@ class VocabularyOut(BaseModel):
     """The fields available in ONE lane.
 
     Filtered server-side, before serialization. A protect-only field is never even
-    offered to the condemn editor, so a dangerous condition is not merely rejected --
-    it is unconstructable.
+    offered to the condemn editor, so a dangerous condition is not merely rejected.
+    It is unconstructable.
     """
 
     lane: Lane
@@ -1211,36 +1347,33 @@ class LeavingSoonOut(BaseModel):
     """The result of one shelf pass across every enabled library."""
 
     ok: bool
-    """Whether the pass did what it set out to do. Preview is not a failure; no library
+    """Whether the pass did what it set out to do. Preview is not a failure. No library
     turned on, or one that failed, is."""
     result_reason: ReasonKey
     """The typed reason describing this pass (``LeavingSoonResult.summary``), the same one
     stored on the Jobs row in the same breath. The browser composes it under
-    ``jobs.result.*`` and never words its own, which is how the row and this response came
-    to say different things about one pass (#555)."""
-    # `problems` used to ride here as a per-library list. It was only ever read as
-    # `problems.length > 0`, never rendered, and the split that moved the wording into the
-    # service took even that reader away -- so it shipped a field no operator could reach,
-    # describing itself as "in plain words" while carrying `str(exc)`. `result` now names the
-    # failing libraries, which is the part they needed; the raw cause stays in the
-    # `leaving_soon.problems` log event, where a stack-shaped sentence belongs (rule 64).
+    ``jobs.result.*`` and never words its own, so the row and this response always agree
+    about one pass."""
+    # The failing libraries are named through `result_reason`'s params, not a separate
+    # field. The raw cause (`str(exc)`) stays in the `leaving_soon.problems` log event,
+    # where a stack-shaped sentence belongs.
 
 
 class SignalCountOut(BaseModel):
     """How many condemned titles one signal pushed toward removal. ``id`` is a built-in signal
-    id or a custom rule's name; the UI maps the built-ins to plain labels and shows a custom rule
-    under its own name."""
+    id or a custom rule's name. The UI maps the built-ins to plain labels and shows a custom
+    rule under its own name."""
 
     id: str
     count: int
 
 
 class ReapBreakdownOut(BaseModel):
-    """What a reap built right now would remove, and why. Read-only; deletes nothing.
+    """What a reap built right now would remove, and why. Read-only, and deletes nothing.
 
-    Counts are the reap decision (measured and unmeasured together); the byte figures sum
+    Counts are the reap decision (measured and unmeasured together). The byte figures sum
     only what has a size. Three of them say how much they left out, in ``will_reap_unknown``,
-    ``movies_unknown`` and ``seasons_unknown``; the others do not, so a byte total beside a
+    ``movies_unknown`` and ``seasons_unknown``. The others do not, so a byte total beside a
     count is not a claim that the count is fully measured. ``has_snapshot`` is false before the
     first scan, when every figure is zero."""
 
@@ -1250,9 +1383,10 @@ class ReapBreakdownOut(BaseModel):
     hand_spared: int
     spares_expired: int = 0
     """The share of ``hand_spared`` a scan would hand back to policy: titles kept out of this
-    plan by a spare whose clock has already passed. They are still being kept -- only a scan
-    realizes a spare's expiry -- so they are absent from this plan with nothing on the page to
-    explain it. The Reap page shows one line when nonzero, saying a scan judges them again.
+    plan by a spare whose clock has already passed. They are still being kept, since only a
+    scan realizes a spare's expiry, so they are absent from this plan with nothing on the
+    page to explain it. The Reap page shows one line when nonzero, saying a scan judges them
+    again.
 
     A count of TITLES, not of spares: one whole-show spare can be holding several condemned
     seasons. A title whose own clock has passed but which another spare still covers is not
@@ -1271,7 +1405,7 @@ class ReapBreakdownOut(BaseModel):
     planner holds back and keep its split in step with its total."""
     seasons: int
     seasons_unknown: int = 0
-    """The unmeasured share of ``seasons``; see ``movies_unknown``."""
+    """The unmeasured share of ``seasons``. See ``movies_unknown``."""
     condemned_by: list[SignalCountOut]
 
 
@@ -1292,7 +1426,7 @@ class PlexTrashOut(BaseModel):
     the libraries that answered, so read it with ``sections_unreadable``."""
     sections_unreadable: int = 0
     """Libraries whose trash could not be counted. Nonzero means ``trashed`` is incomplete,
-    and the page warns rather than reading silence as zero (rule 93)."""
+    and the page warns rather than reading silence as zero."""
     empties_after_scan: bool | None = None
     """Plex's own ``autoEmptyTrash`` preference, which is server-wide and ships ON. When
     true, Plex purges the trash itself after every scan Reaper's refresh triggers, so the
@@ -1313,8 +1447,8 @@ class RequesterRowOut(BaseModel):
     cannot see their history at all". ``played_by_them`` below is structurally 0 for a None
     (``fairness._roll_up`` only counts plays inside ``if pid is not None``), and a card that
     renders that as a definite 0% tells the operator a confident zero about someone Reaper
-    never measured, while they decide whose files to delete. Never a key: rule 63 keys rows
-    on ``identity``, which is always present."""
+    never measured, while they decide whose files to delete. Never use this as a row key:
+    rows key on ``identity``, which is always present."""
     name: str
     requests_made: int
     gb_granted_bytes: int
@@ -1328,8 +1462,8 @@ class UnmatchedRequestOut(BaseModel):
     panel. Merged by title across co-requesters, and classified so the panel can say why."""
 
     title: str | None = None
-    """The display name. Null when it couldn't be looked up (no id, or the lookup failed);
-    the row then shows a generic label from the type and date, never an id."""
+    """The display name. Null when it could not be looked up (no id, or the lookup failed).
+    The row then shows a generic label from the type and date, never an id."""
     year: int | None = None
     media_type: str
     """movie | tv. The row reads it as "Movie" / "Series"."""
@@ -1355,14 +1489,14 @@ class FairnessReportOut(BaseModel):
     unmatched: list[UnmatchedRequestOut] = []
     """The not-in-scan requests themselves, named and grouped by reason, for the panel."""
     no_snapshot: bool = False
-    """True when no scan has ever run; Scales has nothing to sit on."""
+    """True when no scan has ever run. Scales has nothing to sit on."""
     horizon_at: str | None = None
-    """How far back the watch history reaches; the watched figures read against it."""
+    """How far back the watch history reaches. The watched figures read against it."""
     rows: list[RequesterRowOut]
 
 
 class QuotaLineOut(BaseModel):
-    """One media type's request cap for a person. ``limit is None`` is unlimited; the window
+    """One media type's request cap for a person. ``limit is None`` is unlimited. The window
     (``days``) and unit differ per type, so movies and series each carry their own."""
 
     limit: int | None = None
@@ -1384,7 +1518,7 @@ class PersonTitleOut(BaseModel):
     media_type: str
     is_4k: bool
     size_bytes: int | None = None
-    """None when nothing about the title is measured; the row says "size unknown"."""
+    """None when nothing about the title is measured. The row says "size unknown"."""
     requested_at: str | None = None
     available_at: str | None = None
     watched_by_them: int
@@ -1418,7 +1552,7 @@ class PersonDetailOut(BaseModel):
     horizon_at: str | None = None
     """How far back the watch history reaches. ``played_by_them`` and every title's
     ``watched_by_them`` are counted with no lower time bound, so a zero is a lower bound
-    against this span, not a measured never-watched; null is an empty mirror, where no watch
+    against this span, not a measured never-watched. Null is an empty mirror, where no watch
     figure here means anything at all."""
     profile_url: str | None = None
     """The requester's page on their request portal, or null when it can't be built. The
@@ -1429,9 +1563,9 @@ class WhitelistEntryOut(BaseModel):
     """One hand-overridden item, as ``POST /api/override`` hands it back.
 
     Pydantic ships a class docstring as the schema ``description``, so this renders in the
-    API reference. It used to say "as the Spared / overrides list shows it", naming a list
-    surface that retired with ``GET /api/whitelist`` -- a reference telling a script author
-    to go looking for a view that is not there (rules 25, 64)."""
+    API reference. It must not name a surface that does not exist, such as a list view
+    that has since retired: that would send a script author looking for something that is
+    not there."""
 
     media_key: str
     title: str
@@ -1444,16 +1578,14 @@ class WhitelistEntryOut(BaseModel):
     created_at: str
 
 
-#: The most days a hand-spare may be set for -- ten years, so a typo cannot set a nonsense
-#: century-long clock. A ceiling only: the floor is ``ge=0`` below, and ``0`` is the default
-#: and means forever, which is the keep direction. This used to claim a ``ge=1`` floor
-#: "so a typo cannot reap the file tomorrow" -- never implemented, and it would not have done
-#: that anyway, since ``ge=1`` admits the one-day spare it describes (rule 7/24).
+#: The most days a hand-spare may be set for: ten years, so a typo cannot set a
+#: nonsense century-long clock. A ceiling only. The floor is ``ge=0`` below, and ``0`` is
+#: the default and means forever, which is the keep direction.
 _MAX_SPARE_DAYS = 3650
 
 
 class OverrideIn(BaseModel):
-    """Override an item's verdict by hand -- spare it (keep) or reap it (force onto the list).
+    """Override an item's verdict by hand: spare it (keep) or reap it (force onto the list).
 
     The title is resolved server-side from the item's latest candidate, so the client sends
     only the identity, the decision, and optionally a note. A ``media_key`` may be a whole
@@ -1482,13 +1614,13 @@ sign-in still works, the window just stops closing.
 """
 
 
-# Declared once because it was declared twice, under one name, in two routers. Pydantic
-# collapsed them into a single published component only while they stayed structurally
-# identical; the moment either gained a field, BOTH operations got module-qualified component
-# names, including the one nobody edited. This is a comment rather than a second docstring
-# paragraph because Pydantic publishes the docstring as the component's ``description``, and
-# an operator reading the API reference does not want this repository's change history
-# (rule 21).
+# One declaration, shared by both routers that return it. FastAPI publishes one OpenAPI
+# component for it only while every usage stays structurally identical. If either usage
+# gained its own field, both would get separate, module-qualified component names, even
+# the one nobody touched. This lives as a comment rather than a second docstring
+# paragraph because Pydantic publishes the class docstring as the component's own
+# description, and an operator reading the API reference does not want implementation
+# reasoning there.
 class PlexServerChoiceOut(BaseModel):
     """One owned server the account could link. Both Plex poll routes answer with it."""
 
@@ -1501,8 +1633,8 @@ class PlexStartIn(BaseModel):
 
     The browser names its own origin because the server cannot. Reaper sits behind
     whatever reverse proxy the operator runs, and in development behind Vite's ``/api``
-    proxy, which rewrites ``Host`` to the API's own port -- so a URL built from the
-    request would forward the window to an address the operator is not on. Only the
+    proxy, which rewrites ``Host`` to the API's own port. A URL built from the request
+    would therefore forward the window to an address the operator is not on. Only the
     browser knows where it is.
 
     Origin only, path appended here, so this can name a host but never a target. It
@@ -1548,7 +1680,7 @@ than 422-ing on a missing body. Shared safely because the model is frozen.
 
 class AboutOut(BaseModel):
     """What's running and where its data lives. Facts only, for the About page and for
-    bug reports; nothing here is editable."""
+    bug reports. Nothing here is editable."""
 
     version: str
     license: str
@@ -1574,7 +1706,7 @@ class UpdateOut(BaseModel):
 
     ``update_available`` is three-state: ``None`` when the check is off, unreachable,
     or the two versions cannot be ordered. The surface renders that as nothing.
-    ``changes`` lists every release newer than the running one, newest first; empty
+    ``changes`` lists every release newer than the running one, newest first. Empty
     unless ``update_available`` is ``True``, and always empty on the dev channel.
     """
 
@@ -1593,16 +1725,16 @@ class ProtectionListOut(BaseModel):
 
     ``name`` is the provider's own display name, which is what the operator configured it
     from ("Sonarr tag: reaper-keep", 'Plex collection: "Never Reap"'). It arrives from Plex
-    or an *arr, so a surface rendering it wraps rather than truncates (rule 139).
+    or an *arr, so a surface rendering it wraps rather than truncates.
 
     ``state`` is ``lists.ListHealth``, derived server-side so this screen and the degraded
-    scan notice cannot disagree about what a failed check means (rule 144). ``item_count``
-    is what the stored copy still protects: a ``failing`` list with members above zero went
-    on covering them, because a failed refresh leaves the previous membership in place.
+    scan notice cannot disagree about what a failed check means. ``item_count`` is what the
+    stored copy still protects: a ``failing`` list with members above zero goes on covering
+    them, because a failed refresh leaves the previous membership in place.
     """
 
     slug: str
-    """The stable key rows are listed by. Not shown; a display name can collide (rule 63)."""
+    """The stable key rows are listed by. Not shown, since a display name can collide."""
 
     name: str
     source: Literal["arr_tag", "plex_collection", "plex_watchlist", "imdb"]
@@ -1620,24 +1752,24 @@ class ProtectionListOut(BaseModel):
 
     list_id: int | None
     """Which ``ListConfig`` this membership was synced for, so the screen can render one row
-    per definition and put Edit and Check now on it. Several rows share one id -- a tag list
-    is synced once per *arr instance -- and it is null for a row stored before its
+    per definition and put Edit and Check now on it. Several rows share one id, since a tag
+    list is synced once per *arr instance, and it is null for a row stored before its
     definition existed, which the next successful check re-homes. Derived from the slug in
-    ``lists.list_id_of``, beside the spellings, never parsed in the browser (rule 63)."""
+    ``lists.list_id_of``, beside the spellings, never parsed in the browser."""
 
     tags: dict[str, int] | None = None
     """A tag list's per-tag counts from the last good check, by the operator's spelling of
     each tag. Null for every other source, and for a row that has not synced since the
-    counts started being recorded -- unknown, never zero."""
+    counts started being recorded: unknown, never zero."""
 
     server: str | None = None
     """Which *arr instance a tag list's row was read from, for the per-server counts. The
-    operator named the instance on Settings; null for every other source."""
+    operator named the instance on Settings. Null for every other source."""
 
     media_types: list[Literal["movie", "tv"]] = Field(default_factory=list)
     """Which media types this row's stored members span. Empty until the first sync. The
-    screen compares it against the media types a keep rule names (``policy_use``) so a rule
-    covering only one side of a mixed list reads as partial cover, not full (#533)."""
+    screen compares it against the media types a keep rule names (``policy_use``), so a
+    rule covering only one side of a mixed list reads as partial cover, not full."""
 
 
 class ListConfigIn(BaseModel):
@@ -1655,8 +1787,8 @@ class ListConfigIn(BaseModel):
 
 
 class ListConfigPatch(BaseModel):
-    """An edit. Every field optional: omitted means "leave it", which is why none default
-    to a value (rule 1 -- an omitted field and an explicit one are different requests)."""
+    """An edit. Every field is optional: omitted means "leave it", which is why none
+    default to a value. An omitted field and an explicit one are different requests."""
 
     name: str | None = Field(default=None, min_length=1, max_length=100)
     config: dict[str, Any] | None = None
@@ -1676,13 +1808,13 @@ class ListSyncOut(BaseModel):
 
     failed: int
     """Lists whose check failed. Each one's own error is on its row, which the screen
-    refetches; this is only what the button says when it settles."""
+    refetches. This is only what the button says when it settles."""
 
     plex_error_reason: ReasonKey | None
     """Set when Plex could not be reached, so its collections were not checked at all and no
     row carries an error explaining why. Null when Plex answered or none is linked. The
     catalog id plus Plex's own error text as a raw ``error`` param (docs/history/
-    I18N_PLAN.md §5): ``ListsPanel.tsx`` composes ``lists.plexError`` (rule 92)."""
+    I18N_PLAN.md §5): ``ListsPanel.tsx`` composes ``lists.plexError``."""
 
 
 class ListPolicyUseOut(BaseModel):
@@ -1698,15 +1830,15 @@ class ListPolicyUseOut(BaseModel):
 class ListConfigOut(BaseModel):
     """A list definition: what the operator named it and where it points.
 
-    The DEFINITION, not the membership. ``ProtectionListOut`` above is the other half --
-    what that definition is currently protecting -- and the two are joined in the browser
-    on ``list_id`` rather than merged here: a definition exists from the moment it is
+    The definition, not the membership. ``ProtectionListOut`` above is the other half:
+    what that definition is currently protecting. The two are joined in the browser on
+    ``list_id`` rather than merged here, since a definition exists from the moment it is
     saved, and its membership does not exist until a sync has run.
     """
 
     id: int
     name: str
-    """The operator's own words. Free text, so a surface rendering it wraps (rule 139)."""
+    """The operator's own words. Free text, so a surface rendering it wraps."""
 
     source: Literal["arr_tag", "plex_collection", "plex_watchlist", "imdb"]
     config: dict[str, Any]
@@ -1715,11 +1847,11 @@ class ListConfigOut(BaseModel):
     policy_use: list[ListPolicyUseOut] = Field(default_factory=list)
     """How the policies use this list right now: one entry per keep rule naming it
     (``services.list_rules.usage``). Empty means no rule does, which the screen renders as
-    a warning -- a defined list that protects nothing."""
+    a warning: a defined list that protects nothing."""
 
     authorable_media: list[Literal["movie", "tv"]] = Field(default_factory=list)
-    """The media types a keep rule on this list can be authored for -- the set the Policy
+    """The media types a keep rule on this list can be authored for: the set the Policy
     editor's list picker offers it on (``policy_migrations.authorable_media_scope``). A Plex
-    collection takes its library's kind and a watchlist both, known before any sync; a tag or
-    IMDb list is known only once a sync has read it. Empty means offer on neither: the type is
-    not known, so a rule could keep nothing (rule 38, #549)."""
+    collection takes its library's kind and a watchlist both, known before any sync. A tag
+    or IMDb list is known only once a sync has read it. Empty means offer on neither: the
+    type is not known, so a rule could keep nothing."""

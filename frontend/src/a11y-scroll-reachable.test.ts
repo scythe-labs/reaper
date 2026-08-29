@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // A container that scrolls is reachable from a keyboard, or it is recorded here as one that
-// does not need to be (WCAG 2.1.1, #177).
+// does not need to be (WCAG 2.1.1).
 //
 // A `overflow: auto` box with nothing focusable inside it cannot be scrolled by keyboard at
-// all. There is no key that scrolls "the thing under the mouse" -- the arrows scroll whatever
-// holds focus -- so a pane of pure prose, a log of `<span>` rows, or a table too wide for the
-// screen is simply unreadable past its first screenful unless something in it can take focus.
-// Six of the seven such containers in this app were in that state at once, and the tell is
-// that the audit which found them ALSO recorded them as fixed: one of the six got `tabIndex`,
-// the note said the class was handled, and the other five sat there for another four passes.
+// all. There is no key that scrolls "the thing under the mouse." The arrow keys scroll
+// whatever holds focus, so a pane of pure prose, a log of `<span>` rows, or a table too wide
+// for the screen is unreadable past its first screenful unless something in it can take focus.
 //
 // **This is a test rather than a rule because a rule cannot see a new one arrive.** The
 // population is discovered from the stylesheet, not from a list somebody remembers to extend,
@@ -17,17 +14,14 @@
 // two states the new box is in. The decision is cheap while the markup is in front of you
 // and expensive to reconstruct later.
 //
-// **What it can and cannot do** (rule 118 -- a check that cannot discriminate must not read as
-// a proof):
+// **What it can and cannot do** (a check that cannot discriminate must not read as a proof):
 //   - It DOES pin the population, so a new scroll container cannot ship unclassified, and a
-//     renamed or deleted one fails rather than dropping out of the walk (rule 145).
+//     renamed or deleted one fails rather than dropping out of the walk.
 //   - It DOES read the real opening tag for a `reachable` site, brace-aware, so `tabIndex={0}`
 //     being deleted or moved to a different element fails.
 //   - It does NOT prove an `exempt` site really holds a focusable child in every state it can
-//     render -- `.why` was cleared on exactly that claim and it was false in two of its six
-//     call sites. The `why` string is the argument, and it is re-read by a person, not by
-//     this file.
-//   - It does NOT know whether a focusable container has a sensible accessible name; the axe
+//     render. The `why` string is a human argument, and someone still has to re-read it.
+//   - It does NOT know whether a focusable container has a sensible accessible name. The axe
 //     audits each panel carries cover that.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -41,7 +35,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 
 /** How a scrolling container lets a keyboard in. */
 type Reach =
-  /** The container itself is a Tab stop: `tabIndex={0}` on the element carrying the class. */
+  /** The container itself is a Tab stop. `tabIndex={0}` sits on the element carrying the class. */
   | "focusable"
   /** It always contains a real control, so Tab lands inside it and the arrows scroll it. */
   | "has-controls"
@@ -80,20 +74,10 @@ const CONTAINERS: Record<string, Container> = {
     reach: "focusable",
     why: "log rows are <span>s; nothing in the console can take focus",
   },
-  ".table-scroll": {
-    file: "components/ReapPlan.tsx",
-    reach: "focusable",
-    why: "the plan-steps table is the journalled record of what a run will send, and no cell is focusable",
-  },
   ".matrix-scroll": {
     file: "components/ListsPanel.tsx",
     reach: "focusable",
     why: "the per-server counts matrix scrolls sideways on a narrow pane and holds no focusable cell, so the box itself takes the tabIndex to carry the scroll",
-  },
-  ".dryrun-outcomes": {
-    file: "components/ReapPlan.tsx",
-    reach: "focusable",
-    why: "the practice-run outcome list is text; the list keeps its listitems and takes the tabIndex itself",
   },
   ".why": {
     file: "components/WhyShell.tsx",
@@ -135,11 +119,21 @@ const CONTAINERS: Record<string, Container> = {
     reach: "has-controls",
     why: "an aria-activedescendant listbox: the <input> keeps DOM focus and the arrow keys move the active option, so the operator drives it without the list ever taking focus. It holds no focusable child of its own, which is why it reads as an exception here rather than as one of the buttons-inside cases",
   },
+  ".feed-scroll": {
+    file: "components/ReapPlan.tsx",
+    reach: "focusable",
+    why: "the reaping card's item-status log is icon, title and size spans, none of them focusable",
+  },
+  ".run-detail-scroll": {
+    file: "components/ReapPlan.tsx",
+    reach: "focusable",
+    why: "the run detail sheet's outcomes feed is the same spans as .feed-scroll, with nothing focusable in a row",
+  },
 };
 
 /** The count is pinned so a scroll container that leaves the walk fails as loudly as one that
- *  arrives without a classification (rule 145): a flag-shaped assertion cannot tell a member
- *  that complies from one the matcher stopped collecting. */
+ *  arrives without a classification. A flag-shaped assertion cannot tell a member that
+ *  complies from one the matcher stopped collecting. */
 const EXPECTED_CONTAINERS = 15;
 
 /** `overflow`, `overflow-x` or `overflow-y` set to a value that makes a box scroll. `hidden`,
@@ -156,7 +150,7 @@ function rules(): { selector: string; body: string; at: number }[] {
   let m: RegExpExecArray | null;
   while ((m = re.exec(code)) !== null) {
     const selector = (m[1] ?? "").trim().replace(/\s+/g, " ");
-    // A media query's own prelude opens a block whose "body" is more rules; the flat walk sees
+    // A media query's own prelude opens a block whose "body" is more rules. The flat walk sees
     // the inner rules on their own, so an `@media` prelude reaching here has an empty body.
     if (selector.startsWith("@")) continue;
     out.push({ selector, body: m[2] ?? "", at: m.index });
@@ -173,30 +167,28 @@ function scrollers(): { selector: string; at: number }[] {
 
 /** The JSX opening tag that carries `className`-with-this-class, read whole.
  *
- *  Anchoring on a delimiter would not survive this tree (rule 147). Three forms here defeat the
- *  obvious scan, and each of them is load-bearing in a real component:
+ *  Anchoring on a delimiter would not survive this tree. Three forms here defeat the obvious
+ *  scan, and each of them is load-bearing in a real component:
  *    - `.log-console`'s class is a ternary, not a literal, so a matcher wanting `className="`
- *      never sees it;
- *    - `.why`'s element carries an `onKeyDown` arrow function, whose `=>` is a `>` a forward
- *      scan takes for the end of the tag;
- *    - `.why`'s element ALSO holds a comment discussing `<aside>` and `<header>`, so a scan
- *      that treats `<` as "this was never a tag" abandons the real tag halfway through. That
- *      one is not hypothetical: it is what this matcher did on its first run, and the failure
- *      read as "no element renders that class" -- a missing-surface message for a surface
- *      that was right there.
- *  So the scan tracks brace depth, quote state AND comments, and only a `>` at depth 0 outside
- *  both closes the tag. Returns every matching tag, since a class can be rendered at more than
- *  one site and each has to carry the attribute. */
+ *      never sees it.
+ *    - `.why`'s element carries an `onKeyDown` arrow function, whose `=>` includes a `>` a
+ *      forward scan would take for the end of the tag.
+ *    - `.why`'s element also holds a comment discussing `<aside>` and `<header>`, so a scan
+ *      that treats `<` as "this was never a tag" would abandon the real tag halfway through,
+ *      and report "no element renders that class" for a surface that is right there.
+ *  So the scan tracks brace depth, quote state, and comments, and only a `>` at depth 0
+ *  outside both closes the tag. Returns every matching tag, since a class can be rendered at
+ *  more than one site and each has to carry the attribute. */
 function openingTagsWithClass(source: string, cls: string): string[] {
   const found: string[] = [];
-  // The class as it appears inside the className VALUE: bounded by quote, brace, space or the
+  // The class as it appears inside the className value: bounded by quote, brace, space, or the
   // string's own edge, so `doc-table` does not match `doc-table-wide`. The value is carved out
-  // by `classValueSpan` below rather than searched for in the whole tag: a windowed search
-  // over the tag classified `.why-close`'s button as carrying `.why` the day an aria-label
-  // beside it started holding the catalog key `why.panel.shell.close` (Stage 4), because a
-  // dotted key spells the bare word the window was looking for.
+  // by `classValueSpan` below rather than searched for in the whole tag. A windowed search over
+  // the tag would misclassify `.why-close`'s button as carrying `.why` whenever a nearby
+  // aria-label holds a dotted catalog key like `why.panel.shell.close`, since the key spells
+  // the bare word the window is looking for.
   const needle = new RegExp(`(?<![\\w-])${cls}(?![\\w-])`);
-  // The className value's own text: the literal's contents, or the balanced braced
+  // The className value's own text. Either the literal's contents, or the balanced braced
   // expression's, which covers the ternary and template spellings the tree uses.
   const classValueSpan = (tag: string): string | null => {
     const at = tag.indexOf("className=");
@@ -266,7 +258,7 @@ function openingTagsWithClass(source: string, cls: string): string[] {
 
 const read = (file: string) => readFileSync(join(HERE, file), "utf8");
 
-/** The last simple class in a selector is the element the rule is about: `.docs-content
+/** The last simple class in a selector is the element the rule is about. `.docs-content
  *  .doc-table` styles the table wrapper, not the pane around it. */
 function classOf(selector: string): string {
   const parts = selector.split(/[\s>+~]+/).filter(Boolean);
@@ -296,7 +288,7 @@ describe("a scrolling container is reachable from a keyboard", () => {
       "classified here but no longer scrolling in the stylesheet: if the selector was renamed, " +
         "rename it here; if the container is gone, delete its row (rule 64)",
     ).toEqual([]);
-    // Pins the size of the walk itself, which the two lists above cannot: they agree with each
+    // Pins the size of the walk itself, which the two lists above cannot. They agree with each
     // other perfectly while both describing a population the matcher stopped collecting.
     expect(seen.length, "the number of scrolling containers in the stylesheet").toBe(
       EXPECTED_CONTAINERS,
@@ -346,8 +338,8 @@ describe("a scrolling container is reachable from a keyboard", () => {
 
   it("still renders the class for a container exempted on its contents", () => {
     // The `why` is a human argument and this cannot check it. What it does hold is that the
-    // surface still exists: an exemption whose element is gone is a stale row vouching for a
-    // decision nobody has re-made (rule 64).
+    // surface still exists. An exemption whose element is gone is a stale row vouching for a
+    // decision nobody has re-made.
     const missing: string[] = [];
     for (const [selector, c] of Object.entries(CONTAINERS)) {
       if (c.reach !== "has-controls") continue;

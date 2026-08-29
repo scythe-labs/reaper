@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The "not in the last scan" list: every available request the scan didn't judge, grouped by
-// WHY, so the operator can see what each one is and why it wasn't matched. Shared by two
-// surfaces -- the board's own panel (NotInScanPanel, opened from the amber tile) and each
-// person's drawer (ScalesPanel, where it replaces the old "N not listed here" footer) -- so
-// both read the same way. It decides nothing: like the rest of Scales, it explains.
+// why, so the operator can see what each one is and why it wasn't matched. Shared by two
+// surfaces: the board's own panel (NotInScanPanel, opened from the amber tile) and each
+// person's drawer (ScalesPanel, where it replaces the old "N not listed here" footer). Both
+// read the same way. It decides nothing: like the rest of Scales, it explains.
 //
 // A row never opens anything (there is no candidate to open), so it rests as static text,
-// reusing the requested-title row chrome. Titles are looked up server-side; when one is
-// missing the row falls back to its type and date, never an id (rule 21).
+// reusing the requested-title row chrome. Titles are looked up server-side. When one is
+// missing, the row falls back to its type and date, never an id.
 
 import { useTranslation } from "react-i18next";
 import type { UnmatchedRequest } from "../api";
@@ -18,9 +18,9 @@ import { PosterFallback } from "./PosterFallback";
 
 /** The reason groups, in reading order: the benign-and-expected first (a rescan fixes it),
  *  then the ones worth a look. Each names itself and carries one bound line explaining what
- *  it means for their files (rule 45). A colored left stripe encodes the reason at a glance.
- *  Heading and why text live in the catalog, keyed by `reasonHeading`/`reasonWhy` below --
- *  a plain data array can't hold translated strings, since a language change wouldn't be
+ *  it means for their files. A colored left stripe encodes the reason at a glance.
+ *  Heading and why text live in the catalog, keyed by `reasonHeading`/`reasonWhy` below,
+ *  because a plain data array can't hold translated strings: a language change wouldn't be
  *  picked up on re-render (same reason `reasonLabel` in ReapBreakdown.tsx is a function). */
 const REASONS: { key: string; cls: string }[] = [
   { key: "after_scan", cls: "nis-group--new" },
@@ -56,8 +56,8 @@ function reasonWhy(key: string): string {
   }
 }
 
-/** Who asked, in plain words. On the board it names the requesters ("by A, B"); inside one
- *  person's drawer their own name is dropped and it reads "also asked by X" -- matching the
+/** Who asked, in plain words. On the board it names the requesters ("by A, B"). Inside one
+ *  person's drawer their own name is dropped and it reads "also asked by X", matching the
  *  in-scan rows, so a shared title never looks like it was theirs alone. Long lists trail off
  *  as "and N others" rather than running off the row. */
 function requesterLabel(names: string[], excludeName?: string): string | null {
@@ -72,12 +72,12 @@ function requesterLabel(names: string[], excludeName?: string): string | null {
 }
 
 /** One unmatched request: what it is (or a graceful fallback when unnamed), its type, when it
- *  was asked for or arrived, and who asked. Static -- there is nothing to open. */
+ *  was asked for or arrived, and who asked. Static: there is nothing to open. */
 function Row({ u, excludeName }: { u: UnmatchedRequest; excludeName?: string | undefined }) {
   const { t } = useTranslation();
   const kind =
     u.media_type === "movie" ? t("scales.mediaKind.movie") : t("scales.mediaKind.series");
-  // Some stored titles already end in their year; don't print it twice.
+  // Some stored titles already end in their year. Don't print it twice.
   const showYear = u.title != null && u.year != null && !u.title.trim().endsWith(`(${u.year})`);
 
   const meta: string[] = [kind];
@@ -100,9 +100,10 @@ function Row({ u, excludeName }: { u: UnmatchedRequest; excludeName?: string | u
         <span className="scales-title-meta">
           {meta.map((m, i) => (
             <span key={i}>
-              {/* A separator, not a word: read out it lands as "middle dot" between two
-                  facts a reader is trying to hear as a list (#177). Its twin in
-                  UnmatchedList/ScalesPanel carries the same hide (rule 72). */}
+              {/* Decorative separator, not a word: a screen reader would read it out as
+                  "middle dot" between two facts a listener is trying to hear as a list, so
+                  it carries aria-hidden. ScalesPanel has the same separator, hidden the
+                  same way. */}
               {i > 0 && (
                 <span className="scales-dot" aria-hidden="true">
                   ·

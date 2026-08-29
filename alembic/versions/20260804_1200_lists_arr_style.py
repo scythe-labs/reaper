@@ -1,23 +1,25 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Every list is Arr-style now: the registry gains the keep tags and the IMDb variants.
+"""Every list is Arr-style now. The registry gains the keep tags and the IMDb variants.
 
-Three additive data moves, no schema change:
+This migration makes three additive data moves. It changes no schema.
 
 * ``source = 'curated'`` rows become ``'imdb'`` with a ``preset`` config, the spelling the
-  generalized IMDb provider reads. The operator's name survives.
-* The policy keep tags become a tag list named on Settings -> Lists, seeded from the newest
-  stored policy bodies: both media types, tags unioned, and matched ANY unless the two
-  bodies named the same tags under ALL. A union is only the wider read under ANY, since ALL
-  would ask each title for both policies' tags (see ``_stored_keep_tags``). The policy-body
-  half of the same move -- the ``on_list`` rules that make the list act -- is
-  ``engine.policy_migrations.convert_list_protections``, which runs on load and is reviewed and saved
-  by the operator; this migration only makes sure the list those rules name exists.
-* ``lists_seeded`` is set whenever any definition exists, so ``list_config.ensure_defaults``
-  does not add a second, shipped copy beside an upgraded install's own rows.
+  generalized IMDb provider reads. The operator's own name for the list survives.
+* The policy keep tags become a tag list named on Settings -> Lists, seeded from the
+  newest stored policy bodies. Both media types' tags are unioned and matched ANY, unless
+  both bodies named the same tags under ALL. A union can only be the wider read under ANY,
+  since ALL would require each title to carry both policies' tags (see
+  ``_stored_keep_tags``). The other half of this move, the ``on_list`` rules that make the
+  list act, is ``engine.policy_migrations.convert_list_protections``, which runs on load
+  and is reviewed and saved by the operator. This migration only makes sure the list those
+  rules name exists.
+* ``lists_seeded`` is set whenever any definition exists, so
+  ``list_config.ensure_defaults`` does not add a second, shipped copy beside an upgraded
+  install's own rows.
 
-``built_in`` clears and ``enabled`` sets on every row: the Protecting switch left the UI
-(a list acts through its keep rules now), and every list is removable since its rules leave
-with it. A disabled row would otherwise render with no control that can re-enable it.
+``built_in`` clears and ``enabled`` sets on every row. The Protecting switch left the UI,
+since a list now acts through its keep rules, and every list is removable since its rules
+leave with it. A disabled row would otherwise render with no control that can re-enable it.
 """
 
 from __future__ import annotations
@@ -37,19 +39,20 @@ _TAG_LIST_NAME = "Titles you've tagged"
 
 
 def _stored_keep_tags(conn: sa.Connection) -> tuple[list[str], str]:
-    """The keep tags the newest stored policy of each media type carries, unioned.
+    """Return the keep tags the newest stored policy of each media type carries, unioned.
 
-    ``all`` survives only when both bodies said ``all`` **and named the same tags**. The
-    legacy keep tags were per policy AND per service: a movie carrying the movie policy's
-    tag was on its keep list whatever the tv policy said. One list replaces both, and under
-    ALL membership is ``wanted <= carried`` (``services.lists.ArrTagRule``), so unioning two
-    DIFFERENT sets under ALL asks every title to carry both policies' tags -- and a movie
-    carrying only the movie tag drops off the list the union was widening. ANY is the only
-    union that cannot withdraw cover from a title one of the two policies was keeping.
+    ``all`` survives only when both bodies said ``all`` and named the same tags. The old
+    keep tags were scoped per policy and per service: a movie carrying the movie policy's
+    tag was on its keep list no matter what the tv policy said. One list now replaces both.
+    Under ALL, membership means ``wanted <= carried`` (``services.lists.ArrTagRule``), so
+    unioning two different tag sets under ALL would require every title to carry both
+    policies' tags, and a movie carrying only the movie tag would drop off the list the
+    union was meant to widen. ANY is the only union that cannot withdraw cover from a
+    title either policy was keeping.
 
-    One stored policy on its own is left exactly as it was: there is no second set to
-    disagree with, so its own match mode carries over. A body that carries no key ran on the
-    shipped default tag.
+    A single stored policy is left exactly as it was, since there is no second set to
+    disagree with, so its own match mode carries over. A body with no keep_tags key ran
+    on the shipped default tag.
     """
     tags: list[str] = []
     per_body: list[frozenset[str]] = []
@@ -85,8 +88,8 @@ def _stored_keep_tags(conn: sa.Connection) -> tuple[list[str], str]:
         matches.append("all" if body.get("keep_tags_match") == "all" else "any")
     if not spoke:
         tags = ["reaper-keep"]
-    # Compared case-folded, the comparison every reader of a tag makes (rule 88) and the
-    # one Sonarr and Radarr themselves make: "Keep" and "keep" are one tag there.
+    # Compared case-folded, the same comparison every reader of a tag makes, and the one
+    # Sonarr and Radarr themselves make. "Keep" and "keep" are one tag there.
     agreed = len(set(per_body)) <= 1
     match = "all" if matches and all(m == "all" for m in matches) and agreed else "any"
     return tags, match
@@ -95,8 +98,8 @@ def _stored_keep_tags(conn: sa.Connection) -> tuple[list[str], str]:
 def upgrade() -> None:
     conn = op.get_bind()
 
-    # 1. The IMDb respelling. The old config body named which shipped list; only the Top 250
-    # ever existed, so every 'curated' row is it.
+    # 1. The IMDb respelling. The old config body named which shipped list. Only the Top
+    # 250 ever existed, so every 'curated' row is it.
     conn.execute(
         sa.text(
             "UPDATE list_config SET source = 'imdb', config_json = :config "
@@ -104,12 +107,12 @@ def upgrade() -> None:
         ),
         {"config": json.dumps({"preset": "top250"})},
     )
-    # 2. Every list is removable and always on; the switch and the built-in lock left the UI.
+    # 2. Every list is removable and always on. The switch and the built-in lock left the UI.
     conn.execute(sa.text("UPDATE list_config SET built_in = 0, enabled = 1"))
 
-    # 3. The keep tags become a list, for installs that have any state to carry: stored
-    # policies (their tags), or definitions (the branch's earlier builds). A truly fresh
-    # database leaves the flag unset and `ensure_defaults` seeds both lists on first read.
+    # 3. The keep tags become a list, for installs that already have stored policies or
+    # list definitions to carry forward. A brand new database leaves the flag unset, and
+    # `ensure_defaults` seeds both lists on first read.
     rows = int(
         conn.execute(sa.text("SELECT COUNT(*) FROM list_config")).scalar_one() or 0
     )
@@ -143,17 +146,17 @@ def upgrade() -> None:
                     {
                         "name": name,
                         "config": json.dumps({"tags": tags, "match": match}),
-                        # An INTEGER unix timestamp: EpochDateTime's storage form. Binding a
-                        # datetime through raw SQL lands an ISO string the ORM raises on --
-                        # the defect the previous seed migration shipped and then pinned.
+                        # An integer unix timestamp, EpochDateTime's storage form. Binding
+                        # a Python datetime through raw SQL would land an ISO string
+                        # instead, which the ORM later raises on.
                         "now": int(datetime.now(UTC).timestamp()),
                     },
                 )
 
-    # 4. The IMDb list, when none exists. The default policy's keep rule names "IMDb Top
-    # 250", and this migration sets the seeded flag below, so skipping this here would
-    # leave every install whose only row is the previous migration's "Never Reap" seed
-    # with a rule naming a list that does not exist -- found by driving a fresh install.
+    # 4. The IMDb list, added when none exists. The default policy's keep rule names
+    # "IMDb Top 250", and this migration sets the seeded flag below. Skipping this step
+    # would leave an install whose only row is the previous migration's "Never Reap" seed
+    # with a rule naming a list that does not exist.
     has_imdb = int(
         conn.execute(
             sa.text("SELECT COUNT(*) FROM list_config WHERE source = 'imdb'")
@@ -178,7 +181,7 @@ def upgrade() -> None:
                 },
             )
 
-    # 5. The defaults are considered seeded: this install has its own rows now, and the
+    # 5. The defaults are now considered seeded. This install has its own rows, and the
     # first read must not add a second shipped copy beside them.
     now = int(datetime.now(UTC).timestamp())
     existing = conn.execute(
@@ -207,7 +210,7 @@ def downgrade() -> None:
         ),
         {"config": json.dumps({"list": "imdb-top-250"})},
     )
-    # The seeded tag list and the flag were this migration's own writes; the tag rows an
-    # operator authored under the new UI are indistinguishable from the seed by now, so the
-    # conservative downgrade keeps them all and removes only the flag.
+    # The seeded tag list and the flag were this migration's own writes. By now, the tag
+    # rows an operator authored under the new UI are indistinguishable from the seed, so
+    # this conservative downgrade keeps them all and removes only the flag.
     conn.execute(sa.text("DELETE FROM app_setting WHERE key = 'lists_seeded'"))

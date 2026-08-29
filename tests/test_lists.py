@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Curated lists as protections.
 
-The differentiating feature: no competitor ingests a curated list as a protection
+This is the differentiating feature. No competitor ingests a curated list as a protection
 source. "Never reap anything in the IMDb Top 250" is a rule you cannot write in
 Maintainerr, Janitorr or Reclaimerr.
 """
@@ -75,7 +75,7 @@ class _FakePlexServer:
     collection (plexapi raises ``NotFound``), a list is one holding an object per entry,
     and an entry is either a guid string (a movie carrying that IMDb id, or ``None`` for
     one whose guids no longer parse) or a :class:`_Held` spelling out title and type.
-    Every library reports the SAME title, so several entries model the same-title case
+    Every library reports the *same* title, so several entries model the same-title case
     the resolver has to survive.
     """
 
@@ -124,7 +124,8 @@ class _FakePlexServer:
 
 
 class TestArrTagRule:
-    """The configurable keep-list: several tags, combined ANY (union) or ALL (intersection)."""
+    """The configurable keep-list: several tags, combined ``any`` (union) or ``all``
+    (intersection)."""
 
     @pytest.fixture
     def sonarr(self) -> FakeSonarr:
@@ -154,10 +155,10 @@ class TestArrTagRule:
     @pytest.mark.parametrize("configured", ["Reaper-Keep", "REAPER-KEEP", " reaper-keep "])
     async def test_the_operators_capitalization_still_matches(self, configured: str) -> None:
         """Sonarr and Radarr lower-case every label at the source, so an operator who
-        configures the natural capitalization of their own tag was looking up a spelling the
-        tag map cannot hold. The tag then read as MISSING, and on a first sync that stored an
-        empty keep-list and reported success: keep-tagged titles silently deletable, forever,
-        with the settings screen showing the list as healthy."""
+        configures the natural capitalization of their own tag was looking up a spelling
+        the tag map cannot hold. The tag then read as *missing*, and on a first sync that
+        stored an empty keep-list and reported success. Keep-tagged titles were silently
+        deletable, forever, with the settings screen showing the list as healthy."""
         sonarr = FakeSonarr(
             tag_rows=[{"id": 1, "label": "reaper-keep"}],
             series_rows=[{"title": "A", "tvdbId": 10, "tags": [1]}],
@@ -184,8 +185,8 @@ class TestArrTagRule:
         assert rule.tag_counts == {"keep": 2, "gold": 2}
 
     async def test_all_mode_counts_per_tag_not_per_match(self, sonarr: FakeSonarr) -> None:
-        """Under ALL only B matches the rule, and the counts still say what each tag
-        covers on its own -- a per-tag count is independent of the combining mode."""
+        """Under ``all`` only B matches the rule, and the counts still say what each tag
+        covers on its own. A per-tag count is independent of the combining mode."""
         rule = ArrTagRule(sonarr, ("keep", "gold"), "all")
         items = await rule.fetch()
 
@@ -194,7 +195,7 @@ class TestArrTagRule:
 
     async def test_the_counts_keep_the_operators_own_spelling(self) -> None:
         """The counts are keyed by the spelling the operator configured, which is what the
-        Lists screen echoes back -- both sides of the lookup itself stay case-folded."""
+        Lists screen echoes back. Both sides of the lookup itself stay case-folded."""
         sonarr = FakeSonarr(
             tag_rows=[{"id": 1, "label": "reaper-keep"}],
             series_rows=[{"title": "A", "tvdbId": 10, "tags": [1]}],
@@ -205,7 +206,7 @@ class TestArrTagRule:
         assert rule.tag_counts == {"Reaper-Keep": 1}
 
     async def test_sync_stats_carries_the_counts_and_the_server(self, sonarr: FakeSonarr) -> None:
-        """The server is named service-first ("Sonarr (hd)"): the instance name alone is
+        """The server is named service-first ("Sonarr (hd)"). The instance name alone is
         the operator's own label ("hd", "4k"), which two services can share, and the
         per-server fold-out on the Lists screen echoes this string as the whole row head."""
         rule = ArrTagRule(sonarr, ("keep",), "any", instance_name="hd")
@@ -216,15 +217,15 @@ class TestArrTagRule:
     async def test_stats_before_any_counting_pass_read_as_unknown_not_zero(
         self, sonarr: FakeSonarr
     ) -> None:
-        """An untaken count is unknown, never zero (rule 96): before a fetch the stats
-        carry ``tags: None``, which the screen renders as bare pills."""
+        """An untaken count is unknown, never zero. Before a fetch the stats carry
+        ``tags: None``, which the screen renders as bare pills."""
         rule = ArrTagRule(sonarr, ("keep",), "any", instance_name="hd")
 
         assert rule.sync_stats == {"tags": None, "server": "Sonarr (hd)"}
 
     async def test_a_wholly_missing_tag_counts_zero_for_every_tag(self) -> None:
-        """No configured tag exists upstream, so no title carries one: every count is a
-        TRUE zero, and recording them is what lets the genuinely-empty first sync show
+        """No configured tag exists upstream, so no title carries one. Every count is a
+        *true* zero, and recording them is what lets the genuinely-empty first sync show
         "0" on the Lists screen instead of a blank."""
         sonarr = FakeSonarr(tag_rows=[{"id": 1, "label": "other"}], series_rows=[])
         rule = ArrTagRule(sonarr, ("keep", "gold"), "any")
@@ -237,10 +238,9 @@ class TestArrTagRule:
     async def test_all_mode_with_one_tag_resolved_leaves_the_counts_unknown(
         self, sonarr: FakeSonarr
     ) -> None:
-        """Under ALL one absent tag aborts the fetch before the counting pass, so the
-        resolved tags' counts were never taken -- and an untaken count is unknown, not
-        zero (rule 96): "keep" genuinely covers titles here, and storing 0 would say the
-        opposite."""
+        """Under ``all`` one absent tag aborts the fetch before the counting pass, so the
+        resolved tags' counts were never taken. An untaken count is unknown, not zero.
+        "keep" genuinely covers titles here, and storing 0 would say the opposite."""
         rule = ArrTagRule(sonarr, ("keep", "absent"), "all")
 
         with pytest.raises(ContainerMissingError):
@@ -284,7 +284,7 @@ class TestSyncStatsRoundTrip:
     ) -> None:
         """The counts are decoration on a row whose count column stands, so a body that
         will not parse (or is not an object) reads as unknown rather than raising the row
-        off the screen (rule 96's shape)."""
+        off the screen."""
         rule = self._rule()
         await sync(engine, rule, kind=ListKind.WHITELIST)
         async with engine.begin() as conn:
@@ -300,8 +300,8 @@ class TestSyncStatsRoundTrip:
 
 class TestMediaTypesSpan:
     """``configured`` reports which media types a slug's stored members span, read back from
-    ``protection_list_item``. The Lists screen compares it against the types a keep rule names
-    so a rule covering one side of a mixed list reads as partial cover, not full (#533)."""
+    ``protection_list_item``. The Lists screen compares it against the types a keep rule
+    names, so a rule covering one side of a mixed list reads as partial cover, not full."""
 
     async def test_a_list_holding_both_kinds_spans_both(self, engine: AsyncEngine) -> None:
         provider = _StaticProvider(
@@ -325,9 +325,9 @@ class TestMediaTypesSpan:
         assert rows[provider.slug].media_types == frozenset({"movie"})
 
     async def test_a_row_with_no_members_yet_spans_nothing(self, engine: AsyncEngine) -> None:
-        # A defined list before its first sync holds no members, so it spans nothing -- which
+        # A defined list before its first sync holds no members, so it spans nothing. That
         # is what lets the screen say an unchecked list protects neither side, rather than
-        # claiming cover it cannot confirm (#533).
+        # claiming cover it cannot confirm.
         await ensure_schema(engine)
         async with engine.begin() as conn:
             await conn.execute(
@@ -393,7 +393,7 @@ class TestAdoptLegacy:
         self, engine: AsyncEngine
     ) -> None:
         """Which of the two the row belongs to cannot be known, and a wrong adoption files
-        one list's membership under another list's name -- so neither claims it, and the
+        one list's membership under another list's name. So neither claims it, and the
         next successful sync sorts it out."""
         rule = await self._seed_keep_tag_row(engine)
         definitions = [
@@ -407,8 +407,8 @@ class TestAdoptLegacy:
     async def test_a_definition_of_the_other_match_mode_adopts_nothing(
         self, engine: AsyncEngine
     ) -> None:
-        """The match mode is in the stored slug: a legacy ANY row under a definition since
-        tightened to ALL would protect wider than the definition says."""
+        """The match mode is in the stored slug. A legacy ``any`` row under a definition
+        since tightened to ``all`` would protect wider than the definition says."""
         rule = await self._seed_keep_tag_row(engine)
         definition = self._definition(7, ListSource.ARR_TAG, {"tags": ["keep"], "match": "all"})
 
@@ -417,7 +417,7 @@ class TestAdoptLegacy:
 
     async def test_an_occupied_target_slug_is_never_overwritten(self, engine: AsyncEngine) -> None:
         """A check already landed under the definition's slug, so that row is the living
-        one; the legacy row stays for the retire sweep to stand down."""
+        one. The legacy row stays for the retire sweep to stand down."""
         rule = await self._seed_keep_tag_row(engine)
         sonarr = FakeSonarr(tag_rows=[{"id": 1, "label": "keep"}], series_rows=[])
         claimed = ArrTagRule(
@@ -479,7 +479,7 @@ class TestAdoptLegacy:
     async def test_the_retired_imdb_spelling_lands_under_the_preset_definition(
         self, engine: AsyncEngine
     ) -> None:
-        """``imdb-top-250`` is the chart's pre-registry slug; the definition's provider
+        """``imdb-top-250`` is the chart's pre-registry slug. The definition's provider
         spells the variant ``top250``."""
         await self._seed_raw_row(engine, "imdb-top-250")
         definition = self._definition(4, ListSource.IMDB, {"preset": "top250"})
@@ -503,7 +503,7 @@ class TestAdoptLegacy:
     async def test_both_imdb_spellings_stored_at_once_adopt_only_one(
         self, engine: AsyncEngine
     ) -> None:
-        """Two legacy spellings of the same chart map to one target; renaming both would
+        """Two legacy spellings of the same chart map to one target. Renaming both would
         collide on the table's primary key, so the second stays for the retire sweep."""
         await self._seed_raw_row(engine, "imdb-top-250")
         await self._seed_raw_row(engine, "imdb-top250")
@@ -516,9 +516,9 @@ class TestAdoptLegacy:
 
 
 class TestAVanishedContainerNeverWipesTheList:
-    """A renamed keep tag or a deleted "Never Reap" collection is a missing CONTAINER,
+    """A renamed keep tag or a deleted "Never Reap" collection is a missing *container*,
     not an empty membership. With members stored, the sync must fail so the stale list
-    keeps protecting; with nothing stored, it is a quiet first sync."""
+    keeps protecting. With nothing stored, it is a quiet first sync."""
 
     async def test_a_vanished_tag_with_stored_members_keeps_the_membership(
         self, engine: AsyncEngine
@@ -548,7 +548,7 @@ class TestAVanishedContainerNeverWipesTheList:
     async def test_under_all_one_missing_tag_raises_when_members_are_stored(
         self, engine: AsyncEngine
     ) -> None:
-        """Under ALL, one absent tag structurally rules every title out -- which is the
+        """Under ``all``, one absent tag structurally rules every title out, which is the
         same wipe wearing a different hat, so it gets the same treatment."""
         both = FakeSonarr(
             tag_rows=[{"id": 1, "label": "keep"}, {"id": 2, "label": "gold"}],
@@ -579,15 +579,15 @@ class TestAVanishedContainerNeverWipesTheList:
             server=_FakePlexServer({"Movies": None, "Movies ": None, "Movies*": ["tt0000001"]}),
             section_name="Movies",
         )
-        # The third library is titled "Movies" too; the fake spells them apart only so the
-        # dict can hold three, and reports every one of them under the same title.
+        # The third library is titled "Movies" too. The fake spells them apart only so
+        # the dict can hold three, and reports every one of them under the same title.
         items = await provider.fetch()
 
         assert [i.imdb_id for i in items] == ["tt0000001"]
 
     async def test_a_library_that_does_not_exist_is_a_hard_failure(self) -> None:
-        """Not a missing container but a missing LIBRARY: a name nothing matches is a
-        configuration error, reported, never synced as an empty list."""
+        """This is not a missing container but a missing *library*. A name nothing
+        matches is a configuration error, reported, never synced as an empty list."""
         provider = PlexCollection(server=_FakePlexServer({}), section_name="Movies")
         with pytest.raises(IntegrationError):
             await provider.fetch()
@@ -596,7 +596,7 @@ class TestAVanishedContainerNeverWipesTheList:
         self, engine: AsyncEngine
     ) -> None:
         """A container that comes back populated and yields not one usable entry is a
-        failure, not an empty list: reading it as empty would wipe the stored membership
+        failure, not an empty list. Reading it as empty would wipe the stored membership
         and unprotect every title on it. The entries here carry no key of any kind, which
         is what every non-Plex source looks like once its ids stop parsing."""
         good = PlexCollection(
@@ -615,12 +615,12 @@ class TestAVanishedContainerNeverWipesTheList:
 
 
 class TestATitleTheContainerStillListsIsNeverDropped:
-    """The same loss at a smaller scale: SOME of the entries stop parsing, not all.
+    """The same loss at a smaller scale. *Some* of the entries stop parsing, not all.
 
     The survivors then look like a complete fetch, so the swap replaces the membership
-    with them and everything else silently stops being protected -- the keep tag is still
-    on the title and nothing says a word. A title the container still lists keeps the keys
-    its row was stored under instead (rule 27).
+    with them and everything else silently stops being protected. The keep tag is still
+    on the title and nothing says a word. A title the container still lists keeps the
+    keys its row was stored under instead.
     """
 
     @staticmethod
@@ -632,10 +632,10 @@ class TestATitleTheContainerStillListsIsNeverDropped:
     async def test_a_title_whose_guids_stopped_parsing_keeps_its_ids(
         self, engine: AsyncEngine
     ) -> None:
-        """The real shape of a Plex agent change: the object is still there, still
+        """The real shape of a Plex agent change. The object is still there, still
         carrying Plex's own key, and only the guids stopped resolving. Storing what came
         back would file it under that key alone, and the movie lane looks a keep list up
-        by RADARR's ids, which the agent change never touched. So the row keeps both."""
+        by Radarr's ids, which the agent change never touched. So the row keeps both."""
         good = self._collection(
             _Held("tt0000001", title="First", rating_key=11),
             _Held("tt0000002", title="Second", rating_key=22),
@@ -655,8 +655,8 @@ class TestATitleTheContainerStillListsIsNeverDropped:
     async def test_a_title_with_nothing_left_to_read_keeps_its_stored_row(
         self, engine: AsyncEngine
     ) -> None:
-        """The floor of the same guarantee, for an entry Reaper can read nothing from --
-        no guids and no key, which is every non-Plex source's shape too."""
+        """The floor of the same guarantee, for an entry Reaper can read nothing from, no
+        guids and no key, which is every non-Plex source's shape too."""
         good = self._collection(
             _Held("tt0000001", title="First"), _Held("tt0000002", title="Second")
         )
@@ -671,8 +671,8 @@ class TestATitleTheContainerStillListsIsNeverDropped:
     async def test_the_operators_own_capitalization_still_carries_it(
         self, engine: AsyncEngine
     ) -> None:
-        """Both sides case-folded (rule 88), or a title Plex re-cased on a re-match is
-        carried by nothing and the protection lapses on exactly the sync that renamed it."""
+        """Both sides are case-folded, or a title Plex re-cased on a re-match is carried
+        by nothing and the protection lapses on exactly the sync that renamed it."""
         good = self._collection(
             _Held("tt0000001", title="First"), _Held("tt0000002", title="Second")
         )
@@ -687,8 +687,8 @@ class TestATitleTheContainerStillListsIsNeverDropped:
     async def test_two_stored_rows_under_one_title_give_back_no_ids(
         self, engine: AsyncEngine
     ) -> None:
-        """Which of them is this entry cannot be answered, so it is not guessed (rule 6).
-        Both rows are still carried, which keeps every protection that existed."""
+        """Which of them is this entry cannot be answered, so it is not guessed. Both
+        rows are still carried, which keeps every protection that existed."""
         good = self._collection(
             _Held("tt0000001", title="Twin", rating_key=11),
             _Held("tt0000002", title="Twin", rating_key=22),
@@ -737,7 +737,7 @@ class TestATitleTheContainerStillListsIsNeverDropped:
         self, engine: AsyncEngine
     ) -> None:
         """An entry with no key of any kind, never stored before, is on the list and
-        protected by nothing: there is nothing to protect it by, and inventing something
+        protected by nothing. There is nothing to protect it by, and inventing something
         is worse. So the sync says so and carries on. Refusing instead would fail this
         list on every scan from now on, and past the staleness bound that stops the
         operator reaping anything at all."""
@@ -798,9 +798,9 @@ class TestATitlePlexNeverMatchedIsStillProtected:
         assert index.lookup(media_type="movie", plex_rating_keys=(22,))
 
     async def test_any_of_a_merged_binds_listings_finds_it(self, engine: AsyncEngine) -> None:
-        """One file listed twice is bound as a group, and the operator put ONE of those
+        """One file listed twice is bound as a group, and the operator put *one* of those
         listings on the list. Every key the item carries is passed, so it does not matter
-        which (rule 29)."""
+        which."""
         await sync(
             engine,
             self._collection(_Held(None, title="Home video", rating_key=77)),
@@ -812,7 +812,7 @@ class TestATitlePlexNeverMatchedIsStillProtected:
         assert not index.lookup(media_type="movie", plex_rating_keys=(41, 42))
 
     async def test_a_key_never_matches_across_kinds(self, engine: AsyncEngine) -> None:
-        """The join key stays (kind, key) for a Plex key exactly as for an id: keys are
+        """The join key stays (kind, key) for a Plex key exactly as for an id. Keys are
         one integer space per server, so a show could otherwise inherit a film's keep."""
         await sync(
             engine,
@@ -839,8 +839,8 @@ class TestATitlePlexNeverMatchedIsStillProtected:
 
 class TestARowIsNeverFiledUnderAKindItsIdsDoNotBelongTo:
     """``media_type`` is half of every lookup's join key, so a row filed under the wrong
-    kind matches nothing while looking healthy in the table -- or matches an unrelated
-    title, since TMDb numbers movies and shows in separate spaces (rule 52)."""
+    kind matches nothing while looking healthy in the table, or matches an unrelated
+    title, since TMDb numbers movies and shows in separate spaces."""
 
     async def test_a_stored_row_under_the_wrong_kind_protects_nothing(
         self, engine: AsyncEngine
@@ -860,7 +860,7 @@ class TestARowIsNeverFiledUnderAKindItsIdsDoNotBelongTo:
         self, engine: AsyncEngine
     ) -> None:
         """A collection is typed by its library, but the mapping this replaced filed
-        every non-show object as a MOVIE. An episode carries episode ids, so the row
+        every non-show object as a *movie*. An episode carries episode ids, so the row
         landed in the movie id space and could hand its keep to whichever film shared
         the number."""
         collection = PlexCollection(
@@ -885,9 +885,9 @@ class TestARowIsNeverFiledUnderAKindItsIdsDoNotBelongTo:
     async def test_a_collection_of_nothing_but_those_never_wipes_the_list(
         self, engine: AsyncEngine
     ) -> None:
-        """Unusable for want of a kind is unusable for want of an id: a populated
+        """Unusable for want of a kind is unusable for want of an id. A populated
         container none of whose entries can be stored is refused, so the stored
-        membership survives it (rule 27)."""
+        membership survives it."""
         good = PlexCollection(
             server=_FakePlexServer({"Movies": ["tt0000001"]}), section_name="Movies"
         )
@@ -985,21 +985,21 @@ class TestAStoredCacheIsWidenedNeverRebuilt:
     async def test_two_callers_widening_at_once_leave_one_of_each_column(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Rule 58. The PRAGMA guarding each ``ALTER`` is not inside a transaction --
-        pysqlite autocommits DDL, so ``engine.begin()`` opens nothing around it -- and SQLite
-        has no ``ADD COLUMN IF NOT EXISTS``. Without ``_widen_lock`` both callers read the
+        """The PRAGMA guarding each ``ALTER`` is not inside a transaction. pysqlite
+        autocommits DDL, so ``engine.begin()`` opens nothing around it, and SQLite has no
+        ``ADD COLUMN IF NOT EXISTS``. Without ``_widen_lock`` both callers read the
         pre-widen shape and the second raises ``duplicate column name``, which aborts a scan.
 
-        Two callers overlap on an ordinary install: the Lists screen calls ``configured``
+        Two callers overlap on an ordinary install. The Lists screen calls ``configured``
         while a scan calls ``load_membership_index``, and the nightly ``refresh_curated_lists``
         calls ``sync``. Three job ids, so APScheduler's ``max_instances`` does not separate
         them.
 
-        **The interleave is probabilistic and this test says so rather than reading as a
-        proof (rule 118).** Every shape read yields once, which widens the window; measured
-        against the unlocked function that raises in about a third of rounds, so it runs
-        twelve rounds against twelve fresh databases and fails on any one of them. With the
-        lock it cannot fail at all -- the second caller reads the widened shape and skips.
+        The interleave is probabilistic, and this test says so rather than reading as a
+        proof. Every shape read yields once, which widens the window. Measured against the
+        unlocked function, which raises in about a third of rounds, so it runs twelve
+        rounds against twelve fresh databases and fails on any one of them. With the lock
+        it cannot fail at all. The second caller reads the widened shape and skips.
         """
         real_execute = AsyncConnection.execute
 
@@ -1046,7 +1046,7 @@ class TestAStoredCacheIsWidenedNeverRebuilt:
 
 
 def _top250_payload(count: int = 250) -> list[dict[str, object]]:
-    """Ids from 1, never 0: ``tt0000000`` is the "unknown" sentinel ``identity._clean_imdb``
+    """Ids from 1, never 0. ``tt0000000`` is the "unknown" sentinel ``identity._clean_imdb``
     drops, so an entry numbered from zero is stored under no imdb id at all."""
     return [
         {"ImdbId": f"tt{i:07d}", "TmdbId": 1000 + i, "Title": f"Film {i}", "Year": 1920 + i}
@@ -1059,7 +1059,7 @@ class TestImdbList:
         self, engine: AsyncEngine, httpx2_mock: respx.Router
     ) -> None:
         """The public fetchers carry no credentials, so a cross-origin CDN hop is safe
-        and must be followed -- unlike the credentialed clients, which refuse it."""
+        and must be followed, unlike the credentialed clients, which refuse it."""
         httpx2_mock.get(IMDB_TOP_250_URL).mock(
             return_value=httpx.Response(
                 302, headers={"location": "https://cdn.example.test/top250.json"}
@@ -1094,11 +1094,11 @@ class TestImdbList:
     async def test_a_custom_list_id_is_appended_to_the_mirror_path(
         self, engine: AsyncEngine, httpx2_mock: respx.Router
     ) -> None:
-        route = httpx2_mock.get(IMDB_LIST_BASE + "ls005421403").mock(
+        route = httpx2_mock.get(IMDB_LIST_BASE + "ls000000001").mock(
             return_value=httpx.Response(200, json=_top250_payload(count=3))
         )
 
-        assert await sync(engine, ImdbList(variant="ls005421403")) == 3
+        assert await sync(engine, ImdbList(variant="ls000000001")) == 3
         assert route.called
 
     def test_the_slug_carries_the_variant_and_the_definition(self) -> None:
@@ -1107,16 +1107,16 @@ class TestImdbList:
         what a one-off refresh writes."""
         assert ImdbList().slug == "imdb-top250"
         assert ImdbList(variant="popular", list_id=3).slug == "imdb-popular-list3"
-        assert ImdbList(variant="ls005421403", list_id=9).slug == "imdb-ls005421403-list9"
+        assert ImdbList(variant="ls000000001", list_id=9).slug == "imdb-ls000000001-list9"
 
     async def test_membership_is_binary_because_the_source_has_no_rank(
         self, engine: AsyncEngine, httpx2_mock: respx.Router
     ) -> None:
-        """The payload carries NO rank field, and the entries come back in roughly
-        CHRONOLOGICAL order -- the first is The Kid (1921).
+        """The payload carries *no* rank field, and the entries come back in roughly
+        chronological order, so the first entry is a silent film from the 1920s.
 
-        Taking the array index as a chart position would tell the owner "The Kid is #1
-        on the IMDb Top 250", which is false. The why-panel would be confidently lying.
+        Taking the array index as a chart position would tell the owner that film is #1
+        on the IMDb Top 250, which is false. The why-panel would be confidently lying.
         So membership is binary and rank stays None."""
         httpx2_mock.get(IMDB_TOP_250_URL).mock(
             return_value=httpx.Response(200, json=_top250_payload())
@@ -1134,9 +1134,9 @@ class TestImdbList:
     ) -> None:
         """The mirror emits ``tt0000000`` for a chart entry it has no IMDb id for.
 
-        Stored raw, that row answers every OTHER item whose own imdbId is the same sentinel,
-        and the why-panel then names a list the film is not on. The entry keeps protecting by
-        its tmdb id, which is the id it is actually identified by (#709).
+        Stored raw, that row answers every *other* item whose own imdbId is the same
+        sentinel, and the why-panel then names a list the film is not on. The entry keeps
+        protecting by its tmdb id, which is the id it is actually identified by.
         """
         payload = _top250_payload()
         payload[0]["ImdbId"] = "tt0000000"
@@ -1175,13 +1175,13 @@ class TestImdbList:
     ) -> None:
         """A custom list has no known size, so its floor is 1: a single-entry list is the
         operator's to keep, and only an empty answer reads as a broken mirror."""
-        url = IMDB_LIST_BASE + "ls005421403"
+        url = IMDB_LIST_BASE + "ls000000001"
         httpx2_mock.get(url).mock(return_value=httpx.Response(200, json=[]))
         with pytest.raises(IntegrationError, match="too short to trust"):
-            await sync(engine, ImdbList(variant="ls005421403"))
+            await sync(engine, ImdbList(variant="ls000000001"))
 
         httpx2_mock.get(url).mock(return_value=httpx.Response(200, json=_top250_payload(count=1)))
-        assert await sync(engine, ImdbList(variant="ls005421403")) == 1
+        assert await sync(engine, ImdbList(variant="ls000000001")) == 1
 
     async def test_a_failed_fetch_leaves_the_previous_list_intact(
         self, engine: AsyncEngine, httpx2_mock: respx.Router
@@ -1190,9 +1190,9 @@ class TestImdbList:
         because a third-party service had a bad minute.
 
         Both of these name the error the sync really raises. A bare
-        ``pytest.raises(Exception)`` is satisfied by one raised BEFORE the swap is reached
-        -- so the assertions below would be covering a path that never ran, on the one
-        rule 27 / rule 2 surface where an empty result is the failure being guarded.
+        ``pytest.raises(Exception)`` is satisfied by one raised *before* the swap is
+        reached, so the assertions below would be covering a path that never ran, on the
+        one surface where an empty result is the failure being guarded.
         """
         httpx2_mock.get(IMDB_TOP_250_URL).mock(
             return_value=httpx.Response(200, json=_top250_payload())
@@ -1256,7 +1256,7 @@ def _watchlist_entry(
 class TestPlexWatchlist:
     async def test_entries_are_parsed_through_the_shared_guid_parser(self) -> None:
         """Both Guid children land, the plex:// legacy guid is ignored, and a show files
-        under tv -- the same one parser the scan's matcher uses."""
+        under tv, the same one parser the scan's matcher uses."""
         provider = PlexWatchlist(
             server=_FakeWatchlistServer(
                 [
@@ -1278,7 +1278,7 @@ class TestPlexWatchlist:
 
     async def test_an_empty_watchlist_is_genuinely_empty(self, engine: AsyncEngine) -> None:
         """The operator cleared it from the Plex app, so it empties the stored membership.
-        A watchlist has no missing-container state: only a raising read keeps the copy."""
+        A watchlist has no missing-container state. Only a raising read keeps the copy."""
         good = PlexWatchlist(server=_FakeWatchlistServer([_watchlist_entry(imdb="tt0000001")]))
         assert await sync(engine, good, kind=ListKind.WHITELIST) == 1
 
@@ -1291,8 +1291,8 @@ class TestPlexWatchlist:
     async def test_a_failed_read_records_the_error_and_keeps_the_membership(
         self, engine: AsyncEngine
     ) -> None:
-        """Any failure to read plex.tv raises and leaves the stored copy protecting --
-        the atomic-swap guarantee, plus the error the Lists screen shows."""
+        """Any failure to read plex.tv raises and leaves the stored copy protecting, the
+        atomic-swap guarantee, plus the error the Lists screen shows."""
         good = PlexWatchlist(server=_FakeWatchlistServer([_watchlist_entry(imdb="tt0000001")]))
         assert await sync(engine, good, kind=ListKind.WHITELIST) == 1
 
@@ -1313,7 +1313,7 @@ class TestPlexWatchlist:
 
 
 class TestMatching:
-    """An item is protected if ANY of its external ids matches."""
+    """An item is protected if *any* of its external ids matches."""
 
     async def test_matched_by_tmdb_when_imdb_is_missing(
         self, engine: AsyncEngine, httpx2_mock: respx.Router
@@ -1342,11 +1342,11 @@ class TestMatching:
 
 
 class TestAShowIsNeverMatchedAgainstAMovieList:
-    """TMDb numbers movies and shows in SEPARATE id spaces: movie #1005 and show #1005
+    """TMDb numbers movies and shows in *separate* id spaces. Movie #1005 and show #1005
     are unrelated titles. The join key is therefore (media_type, id), not id alone. Without
     that, a show whose TMDb id happens to equal a Top 250 film's is reported "on the IMDb
-    Top 250", kept for a reason its owner never gave, and the why-panel says something false.
-    A live instance showed exactly this on TV shows."""
+    Top 250", kept for a reason its owner never gave, and the why-panel says something
+    false. A live instance showed exactly this on TV shows."""
 
     async def test_a_show_sharing_a_top250_films_tmdb_id_is_not_protected(
         self, engine: AsyncEngine, httpx2_mock: respx.Router
@@ -1356,7 +1356,7 @@ class TestAShowIsNeverMatchedAgainstAMovieList:
         )
         await sync(engine, ImdbList())
 
-        # Film 5 is stored as a MOVIE with TMDb id 1005.
+        # Film 5 is stored as a *movie* with TMDb id 1005.
         assert await memberships(engine, media_type="movie", tmdb_id=1005)  # the film is on it
         assert await memberships(engine, media_type="tv", tmdb_id=1005) == []  # a show is not
 
@@ -1368,8 +1368,8 @@ class TestAShowIsNeverMatchedAgainstAMovieList:
 
 class TestMembershipIndexParity:
     """The scan answers "which lists contain this item?" from an in-memory index loaded
-    once per run. The index must agree with :func:`memberships` -- the per-item SQL it
-    replaced -- on every lookup, or the two paths could protect different items."""
+    once per run. The index must agree with :func:`memberships`, the per-item SQL it
+    replaced, on every lookup, or the two paths could protect different items."""
 
     async def test_the_index_answers_exactly_like_the_query(
         self, engine: AsyncEngine, httpx2_mock: respx.Router

@@ -2,9 +2,10 @@
 //
 // The address bar, as where a cold load lands.
 //
-// The app has no router (see backnav.tsx): where you are is plain React state, so a reload or a
-// pasted link used to land on the review queue whatever the operator was looking at. This module
-// is the one place that turns a location into a landing, and a landing back into a location.
+// The app has no router (see backnav.tsx): where you are is plain React state. Without this
+// module, a reload or a pasted link would land on the review queue whatever the operator was
+// looking at. This module is the one place that turns a location into a landing, and a
+// landing back into a location.
 //
 // **The URL is written on every nav and read only at mount**, which is what keeps this and
 // `backnav` from fighting. `backnav` stays the authority for Back: its undo restores the view
@@ -152,9 +153,10 @@ export const sectionUrl = (
 //: The last URL this module wrote. Held here because the entry it was written onto does not
 //: survive: `backnav` gives an entry back with a real `history.back()` whenever a layer closes
 //: by anything other than a Back press (`unpark`), and again for each step of its mount walk
-//: over sentinels a reload left parked (`reconcileStep`). Those traversals land AFTER React's
-//: passive effects, so the address bar reverts to the entry underneath and no render follows to
-//: notice. Re-asserting from a render cannot fix it: there is no render.
+//: over sentinels a reload left parked (`reconcileStep`). Those traversals land after React's
+//: passive effects, so the address bar reverts to the entry underneath and no render follows
+//: to notice. Re-asserting from a render cannot fix it, since there is no render to do it
+//: from.
 let written: string | null = null;
 
 /** Put `url` on the entry the app is standing on, keeping that entry's state.
@@ -169,30 +171,31 @@ export function writeUrl(url: string): void {
 
 /** Put the last written URL back after a traversal has stepped off the entry carrying it.
  *
- *  Called from `backnav`'s `onPop` on EVERY pop, its own steps and the operator's alike. A pop
- *  that only closes a layer changes no state, so no effect ever runs to correct the address bar
- *  and this is the only thing that does. Restricting it to the app's own steps was tried and is
- *  wrong: a Back press that closes a panel is the operator's pop, and it reverted the URL
+ *  Called from `backnav`'s `onPop` on every pop, its own steps and the operator's alike. A pop
+ *  that only closes a layer changes no state, so no effect would otherwise run to correct the
+ *  address bar; this is the only thing that does. Restricting it to the app's own steps is
+ *  wrong: a Back press that closes a panel is the operator's pop, and it reverts the URL
  *  exactly like the rest.
  *
- *  **A pop that genuinely MOVES the app writes the real URL over this one, and that comes from
- *  `App.goTo`, not from anything here.** `pushNav` has one call site, guarded on the view or the
- *  lane actually changing, so every frame's undo changes one of them and one of the two writers
- *  fires. Were a frame ever parked whose undo restores a value already current, React would bail
- *  out, no effect would run, and this re-assert would win against a real navigation. That is a
- *  property of the guard in `App.tsx`, so a second `pushNav` call site has to keep it.
+ *  **A pop that genuinely moves the app writes the real URL over this one, and that comes from
+ *  `App.goTo`, not from anything here.** `pushNav` has one call site, guarded on the view or
+ *  the lane actually changing, so every frame's undo changes one of them and one of the two
+ *  writers fires. Were a frame ever parked whose undo restores a value already current, React
+ *  would bail out, no effect would run, and this re-assert would win against a real
+ *  navigation. That is a property of the guard in `App.tsx`, so a second `pushNav` call site
+ *  has to keep it.
  *
- *  Without this the ＋ Filter menu's own close discarded every filter it had just put in the
- *  address bar, and a section reached by clicking the nav reloaded onto whichever one the
- *  previous entry named. */
+ *  Without this, the ＋ Filter menu's own close would discard every filter it had just put in
+ *  the address bar, and a section reached by clicking the nav would reload onto whichever one
+ *  the previous entry named. */
 export function reassertUrl(): void {
   if (written === null || written === window.location.pathname + window.location.search) return;
   history.replaceState(history.state, "", written);
 }
 
-/** Forget what was written. For the test setup only: this module's `written` outlives a render
- *  tree, so without this one file's last URL would be re-asserted over the next test's own
- *  (rule 133). Production never calls it, and never wants to. */
+/** Forget what was written. For the test setup only: this module's `written` outlives a
+ *  render tree, so without this one file's last URL would be re-asserted over the next
+ *  test's own. Production never calls it, and never wants to. */
 export function forgetWrittenUrl(): void {
   written = null;
 }

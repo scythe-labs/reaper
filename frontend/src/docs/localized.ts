@@ -33,7 +33,7 @@ function candidates(lng: string): string[] {
 
 const modulePath = (tag: string) => `./content/${tag}/index.ts`;
 
-/** A loader over one set of modules. The app's is `manualFor`; tests build their own over a
+/** A loader over one set of modules. The app's is `manualFor`. Tests build their own over a
  *  fake set, each with its own cache. */
 export function manualLoader(modules: Record<string, Loader>) {
   const cache = new Map<string, Promise<Manual>>();

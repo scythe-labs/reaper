@@ -4,7 +4,7 @@
 // rendered by DocBody with the app's own classes, so a table or a callout in the docs looks
 // exactly like one in the app and no markdown dependency has to be vetted or pinned.
 //
-// Adding a doc is one object in a content file plus one line in registry.ts. Adding a NEW
+// Adding a doc is one object in a content file plus one line in registry.ts. Adding a new
 // kind of content is one variant here and one case in DocBody. That is the whole extension
 // story: keep authoring terse (the constructors below), keep rendering in one place.
 //
@@ -14,8 +14,8 @@
 
 export type CalloutTone = "tip" | "note" | "caution";
 
-/** A heading. `sub` renders an h3 (a subsection); otherwise an h2 that the index lists as a
- *  jump target. An `id` makes it linkable with openDoc(docId, id). */
+/** A heading. `sub` renders an h3 (a subsection). Otherwise it renders an h2 that the index
+ *  lists as a jump target. An `id` makes it linkable with openDoc(docId, id). */
 export type Heading = { kind: "h"; text: string; id?: string; sub?: boolean };
 export type Para = { kind: "p"; text: string };
 export type Callout = { kind: "callout"; tone: CalloutTone; text: string };
@@ -32,7 +32,7 @@ export type TableBlock = { kind: "table"; head: string[]; rows: string[][]; hi?:
 export type DiagramTone = "keep" | "stop";
 export type DiagramShape = "process" | "decision" | "terminal";
 export type DiagramNode = { text: string; sub?: string; shape?: DiagramShape; tone?: DiagramTone };
-/** The connector leading INTO a step from the one above: `label` rides the arrow (yes / no /
+/** The connector leading into a step from the one above: `label` rides the arrow (yes / no /
  *  ok), `phase` prints a divider first (e.g. "checked once, before any file"). */
 export type DiagramEnter = { label?: string; phase?: string };
 export type DiagramBranch = { label?: string; node: DiagramNode };

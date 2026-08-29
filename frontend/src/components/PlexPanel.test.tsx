@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The Plex settings panel. These pin the things an operator can get stuck on: reopening the
-// manual-address editor for an address they typed earlier, getting out of a sign-in whose
-// plex.tv tab never opened, seeing a failed sign-in as a failure, and -- for anyone driving
-// this panel by ear -- being able to tell one box on it from another.
+// The Plex settings panel. These tests pin the mistakes an operator can get stuck on:
+// reopening the manual-address editor for an address typed earlier, getting out of a sign-in
+// whose plex.tv tab never opened, showing a failed sign-in as a failure, and letting someone
+// driving this panel by ear tell one box on it from another.
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,12 +14,11 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import { Announcer } from "../announce";
 import { PlexPanel } from "./PlexPanel";
 
-// jsdom has no window.open, so any test that reaches "Link with Plex" -- the linking
-// describe and the whole-panel control sweep alike -- printed "Not implemented: Window's
-// open() method" into the CI log, noise a reader has to clear every run. The stub also
-// lets the linking test pin the noopener feature string, which Login.test.tsx and
-// SetupPlexStep.test.tsx already do for their copies of this popup (rule 72): without
-// noopener, plex.tv gets a handle on the page it could navigate.
+// jsdom has no window.open. Any test that reaches "Link with Plex" prints "Not implemented:
+// Window's open() method" into the CI log without this stub. The stub also lets this test check
+// for the noopener feature string, which Login.test.tsx and SetupPlexStep.test.tsx check for
+// their own copies of this popup. Without noopener, plex.tv would get a handle on the page it
+// opened from and could navigate it.
 const opened = vi.fn<typeof window.open>(() => null);
 beforeEach(() => vi.stubGlobal("open", opened));
 afterEach(() => {
@@ -63,12 +62,10 @@ function connectionSelect(): HTMLSelectElement {
 
 /** The same picker, once the plex.tv lookup has answered and it can actually be used.
  *
- *  Its options come from the fast, local status read, so the picker is on screen a turn before
- *  it works: it stays disabled while the lookup runs. user-event reports a disabled select as
- *  SUCCESS -- `selectOptions` returns having dispatched nothing -- so a test that acted in that
- *  window silently did nothing, then failed a second later on an editor that never opened. These
- *  two passed only because the mocked lookup is an already-resolved promise: one event-loop turn
- *  of slack, which a loaded machine hands out freely, is the whole margin. Rule 137. */
+ *  Its options come from the fast, local status read, so the picker appears on screen before it
+ *  works: it stays disabled while the lookup runs. user-event treats a click on a disabled
+ *  select as success, so a test that acts before the select is enabled does nothing and then
+ *  fails later on an editor that never opened. Wait for the select to become enabled first. */
 async function usableConnectionSelect(): Promise<HTMLSelectElement> {
   await waitFor(() => expect(connectionSelect()).toBeEnabled());
   return connectionSelect();
@@ -78,9 +75,10 @@ function renderPanel(
   connections: PlexResourceConnection[] = [discovered(LOCAL)],
   /** Stable across renders, which the prop requires: pass one `vi.fn()`, never an inline arrow. */
   onDirtyChange?: (dirty: boolean) => void,
-  /** Status already in the cache, so the panel mounts with `data` on its FIRST render -- what
-   *  every section switch back to Plex does, since `["plex"]` is read only here and stays fresh.
-   *  A fresh client is a COLD mount, one render behind, which is a different code path. */
+  /** Status already in the cache, so the panel mounts with `data` set on its first render. This
+   *  is what happens every time an operator switches back to the Plex section, since `["plex"]`
+   *  is read only here and stays fresh. A fresh client mounts cold instead, one render behind,
+   *  which is a different code path. */
   cached?: PlexStatus,
 ) {
   apiMock.plexResources.mockResolvedValue({
@@ -98,9 +96,9 @@ function renderPanel(
   if (cached) queryClient.setQueryData(["plex"], cached);
   return renderWithProviders(
     <>
-      {/* The app mounts this above every route (`App.tsx`), and `announce()` returns early when no
-          region is listening -- so without it here this panel's sentences are dropped and a test
-          about them passes against silence. */}
+      {/* The app mounts this above every route in `App.tsx`. `announce()` returns early when no
+          region is listening, so without it here, this panel's spoken sentences are dropped and
+          a test about them would pass against silence. */}
       <Announcer />
       <PlexPanel onDirtyChange={onDirtyChange} />
     </>,
@@ -115,11 +113,11 @@ beforeEach(() => {
   ]);
   apiMock.syncPlexLibraries.mockResolvedValue([]);
   apiMock.setPlexLibraries.mockResolvedValue([]);
-  // null, not 0: the shape a fresh install actually returns (no snapshot has counted).
+  // A fresh install returns null, not 0, since no snapshot has counted yet.
   apiMock.watchEvidence.mockResolvedValue({ titles: 0, held_back: null });
   apiMock.resetWatchEvidence.mockResolvedValue({ forgotten: 0 });
-  // An install that has set an admin password and left deletion off -- the shipped state, and
-  // the only one in which the reset is offered at all. The tests that vary it say so.
+  // The shipped state: an admin password is set and deletion is off. The reset is offered only
+  // in this state; tests that use a different state say so explicitly.
   apiMock.safety.mockResolvedValue({
     destructive_enabled: false,
     has_password: true,
@@ -143,8 +141,8 @@ afterEach(() => {
 
 describe("the connection picker", () => {
   // Plex is where Reaper reads what has been watched, so a wrong address here starves every
-  // signal that argues for keeping a file. The picker and the boxes beside it have to be
-  // tellable apart by ear, which is what an operator driving this panel is doing.
+  // signal that argues for keeping a file. The picker and the boxes beside it have to be told
+  // apart by ear, which is what an operator driving this panel is doing.
   it("has no accessibility violations", async () => {
     const { container } = renderPanel();
     await usableConnectionSelect();
@@ -177,31 +175,28 @@ describe("the connection picker", () => {
 });
 
 describe("every control on this panel", () => {
-  // Rule 18: a `.set-row`'s label is a `<span className="set-label">`, which names nothing. The
-  // rows whose control is a Switch escape that because Switch takes `ariaLabel` and every one of
-  // them passes it; the rows carrying a box had no accessible name at all, so a screen reader
-  // announced the server picker, the connection picker and the web address as three bare fields
-  // with no way to tell them apart -- and the connection picker is what points Reaper at the
-  // server it manages.
+  // A `.set-row` label is a plain `<span className="set-label">`, which is not an accessible
+  // name. Rows built on a Switch get a name because Switch takes an `ariaLabel` and every one
+  // passes it. Rows built on a plain box had no accessible name at all, so a screen reader
+  // announced the server picker, the connection picker, and the web address as three identical
+  // bare fields. The connection picker is what tells Reaper which server to manage.
   //
-  // Rule 145: this walks a population, so it counts. "Every control I collected has a name" reads
-  // green when the walk collects nothing, and the pickers were reached here through
-  // `getByRole("option").closest("select")` for exactly that reason -- a shape that never asks
-  // for a name. The table below is every input and select this fixture renders, reconciled
-  // against the source by hand; the count is what makes an eleventh control name itself rather
-  // than opt out -- IN THE BRANCHES THIS FIXTURE MOUNTS. That qualifier is the honest limit of
-  // the guard and is load-bearing: a control added to a branch the walk never renders is missing
-  // from the table and from the count alike, and the two absences hide each other perfectly
-  // (rule 145's own blind spot). Measured rather than assumed -- a bare `<input>` dropped into
-  // the `resources.isError` arm leaves this file green. The branches NOT walked here are
-  // `resources.isError`, `linkedServerMissing`, the unlinked `ServerPickList`, and the pending
-  // and `!data` arms; none renders a control today, which is what makes the count correct now,
-  // and none is watched by this test if that changes.
+  // This test counts every named control instead of only checking that the controls it finds
+  // have a name, because a query that misses a control would still pass under the weaker check.
+  // The pickers are found through `getByRole("option").closest("select")`, a query that never
+  // asks for a name on its own. The table below lists every input and select this fixture
+  // renders, checked by hand against the source; the count catches a control this query would
+  // otherwise skip silently. The check only covers the branches this fixture actually mounts: a
+  // control added to a branch nothing here renders would be missing from the table and from the
+  // count, so it would still pass. The branches not covered are `resources.isError`,
+  // `linkedServerMissing`, the unlinked `ServerPickList`, and the pending and `!data` arms; none
+  // renders a control today, and none is watched by this test if that changes.
   it("answers to the label the operator can see", async () => {
     const user = userEvent.setup();
     const { container } = renderPanel();
 
-    // The manual editor is closed at rest and its two boxes belong to the population, so open it.
+    // The manual editor starts closed, and its two boxes are part of the set counted below, so
+    // open it.
     await user.selectOptions(await usableConnectionSelect(), "__manual__");
     // The last section to arrive, so waiting on it settles the libraries above it too.
     await screen.findByRole("switch", { name: "Update while read-only" });
@@ -229,10 +224,10 @@ describe("every control on this panel", () => {
 
 describe("when plex.tv's list comes back without the linked server", () => {
   it("says so and offers no picker, instead of presenting some other server as ours", async () => {
-    // B-10: `currentServer` fell back to `servers[0]`, so a partial or filtered plex.tv
-    // response silently promoted a DIFFERENT server to "the one Reaper manages" and the
-    // Connection row listed that server's addresses. Saving one pointed Reaper's Leaving
-    // Soon writes and its Never-Reap read at a library it was never linked to.
+    // If `currentServer` fell back to `servers[0]`, a partial or filtered plex.tv response
+    // would silently promote a different server to "the one Reaper manages," and the Connection
+    // row would list that server's addresses. Saving would then point Reaper's Leaving Soon
+    // writes and its Never-Reap read at a library it was never linked to.
     apiMock.plexResources.mockResolvedValue({
       source: "plex.tv",
       owner_username: "reaper-owner",
@@ -252,16 +247,16 @@ describe("when plex.tv's list comes back without the linked server", () => {
     expect(notice).toHaveClass("notice-warn");
     expect(notice.textContent).toContain("Example server");
 
-    // The other server is not offered at all -- not even as an option a browser would
-    // display: a select whose value matches nothing shows its first option, so listing it
-    // would still read as "this is your server", merely unsavable. The box names the
-    // linked server, and neither picker can act.
+    // The other server never appears as an option, not even one a browser would render. A
+    // select whose value matches nothing shows its first option, so listing the other server
+    // would still read as "this is your server," just unsavable. The box names the linked
+    // server instead, and neither picker can be used.
     expect(screen.queryByRole("option", { name: "Someone else's server" })).not.toBeInTheDocument();
     const server = screen.getByRole("option", { name: "Example server" }).closest("select");
     expect(server).toBeDisabled();
     expect(connectionSelect()).toBeDisabled();
 
-    // And the other server's addresses are not on offer either.
+    // The other server's addresses are not offered either.
     expect(screen.queryByRole("option", { name: /10-0-0-9/ })).not.toBeInTheDocument();
     expect(apiMock.plexSetConnection).not.toHaveBeenCalled();
   });
@@ -311,36 +306,35 @@ describe("linking with Plex", () => {
   });
 });
 
-// Every read below the connection form means "of the currently LINKED server", and not one of the
-// four is qualified by a machine identifier, so a row cached against the old server answers for
-// the new one. Every path that changes which server that is therefore has to refresh the whole
-// set; two of them refreshed the status row alone, so unlinking and then linking a DIFFERENT
-// server painted the previous server's libraries and their enabled flags -- and "Movies" and
-// "TV Shows" collide across servers, so the wrong list looked like the right one (#205).
+// Every read below the connection form answers for "the currently linked server," and none of
+// the four is scoped by a machine identifier. A row cached from the old server would answer for
+// the new one unless every path that changes the linked server refreshes the whole set. If a
+// path refreshed only the status row, unlinking and then linking a different server would show
+// the previous server's libraries and their enabled flags, since "Movies" and "TV Shows" collide
+// across servers and the wrong list looks like the right one.
 //
-// **Three of the five such paths are on this panel.** The setup wizard holds the other two, and
-// this file is where the claim used to be checked, which is how the wizard came to open-code a
-// three-key version of the set (W10-7). The keys now live in `plexServerQueries.ts` and
-// `plexServerQueries.test.ts` bans any handler from restating them; these stay because they drive
-// the panel's three paths through the UI, which a source scan cannot do.
+// Three of the five paths that change the linked server are on this panel; the setup wizard
+// holds the other two. The keys live in `plexServerQueries.ts`, and `plexServerQueries.test.ts`
+// bans any handler from restating them. These tests stay here because they drive the panel's
+// three paths through the UI, which a source scan cannot do.
 //
-// **These pin the invalidation, not the symptom, and the symptom is not reachable from here.** It
-// needs a cached row to still be FRESH when the query re-enables, and freshness is the one thing
-// this tree does not share with production: the app sets `staleTime: 30_000` app-wide (`main.tsx`)
-// while `testQueryClient` leaves it at 0, so under the suite every re-enable refetches whatever
-// anyone invalidated and the grid is right either way. Reproducing it would mean giving the client
-// production's staleTime, which pins a fixture as much as the panel. So each path is asserted to
-// have said the whole set is no longer trusted, which is the fix, and reverting either caller to
-// `["plex"]` + `["setup"]` fails here (rule 118: it does not read as a proof of the grid).
+// These tests pin the cache invalidation, not the visible symptom, because the symptom needs a
+// cached row that is still fresh when the query re-enables, and this test tree does not share
+// freshness with production. The app sets `staleTime: 30_000` everywhere (`main.tsx`), but
+// `testQueryClient` leaves it at 0, so every re-enable in this suite refetches whatever was
+// invalidated and the grid ends up correct either way. So each path is checked for reporting the
+// whole set as no longer trusted, which is the actual fix; reverting either caller to
+// `["plex"]` + `["setup"]` still fails this test even though it would not reproduce the visible
+// bug.
 describe("changing which server is linked", () => {
-  /** Every key that means "of the currently linked server". Written out rather than imported
-   *  from the panel, so a key quietly dropped from `invalidateAllPlex` fails instead of moving
-   *  the expectation with it (rule 119).
+  /** Every key that means "of the currently linked server." Written out here instead of
+   *  imported from the panel, so a key quietly dropped from `invalidateAllPlex` fails this test
+   *  instead of changing the expectation along with it.
    *
-   *  Grep-verified against the whole SPA rather than read off the panel, which is how
-   *  `["plexTrash"]` came to be missing from both: it is read on the Reap page, so counting the
-   *  keys declared beside the helper gives four and the tree has five. The count is pinned for
-   *  the same reason -- a per-key `toContain` cannot notice a key nobody listed (rule 145). */
+   *  Checked against the whole app with a text search rather than read off the panel alone: a
+   *  key used only elsewhere, such as `["plexTrash"]` on the Reap page, would otherwise be
+   *  missed. The count below is pinned too, since checking only that each listed key appears
+   *  cannot notice a key nobody listed. */
   const OF_THE_LINKED_SERVER = [
     ["plex"],
     ["plex-resources"],
@@ -350,7 +344,7 @@ describe("changing which server is linked", () => {
     ["watch-evidence"],
   ];
 
-  /** A mount whose invalidations the test can read back. The spy calls THROUGH, so the panel
+  /** A mount whose invalidations the test can read back. The spy calls through, so the panel
    *  still refetches its status and the link path below reaches its linked render. */
   function renderRecordingInvalidations(): string[] {
     apiMock.plexResources.mockResolvedValue({
@@ -377,10 +371,11 @@ describe("changing which server is linked", () => {
         `${JSON.stringify(key)} is not "of the linked server" any more`,
       ).toContain(JSON.stringify(key));
     }
-    // And the SIZE of what the helper dropped, reconciled by hand against the list above. The
-    // loop can only check keys somebody thought to list, so it read green for the whole life of
-    // `["plexTrash"]`'s absence (rule 145). A key added to `invalidateAllPlex` and not to this
-    // list fails here; `["setup"]`, which the callers invalidate separately, is not the helper's.
+    // This also checks the SIZE of what the helper dropped, reconciled by hand against the list
+    // above. The loop above only checks keys someone listed, so it cannot notice a key that is
+    // missing from the list entirely, such as `["plexTrash"]`. A key added to `invalidateAllPlex`
+    // and not to this list fails here. `["setup"]` is not the helper's key: the callers
+    // invalidate it separately.
     const helperKeys = new Set(invalidated.filter((k) => k !== JSON.stringify(["setup"])));
     expect(
       helperKeys.size,
@@ -414,9 +409,9 @@ describe("changing which server is linked", () => {
     const invalidated = renderRecordingInvalidations();
     const start = await screen.findByRole("button", { name: "Link with Plex" });
 
-    // `fireEvent`, not user-event: the poll runs on a two-second interval, so this needs fake
-    // timers, and user-event schedules its own on the real clock (the shape the timed-out test
-    // above uses).
+    // This uses `fireEvent`, not user-event, because the poll runs on a two-second interval and
+    // needs fake timers. user-event schedules its own timers on the real clock, which the
+    // timed-out test above relies on instead.
     vi.useFakeTimers();
     try {
       fireEvent.click(start);
@@ -465,13 +460,14 @@ describe("what leaving this panel would lose", () => {
   // The panel reports its unsaved drafts up to the settings shell, so switching section can stop
   // and ask instead of unmounting them silently.
   //
-  // Rule 146: that report makes two claims at once -- there is something to lose, AND the
-  // operator can still get to it. A state that keeps the first while dropping the second turns
-  // the guard into a trap whose only exit is the destructive button. A refetch that fails after a
-  // good load is exactly that state, and it is one click away: the certificate switch saves on
-  // the spot and invalidates this read. React Query keeps the last good row through a failed
-  // refetch, so trading the form for the "couldn't load" paragraph there would take the box and
-  // its Save off screen while the typed address stayed in state, still reported unsaved.
+  // That report makes two claims at once: there is something to lose, and the operator can
+  // still reach it to save or discard it. A state that keeps the first claim while dropping the
+  // second turns the guard into a trap whose only way out is the destructive button. A refetch
+  // that fails after a good load is exactly that state, and it is one click away: the
+  // certificate switch saves immediately and invalidates this read. React Query keeps the last
+  // good row through a failed refetch, so replacing the form with a "couldn't load" paragraph
+  // would take the box and its Save button off screen while the typed address stayed in state,
+  // still reported as unsaved.
   it("keeps the web-address box when a refetch fails, so its draft stays reachable", async () => {
     const user = userEvent.setup();
     const dirty = vi.fn();
@@ -487,29 +483,30 @@ describe("what leaving this panel would lose", () => {
     await user.click(toggle);
 
     await waitFor(() => expect(apiMock.plexStatus.mock.calls.length).toBeGreaterThan(1));
-    // Still the form, on the last good values, with the draft still in it and still saveable.
+    // The form is still shown, with the last good values, the draft still in it, and still
+    // saveable.
     expect(screen.queryByText(/Couldn't load these settings/)).toBeNull();
     expect(screen.getByPlaceholderText("https://app.plex.tv")).toHaveValue(
       "https://plex.example.org",
     );
     expect(dirty).toHaveBeenLastCalledWith(true);
 
-    // And it SAYS the read failed. Keeping the form is what makes the draft reachable; keeping
-    // it with nothing said is the other half of the same mistake, because the link state, the
-    // server, the libraries and the certificate switch below are then presented as current when
-    // they are known to be stale (rule 17/36).
+    // The panel also says the read failed. Keeping the form is what makes the draft reachable,
+    // but keeping it silent would be the other half of the same mistake: the link state,
+    // server, libraries, and certificate switch below would then look current while known to be
+    // stale.
     const stale = await screen.findByText(/Couldn't check these settings just now/);
     expect(stale).toHaveClass("notice-warn");
   });
 
   it("stops reporting a draft once the address is saved back to the default", async () => {
-    // Clearing the box is what the row's own help tells the operator to do to go back to the
-    // hosted default, and it saves the empty string. The route stores that as "unset" and
-    // answers with the SAME default string it was already returning, so `savedWebUrl` never
-    // changes identity and the re-seed effect never fires. The box then sat empty against a
-    // default it now matched: a Save button that never went away, and -- once this panel started
-    // reporting upward -- a section-switch confirm no button on this panel could satisfy, for a
-    // value that was already stored. Rule 39: re-seed from the server response after a save.
+    // The row's help tells the operator to clear the box to go back to the hosted default, and
+    // clearing it saves the empty string. The route stores that as "unset" and answers with the
+    // same default string it was already returning, so `savedWebUrl` keeps the same value and
+    // the re-seed effect never fires unless the panel re-seeds from the server's response after
+    // a save. Without that re-seed, the box would sit empty against a default it now matches:
+    // the Save button never goes away, and the panel would keep asking the operator to confirm
+    // leaving over a value that is already stored.
     const user = userEvent.setup();
     const dirty = vi.fn();
     renderPanel([discovered(LOCAL)], dirty);
@@ -528,15 +525,15 @@ describe("what leaving this panel would lose", () => {
   });
 
   it("never reports a draft for the frame before its boxes are seeded", async () => {
-    // #139's twin on this panel (rule 72). Same defect, different guard: this panel re-seeds on
-    // every change of the stored value where `GeneralPanel` seeds once, so it asks which value
-    // its boxes were seeded FROM rather than merely whether they have been -- a save or another
-    // tab moving the address opens the same window again, and a "have we seeded" flag would
-    // miss that second one entirely.
+    // This panel re-seeds on every change of the stored value, where `GeneralPanel` seeds once,
+    // so the guard has to track which value the boxes were seeded from, not merely whether they
+    // have been seeded. A save, or another tab changing the address, reopens the same risk
+    // window a second time, and a plain "have we seeded" flag would miss that second window
+    // entirely.
     //
-    // The web address is the reachable one: the fixture stores a non-empty address, so the box
-    // starts "" against it. Deterministic because the report is an effect, so the spy records
-    // the call whether or not the frame was painted.
+    // The web address is the field this test can reach: the fixture stores a non-empty address,
+    // so the box starts empty against it. The check is deterministic because the report runs as
+    // an effect, so the spy records the call whether or not the frame is painted.
     const dirty = vi.fn();
     renderPanel([], dirty);
 
@@ -548,15 +545,15 @@ describe("what leaving this panel would lose", () => {
   });
 
   it("never reports a draft when the stored status is already cached", async () => {
-    // The warm half of the test above, and the one the guard is actually for. A fresh
-    // `QueryClient` mounts this panel COLD: `data` is undefined on the first render, so the box
-    // and the stored value are both "" and no comparison can go wrong yet. Every render after
-    // the first section switch is warm instead -- `["plex"]` is read only by this panel, nothing
-    // evicts it inside the default window, and `Settings` unmounts and remounts the panel per
-    // section -- so `data` is there on the first render with the box still "". A guard seeded
-    // from `savedWebUrl` agrees with it on that frame and passes, which is #139 surviving on the
-    // twin (rule 72); the confirm built on this report then names Plex settings nobody typed
-    // (rule 146). Cold and warm are one line apart and only one of them fails.
+    // This is the warm case of the test above, and the one this guard is actually for. A fresh
+    // `QueryClient` mounts this panel cold: `data` is undefined on the first render, so the box
+    // and the stored value both start as "" and no comparison can go wrong yet. Every render
+    // after the first section switch is warm instead: `["plex"]` is read only by this panel,
+    // nothing evicts it within the default window, and `Settings` unmounts and remounts the
+    // panel on every section change. So `data` is already there on the first render while the
+    // box is still "". A guard seeded from `savedWebUrl` would agree with it on that frame and
+    // pass wrongly, and the confirm built on that report would then ask about Plex settings
+    // nobody typed. Cold and warm differ by one line, and only the warm case can fail.
     const dirty = vi.fn();
     renderPanel([], dirty, status());
 
@@ -568,18 +565,18 @@ describe("what leaving this panel would lose", () => {
   });
 
   it("never reports a draft for a cached certificate choice either", async () => {
-    // The certificate switch carries the same guard as the address box and is fixed with it
-    // (rule 72), so it gets the same warm mount. What it does NOT get is a claim of live
-    // exposure: today the status read omits the certificate flag while unlinked and the schema
-    // default is on, so the stored value and this box's initial value are both `true` on every
-    // real server and no operator can reach the frame this pins. The state below is therefore
-    // one the API does not currently produce, and the test says so rather than reading as a
-    // reproduction (rule 118). It pins the SHAPE of the guard: that the flag is a sentinel no
-    // stored value can equal, so nobody rewrites it as one seeded from the stored value and
-    // finds out later, when the route starts sending the flag, that it was inert all along.
+    // The certificate switch shares the same guard as the address box, so it gets the same warm
+    // mount. It does not get a claim of live exposure: today the status read omits the
+    // certificate flag while unlinked, and the schema default is `true`, so the stored value and
+    // this box's initial value agree on every real server and no operator can reach the state
+    // this test drives. The state below is one the API does not currently produce; this comment
+    // says so rather than letting the test read as a reproduction of a real scenario. What it
+    // pins is the shape of the guard: the flag starts as a sentinel value no stored value can
+    // equal, so nobody can rewrite it to seed from the stored value and find out later, once the
+    // route starts sending the flag, that the guard had gone inert.
     //
     // The address is stored empty here so the box and its saved value agree, leaving the
-    // certificate switch as the only thing that can report anything at all.
+    // certificate switch as the only control that can report a draft at all.
     const unlinked = status({ linked: false, verify_tls: false, web_url: "" });
     apiMock.plexStatus.mockResolvedValue(unlinked);
     const dirty = vi.fn();
@@ -593,11 +590,11 @@ describe("what leaving this panel would lose", () => {
   });
 
   it("reports nothing when the manual address row is only opened", async () => {
-    // The row is filled by parsing the stored address, so the two are not the same text and
-    // comparing them directly called an untouched row an edit (rule 39). This address is one the
-    // operator can save through this very box: `URL.hostname` lowercases the host on the way in,
-    // so it comes back spelled differently than it went out. A stored scheme-default port does
-    // the same thing, since `URL.port` is empty for one.
+    // The row is filled by parsing the stored address, so the parsed text and the stored text
+    // are not identical, and comparing them directly would call an untouched row an edit. This
+    // is an address the operator can save through this very box: `URL.hostname` lowercases the
+    // host on the way in, so it comes back spelled differently than it went out. A stored
+    // scheme-default port behaves the same way, since `URL.port` is empty for one.
     const user = userEvent.setup();
     const dirty = vi.fn();
     apiMock.plexStatus.mockResolvedValue(
@@ -606,11 +603,9 @@ describe("what leaving this panel would lose", () => {
     renderPanel([], dirty);
 
     // Settle the mount before watching anything, so what follows is only what OPENING the row
-    // reported. Waiting only for a `false` call is satisfied by the loading state's own report,
-    // one turn too early. The mount used to report one frame of `true` on its own here, the
-    // web-address box still "" while the saved value had arrived; that was #139 and the panel
-    // no longer does it, which the test above pins. The wait stays because a settled mount is
-    // still the right starting point for a test about opening the row.
+    // reports. Waiting only for a `false` call would be satisfied too early, by the loading
+    // state's own report. A settled mount is still the right starting point for a test about
+    // opening the row.
     const select = await usableConnectionSelect();
     await waitFor(() =>
       expect(screen.getByPlaceholderText("https://app.plex.tv")).toHaveValue("https://app.plex.tv"),
@@ -627,8 +622,7 @@ describe("what leaving this panel would lose", () => {
   });
 
   it("reports the manual address row once its host is edited", async () => {
-    // The other half: deleting `manualDirty` from the report must fail something. Without this
-    // the manual row was named in three comments and pinned by no test.
+    // The other half of the guard: deleting `manualDirty` from the report must fail this test.
     const user = userEvent.setup();
     const dirty = vi.fn();
     renderPanel([], dirty);
@@ -642,10 +636,11 @@ describe("what leaving this panel would lose", () => {
   });
 
   it("reports the certificate choice made before a server is linked", async () => {
-    // The switch only writes once a server is linked (`if (linked)` on its onChange), so before
-    // that the choice is a draft: it lives in state and rides along with the link poll. Leaving
-    // the section dropped it silently, and the next sign-in then probed a self-signed server
-    // with checking back on and failed with nothing on screen explaining why.
+    // The switch only writes once a server is linked (`if (linked)` in its onChange), so before
+    // that the choice is a draft that lives only in component state, alongside the link poll.
+    // Leaving the section without this report would drop that choice silently, and the next
+    // sign-in would probe a self-signed server with checking back on, and fail with nothing on
+    // screen explaining why.
     const user = userEvent.setup();
     const dirty = vi.fn();
     apiMock.plexStatus.mockResolvedValue(
@@ -705,12 +700,12 @@ describe("the certificate check", () => {
   });
 
   it("sends the certificate check and nothing else", async () => {
-    // It used to send the saved web address beside it, read from `["plex"]`'s cached row, and the
-    // route wrote every field it received. So a cached row that had gone out of date -- a failed
-    // refetch this panel deliberately renders through, or another tab editing the address --
-    // reverted the operator's address without a word, and every "open in Plex" link in the app
-    // then pointed at plex.tv. `web_url` is what must be ABSENT, so this asserts the exact
-    // payload rather than the switch's own value, which was never the part that was wrong (#204).
+    // If the save also sent the saved web address, read from `["plex"]`'s cached row, the route
+    // would write every field it received. A cached row that has gone stale, through a failed
+    // refetch this panel deliberately renders through, or another tab editing the address, would
+    // then revert the operator's address without a word, and every "open in Plex" link in the
+    // app would point at plex.tv. `web_url` must be absent from the payload, so this checks the
+    // exact payload sent rather than the switch's own value.
     const user = userEvent.setup();
     apiMock.setPlexSettings.mockResolvedValue(status({ verify_tls: false }));
     renderPanel();
@@ -727,18 +722,17 @@ describe("the certificate check", () => {
   });
 });
 
-// The three groups below the connection form, driven through a failed refetch (#166).
+// The three groups below the connection form, driven through a failed refetch.
 //
-// The panel's own status read got this split in #140; these two did not, so an undivided
-// `isError` traded the whole library grid, and separately both Leaving Soon switches, for one
-// error paragraph while React Query still held the last good answer. Every trigger is a success
-// path: `invalidateAllPlex` fires on all three paths that change which server is linked -- a
-// switch, a link and an unlink -- and returning to the section past `staleTime` refetches on its
-// own. For most of this comment's life the switch was its only caller and the other two refreshed
-// the status row alone, which is the bug #205 fixed; the count here has been wrong in both
-// directions since, so the callers are now pinned by name in "changing which server is linked"
-// below rather than counted in prose. Each group is pinned in both directions, because a fix that
-// only deleted the `isError` arm would leave a genuinely-unread group claiming to be empty rather than unread.
+// An undivided `isError` would trade the whole library grid, and separately both Leaving Soon
+// switches, for one error paragraph, even while React Query still holds the last good answer.
+// So each group renders a stale notice instead, keeping the last good data on screen. Every
+// trigger here is a success path: `invalidateAllPlex` fires on all three paths that change which
+// server is linked (a switch, a link, and an unlink), and returning to the section past
+// `staleTime` refetches on its own. The callers that trigger `invalidateAllPlex` are pinned by
+// name in "changing which server is linked" below. Each group is pinned in both directions,
+// because a fix that only deleted the `isError` arm would leave a genuinely never-loaded group
+// claiming to be merely stale instead of never loaded.
 describe("the groups below the form, through a failed refetch", () => {
   /** A cold mount whose queryClient the test keeps, so it can invalidate one key by hand. */
   function renderWithClient() {
@@ -759,11 +753,12 @@ describe("the groups below the form, through a failed refetch", () => {
   const STALE_LIBS = /Couldn't check the library list just now/;
   const STALE_SHELF = /Couldn't check the Leaving Soon settings just now/;
   const STALE_WATCH = /Couldn't check the watch history record just now/;
-  // The one this panel speaks in once several of its reads have failed at once (#198).
+  // The sentence this panel uses once several of its reads have failed at once.
   const STALE_PANEL = /Couldn't check the Plex settings just now/;
   const STALE_ANY = /Couldn't check .* just now/;
-  // Rule 144: the noun is the `what` prop of StaleReadNotice, which owns the sentence. Deleting
-  // either `what` here leaves the loose form below green, so each is asserted by its own noun.
+  // The noun in the stale-read sentence is the `what` prop of StaleReadNotice, which owns the
+  // sentence. Deleting either `what` prop here would leave the loose match below still passing,
+  // so each read is asserted by its own noun.
   const WHAT_HINT =
     "The stale line's noun is the `what` prop of StaleReadNotice.tsx, which owns the sentence. " +
     'Sibling call sites: PlexPanel\'s own status read (the default, "these settings"), the ' +
@@ -774,12 +769,12 @@ describe("the groups below the form, through a failed refetch", () => {
 
   it("keeps the library grid and its switches when the refetch fails", async () => {
     const queryClient = renderWithClient();
-    // Cheap text first, then the switch synchronously (#228, rule 72's twin of the Leaving Soon
-    // row in SettingsStaleRead.test.tsx). This grid is two reads deep -- the panel returns early
-    // while `plex` is pending and the grid waits on `plex-libraries` behind it -- and a
-    // `findByRole` with a name matcher re-computes accessible names across the whole panel on
-    // every 50ms poll, so the pair had one budget with the looking taken out of it. That budget
-    // was 1000ms then and is 5000ms now (`src/test/setup.ts`, #887); the query costs the same.
+    // Find the cheap text first, then the switch synchronously; this mirrors the Leaving Soon
+    // row in SettingsStaleRead.test.tsx. This grid is two reads deep: the panel returns early
+    // while `plex` is pending, and the grid then waits on `plex-libraries` behind it. A
+    // `findByRole` with a name matcher recomputes accessible names across the whole panel on
+    // every 50ms poll, which competes with this test for the same timeout budget in
+    // `src/test/setup.ts`.
     await screen.findByText("Refresh libraries");
     const toggle = screen.getByRole("switch", { name: "Let Reaper touch Movies" });
 
@@ -801,10 +796,10 @@ describe("the groups below the form, through a failed refetch", () => {
   });
 
   it("says it once when several reads fail together", async () => {
-    // The state `invalidateAllPlex` produces: one server switch against an unreachable Plex
-    // refetches all four of these, and each used to answer with its own amber paragraph, so the
-    // operator read the same failure four times down one panel (#198). The notice carries
-    // role="alert", so it was four announcements as well.
+    // The state `invalidateAllPlex` produces: switching to an unreachable Plex server refetches
+    // all four of these reads at once. Without this grouped notice, each would show its own
+    // amber paragraph, so the operator would read the same failure four times down one panel,
+    // and since the notice carries role="alert", hear it announced four times too.
     const queryClient = renderWithClient();
     await screen.findByText("Refresh libraries");
     await screen.findByRole("button", { name: "Forget…" });
@@ -824,8 +819,8 @@ describe("the groups below the form, through a failed refetch", () => {
     // Neither read speaks for itself while the panel is speaking for both.
     expect(screen.queryByText(STALE_LIBS)).toBeNull();
     expect(screen.queryByText(STALE_WATCH)).toBeNull();
-    // And the line still sits above everything it now covers, since it says what's BELOW may be
-    // out of date and `.panel` is plain block flow.
+    // The line still sits above everything it covers, since it says what is below it may be out
+    // of date, and `.panel` uses plain block flow.
     const grid = screen.getByRole("switch", { name: "Let Reaper touch Movies" });
     expect(lines[0]!.compareDocumentPosition(grid) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // The controls under it are all still drawn and operable, which is why the panel keeps
@@ -876,10 +871,9 @@ describe("the groups below the form, through a failed refetch", () => {
 
   it("keeps both Leaving Soon switches when the refetch fails", async () => {
     const queryClient = renderWithClient();
-    // Same shape as the grid above, on the same query key #228 was about. "Update while
-    // read-only" is the second row's label, rendered only once `leaving-soon-settings` has
-    // landed, so it settles the read this switch's existence depends on without walking the
-    // tree for names.
+    // Same shape as the grid above, on the same query key. "Update while read-only" is the
+    // second row's label, rendered only once `leaving-soon-settings` has landed, so waiting for
+    // it settles the read this switch depends on without walking the tree for names.
     await screen.findByText("Update while read-only");
     const shelf = screen.getByRole("switch", { name: 'Show "Leaving Soon" in Plex' });
 
@@ -908,10 +902,10 @@ describe("the groups below the form, through a failed refetch", () => {
   });
 });
 
-// The watch-record reset. A title whose measured plays fall to zero reads as
-// unreadable, which is right until the cause is a rebuilt library -- then it is every
-// watched title at once and nothing is reapable. This is the way out, so it has to be
-// reachable, has to say what it will do, and must not be reachable by one stray click.
+// The watch-record reset. A title whose measured plays fall to zero reads as unreadable. That
+// is correct unless the cause is a rebuilt library, in which case it is every watched title at
+// once and nothing is reapable. This reset is the way out, so it has to be reachable, has to say
+// what it will do, and must not be reachable by one stray click.
 describe("forgetting the recorded watch history", () => {
   function renderPanel() {
     apiMock.plexResources.mockResolvedValue({
@@ -940,9 +934,9 @@ describe("forgetting the recorded watch history", () => {
 
   /** Open the reset and type the admin password into the confirm form.
    *
-   *  Rule 137: the Confirm is disabled until the box has something in it, and user-event reports
-   *  a click on a disabled control as SUCCESS -- so a test that pressed it before typing would
-   *  send nothing, then fail later on a state its no-op never produced. */
+   *  The Confirm button is disabled until the box has something in it, and user-event reports a
+   *  click on a disabled button as success, so a test that clicks it before typing would send
+   *  nothing and then fail later on a state its no-op never produced. */
   async function arm(user: ReturnType<typeof userEvent.setup>, password = PASSWORD) {
     await user.click(await screen.findByRole("button", { name: "Forget…" }));
     const box = screen.getByLabelText("Admin password");
@@ -968,12 +962,11 @@ describe("forgetting the recorded watch history", () => {
     await fill(user, screen.getByLabelText("Admin password"), PASSWORD);
     await waitFor(() => expect(confirm).toBeEnabled());
     await user.click(confirm);
-    // The password reaches the server, which is the whole of this change: the route refuses
-    // without it, so a call that dropped it on the floor would read as green here and 403 in
-    // the app.
-    // Read off the first argument rather than matching the whole call: React Query hands a
-    // mutationFn its own context as a second argument, which the client ignores and this
-    // assertion has no business pinning.
+    // The password must reach the server: the route refuses without it, so a call that dropped
+    // it would still pass here while returning 403 in the real app.
+    // This reads the first argument only, rather than matching the whole call, because React
+    // Query hands a mutationFn its own context as a second argument that the client ignores and
+    // this assertion has no reason to pin.
     expect(apiMock.resetWatchEvidence).toHaveBeenCalledTimes(1);
     expect(apiMock.resetWatchEvidence.mock.calls[0]?.[0]).toBe(PASSWORD);
   });
@@ -988,9 +981,9 @@ describe("forgetting the recorded watch history", () => {
     expect(apiMock.resetWatchEvidence).not.toHaveBeenCalled();
     expect(await screen.findByRole("button", { name: "Forget…" })).toBeEnabled();
 
-    // Reopening offers an EMPTY box. Cancel that only closed the form would leave the admin
-    // password in component state for as long as this panel stayed mounted, and refill the field
-    // on the next open -- the shape S-5 was filed for.
+    // Reopening offers an empty box. If Cancel only closed the form, the admin password would
+    // stay in component state for as long as this panel is mounted, and refill the field the
+    // next time it opens.
     await user.click(screen.getByRole("button", { name: "Forget…" }));
     expect(screen.getByLabelText("Admin password")).toHaveValue("");
   });
@@ -1004,23 +997,22 @@ describe("forgetting the recorded watch history", () => {
     await arm(user);
     await user.click(screen.getByRole("button", { name: "Confirm forget" }));
 
-    // The second sentence is load-bearing: the stored candidates are frozen snapshot data, so
-    // the queue does not move until the next scan. Without it the operator reads the unchanged
-    // queue as "that did not work" and reaches for the policy next, which does cost files.
+    // The second sentence matters: the stored candidates are frozen snapshot data, so the queue
+    // does not move until the next scan. Without it, the operator would read the unchanged queue
+    // as "that did not work" and reach for the policy next, which does cost files.
     //
-    // Scoped to the visible row, because this sentence is on screen TWICE on purpose -- the live
-    // region says the same words (rule 144, pinned separately below), and an unscoped match
-    // finds both and throws.
+    // This checks the visible row only, because the sentence appears on screen twice on
+    // purpose: the live region announces the same words, and a query with no scope would find
+    // both and throw.
     const status = await screen.findByText(/Forgotten for 1,284 titles/, {
       selector: ".set-status",
     });
     expect(status).toHaveTextContent("The next scan uses what Plex holds now.");
   });
 
-  // The fallback, for a failure that arrived with nothing to say. Without it the operator gets a
-  // red box holding no words, which is worse than the fixed sentence this used to always show:
-  // "nothing changed" is the load-bearing half, since someone reading a bare failure cannot tell
-  // whether pressing again is safe.
+  // The fallback for a failure that arrives with nothing to say. Without it, the operator would
+  // see an empty red box. "Nothing changed" is the essential half of that sentence, since
+  // someone reading a bare failure cannot tell whether pressing again is safe.
   it("still says nothing changed when the failure carries no message", async () => {
     const user = userEvent.setup();
     apiMock.resetWatchEvidence.mockRejectedValue(new Error(""));
@@ -1035,8 +1027,8 @@ describe("forgetting the recorded watch history", () => {
   });
 
   // Every refusal the password gate can raise needs a different move from the operator, so the
-  // server's own sentence is what gets rendered. A fixed "couldn't forget the record" would have
-  // told someone locked out to keep pressing.
+  // server's own sentence is what gets rendered. A fixed "couldn't forget the record" message
+  // would tell someone locked out to keep pressing.
   it.each([
     "That password didn't match. The record was kept.",
     "Too many attempts. Please wait and try again.",
@@ -1062,18 +1054,18 @@ describe("forgetting the recorded watch history", () => {
     await screen.findByText("That password didn't match.");
 
     // The form stays open to retype into, but the wrong password does not sit there waiting to
-    // be resent -- the same thing `RestoreCard` does with a rejected confirm.
+    // be resent. `RestoreCard` does the same thing with a rejected confirm.
     expect(screen.getByLabelText("Admin password")).toHaveValue("");
   });
 
   // The three states that are not "a password exists" all fail closed: this control withdraws a
-  // protection from every title at once, so there is no direction here that is safe to offer on
-  // a guess. `DeletionToggle` keeps its OFF direction live on an unreadable safety read because
-  // that one can only make Reaper safer; this row has no such half.
-  // Both exits unmount the form and take the pressed button with them, so focus falls to
-  // `<body>` and the next Tab restarts at the top of the page. The successor is the button that
-  // opened the form, which is back in that slot by the next commit. Same handoff the two Saves
-  // on this panel make, through the same hook (rule 72).
+  // protection from every title at once, so there is no direction here that is safe to offer on a
+  // guess. `DeletionToggle` keeps its OFF direction live on an unreadable safety read, since that
+  // direction can only make Reaper safer; this row has no equivalent safe direction.
+  // Both exits unmount the form and take the pressed button with them, so focus falls to `<body>`
+  // and the next Tab would restart at the top of the page. This test moves focus to the button
+  // that reopened the form, which is back in that slot by the next commit. The two Save buttons
+  // on this panel make the same handoff, through the same hook.
   it.each([
     ["Confirm forget", "success"],
     ["Cancel", "standing down"],
@@ -1097,8 +1089,8 @@ describe("forgetting the recorded watch history", () => {
     await arm(user);
     await user.click(screen.getByRole("button", { name: "Confirm forget" }));
 
-    // The status line is the only thing that moves, and it sits in an unfocused subtree. Reads
-    // the same as the visible sentence (rule 144).
+    // The status line is the only thing that moves, and it sits in an unfocused subtree. It
+    // reads the same words as the visible sentence.
     await waitFor(() =>
       expect(spoken()).toContain(
         "Forgotten for 1,284 titles. The next scan uses what Plex holds now.",
@@ -1124,16 +1116,17 @@ describe("forgetting the recorded watch history", () => {
     apiMock.safety.mockRejectedValue(new Error("boom"));
     renderPanel();
 
-    // Named, not blank: a control that simply vanished would read as "this install doesn't have
-    // that feature" rather than "Reaper couldn't look" (rule 17/36).
+    // This names the reason instead of leaving a blank: a control that simply vanished would
+    // read as "this install doesn't have that feature" rather than "Reaper couldn't check."
     await screen.findByText(/couldn't check whether an admin password is set/);
     expect(screen.queryByRole("button", { name: "Forget…" })).toBeNull();
     expect(apiMock.resetWatchEvidence).not.toHaveBeenCalled();
   });
 
-  // The status line, whose job is to answer "do I need to press this at all". Three readings,
-  // and the null one is the reason this is a table: a scan that never counted is not a scan that
-  // counted none (rule 93), so it must not claim the last scan found nothing unreadable.
+  // The status line answers "do I need to press this at all." This is a table because of the
+  // null reading: a scan that never counted plays is different from a scan that counted zero
+  // unreadable ones, and the sentence must not claim the last scan found nothing unreadable when
+  // it never checked at all.
   it.each([
     [
       { titles: 1284, held_back: 3 },
@@ -1158,22 +1151,23 @@ describe("forgetting the recorded watch history", () => {
     expect(await screen.findByText(expected)).toBeInTheDocument();
   });
 
-  // "Held back" is this app's phrase for an item with no readable SIZE, in the planner and on
-  // four docs pages, where the repair is a policy allowance. Reusing it for unreadable plays
-  // would send the operator to that allowance instead of to Tautulli (rules 21, 144).
+  // "Held back" is this app's phrase for an item with no readable size, used in the planner and
+  // on four docs pages, where the fix is a policy allowance. Reusing that phrase for unreadable
+  // plays would send the operator to that allowance instead of to Tautulli.
   it("does not describe an unreadable-history item with the unknown-size phrase", async () => {
     apiMock.watchEvidence.mockResolvedValue({ titles: 1284, held_back: 3 });
     renderPanel();
     const status = await screen.findByText(/couldn't read the plays for 3 items/);
     expect(status).not.toHaveTextContent("held back");
-    // Nor a verdict claim: the number is not computed from one (rule 144).
+    // This also is not a verdict claim: the number shown is not computed from one.
     expect(status).not.toHaveTextContent("kept");
   });
 
   it("warns that a watched title will score as unwatched until Tautulli is repaired", async () => {
     renderPanel();
-    // The honest cost of pressing it. A reset that reads as free is the one an operator presses
-    // without repairing the source, and then every re-added title is condemnable on false zeros.
+    // This states the real cost of pressing the button. A reset that reads as free is one an
+    // operator would press without repairing the source, after which every re-added title
+    // becomes condemnable on false zero-play counts.
     const warning = await screen.findByText(/scores as never watched/);
     expect(warning).toHaveClass("notice-warn");
     expect(warning).toHaveTextContent("repair its history in Tautulli");
@@ -1181,11 +1175,12 @@ describe("forgetting the recorded watch history", () => {
 });
 
 describe("saving the Plex web address", () => {
-  // The row's inline Save exists only while the box is dirty, so pressing it destroys the pressed
-  // control, and it is `disabled` while the write is in flight so focus is gone before that. Its
-  // whole success signal was that disappearance, which is an absence and cannot be heard -- while
-  // the Manual address row beside it has said "Connection saved." all along, so the two halves of
-  // one pair disagreed (#173, rule 72).
+  // The row's inline Save button exists only while the box is dirty, so pressing it removes the
+  // pressed control, and the button is disabled while the write is in flight, so focus is
+  // already gone by the time it succeeds. Disappearing is not something a screen reader can
+  // hear, so this row also announces success through the same live region the Manual address
+  // row beside it uses ("Connection saved."), and this test checks that both rows say something
+  // out loud.
   const spoken = () =>
     [...document.querySelectorAll('[aria-live="polite"]')].map((n) => n.textContent).join("");
   const box = () => screen.getByLabelText("Plex web address");
@@ -1218,7 +1213,7 @@ describe("saving the Plex web address", () => {
 });
 
 describe("naming the shelf", () => {
-  /** The saved answer, so the row re-seeds from the response rather than the effect (rule 39). */
+  /** The saved answer, so the row re-seeds from the server response rather than from an effect. */
   function savesAs(name: string) {
     apiMock.setLeavingSoonSettings.mockResolvedValue({
       enabled: false,
@@ -1252,12 +1247,13 @@ describe("naming the shelf", () => {
   });
 
   it("stops reporting a draft once an emptied box is saved back to the default", async () => {
-    // Clearing the box is how the help says to go back to the default, and it saves the empty
-    // string. The route stores that as unset and answers with the SAME default name it was
-    // already returning, so `savedShelfName` never changes identity and the re-seed effect
-    // never fires: the box would sit empty against a name it now matches, with a Save that
-    // never goes away and a section-switch confirm nothing on this panel can satisfy. The web
-    // address row above had exactly this (rule 39, rule 72).
+    // Clearing the box is how the help tells the operator to go back to the default, and
+    // clearing it saves the empty string. The route stores that as unset and answers with the
+    // same default name it was already returning, so `savedShelfName` keeps the same value and
+    // the re-seed effect would never fire without this test's guard. Without it, the box would
+    // sit empty against a name it now matches: the Save button never goes away, and the panel
+    // would keep asking to confirm leaving over a value that is already stored. The web address
+    // row above needs the same fix.
     const user = userEvent.setup();
     const dirty = vi.fn();
     savesAs("Leaving Soon");
@@ -1291,10 +1287,9 @@ describe("naming the shelf", () => {
 });
 
 describe("the shelf status line", () => {
-  // The one sentence on this screen that says how the Leaving Soon shelf is doing, and until
-  // now the only one of the four copies of that answer with no test on it -- which is how it
-  // went on wording its own preview caveat while the other three were fixed (#555), and how
-  // it went on answering for a shelf a later scan had skipped.
+  // The one sentence on this screen that says how the Leaving Soon shelf is doing. It has to
+  // stay in sync with the other status lines that report similar information, and it has to say
+  // when a later scan skipped the shelf rather than reporting a stale pass as current.
   const PASS = {
     at: "2026-08-03T02:00:00+00:00",
     movies: 280,
@@ -1303,12 +1298,11 @@ describe("the shelf status line", () => {
     ok: true,
     result_reason: { k: "shelf_updated", p: { added: 4, removed: 1 } },
   };
-  /** After `PASS`, since the whole decision is which record is newer (rule 141).
-   *  `result_reason` is a real catalog code (phase 8b): this panel's own status line never
-   *  reads it (it says only a generic "later scan skipped" sentence; the Jobs row names the
-   *  reason), so the exact code doesn't matter to these assertions -- it just has to be a
-   *  real one, since `shelf()`'s loose `Record<string, unknown>` typing would not catch a
-   *  stale shape. */
+  /** Dated after `PASS`, since the whole decision is which record is newer. `result_reason` is
+   *  a real catalog code, but this panel's own status line never reads it: it shows only a
+   *  generic "later scan skipped" sentence, while the Jobs row names the reason. So the exact
+   *  code does not matter to these assertions, it just has to be a real one, since `shelf()`'s
+   *  loose `Record<string, unknown>` typing would not catch a stale shape. */
   const SKIP = {
     at: "2026-08-04T20:06:00+00:00",
     result_reason: { k: "error.leaving_soon.skip_unreachable", p: {} },
@@ -1335,8 +1329,8 @@ describe("the shelf status line", () => {
     return line.textContent ?? "";
   }
 
-  /** The whole line bar the elapsed phrase, which is the wall clock and not a claim this
-   *  panel makes (rule 133). Anchored at both ends, so a stray lead is a failure. */
+  /** The whole line except the elapsed-time phrase, which reads the wall clock and is not a
+   *  claim this panel makes. Anchored at both ends, so an unexpected lead-in fails the match. */
   const LINE = (lead: string) =>
     new RegExp(
       `^${lead}Last updated .+, 280 movies and 311 seasons on the shelves, ` +
@@ -1348,10 +1342,11 @@ describe("the shelf status line", () => {
   });
 
   it("says nothing at all while the shelf is switched off", async () => {
-    // The line promised "next update after the next scan" for a scan coded to skip the
-    // shelf, and named counts a switch-off cleanup had already cleared from Plex (#624). The
-    // switch is asserted alongside, because the fix is a line that disappears and the whole
-    // group disappearing would look the same from a query for the text (rule 118).
+    // If shown here, the line would promise "next update after the next scan" for a scan coded
+    // to skip the shelf, and would name counts that a switch-off cleanup had already cleared
+    // from Plex. The switch is asserted alongside the missing line, because a whole group
+    // disappearing would look the same as a fixed line disappearing to a query for the text
+    // alone.
     apiMock.leavingSoonSettings.mockResolvedValue({
       enabled: false,
       allow_unarmed: false,
@@ -1364,8 +1359,8 @@ describe("the shelf status line", () => {
 
     const shelf = await screen.findByRole("switch", { name: 'Show "Leaving Soon" in Plex' });
     expect(shelf).not.toBeChecked();
-    // The watch-history record has a `.set-status` row of its own on this panel, so the
-    // predicate is `statusLine`'s: the shelf line is the one naming the shelves.
+    // The watch-history record has its own `.set-status` row on this panel, so this predicate
+    // uses the same one `statusLine` does: the shelf line is the one naming the shelves.
     const shelfLine = [...container.querySelectorAll(".set-status")].find((n) =>
       n.textContent?.includes("on the shelves"),
     );
@@ -1374,9 +1369,9 @@ describe("the shelf status line", () => {
   });
 
   it("says a later scan skipped the shelves, and past-tenses the counts it left behind", async () => {
-    // Without this the panel answered with the completed pass alone: a green, confident
-    // verdict about a shelf that has stopped updating, on the screen an operator comes to
-    // when they suspect exactly that.
+    // Without this line, the panel would report only the completed pass: a confident verdict
+    // about a shelf that has stopped updating, on the exact screen an operator visits when they
+    // suspect that.
     const line = await statusLine({ last_skip: SKIP });
 
     expect(line).toContain("A later scan didn't update the shelves. The Jobs page says why.");
@@ -1385,8 +1380,8 @@ describe("the shelf status line", () => {
   });
 
   it("goes back to the pass once a later one lands", async () => {
-    // The direction that proves it COMPARES the two. Nothing clears a skip, so without this
-    // the panel would report a recovered shelf as broken forever.
+    // This direction proves the panel compares the two dates. Nothing clears a skip on its own,
+    // so without this comparison the panel would report a recovered shelf as broken forever.
     const line = await statusLine({
       last: { ...PASS, at: "2026-08-04T22:30:00+00:00" },
       last_skip: SKIP,
@@ -1397,9 +1392,9 @@ describe("the shelf status line", () => {
   });
 
   it("opens with the shelf Plex still shows, when a rename has not been carried across", async () => {
-    // The one fact on this screen that contradicts what the operator is looking at: the box
-    // two rows up says one name and their library still shows another, and the counts after
-    // it are about the shelf under the OLD name. So it leads.
+    // The one fact on this screen that contradicts what the operator is looking at: the box two
+    // rows up shows one name, but the library still shows another, and the counts that follow
+    // are about the shelf under the old name. That is why this sentence leads.
     const line = await statusLine({ name: "Last chance", applied_name: "Leaving Soon" });
 
     expect(line).toMatch(
@@ -1415,23 +1410,25 @@ describe("the shelf status line", () => {
 
   it("opens with the date, not a stray period, for a row stored before summaries existed", async () => {
     // `ok` and a result reason were added to the stored row after the shelf shipped, and the
-    // JSON is never migrated, so a tester's row can thaw as a legacy reason with empty text.
+    // stored JSON is never migrated, so an old row can be read back with a legacy reason that
+    // has empty text.
     expect(
       await statusLine({ last: { ...PASS, result_reason: { k: "legacy", p: { text: "" } } } }),
     ).toMatch(LINE(""));
   });
 
   it("groups every number on the line the one way, whatever the browser's locale", async () => {
-    // The lead sentence is the service's, comma-grouped by Python's `:,`, and the server
-    // cannot know the browser's locale. `count` follows that locale, so the two together read
-    // "1,234 added, 5,678 cleared. Last updated …, 1.234 movies" in a de-DE browser -- two
-    // thousands separators in one sentence, neither wrong alone.
+    // The lead sentence comes from the server, comma-grouped by Python's `:,` formatting, and
+    // the server cannot know the browser's locale. `count` follows the browser's locale
+    // instead, so in a de-DE browser the two together would read "1,234 added, 5,678 cleared.
+    // Last updated …, 1.234 movies," two different thousands separators in one sentence,
+    // neither wrong alone.
     //
-    // Driving the locale is what makes this fail on reverting to `count` (rule 118): under
-    // en-US both formatters agree and the assertion cannot discriminate. The default locale
-    // is stubbed at `Number.prototype.toLocaleString`, which is the call both formatters
-    // actually make -- spying on `Intl.NumberFormat` does NOT reach it, and a version of this
-    // test that did read green against the very revert it was written to catch.
+    // This test drives a non-English locale so it can fail if the code reverts to `count` for
+    // the server's own numbers: under en-US both formatters agree and the assertion could not
+    // tell them apart. The locale is stubbed on `Number.prototype.toLocaleString`, which is the
+    // call both formatters actually make. Spying on `Intl.NumberFormat` instead would not reach
+    // it.
     const original = Number.prototype.toLocaleString;
     vi.spyOn(Number.prototype, "toLocaleString").mockImplementation(function (
       this: number,

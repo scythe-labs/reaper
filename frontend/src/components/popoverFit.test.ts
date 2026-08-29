@@ -3,7 +3,7 @@
 //
 // The one part of an anchored popover's placement that is arithmetic rather than layout: how far
 // it slides to stay on screen. jsdom reports every box as zero-sized, so the measuring the
-// component does around this call cannot be exercised there -- these pin the decision it feeds.
+// component does around this call cannot be exercised there. These pin the decision it feeds.
 //
 // The numbers are a phone: a 390px-wide screen and the filter menu at its 260px widest.
 
@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import { fixedMenuPos, inlineStartOf, popoverShift } from "./popoverFit";
 
 describe("popoverShift", () => {
-  // Written from what the placement promises, never read off its branches (rule 119). Each row
+  // Written from what the placement promises, never read off its branches. Each row
   // is [what it promises, anchor's left edge, popover width, screen width, pixels to slide].
   const cases: [string, number, number, number, number][] = [
     ["leaves a popover with room to spare exactly where its anchor puts it", 24, 260, 1440, 0],
@@ -26,8 +26,8 @@ describe("popoverShift", () => {
     expect(popoverShift(anchorLeft, width, screen)).toBe(want);
   });
 
-  // The two invariants above stated over the whole space rather than at six points: whatever the
-  // geometry, the slide is a pull leftward, and it never drags the popover past the gutter.
+  // The two invariants above, stated over the whole space rather than at six points. Whatever
+  // the geometry, the slide is a pull leftward, and it never drags the popover past the gutter.
   it("is never a push right, and never crosses the left gutter", () => {
     for (let anchorLeft = 0; anchorLeft <= 400; anchorLeft += 7) {
       for (const width of [120, 190, 260, 400]) {
@@ -42,8 +42,8 @@ describe("popoverShift", () => {
 });
 
 // These two are the only places in the app that measure the viewport in raw pixels, so they are
-// the only two the browser's own `dir="rtl"` mirroring cannot reach (#861). Everything else
-// mirrors because the stylesheet names its sides by reading order.
+// the only two the browser's own `dir="rtl"` mirroring cannot reach. Everything else mirrors
+// because the stylesheet names its sides by reading order.
 describe("inlineStartOf", () => {
   it("is the left edge in a left-to-right page and the mirror of the right edge otherwise", () => {
     const rect = { left: 300, right: 360 };
@@ -74,11 +74,11 @@ describe("fixedMenuPos", () => {
   const nearLeftEdge = { left: 30, right: 60, top: 200, bottom: 224 };
 
   it("hangs the menu back from the trigger's far edge, whichever edge that is", () => {
-    // Left to right: the menu's right edge meets the trigger's right edge, so it starts
+    // Left to right, the menu's right edge meets the trigger's right edge, so it starts
     // 360 - 200 = 160px from the left.
     expect(fixedMenuPos(nearRightEdge, 200, 100, 390, 800, 8, false).start).toBe(160);
-    // Right to left: the trigger's far edge is its LEFT one, 390 - 30 = 360px from the reading
-    // edge, so the menu starts 160px from the RIGHT. The mirror of the same number.
+    // Right to left, the trigger's far edge is its left one, 390 - 30 = 360px from the reading
+    // edge, so the menu starts 160px from the right. The mirror of the same number.
     expect(fixedMenuPos(nearLeftEdge, 200, 100, 390, 800, 8, true).start).toBe(160);
   });
 

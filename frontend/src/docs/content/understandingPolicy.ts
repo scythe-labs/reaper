@@ -233,13 +233,13 @@ export const understandingPolicy: Doc = {
       "For a show, this means someone on the server has gone back to episodes already seen at least twice. Watching a new season as it airs is a first watch, so it doesn't count toward a rewatch.",
     ),
     p(
-      "Turn the second switch on to protect anything that still has a real shot at being watched again, even if the score is high. Reaper figures out that shot by looking at how long a title has gone unwatched and checking what happened to other titles in your library that sat idle for about the same amount of time. It calculates the likelihood based on the percentage of those titles that got watched again within a year. If it meets or beats your threshold, the title stays.",
+      "Turn the second switch on to protect anything that still has a real shot at being watched again, even if the score is high. Reaper figures out that shot by looking at how long a title has gone unwatched and checking what happened to other titles in your library that sat idle for about the same amount of time. It looks at what percentage of those titles got watched again within a year, and gives the title the benefit of the doubt: the smaller the group, the more generous the number, so a small group is never judged as a flat zero. If that meets or beats your threshold, the title stays.",
     ),
     p(
-      "Imagine a movie hasn't been watched in 2 years. Reaper finds 100 other titles that also sat for 2 years, and 30 of them were watched again within a year. That's a 30% chance. If your threshold is set to 25, Reaper keeps the movie. At 40, the score decides.",
+      "Imagine a movie hasn't been watched in 2 years. Reaper finds 100 other titles that also sat for 2 years, and 30 of them were watched again within a year. With the benefit of the doubt, that counts as up to a 40% chance. If your threshold is set to 25, Reaper keeps the movie. At 45, the score decides.",
     ),
     p(
-      "Shows are measured as a whole. Any episode counts as activity, so keeping a show means keeping all its seasons. Imagine a show hasn't been touched for a year. Out of 60 other shows that sat for a year, 20 came back. That's 33%. At a threshold of 25, the show is kept.",
+      "Shows are measured as a whole. Any episode counts as activity, so keeping a show means keeping all its seasons. Imagine a show hasn't been touched for a year. Out of 60 other shows that sat for a year, 20 came back, up to a 46% chance. At a threshold of 25, the show is kept.",
     ),
     p(
       "Every scan, Reaper pretends today was a year ago and sorts every title by how long it sat there: under a year, one to two years, and so on. Since it rewound the clock, the following year is already in your history so it can count how many in each group got played again. Those counts fill the table on the card, one row per group. A group needs at least 30 titles before its number is used.",

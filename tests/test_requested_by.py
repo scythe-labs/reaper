@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The "requested by" join -- and never a gate.
+"""The "requested by" join is never a gate.
 
-By default the map keys on tmdb/tvdb (a loose union: every copy of a title shows everyone who
-asked for the title). When the operator maps a Seerr service to a Reaper instance, a request
-also files under the exact copy's media_key, so a title kept in two libraries attributes each
-copy to the right person. Either way this is display-only: the worst a wrong match can do is
-show the wrong name, so a loose join is acceptable here in a way it never is on the delete path.
+By default the map keys on tmdb/tvdb, a loose union where every copy of a title shows
+everyone who asked for the title. When the operator maps a Seerr service to a Reaper
+instance, a request also files under the exact copy's media_key, so a title kept in two
+libraries attributes each copy to the right person. Either way this is display-only: the
+worst a wrong match can do is show the wrong name, so a loose join is acceptable here in a
+way it never is on the delete path.
 """
 
 from __future__ import annotations
@@ -47,11 +48,12 @@ def _src(client: object, service_map: dict[str, int] | None = None) -> requested
 
 
 # `movie_key`/`show_key`/`season_key` take `int | None` and so are declared to return
-# `str | None`: a request with no id has no key. Every call below passes a literal id, where
-# None is unreachable -- but the signature cannot say so, and mypy is right that indexing a
-# `dict[str, str]` with `str | None` is not allowed. These narrow it once, and the assert is
-# what makes the narrowing honest rather than a cast: a helper that started returning None
-# for a real id fails HERE, naming the key, instead of raising KeyError three lines later.
+# `str | None`, since a request with no id has no key. Every call below passes a literal id,
+# so None cannot actually happen here, but the signature cannot say so, and mypy is right
+# that indexing a `dict[str, str]` with `str | None` is not allowed. These helpers narrow it
+# once, and the assert is what makes the narrowing honest rather than a silent cast: a
+# helper that started returning None for a real id fails here, naming the key, instead of
+# raising KeyError three lines later.
 def _movie(tmdb_id: int) -> str:
     key = requested_by.movie_key(tmdb_id)
     assert key is not None
@@ -150,9 +152,9 @@ class TestBuildMap:
 class TestBuildMapPrecisePerCopy:
     """The service map: a request also files under the exact copy's media_key.
 
-    The multi-Seerr, multi-library case -- a title kept in a main library (added by one Sonarr)
-    and a restricted one (added by another) -- so each copy attributes to the person who asked
-    for THAT copy, not the union of everyone who asked for the title.
+    The multi-Seerr, multi-library case: a title kept in a main library, added by one Sonarr,
+    and a restricted one, added by another. Each copy attributes to the person who asked for
+    that specific copy, not to the union of everyone who asked for the title.
     """
 
     async def test_a_mapped_movie_files_under_its_exact_media_key(self) -> None:
@@ -213,7 +215,7 @@ class TestBuildMapPrecisePerCopy:
         assert _season_at(9, 42, 1) not in result
 
     async def test_an_unmapped_service_keeps_only_the_loose_key(self) -> None:
-        # radarr serviceId 3 is not in the map, so no precise key is filed -- today's behavior.
+        # radarr serviceId 3 is not in the map, so no precise key is filed.
         seerr = FakeSeerr([_req(media_type="movie", tmdb_id=603, arr_id=55, arr_instance_id=3)])
         result = await requested_by.build_map([_src(seerr, {"radarr:2": 7})])
         assert result[_movie(603)] == "Alice"
@@ -299,7 +301,8 @@ class TestBuildMapRatingKey:
 
 
 class _PlexAwareSeerr(FakeSeerr):
-    """A fake Seerr that also answers ``plex_machine_id`` -- for the I-3 namespace guard."""
+    """A fake Seerr that also answers ``plex_machine_id``, for the rating-key namespace
+    guard."""
 
     def __init__(self, requests: list[MediaRequest], machine_id: str | None) -> None:
         super().__init__(requests)
@@ -310,7 +313,7 @@ class _PlexAwareSeerr(FakeSeerr):
 
 
 class TestBuildMapRatingKeyNamespace:
-    """I-3: the rating-key tier is filed only when the portal is on the SAME Plex as Reaper.
+    """The rating-key tier is filed only when the portal is on the same Plex as Reaper.
     Rating keys are unique per server, so a portal on a different Plex would file keys that
     collide with Reaper's candidates and name a requester on an unrelated item."""
 
@@ -350,13 +353,13 @@ class TestBuildMapRatingKeyNamespace:
 
 
 class TestRequestIndex:
-    """The three-state fact index -- the fail-closed side, used to score, not to display."""
+    """The three-state fact index, the fail-closed side used to score, not to display."""
 
     async def test_no_seerr_is_unavailable_and_answers_unknown(self) -> None:
         index = await requested_by.build_request_index([])
         assert index.available is False
-        # Even a real id cannot be answered without a loaded index: fail closed to Unknown,
-        # never "not requested" (which would add delete pressure).
+        # Even a real id cannot be answered without a loaded index. This fails closed to
+        # Unknown, never to "not requested", which would add delete pressure.
         assert isinstance(index.movie_requested(603), Unknown)
         assert isinstance(index.season_requested(81189, 2), Unknown)
 
@@ -397,8 +400,7 @@ class TestRequestIndex:
         assert isinstance(obs, Known) and obs.value is False
 
     async def test_a_request_in_the_second_portal_is_known_true(self) -> None:
-        # A movie requested only in the second Seerr must read as requested, not "not
-        # requested" -- the scoring half of the reported bug.
+        # A movie requested only in the second Seerr must still read as requested.
         first = FakeSeerr([_req(media_type="movie", tmdb_id=603)])
         second = FakeSeerr([_req(media_type="movie", tmdb_id=1234)])
         index = await requested_by.build_request_index([first, second])
@@ -411,13 +413,14 @@ class TestRequestIndex:
         assert isinstance(index.movie_requested(603), Unknown)
 
     async def test_one_unreachable_portal_degrades_the_whole_index(self) -> None:
-        # The fail-closed regression: with a reachable portal AND an unreachable one, the
-        # index must NOT confidently answer "not requested" (Known False) off the partial
-        # view -- it degrades to Unknown so no requested title gains delete pressure.
+        # With one reachable portal and one unreachable one, the index must not confidently
+        # answer "not requested" off the partial view. It degrades to Unknown so no
+        # requested title gains delete pressure.
         good = FakeSeerr([_req(media_type="movie", tmdb_id=603)])
         index = await requested_by.build_request_index([good, FakeSeerr(unreachable=True)])
         assert index.available is False
-        # Even the id we DID read from the good portal is Unknown, not Known(True/False):
-        # the whole set degrades, because a title could be requested in the blind portal.
+        # Even the id read from the good portal answers Unknown, not Known(True) or
+        # Known(False). The whole set degrades, because a title could be requested in the
+        # blind portal.
         assert isinstance(index.movie_requested(603), Unknown)
         assert isinstance(index.movie_requested(999), Unknown)

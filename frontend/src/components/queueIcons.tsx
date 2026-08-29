@@ -2,10 +2,9 @@
 //
 // The review queue's inline icons and glyphs, in one file.
 //
-// Twelve of these sat between the pieces of logic they decorate in ReviewQueue.tsx, so a
-// reviewer of a two-line rule change scrolled past a few hundred lines of path data to find it
-// (R-1). None of them takes anything but a prop or two; none of them belongs to the queue in
-// particular. Every one is exported so the file that draws with it can import it by name.
+// Split out of ReviewQueue.tsx into its own module: none of these takes anything but a prop
+// or two, and none of them belongs to the queue in particular. Every one is exported so the
+// file that draws with it can import it by name.
 //
 // All of them are `aria-hidden`: each sits beside a label, or inside a control that carries its
 // own accessible name, so a screen reader must not read the decoration twice.
@@ -79,7 +78,7 @@ export function OverrideIcon() {
   );
 }
 
-/** The Plex library (section) glyph -- a small shelf of spines, distinct from the media-type
+/** The Plex library (section) glyph: a small shelf of spines, distinct from the media-type
  *  layers icon so a library never reads as a media type. Shared by the library filter and the
  *  library chip. */
 export function LibraryIcon() {
@@ -113,10 +112,10 @@ export function LibraryIcon() {
   );
 }
 
-/** Two spines and a leaning third, for a Plex collection -- distinct from the library shelf's
- *  own spines-and-book glyph (the two sit side by side on a card's facts line, rule 21's "never
- *  mix two meanings on one glyph" read straight through to icons). Sized down (12px) to sit
- *  inside the collection chip, the chip family's own smaller cousin of the 14px set above. */
+/** Two spines and a leaning third, for a Plex collection, distinct from the library shelf's
+ *  own spines-and-book glyph: the two sit side by side on a card's facts line, and a glyph
+ *  must not mix two meanings. Sized down (12px) to sit inside the collection chip, the chip
+ *  family's own smaller cousin of the 14px set above. */
 export function CollectionIcon() {
   return (
     <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
@@ -170,16 +169,17 @@ export function CheckIcon() {
   );
 }
 
-/** The reap glyph: the scythe (see ScytheGlyph) as a reap ACTION. It is not the app's mark --
- *  that is the hooded figure in brand/dissolve -- and it should not follow the brand: what it
- *  has to say is which way a row went, paired against ∞ for spared. A heavier snath (5.5 vs the
- *  glyph's default 3.5) holds the shape's weight at button size, where the stroke would
- *  otherwise thin to a hairline. Only reap actions wear it -- close buttons keep ✕. */
+/** The reap glyph: the scythe (see ScytheGlyph) as a reap action. The app's own mark is the
+ *  hooded figure in brand/dissolve, a different glyph with a different job: this one says
+ *  which way a row went, paired against ∞ for spared, so it does not follow the brand. A
+ *  heavier snath (5.5 vs the glyph's default 3.5) holds the shape's weight at button size,
+ *  where the stroke would otherwise thin to a hairline. Only reap actions wear it; close
+ *  buttons keep ✕. */
 export function ScytheIcon() {
   return <ScytheGlyph className="scythe" width={13} height={13} strokeWidth={5.5} />;
 }
 
-/** A small clock, the dormancy pill's shape reused -- here in the spare's green to mean "kept,
+/** A small clock, the dormancy pill's shape reused, here in the spare's green to mean "kept,
  *  for now". It marks a TIMED spare, where ∞ marks a forever one. */
 export function ClockGlyph({
   dashed = false,
@@ -204,7 +204,7 @@ export function ClockGlyph({
 }
 
 /** The Spare button's leading glyph: ∞ when a plain press keeps forever, the clock when it
- *  keeps for a set time -- so the button says what it will do before you open the menu. */
+ *  keeps for a set time, so the button says what it will do before you open the menu. */
 export function SpareGlyph({ days }: { days: number }) {
   return days > 0 ? (
     <ClockGlyph />
@@ -231,8 +231,8 @@ export function CaretDownGlyph() {
 
 /** The mark that says a link leaves Reaper, worn by the why panel's title and the Scales
  *  panel's heading. Decoration: the destination is already in the link's words, so it is
- *  `aria-hidden` like everything else here (rule 21's middot clause, same reasoning). The two
- *  sites style it differently, which is the only thing `className` carries. */
+ *  `aria-hidden` like everything else here. The two sites style it differently, which is the
+ *  only thing `className` carries. */
 export function ExternalMark({ className }: { className: string }) {
   return (
     <svg
@@ -269,7 +269,7 @@ export function PenGlyph() {
 }
 
 /** The selection tick a card wears in Select mode: an empty ring until picked, a filled check
- *  once it is. Replaces the raw checkbox -- it reads as part of the card. */
+ *  once it is. Replaces the raw checkbox, so it reads as part of the card. */
 export function SelectTick({ selected }: { selected: boolean }) {
   return (
     <span className={`select-tick ${selected ? "on" : ""}`} aria-hidden="true">

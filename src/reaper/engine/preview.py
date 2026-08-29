@@ -1,42 +1,38 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Trying a policy rule against one value, without a scan.
+"""Try a policy rule against one value, without running a scan.
 
-The policy editor draws a probe under each signal's range: move it and the sentence says
-what a title at that value would earn. Answering that in the browser would mean a second
-copy of the ramp living beside the control an operator tunes deletions with -- free to
-drift from the engine, and confident while wrong (rule 3/22). So the question comes here
-and is answered by the real ``evaluate_signal``, on the same code path a scan runs.
+The policy editor draws a probe under each signal's range. Moving it shows what a title at
+that value would earn. Answering that in the browser would need a second copy of the
+scoring curve, living beside the control an operator tunes deletions with, free to drift
+from the real engine and confident while wrong. So the question comes here instead, and is
+answered by the real ``evaluate_signal``, on the same code path a scan runs.
 
-**Built to take more than one question, and the extension point is the type rather than a
-registry.** A probe is a ``kind`` on the wire, a member on ``api.schemas.PolicyProbeIn``, a
-function here that answers it by calling the production evaluator, and an arm on the route's
-``match``. Adding "what would this keep rule discount" or "what would this graded rule of my
-own add" costs those four and nothing else: no new route, no new response shape, and no
-change to what an existing client sends. The kind is carried as a typed discriminator rather
-than inferred from which fields happened to arrive, which is what rule 142 is about, and it
-is far cheaper to type now than to retrofit onto a wire format that shipped without it.
+Built to take more than one kind of question. A probe carries a ``kind`` on the wire, a
+member on ``api.schemas.PolicyProbeIn``, a function here that answers it by calling the
+production evaluator, and an arm on the route's ``match``. Adding a new kind, such as "what
+would this keep rule discount," costs those four things and nothing else: no new route, no
+new response shape, and no change to what an existing client sends. The kind is a typed
+value on the wire rather than something inferred from which fields happened to arrive,
+which is cheaper to build in now than to retrofit later.
 
-A dict of kind-to-callable was written here and removed: the kinds take different arguments,
-so nothing could dispatch through it, and a registry nothing reads is scaffolding that
-cannot fire (rule 38/117). ``match`` on the discriminator gives the same extension point, and
-the route's ``assert_never`` arm is what makes mypy check the arms are exhaustive: a bare
-``match`` does not, and the forgotten arm would have reached the operator as a 500 off an
-unbound name rather than as a refusal.
+The route's ``assert_never`` arm makes mypy check that every kind is handled. A plain
+``match`` with no such arm would let a forgotten kind reach the operator as a server error
+instead of a refusal.
 
-Only ``signal`` exists today, because a probe ships with the surface that asks it.
+Only ``signal`` exists today, because a probe ships with the surface that asks for it.
 
-**This is a preview of the RULE, not of any item.** Every fact a signal reads is ``Unknown``
-except the one under the probe, so nothing else can move the answer. The fields only the
-custom-rule vocabulary reads are left at ``Facts``' own default, which is ``Absent`` -- no
-signal reads them, and a keep probe would set its own field ``Known`` before asking. Whoever
-adds that arm sets ``days_since_added`` the way ``history_reach_days`` is set below, or a
-lifetime shortfall hands back the full discount at every value and teaches nothing about the
-ramp. The reach check that guards
-watcher counts is satisfied rather than exercised: a mirror too short for the window
-withholds ``FEW_WATCHERS`` entirely (rule 140), which would report zero at every value and
-teach the operator nothing about the shape of the rule they are setting. That shortfall is
-already the subject of its own policy warning, which is where it belongs -- beside the
-history it is about, not inside a ramp preview.
+This previews the RULE, not any real item. Every fact a signal reads is ``Unknown`` except
+the one under the probe, so nothing else can move the answer. Fields that only the
+custom-rule vocabulary reads are left at ``Facts``' own default, ``Absent``, since no
+built-in signal reads them. A future probe for a keep rule would need to set its own field
+to ``Known`` before asking, the way ``history_reach_days`` is set below for watcher counts:
+``days_since_added`` would need the same treatment, or a lifetime shortfall would show the
+full discount at every value and teach nothing about the actual curve. The check that
+guards watcher counts against a short watch history is satisfied here rather than
+exercised: a history too short for the window would otherwise withhold the watcher signal
+entirely, reporting zero at every value and teaching the operator nothing about the shape
+of the rule they are setting. That shortfall already has its own policy warning, which is
+where it belongs, next to the history it is about, not inside a preview of a rule's shape.
 """
 
 from __future__ import annotations
@@ -47,10 +43,9 @@ from reaper.engine.gates import Facts
 from reaper.engine.observation import Known, Unknown
 from reaper.engine.signals import SignalConfig, SignalId, evaluate_signal
 
-#: The one fact each built-in signal reads. Mirrors ``SignalId``, and
-#: ``tests/test_signal_preview.py`` fails when the two disagree: a signal missing here has
-#: no preview, and would reach the route as a ``KeyError`` rather than as a refusal
-#: (rule 103).
+#: The one fact each built-in signal reads. Mirrors ``SignalId``. A signal missing from this
+#: map has no preview and would otherwise reach the route as a ``KeyError`` instead of a
+#: refusal, so ``tests/test_signal_preview.py`` fails when the two disagree.
 READS: dict[SignalId, str] = {
     SignalId.UNWATCHED: "days_observed_unwatched",
     SignalId.FEW_WATCHERS: "distinct_watchers",
@@ -59,28 +54,27 @@ READS: dict[SignalId, str] = {
     SignalId.SIZE: "size_bytes",
 }
 
-#: Named rather than typed at the site, so the copy walk can see it: an `Unknown` reason can
-#: reach the why panel verbatim, and one written inline is invisible to every drift test.
-#: This one never should reach it -- a probe builds no candidate and writes no explanation --
-#: but "should not" is not a mechanism, and the guard is the mechanism.
+#: Named as a constant rather than typed inline, so a tool that scans for reason strings can
+#: see it. An ``Unknown`` reason can reach the why-panel as raw text, and one written inline
+#: would be invisible to that scan. This reason should never actually reach a panel, since a
+#: probe builds no candidate and writes no explanation, but that expectation alone is not a
+#: guarantee, so it stays a named constant just in case.
 NOT_PROBED_REASON = "not_probed"
 
 _NOTHING = Unknown(source="preview", reason=NOT_PROBED_REASON)
 
-#: Long enough that the watch mirror never withholds a watcher count here. A century, above any
-#: history anyone has. See the module docstring: the probe is about the ramp, and the shortfall
-#: has its own warning elsewhere. ``history_shortfall`` returns ``None`` at ``reach >= needed``,
-#: so this only has to out-reach the window the engine is handed.
-#:
-#: It used to be half of a pair, with a ``MAX_PROBE_WINDOW_DAYS`` the wire read as the ceiling on
-#: a ``window_days`` a caller could send. The request field is gone, so the window is now the
-#: engine's own default and there is one number here rather than two held together by a rule.
+#: Long enough that the watch history never withholds a watcher count here: a century, more
+#: than any real history reaches. See the module docstring for why: the probe is about the
+#: shape of the rule, and a short history has its own warning elsewhere.
+#: ``history_shortfall`` returns ``None`` once ``reach >= needed``, so this only has to
+#: out-reach the window the engine is given.
 _REACH_DAYS = 36_500.0
 
 
 def _bare_facts(field: str, value: float) -> Facts:
-    """Every fact a signal reads is Unknown but one, so only the probed value can move the
-    answer. The rest keep ``Facts``' default; the module docstring says what that costs."""
+    """Every fact a signal reads is Unknown, except the one field under the probe, so only
+    the probed value can move the answer. The rest keep ``Facts``' own default; the module
+    docstring explains what that costs."""
     observations: dict[str, object] = {
         "title": "preview",
         "days_observed_unwatched": _NOTHING,
@@ -108,12 +102,12 @@ def _bare_facts(field: str, value: float) -> Facts:
 class ProbeResult:
     """One answer, in the shape every probe kind returns.
 
-    ``points`` is what the rule moves the score by in its own direction -- pressure for a
-    signal, and a discount for a keep rule when one is added -- so the editor renders any
-    kind the same way. It is the only field: the engine's own wording for the answer used to
-    ride beside it and no surface ever rendered it, because ``signalRamp.ts`` words both the
-    editor's sentence and the panel's row, and a second wording over the wire would be a
-    third copy rather than the thing that reconciles them.
+    ``points`` is how much the rule moves the score, in its own direction: pressure toward
+    deletion for a signal, or a discount for a keep rule once one exists. This lets the
+    editor render any kind of probe the same way. It is the only field: ``signalRamp.ts``
+    already writes both the editor's sentence and the panel's row from the number alone,
+    so a separate wording sent over the wire would be a third copy instead of the thing
+    that keeps the other two in sync.
     """
 
     points: float

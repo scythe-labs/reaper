@@ -18,9 +18,8 @@ import {
 } from "./accent";
 import { appIconDataUri } from "./brand/appIcon";
 
-/** WCAG contrast, written out here rather than imported: these tests assert that the ink
- *  accent.ts picks really does clear 4.5:1, and an assertion that reuses the module's own
- *  maths would pass even if that maths were wrong. */
+/** Computes WCAG contrast directly, instead of importing it from accent.ts. Reusing the
+ *  module's own math would let these tests pass even if that math were wrong. */
 function ratio(a: string, b: string): number {
   const lum = (hex: string) => {
     const ch = (i: number) => {
@@ -46,7 +45,7 @@ function stubLocalStorage(): void {
 
 describe("accentInk", () => {
   it("puts dark ink on a bright accent, so button text stays readable", () => {
-    // The default sky blue, amber and white are all bright: white text would fail WCAG.
+    // The default sky blue, amber, and white are all bright colors, so white text on them would fail WCAG.
     expect(accentInk(DEFAULT_ACCENT)).toBe("#06202c");
     expect(accentInk("#f59e0b")).toBe("#06202c");
     expect(accentInk("#ffffff")).toBe("#06202c");
@@ -62,7 +61,7 @@ describe("accentText", () => {
   it("agrees with the stylesheet's fallback for the built-in accent", () => {
     // styles/00-tokens.css falls back to color-mix(in srgb, var(--accent), #000 42%) when no measured
     // ink is set. If this search and that fallback ever disagreed, a page would change color
-    // the moment the module loaded. #157194 is that mix.
+    // the moment the module loaded. That color mix works out to #157194.
     expect(accentText(DEFAULT_ACCENT, "light")).toBe("#157194");
   });
 
@@ -73,8 +72,8 @@ describe("accentText", () => {
   });
 
   it("pushes a pale accent past what a flat darken would manage", () => {
-    // A flat 42% darken of this yellow lands at 3.56:1 on white -- the case the stylesheet
-    // fallback cannot cover, and the reason the search exists.
+    // A flat 42% darken of this yellow lands at 3.56:1 on white, a case the stylesheet
+    // fallback cannot cover. That is why the search exists.
     const ink = accentText("#ffee00", "light");
     expect(ratio(ink, "#ffffff")).toBeGreaterThanOrEqual(4.5);
     expect(ratio("#948a00", "#ffffff")).toBeLessThan(4.5);
@@ -87,8 +86,8 @@ describe("accentText", () => {
   });
 
   it("clears AA on the tightest ground -- the accent's own tint, not the plain surface", () => {
-    // Every accent-colored chip sits on a tint of its own accent; the docs index's selected
-    // row is the strongest at 22%. Clearing that clears --surface and --bg behind it.
+    // Every accent-colored chip sits on a tint of its own accent. The docs index's selected
+    // row is the strongest, at 22%. Clearing that also clears --surface and --bg behind it.
     for (const accent of [DEFAULT_ACCENT, "#ffee00", "#4f46e5", "#24b26b", "#c62630"]) {
       for (const theme of ["light", "dark"] as const) {
         const surface = theme === "light" ? "#ffffff" : "#191b21";
@@ -120,8 +119,8 @@ describe("isHexColor", () => {
 describe("applyAccent", () => {
   beforeEach(() => {
     document.documentElement.removeAttribute("style");
-    // jsdom on an opaque origin exposes no localStorage; give the test a real in-memory one
-    // so the pre-paint cache can be asserted (the code itself tolerates its absence).
+    // jsdom exposes no localStorage on an opaque origin. This test stubs in a real in-memory
+    // one so the pre-paint cache can be checked. The code itself tolerates a missing cache.
     stubLocalStorage();
   });
 
@@ -141,8 +140,9 @@ describe("applyAccent", () => {
   });
 
   it("sets BOTH themes' accent-text inks, and caches the pair for pre-paint", () => {
-    // Both, not just the current theme's: "Match my device" can flip mid-session and the
-    // stylesheet picks by media query without asking this module again.
+    // Both themes, not just the current one: the "Match my device" setting can flip
+    // mid-session, and the stylesheet then picks by media query without asking this module
+    // again.
     applyAccent("#ffee00");
     const s = document.documentElement.style;
     const light = s.getPropertyValue("--accent-text-light");
@@ -161,12 +161,22 @@ describe("applyAccent", () => {
     expect(localStorage.getItem(ACCENT_STORAGE_KEY)).toBeNull();
   });
 
+  it("paints the browser's own chrome at the accent", () => {
+    const meta = document.createElement("meta");
+    meta.id = "theme-color";
+    meta.name = "theme-color";
+    meta.content = DEFAULT_ACCENT;
+    document.head.appendChild(meta);
+    applyAccent("#4f46e5");
+    expect(meta.content).toBe("#4f46e5");
+    meta.remove();
+  });
+
   it("caches the ink that rides on the accent, so the pre-paint never recomputes it", () => {
-    // #009050 sits almost exactly on the boundary between the two inks (L = 0.2055), which
-    // is where index.html's own copy of this maths used to disagree: it rounded the dark
-    // ink's luminance to 0.012 against the real 0.0125359, pre-painted dark, and watched
-    // this module set light a moment later -- an ink flip on every accent-filled button at
-    // first paint (B-34). The pre-paint now reads this cache back instead.
+    // #009050 sits almost exactly on the boundary between the two ink colors, at a relative
+    // luminance of 0.2055, so a second, slightly different formula could round the wrong way
+    // here. The pre-paint script reads this cached value instead of recomputing it, so it
+    // always agrees with whatever accent.ts computed.
     applyAccent("#009050");
     expect(accentInk("#009050")).toBe("#ffffff");
     expect(localStorage.getItem(ACCENT_INK_STORAGE_KEY)).toBe("#ffffff");
@@ -175,10 +185,10 @@ describe("applyAccent", () => {
 });
 
 describe("the pre-paint script in index.html", () => {
-  // Rules 67/68: a value two files must agree on is DERIVED in one of them and read back in
-  // the other. index.html runs before the bundle, so it cannot import accent.ts -- which is
-  // exactly why it once carried a hand-copied, subtly-different luminance formula. These
-  // assertions are what stops that coming back.
+  // index.html runs before the JavaScript bundle loads, so it cannot import accent.ts. Any
+  // value the two files must agree on is computed once, here in accent.ts, and read back from
+  // storage in index.html rather than recomputed there. These assertions check that
+  // index.html does exactly that.
   const html = readFileSync(
     join(dirname(fileURLToPath(import.meta.url)), "..", "index.html"),
     "utf8",
@@ -195,9 +205,18 @@ describe("the pre-paint script in index.html", () => {
     }
   });
 
+  it("ships the theme-color tag at the built-in accent and rewrites it from the cache", () => {
+    // The static content= here is a second copy of DEFAULT_ACCENT, since index.html cannot
+    // import it from accent.ts. This assertion is the link between them, so a retune of the
+    // built-in accent in accent.ts fails here instead of shipping a browser tab color stuck
+    // on the old value.
+    expect(html).toContain(`<meta id="theme-color" name="theme-color" content="${DEFAULT_ACCENT}"`);
+    expect(html).toContain('document.getElementById("theme-color")');
+  });
+
   it("repeats none of the color maths", () => {
-    // The luminance coefficients and the sRGB transfer curve: if any of these appears here,
-    // some derivation has been copied into the file rather than read back out of storage.
+    // If any of the luminance coefficients or the sRGB transfer-curve constants appear here,
+    // some derivation was copied into the file instead of being read back out of storage.
     for (const constant of ["0.2126", "0.7152", "0.0722", "0.03928", "12.92", "1.055"]) {
       expect(html).not.toContain(constant);
     }

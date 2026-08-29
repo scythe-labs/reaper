@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The client-side execute gate. These pin the gauntlet the sheet enforces in front of
-// the one endpoint that deletes: the button lights only when the dry run proved the
-// plan, deletion is armed, and the exact content-bound phrase was typed. Once a reap is
-// in flight the sheet shows live progress and a graceful Stop -- and, because the run is
-// now detached on the server, the sheet closes freely (the app-wide bar keeps the count
-// and Stop), and reopening shows the report.
-import { act, fireEvent, screen } from "@testing-library/react";
+// This file pins the client-side execute gate. These tests check what the sheet enforces in
+// front of the one endpoint that deletes. The button lights only when the dry run proves the
+// plan, deletion is armed, and the exact content-bound phrase is typed. The sheet's job ends
+// there: once the phrase is accepted it seeds the shared status, closes, and hands the run to
+// the app-wide bar and the Reap tab. It shows neither progress nor a report of its own.
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type ReapStatus, type Run, type RunReport } from "../api";
@@ -20,7 +19,7 @@ const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
-// Everything but `api` is real -- the sheet reads `ApiError` to tell a moved phrase (409)
+// Everything but `api` is real. The sheet reads `ApiError` to tell a moved phrase (409) apart
 // from any other refusal.
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
@@ -67,21 +66,25 @@ function status(overrides: Partial<ReapStatus> = {}): ReapStatus {
     skipped: 0,
     title: "",
     error_reason: null,
-    report: null,
     ...overrides,
   };
 }
 
 const runningStatus = status({ running: true, run_id: run.id, phase: "reaping", total: 1 });
 
-function renderSheet(onClose: () => void = () => {}, seedStatus?: ReapStatus) {
+function renderSheet(
+  onClose: () => void = () => {},
+  seedStatus?: ReapStatus,
+  initialReport: RunReport = report(),
+) {
   const queryClient = testQueryClient();
-  // The status cache is shared with the app-wide bar and is already warm when this sheet is
-  // opened from it. Seeding it reproduces that, which is what the dry-run skip reads.
+  // The status cache is shared with the app-wide bar and the Reap tab. Seeding it lets a test
+  // stand another reap up in the one execute slot, which the arm stage reads as `otherRunning`.
   if (seedStatus) queryClient.setQueryData(["reapStatus"], seedStatus);
-  const utils = renderWithProviders(<ReapConfirm run={run} onClose={onClose} />, {
-    client: queryClient,
-  });
+  const utils = renderWithProviders(
+    <ReapConfirm run={run} initialReport={initialReport} onClose={onClose} />,
+    { client: queryClient },
+  );
   return { ...utils, queryClient };
 }
 
@@ -92,9 +95,9 @@ beforeEach(() => {
   apiMock.dryRun.mockResolvedValue(report());
   apiMock.reapStatus.mockResolvedValue(status()); // idle until a reap starts
   apiMock.executeRun.mockResolvedValue(runningStatus);
-  apiMock.stopRun.mockResolvedValue({ ...runningStatus, stopping: true });
-  // An empty, fully readable trash: the warning stays out of the way of every test that is
-  // about something else. The tests that are about it set their own value.
+  // The default trash is empty and fully readable, so the warning stays out of the way of
+  // every test that is about something else. Tests that are about the warning set their own
+  // value.
   apiMock.plexTrash.mockResolvedValue({
     configured: true,
     trashed: 0,
@@ -105,9 +108,9 @@ beforeEach(() => {
 
 describe("the execute gate", () => {
   // This sheet is the last surface in front of the one route that deletes, so what a screen
-  // reader makes of it is a safety property: an operator who cannot hear why Reap is locked
-  // cannot tell a working gate from a broken button. axe reads the tree the browser built,
-  // so the phrase box and the trash warning are judged as rendered, not as written.
+  // reader makes of it is a safety property. An operator who cannot hear why Reap is locked
+  // cannot tell a working gate from a broken button. axe reads the tree the browser built, so
+  // the phrase box and the trash warning are judged as rendered, not as written.
   it("has no accessibility violations", async () => {
     const { container } = renderSheet();
     await screen.findByText(/Practice run passed/);
@@ -119,10 +122,12 @@ describe("the execute gate", () => {
     renderSheet();
 
     await screen.findByText(/Practice run passed/);
-    const execute = screen.getByRole("button", { name: /^Reap 1 soul$/ });
+    const execute = screen.getByRole("button", { name: /^Reap$/ });
     expect(execute).toBeDisabled();
 
-    const input = screen.getByRole("textbox");
+    // The sheet opens proven, so the arm stage is a `useSafety` read away from the phrase field.
+    // In the app that read is already cached; here it settles a tick after mount (rule 137).
+    const input = await screen.findByRole("textbox");
     await fill(user, input, "REAP 9 SOULS 9 GB"); // a stale tab's phrase
     expect(execute).toBeDisabled();
 
@@ -148,7 +153,7 @@ describe("the execute gate", () => {
 
     // The phrase alone is not enough while the warning stands.
     await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
-    const execute = screen.getByRole("button", { name: /^Reap 1 soul$/ });
+    const execute = screen.getByRole("button", { name: /^Reap$/ });
     expect(execute).toBeDisabled();
 
     await user.click(screen.getByRole("checkbox"));
@@ -156,8 +161,9 @@ describe("the execute gate", () => {
   });
 
   it("warns when the trash can't be read, rather than reading silence as empty", async () => {
-    // Unreadable is Unknown, never Absent: "we could not look" is exactly when the operator
-    // most needs telling, so it warns and holds Reap the same way a definite count does.
+    // Unreadable counts as unknown, not absent. The moment the app could not check is exactly
+    // when the operator needs telling, so it warns and holds Reap the same way a definite
+    // count does.
     apiMock.plexTrash.mockRejectedValue(new Error("plex is down"));
     const user = userEvent.setup();
     renderSheet();
@@ -166,7 +172,7 @@ describe("the execute gate", () => {
     expect(await screen.findByText(/couldn't read Plex's trash/i)).toBeInTheDocument();
 
     await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
-    expect(screen.getByRole("button", { name: /^Reap 1 soul$/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Reap$/ })).toBeDisabled();
   });
 
   it("says nothing at all when the trash is empty and readable", async () => {
@@ -179,9 +185,10 @@ describe("the execute gate", () => {
   });
 
   it("stays silent when Plex empties its own trash and there is nothing in it", async () => {
-    // Plex ships this preference ON and most servers never change it, so on its own it is not
-    // a warning: it would stand in front of every reap and train the operator past the one
-    // that matters. It only ever rides on a trash that already warrants telling them.
+    // Plex ships this preference on by default, and most servers never change it. Shown on its
+    // own, it is not a warning, it would stand in front of every reap and train the operator to
+    // ignore the one that matters. It only appears alongside a trash count that already
+    // warrants telling them.
     apiMock.plexTrash.mockResolvedValue({
       configured: true,
       trashed: 0,
@@ -210,8 +217,8 @@ describe("the execute gate", () => {
   });
 
   it("says nothing about auto-emptying when the preference could not be read", async () => {
-    // `null` is Unknown. Reading it as "Plex does not empty its own trash" would be the
-    // reassuring direction over a preference nobody checked (rule 93).
+    // `null` means unknown. Reading it as "Plex does not empty its own trash" would wrongly
+    // reassure the operator about a preference nobody actually checked.
     apiMock.plexTrash.mockResolvedValue({
       configured: true,
       trashed: 40,
@@ -242,7 +249,7 @@ describe("the execute gate", () => {
     expect(await screen.findByText(/Checking whether deletion is on/)).toBeInTheDocument();
     expect(screen.queryByText(/Deletion is/)).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Reap 1 soul$/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Reap$/ })).toBeDisabled();
   });
 
   it("says it couldn't look when the safety read fails, never that deletion is off", async () => {
@@ -253,49 +260,49 @@ describe("the execute gate", () => {
     expect(await screen.findByText(/couldn't confirm whether deletion is on/)).toBeInTheDocument();
     expect(screen.queryByText(/Deletion is/)).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Reap 1 soul$/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Reap$/ })).toBeDisabled();
   });
 
   it("a practice run that stopped never unlocks execution", async () => {
-    apiMock.dryRun.mockResolvedValue(
-      report({ state: "aborted", aborted_reason: { k: "legacy", p: { text: "over the cap" } } }),
-    );
-    renderSheet();
+    // The caller proved the plan before opening, and the practice run stopped. The sheet opens
+    // on that result: the stopped message, and no way to arm.
+    renderSheet(() => {}, undefined, {
+      ...report(),
+      state: "aborted",
+      aborted_reason: { k: "legacy", p: { text: "over the cap" } },
+    });
 
     await screen.findByText(/The plan stopped/);
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Reap 1 soul$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Reap$/ })).not.toBeInTheDocument();
   });
 
-  it("shows live progress and a Stop while reaping, and closes freely (the run is detached)", async () => {
+  it("closes the moment the reap starts, handing the run to the bar and the Reap tab", async () => {
+    // The sheet's job ends when Execute succeeds. It seeds the shared status so the app-wide bar
+    // and the Reap tab show the run at once, fires onStarted, and closes. It never shows progress
+    // or a Stop of its own: the run is detached, and those surfaces own it from here.
     const onClose = vi.fn();
+    const onStarted = vi.fn();
     const user = userEvent.setup();
-    const { container } = renderSheet(onClose);
+    const queryClient = testQueryClient();
+    renderWithProviders(
+      <ReapConfirm run={run} initialReport={report()} onClose={onClose} onStarted={onStarted} />,
+      { client: queryClient },
+    );
 
     await screen.findByText(/Practice run passed/);
-    await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
-    await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
+    await fill(user, await screen.findByRole("textbox"), run.confirmation_phrase);
+    await user.click(screen.getByRole("button", { name: /^Reap$/ }));
 
-    // In flight: the graceful Stop is offered, and the sheet no longer traps -- the ✕ is
-    // enabled and the scrim closes it, because the run keeps going on the server.
-    await screen.findByRole("button", { name: /^Stop$/ });
-    expect(screen.getByRole("button", { name: "Close" })).toBeEnabled();
-    await user.click(container.querySelector(".modal-scrim")!);
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it("Stop asks the server to halt the run, gracefully", async () => {
-    const user = userEvent.setup();
-    renderSheet();
-
-    await screen.findByText(/Practice run passed/);
-    await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
-    await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
-
-    await user.click(await screen.findByRole("button", { name: /^Stop$/ }));
-    expect(apiMock.stopRun).toHaveBeenCalledWith(run.id);
-    // Once stopping, the button says so and no longer offers a second Stop.
-    expect(await screen.findByRole("button", { name: /Stopping/ })).toBeDisabled();
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(onStarted).toHaveBeenCalledTimes(1);
+    expect(apiMock.executeRun).toHaveBeenCalledWith(run.id, run.confirmation_phrase);
+    // Seeded so neither the bar nor the tab waits on the first poll to show the run.
+    expect(queryClient.getQueryData(["reapStatus"])).toMatchObject({
+      running: true,
+      run_id: run.id,
+    });
+    expect(screen.queryByRole("button", { name: /^Stop$/ })).not.toBeInTheDocument();
   });
 
   it("closes on Escape", async () => {
@@ -309,10 +316,11 @@ describe("the execute gate", () => {
   });
 
   it("survives a drag that starts on the phrase and ends outside the panel", async () => {
-    // B-17: a click fires on the nearest common ancestor of press and release, so a drag
-    // out of the panel dispatched `click` on the SCRIM and the panel's stopPropagation
-    // never saw it. Selecting the confirmation phrase to read or copy it tore the sheet
-    // down, taking the practice-run result and anything typed with it.
+    // A browser click event fires on the nearest common ancestor of the press and the release.
+    // A drag that starts inside the panel and ends on the scrim therefore dispatches a click on
+    // the scrim, which the panel's stopPropagation never sees. Selecting the confirmation
+    // phrase to read or copy it must not close the sheet this way, since that would lose the
+    // practice-run result and anything already typed.
     const onClose = vi.fn();
     const { container } = renderSheet(onClose);
 
@@ -324,7 +332,7 @@ describe("the execute gate", () => {
     fireEvent.click(scrim); // what the browser dispatches at the common ancestor
     expect(onClose).not.toHaveBeenCalled();
 
-    // A real click outside still closes: pressed AND released on the scrim itself.
+    // A real click outside the panel, pressed and released on the scrim itself, still closes it.
     fireEvent.mouseDown(scrim);
     fireEvent.mouseUp(scrim);
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -333,7 +341,7 @@ describe("the execute gate", () => {
   it("is a dialog that says what it is", async () => {
     renderSheet();
 
-    const dialog = await screen.findByRole("dialog", { name: /Reap 1 soul/ });
+    const dialog = await screen.findByRole("dialog", { name: /Reap 1 title/ });
     expect(dialog).toHaveAttribute("aria-modal", "true");
   });
 
@@ -342,124 +350,50 @@ describe("the execute gate", () => {
     renderSheet();
 
     await screen.findByText(/Practice run passed/);
-    // Trailing whitespace is trimmed on the way out, which is only possible if what is
-    // posted comes from the input. Echoing the prop would make the human gate a `disabled`
-    // attribute the server cannot tell from a script (S-1).
-    await fill(user, screen.getByRole("textbox"), `${run.confirmation_phrase}  `);
-    await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
+    // Trailing whitespace is trimmed on the way out, which is only possible if the posted
+    // value comes from the input box. If the sheet echoed the prop instead, the human check
+    // here would be reduced to a `disabled` attribute, which the server cannot tell apart from
+    // a script bypassing it.
+    await fill(user, await screen.findByRole("textbox"), `${run.confirmation_phrase}  `);
+    await user.click(screen.getByRole("button", { name: /^Reap$/ }));
     expect(apiMock.executeRun).toHaveBeenCalledWith(run.id, run.confirmation_phrase);
   });
 
   it("re-measures against the phrase the server moved to", async () => {
     const user = userEvent.setup();
     apiMock.executeRun.mockRejectedValue(new ApiError(409, "The plan changed."));
-    // What the server holds now: a soul more, so a different phrase.
+    // The server now holds one more soul, so it expects a different phrase.
     const moved = { ...run, item_count: 2, confirmation_phrase: "REAP 2 SOULS 1 GB" };
     apiMock.run.mockResolvedValue(moved);
     renderSheet();
 
     await screen.findByText(/Practice run passed/);
-    await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
-    await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
+    await fill(user, await screen.findByRole("textbox"), run.confirmation_phrase);
+    await user.click(screen.getByRole("button", { name: /^Reap$/ }));
     await screen.findByText(/The plan changed./);
 
-    // Otherwise the sheet deadlocks: it keeps lighting the button for the stale phrase the
-    // server now refuses, and typing the real one disables it (S-1). This is rendered from a
-    // run the caller only CAPTURED -- what "Reap now" in the review queue hands over -- so
-    // nothing outside the sheet observes ["run", id], and the invalidation reached nobody at
-    // all until the sheet started watching that key itself.
-    const input = await screen.findByRole("textbox");
-    expect((input as HTMLInputElement).placeholder).toBe(moved.confirmation_phrase);
-    expect(screen.getByRole("button", { name: /^Reap 2 souls$/ })).toBeInTheDocument();
-  });
-
-  it("says a reap stopped on a problem, and never re-arms itself in silence", async () => {
-    // The executor raised mid-run: no report, and files may already be gone. The confirm
-    // stage must not come back live with the phrase still typed (B-3).
-    const failed = status({
-      run_id: run.id,
-      phase: "error",
-      error_reason: {
-        k: "error.reap.unexpected",
-        p: { error: "Deletion was switched off mid-run." },
-      },
-    });
-    apiMock.reapStatus.mockResolvedValue(failed);
-    apiMock.dryRun.mockClear();
-    renderSheet(() => {}, failed);
-
-    expect(await screen.findByText(/The reap stopped on a problem/)).toBeInTheDocument();
-    expect(screen.getByText(/Deletion was switched off mid-run./)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Reap 1 soul$/ })).not.toBeInTheDocument();
-    // And no dry run is fired over it: the executor refuses one on a non-planned run, and
-    // its blurb would render as the only explanation of a failed deletion.
-    expect(apiMock.dryRun).not.toHaveBeenCalled();
-  });
-
-  it("shows the per-item checklist once the run finishes", async () => {
-    const user = userEvent.setup();
-    const { queryClient } = renderSheet();
-
-    await screen.findByText(/Practice run passed/);
-    await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
-    await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
-    await screen.findByRole("button", { name: /^Stop$/ });
-
-    // The run finishes: the status carries the after-action report.
-    act(() => {
-      queryClient.setQueryData(
-        ["reapStatus"],
-        status({
-          running: false,
-          run_id: run.id,
-          phase: "complete",
-          deleted_items: 1,
-          deleted_bytes: 1024 ** 3,
-          report: report({
-            dry_run: false,
-            would_delete_items: 1,
-            deleted_bytes: 1024 ** 3,
-            outcomes: [
-              {
-                media_key: "radarr:1:1",
-                title: "A Film",
-                kind: "radarr_delete",
-                state: "verified",
-                detail_reason: { k: "legacy", p: { text: "deleted" } },
-                checks: [
-                  {
-                    label_reason: {
-                      k: "legacy",
-                      p: { text: "Nobody was watching it right now" },
-                    },
-                    ok: true,
-                  },
-                ],
-                is_canary: false,
-              },
-            ],
-          }),
-        }),
-      );
-    });
-
-    await screen.findByText(/1 soul reclaimed/);
-    expect(screen.getByText("A Film")).toBeInTheDocument();
-    expect(screen.getByText(/Nobody was watching it right now/)).toBeInTheDocument();
+    // Without this, the sheet would deadlock. It would keep lighting the button for the stale
+    // phrase the server now refuses, while typing the real one disables it. The sheet renders
+    // from a run object the caller only captured, the same one "Reap now" in the review queue
+    // hands over, so nothing outside the sheet observes the query key ["run", id]. The sheet
+    // has to watch that key itself, or the invalidation reaches nobody.
+    await screen.findByRole("textbox");
+    expect(screen.getByText(moved.confirmation_phrase)).toBeInTheDocument();
+    expect(screen.queryByText(run.confirmation_phrase)).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: /Reap 2 titles/ })).toBeInTheDocument();
   });
 });
 
-// Everything below is #170: this sheet is the one surface in the app that starts a deletion,
-// and it went from open to finished without saying a word. `ModalShell` announces the dialog
-// once, and from there the body mutated on a poll -- practice run, then the typed-phrase field
-// arriving, then progress, then a report -- with no live region and no focus move anywhere in
-// the file.
-describe("what a screen reader hears while a reap runs", () => {
-  /** What the app's polite region is holding. `Announcer` lives at the app root and this sheet
-   *  renders without it, so the assertions read the store through a region mounted beside it --
-   *  the same thing an operator would hear, and the only way to see it from here. */
+// This sheet is the one surface in the app that starts a deletion, so it must keep speaking
+// through the gauntlet, not just once at the start. `ModalShell` announces the dialog by name
+// only when it opens. After that the body changes on a poll, moving through the practice run and
+// the typed-phrase field arriving, and each of those changes needs its own live region or focus
+// move. The run's own progress and end are ReapBar's to announce, since the sheet is gone by then.
+describe("what a screen reader hears through the gauntlet", () => {
+  /** What the app's polite live region is holding. `Announcer` lives at the app root, and this
+   *  sheet renders without it, so these assertions read the announcement store through a region
+   *  mounted beside the sheet instead. That is the same thing an operator would hear, and the
+   *  only way to observe it from here. */
   function spoken(): string {
     return screen
       .getAllByRole("status")
@@ -474,7 +408,7 @@ describe("what a screen reader hears while a reap runs", () => {
     const utils = renderWithProviders(
       <>
         <Announcer />
-        <ReapConfirm run={run} onClose={() => {}} />
+        <ReapConfirm run={run} initialReport={report()} onClose={() => {}} />
       </>,
       { client: queryClient },
     );
@@ -485,7 +419,8 @@ describe("what a screen reader hears while a reap runs", () => {
     renderWithAnnouncer();
 
     await screen.findByText(/Practice run passed/);
-    expect(spoken()).toContain("Type the confirmation phrase");
+    // The announcement follows the `useSafety` read, a tick behind the visible line.
+    await waitFor(() => expect(spoken()).toContain("Type the confirmation phrase"));
   });
 
   it("puts the operator in the phrase box when it appears", async () => {
@@ -507,37 +442,40 @@ describe("what a screen reader hears while a reap runs", () => {
   });
 
   it("never says deletion is off about a switch it could not read", async () => {
-    // `armed` is `destructive_enabled === true`, so a failed read collapses into "off" -- and
-    // the spoken stage said so as a definite fact, on the last screen before files go, while
-    // the block on screen kept all three states apart. The reassuring direction to be wrong in.
+    // `armed` is `destructive_enabled === true`, so a failed read must not collapse into "off".
+    // Announcing "off" as a definite fact on the last screen before files are deleted would be
+    // the wrong direction to guess, even though the on-screen block keeps all three states apart.
     apiMock.safety.mockImplementation(() => Promise.reject(new Error("unreachable")));
     renderWithAnnouncer();
 
-    await screen.findByText(/couldn't confirm whether deletion is on/i);
-    expect(spoken()).toContain("couldn't confirm whether deletion is on");
+    // Two matches, and that is the point: the visible notice AND the spoken line both say it.
+    await screen.findAllByText(/couldn't confirm whether deletion is on/i);
+    await waitFor(() => expect(spoken()).toContain("couldn't confirm whether deletion is on"));
     expect(spoken()).not.toContain("deletion is off");
   });
 
   it("does not send the operator to a phrase box another reap is holding shut", async () => {
-    // A dry run claims no slot, so the practice run passes while someone else's reap holds the
-    // one execute slot. The screen says to come back later and renders NO phrase field; the
-    // announcement told them to type one. Worse, `say` dedupes on the sentence, so the correct
-    // line was then swallowed as a repeat when the field finally arrived -- instruction at the
-    // moment they cannot act, silence at the moment they can.
+    // A dry run does not claim the one execute slot, so the practice run can pass while someone
+    // else's reap holds it. The screen then says to come back later and renders no phrase
+    // field, so the announcement must not tell the operator to type one. `say` also dedupes on
+    // the exact sentence, so if the announcement text were the same each time, the correct line
+    // would be swallowed as a repeat once the field actually arrives.
     const elsewhere = status({ running: true, run_id: 99, phase: "reaping", total: 1 });
     apiMock.reapStatus.mockResolvedValue(elsewhere);
     renderWithAnnouncer(elsewhere);
 
-    await screen.findByText(/Another reap is running/);
+    // Two matches, and that is the point: the visible notice AND the spoken line both say it.
+    await screen.findAllByText(/Another reap is running/);
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(spoken()).toContain("Another reap is running");
+    await waitFor(() => expect(spoken()).toContain("Another reap is running"));
     expect(spoken()).not.toContain("Type the confirmation phrase");
   });
 
   it("leaves focus on the Plex-trash consent that is holding Reap disabled", async () => {
-    // The notice renders ABOVE the phrase field and its checkbox is what keeps Reap dark.
-    // Jumping the operator into the box hides both the disclosure and the reason the button
-    // will not light: they type the exact phrase, find Reap dead, and are never told why.
+    // The notice renders above the phrase field, and its checkbox is what keeps Reap disabled.
+    // Jumping the operator straight into the phrase box would hide both the notice and the
+    // reason the button will not light. They would type the exact phrase, find Reap still
+    // disabled, and never learn why.
     apiMock.plexTrash.mockResolvedValue({
       configured: true,
       trashed: 40,
@@ -551,131 +489,5 @@ describe("what a screen reader hears while a reap runs", () => {
     // And the thing they need is still ahead of them in reading order.
     const consent = screen.getByRole("checkbox");
     expect(consent.compareDocumentPosition(input)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-  });
-
-  it("states the progress as a progressbar, in words rather than a bare number", async () => {
-    const half = status({ running: true, run_id: run.id, phase: "reaping", done: 2, total: 4 });
-    apiMock.reapStatus.mockResolvedValue(half);
-    renderWithAnnouncer(half);
-
-    const bar = await screen.findByRole("progressbar", { name: "Reaping" });
-    expect(bar).toHaveAttribute("aria-valuenow", "50");
-    expect(bar).toHaveAttribute("aria-valuetext", "50%, 2 of 4 removed");
-  });
-
-  it("announces progress in tenths, not once per item", async () => {
-    // The status polls every second. A sentence per item on a run of hundreds would hold the
-    // app's one polite region for the length of the run, so nothing else could be heard.
-    const at = (done: number, total: number) =>
-      status({ running: true, run_id: run.id, phase: "reaping", done, total });
-    apiMock.reapStatus.mockResolvedValue(at(0, 100));
-    const { queryClient } = renderWithAnnouncer(at(0, 100));
-    await screen.findByRole("progressbar", { name: "Reaping" });
-
-    const heard: string[] = [];
-    for (const done of [1, 2, 3, 4, 5]) {
-      act(() => void queryClient.setQueryData(["reapStatus"], at(done, 100)));
-      heard.push(spoken());
-    }
-    // Five items, all inside the first tenth: one sentence, not five.
-    expect(new Set(heard).size).toBe(1);
-    expect(heard[0]).toContain("0% deleted");
-
-    // Crossing into the next tenth does speak. `findByText` and not a synchronous read: the
-    // announcer holds each sentence for its turn before the next may replace it, so this
-    // arrives a beat later by design (announce.tsx).
-    act(() => void queryClient.setQueryData(["reapStatus"], at(10, 100)));
-    expect(await screen.findByText("10% deleted.")).toBeInTheDocument();
-  });
-
-  it("moves focus to the outcome when the run ends, because the dialog's job has changed", async () => {
-    const { queryClient } = renderWithAnnouncer();
-    await screen.findByRole("textbox");
-
-    act(() => {
-      queryClient.setQueryData(
-        ["reapStatus"],
-        status({
-          run_id: run.id,
-          phase: "complete",
-          deleted_items: 1,
-          deleted_bytes: 1024 ** 3,
-          report: report({ dry_run: false, would_delete_items: 1, deleted_bytes: 1024 ** 3 }),
-        }),
-      );
-    });
-
-    const outcome = (await screen.findByText(/1 soul reclaimed/)).closest(".reap-result");
-    expect(outcome).toHaveFocus();
-  });
-
-  it("moves focus to the failure, which is the only account of files already gone", async () => {
-    // Rendered on a healthy sheet and failed underneath the operator, which is the shape that
-    // matters: the run raised while they stood in the confirm stage.
-    const { queryClient } = renderWithAnnouncer();
-    await screen.findByRole("textbox");
-
-    act(
-      () =>
-        void queryClient.setQueryData(
-          ["reapStatus"],
-          status({
-            run_id: run.id,
-            phase: "error",
-            error_reason: {
-              k: "error.reap.unexpected",
-              p: { error: "Deletion was switched off mid-run." },
-            },
-          }),
-        ),
-    );
-
-    const block = (await screen.findByText(/The reap stopped on a problem/)).closest(".reap-arm");
-    expect(block).toHaveFocus();
-  });
-
-  it("tells a pass from a fail in the report, where the glyph alone cannot", async () => {
-    // ✓ and ✗ are both silent on NVDA at its default symbol level, so the two lines read out
-    // identically -- in the report for a run that has just deleted files.
-    const done = status({
-      run_id: run.id,
-      phase: "complete",
-      deleted_items: 1,
-      report: report({
-        dry_run: false,
-        outcomes: [
-          {
-            media_key: "radarr:1:1",
-            title: "A Film",
-            kind: "radarr_delete",
-            state: "verified",
-            detail_reason: { k: "legacy", p: { text: "deleted" } },
-            checks: [
-              {
-                label_reason: { k: "legacy", p: { text: "Nobody was watching it right now" } },
-                ok: true,
-              },
-              {
-                label_reason: {
-                  k: "legacy",
-                  p: { text: "It was played since you approved it" },
-                },
-                ok: false,
-              },
-            ],
-            is_canary: false,
-          },
-        ],
-      }),
-    });
-    apiMock.reapStatus.mockResolvedValue(done);
-    renderWithAnnouncer(done);
-
-    const passed = await screen.findByText(/Nobody was watching it right now/);
-    expect(passed.closest("li")).toHaveTextContent("Passed: Nobody was watching it right now");
-    const failedCheck = screen.getByText(/It was played since you approved it/);
-    expect(failedCheck.closest("li")).toHaveTextContent(
-      "Failed: It was played since you approved it",
-    );
   });
 });

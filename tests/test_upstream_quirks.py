@@ -1,19 +1,24 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Regression tests for the ways upstream APIs actually behave.
 
-Every case here was found by probing live Sonarr, Radarr, Tautulli and Seerr instances
+Every case here was found by probing live Sonarr, Radarr, Tautulli, and Seerr instances
 read-only, and every one of them contradicts a reasonable assumption. A fixture written
-from an OpenAPI spec would have encoded the assumption instead of the truth -- which is
-why this file exists. Each test names the wrong belief it protects against.
+from an OpenAPI spec would have encoded the assumption instead of the truth. Each test
+names the wrong belief it protects against.
 """
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import ClassVar
+from xml.etree.ElementTree import Element
+from xml.etree.ElementTree import fromstring as _unsafe_fromstring
 
 import pytest
+from plexapi.library import LibrarySection
 
 from reaper.clients.base import IntegrationError
+from reaper.clients.plex import PlexClient
 from reaper.clients.seerr import SeerrClient
 from reaper.clients.sonarr_stats import SeasonStats, parse_season_stats, rank_seasons
 from reaper.clock import from_epoch, from_iso
@@ -21,9 +26,15 @@ from reaper.config import RuntimeSafety
 from reaper.ratings import Rating, RatingSource, from_plex, from_radarr, pick
 
 
+def _fromstring(xml: str) -> Element:
+    """Parse a canned test fixture. These are literals in this file, not untrusted data,
+    so the stdlib parser is fine here (S314 exists for hostile inputs)."""
+    return _unsafe_fromstring(xml)  # noqa: S314
+
+
 class TestSeerrPaginationEnvelope:
     """``pageInfo.results`` is the only signal that more pages exist. Rows present with
-    the total missing is an envelope-shape change; reading it as total=0 would stop
+    the total missing is an envelope-shape change. Reading it as total=0 would stop
     after one page and silently undercount every requester."""
 
     async def test_rows_without_a_total_refuse_rather_than_truncate(self) -> None:
@@ -62,7 +73,8 @@ class TestEpisodeCountIsNotWhatItLooksLike:
     """
 
     def test_unmonitored_season_reports_zero_wanted_but_is_not_empty(self) -> None:
-        """The common case on any finished show: all episodes aired, none monitored."""
+        """On any finished show, all episodes have aired and none are monitored. This is
+        the common case."""
         season = parse_season_stats(
             {
                 "seasonNumber": 1,
@@ -78,10 +90,10 @@ class TestEpisodeCountIsNotWhatItLooksLike:
         assert season is not None
         assert season.wanted_episode_count == 0
         assert season.total_episode_count == 15  # the honest length
-        assert season.has_content is False  # correct: no files
+        assert season.has_content is False  # correct, no files
 
     def test_a_season_with_files_is_never_reported_as_empty(self) -> None:
-        """The dangerous inverse: unmonitored, reports zero wanted, but the files are
+        """The dangerous inverse. Unmonitored, reporting zero wanted, but the files are
         right there on disk. ``has_content`` must depend on ``episodeFileCount``, never
         on Sonarr's intent metric."""
         season = parse_season_stats(
@@ -103,11 +115,11 @@ class TestEpisodeCountIsNotWhatItLooksLike:
     def test_files_on_disk_with_no_reported_size_is_unknown_not_empty(self) -> None:
         """The partial-payload case, and the one that decides a keep.
 
-        Sonarr says 22 files are on disk but reports no size for them. As ``0`` that
-        becomes an affirmative measurement: maximum pressure on a size signal, and any
-        "keep large files" rule silently stops holding the season. It must read as "we
-        could not tell", while ``has_content`` still says the files are there -- the two
-        questions are answered by different fields for exactly this reason.
+        Sonarr says 22 files are on disk but reports no size for them. Reading that
+        missing size as ``0`` would raise the deletion score as much as possible, and any
+        "keep large files" rule would silently stop holding the season. It must read as
+        "we could not tell" instead. ``has_content`` still says the files are there,
+        because the two questions are answered by different fields for exactly this reason.
         """
         season = parse_season_stats(
             {
@@ -126,8 +138,9 @@ class TestEpisodeCountIsNotWhatItLooksLike:
         assert season.size_on_disk is None
 
     def test_a_genuinely_empty_season_also_reads_as_no_size(self) -> None:
-        """Nothing on disk and no size. Same None, and harmless: `has_content` is False,
-        so the season is never a deletion candidate in the first place."""
+        """Nothing on disk and no size. Same ``None`` result, and harmless, because
+        ``has_content`` is False, so the season is never a deletion candidate in the
+        first place."""
         season = parse_season_stats(
             {
                 "seasonNumber": 4,
@@ -140,7 +153,7 @@ class TestEpisodeCountIsNotWhatItLooksLike:
         assert season.size_on_disk is None
 
     def test_incomplete_season_is_detected(self) -> None:
-        """A long-running show mid-download: Sonarr wants more than it has."""
+        """A long-running show mid-download, where Sonarr wants more episodes than it has."""
         season = parse_season_stats(
             {
                 "seasonNumber": 0,
@@ -157,9 +170,10 @@ class TestEpisodeCountIsNotWhatItLooksLike:
         assert season.is_incomplete is True
 
     def test_a_monitored_unaired_season_reports_zero_wanted(self) -> None:
-        """Monitored, but nothing has aired yet -- so it also reports zero, for a
-        completely different reason than the unmonitored case above. Neither may be
-        read as "this season is empty, reclaim it"."""
+        """Monitored, but nothing has aired yet, so it also reports zero, for a
+        completely different reason than the unmonitored case above. Neither case means
+        "this season is empty, reclaim it."
+        """
         season = parse_season_stats(
             {
                 "seasonNumber": 9,
@@ -199,9 +213,9 @@ class TestSeasonRanking:
         assert ranks[1] == 5
 
     def test_specials_do_not_consume_a_rank_slot(self) -> None:
-        """Season 0 is not part of the run of the show. If it took rank 1,
-        'keep the last 2' would keep specials plus a single real season --
-        silently deleting the most recent season the viewer actually watches."""
+        """Season 0 is not part of the run of the show. If it took rank 1, 'keep the
+        last 2' would keep specials plus a single real season, silently deleting the
+        most recent season the viewer actually watches."""
         ranks = rank_seasons([self._season(n) for n in (0, 1, 2, 3)])
 
         assert 0 not in ranks
@@ -214,10 +228,11 @@ class TestSeasonRanking:
         assert keep == {4, 5}
 
     def test_a_fileless_season_does_not_consume_a_rank_slot(self) -> None:
-        """An announced-but-undownloaded next season must not take rank 1: 'keep the
-        last 2' would then protect the empty shell plus one real season and leave the
-        season the rule meant to keep prunable -- the same slot-shift bug the specials
-        exclusion closes, re-entering through empty seasons."""
+        """An announced-but-undownloaded next season must not take rank 1. 'Keep the
+        last 2' would then protect the empty shell plus one real season, leaving the
+        season the rule meant to keep open to pruning. It is the same slot-shift problem
+        the specials exclusion closes, showing up again through empty seasons instead.
+        """
         seasons = [self._season(n) for n in (1, 2, 3, 4, 5)] + [self._season(6, files=0)]
         ranks = rank_seasons(seasons)
 
@@ -230,8 +245,8 @@ class TestRatingProvenance:
     """The published guidance says Plex's ``audienceRating`` is Rotten Tomatoes.
 
     On a probed server it was IMDb, on every movie sampled. Both shapes exist in the
-    wild -- the field means whatever the library's metadata agent decided it means. So
-    the source is read from ``ratingImage`` and never assumed from the field name.
+    wild, because the field means whatever the library's metadata agent decided it means.
+    So the source is read from ``ratingImage`` and never assumed from the field name.
     """
 
     def test_plex_audience_rating_read_as_imdb_when_the_image_says_imdb(self) -> None:
@@ -251,17 +266,19 @@ class TestRatingProvenance:
         assert rating.value == 9.6
 
     def test_plex_rotten_tomatoes_is_already_on_ten_and_is_not_divided_again(self) -> None:
-        """Plex serves every rating slot on 0-10 whatever the source (measured): an
-        84% audience score arrives as "8.4". Dividing it as Radarr's raw
-        percentages need turned it into 0.84 -- displayed as 8%."""
+        """Plex serves every rating slot on 0-10 whatever the source. An 84% audience
+        score arrives from Plex as "8.4". Dividing it the way Radarr's raw percentages
+        need would turn it into 0.84, displayed as 8%.
+        """
         audience = from_plex("8.4", "rottentomatoes://image.rating.upright", audience=True)
 
         assert audience is not None
         assert audience.value == 8.4
 
     def test_a_percentage_shaped_plex_value_is_still_read_as_a_percentage(self) -> None:
-        """Defensive: a percentage source above 10 can only be a raw percentage from
-        an agent that skipped Plex's 0-10 normalization. The value proves the scale."""
+        """A percentage source above 10 can only be a raw percentage from an agent that
+        skipped Plex's 0-10 normalization. The value itself proves the scale.
+        """
         rating = from_plex("96", "rottentomatoes://image.rating.ripe")
 
         assert rating is not None
@@ -277,16 +294,17 @@ class TestRatingProvenance:
     def test_the_audience_slot_routes_a_rotten_tomatoes_image_to_the_audience_score(
         self,
     ) -> None:
-        """Both RT populations arrive as ``rottentomatoes://`` images; only the slot
-        tells them apart. Without the flag, the audience score silently became the
-        Tomatometer -- and the panel would have shown two 'critic' numbers."""
+        """Both RT populations arrive as ``rottentomatoes://`` images. Only the slot
+        tells them apart. Without the flag, the audience score would silently become the
+        Tomatometer, and the panel would show two 'critic' numbers.
+        """
         audience = from_plex("8.4", "rottentomatoes://image.rating.upright", audience=True)
         assert audience is not None
         assert audience.source is RatingSource.ROTTEN_TOMATOES_AUDIENCE
         assert audience.value == 8.4
 
-        # An IMDb image in the audience slot is still just IMDb (the probed-server
-        # shape in this module's docstring) -- the flag only disambiguates RT.
+        # An IMDb image in the audience slot is still just IMDb, the probed-server shape
+        # from this module's docstring. The flag only disambiguates RT.
         imdb = from_plex("7.0", "imdb://image.rating", audience=True)
         assert imdb is not None
         assert imdb.source is RatingSource.IMDB
@@ -297,16 +315,18 @@ class TestRatingProvenance:
         assert from_plex("7.0", "") is None
 
     def test_an_empty_rating_is_none(self) -> None:
-        """Plex returns '' for absent, which must not become 0.0 -- a 0.0 rating
-        would read as 'terrible film, delete it'."""
+        """Plex returns '' for absent. That must not become 0.0, since a 0.0 rating
+        would read as 'terrible film, delete it.'
+        """
         assert from_plex("", "imdb://image.rating") is None
         assert from_plex(None, "imdb://image.rating") is None
 
     def test_both_ends_of_the_scale_are_inside_it(self) -> None:
         """``0.0 <= number <= 10.0`` is inclusive at both ends, and the test above only
         drove the outside (11, -1, 250). Dropping either edge turns a rating we read
-        perfectly well into "no rating", which the why-panel prints as a source that was
-        never checked -- and takes the protection with it."""
+        perfectly well into "no rating," which the why-panel prints as a source that was
+        never checked, taking the protection down with it.
+        """
         top = from_plex("10", "imdb://image.rating")
         assert top is not None
         assert top.value == 10.0
@@ -316,15 +336,16 @@ class TestRatingProvenance:
         assert bottom.value == 0.0
 
     def test_a_percentage_source_at_exactly_ten_is_a_score_not_a_percentage(self) -> None:
-        """The raw-percentage rescale triggers ABOVE 10, never at it. A Tomatometer of 10
-        on Plex's 0-10 scale is a perfect 100%; rescaling it would file the
-        best-reviewed title in the library as 10% and let the bar miss it."""
+        """The raw-percentage rescale triggers above 10, never at it. A Tomatometer of 10
+        on Plex's 0-10 scale is already a perfect 100%. Rescaling it would file the
+        best-reviewed title in the library as 10% and let the bar miss it.
+        """
         on_the_scale = from_plex("10", "rottentomatoes://image.rating.ripe")
         assert on_the_scale is not None
         assert on_the_scale.value == 10.0
 
         # 100 is the raw-percentage shape the rescale exists for, and it lands on the
-        # same 10.0 -- so the two readings agree at the top of the scale and only the
+        # same 10.0. The two readings agree at the top of the scale, and only the
         # boundary itself decides which one a value of 10 gets.
         raw_percentage = from_plex("100", "rottentomatoes://image.rating.ripe")
         assert raw_percentage is not None
@@ -334,9 +355,9 @@ class TestRatingProvenance:
 class TestRadarrRatings:
     """Radarr hands us five rating sources for free, in a payload we already fetch.
 
-    The shape below is representative of a well-reviewed mainstream film: a large IMDb
-    vote count, a Tomatometer expressed as a bare percentage, and Metacritic with no
-    vote concept at all.
+    The shape below is representative of a well-reviewed mainstream film. It has a
+    large IMDb vote count, a Tomatometer expressed as a bare percentage, and
+    Metacritic with no vote concept at all.
     """
 
     SAMPLE: ClassVar[dict[str, dict[str, object]]] = {
@@ -363,8 +384,9 @@ class TestRadarrRatings:
         assert rt.value == 9.6  # 96% -> 9.6/10
 
     def test_a_value_outside_every_known_scale_is_dropped(self) -> None:
-        """An IMDb average of 96 is not a rating we know how to read; guessing a
-        scale for it could protect or condemn on a fiction."""
+        """An IMDb average of 96 is not a rating we know how to read. Guessing a scale
+        for it could protect or condemn a file on a fiction.
+        """
         assert from_radarr({"imdb": {"votes": 1_000, "value": 96, "type": "user"}}) == []
         assert from_radarr({"rottenTomatoes": {"votes": 0, "value": 250, "type": "user"}}) == []
 
@@ -389,9 +411,10 @@ class TestRadarrRatings:
         assert obscure.meets(7.0, min_votes=1000) is False
 
     def test_an_unknown_source_never_protects(self) -> None:
-        """Fail closed: we would rather keep a file than delete it on a number we
-        cannot interpret -- but we must not *protect* on one either, or an
-        unparseable field would silently make everything immortal."""
+        """Failing closed here means keeping a file rather than deleting it on a number
+        we cannot interpret. It also means never protecting on that number either, or
+        an unparseable field would silently make everything immortal.
+        """
         unknown = Rating(source=RatingSource.UNKNOWN, value=10.0, votes=999_999, provider="?")
         assert unknown.meets(1.0) is False
 
@@ -419,8 +442,9 @@ class TestRadarrRatings:
         assert perfect_average is not None
         assert perfect_average.value == 10.0
 
-        # The bottom edge matters for the panel rather than for a protection: a 0 that is
-        # dropped reads as "no Rotten Tomatoes rating" when there is one, and it is zero.
+        # The bottom edge matters for the panel more than for a protection. A 0 that
+        # gets dropped reads as "no Rotten Tomatoes rating" when there is one, and it is
+        # zero.
         floor = pick(
             from_radarr({"rottenTomatoes": {"value": 0}}), RatingSource.ROTTEN_TOMATOES_CRITIC
         )
@@ -430,9 +454,10 @@ class TestRadarrRatings:
     def test_a_percentage_source_never_carries_a_vote_count(self) -> None:
         """The sample reports ``votes: 0`` for Rotten Tomatoes, so the test above cannot
         tell dropping the count from reading a zero. A payload carrying a real count
-        distinguishes them: a percentage source has no vote concept, and storing one would
-        print "from 500 votes" beside a number no votes produced -- and hand a vote floor
-        a count to reject it on."""
+        distinguishes them. A percentage source has no vote concept, and storing one
+        would print "from 500 votes" beside a number no votes produced, and would hand a
+        vote floor a count to reject it on.
+        """
         rt = pick(
             from_radarr({"rottenTomatoes": {"value": 96, "votes": 500}}),
             RatingSource.ROTTEN_TOMATOES_CRITIC,
@@ -446,10 +471,11 @@ class TestRadarrRatings:
     def test_an_unreadable_vote_count_costs_that_one_rating_and_nothing_else(
         self, unreadable: object
     ) -> None:
-        """Rule 32: a fork or a future schema serializing votes as "3,000" must not raise
-        out of the fact build. It costs that rating its count -- and specifically NOT the
-        previous source's, which is still in the loop variable when the conversion raises,
-        so a recovery that forgets to clear it attributes IMDb's 1,200 votes to TMDb.
+        """A fork or a future schema serializing votes as "3,000" must not raise out of
+        the fact build. It costs that one rating its count, and never the previous
+        source's count, which is still sitting in the loop variable when the conversion
+        raises. A recovery that forgets to clear it would attribute IMDb's 1,200 votes
+        to TMDb instead.
         """
         out = from_radarr(
             {
@@ -469,13 +495,14 @@ class TestRadarrRatings:
 
 
 class TestWhereTheRatingBarTurns:
-    """``Rating.meets`` decides whether one rating bar cleared, and a bar that stops
-    clearing does not refuse a save -- it withdraws a protection ``RatingFloorGate`` was
+    """``Rating.meets`` decides whether one rating bar cleared. A bar that stops
+    clearing does not refuse a save. It withdraws a protection ``RatingFloorGate`` was
     carrying and hands the file to the reap list.
 
     Its three comparisons are all inclusive. The value floor (``value >= floor``) was
-    already defended; the two governing the VOTE floor were not, because every case above
-    drove a four-figure count or a dozen, never the numbers the comparisons turn on.
+    already covered by earlier tests. The two comparisons governing the vote floor were
+    not, because every case above drove a four-figure count or a dozen, never the
+    numbers these comparisons actually turn on.
     """
 
     @staticmethod
@@ -491,16 +518,18 @@ class TestWhereTheRatingBarTurns:
         assert self.imdb(8.0, 0).meets(7.5) is True
 
     def test_a_vote_floor_of_one_still_applies(self) -> None:
-        """The other end of the same comparison: 1 is a legal vote floor an operator can
-        set, and it has to bite. A 9.5 from a single vote is noise, and protecting on it
-        keeps junk -- so it clears at one vote and not at none."""
+        """The other end of the same comparison. 1 is a legal vote floor an operator can
+        set, and it has to take effect. A 9.5 from a single vote is noise, and protecting
+        on it keeps junk, so it clears at one vote and not at none.
+        """
         assert self.imdb(9.5, 1).meets(7.5, min_votes=1) is True
         assert self.imdb(9.5, 0).meets(7.5, min_votes=1) is False
         assert self.imdb(9.5, None).meets(7.5, min_votes=1) is False
 
     def test_a_count_exactly_at_the_vote_floor_is_trusted(self) -> None:
-        """``votes < min_votes`` refuses, so the floor is inclusive: an operator asking for
-        1,000 votes is asking for a title with exactly 1,000 to count."""
+        """``votes < min_votes`` refuses, so the floor is inclusive. An operator asking
+        for 1,000 votes is asking for a title with exactly 1,000 to count.
+        """
         assert self.imdb(8.0, 1_000).meets(7.5, min_votes=1_000) is True
         assert self.imdb(8.0, 999).meets(7.5, min_votes=1_000) is False
 
@@ -510,13 +539,15 @@ class TestUpstreamTimestampShapes:
 
     def test_tautulli_added_at_is_a_string_but_last_played_is_an_int(self) -> None:
         """Tautulli returns the same kind of value with two different types in the same
-        response: ``added_at`` as a string, ``last_played`` as an int."""
+        response. ``added_at`` arrives as a string, ``last_played`` as an int.
+        """
         assert from_epoch("1700000000") == from_epoch(1_700_000_000)
 
     def test_tautulli_never_played_is_none_not_1970(self) -> None:
-        """last_played is None/'' for never-played. Coerced to epoch 0 it becomes
-        1970 -- which the scoring engine reads as *maximally stale*, making
-        never-watched media the top deletion candidate. Exactly backwards."""
+        """last_played is None or '' for never-played. Coerced to epoch 0, it becomes
+        1970, which the scoring engine reads as maximally stale, making never-watched
+        media the top deletion candidate. That is exactly backwards.
+        """
         assert from_epoch(None) is None
         assert from_epoch("") is None
         assert from_epoch(0) is None
@@ -531,6 +562,61 @@ class TestUpstreamTimestampShapes:
 
     @pytest.mark.parametrize("value", ["", None, "not-a-date", "2026-01-02T15:54:47"])
     def test_unparseable_or_offsetless_iso_is_none(self, value: str | None) -> None:
-        """An ISO timestamp with no offset is rejected rather than assumed UTC:
-        guessing is how a deletion clock ends up hours out."""
+        """An ISO timestamp with no offset is rejected rather than assumed UTC. Guessing
+        is how a deletion clock ends up hours off.
+        """
         assert from_iso(value) is None
+
+
+class TestPlexCachesASectionsItemCount:
+    """``LibrarySection.totalSize`` is a plexapi ``cached_data_property``, on a section
+    object plexapi keeps for the life of a connection. Reading it twice answers with the
+    first number both times.
+
+    The trash interlock reads this count before the first delete and again before the
+    purge, and refuses to purge unless the section shrank. One cached number makes every
+    shrink zero, so the gate declines every purge while reading like a working interlock.
+    """
+
+    #: One movie library, as Plex spells it in ``/library/sections``.
+    SECTION: ClassVar[str] = (
+        '<Directory key="1" type="movie" title="Movies" agent="a" scanner="s" '
+        'language="en" uuid="u"/>'
+    )
+
+    class _Server:
+        """A connected plexapi server, minus the socket. Its section listing answers the
+        next scripted count, so two answers differ only if something asked Plex twice."""
+
+        def __init__(self, counts: list[int], section_xml: str) -> None:
+            self._counts = list(counts)
+            self._section_xml = section_xml
+            self.section = LibrarySection(  # type: ignore[no-untyped-call]
+                self, _fromstring(section_xml), initpath="/library/sections"
+            )
+            self.library = SimpleNamespace(sectionByID=lambda key: self.section)
+
+        def query(self, path: str, **kwargs: object) -> Element:
+            if "/all" in path:
+                total = self._counts.pop(0) if len(self._counts) > 1 else self._counts[0]
+                return _fromstring(f'<MediaContainer totalSize="{total}"/>')
+            return _fromstring(f"<MediaContainer>{self._section_xml}</MediaContainer>")
+
+    def test_reading_the_count_twice_answers_with_the_first_number(self) -> None:
+        """The upstream behavior, on a bare section object. The reload in
+        ``PlexClient.item_count`` rests on it, so it is pinned rather than assumed. This
+        test fails the day plexapi stops caching."""
+        server = self._Server([100, 98], self.SECTION)
+
+        assert server.section.totalSize == 100
+        assert server.section.totalSize == 100  # Plex was never asked a second time
+
+    async def test_item_count_answers_the_live_number_every_time(self) -> None:
+        """Two calls, two answers, because the client reloads the section before reading
+        the count off it."""
+        client = PlexClient("http://plex.test", "t", safety=RuntimeSafety())
+        # Injected so `_connect` returns without a socket.
+        client._server = self._Server([100, 98], self.SECTION)  # type: ignore[assignment]
+
+        assert await client.item_count(1) == 100
+        assert await client.item_count(1) == 98

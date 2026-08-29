@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The wizard's password step, and who hears its one error region.
 //
-// The step is a second drawing of `AdminPasswordForm`: same two boxes, same two complaints, same
-// single region carrying whichever one is live. What it had drifted on is the half a diff does
-// not show. Its live complaints were `role="alert"` and its boxes carried no `aria-invalid`;
-// `SetupPasswordStep.tsx` holds the reason for both. Both arms of each are driven here, because
-// the fix is a branch and only one side of it is the interesting one.
+// The step is a second drawing of `AdminPasswordForm`, with the same two boxes, the same two
+// complaints, and the same single region carrying whichever one is live. A complaint that
+// updates on every keystroke must not interrupt with `role="alert"`, but the box it explains
+// must carry `aria-invalid`. A submit failure is different: it happens once, so it does get
+// `role="alert"`. `SetupPasswordStep.tsx` holds the reason for the split, and both arms of
+// each are driven here, because the fix is a branch and only one side of it is the interesting
+// one.
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -54,8 +56,9 @@ describe("the wizard's password step", () => {
     const complaint = screen.getByText(/Use at least 12 characters/i).closest(".notice");
     expect(complaint).not.toBeNull();
     expect(screen.getByText(/7 so far/i)).toBeInTheDocument();
-    // `standing`: the sentence explains why the button is off, it is reachable from the box
-    // through `aria-describedby`, and it rewrites itself on the next keystroke.
+    // This complaint stands rather than interrupts. It explains why the button is off, is
+    // reachable from the box through `aria-describedby`, and rewrites itself on the next
+    // keystroke.
     expect(complaint).not.toHaveAttribute("role");
     expect(box()).toHaveAccessibleDescription(/Use at least 12 characters/i);
     expect(box()).toHaveAttribute("aria-invalid", "true");

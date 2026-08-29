@@ -103,11 +103,11 @@ class TestARatingWeCouldNotLookUpIsUnknown:
 
 class TestNobodyIsWatchingIsNotSaidOfAnItemNobodyChecked:
     """``is_streaming_now`` is one of the two structural gates, and it is matched by rating
-    key. An item with no key has no key to match, so the check never ran -- but it recorded
+    key. An item with no key has no key to match, so the check never ran, but it recorded
     a definite ``Known(False)``, three lines under a comment reading "Never assume False,
-    that is how a tool deletes a file somebody is watching" (rules 93 and 7/24). Every
-    sibling fact takes ``Unknown`` on the same condition, and so does the season builder's
-    twin (``season_scan``, rule 72)."""
+    that is how a tool deletes a file somebody is watching." Every sibling fact takes
+    ``Unknown`` on the same condition, and so does the season builder's twin
+    (``season_scan``)."""
 
     def test_an_unmatched_movie_does_not_claim_nobody_is_watching(self) -> None:
         facts = _facts(_raw(plex_rating_key=None))
@@ -115,14 +115,15 @@ class TestNobodyIsWatchingIsNotSaidOfAnItemNobodyChecked:
         assert isinstance(facts.is_streaming_now, Unknown)
 
     def test_an_ambiguous_match_is_the_one_that_stings(self) -> None:
-        """Plex DOES hold this title, in two copies, so somebody can be streaming it right
-        now. Reaper refused to guess which copy's history to read, which is correct, and then
-        asserted nobody was watching, which is not. The reason names the real situation."""
+        """Plex *does* hold this title, in two copies, so somebody can be streaming it
+        right now. Reaper refused to guess which copy's history to read, which is correct,
+        and then asserted nobody was watching, which is not. The reason names the real
+        situation."""
         facts = _facts(_raw(plex_rating_key=None, match_status=identity.MatchStatus.AMBIGUOUS))
 
         streaming = facts.is_streaming_now
         assert isinstance(streaming, Unknown)
-        # Shared with the season lane now (rule 72): the same base id, media-selected.
+        # Shared with the season lane now: the same base id, media-selected.
         assert streaming.reason == Reason("cause.plex_ambiguous", {"mediaType": "movie"})
 
     def test_a_matched_movie_nobody_is_streaming_is_still_a_definite_no(self) -> None:
@@ -137,8 +138,8 @@ class TestAKeepListRowIsFoundByEveryIdTheMovieCarries:
     """Radarr is tmdb-native and a blank ``imdbId`` is ordinary, so a movie's imdb id is
     often the one Plex matched. A "Never Reap" collection on a legacy-agent Plex library
     is stored under an imdb id and nothing else, so looking the movie up by Radarr's ids
-    alone would miss it -- and a film the owner put on the keep list would be condemned
-    on a healthy, executable snapshot."""
+    alone would miss it. A film the owner put on the keep list would then be condemned on
+    a healthy, executable snapshot."""
 
     @staticmethod
     def _keep_list_stored_under_imdb_only() -> lists.MembershipIndex:
@@ -210,10 +211,11 @@ class TestAMatchedItemWithNoArrivalDateIsWarned:
     only as kept-to-be-safe, never on the reap list. A warning names it so "why isn't this
     reapable" is answerable from the log, the same as an unmatched item.
 
-    "Nothing to measure from" means no arrival date AND no play (#272, #257). This lane used
-    to stop at the missing arrival date whatever history it held, while the season lane
-    measured from the play -- one derived value with two thaw rules. The thaw is now
-    ``engine.dormancy.reference_instant``'s, so both lanes take one branch.
+    "Nothing to measure from" means no arrival date and no play. This lane used to stop at
+    the missing arrival date whatever history it held, while the season lane measured from
+    the play instead, one derived value computed two different ways.
+    ``engine.dormancy.reference_instant`` now computes it for both, so both lanes take one
+    branch.
     """
 
     def test_a_matched_movie_with_neither_an_added_at_nor_a_play_is_warned(self) -> None:
@@ -227,16 +229,16 @@ class TestAMatchedItemWithNoArrivalDateIsWarned:
         assert warned[0]["media_type"] == "movie"
 
     def test_no_added_at_but_a_play_measures_from_the_play_and_is_silent(self) -> None:
-        """The divergence itself: same evidence, and this lane used to answer Unknown where
-        the season lane answered with a number. Neither lane had a test for it, because both
-        no-arrival-date tests pinned the play absent (#257). The item is judged now, and the
-        warning must not fire -- it says dormancy could not be measured, and it was."""
+        """The divergence itself. Same evidence, and this lane used to answer Unknown where
+        the season lane answered with a number. Neither lane had a test for it, because
+        both no-arrival-date tests pinned the play absent. The item is judged now, and the
+        warning must not fire. It says dormancy could not be measured, and it was."""
         with capture_logs() as logs:
             facts = _facts(_raw(added_at=None), last_played={10: utcnow() - timedelta(days=12)})
 
         assert isinstance(facts.days_observed_unwatched, Known)
-        # A range, not an equality: production samples its own `utcnow()` and comparing two
-        # samples of the clock it reads is rule 133's flake. The 2019 horizon would give
+        # A range, not an equality. Production samples its own `utcnow()`, and comparing
+        # two samples of the clock it reads is a flake. The 2019 horizon would give
         # thousands of days, so this discriminates the play from every fallback.
         assert 11 <= facts.days_observed_unwatched.value <= 13
         assert [e for e in logs if e["event"] == "scan.no_added_at"] == []
@@ -279,13 +281,13 @@ class TestTheScanRecordsHowFarBackItsHistoryReaches:
 
     Dormancy has been clamped to the horizon since early on (``dormancy.reference_instant``),
     so an item older than the mirror reads as dormant since the mirror's edge rather than
-    for decades. The *watcher count* had no equivalent: it was counted over
+    for decades. The *watcher count* had no equivalent. It was counted over
     ``utcnow() - window_days`` whatever the mirror held, so on a history younger than the
     window a title several people watched inside that window counted as nobody, and the
     gate printed "Nobody here watched it in the last year" about a year it had not seen.
 
-    The count itself cannot be fixed by clamping the query -- there are no rows before the
-    horizon to find -- so the scan records the reach instead and the gate refuses to
+    The count itself cannot be fixed by clamping the query, since there are no rows before
+    the horizon to find, so the scan records the reach instead and the gate refuses to
     answer past it.
     """
 
@@ -308,7 +310,7 @@ class TestTheScanRecordsHowFarBackItsHistoryReaches:
         """Sampled once, on the context, because it describes the mirror and not the item.
 
         Re-reading the clock inside the per-item builder let one scan freeze two different
-        reaches: an item built after the day count ticked up to the popularity window was
+        reaches. An item built after the day count ticked up to the popularity window was
         answered where an identical item built moments earlier was held. The distinctive
         value here cannot arise from the horizon, so this fails if the derivation moves
         back into the builder.
@@ -332,8 +334,8 @@ class TestTheScanRecordsHowFarBackItsHistoryReaches:
     def test_a_title_watched_before_a_young_horizon_is_held_not_condemned(self) -> None:
         """The issue, driven through the builder and the shipped gate.
 
-        The mirror reaches back 90 days; the operator lowered the dormancy floor, so the
-        clamp no longer saves the item on its own; several people watched this title eight
+        The mirror reaches back 90 days. The operator lowered the dormancy floor, so the
+        clamp no longer saves the item on its own. Several people watched this title eight
         months ago, which is inside the year-long window and outside the mirror. The scan
         sees a zero, and must not call it one.
         """
@@ -370,11 +372,11 @@ class TestTheScanRecordsHowFarBackItsHistoryReaches:
 class TestWatchCountsFromAStaleMirrorAreNotZero:
     """Watch stats are read from the local ``watch_event`` cache, not live.
 
-    So a Tautulli ingest that stopped a month ago does not raise, does not degrade
-    the snapshot, and does not look any different from a genuinely quiet library:
-    ``watchers_window.get(rating_key, 0)`` keeps returning an affirmative
-    ``Known(0)`` while dormancy grows against a frozen mirror. Every item drifts
-    toward condemnation at exactly the rate the outage lasts.
+    So a Tautulli ingest that stopped a month ago does not raise, does not degrade the
+    snapshot, and does not look any different from a genuinely quiet library.
+    ``watchers_window.get(rating_key, 0)`` keeps returning an affirmative ``Known(0)``
+    while dormancy grows against a frozen mirror. Every item drifts toward condemnation
+    at exactly the rate the outage lasts.
     """
 
     # The staleness behavior itself is pinned by driving the real scan, in
@@ -382,13 +384,13 @@ class TestWatchCountsFromAStaleMirrorAreNotZero:
     # are held apart in tests/test_history_sync.py, by
     # TestTheIngestClockIsSeparateFromTheWatchingClock.
     # A `hasattr` check used to sit here naming `latest()` as the signal that tells a quiet
-    # library from a stalled ingest. It was wrong on both counts: the shipped guard reads
+    # library from a stalled ingest. It was wrong on both counts. The shipped guard reads
     # `last_synced_at`, and asserting on a name passes on a broken body and fails on a
-    # rename (the anti-pattern H-1 was raised about).
+    # rename.
 
     def test_the_staleness_bound_is_two_nightly_cycles(self) -> None:
         """Pinned so it cannot drift silently. Tighter and a paused ingest blocks every
-        scan; looser and items drift toward condemnation for the length of the outage."""
+        scan. Looser and items drift toward condemnation for the length of the outage."""
         from reaper.services import snapshot
 
         assert timedelta(hours=48) == snapshot.MIRROR_STALE_AFTER
@@ -399,7 +401,7 @@ class TestAPolicyVersionBumpCannotBrickTheEditor:
     ``PolicyBody.model_validate_json`` on both the scan path and ``GET /api/policy``,
     and that call site has no fallback. Pinned to a single ``Literal``, the next bump
     would fail every stored body at once, taking out the policy editor along with the
-    scan: the operator could not even open the page to fix it."""
+    scan. The operator could not even open the page to fix it."""
 
     def test_a_body_written_by_an_older_reaper_still_loads(self) -> None:
         from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody
@@ -425,17 +427,17 @@ class TestAPolicyVersionBumpCannotBrickTheEditor:
 
 
 class TestARepairedPolicyCannotExecute:
-    """A rescaled policy is safe to SCAN on and unsafe to DELETE on, and those are
+    """A rescaled policy is safe to *scan* on and unsafe to *delete* on, and those are
     different questions.
 
     The rescale cannot move a score, so the numbers a scan produces are right. But the
-    body it ran was never saved by anyone: it is Reaper's repair of a stored row, and an
+    body it ran was never saved by anyone. It is Reaper's repair of a stored row, and an
     approval names a policy hash. Executing against one nobody chose is the substitution
     the journal exists to prevent, so the scan degrades and the snapshot is not
     executable until the operator opens the editor and saves.
 
-    These pin the flags. The behavior they feed -- the scan degrading and the plan being
-    refused -- is driven end to end in
+    These pin the flags. The behavior they feed, the scan degrading and the plan being
+    refused, is driven end to end in
     ``test_scan_pipeline.TestARepairedPolicyCannotBeReapedFrom``.
     """
 
@@ -453,10 +455,11 @@ class TestARepairedPolicyCannotExecute:
             assert ActivePolicy(DEFAULT_MOVIE_POLICY, "mine", (repair,)).repaired is True
 
     def test_the_two_recoveries_are_flags_and_not_read_off_the_name(self) -> None:
-        """Regression. These were briefly told apart by ``name != "default"``, which looks
-        reasonable and is wrong: an operator's own policy is very often *called* "default",
-        so their rescaled policy was reported as unreadable and the editor stopped offering
-        to save it. The name carries no such meaning; only the flags do."""
+        """This is a regression test. These were briefly told apart by
+        ``name != "default"``, which looks reasonable and is wrong. An operator's own
+        policy is very often *called* "default", so their rescaled policy was reported as
+        unreadable and the editor stopped offering to save it. The name carries no such
+        meaning. Only the flags do."""
         from reaper.engine.policy_migrations import PolicyRepair
         from reaper.services.profiles import ActivePolicy
 

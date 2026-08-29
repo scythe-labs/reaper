@@ -1,22 +1,23 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Two cookie names, and the ways a stale one used to beat a live one.
+"""The two session cookie names, and the properties that keep a stale one from beating a
+live one.
 
 Reaper names the session cookie after the connection: ``__Host-reaper_session`` over
 HTTPS, a plain ``reaper_session`` otherwise (:mod:`reaper.auth.cookie` says why). A jar
-can therefore hold both at once, and every failure covered here is one bug wearing four
-hats -- code that took the first name that merely EXISTED instead of the one that was
-actually live:
+can hold both at once, so the code must act on whichever cookie is actually live, never
+on whichever name it happens to find first. This file pins four such properties:
 
-* Clearing the ``__Host-`` name with the *request's* ``Secure`` flag. A browser refuses
-  a ``__Host-`` cookie that arrives without ``Secure``, deletion included, so on the
-  common TLS-behind-an-unlisted-proxy install the delete was discarded by the browser
-  while its database row went away regardless. The dead cookie then outranked every
-  later sign-in and sign-in silently stopped working, with no error anywhere.
-* Reading ``secure or plain``, which is what let that dead cookie shadow the live one.
-* Logout revoking only the first name, leaving the live session valid server-side after
-  the operator had asked to sign out.
-* A password change sparing the first name, signing the operator out of the very tab
-  they were working in.
+* Clearing the ``__Host-`` name always sets ``Secure``, regardless of the current
+  request. A browser refuses a ``__Host-`` cookie delete that arrives without
+  ``Secure``, so a delete missing it discards the cookie's database row while leaving
+  the cookie itself in the jar, where it keeps authenticating as its owner with no
+  visible error.
+* Reading a jar tries every name and keeps the one that actually resolves, rather than
+  the first name that merely exists.
+* Logout revokes every name a jar carries, not just the first.
+* A password change spares the session actually in use. Sparing just the first cookie
+  name instead can revoke the live session and sign the operator out of the tab they
+  are working in.
 """
 
 from __future__ import annotations
@@ -55,10 +56,11 @@ def _emitted(response: Response) -> dict[str, str]:
 
 
 class TestClearingUsesTheFlagEachNameRequires:
-    """The ``Secure`` flag on a delete is a property of the NAME, not of the request.
+    """The ``Secure`` flag on a delete is a property of the name, not of the request.
 
-    This is the root cause of the lockout. ``clear_session_cookie`` deliberately takes no
-    per-request flag any more, so reverting to one cannot happen without deleting these.
+    ``clear_session_cookie`` takes no per-request flag, on purpose: using the request's
+    flag instead would silently drop the ``__Host-`` cookie's delete on any install where
+    the request does not look secure, while the cookie's database row was removed anyway.
     """
 
     def test_the_host_name_is_always_cleared_with_secure(self) -> None:
@@ -71,7 +73,8 @@ class TestClearingUsesTheFlagEachNameRequires:
         )
 
     def test_the_plain_name_is_cleared_without_secure(self) -> None:
-        """So its delete is accepted over plain HTTP as well as HTTPS."""
+        """Its delete carries no ``Secure`` flag, so it is accepted over plain HTTP as
+        well as HTTPS."""
         response = Response()
         clear_session_cookie(response)
         assert "secure" not in _emitted(response)[PLAIN_NAME].lower()
@@ -117,12 +120,12 @@ async def factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSessi
 
 
 class TestAStaleCookieCannotShadowALiveSession:
-    """The lockout, at the level that decides it.
+    """A dead cookie under one name cannot shadow a live session under the other name.
 
-    ``resolve_session_from_cookies`` tries every name and keeps the first that really
-    resolves. Returning the winning TOKEN matters as much as returning the user: logout
-    revokes it and a password change spares it, so handing back the wrong one revokes or
-    spares the wrong session.
+    ``resolve_session_from_cookies`` tries every name and keeps the first one that
+    actually resolves. Returning the winning token matters as much as returning the
+    user. Logout revokes that token and a password change spares it, so handing back the
+    wrong token would revoke or spare the wrong session.
     """
 
     async def test_a_dead_host_cookie_does_not_beat_a_live_plain_one(
@@ -174,21 +177,24 @@ def client(settings: Settings) -> Iterator[TestClient]:
 
 
 class TestLogoutRevokesEverySessionTheJarPresents:
-    """Signing out has to mean it.
+    """Signing out has to mean it. Logout revokes every session a jar's cookies name.
 
-    Logout used to close only the first name carrying a cookie. With a stale cookie in
-    the jar the delete hit a row that was already gone, so the genuinely live session
-    under the other name survived in the database -- an exfiltrated token would still
-    have worked after the operator signed out.
+    If logout only closed the first name carrying a cookie, a stale cookie in the jar
+    would make the delete land on a row that was already gone, leaving the genuinely
+    live session under the other name valid in the database. An exfiltrated token for
+    that session would still work after the operator signed out.
     """
 
     def test_a_second_live_session_under_the_other_name_is_revoked_too(
         self, client: TestClient, settings: Settings
     ) -> None:
-        """The planted jar is not one a browser could present: TestClient speaks http, and
-        a real browser never sends a ``__Host-`` cookie over plain HTTP. It pins the server
-        behavior regardless, which is the property under test, and it does discriminate
-        (revert to closing only the first token and the login session survives)."""
+        """A real browser could never present this exact cookie jar. TestClient speaks
+        http, and a browser never sends a ``__Host-`` cookie over plain HTTP.
+
+        The test still pins the server's own behavior, which is what is under test here.
+        It also discriminates. Reverting to closing only the first token would make the
+        login session survive, and this test would then fail.
+        """
         login(client, settings)  # TestClient speaks http, so this is the PLAIN name
 
         engine = sa_create_engine(settings.sync_database_url)
@@ -216,13 +222,13 @@ class TestLogoutRevokesEverySessionTheJarPresents:
 
 
 class TestOnlyOneSessionCookieIsEverLeftInTheJar:
-    """Writing one name has to clear the other, or a LIVE cookie under the unused name
-    outlives every later sign-in.
+    """Writing one cookie name must clear the other, or a live cookie under the unused
+    name outlives every later sign-in.
 
-    Reading the first name that RESOLVES fixes the dead-cookie lockout, and nothing more:
-    a live cookie still resolves. Because ``__Host-`` is tried first, one sitting in the
-    jar kept authenticating as whoever owned it, so signing in as a second admin appeared
-    to succeed while the app stayed signed in as the first.
+    Trying every name and keeping the first that resolves handles a dead cookie, but a
+    live cookie still resolves too. Because ``__Host-`` is tried first, a live cookie left
+    sitting in the jar under that name keeps authenticating as its owner. Signing in as a
+    second admin would then appear to succeed while the app stayed signed in as the first.
     """
 
     def test_writing_the_host_name_clears_the_plain_one(self) -> None:
@@ -233,9 +239,10 @@ class TestOnlyOneSessionCookieIsEverLeftInTheJar:
         assert "max-age=0" in emitted[PLAIN_NAME].lower()
 
     def test_writing_the_plain_name_clears_the_host_one_with_secure(self) -> None:
-        """The delete needs Secure or the browser refuses it, which is the whole lesson of
-        the class above. Over a genuinely plain-HTTP leg the browser would never have sent
-        that cookie anyway, so nothing is stranded."""
+        """The delete needs ``Secure`` or the browser refuses it, the same constraint the
+        class above pins for the ``__Host-`` name. Over a genuinely plain-HTTP connection
+        the browser would never have sent that cookie anyway, so nothing is stranded.
+        """
         response = Response()
         set_session_cookie(response, "tok", secure=False)
         emitted = _emitted(response)
@@ -246,14 +253,15 @@ class TestOnlyOneSessionCookieIsEverLeftInTheJar:
     def test_signing_in_clears_the_other_name_in_the_same_response(
         self, client: TestClient, settings: Settings
     ) -> None:
-        """The end-to-end shape, asserted where it is decidable: on the wire.
+        """Checks the end-to-end shape on the wire, where it can actually be decided.
 
-        The failure needs a browser leg that is HTTPS while ``is_secure_request`` reads
-        False, which is precisely the unlisted-proxy install. TestClient cannot be both at
-        once -- over http it discards the ``Secure`` delete exactly as a browser would, and
-        over https ``is_secure_request`` becomes True and the app writes the other name. So
-        this pins what the SERVER emits, which is the half this fix owns, and the two unit
-        tests above pin the flags that decide whether the browser honors it.
+        The scenario this covers needs a browser connection that is HTTPS while
+        ``is_secure_request`` reads False, which is exactly what an unlisted reverse
+        proxy produces. TestClient cannot be both at once. Over http it discards the
+        ``Secure`` delete exactly as a browser would, and over https
+        ``is_secure_request`` becomes True and the app writes the other name instead.
+        This test pins what the server emits. The two unit tests above pin the cookie
+        flags that decide whether the browser honors it.
         """
         seed_admin(settings)
         client.headers["X-Reaper-CSRF"] = "1"

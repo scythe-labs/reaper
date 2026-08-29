@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""A restore swap that is killed part way through, and the drift guards around it.
+"""Checks that a restore swap killed partway through finishes safely on the next boot.
 
-The swap is several renames, each atomic on its own but not together, so a host reboot or
-an OOM between them leaves the database replaced and the key still staged. The next boot
-then saw a staging with no ``reaper.db`` in it, read that as "the staging is broken", and
-deleted the whole thing -- including ``secret.key``, the ONLY copy of the key for the
-database that was by then already live -- while printing that the current data was kept
-(B2-21). Everything here is about that window and the two guards beside it: the auth-purge
-list matching the schema (R-3) and the two size ceilings matching each other (PR-11).
+The swap is several renames, each atomic on its own but not all together, so a host
+reboot or an out-of-memory kill between them can leave the database replaced while the
+key is still staged. A naive resume would see a staging directory with no ``reaper.db``
+in it, treat that as a broken staging, and delete the whole directory, including
+``secret.key``, the only copy of the key for the database that is by then already live,
+while telling the operator their current data was kept. This file checks the window that
+failure lives in, plus two related guards: the auth-purge list matching the schema, and
+the two size ceilings matching each other.
 """
 
 from __future__ import annotations
@@ -24,10 +25,10 @@ from reaper.secrets import KEY_FILENAME, SALT_FILENAME
 from reaper.services import restore
 from reaper.services.backup import DB_ARCNAME, MAX_DB_BYTES
 
-#: Column-name fragments that suggest a row carries a credential of some kind. Deliberately
-#: broad: the test's job is to force a DECISION about every such table, not to guess right.
-#: A table that holds someone else's key (``instance``) is listed as considered-and-kept,
-#: the same as one that holds an account.
+#: Column-name fragments that suggest a row carries some kind of credential. The list is
+#: deliberately broad, since the test's job is to force a decision about every such table,
+#: not to guess correctly on the first try. A table that holds someone else's key
+#: (``instance``) is listed as considered and kept, the same as one that holds an account.
 _AUTH_COLUMN_HINTS = ("token", "password", "session", "api_key", "secret")
 #: Table-name fragments with the same meaning.
 _AUTH_TABLE_HINTS = ("auth", "session", "login", "recovery", "token", "credential")
@@ -63,10 +64,11 @@ class TestAnInterruptedSwapIsFinished:
     def test_the_staged_key_survives_and_lands(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """The exact interrupted state: the staged database has already been renamed into
-        ``data/`` and the key has not. Discarding here deletes the key that opens the
-        database now serving, so the install boots on a restored database, mints a fresh
-        key, and every stored service credential silently stops decrypting."""
+        """Reproduces the interrupted state where the staged database has already been
+        renamed into ``data/`` but the key has not. Discarding the staging here would
+        delete the key that opens the database now in use, so the install would boot
+        against a restored database, mint a fresh key, and every stored service
+        credential would silently stop decrypting."""
         settings = _settings(tmp_path)
         settings.ensure_data_dir()
         recovery = tmp_path / "pre-restore-20260724T000000Z"
@@ -83,9 +85,9 @@ class TestAnInterruptedSwapIsFinished:
     def test_it_says_the_restore_already_happened(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """The old message asserted "current data kept" in a state where the current data
-        had already been replaced. Copy that is wrong about a restore is worse than none:
-        it is read while deciding whether to panic."""
+        """The message must never claim "current data kept" in a state where the current
+        data has already been replaced. An operator reads this message while deciding
+        whether to panic, so a wrong claim here is worse than no message at all."""
         settings = _settings(tmp_path)
         settings.ensure_data_dir()
         _sqlite_file(tmp_path / DB_ARCNAME)
@@ -101,13 +103,14 @@ class TestAnInterruptedSwapIsFinished:
 class TestASwapKilledMidLoopDoesNotStrandAWal:
     """The other half of the same window, one rename earlier.
 
-    The move-aside walks ``reaper.db`` first and its ``-wal``/``-shm`` after. A kill
-    between those two renames left the previous database's write-ahead log sitting in
-    ``data/``, and the resume path only ever moved the STAGED files in -- so the restored
-    database landed beside a log written for a different database. SQLite validates a WAL
-    by its own header and frame checksums, never by any binding to the database file, so
-    it replays. Neither copy survives it: the restored database takes writes it never
-    made, and the pre-restore copy is missing the log those writes were in.
+    Moving the old database aside renames ``reaper.db`` first and its ``-wal``/``-shm``
+    files after. A kill between those two renames leaves the previous database's
+    write-ahead log sitting in ``data/``, and a resume that only moves the STAGED files
+    in lands the restored database beside a log written for a different database.
+    SQLite validates a WAL by its own header and frame checksums, not by any binding to
+    the database file, so it replays that log anyway. Both databases end up damaged: the
+    restored one gains writes it never made, and the pre-restore copy is missing the log
+    those writes belong to.
     """
 
     def test_a_stale_wal_follows_its_own_database_into_recovery(self, tmp_path: Path) -> None:
@@ -115,7 +118,8 @@ class TestASwapKilledMidLoopDoesNotStrandAWal:
         settings.ensure_data_dir()
         recovery = tmp_path / "pre-restore-20260724T000000Z"
         recovery.mkdir()
-        # The interrupted state: the live database made it across, its sidecars did not.
+        # Reproduces the interrupted state, where the live database made it across but
+        # its sidecars did not.
         _sqlite_file(recovery / DB_ARCNAME)
         (tmp_path / f"{DB_ARCNAME}-wal").write_bytes(b"previous-database-wal")
         (tmp_path / f"{DB_ARCNAME}-shm").write_bytes(b"previous-database-shm")
@@ -151,10 +155,10 @@ class TestASwapKilledMidLoopDoesNotStrandAWal:
         assert (tmp_path / KEY_FILENAME).read_text() == "staged-key\n"
 
     def test_an_already_restored_database_is_not_moved_aside(self, tmp_path: Path) -> None:
-        """Once the staged database has been moved in, ``data/reaper.db`` is the RESTORED
+        """Once the staged database has been moved in, ``data/reaper.db`` is the restored
         one. Sweeping it into recovery on the next boot would undo the restore and leave
-        the install with no database at all, which is why the sweep is scoped by whether
-        the staged copy is still staged."""
+        the install with no database at all, so the sweep only runs while the staged copy
+        is still staged."""
         settings = _settings(tmp_path)
         settings.ensure_data_dir()
         recovery = tmp_path / "pre-restore-20260724T000000Z"
@@ -169,15 +173,16 @@ class TestASwapKilledMidLoopDoesNotStrandAWal:
         assert not (recovery / DB_ARCNAME).exists()
 
     def test_the_restored_databases_own_wal_is_left_where_it_is(self, tmp_path: Path) -> None:
-        """Once the staged database is in place, data/reaper.db-wal is ITS log.
+        """Once the staged database is in place, data/reaper.db-wal is its own log, not
+        the previous database's.
 
-        _move_staged_in ends in an rmtree that swallows its own failure, so a completed
-        swap can still leave the marker behind: a read-only directory, or a held file on a
-        network mount. Every later boot then re-enters this branch with the app's own live
-        WAL sitting beside the restored database. Sweeping the sidecars "just in case"
-        looked harmless because the branch looked unreachable, and it is neither: it loses
-        every transaction still in that log, and drops it on top of the recovery copy's own
-        log, which is precisely the mismatched-WAL corruption the sweep exists to prevent.
+        ``_move_staged_in`` ends in an rmtree that swallows its own failure, so a completed
+        swap can still leave the marker behind, for example because of a read-only
+        directory or a held file on a network mount. Every later boot then re-enters this
+        branch with the app's own live WAL sitting beside the restored database. Sweeping
+        the sidecars in that case would lose every transaction still in that log, and
+        would drop the previous database's log on top of the recovery copy's own, which is
+        the exact mismatched-WAL corruption this sweep exists to prevent.
         """
         settings = _settings(tmp_path)
         settings.ensure_data_dir()
@@ -185,7 +190,7 @@ class TestASwapKilledMidLoopDoesNotStrandAWal:
         recovery.mkdir()
         _sqlite_file(recovery / DB_ARCNAME)
         (recovery / f"{DB_ARCNAME}-wal").write_bytes(b"the-previous-databases-wal")
-        # The swap finished; only the staging cleanup did not.
+        # The swap finished. Only the staging cleanup did not.
         _sqlite_file(tmp_path / DB_ARCNAME)
         (tmp_path / f"{DB_ARCNAME}-wal").write_bytes(b"the-restored-databases-own-wal")
         _stage(tmp_path, with_db=False, swapping=recovery.name)
@@ -208,8 +213,8 @@ class TestASwapKilledMidLoopDoesNotStrandAWal:
 
     def test_an_unusable_marker_name_still_lands_inside_the_data_dir(self, tmp_path: Path) -> None:
         """The marker is written by this process, but it is read back off disk, so it is
-        treated as untrusted: a name that is not one of ours gets a fresh folder rather
-        than being joined onto the data directory."""
+        treated as untrusted. A name that is not one of ours gets a fresh folder, instead
+        of being joined onto the data directory."""
         settings = _settings(tmp_path)
         settings.ensure_data_dir()
         _sqlite_file(tmp_path / DB_ARCNAME)
@@ -229,7 +234,8 @@ class TestAnUnusableStagingIsStillDiscarded:
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """With no swap marker nothing has been moved, so "current data kept" IS true."""
+        """With no swap marker, nothing has been moved, so "current data kept" is
+        actually true."""
         settings = _settings(tmp_path)
         settings.ensure_data_dir()
         _sqlite_file(tmp_path / DB_ARCNAME)
@@ -267,7 +273,7 @@ class TestAnUnusableStagingIsStillDiscarded:
 
 class TestACleanSwapLeavesNoMarker:
     def test_the_marker_is_written_then_removed_with_the_staging(self, tmp_path: Path) -> None:
-        """A marker left behind would make the NEXT armed restore look interrupted."""
+        """A marker left behind would make the next armed restore look interrupted."""
         settings = _settings(tmp_path)
         settings.ensure_data_dir()
         _sqlite_file(tmp_path / DB_ARCNAME)
@@ -293,10 +299,10 @@ class TestACleanSwapLeavesNoMarker:
 
 
 class TestTheAuthPurgeListTracksTheSchema:
-    """The purge list was a literal inside the restore code, tied to nothing. A new
-    auth-bearing table would have ridden a restore through in silence, so a session or
-    reset link valid when the backup was taken would work again after the swap -- exactly
-    what the purge exists to prevent (R-3)."""
+    """A new auth-bearing table added to the schema without an entry here would ride a
+    restore through untouched. That would let a session or reset link that was valid when
+    the backup was taken keep working after the swap, exactly what this purge list exists
+    to prevent."""
 
     def test_every_listed_table_exists(self) -> None:
         known = set(Base.metadata.tables)
@@ -340,8 +346,8 @@ class TestTheAuthPurgeListTracksTheSchema:
             con.close()
 
     def test_a_backup_predating_a_table_still_purges(self, tmp_path: Path) -> None:
-        """An older backup may not have every table yet; that is nothing to purge, not an
-        error that would block the restore."""
+        """An older backup may not have every table yet. A missing table is nothing to
+        purge, not an error that should block the restore."""
         db = tmp_path / "old.db"
         con = sqlite3.connect(db)
         con.execute("CREATE TABLE app_user (id INTEGER PRIMARY KEY)")
@@ -353,8 +359,8 @@ class TestTheAuthPurgeListTracksTheSchema:
 
 class TestTheSizeCeilingsAgree:
     def test_the_restore_cap_is_the_backup_cap(self) -> None:
-        """A backup its own restore rejects is worse than no backup: the operator believes
-        they are covered right up until they are not (PR-11)."""
+        """A backup that its own restore would reject is worse than no backup at all. The
+        operator believes they are covered right up until the moment they are not."""
         assert restore._MEMBER_CAPS[DB_ARCNAME] == MAX_DB_BYTES
 
     def test_the_backup_refuses_to_write_one_it_could_not_restore(

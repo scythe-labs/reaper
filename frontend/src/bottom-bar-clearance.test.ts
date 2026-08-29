@@ -1,24 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @vitest-environment node
-// One invariant, held over the whole stylesheet: a rule that lifts a surface clear of the phone's
-// section bar is declared AFTER that surface's own `bottom`, never before it.
+// This file checks one invariant over the whole stylesheet: a rule that lifts a surface clear of
+// the phone's bottom section bar must be declared AFTER that surface's own `bottom` rule, never
+// before it.
 //
-// The bar is `position: fixed; bottom: 0` under 900px, so every other surface anchored to the foot
-// of the screen has to clear it, and each does that with a `bottom` reading `--navbar-h`. A media
-// query adds NO specificity: at equal specificity the later declaration wins, so an override
-// written above the base rule loses to it and does nothing at all. Nothing about it looks wrong --
-// the `calc()` is right there, citing the right custom property.
+// The bar is `position: fixed; bottom: 0` under 900px, so every other surface anchored to the
+// foot of the screen has to clear it, each with its own `bottom` reading `--navbar-h`. A media
+// query adds no specificity of its own. At equal specificity, the later declaration in the file
+// wins, so an override written above the bar's base rule loses to it and does nothing, even
+// though the `calc()` looks correct and cites the right custom property.
 //
-// This is not hypothetical. All three overrides shipped in the block that declares the bar, which
-// sits ~4,000 lines above `.bulk-bar`'s base rule, so all three were inert. The bulk-action bar
-// then sat behind the nav icons on a phone: the only way to spare or reap several items at once,
-// with its buttons unreachable and a tap landing on a nav icon instead, which changes view and
-// drops the selection. `.savebar` was the same shape with a worse ending -- it is the only save
-// affordance on the policy page (rule 43), so the tap that should save a draft navigated away and
-// discarded it silently.
+// A rule declared in the wrong order looks fine in the CSS itself. If it lifts the bulk-action
+// bar or the policy page's only save button, that control sits behind the phone's nav icons
+// instead, so a tap lands on a nav icon and changes view instead of saving or selecting
+// anything.
 //
-// A test rather than a fourth comment, because the next surface to grow a bottom anchor will be
-// written the same way (rule 72: the fix lands on every twin, including ones not yet added).
+// A test catches this rather than a comment, because the next surface to grow a bottom anchor
+// will be written the same way, and the fix has to land on every one of them, including ones
+// not yet added.
 import { describe, expect, it } from "vitest";
 
 import { CSS as css, siteOf } from "./test/stylesheet";
@@ -79,8 +78,9 @@ describe("the stylesheet: bottom-bar clearance", () => {
     (r) => r.inPhoneMedia && declaresBottom(r.body) && r.body.includes("--navbar-h"),
   );
 
-  // Guard against the vacuous pass: if the parse ever stops finding these, the ordering
-  // assertion below would hold over an empty set and report a green gate for no checking at all.
+  // This guards against a vacuous pass. If the parse ever stops finding these surfaces, the
+  // ordering assertion below would hold over an empty set and report a green gate that checked
+  // nothing.
   it("finds the surfaces that have to clear the bar", () => {
     const selectors = lifts.map((r) => r.selector);
     expect(selectors).toEqual(expect.arrayContaining([".bulk-bar", ".scan-toast", ".savebar"]));
@@ -91,7 +91,7 @@ describe("the stylesheet: bottom-bar clearance", () => {
       const base = rules.filter(
         (r) => !r.inPhoneMedia && r.selector === lift.selector && declaresBottom(r.body),
       );
-      // Same specificity, so only source order decides: the lift must come last.
+      // Same specificity, so only source order decides. The lift must come last.
       return base
         .filter((b) => b.at > lift.at)
         .map((b) => `${lift.selector}: lift at ${siteOf(lift.at)}, base at ${siteOf(b.at)}`);

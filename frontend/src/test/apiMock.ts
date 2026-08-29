@@ -1,38 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// One mock that answers every api function, for the tests that replace `../api` wholesale.
+// A mock that answers every api function, for tests that replace `../api` wholesale.
 //
-// Thirty-five test files hand-declared the subset of the api their tree reads, ranging from one
-// function to thirty-two. That list is not the test's own business: it is a property of the
-// component tree, it changes whenever a nested hook starts reading something, and the file that
-// has to change is one nobody editing the hook is looking at. Rule 135 is the standing answer --
-// a mock gap fails the run rather than warning -- and this closes the same gap one step earlier,
-// by leaving no subset to get wrong.
+// A hand-picked subset of api functions is easy to get wrong: it depends on what the component
+// tree reads, that changes whenever a nested hook starts reading something new, and the file
+// that needs updating is not the one anyone is looking at. An unmocked function used as a query
+// returns `undefined`, which `src/test/setup.ts` fails the test run for. Used inside a hook's
+// own function (`() => api.foo(x)`), it throws instead, and React Query renders the tree's
+// ordinary failed-read branch, so nothing points at the missing mock. Mocking every function up
+// front removes the subset to get wrong in the first place.
 //
-// **Why this is safe to widen, given rule 135's own risk note.** Supplying a function a file used
-// to omit could in principle answer a read the test meant to fail. It cannot, in either shape a
-// tree performs the read:
+// A test that means to reject a read still says so with `mockRejectedValue`. An absent mock was
+// never the right way to ask for that.
 //
-//   * `queryFn: api.foo` -- an omitted `foo` is `undefined`, which `src/test/setup.ts` already
-//     FAILS the run on. So no passing test relies on that absence today; there are none to break.
-//   * `queryFn: () => api.foo(x)` -- an omitted `foo` throws a TypeError inside the arrow, which
-//     React Query files as an ordinary rejection and the tree renders its failed-read branch. An
-//     unconfigured `vi.fn()` returns `undefined`, which React Query also rejects. Same branch,
-//     same silence. This is rule 135's documented blind spot, and it is unchanged either way.
+// This also covers mutations, which query-completeness checks do not: React Query never flags a
+// mutation with no `mutationFn`. `removeApiKey` went missing from one panel's mock with no
+// warning until a test that pressed Remove failed on an unrelated undefined call.
 //
-// A test that means to reject a read still says so with `mockRejectedValue`, which is what the
-// suite already does; absence was never the way to ask for it.
-//
-// **The mutations are the half nothing was watching.** `setup.ts` fails a query with no
-// `queryFn`; it says nothing about a mutation with no `mutationFn`, because React Query does not
-// announce that one. `removeApiKey` was missing from the General panel's mock until the Remove
-// path needed driving, and it went missing SILENTLY: a test pressing Remove would have failed on
-// an undefined call rather than on the thing it was checking. So the completeness here is not a
-// tidier spelling of a gate that already existed -- for every mutation in the module, it is the
-// only thing standing between a gap and a confusing failure.
-//
-// There is no key list to check. The names are read off `api` itself, so a function added to or
-// removed from `api.ts` is answered here on the next run, and rule 103's drift guard has nothing
-// left to guard.
+// The function names are read off `api` itself, so adding or removing one from `api.ts` is
+// answered here automatically, with nothing else to keep in sync.
 import { vi } from "vitest";
 
 import { api } from "../api";
@@ -41,9 +26,9 @@ import { api } from "../api";
  *  wrong shape is a compile error rather than a passing test. */
 export type ApiMock = { [K in keyof typeof api]: ReturnType<typeof vi.fn> };
 
-/** A fresh set per file. Never share one across files: `vi.fn()` carries call history, and
- *  vitest gives each test file its own module registry, so a shared instance would leak counts
- *  between them (rule 133). */
+/** A fresh set per file. Never share one across files. `vi.fn()` carries call history, and
+ *  vitest gives each test file its own module registry, so a shared instance would leak call
+ *  counts between them. */
 export function makeApiMock(): ApiMock {
   return Object.fromEntries(Object.keys(api).map((name) => [name, vi.fn()])) as ApiMock;
 }

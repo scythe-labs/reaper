@@ -247,8 +247,8 @@ CASES: list[tuple[str, InstanceKind, BaseException, str]] = [
     ids=[name for name, _kind, _exc, _expected in CASES],
 )
 def testexplain_failure_sentence(kind: InstanceKind, exc: BaseException, expected: str) -> None:
-    # Through english(), the real catalog renderer (rule 119): explain_failure returns a
-    # typed Reason now, and the English it composes into is what an operator actually reads.
+    # This goes through english(), the real catalog renderer. explain_failure returns a
+    # typed Reason, and the English it composes into is what an operator actually reads.
     assert english(explain_failure(kind, exc)) == expected
 
 
@@ -288,7 +288,7 @@ KEY_REFUSED = "Seerr refused the API key. Copy it again from its own settings."
 class TestSeerrConnectionExercisesTheKey:
     """A green connection test must mean the key was accepted, not merely that the URL
     resolves. Seerr's ``/status`` is public and passes with any key, so the test also
-    reads an authenticated route. These pin that it does -- so a wrong key that a live
+    reads an authenticated route. These tests pin that it does. A wrong key that a live
     instance answered ``/status`` for is caught at test time, not weeks later as a scan
     warning with the requester signal silently dark.
     """
@@ -352,7 +352,7 @@ class TestServiceInstanceMapCodec:
 
     def test_decode_drops_every_unusable_pair(self) -> None:
         # bool (a JSON true), zero, negative, non-int, and a blank key can never name a real
-        # instance, so each is dropped rather than crash a scan (rule 32).
+        # instance, so each is dropped rather than crash a scan.
         raw = '{"2": true, "3": 0, "4": -1, "5": "x", "  ": 9}'
         assert decode_service_instance_map(raw) == {}
 
@@ -390,9 +390,10 @@ def _svc(kind: str, hostname: str | None, port: int | None) -> SeerrService:
 
 
 class TestSuggestInstance:
-    """Prefill only: suggest a Reaper instance when EXACTLY ONE matches by kind + host + port;
-    an ambiguous or missing match leaves the operator to pick (Seerr and Reaper often reach the
-    same server at different addresses, so a miss is expected, not an error)."""
+    """This suggests a Reaper instance only when *exactly one* matches by kind + host +
+    port. An ambiguous or missing match leaves the operator to pick. Seerr and Reaper
+    often reach the same server at different addresses, so a miss is expected, not an
+    error."""
 
     def test_host_port_fills_scheme_default_and_lowercases(self) -> None:
         assert _host_port("http://Host:7878") == ("host", 7878)

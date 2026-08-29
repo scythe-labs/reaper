@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The GUID sweep parses listing XML directly, with no hidden per-item requests.
 
-The trap this pins down was measured: walking ``section.all()`` objects
-made plexapi silently reload any item whose accessed attribute was ``None``, one
-metadata request per title, and the "single sweep" cost minutes on a large library.
-The raw parser must extract every field the resolver and the review view rely on --
-and a fake server here COUNTS its requests, so a regression back toward per-item
-fetches fails loudly.
+Walking ``section.all()`` objects makes plexapi silently reload any item whose accessed
+attribute is ``None``, at one metadata request per title, which turns a "single sweep"
+into minutes on a large library. The raw parser must extract every field the resolver and
+the review view rely on. A fake server here counts its requests, so a regression back
+toward per-item fetches fails loudly.
 """
 
 from __future__ import annotations
@@ -72,17 +71,17 @@ class TestParseSweepElement:
         assert item.content_rating == "R"
         assert item.runtime_minutes == 121
         # The audience slot with an RT image resolves to the audience source, and the
-        # value stays on Plex's 0-10 scale exactly as the attribute carried it:
-        # audienceRating="8.4" is an 84% score. Dividing it again, as Radarr's raw
-        # percentages need, is the regression this pins (8.4 once became 0.84).
+        # value stays on Plex's 0-10 scale exactly as the attribute carried it.
+        # audienceRating="8.4" is an 84% score. Dividing it again, the way Radarr's raw
+        # percentages need to be, would be the regression this pins.
         assert any(
             r.source is RatingSource.ROTTEN_TOMATOES_AUDIENCE and r.value == 8.4
             for r in item.ratings
         )
 
     def test_missing_fields_are_none_never_a_fetch(self) -> None:
-        """A bare row parses to honest Nones -- the exact opposite of the plexapi
-        object walk, where a None attribute meant a hidden network request."""
+        """A bare row parses to honest Nones. That is the opposite of the plexapi object
+        walk, where a None attribute meant a hidden network request."""
         item = _parse_sweep_element(fromstring(BARE_ROW))
         assert item.rating_key == 42
         assert item.year is None
@@ -99,7 +98,7 @@ class _FakeSection:
     def __init__(self, key: int, stype: str, title: str | None = None) -> None:
         self.key = key
         self.type = stype
-        # A real Plex section carries the operator's library name; the sweep stamps it onto
+        # A real Plex section carries the operator's library name. The sweep stamps it onto
         # every item as its ``library``. Defaulted from the key so existing call sites need
         # not spell one out.
         self.title = title if title is not None else f"Section {key}"
@@ -165,17 +164,20 @@ class TestLibraryGuidIndex:
         index = await _client_with(movie_server).library_guid_index(section_type="movie")
         assert set(index) == {41, 42}
         assert index[41].ids.tmdb == 4141
-        # THE point: two items, TWO requests -- one listing page plus one metadata batch
-        # (100 items per call, for the Rating children). Never a per-item reload.
+        # This is the point. Two items produce two requests, one listing page plus one
+        # metadata batch (100 items per call, for the Rating children). Never a per-item
+        # reload.
         assert len(movie_server.queries) == 2
 
     async def test_rating_children_add_sources_the_slots_did_not_carry(
         self, movie_server: _FakeServer
     ) -> None:
-        """The listing's two slots cannot carry a provider's critic AND audience score;
-        the batched metadata's typed Rating children fill in the rest. The slot value
-        keeps precedence where both name the same source, and a child whose provenance
-        we cannot read (metacritic has no prefix mapping) is dropped, never guessed."""
+        """The listing's two slots cannot carry a provider's critic and audience score
+        both. The batched metadata's typed Rating children fill in the rest. The slot
+        value keeps precedence where both name the same source, and a child whose
+        provenance cannot be read (metacritic has no prefix mapping) is dropped, never
+        guessed.
+        """
         index = await _client_with(movie_server).library_guid_index(section_type="movie")
         by_source = {r.source: r.value for r in index[41].ratings}
         assert by_source == {
@@ -207,7 +209,7 @@ class TestLibraryGuidIndex:
         # The folder-name tier that narrows a show listed in two sections.
         assert index[90].file_basename == "example show (2005)"
         assert [f.basename for f in index[90].files] == ["example show (2005)"]
-        # The same batch carries the show's Rating children -- no extra request.
+        # The same batch carries the show's Rating children, no extra request.
         assert [(r.source, r.value) for r in index[90].ratings] == [
             (RatingSource.ROTTEN_TOMATOES_AUDIENCE, 8.8)
         ]
@@ -215,9 +217,10 @@ class TestLibraryGuidIndex:
 
 
 class TestCollectionTags:
-    """#820: the section's whole membership in one read per ~400 items, off each item's own
-    ``collection`` tags, where asking each collection for its children cost one read per
-    collection."""
+    """Reads the section's whole membership in one request per ~400 items, off each item's
+    own ``collection`` tags. Asking each collection for its own children instead would cost
+    one request per collection.
+    """
 
     @staticmethod
     def _server(listing: str, batch: str, *, section: int = 1, kind: str = "movie") -> _FakeServer:
@@ -249,16 +252,19 @@ class TestCollectionTags:
         tags = await _client_with(server).collection_tags(1, kind="movie")
 
         assert tags == {41: ("Cult Classics",), 42: ("Cult Classics", "Heist")}
-        # An item in nothing is absent, never an empty tuple: the caller stores "no
-        # membership" as nothing at all, and a key present with () would read as one.
+        # An item in nothing is absent, never an empty tuple. The caller stores "no
+        # membership" as nothing at all, and a key present with () would read as membership
+        # in nothing named.
         assert 43 not in tags
-        # THE point: three items, TWO requests -- one listing page plus one metadata batch.
+        # This is the point. Three items produce two requests, one listing page plus one
+        # metadata batch.
         assert len(server.queries) == 2
 
     async def test_a_show_library_is_read_at_the_show_level(self) -> None:
-        """A TV collection lists SHOWS, and the chip is looked up by the show's own key.
-        Reading a show section at ``type=3`` would return seasons, whose keys match no
-        chip -- every TV collection would silently come back empty."""
+        """A TV collection lists shows, and the chip is looked up by the show's own key.
+        Reading a show section at ``type=3`` would return seasons instead, whose keys
+        match no chip, so every TV collection would silently come back empty.
+        """
         listing = (
             '<MediaContainer size="1" totalSize="1"><Directory ratingKey="90"/></MediaContainer>'
         )
@@ -275,9 +281,12 @@ class TestCollectionTags:
         assert "type=2" in server.queries[0]
 
     async def test_a_short_metadata_batch_keeps_what_it_read(self) -> None:
-        """Rule 28 binds evidence sources and a collection is not one, so a server that
-        windows the multi-id response costs a chip, never the scan (the GUID sweep's own
-        batch degrades on this, which is the contrast: it carries the ratings)."""
+        """A collection tag is not evidence the scorer relies on, unlike a rating. So when
+        a server windows a multi-id response and returns fewer rows than asked, this costs
+        a missing chip, not a degraded scan. The GUID sweep's own batch is different: it
+        carries the ratings, so the same kind of short response there marks the whole
+        scan untrusted instead.
+        """
         listing = (
             '<MediaContainer size="2" totalSize="2">'
             '<Video ratingKey="41"/><Video ratingKey="42"/>'
@@ -312,15 +321,15 @@ class TestLibrarySeasonIndex:
             {"/library/sections/2/all": SEASON_LISTING},
         )
         out = await _client_with(server).library_season_index()
-        # Grouped by parentRatingKey; the orphan row (no show) is dropped, never guessed.
+        # Grouped by parentRatingKey. The orphan row, with no show, is dropped, never guessed.
         assert set(out) == {900, 950}
         assert {r.season_index for r in out[900]} == {1, 2}
         assert {r.rating_key for r in out[900]} == {901, 902}
         first = next(r for r in out[900] if r.season_index == 1)
         assert first.rating_key == 901
-        assert first.added_at == "1000000"  # raw epoch string; from_epoch parses it later
-        # Only the show section is swept -- the movie section (type=3 makes no sense there)
-        # is never queried.
+        assert first.added_at == "1000000"  # raw epoch string, parsed later by from_epoch
+        # Only the show section is swept. The movie section is never queried, since
+        # type=3 makes no sense there.
         assert all("/library/sections/2/all" in q for q in server.queries)
         assert all("type=3" in q for q in server.queries)
 
@@ -337,7 +346,8 @@ class TestLibrarySeasonIndex:
     async def test_a_clamped_page_is_followed_to_totalsize(self) -> None:
         """A server may return fewer rows than the requested page while ``totalSize`` says
         more remain. The sweep follows the total to the end and never stops on the short
-        page (rule 5) -- else a real season goes unread and loses its watch protection."""
+        page. Otherwise a real season goes unread and loses its watch protection.
+        """
         page0 = (
             '<MediaContainer size="1" totalSize="2">'
             '<Directory ratingKey="901" parentRatingKey="900" index="1"/>'
@@ -360,8 +370,8 @@ class TestLibrarySeasonIndex:
         assert len(server.queries) == 2
 
     async def test_a_child_without_a_rating_key_raises_rather_than_truncating(self) -> None:
-        """A child the paging math cannot advance over (no ratingKey) is an anomaly the
-        complete-or-raise contract raises on, so the caller falls back per show (rule 5)."""
+        """A child the paging math cannot advance over, with no ratingKey, is an anomaly
+        the complete-or-raise contract raises on, so the caller falls back per show."""
         listing = (
             '<MediaContainer size="2" totalSize="2">'
             '<Directory ratingKey="901" parentRatingKey="900" index="1"/>'
@@ -373,8 +383,9 @@ class TestLibrarySeasonIndex:
             await _client_with(server).library_season_index()
 
     async def test_a_full_page_with_no_totalsize_raises(self) -> None:
-        """A full page and no ``totalSize`` to bound it: we cannot tell whether more remains,
-        so we fail closed rather than guess it is the last page (rule 5)."""
+        """A full page with no ``totalSize`` to bound it means it is impossible to tell
+        whether more remains, so this fails closed instead of guessing it is the last page.
+        """
         rows = "".join(
             f'<Directory ratingKey="{9000 + i}" parentRatingKey="900" index="{i}"/>'
             for i in range(SWEEP_PAGE_SIZE)
@@ -386,15 +397,14 @@ class TestLibrarySeasonIndex:
 
 
 class TestTwinsHardenedPaging:
-    """B-3: the GUID sweep and the two section-listing twins page exactly like the season
-    sweep -- raw-count advance, ``totalSize`` the sole authority, a truncated page or an
-    unbounded full page raised on. Before the fix these three still fell ``totalSize`` -> ``size``
-    and ended on a short page, so a clamped or unbounded section returned a silently partial map.
+    """The GUID sweep and the two section-listing twins page exactly like the season
+    sweep. Raw-count advance, ``totalSize`` the sole authority, and a truncated page or an
+    unbounded full page both raise instead of returning a silently partial map.
     """
 
     async def test_guid_sweep_follows_a_clamped_page_to_totalsize(self) -> None:
-        # size=1 while totalSize=2: the server clamped the page below the request. The sweep
-        # must follow the total to the second page, not stop on the short first one.
+        # size=1 while totalSize=2. The server clamped the page below the request, so the
+        # sweep must follow the total to the second page, not stop on the short first one.
         page0 = f'<MediaContainer size="1" totalSize="2">{MOVIE_ROW}</MediaContainer>'
         page1 = f'<MediaContainer size="1" totalSize="2">{BARE_ROW}</MediaContainer>'
         server = _FakeServer(
@@ -421,7 +431,7 @@ class TestTwinsHardenedPaging:
         listing = (
             '<MediaContainer size="2" totalSize="2">'
             '<Video ratingKey="1"/>'
-            "<Video/>"  # no ratingKey: the paging math cannot advance over it
+            "<Video/>"  # no ratingKey, so the paging math cannot advance over it
             "</MediaContainer>"
         )
         server = _FakeServer([_FakeSection(1, "movie")], {"/library/sections/1/all": listing})
@@ -443,13 +453,16 @@ class TestTwinsHardenedPaging:
 
 
 class TestTheShelfReadsPageToo:
-    """B-4: the two collection reads were issued raw, one request, iterate what comes back.
-    Windowed by the server, each one fails a different way and neither says so."""
+    """The two collection reads, ``find_collection`` and ``collection_children``, page
+    exactly like every other listing. They follow ``totalSize`` instead of reading one
+    request and stopping there.
+    """
 
     async def test_a_collection_past_the_first_window_is_still_found(self) -> None:
-        """Read unpaged, a shelf sitting past the first window reads as ABSENT, and the
-        caller then creates a SECOND "Leaving Soon" collection: the reconcile splits across
-        two shelves and neither one is right."""
+        """If this read were unpaged, a shelf sitting past the first window would read as
+        absent, and the caller would then create a second "Leaving Soon" collection. The
+        reconcile would then split across two shelves, and neither one would be right.
+        """
         page0 = (
             '<MediaContainer size="1" totalSize="2">'
             '<Directory ratingKey="10" title="Other"/>'
@@ -471,9 +484,10 @@ class TestTheShelfReadsPageToo:
         assert await _client_with(server).find_collection(1, "leaving soon") == 11
 
     async def test_a_row_with_no_rating_key_raises_instead_of_being_skipped(self) -> None:
-        """The old ``find_collection`` skipped a falsy ``ratingKey`` and returned ``None``,
-        which the caller reads as "no such collection" and then CREATES a second "Leaving
-        Soon" shelf. Now it raises instead of degrading honestly."""
+        """Skipping a falsy ``ratingKey`` and returning ``None`` would read to the caller
+        as "no such collection", and the caller would then create a second "Leaving Soon"
+        shelf. This raises instead.
+        """
         listing = (
             '<MediaContainer size="1" totalSize="1">'
             '<Directory ratingKey="" title="Leaving Soon"/>'
@@ -501,7 +515,7 @@ class TestTheShelfReadsPageToo:
         assert await _client_with(server).collection_children(9) == {1, 2}
 
     async def test_an_unbounded_full_page_of_members_raises(self) -> None:
-        """The same fail-closed rule the sweeps run on: a full page with no ``totalSize``
+        """The same fail-closed rule the sweeps run on. A full page with no ``totalSize``
         cannot be told from a truncated one, so it is never guessed to be the last."""
         rows = "".join(f'<Video ratingKey="{i}"/>' for i in range(SWEEP_PAGE_SIZE))
         server = _FakeServer(
@@ -514,9 +528,10 @@ class TestTheShelfReadsPageToo:
 
 
 class TestListCollections:
-    """#816 phase 1: ``list_collections`` is the third read over the shelf's
-    ``/collections`` listing, alongside ``find_collection`` and ``collection_children`` --
-    same path, same ``_iter_pages`` loop (rule 72)."""
+    """``list_collections`` is a third read over the shelf's ``/collections`` listing,
+    alongside ``find_collection`` and ``collection_children``. Same path, same
+    ``_iter_pages`` loop.
+    """
 
     async def test_a_paged_listing_returns_every_row_and_an_empty_section_returns_none(
         self,
@@ -551,8 +566,8 @@ class TestListCollections:
         assert await client.list_collections(2) == []
 
     async def test_an_unbounded_full_page_raises_rather_than_truncating(self) -> None:
-        """Complete-or-raise like every other listing (rule 56): a truncated page is
-        never read as the whole shelf."""
+        """Complete-or-raise, like every other listing. A truncated page is never read as
+        the whole shelf."""
         rows = "".join(f'<Directory ratingKey="{i}" title="C{i}"/>' for i in range(SWEEP_PAGE_SIZE))
         server = _FakeServer(
             [_FakeSection(1, "movie")],
@@ -565,9 +580,9 @@ class TestListCollections:
 class _NeverAdvancing(_FakeServer):
     """Serves a full page whose ``totalSize`` sits far ahead of ``start``, forever.
 
-    None of the loop's existing exits fire: the page is never empty, never short, and the
-    reported total is always ahead. Refuses once asked past the cap, so deleting the cap fails
-    this test instead of hanging the suite (rule 118).
+    None of the loop's existing exits fire. The page is never empty, never short, and the
+    reported total is always ahead. This refuses once asked past the cap, so deleting the
+    cap fails this test instead of hanging the suite.
     """
 
     def __init__(self, limit: int) -> None:
@@ -586,31 +601,33 @@ class _NeverAdvancing(_FakeServer):
 
 
 class TestASweepThatNeverFinishesIsBounded:
-    """Rule 56/89's page backstop, on the one paged read of four that lacked one.
+    """The page-count backstop, on the one paged read of four that lacked one.
 
     ``plex.SWEEP_MAX_PAGES`` carries why it raises and what a runaway sweep costs.
     """
 
     async def test_a_section_sweep_stops_and_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The page count is what stops it, never the total: the fixture's 10,000 would end on
-        its own after 10,000 pages. It raises rather than returning short, matching
-        ``seerr.MAX_PAGES`` and not ``history_sync.MAX_HISTORY_PAGES``, because ``_iter_pages``
-        is complete-or-raise and every caller reads a protection source."""
+        """The page count is what stops it, never the total. The fixture's 10,000 would
+        end on its own only after 10,000 pages. It raises rather than returning short,
+        matching ``seerr.MAX_PAGES`` and not ``history_sync.MAX_HISTORY_PAGES``, because
+        ``_iter_pages`` is complete-or-raise and every caller reads a protection source.
+        """
         monkeypatch.setattr("reaper.clients.plex.SWEEP_MAX_PAGES", 3)
         server = _NeverAdvancing(limit=4)
 
         with pytest.raises(PlexError) as exc:
             await _client_with(server).section_rating_keys(1, kind="movie")
-        # _call wraps read()'s own PlexError a second time, naming the outer call:
-        # the inner paging_failed sentence survives as this one's own {detail}.
+        # _call wraps read()'s own PlexError a second time, naming the outer call. The
+        # inner paging_failed sentence survives as this one's own {detail}.
         assert exc.value.code == "error.plexclient.call_failed"
 
         assert len(server.queries) == 3
 
     async def test_the_shelf_read_is_bounded_too(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The two shelf reads enter ``_iter_pages`` directly rather than through
-        ``_iter_section_pages``, and a different cap value from the case above so neither test
-        rests on one number (rule 141). Production is 1,000."""
+        ``_iter_section_pages``. This uses a different cap value from the case above, so
+        neither test rests on the same number. Production is 1,000.
+        """
         monkeypatch.setattr("reaper.clients.plex.SWEEP_MAX_PAGES", 2)
         server = _NeverAdvancing(limit=3)
 
@@ -641,11 +658,13 @@ class TestASweepThatNeverFinishesIsBounded:
 
 
 class TestSectionPaths:
-    """B-2/B2-2: the path table addresses sections by KEY, and its failures are PlexError."""
+    """The path table addresses sections by key, and its failures are ``PlexError``."""
 
     async def test_two_libraries_sharing_a_title_both_survive(self) -> None:
-        """Keyed by title, one of these silently overwrote the other -- and the dropped
-        library's post-reap refresh then mapped to nothing at all."""
+        """If this were keyed by title instead of by section key, one of these two
+        libraries would silently overwrite the other, and the dropped library's post-reap
+        refresh would map to nothing at all.
+        """
         hd, four_k = _FakeSection(1, "movie", "Movies"), _FakeSection(2, "movie", "Movies")
         hd.locations, four_k.locations = ["/media/hd"], ["/media/4k"]
 
@@ -657,10 +676,13 @@ class TestSectionPaths:
         ]
 
     async def test_a_failing_read_surfaces_as_plex_error(self) -> None:
-        """The only Plex read that did not map its failures. Plex can answer the connect
-        handshake and still fail this one path, and the raw exception escaped the executor's
-        ``except PlexError`` mid-run: the file already deleted, its journal step stuck at
-        SENT, the run stuck EXECUTING, and every remaining approved deletion never tried."""
+        """The path table's failures are ``PlexError``, mapped even for this one read.
+
+        Plex can answer the connect handshake and still fail on this one path. If a raw
+        exception escaped the executor's ``except PlexError`` mid-run, a file could
+        already be deleted, its journal step stuck at SENT, the run stuck EXECUTING, and
+        every remaining approved deletion never tried.
+        """
 
         class _Boom:
             def sections(self) -> list[_FakeSection]:
@@ -689,7 +711,7 @@ class TestTrashCount:
     async def test_it_reads_the_total_the_container_reports(self) -> None:
         server = self._server('<MediaContainer size="0" totalSize="12"/>')
         assert await _client_with(server).trash_count(7) == 12
-        # Zero-sized window: a count read must never pull the listing itself.
+        # Zero-sized window. A count read must never pull the listing itself.
         assert "X-Plex-Container-Size=0" in server.queries[0]
 
     async def test_a_genuinely_empty_trash_is_zero(self) -> None:
@@ -697,17 +719,18 @@ class TestTrashCount:
         assert await _client_with(server).trash_count(7) == 0
 
     async def test_a_container_with_no_total_fails_closed(self) -> None:
-        """No ``totalSize`` means the answer is not a count. Falling back to ``size`` (rule
-        56) would read a zero-sized window as an empty trash and print a fabricated number
-        beside the operator's most dangerous button."""
+        """No ``totalSize`` means the answer is not a count. Falling back to ``size``
+        would read a zero-sized window as an empty trash and print a fabricated number
+        beside the operator's most dangerous button.
+        """
         server = self._server('<MediaContainer size="0"/>')
         with pytest.raises(PlexError) as exc:
             await _client_with(server).trash_count(7)
         assert exc.value.code == "error.plexclient.trash_count_failed"
 
     async def test_a_failing_read_surfaces_as_plex_error(self) -> None:
-        """Rule 110: the caller catches ``PlexError`` and warns. A raw transport exception
-        would escape that and take the reap page down with it."""
+        """The caller catches ``PlexError`` and warns. A raw transport exception would
+        escape that and take the reap page down with it."""
 
         class _Boom(_FakeServer):
             def query(self, path: str) -> Any:

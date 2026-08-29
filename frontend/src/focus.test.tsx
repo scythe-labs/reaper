@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Where focus goes when a control removes the row it lives in (#173). Activating such a control
-// destroys the focused element, so focus falls to `<body>` and the next Tab restarts at the top
-// of the document -- on the policy page, a ~1,900-line form. An operator removing three tags was
-// thrown to the top three times.
+// Where focus goes when a control removes the row it lives in. Activating such a control
+// destroys the focused element, so without a fix, focus falls to `<body>` and the next Tab
+// restarts at the top of the document, which on the policy page is a form of about 1,900
+// lines. Removing three tags in a row would throw the operator to the top three times.
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useRef, useState } from "react";
@@ -46,7 +46,7 @@ describe("useRemovalFocus", () => {
 
     await user.click(screen.getByRole("button", { name: "Remove b" }));
 
-    // The NEXT row, which is what the eye expects after a delete: "c" has slid up into b's slot.
+    // The next row, which is what the eye expects after a delete: "c" has slid up into b's slot.
     expect(screen.getByRole("button", { name: "Remove c" })).toHaveFocus();
   });
 
@@ -80,8 +80,8 @@ describe("useRemovalFocus", () => {
   });
 
   it("leaves focus alone when nothing said a row was going", async () => {
-    // The effect runs on every commit, so it has to be inert unless `removing` armed it --
-    // otherwise an unrelated re-render would yank the operator into the list.
+    // The effect runs on every commit, so it has to stay inert unless `removing` armed it.
+    // Otherwise an unrelated re-render would yank the operator into the list.
     const user = userEvent.setup();
     render(<List start={["a", "b"]} />);
 
@@ -122,8 +122,8 @@ function Panel() {
 describe("useSavebarFocus", () => {
   it("puts the operator on the panel's heading when the bar takes their button away", async () => {
     // A savebar exists only while something is unsaved, so the press that dismisses it destroys
-    // the control that was activated. Focus fell to `<body>` and the next Tab restarted above the
-    // whole form -- the policy page's is ~1,900 lines (#173).
+    // the control that was activated. Without a fix, focus falls to `<body>` and the next Tab
+    // restarts above the whole form, which on the policy page is about 1,900 lines.
     const user = userEvent.setup();
     render(<Panel />);
     await user.type(screen.getByRole("textbox", { name: "A field" }), "x");
@@ -134,10 +134,10 @@ describe("useSavebarFocus", () => {
   });
 
   it("does not drag the page to the heading it focuses", async () => {
-    // The landing point is a FIXED spot near the top of a form that runs to ~1,900 lines, not
-    // somewhere near the operator, so focusing it scrolled Save and Discard back to the top --
-    // however far down the operator had gone to make the edit they just saved. jsdom computes
-    // no layout and cannot be scrolled, so the contract is read off the call: focus still
+    // The landing point is a fixed spot near the top of a form that runs to about 1,900 lines,
+    // not somewhere near the operator, so focusing it would scroll Save and Discard back to the
+    // top, however far down the operator had gone to make the edit just saved. jsdom computes no
+    // layout and cannot be scrolled, so the contract is read off the call instead: focus still
     // moves, and it moves without taking the viewport with it.
     const user = userEvent.setup();
     const focused = vi.spyOn(HTMLHeadingElement.prototype, "focus");
@@ -164,16 +164,17 @@ describe("useSavebarFocus", () => {
 });
 
 /** A control that acts, is disabled while the write is in flight, goes away with what it acted
- *  on, and is replaced by something else -- the shape of every site `useSuccessorFocus` covers.
+ *  on, and is replaced by something else. This is the shape of every site `useSuccessorFocus`
+ *  covers.
  *
  *  `settle` is what makes one harness cover all three real timings. 0 is a successor that mounts
- *  in the same commit as the press (Plex's Manual address row); any positive number is one that
+ *  in the same commit as the press (Plex's Manual address row). Any positive number is one that
  *  waits for an invalidated query to come back (the API key row, the Discord row, the restore
- *  card), and on that path the press paints `disabled` first, which is what drops focus to
- *  `<body>` BEFORE the unmount. `blockFor` adds the third: a successor that MOUNTS before it is
- *  actable and only then becomes pressable, which two of the sites pass through -- and `spelling`
- *  drives both forms the "not actable" matcher accepts, since a matcher is only proven against the
- *  spellings it is actually run on (rule 147). */
+ *  card), and on that path the press paints `disabled` first, which drops focus to `<body>`
+ *  before the unmount. `blockFor` adds the third case: a successor that mounts before it is
+ *  actable and only then becomes pressable, which two of the sites pass through. `spelling`
+ *  drives both forms the "not actable" matcher accepts, since a matcher is proven only against
+ *  the spellings it is actually run on. */
 function Removable({
   settle = 0,
   blockFor = 0,
@@ -241,17 +242,19 @@ describe("useSuccessorFocus", () => {
   });
 
   it("waits out a round trip and lands on the successor when it finally arrives", async () => {
-    // The case `useRemovalFocus` cannot cover: it resolves its target on the very next commit, and
-    // on these sites there is no target then -- so every commit afterwards gets a turn instead.
+    // The case `useRemovalFocus` cannot cover: it resolves its target on the very next commit,
+    // but on these sites there is no target yet then, so every commit afterwards gets a turn
+    // instead.
     vi.useFakeTimers();
     try {
       render(<Removable settle={50} />);
       pressRemove();
 
       // The press disabled the control it was on, so there is nowhere to stand and nothing to go
-      // to yet. Asserted as "not actable" rather than as `<body>`: a real browser blurs a control
-      // that becomes disabled and jsdom does not, and the hook treats both as lost for exactly
-      // that reason -- pinning `<body>` here would pin the jsdom behavior instead of the rule.
+      // to yet. This is asserted as "not actable" rather than as `<body>`, because a real
+      // browser blurs a control that becomes disabled while jsdom does not, and the hook treats
+      // both as lost for exactly that reason. Pinning `<body>` here would pin the jsdom behavior
+      // instead of the rule.
       expect(screen.getByRole("button", { name: "Remove it" })).toBeDisabled();
       expect(document.activeElement).toBeDisabled();
 
@@ -265,16 +268,16 @@ describe("useSuccessorFocus", () => {
     }
   });
 
-  // Focusing a disabled control is a silent no-op: the browser drops it straight back to `<body>`,
-  // so a move that "succeeded" leaves the operator exactly where the bug left them. Two of the
-  // sites pass through a state whose only candidate is still `disabled` -- the restore card's
-  // "Cancel restore" mounts a whole commit before `busy` clears.
+  // Focusing a disabled control is a silent no-op: the browser drops it straight back to
+  // `<body>`, so a move that "succeeded" would leave the operator exactly where they started.
+  // Two of the sites pass through a state whose only candidate is still `disabled`: the restore
+  // card's "Cancel restore" button mounts a whole commit before `busy` clears.
   //
-  // What is pinned is that the request SURVIVES that state, not that nothing is focused during it:
-  // jsdom refuses `.focus()` on a disabled node all by itself, so an assertion that the disabled
-  // successor is unfocused holds with the guard deleted and proves nothing (rule 119). Deleting it
-  // spends the request on a no-op, and the successor never gets focus at all -- which is what
-  // these two fail on.
+  // What this pins is that the request survives that state, not that nothing is focused during
+  // it. jsdom refuses `.focus()` on a disabled node by itself, so an assertion that the disabled
+  // successor is unfocused would hold even with the guard deleted, and would prove nothing.
+  // Deleting the guard spends the request on a no-op, so the successor never gets focus at all,
+  // which is what these two tests would fail on.
   for (const spelling of ["disabled", "aria-disabled"] as const) {
     it(`keeps waiting through a successor blocked by ${spelling}, then lands on it`, async () => {
       vi.useFakeTimers();
@@ -333,13 +336,13 @@ describe("useSuccessorFocus", () => {
 
 /** The other real shape, and the one that decides how broad "lost" has to be: a row whose Save
  *  exists only while it is dirty, whose box is on screen the whole time, and whose press disables
- *  the Save WITHOUT unmounting it -- Plex's web-address row, which holds the button up until the
- *  `["plex"]` refetch lands (#173).
+ *  the Save without unmounting it. Plex's web-address row is this shape: it holds the button up
+ *  until the `["plex"]` refetch lands.
  *
  *  Here the successor is actable on the very commit after the press, while the pressed control is
- *  still mounted and merely disabled. So the cursor is not on `<body>`: it is parked on a control
- *  nobody can act on. A guard reading only `<body>` declines to move at all, which is the bug
- *  going unfixed on this row alone. */
+ *  still mounted and merely disabled. So the cursor is not on `<body>`, it is parked on a control
+ *  nobody can act on. A guard that only checks for `<body>` would decline to move at all, leaving
+ *  this row alone unfixed. */
 function DirtyRow() {
   const [dirty, setDirty] = useState(false);
   const [sending, setSending] = useState(false);
@@ -376,7 +379,7 @@ describe("useSuccessorFocus, when the pressed control is disabled but still on s
 
     await user.click(screen.getByRole("button", { name: "Save" }));
 
-    // Still there, still unactable -- which is the state a `<body>`-only check reads as "fine".
+    // Still there, still unactable, which is the state a `<body>`-only check reads as "fine".
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     expect(box).toHaveFocus();
   });

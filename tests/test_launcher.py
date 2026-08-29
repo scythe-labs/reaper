@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The packaged-install launcher: data-dir choice, provenance export, and the serve call.
+"""The packaged-install launcher. Data-dir choice, provenance export, and the serve call.
 
 The serve call's ``proxy_headers=False`` is pinned here because the hygiene walk that
 proves ``--no-proxy-headers`` on every CLI launch cannot see a programmatic
-``uvicorn.run`` -- this test is that walk's counterpart for the one launch site that
-is a function call (rule 118: the interlock is tested directly, and rule 141: the
-captured value is asserted, not just the call).
+``uvicorn.run``. This test is that walk's counterpart for the one launch site that is a
+function call. The interlock is tested directly, and the captured value is asserted, not
+just the call.
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ class TestExportBuildinfo:
         }
 
     def test_an_operator_env_value_wins(self, tmp_path: Path) -> None:
-        """Baked provenance behaves like the container's image env: a value the
+        """Baked provenance behaves like the container's image env. A value the
         operator set outranks it, exactly as `docker run -e` outranks `ENV`."""
         path = self._write(tmp_path, {"version": "2026.8.1"})
         env = {"REAPER_VERSION": "2026.9.9"}
@@ -123,9 +123,9 @@ class TestPort:
         """Through `_say`, so a double-clicked build shows the operator something.
 
         On a desktop build this value comes from `launcher.conf`, the one file that shape is
-        configured through, and stderr there is `os.devnull` (#622). Both install shapes are
-        driven, because `_say`'s dialog half is the one that only fires when frozen and a
-        single case could not tell a routed refusal from a hardcoded one (rule 141).
+        configured through, and stderr there is `os.devnull`. Both install shapes are
+        driven, because `_say`'s dialog half is the one that only fires when frozen, and a
+        single case could not tell a routed refusal from a hardcoded one.
         """
         said: list[tuple[str, bool]] = []
         monkeypatch.setattr(launcher, "_say", lambda m, *, frozen: said.append((m, frozen)))
@@ -145,8 +145,8 @@ class TestPort:
 
         The launcher spelled `8420` and `0.0.0.0` beside `config.Settings`'s copies, so the
         port it bound and the port `main.py` printed in the anti-lockout recovery link could
-        drift apart without anything failing (#558). The literals here are the third copy on
-        purpose: a test transcribing `Settings.model_fields` would agree with any value.
+        drift apart without anything failing. The literals here are the third copy on
+        purpose. A test transcribing `Settings.model_fields` would agree with any value.
         """
         assert launcher._settings_default(field) == expected
         assert str(Settings.model_fields[field].default) == expected
@@ -182,8 +182,8 @@ class TestLauncherConf:
         assert "REAPER_TRAY" in text
         assert "REAPER_DOCK_ICON" in text
         # The anti-lockout switch, which this file is the only delivery route for on a
-        # double-clicked app: an operator who cannot sign in cannot be told about it from
-        # inside the app, so a key absent from the template does not exist for them (#433).
+        # double-clicked app. An operator who cannot sign in cannot be told about it from
+        # inside the app, so a key absent from the template does not exist for them.
         assert "REAPER_RECOVERY" in text
         assert "recovery.txt" in text  # and where the code it mints will be
         env2: dict[str, str] = {}
@@ -193,36 +193,37 @@ class TestLauncherConf:
 
 class TestWhichInstallsReadTheConf:
     """The file is for installs nobody can hand an environment variable to, and the snap is
-    one: snapd starts it at boot, ``snapcraft.yaml`` declares no configure hook, so `snap set`
-    reaches nothing. It was missed, which left REAPER_RECOVERY with no route in on that
-    install at all (#433, rule 72).
+    one. snapd starts it at boot, ``snapcraft.yaml`` declares no configure hook, so
+    `snap set` reaches nothing. That was missed, which left REAPER_RECOVERY with no route
+    in on that install at all.
 
-    Every shape is driven, not just the one that motivated the change: a flag-shaped
-    assertion cannot tell a shape that complies from one that dropped out of the walk
-    (rule 145). The container and a source checkout are the two that must stay OUT, and both
-    are asserted rather than left to the default.
+    Every shape is driven, not just the one that motivated the change. A flag-shaped
+    assertion cannot tell a shape that complies from one that dropped out of the walk. The
+    container and a source checkout are the two that must stay *out*, and both are
+    asserted rather than left to the default.
     """
 
     def test_a_frozen_desktop_build_reads_it(self) -> None:
         assert launcher.reads_launcher_conf({}, frozen=True) is True
 
     def test_the_snap_reads_it(self) -> None:
-        # REAPER_HOME is what names the snap: snapcraft.yaml sets it to $SNAP.
+        # REAPER_HOME is what names the snap. snapcraft.yaml sets it to $SNAP.
         assert (
             launcher.reads_launcher_conf({"REAPER_HOME": "/snap/x/current"}, frozen=False) is True
         )
 
     def test_the_container_does_not(self) -> None:
-        # A compose file IS a file of environment variables; a second one inside /data would
-        # give every setting two homes. The Dockerfile sets REAPER_DATA_DIR, never REAPER_HOME.
+        # A compose file *is* a file of environment variables. A second one inside /data
+        # would give every setting two homes. The Dockerfile sets REAPER_DATA_DIR, never
+        # REAPER_HOME.
         assert launcher.reads_launcher_conf({"REAPER_DATA_DIR": "/data"}, frozen=False) is False
 
     def test_a_source_checkout_does_not(self) -> None:
         assert launcher.reads_launcher_conf({}, frozen=False) is False
 
     def test_an_empty_home_is_not_a_snap(self) -> None:
-        # `.strip()`, not truthiness on the raw value: an env var set to blank is how a
-        # compose file spells "unset", and it must not switch the file on.
+        # `.strip()` runs here, not truthiness on the raw value. An env var set to blank
+        # is how a compose file spells "unset", and it must not switch the file on.
         assert launcher.reads_launcher_conf({"REAPER_HOME": "   "}, frozen=False) is False
 
 
@@ -243,8 +244,8 @@ class TestLoopbackGuard:
     def test_the_refusal_is_stderr_only_from_source(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """The dialog is for the double-clicked binary that has no readable stderr;
-        a source run must never pop native UI."""
+        """The dialog is for the double-clicked binary that has no readable stderr.
+        A source run must never pop native UI."""
         calls: list[object] = []
         monkeypatch.setattr(subprocess, "run", lambda *a, **k: calls.append(a))
         launcher._say("a plain refusal", frozen=False)
@@ -285,10 +286,10 @@ class TestDesktopHelpers:
     def test_a_torn_write_cannot_empty_the_operator_conf(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The writer lands through a sibling and os.replace (rule 118): the reader
-        accepts a truncated conf as valid, so an in-place truncate that dies mid-save
-        would silently revert every operator line — REAPER_HOST's default is the
-        wildcard bind."""
+        """The writer lands through a sibling and os.replace. The reader accepts a
+        truncated conf as valid, so an in-place truncate that dies mid-save would
+        silently revert every operator line. REAPER_HOST's default is the wildcard
+        bind."""
         original = "# a note the operator wrote\nREAPER_HOST=127.0.0.1\n"
         (tmp_path / "launcher.conf").write_text(original, encoding="utf-8")
 
@@ -328,9 +329,9 @@ class TestTrayChoice:
             ("darwin", None, False, False),  # source runs stay plain
             ("darwin", "false", True, False),
             ("win32", "1", False, True),  # a dev run can opt in while testing
-            # A typo is not an answer. It used to read as False, which on the .app buys an
-            # install with no menu-bar icon -- and `LSUIElement` hides the Dock one, so that
-            # icon is the only route to Quit.
+            # A typo is not an answer. It used to read as False, which on the .app buys
+            # an install with no menu-bar icon. `LSUIElement` hides the Dock one too, so
+            # that icon is the only route to Quit.
             ("darwin", "ture", True, True),
             ("win32", "enabled", True, True),
         ],
@@ -342,7 +343,7 @@ class TestTrayChoice:
         assert launcher._tray_wanted(platform, env, frozen=frozen) is expected
 
     def test_both_launch_shapes_read_one_declaration(self) -> None:
-        """rule 104: uvicorn.run and the tray path's Config spread this one dict, so
+        """uvicorn.run and the tray path's Config spread this one dict, so
         proxy_headers=False cannot drift between them."""
         assert launcher._serve_kwargs("10.0.0.5", 8437) == {
             "factory": True,
@@ -420,8 +421,8 @@ class TestServeWithTray:
         return found
 
     def test_quit_stops_the_server_then_the_icon(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The quit path of #431: the menu only sets should_exit (uvicorn's graceful
-        stop); the watcher sees the worker end and takes the icon down after it."""
+        """The quit path. The menu only sets should_exit, uvicorn's graceful stop. The
+        watcher sees the worker end and takes the icon down after it."""
         docked: list[bool] = []
         monkeypatch.setattr(launcher, "_show_dock_icon", lambda: docked.append(True))
         module, created = self._module()
@@ -518,14 +519,14 @@ class TestMain:
         )
         monkeypatch.setenv("REAPER_DATA_DIR", str(tmp_path))
         monkeypatch.setenv("REAPER_LAUNCH_BROWSER", "false")
-        # Pinned free: the real check reads this machine's ports, and the suite must
-        # not fail because a dev server happens to hold 8420 (rule 119). The occupied
-        # branch pins the opposite explicitly.
+        # This is pinned free. The real check reads this machine's ports, and the suite
+        # must not fail because a dev server happens to hold 8420. The occupied branch
+        # pins the opposite explicitly.
         monkeypatch.setattr(launcher, "_loopback_occupied", lambda port: False)
         monkeypatch.delenv("REAPER_HOST", raising=False)
         monkeypatch.delenv("REAPER_PORT", raising=False)
-        # main() reads these through export_buildinfo/install_root; a machine that
-        # happens to set them would change what this suite proves (rule 133).
+        # main() reads these through export_buildinfo/install_root. A machine that
+        # happens to set them would change what this suite proves.
         monkeypatch.delenv("REAPER_HOME", raising=False)
         monkeypatch.delenv("REAPER_BUILDINFO", raising=False)
         return captured
@@ -537,11 +538,11 @@ class TestMain:
 
         The anti-lockout recovery link is built from `settings.host`/`settings.port`, which
         do read the file. The launcher read `os.environ` directly, so a source checkout with
-        `REAPER_PORT` in `.env.local` -- which `.env.example` ships uncommented -- bound
-        8420 and printed a link to a port nothing was listening on. That link is the way back
-        in for a locked-out operator (#558).
+        `REAPER_PORT` in `.env.local`, which `.env.example` ships uncommented, bound 8420
+        and printed a link to a port nothing was listening on. That link is the way back
+        in for a locked-out operator.
 
-        Both values are non-default, so neither assertion can pass on a default (rule 141).
+        Both values are non-default, so neither assertion can pass on a default.
         """
         (tmp_path / ".env.local").write_text(
             "REAPER_PORT=8433\nREAPER_HOST=127.0.0.1\n", encoding="utf-8"
@@ -572,7 +573,7 @@ class TestMain:
         self, serve: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """A plain `pip install reaper` puts reaper-server on PATH with no alembic/
-        beside it; continuing would create a data folder nothing can bring current.
+        beside it. Continuing would create a data folder nothing can bring current.
         The refusal lands before preflight, so not even the folder is created."""
         monkeypatch.setenv("REAPER_HOME", str(tmp_path))  # a root with no alembic/
         with pytest.raises(SystemExit) as excinfo:
@@ -584,13 +585,13 @@ class TestMain:
     def test_an_occupied_loopback_refuses_instead_of_hiding(
         self, serve: dict[str, Any], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Another process answering 127.0.0.1 on our port means the browser would
-        open onto the WRONG server (a wildcard bind can still succeed beside it, so
-        uvicorn would come up and nobody would ever see this install). Refusing with
-        a message that names the port is the only honest outcome — and the refusal
-        lands before preflight or migrations, because preflight applies a staged
-        restore by renaming the live database files aside, which on macOS/Linux
-        succeeds under the running copy's open handles."""
+        """Another process answering 127.0.0.1 on our port means the browser would open
+        onto the *wrong* server (a wildcard bind can still succeed beside it, so uvicorn
+        would come up and nobody would ever see this install). Refusing with a message
+        that names the port is the only honest outcome. The refusal lands before preflight
+        or migrations, because preflight applies a staged restore by renaming the live
+        database files aside, which on macOS/Linux succeeds under the running copy's open
+        handles."""
         monkeypatch.setattr(launcher, "_loopback_occupied", lambda port: True)
         said: list[str] = []
         monkeypatch.setattr(launcher, "_say", lambda m, *, frozen: said.append(m))
@@ -619,11 +620,11 @@ class TestMain:
         self, serve: dict[str, Any], monkeypatch: pytest.MonkeyPatch, frozen: bool
     ) -> None:
         """`preflight.main` returns an int and used to keep its sentence to itself, so a
-        double-clicked build that refused to boot closed with no window and no message
-        (#622). It takes a callback now and the launcher passes `_say`.
+        double-clicked build that refused to boot closed with no window and no message.
+        It takes a callback now and the launcher passes `_say`.
 
-        Both install shapes are driven: `_say`'s dialog half only fires when frozen, and one
-        case could not tell a routed refusal from a hardcoded one (rule 141).
+        Both install shapes are driven. `_say`'s dialog half only fires when frozen, and
+        one case could not tell a routed refusal from a hardcoded one.
         """
         monkeypatch.setattr(launcher, "_bundle_root", lambda: Path("/bundle") if frozen else None)
         said: list[tuple[str, bool]] = []
@@ -673,10 +674,10 @@ class TestMain:
     def test_the_tray_path_carries_the_same_serve_kwargs(
         self, serve: dict[str, Any], tray: dict[str, Any], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The second programmatic launch site (rule 72's sibling of the uvicorn.run
-        call): its Config must pin proxy_headers=False exactly as the plain path
-        does. The port is non-default so an argument dropped on the way to Config
-        cannot hide behind the default (rule 141)."""
+        """The second programmatic launch site, the sibling of the uvicorn.run call. Its
+        Config must pin proxy_headers=False exactly as the plain path does. The port is
+        non-default so an argument dropped on the way to Config cannot hide behind the
+        default."""
         monkeypatch.setenv("REAPER_PORT", "8437")
         from reaper.main import create_app
 
@@ -691,7 +692,7 @@ class TestMain:
     def test_a_tray_serve_failure_is_said_out_loud(
         self, serve: dict[str, Any], tray: dict[str, Any], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A windowed build whose icon just vanished has no stderr anyone reads; the
+        """A windowed build whose icon just vanished has no stderr anyone reads. The
         dialog is the one signal left."""
         tray["tray_error"] = RuntimeError("bind failed")
         said: list[str] = []
@@ -705,7 +706,7 @@ class TestMain:
         self, serve: dict[str, Any], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A bundle that somehow lost pystray serves without an icon rather than
-        refusing: the server itself is fine, and the operator can still reach it."""
+        refusing. The server itself is fine, and the operator can still reach it."""
         monkeypatch.setattr(launcher, "_tray_wanted", lambda *a, **k: True)
         monkeypatch.setattr(launcher, "_tray_backend", lambda: None)
         launcher.main()
@@ -750,14 +751,14 @@ class TestBuildinfoPath:
 
 class TestADotenvReachesTheLauncherAndTheDesktopFlags:
     """`.env.example` says "Copy to .env.local", and four of the keys it documents did
-    nothing when set there (#558).
+    nothing when set there.
 
-    A `.env` file is read by pydantic-settings into `Settings` and is **not** exported into
-    `os.environ`, so every reader going straight to the process environment was blind to it:
-    it read as configured, warned nothing, and did nothing. The port half is the one that
-    matters most, because `main.py` prints the anti-lockout recovery link from
-    `settings.port` -- which does see the file -- while the launcher bound the value that
-    did not. A locked-out operator was sent to a port nothing was listening on.
+    A `.env` file is read by pydantic-settings into `Settings` and is *not* exported into
+    `os.environ`, so every reader going straight to the process environment was blind to
+    it. It read as configured, warned nothing, and did nothing. The port half is the one
+    that matters most, because `main.py` prints the anti-lockout recovery link from
+    `settings.port`, which does see the file, while the launcher bound the value that did
+    not. A locked-out operator was sent to a port nothing was listening on.
 
     Both halves are driven through one `.env.local`, since one merge answers both.
     """
@@ -767,7 +768,7 @@ class TestADotenvReachesTheLauncherAndTheDesktopFlags:
         """A `.env.local` beside the process, the way a source checkout has one.
 
         `conftest.py`'s `_hermetic` clears `env_file` so no test reads the developer's real
-        one; this puts a throwaway back for the duration, which is also what proves the two
+        one. This puts a throwaway back for the duration, which is also what proves the two
         are the same switch.
         """
         env_local = tmp_path / ".env.local"
@@ -793,7 +794,7 @@ class TestADotenvReachesTheLauncherAndTheDesktopFlags:
     def test_a_real_environment_variable_still_wins(
         self, dotenv: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Precedence is pydantic-settings', not a new one: the container and the desktop
+        """Precedence is pydantic-settings', not a new one. The container and the desktop
         conf both arrive as real environment variables and must keep winning."""
         dotenv.write_text("REAPER_PORT=8433\n", encoding="utf-8")
         monkeypatch.setenv("REAPER_PORT", "8444")
@@ -803,8 +804,8 @@ class TestADotenvReachesTheLauncherAndTheDesktopFlags:
     @pytest.mark.parametrize(
         ("key", "written", "expected"),
         [
-            # Each of the four `.env.example` documents, and each driven AGAINST its own
-            # default so the assertion cannot pass on the default alone (rule 141).
+            # Each of the four `.env.example` documents, and each driven *against* its
+            # own default so the assertion cannot pass on the default alone.
             ("REAPER_UPDATE_CHECK", "false", False),
             ("REAPER_LAUNCH_BROWSER", "true", True),
             ("REAPER_TRAY", "true", True),

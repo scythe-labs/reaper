@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Display metadata frozen onto a candidate at scan time.
 
-Resolution, certification, runtime and external ratings are **presentation** fields:
-the review queue and the why-panel draw them around a verdict, and none of them ever
-participates in one. They still follow the codebase's provenance rules -- a rating is
-stored only when its source is known (see ``reaper.ratings``), and the IMDb number
-stored here is the *same dataset entry* the scoring signal froze into ``Facts``, so
-the panel can never show one IMDb value beside a signal that used another.
+Resolution, certification, runtime, and external ratings are presentation fields: the
+review queue and the why-panel draw them around a verdict, and none of them ever
+affects one. They still follow the codebase's provenance rules: a rating is stored only
+when its source is known (see ``reaper.ratings``), and the IMDb number stored here is
+the same dataset entry the scoring signal froze into ``Facts``, so the panel never shows
+one IMDb value beside a signal that used another.
 
-Source priority is Plex first, then the *arrs -- Plex is the server the operator
-actually fronts, and its section listing carries all of this for free during the
-sweep the scan already runs.
+Source priority is Plex first, then the *arrs, since Plex is the server the operator
+actually fronts, and its section listing carries all of this for free during the sweep
+the scan already runs.
 """
 
 from __future__ import annotations
@@ -50,9 +50,9 @@ _QUALITY_MARKERS: tuple[tuple[str, str], ...] = (
 def normalize_resolution(plex_value: str | None, quality_name: str | None) -> str | None:
     """One canonical resolution string ("2160", "1080", ..., "sd") or ``None``.
 
-    Plex's ``videoResolution`` first (it describes the file Plex actually serves),
+    Plex's ``videoResolution`` first, since it describes the file Plex actually serves,
     falling back to parsing the *arr's quality name (e.g. "Bluray-1080p"). Anything
-    unrecognizable is ``None`` -- the badge is hidden, never guessed.
+    unrecognizable is ``None``, so the badge is hidden rather than guessed.
     """
     if plex_value:
         value = plex_value.strip().lower()
@@ -70,13 +70,12 @@ def normalize_resolution(plex_value: str | None, quality_name: str | None) -> st
     return None
 
 
-#: What the operator is told when an IMDb figure could not be read. Each is a KEY into the
+#: What the operator is told when an IMDb figure could not be read. Each is a key into the
 #: catalog's ``why.cause.*`` entries, which turn it into the sentence the owner reads; a key
 #: with no entry there falls back to printing this string raw, and
 #: ``test_review_chips.py::TestTheMatchStatusVocabulary`` fails on one. Named here, and not
-#: typed at the site, because both lanes report the same two states in the same words --
-#: hand-typed on both sides of the tree, they were invisible to that test and reached the
-#: panel raw (rule 144).
+#: typed at the site, because both lanes report the same two states in the same words, so a
+#: test can check both against these constants instead of two hand-typed copies.
 IMDB_UNREADABLE_REASON = "imdb_unreadable"
 """The dataset as a whole was unreadable, so its empty map is not an answer about any title."""
 NO_IMDB_ID_REASON = "no_imdb_id"
@@ -89,14 +88,15 @@ def dataset_lookup(
     """The IMDb dataset row for the first id that resolves, and whether we could look.
 
     The second element is the one that matters to the scoring path, because "no rating"
-    and "no way to ask for a rating" are opposite instructions to the keep lane. A title
-    we looked up and did not find is ``Absent``, which withdraws every rating-based keep,
-    correctly: it is unrated, not well rated. A title we could never look up (Radarr has
-    no ``imdbId`` and Plex has no match) is ``Unknown``, which keeps fully.
+    and "no way to ask for a rating" lead to opposite outcomes on whether the title is
+    kept. A title we looked up and did not find is ``Absent``, which correctly withdraws
+    every rating-based keep, since it is unrated, not well rated. A title we could never
+    look up (Radarr has no ``imdbId`` and Plex has no match) is ``Unknown``, which keeps
+    it fully protected.
 
-    Collapsing the two is a silent un-protection: coverage still reads 100% and nothing
-    degrades the snapshot, so nothing anywhere reports that the item was never checked.
-    See ``tests/test_fact_layer_states.py``.
+    Collapsing the two would silently drop a protection: coverage would still read 100%
+    and nothing would degrade the snapshot, so nothing anywhere would report that the
+    item was never checked. See ``tests/test_fact_layer_states.py``.
     """
     for imdb_id in imdb_ids:
         if imdb_id:
@@ -110,7 +110,7 @@ def dataset_entry(imdb: dict[str, ImdbRating], *imdb_ids: str | None) -> ImdbRat
     """The IMDb dataset row for the first id that resolves, or ``None``.
 
     The display half of :func:`dataset_lookup`, which shares its lookup with
-    ``build_facts`` so the scoring signal and the displayed ratings row can never drift
+    ``build_facts`` so the scoring signal and the displayed ratings row cannot drift
     apart. Display has no use for the "could we look" half: a row with nothing to show
     shows nothing either way.
     """
@@ -124,12 +124,12 @@ def build_ratings_json(
 ) -> str | None:
     """The frozen ratings row, as canonical JSON, or ``None`` when nothing is known.
 
-    Integers only (floats do not canonicalise): every value is stored as
-    ``round(value_on_the_0_to_10_scale * 10)`` -- IMDb 5.9 -> 59, an RT 77% -> 77,
-    TMDb 6.1 -> 61 -- plus ``imdb_votes`` when the IMDb source counts votes.
+    Integers only, since floats do not canonicalize: every value is stored as
+    ``round(value_on_the_0_to_10_scale * 10)`` (IMDb 5.9 -> 59, an RT 77% -> 77,
+    TMDb 6.1 -> 61), plus ``imdb_votes`` when the IMDb source counts votes.
 
-    Priority per source: the IMDb dataset entry outranks everything (it is what the
-    score used); then Plex; then the *arr fills what is still missing.
+    Priority per source: the IMDb dataset entry outranks everything, since it is what
+    the score used; then Plex; then the *arr fills what is still missing.
     """
     out: dict[str, int] = {}
 
@@ -152,7 +152,7 @@ def build_ratings_json(
 def parse_ratings_json(text: str | None) -> dict[str, int]:
     """Decode a stored ratings row back to its int map. Defensive: anything that is
     not the dict of ints :func:`build_ratings_json` writes comes back empty, so an
-    old or hand-edited row degrades to "no ratings shown", never an error."""
+    old or hand-edited row degrades to "no ratings shown," never an error."""
     if not text:
         return {}
     try:

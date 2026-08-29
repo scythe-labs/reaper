@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The field and value lists the policy editor's own pickers are built from.
 
-Read-only, and the reason it is its own module rather than part of the editor: what a
-lane offers is derived from ``engine/fields.py``, so it answers the same question for the
-policy editor, the keep rules and the simulator without any of them holding a copy
-(rule 66).
+Read-only. This is its own module, separate from the editor, because what a lane
+offers is derived from ``engine/fields.py``. It answers the same question for the
+policy editor, the keep rules, and the simulator, so none of them holds its own copy.
 """
 
 from __future__ import annotations
@@ -32,13 +31,13 @@ router = APIRouter(prefix="/api")
 
 @router.get("/vocabulary", tags=[api_tags.POLICY])
 async def get_vocabulary(lane: Lane, media_type: MediaType | None = None) -> VocabularyOut:
-    """The fields available in one lane, for one policy's media type.
+    """List the fields available in one lane, for one policy's media type.
 
-    Filtered **server-side, before serialization**. ``?lane=condemn`` never returns a
-    protect-only field, so the browser is not even shown one -- a dangerous condition is
-    not merely rejected, it is unconstructable. ``&media_type=movie`` narrows it further:
-    a TV-only field like "the show has ended" is not offered on a movie policy. Omitting
-    ``media_type`` keeps every field, so older callers are unchanged.
+    Filtering happens server-side, before serialization. ``?lane=condemn`` never
+    returns a protect-only field, so the browser cannot even build a control for one.
+    ``&media_type=movie`` narrows it further, so a TV-only field like "the show has
+    ended" is not offered on a movie policy. Omitting ``media_type`` keeps every field,
+    so older callers see no change.
     """
     return VocabularyOut(
         lane=lane,
@@ -50,7 +49,7 @@ async def get_vocabulary(lane: Lane, media_type: MediaType | None = None) -> Voc
 
 
 #: The fields whose seen-values are worth suggesting, and the candidate column each is
-#: read from. Free-text fields only: numbers and booleans need no suggestions.
+#: read from. Free-text fields only. Numbers and booleans need no suggestions.
 _VALUE_COLUMNS = {
     "genre": Candidate.genres_json,
     "collection": Candidate.collections_json,
@@ -61,25 +60,24 @@ _VALUE_COLUMNS = {
 #: How many ranked values a suggestion list carries. One shared ceiling rather than a per-field
 #: table nobody would remember to extend for the next JSON-array field.
 #:
-#: **Measured rather than guessed, and the first guess was too low.** A real library of 5,984
-#: scanned items carries 387 distinct Plex collections against tens of genres (#816, recorded in
-#: `docs/LEARNINGS.md`), so the 200 this shipped with would have dropped roughly half of them
-#: with nothing saying so. The list is ranked by how many titles carry the value, so a truncation
-#: takes the rarest, which on a collection set is the specific shelf the operator went looking
-#: for. Raised rather than making the picker type-to-search, which is frontend work this change
-#: does not otherwise touch; past this a truncation still says nothing, and that is the fix the
-#: next library to outgrow it should get instead of another number here.
+#: A real library with 387 distinct Plex collections showed a cap of 200 would silently
+#: drop about half of them (see ``docs/LEARNINGS.md``). The list ranks by how many
+#: titles carry the value, so a truncation drops the rarest values first, which on a
+#: collection field is often the specific one the operator went looking for. If a
+#: library outgrows this cap too, give the picker type-to-search rather than raising
+#: the number again. Past some size, a truncated list stops warning the operator that
+#: it is incomplete.
 _MAX_VALUES = 2000
 
 
 @router.get("/vocabulary/values", tags=[api_tags.POLICY])
 async def vocabulary_values(request: Request, field: str) -> FieldValuesOut:
-    """Distinct values the latest scan actually saw for one field, most common first.
+    """List the distinct values the latest scan saw for one field, most common first.
 
-    Powers the rule editors' input suggestions ("Documentary", "Bluray-1080p", ...).
-    Deliberately fail-open-to-empty: an unknown field, or no scan yet, returns an empty
-    list rather than an error, because a suggestion box with nothing to suggest is still
-    a working input -- typing any value remains valid either way.
+    This powers the rule editors' input suggestions, such as "Documentary" or
+    "Bluray-1080p". An unknown field, or no scan yet, returns an empty list instead of
+    an error, since a suggestion box with nothing to suggest is still a working input.
+    Typing any value stays valid either way.
     """
     column = _VALUE_COLUMNS.get(field)
     if column is None:
@@ -101,10 +99,11 @@ async def vocabulary_values(request: Request, field: str) -> FieldValuesOut:
 
     counts: Counter[str] = Counter()
     for raw in raws:
-        if raw is None:  # filtered in SQL; repeated here for the type-checker
+        if raw is None:  # Already filtered in SQL. Repeated here for the type checker.
             continue
-        # Both JSON-array columns need the same parse; keyed off the COLUMN, not the field
-        # name, so a third JSON-array field only ever needs a `_VALUE_COLUMNS` entry.
+        # Both JSON-array columns need the same parse. This checks the COLUMN itself,
+        # not the field name, so adding a third JSON-array field only needs a
+        # `_VALUE_COLUMNS` entry.
         if column is Candidate.genres_json or column is Candidate.collections_json:
             # A row that does not parse contributes nothing.
             try:

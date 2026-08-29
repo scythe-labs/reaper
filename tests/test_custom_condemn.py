@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""User-authored custom condemn rules -- unsigned, normalized, and fail-closed.
+"""User-authored custom condemn rules. Unsigned, normalized, and fail-closed.
 
 A custom "remove" rule is a signal, never a gate: it can only ever add condemnation
 pressure, its weight joins the same fixed denominator as the built-in signals, and an
-Unknown input contributes nothing while keeping its weight -- so a custom rule can only
-push a score DOWN on missing data, exactly like a built-in one.
+Unknown input contributes nothing while keeping its weight. So a custom rule can only
+push a score *down* on missing data, exactly like a built-in one.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def _facts(**overrides: object) -> Facts:
         "is_whitelisted": Known(value=False, source="plex"),
         # Deep enough that a watcher count is the answer rather than a lower bound, so
         # these tests measure the rule they are about and not the reach bound
-        # (``fields.reach_shortfall``); the twin in tests/test_fields.py says the rest.
+        # (``fields.reach_shortfall``). The twin in tests/test_fields.py says the rest.
         "history_reach_days": Known(value=4000.0, source="tautulli"),
         "days_since_added": Known(value=800.0, source="plex"),
     }
@@ -138,8 +138,9 @@ class TestScoreComposition:
         assert composed.value == pytest.approx(100.0)  # 70 + 30 over a denominator of 100
 
     def test_adding_a_rule_rebalances_the_normalized_score(self) -> None:
-        # The architecture the operator chose: a custom weight joins the fixed denominator,
-        # so adding an UNMATCHED rule lowers every other signal's share of 100.
+        # The architecture the operator chose: a custom weight joins the fixed
+        # denominator, so adding an *unmatched* rule lowers every other signal's share of
+        # 100.
         facts = _facts(
             days_observed_unwatched=Known(1825.0, "tautulli"), genres=Known("drama", "radarr")
         )
@@ -220,10 +221,9 @@ class TestPolicyValidation:
         assert any(w.field == "custom_condemn" and w.severity == "danger" for w in warnings)
 
 
-# TestARuleIsWorthLessThanItsNumber lived here. It pinned the dilution warning: a rule
-# written as 40 really adding about 22. `PolicyBody._weights_total_one_hundred` makes
-# that unrepresentable, so both the warning and its tests are gone rather than reworded.
-# What replaces them is test_policy.py's test_weights_that_do_not_total_one_hundred_are_refused.
+# A custom rule's weight cannot be diluted below its stated number:
+# `PolicyBody._weights_total_one_hundred` makes that unrepresentable. See
+# test_policy.py's test_weights_that_do_not_total_one_hundred_are_refused.
 
 
 def _keep(**over: object) -> KeepConfig:
@@ -289,10 +289,10 @@ class TestGradedKeep:
 
     def test_a_membership_keep_is_flat_and_case_folded(self) -> None:
         """The four arms of the membership branch, driven together because the split is
-        the claim (rule 93): a member takes the FULL discount, a non-member none, a
-        genuine "on no list" none, and a membership that could not be read the full one,
-        evaluated False. The name match is case-folded on both sides (rule 88) and per
-        element of the comma-joined fact."""
+        the claim. A member takes the *full* discount, a non-member none, a genuine "on
+        no list" none, and a membership that could not be read the full one, evaluated
+        False. The name match is case-folded on both sides and per element of the
+        comma-joined fact."""
         keep = KeepConfig(
             name="on my list",
             max_discount=25,
@@ -323,7 +323,7 @@ class TestGradedKeep:
 
     def test_a_membership_keep_must_say_which_list(self) -> None:
         """The membership form (a multi-text field like ``on_list``) is flat, so the one
-        thing it cannot do without is the list's name -- a nameless one would have nothing
+        thing it cannot do without is the list's name. A nameless one would have nothing
         to match and read as a live lean covering nothing."""
         with pytest.raises(ValidationError, match="which list"):
             GradedKeepSpec(name="x", field="on_list", max_discount=10, floor=0, saturate_at=5)
@@ -333,7 +333,7 @@ class TestGradedKeep:
             )
 
     def test_a_membership_keep_with_a_name_validates_and_ignores_the_ramp(self) -> None:
-        """Flat, so the ramp fields are inert: a floor at or above saturate_at, which a
+        """Flat, so the ramp fields are inert. A floor at or above saturate_at, which a
         numeric keep refuses, is not validated here because nothing reads it."""
         spec = GradedKeepSpec(
             name="x", field="on_list", value="My list", max_discount=10, floor=5, saturate_at=5
@@ -341,11 +341,11 @@ class TestGradedKeep:
         assert spec.value == "My list"
 
     def test_only_on_list_is_a_membership_field(self) -> None:
-        """The arm keyed on the field's SHAPE (``TEXT and multi``), which also describes
-        ``genre``: that validated, granted the flat keep, and explained itself as 'on your
-        list "Comedy"' (#505). Keep-only, so nothing widened, but the operator was told a
-        genre is a list (rule 21). The editor offers the box for ``on_list`` alone, so the
-        reachable paths were the API and an imported or restored body."""
+        """The arm keyed on the field's *shape* (``TEXT and multi``), which also
+        describes ``genre``. That used to validate, grant the flat keep, and explain
+        itself as 'on your list "Comedy"'. Keep-only, so nothing widened, but the
+        operator was told a genre is a list. The editor offers the box for ``on_list``
+        alone, so the reachable paths were the API and an imported or restored body."""
         with pytest.raises(ValidationError, match="not a list"):
             GradedKeepSpec(
                 name="Comedy stays",
@@ -370,7 +370,8 @@ class TestGradedKeep:
             )
 
     def test_a_keep_may_use_a_protect_only_field(self) -> None:
-        # watchers_all_time is protect-only, but a keep may use it -- it only lowers a score.
+        # watchers_all_time is protect-only, but a keep may use it. It only lowers a
+        # score.
         spec = GradedKeepSpec(
             name="loyal", field="watchers_all_time", max_discount=20, floor=0, saturate_at=10
         )
@@ -390,11 +391,11 @@ class TestGradedKeep:
 
 
 def _rewatch_keep(**over: object) -> KeepConfig:
-    """Both bars off the shipped 10/730 default throughout this class (rule 141): a fixture
-    pinned to the default cannot tell a caller that read the config's own bars from one that
-    silently fell back to them. Two different bar pairs are exercised below for the same
-    reason -- one pair alone could not tell a caller that reads the RIGHT bar from one that
-    reads a constant."""
+    """Both bars sit off the shipped 10/730 default throughout this class. A fixture
+    pinned to the default cannot tell a caller that read the config's own bars from one
+    that silently fell back to them. Two different bar pairs are exercised below for the
+    same reason. One pair alone could not tell a caller that reads the *right* bar from
+    one that reads a constant."""
     params: dict[str, object] = {
         "name": REWATCH_KEEP,
         "max_discount": 22,
@@ -456,8 +457,8 @@ class TestBuiltinRewatchKeep:
         assert text(result.detail) == "Watched 3 times in total."
 
     def test_a_stale_last_play_discounts_nothing(self) -> None:
-        """Enough viewings, but the most recent one is outside the window: read-and-not-met,
-        never Unknown, so the miss detail states both figures honestly."""
+        """Enough viewings, but the most recent one is outside the window. This reads as
+        read-and-not-met, never Unknown, so the miss detail states both figures honestly."""
         keep = _rewatch_keep(min_viewings=6, recent_days=400)
         facts = _facts(
             rewatch_viewings=Known(value=8, source="tautulli"),
@@ -521,9 +522,9 @@ class TestBuiltinRewatchKeep:
         assert text(result.detail) == "kept fully: could not check your watch history"
 
     def test_never_watched_here_discounts_nothing(self) -> None:
-        """``Known(0)`` viewings paired with an ``Absent`` last play: the never-watched shape
-        ``snapshot.build_facts`` freezes when the mirror was read and holds no qualified play
-        at all (rule 93), never ``Unknown``."""
+        """``Known(0)`` viewings paired with an ``Absent`` last play. This is the
+        never-watched shape ``snapshot.build_facts`` freezes when the mirror was read and
+        holds no qualified play at all, never ``Unknown``."""
         keep = _rewatch_keep()
         facts = _facts(
             rewatch_viewings=Known(value=0, source="tautulli"),
@@ -538,9 +539,9 @@ class TestBuiltinRewatchKeep:
 
     def test_ungathered_facts_discount_nothing(self) -> None:
         """``rewatch_viewings`` Absent means the caller never gathered watch history
-        (hand-built ``Facts``; both live builders now write the observation), never a
-        failed read, so the keep withholds no discount over evidence that was never
-        gathered rather than fail-closing on it."""
+        (hand-built ``Facts``, since both live builders now write the observation),
+        never a failed read, so the keep withholds no discount over evidence that was
+        never gathered rather than fail-closing on it."""
         keep = _rewatch_keep()
         facts = _facts(
             rewatch_viewings=Absent(source="tautulli"),
@@ -558,7 +559,7 @@ class TestBuiltinRewatchKeepTvWording:
     """The same flat arm on a TV config (``KeepConfig.media_type == "tv"``): the count is
     whole re-watches of the show (``services.rewatch.replay_period_count``), so every
     detail that states it says "again" (the approved TV mockup's copy). Condition
-    arithmetic is the movie class above; only the wording forks."""
+    arithmetic is the movie class above. Only the wording forks."""
 
     def test_the_condition_met_states_rewatches(self) -> None:
         keep = _rewatch_keep(media_type="tv", min_viewings=2, recent_days=500)
@@ -601,9 +602,9 @@ class TestBuiltinRewatchKeepTvWording:
         assert text(result.detail) == "Watched again 3 times, but not in the last 1 year, 4 months."
 
     def test_zero_rewatches_says_never_again_not_never(self) -> None:
-        """A show at zero was possibly watched once through -- its count is re-watches --
-        so the movie lane's "Never watched here." would overclaim about a show someone
-        followed to the end."""
+        """A show at zero was possibly watched once through, since its count is
+        re-watches, so the movie lane's "Never watched here." would overclaim about a
+        show someone followed to the end."""
         keep = _rewatch_keep(media_type="tv", min_viewings=2, recent_days=500)
         facts = _facts(
             rewatch_viewings=Known(value=0, source="tautulli"),

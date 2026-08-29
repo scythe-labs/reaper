@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Scales -- the requester roll-up over the last scan.
+"""Scales. The requester roll-up over the last scan.
 
 Two halves, tested apart: the pure roll-up (``roll_up``, no instance or DB needed), which
 joins requests to the scan's candidates and lets the scan's verdict decide what is
-reclaimable; and the watch-evidence query against a real ``watch_event`` table (a movie
+reclaimable, and the watch-evidence query against a real ``watch_event`` table (a movie
 keys on rating_key, a season on its parent, a show on its grandparent).
 
-Names and titles here are placeholders -- the aggregation does not care what they say.
+Names and titles here are placeholders. The aggregation does not care what they say.
 """
 
 from __future__ import annotations
@@ -50,8 +50,8 @@ from reaper.services.fairness import (
 )
 from tests._fakes import FakeSeerr
 
-# The canonical stored-explanation shapes, kept in the suite that pins what a hand reap does
-# with each rather than transcribed here (rule 119).
+# The canonical stored-explanation shapes, kept in the suite that pins what a hand reap
+# does with each rather than transcribed here.
 from tests.test_override_truth import STRUCTURAL, stored_explanation
 
 GB = 1024**3
@@ -112,10 +112,10 @@ def _cand(
     effective_condemn: bool | None = None,
     season_number: int | None = None,
 ) -> CandidateInfo:
-    # Production loads effective_condemn from condemned.effective_condemned; a hand-built
-    # candidate mirrors that default (a scan condemn, not spared back, is reclaimable) so the
-    # existing roll-up tests need not spell it out. A spare override flips it off, matching
-    # the production truth (whitelist.effective_override -> effective_condemned).
+    # Production loads effective_condemn from condemned.effective_condemned. A hand-built
+    # candidate mirrors that default (a scan condemn, not spared back, is reclaimable) so
+    # the existing roll-up tests need not spell it out. A spare override flips it off,
+    # matching the production truth (whitelist.effective_override -> effective_condemned).
     if effective_condemn is None:
         effective_condemn = verdict == "condemn" and override != "spare"
     return CandidateInfo(
@@ -181,8 +181,8 @@ class TestRollUp:
         assert report.rows[0].reclaimable_items == 0
 
     def test_an_abstained_title_is_not_reclaimable(self) -> None:
-        """Abstain is 'kept to be safe', so it is not offered up either -- reclaimable is the
-        condemn lane alone."""
+        """Abstain is 'kept to be safe', so it is not offered up either. Reclaimable is
+        the condemn lane alone."""
         report = roll_up([_req(plex_id=100, name="Alice")], [_cand(verdict="abstain")], {})
         assert report.total_reclaimable_items == 0
 
@@ -220,7 +220,7 @@ class TestRollUp:
         assert report.total_reclaimable_bytes == 10 * GB
 
     def test_a_request_the_scan_has_not_seen_is_not_in_scan(self) -> None:
-        # Request points at tmdb 999; the only candidate is tmdb 1.
+        # Request points at tmdb 999. The only candidate is tmdb 1.
         report = roll_up(
             [_req(plex_id=100, name="Alice", tmdb=999, imdb="tt999")], [_cand(tmdb=1)], {}
         )
@@ -241,8 +241,9 @@ class TestRollUp:
         assert report.not_in_scan == 2
 
     def test_a_show_links_to_its_group_and_charges_its_condemned_seasons(self) -> None:
-        """A show maps to several season candidates. Reclaimable is the sum of the CONDEMNED
-        seasons' disk, and the chip opens the show (its group), not one season."""
+        """A show maps to several season candidates. Reclaimable is the sum of the
+        *condemned* seasons' disk, and the chip opens the show (its group), not one
+        season."""
         req = _req(plex_id=100, name="Alice", tmdb=7, imdb=None, media_type="tv")
         cands = [
             _cand(
@@ -272,7 +273,7 @@ class TestRollUp:
         ]
         report = roll_up([req], cands, {})
         (row,) = report.rows
-        # Granted is the whole show; reclaimable is only the condemned season.
+        # Granted is the whole show. Reclaimable is only the condemned season.
         assert row.gb_granted_bytes == 7 * GB
         assert row.reclaimable_bytes == 3 * GB
 
@@ -289,8 +290,8 @@ class TestRollUp:
         assert [r.name for r in report.rows] == ["Big", "Small"]
 
     def test_a_tv_request_does_not_bind_a_same_numbered_movie_candidate(self) -> None:
-        """TMDB movie ids and TV ids overlap numerically. A TV request for tmdb 5 must not be
-        charged a movie candidate that happens to carry movie-tmdb 5 (rule 6/29)."""
+        """TMDB movie ids and TV ids overlap numerically. A TV request for tmdb 5 must not
+        be charged a movie candidate that happens to carry movie-tmdb 5."""
         tv_req = _req(plex_id=100, name="Alice", tmdb=5, imdb=None, media_type="tv")
         movie_cand = _cand(cid=1, verdict="condemn", tmdb=5, imdb=None, media_type="movie")
         report = roll_up([tv_req], [movie_cand], {})
@@ -302,8 +303,8 @@ class TestRollUp:
     def test_a_tv_show_binds_its_request_by_tvdb_when_the_candidate_has_no_tmdb(self) -> None:
         """Sonarr is tvdb-native and does not always carry a tmdb id, so a season candidate can
         store only imdb + tvdb. Its Seerr request is tmdb-keyed and often has no imdb, leaving
-        tvdb the only id both sides share. The join must bind on it, or a show that WAS scanned
-        reads as "not in the last scan" (rule 29)."""
+        tvdb the only id both sides share. The join must bind on it, or a show that *was*
+        scanned reads as "not in the last scan"."""
         tv_req = _req(plex_id=100, name="Alice", media_type="tv", tmdb=77, tvdb=9001, imdb=None)
         season_cand = _cand(
             cid=1,
@@ -364,9 +365,9 @@ class TestRollUp:
         assert report.total_reclaimable_bytes == 5 * GB
 
     def test_two_unlinked_requesters_stay_separate_rows(self) -> None:
-        """Seerr local users not linked to Plex have no plex_id. Keying rows on plex_id folded
-        every such person into one row under the first name; the Seerr id keeps them apart, and
-        each is credited with their own request of a shared title (rule 12)."""
+        """Seerr local users not linked to Plex have no plex_id. Keying rows on plex_id
+        folded every such person into one row under the first name. The Seerr id keeps
+        them apart, and each is credited with their own request of a shared title."""
         reqs = [
             _req(plex_id=None, seerr_id=11, name="Ada", tmdb=1, imdb=None, request_id=1),
             _req(plex_id=None, seerr_id=22, name="Bea", tmdb=1, imdb=None, request_id=2),
@@ -381,15 +382,15 @@ class TestRollUp:
         assert report.total_reclaimable_items == 1
         # And each row carries the None, so the surfaces reading played_by_them can tell
         # "we looked and they watched nothing" from "we cannot see their history at all".
-        # That figure is a STRUCTURAL zero here -- _roll_up counts plays only inside
-        # `if pid is not None` -- and Scales rendered it as a definite 0%.
+        # That figure is a *structural* zero here. `_roll_up` counts plays only inside
+        # `if pid is not None`, and Scales rendered it as a definite 0%.
         assert all(r.plex_id is None for r in report.rows)
         assert all(r.played_by_them == 0 for r in report.rows)
 
     def test_the_board_puts_the_missing_plex_account_on_the_wire(self) -> None:
         """The card cannot guard a None it was never sent. ``RequesterRowOut`` did not carry
         ``plex_id`` at all, so the board had no way to tell an unmeasurable person from a
-        measured one, whatever the roll-up knew (rules 63, 93)."""
+        measured one, whatever the roll-up knew."""
         rows = [
             _req(plex_id=None, seerr_id=11, name="Ada", tmdb=1, imdb=None, request_id=1),
             _req(plex_id=100, seerr_id=22, name="Bea", tmdb=2, imdb=None, request_id=2),
@@ -410,8 +411,8 @@ class TestRollUp:
     def test_two_portals_reusing_one_seerr_id_stay_separate_rows(self) -> None:
         """Each Seerr numbers its own users, so a user id is unique only within one portal:
         id 5 on the primary and id 5 on the secondary are different people. Two unlinked local
-        users who share an id across portals must not merge into one row (the reported bug).
-        The portal each request came from keeps them apart."""
+        users who share an id across portals must not merge into one row. The portal
+        each request came from keeps them apart."""
         reqs = [
             _req(plex_id=None, seerr_id=5, name="Primary Pat", portal_key="1", request_id=1),
             _req(plex_id=None, seerr_id=5, name="Secondary Sam", portal_key="2", request_id=2),
@@ -437,8 +438,9 @@ class TestRollUp:
         assert row.name == "Dana" and row.requests_made == 2
 
     def test_the_same_title_via_a_tmdb_and_an_imdb_request_counts_once(self) -> None:
-        """One request carries tmdb+imdb (groups by tmdb), another only imdb (groups by imdb);
-        both bind the same candidate. The items total dedupes by candidate, like the bytes."""
+        """One request carries tmdb+imdb (groups by tmdb), another only imdb (groups by
+        imdb). Both bind the same candidate. The items total dedupes by candidate, like
+        the bytes."""
         reqs = [
             _req(plex_id=100, name="Alice", tmdb=1, imdb="tt1", request_id=1),
             _req(plex_id=200, name="Bob", tmdb=None, imdb="tt1", request_id=2),
@@ -464,10 +466,11 @@ class TestRollUp:
 
 
 class TestOverrideAwareReclaimable:
-    """B-5: reclaimable follows the EFFECTIVE decision, not the frozen scan verdict. A hand
-    spare keeps a scan-condemned title off the board; an engine-honored hand reap adds an
-    otherwise-kept one. The roll-up reads ``effective_condemn`` (loaded from the one production
-    ``condemned.effective_condemned``), so Scales can never disagree with Review (rule 77/61)."""
+    """Reclaimable follows the *effective* decision, not the frozen scan verdict. A hand
+    spare keeps a scan-condemned title off the board. An engine-honored hand reap adds
+    an otherwise-kept one. The roll-up reads ``effective_condemn`` (loaded from the one
+    production ``condemned.effective_condemned``), so Scales can never disagree with
+    Review."""
 
     def test_a_hand_spared_condemned_title_is_not_reclaimable(self) -> None:
         report = roll_up(
@@ -497,8 +500,8 @@ class TestOverrideAwareReclaimable:
         assert report.total_reclaimable_items == 1
 
     def test_a_held_hand_reap_the_engine_refuses_is_not_reclaimable(self) -> None:
-        # A hand reap the engine will NOT honor (a held reap) leaves effective_condemn False,
-        # so it is never counted as reclaimable disk.
+        # A hand reap the engine will *not* honor (a held reap) leaves effective_condemn
+        # False, so it is never counted as reclaimable disk.
         report = roll_up(
             [_req(plex_id=100, name="Alice")],
             [
@@ -514,8 +517,8 @@ class TestOverrideAwareReclaimable:
 
 
 class TestScopeToRequest:
-    """B-6: a season-scoped request binds only the seasons it asked for; a movie or a whole-show
-    request binds the whole matched set (rule 78)."""
+    """A season-scoped request binds only the seasons it asked for. A movie or a
+    whole-show request binds the whole matched set."""
 
     def test_a_season_scoped_request_keeps_only_its_seasons(self) -> None:
         cands = [
@@ -557,8 +560,8 @@ class TestScopeToRequest:
 
 
 class TestSeasonScopedAttribution:
-    """B-6 at the roll-up: co-requesters of one show who each asked for a different season are
-    each charged only their own season, never the whole show."""
+    """At the roll-up, co-requesters of one show who each asked for a different season
+    are each charged only their own season, never the whole show."""
 
     def test_two_people_asking_for_different_seasons_split_the_disk(self) -> None:
         cands = [
@@ -611,7 +614,8 @@ class TestSeasonScopedAttribution:
         )
         report = roll_up([alice, bob], cands, {})
         by_name = {r.name: r for r in report.rows}
-        # Each is granted and can reclaim only the season they asked for -- not the whole show.
+        # Each is granted and can reclaim only the season they asked for, not the whole
+        # show.
         assert by_name["Alice"].gb_granted_bytes == 4 * GB
         assert by_name["Alice"].reclaimable_bytes == 4 * GB
         assert by_name["Bob"].gb_granted_bytes == 6 * GB
@@ -621,11 +625,11 @@ class TestSeasonScopedAttribution:
         assert report.total_reclaimable_items == 1
 
     def test_a_request_whose_seasons_are_all_absent_is_not_counted(self) -> None:
-        """B-28: the scan has a show, but not the season this person asked for. There is
-        nothing of theirs to attribute, so the request does not count -- exactly as the person
-        drawer skips it. Counting it here inflated the card's denominator, so the same person
-        in the same scan read one watched share on the card and a different one in the panel
-        the card opens."""
+        """The scan has a show, but not the season this person asked for. There is
+        nothing of theirs to attribute, so the request does not count, exactly as the
+        person drawer skips it. Counting it here inflated the card's denominator, so the
+        same person in the same scan read one watched share on the card and a different
+        one in the panel the card opens."""
         cands = [
             _cand(
                 cid=1,
@@ -662,9 +666,9 @@ class TestSeasonScopedAttribution:
         # One request, not two: the season-9 request scoped to nothing.
         assert row.requests_made == 1
 
-        # And a person whose ONLY request scopes to nothing gets no row at all -- the drawer
-        # has no detail to show them (build_person_detail returns None, a 404), so a card that
-        # opens onto nothing must not exist either.
+        # And a person whose *only* request scopes to nothing gets no row at all. The
+        # drawer has no detail to show them (build_person_detail returns None, a 404),
+        # so a card that opens onto nothing must not exist either.
         none_of_it = roll_up([asked_for_one_it_does_not], cands, {})
         assert none_of_it.rows == []
 
@@ -684,16 +688,17 @@ class TestUnmatched:
         assert u.title is None
 
     def test_media_that_arrived_after_the_scan_is_added_since(self) -> None:
-        """available_at (NOW-400d) is AFTER the scan clock (NOW-450d), so the scan could not
-        have seen it: added since, not set aside."""
+        """available_at (NOW-400d) is *after* the scan clock (NOW-450d), so the scan
+        could not have seen it: added since, not set aside."""
         req = _req(plex_id=100, name="Alice", tmdb=999, imdb=None)
         report = roll_up([req], [], {}, snapshot_at=NOW - timedelta(days=450))
         (u,) = report.unmatched
         assert u.reason == UNMATCHED_AFTER_SCAN
 
     def test_media_present_at_scan_time_is_set_aside(self) -> None:
-        """available_at (NOW-400d) is BEFORE the scan clock (NOW-300d): it was on the server
-        during the scan but produced no candidate, so it was set aside, not added since."""
+        """available_at (NOW-400d) is *before* the scan clock (NOW-300d): it was on the
+        server during the scan but produced no candidate, so it was set aside, not added
+        since."""
         req = _req(plex_id=100, name="Alice", tmdb=999, imdb=None)
         report = roll_up([req], [], {}, snapshot_at=NOW - timedelta(days=300))
         (u,) = report.unmatched
@@ -724,7 +729,7 @@ class TestUnmatched:
 
     def test_a_4k_request_marks_the_row_4k_and_the_type_is_tv(self) -> None:
         req = _req(plex_id=100, name="Alice", tmdb=999, imdb=None, media_type="tv")
-        object.__setattr__(req, "is_4k", True)  # frozen dataclass; flip just this field
+        object.__setattr__(req, "is_4k", True)  # frozen dataclass, flip just this field
         report = roll_up([req], [], {})
         (u,) = report.unmatched
         assert u.is_4k is True
@@ -763,9 +768,10 @@ async def _insert_event(
     gp: int | None = None,
     watched_at: int = 1,
 ) -> None:
-    """One play in the mirror. ``watched_at`` is an epoch second, and only the tests about the
-    mirror's REACH need to choose it: the oldest one is the horizon, and a horizon test that
-    took the default could not tell a carried value from a coincidence (rule 141)."""
+    """One play in the mirror. ``watched_at`` is an epoch second, and only the tests
+    about the mirror's *reach* need to choose it. The oldest one is the horizon, and a
+    horizon test that took the default could not tell a carried value from a
+    coincidence."""
     async with engine.begin() as conn:
         await conn.execute(
             text(
@@ -814,7 +820,7 @@ class TestEvidenceIndex:
 
 
 # ---------------------------------------------------------------------------
-# build_report reads every Seerr (the reported "second portal is missing" bug)
+# build_report reads every Seerr instance, not just the first.
 # ---------------------------------------------------------------------------
 
 
@@ -934,9 +940,9 @@ class TestBuildReportMergesSeerrs:
     async def test_a_hand_spared_condemned_title_drops_off_the_board(
         self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
-        """B-5 end to end: the fixture's only candidate (radarr:1:1) is scan-condemned. Sparing
-        it by hand must make the board stop counting it reclaimable -- exactly what Review and the
-        Reap page show -- because _load_candidates merges the live override (rule 77)."""
+        """The fixture's only candidate (radarr:1:1) is scan-condemned. Sparing it by
+        hand must make the board stop counting it reclaimable, exactly what Review and
+        the Reap page show, because _load_candidates merges the live override."""
         factory, cache = report_env
         async with factory() as session:
             session.add(
@@ -963,9 +969,9 @@ class TestBuildReportMergesSeerrs:
     async def test_the_shared_cache_reuses_one_portal_read_across_calls(
         self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
-        """P-1: the board and the drawer share a RequestCache, so a second call within the TTL
-        re-pages no portal. Fetch is concurrent, but the cache is what stops the drawer redoing
-        the board's read."""
+        """The board and the drawer share a RequestCache, so a second call within the
+        TTL re-pages no portal. Fetch is concurrent, but the cache is what stops the
+        drawer redoing the board's read."""
         factory, cache = report_env
 
         class _CountingSeerr(FakeSeerr):
@@ -984,7 +990,7 @@ class TestBuildReportMergesSeerrs:
                 cache_engine=cache,
                 cache=shared,
             )
-        # Three board loads, one portal read -- the rest served from the cache.
+        # Three board loads, one portal read, the rest served from the cache.
         assert _CountingSeerr.reads == 1
 
 
@@ -1081,12 +1087,12 @@ class TestEnrichTitles:
         and never answers costs one read timeout per wave, so bounding the burst turns one
         stalled wave into ten and the page has no deadline of its own.
 
-        The deadline is monkeypatched rather than waited out, and the portal hangs forever.
-        The outer guard is what turns "no deadline" into a failure instead of a hung job: it
-        is two orders of magnitude above the patched deadline, so it can only fire when
-        nothing under it bounds the wait. The rows the deadline cuts off keep ``title=None``,
-        which is what a failed lookup already leaves and what the generic label renders
-        from."""
+        The deadline is monkeypatched rather than waited out, and the portal hangs
+        forever. The outer guard is what turns "no deadline" into a failure instead of a
+        hung job. It is two orders of magnitude above the patched deadline, so it can
+        only fire when nothing under it bounds the wait. The rows the deadline cuts off
+        keep ``title=None``, which is what a failed lookup already leaves and what the
+        generic label renders from."""
         started = 0
 
         class _HangingSeerr(FakeSeerr):
@@ -1127,11 +1133,12 @@ class TestBuildReportReadsNoAccounts:
     async def test_the_board_asks_the_portal_for_no_account_data(
         self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
-        """Issue #259: the board used to fold in every shown person's lifetime request count
-        and live caps, which cost one user list plus one quota call per person per portal on
-        every Scales load -- and no card has rendered those numbers since the chips came off.
-        The drawer still pays it for the one person it opens (``TestEnrichAccounts``), so this
-        pins the board alone. A re-added enrichment fails here rather than going unnoticed."""
+        """The board used to fold in every shown person's lifetime request count and
+        live caps, which cost one user list plus one quota call per person per portal
+        on every Scales load, and no card has rendered those numbers since the chips
+        came off. The drawer still pays it for the one person it opens
+        (``TestEnrichAccounts``), so this pins the board alone. A re-added enrichment
+        fails here rather than going unnoticed."""
         factory, cache = report_env
         calls: list[str] = []
 
@@ -1160,7 +1167,7 @@ class TestBuildReportReadsNoAccounts:
     async def test_an_unreadable_user_list_cannot_block_the_board(
         self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
-        # Requests read fine; the user list is down. The board never asks it, so it renders.
+        # Requests read fine. The user list is down. The board never asks it, so it renders.
         factory, cache = report_env
 
         class _RequestsOnly(FakeSeerr):
@@ -1296,14 +1303,14 @@ class TestBuildPersonDetail:
     async def test_the_drawer_carries_the_span_its_watch_figures_were_counted_over(
         self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
-        """Every watch figure on the drawer is counted over the whole mirror, and the mirror
-        begins at its horizon, so a zero is a LOWER BOUND. The drawer makes the flattest claim
-        of the two Scales surfaces (a per-title "not watched"), and was the one that could not
-        name the window it was claiming over: the board already renders the span, and
-        ``PersonDetail`` never carried it."""
+        """Every watch figure on the drawer is counted over the whole mirror, and the
+        mirror begins at its horizon, so a zero is a *lower bound*. The drawer makes the
+        flattest claim of the two Scales surfaces (a per-title "not watched"), and was
+        the one that could not name the window it was claiming over. The board already
+        renders the span, and ``PersonDetail`` never carried it."""
         factory, cache = report_env
-        # An oldest play well away from `_insert_event`'s default, so a horizon that arrived by
-        # accident is distinguishable from one that was carried (rule 141).
+        # An oldest play well away from `_insert_event`'s default, so a horizon that
+        # arrived by accident is distinguishable from one that was carried.
         await _insert_event(cache, rating_key=555, user_id=1, watched_at=1_700_000_000)
         await _insert_event(cache, rating_key=555, user_id=1, watched_at=1_800_000_000)
         portal = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
@@ -1341,10 +1348,10 @@ class TestBuildPersonDetail:
     async def test_the_drawer_puts_that_span_on_the_wire(
         self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
-        """The panel cannot bound a figure by a span it was never sent. ``PersonDetailOut`` did
-        not carry ``horizon_at`` at all, so the drawer had no way to qualify its zeroes whatever
-        the service knew -- the board's twin of this is
-        ``test_the_board_puts_the_missing_plex_account_on_the_wire`` (rules 64, 72, 93)."""
+        """The panel cannot bound a figure by a span it was never sent.
+        ``PersonDetailOut`` did not carry ``horizon_at`` at all, so the drawer had no
+        way to qualify its zeroes whatever the service knew. The board's twin of this is
+        ``test_the_board_puts_the_missing_plex_account_on_the_wire``."""
         factory, cache = report_env
         await _insert_event(cache, rating_key=555, user_id=1, watched_at=1_700_000_000)
         portal = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
@@ -1365,9 +1372,10 @@ class TestBuildPersonDetail:
     async def test_a_persons_not_in_scan_request_is_listed_and_named(
         self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
-        """Alice asked for one title the scan has (tmdb=1) and one it never saw (tmdb=2). The
-        drawer lists the in-scan one as a title and the other in her not-in-scan panel, named
-        from Seerr and counted -- so her panel reads as most of what she asked for, not all."""
+        """Alice asked for one title the scan has (tmdb=1) and one it never saw (tmdb=2).
+        The drawer lists the in-scan one as a title and the other in her not-in-scan
+        panel, named from Seerr and counted. So her panel reads as most of what she
+        asked for, not all."""
         factory, cache = report_env
         portal = FakeSeerr(
             [
@@ -1399,13 +1407,15 @@ class TestBuildPersonDetail:
         await _insert_event(cache, rating_key=9001, user_id=1, parent=770, gp=42)
         await _insert_event(cache, rating_key=9002, user_id=1, parent=770, gp=42)
         eps = await fairness._distinct_episodes(cache, plex_id=1, season_keys={770})
-        # Two distinct episodes, not three raw plays -- the panel's "N episodes watched".
+        # Two distinct episodes, not three raw plays. This is the panel's "N episodes
+        # watched".
         assert eps == {770: 2}
 
     async def test_a_season_scoped_request_charges_only_its_season(self, tmp_path: Path) -> None:
-        """B-6 at the drawer: a show has two condemned seasons (S1=4 GiB key 770, S2=6 GiB key
-        771). Alice asked for S1 ONLY. Her granted/reclaimable bytes and her watched figure must
-        cover S1 alone -- never the whole show, and never S2 she played but never asked for."""
+        """A show has two condemned seasons (S1=4 GiB key 770, S2=6 GiB key 771). Alice
+        asked for S1 *only*. Her granted/reclaimable bytes and her watched figure must
+        cover S1 alone, never the whole show, and never S2 she played but never asked
+        for."""
         settings = Settings(data_dir=tmp_path, secret_key="test-key")
         main = create_engine(settings)
         async with main.begin() as conn:
@@ -1439,7 +1449,7 @@ class TestBuildPersonDetail:
                     )
                 )
             await session.commit()
-        # Alice played an episode under S1 (770) and one under S2 (771); she asked for S1 only.
+        # Alice played an episode under S1 (770) and one under S2 (771). She asked for S1 only.
         await _insert_event(cache, rating_key=9101, user_id=1, parent=770, gp=9001)
         await _insert_event(cache, rating_key=9201, user_id=1, parent=771, gp=9001)
         portal = FakeSeerr(
@@ -1462,7 +1472,7 @@ class TestBuildPersonDetail:
             identity="plex:1",
         )
         assert detail is not None
-        # Only S1 is attributed to Alice -- not the whole show's 10 GiB.
+        # Only S1 is attributed to Alice, not the whole show's 10 GiB.
         assert detail.gb_granted_bytes == 4 * GB
         assert detail.reclaimable_bytes == 4 * GB
         (title,) = detail.titles
@@ -1473,10 +1483,11 @@ class TestBuildPersonDetail:
         await cache.dispose()
 
     async def test_the_card_and_the_panel_count_the_same_requests(self, tmp_path: Path) -> None:
-        """B-28, rule 30: the card divides the watched share by ``requests_made`` and the panel
-        it opens divides by ``requests_in_scan``. Alice asked for a season the scan has and a
-        season of another show it does not, and watched the first. The two surfaces must reach
-        the same number; they used to read 50% and 100% for the same person and the same scan."""
+        """The card divides the watched share by ``requests_made`` and the panel it
+        opens divides by ``requests_in_scan``. Alice asked for a season the scan has
+        and a season of another show it does not, and watched the first. The two
+        surfaces must reach the same number. They used to read 50% and 100% for the
+        same person and the same scan."""
         settings = Settings(data_dir=tmp_path, secret_key="test-key")
         main = create_engine(settings)
         async with main.begin() as conn:
@@ -1557,19 +1568,19 @@ class TestBuildPersonDetail:
         await cache.dispose()
 
 
-#: A hand reap the engine will NOT honor: a structural stop fired, so the file is kept.
+#: A hand reap the engine will *not* honor: a structural stop fired, so the file is kept.
 HELD = STRUCTURAL
 #: A hand reap nothing refuses, so the engine honors it and the file is reclaimable.
 HONORED = stored_explanation()
 
 
 class TestTheDrawerFateMatchesTheQueueLane:
-    """A title's fate on Scales is the lane the review queue files it under -- the same
-    ``condemned.effective_verdict``, never a second reading of the same row (rule 3/22/77).
+    """A title's fate on Scales is the lane the review queue files it under, the same
+    ``condemned.effective_verdict``, never a second reading of the same row.
 
-    The drawer prints one of three words beside a title AND routes the jump into Review on
-    it, so a disagreement is read twice: the operator is told the file is undecided, and
-    clicking it opens the one lane the title is not in.
+    The drawer prints one of three words beside a title *and* routes the jump into
+    Review on it, so a disagreement is read twice. The operator is told the file is
+    undecided, and clicking it opens the one lane the title is not in.
     """
 
     async def _decided_abstain(
@@ -1614,17 +1625,18 @@ class TestTheDrawerFateMatchesTheQueueLane:
         async with factory() as session:
             row = (await session.execute(select(Candidate))).scalars().one()
             decisions = await whitelist.overrides(session)
-            # The queue's own classifier, run on the same row (rule 119: the real function,
-            # never a transcription of it).
+            # The queue's own classifier, run on the same row: the real function, never
+            # a transcription of it.
             lane = effective_verdict(row, decisions)
         return title.verdict, lane
 
     async def test_a_hand_reap_the_engine_holds_reads_as_kept_not_undecided(
         self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
-        """The reap is held because a structural stop fired (it is streaming right now), so
-        the engine keeps the file. Scales called this "Left to decide" while the queue filed
-        it under Kept, and the row's jump opened Limbo -- the one list it is not in."""
+        """The reap is held because a structural stop fired (it is streaming right now),
+        so the engine keeps the file. Scales called this "Left to decide" while the
+        queue filed it under Kept, and the row's jump opened Limbo, the one list it is
+        not in."""
         factory, cache = report_env
         await self._decided_abstain(factory, decision="reap", explanation=HELD)
         fate, lane = await self._fate_and_lane(factory, cache)
@@ -1652,12 +1664,12 @@ class TestTheDrawerFateMatchesTheQueueLane:
         decision: str | None,
     ) -> None:
         """Driven over the whole decision vocabulary the API accepts, read off
-        ``OverrideIn.decision`` rather than listed here, so a third kind of hand decision
-        fails this until Scales is taught what lane it lands in (rule 103). ``None`` is the
-        untouched row, the one case that really is still undecided.
+        ``OverrideIn.decision`` rather than listed here, so a third kind of hand
+        decision fails this until Scales is taught what lane it lands in. ``None`` is
+        the untouched row, the one case that really is still undecided.
 
-        The reap here is one the engine holds, which is the case the two surfaces disagreed
-        on; its honored twin is pinned above.
+        The reap here is one the engine holds, which is the case the two surfaces
+        disagreed on. Its honored twin is pinned above.
         """
         factory, cache = report_env
         await self._decided_abstain(factory, decision=decision, explanation=HELD)

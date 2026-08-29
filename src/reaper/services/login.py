@@ -1,35 +1,34 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Logging in: Plex OAuth (with the ownership check) and the local fallback.
 
-This is distinct from :mod:`reaper.services.plex_link`, which *links the server*.
-Linking is a one-time setup act; logging in happens every session. What they share lives
-there: the client identifier and the ownership decision, both imported here, and the PIN
-start (:func:`~reaper.services.plex_link.start_pin`), which each flow's own route calls
-with its purpose. The polling halves are not shared, and the note above
+This is distinct from :mod:`reaper.services.plex_link`, which links the server. Linking
+is a one-time setup act; logging in happens every session. The two share the client
+identifier and the ownership decision, both imported here, and the PIN start
+(:func:`~reaper.services.plex_link.start_pin`), which each flow's own route calls with
+its own purpose. The polling halves are not shared; the note above
 :func:`poll_plex_login` says why.
 
-Three shapes of sign-in resolve to the same thing -- a minted session for a
-verified admin:
+Three shapes of sign-in resolve to the same thing: a minted session for a verified admin.
 
-* **Plex login.** The server is already linked, so we know its machine id. The
-  user signs in on plex.tv, and we require *their own* token to report this
-  machine as ``owned``. Authenticating is not enough; a stranger with a valid
-  Plex account, or one of the hundred people you share the library with, must be
-  turned away. (See :meth:`PlexTvClient.owns_server`.)
+* **Plex login.** The server is already linked, so its machine id is already known. The
+  user signs in on plex.tv, and Reaper requires their own token to report this machine
+  as ``owned``. Authenticating alone is not enough: a stranger with a valid Plex account,
+  or one of the other people the library is shared with, must be turned away. See
+  :meth:`PlexTvClient.owns_server`.
 
-* **Plex setup.** No server is linked yet. The first owner to sign in claims the
-  server: we link it (refusing anyone who owns no server, or more than one) and
-  create their admin account in the same step. Once a server is linked this path
-  is unreachable, so it cannot be used to hijack an already-configured Reaper.
+* **Plex setup.** No server is linked yet. The first owner to sign in claims the server:
+  Reaper links it, refusing anyone who owns no server or more than one, and creates
+  their admin account in the same step. Once a server is linked, this path is
+  unreachable, so it cannot be used to hijack an already-configured Reaper.
 
-* **Local login.** Username and Argon2id password. The anti-lockout account, and
-  the way in when plex.tv is down. Failures are deliberately indistinguishable
-  from each other, and take the same time whether or not the user exists.
+* **Local login.** Username and Argon2id password. The anti-lockout account, and the
+  way in when plex.tv is down. Every failure looks the same and takes the same time,
+  whether or not the user exists.
 
-The browser never handles a Plex token. It is told to open an auth URL; the
-*backend* polls plex.tv for approval. (Overseerr posts the token from the page to
-its own API, exposing a full-power account credential to anything running in the
-tab. We do not.)
+The browser never handles a Plex token. It only opens an auth URL; the backend polls
+plex.tv for approval. Overseerr instead posts the token from the page to its own API,
+which exposes a full-power account credential to anything running in that browser tab.
+Reaper's backend-only poll avoids that exposure.
 """
 
 from __future__ import annotations
@@ -69,11 +68,11 @@ _DUMMY_HASH = hash_password(generate_password())
 
 
 class LoginError(Refusal):
-    """Sign-in did not succeed. A catalog code plus raw params (``reaper.refusal``).
+    """Sign-in did not succeed. A catalog code plus raw parameters (``reaper.refusal``).
 
     Defaults to 401 rather than ``Refusal``'s own 422: every route answering one of these
-    (``api.auth``'s Plex and local sign-in) has always answered 401, a credential refusal,
-    never 422's "well-formed but refused content."
+    (``api.auth``'s Plex and local sign-in) answers with 401, a credential refusal, never
+    422's "well-formed but refused content."
     """
 
     def __init__(self, code: str, /, *, status: int = 401, **params: ReasonParam) -> None:
@@ -94,7 +93,7 @@ class UserView:
 class LoginResult:
     session_token: str
     user: UserView
-    # True when this sign-in also performed first-run setup (linked the server).
+    # True when this sign-in also performed first-run setup, linking the server.
     setup: bool = False
 
 
@@ -110,11 +109,10 @@ def _view(user: AppUser) -> UserView:
 # ---------------------------------------------------------------------------
 # Plex. The flow opens at plex_link.start_pin(purpose="login"); what follows is the half
 # that is not shared with the link flow. The two pollers agree on the plex.tv round trip
-# and diverge after it, so one function serving both would take a flag, which is what
-# killed W6-3's shared paged(). The divergence: this one mints a session, and it branches
-# on whether a server is already linked, authorizing against that machine id when one is
-# and running first-run setup through complete_link when none is. It consumes the pending
-# row on each refusal arm, where poll_link consumes in a finally.
+# and diverge after it: this one mints a session, and it branches on whether a server is
+# already linked, authorizing against that machine id when one is and running first-run
+# setup through complete_link when none is. It consumes the pending row on each refusal
+# arm, where poll_link consumes it in a finally block instead.
 # ---------------------------------------------------------------------------
 
 
@@ -129,16 +127,16 @@ async def poll_plex_login(
 ) -> LoginResult | None:
     """Check a pending Plex login once.
 
-    Returns ``None`` while the user has not yet approved (the frontend keeps
-    polling), a :class:`LoginResult` once they have and the checks pass, and
-    raises :class:`LoginError` on any refusal. A refused attempt consumes its
-    pending row, so a rejected token cannot be replayed.
+    Returns ``None`` while the user has not yet approved, and the frontend keeps
+    polling. Returns a :class:`LoginResult` once they have and the checks pass.
+    Raises :class:`LoginError` on any refusal. A refused attempt consumes its pending
+    row, so a rejected token cannot be replayed.
 
-    First-run setup only: an owner of several servers raises
-    :class:`PlexServerChoiceNeededError`, and a server that is briefly unreachable raises
-    :class:`PlexLinkRetryableError` -- neither is a refusal, so the pending row survives
-    in both cases and the frontend re-polls the same PIN (carrying the picked server, or
-    simply waiting for the server to come back).
+    During first-run setup only: an owner of several servers raises
+    :class:`PlexServerChoiceNeededError`, and a server that is briefly unreachable
+    raises :class:`PlexLinkRetryableError`. Neither is a refusal, so the pending row
+    survives in both cases and the frontend re-polls the same PIN, carrying the picked
+    server, or simply waiting for the server to come back.
     """
     async with session_factory() as session:
         pending = await session.scalar(
@@ -162,7 +160,7 @@ async def poll_plex_login(
             token = await plextv.check_pin(pin_id)
         except IntegrationError as exc:
             if exc.status == 429:
-                # We polled plex.tv too eagerly. Not a failure -- tell the browser
+                # Reaper polled plex.tv too eagerly. Not a failure; tell the browser
                 # to try again shortly.
                 return None
             raise LoginError("error.auth.login_check_failed") from exc
@@ -180,13 +178,13 @@ async def poll_plex_login(
         server = (await session.execute(select(PlexServer).limit(1))).scalar_one_or_none()
 
     if server is not None:
-        # LOGIN: authorize against the machine id we already trust.
+        # Login: authorize against the machine id Reaper already trusts.
         if not any(r.client_identifier == server.machine_identifier for r in owned):
             await _consume_pending(session_factory, pin_id)
             log.warning("login.plex_not_owner", account=account.account_id)
             raise LoginError("error.auth.plex_not_owner")
     else:
-        # SETUP: the first owner claims the server. complete_link refuses a non-owner,
+        # Setup: the first owner claims the server. complete_link refuses a non-owner,
         # asks for a choice on a multi-server account, and persists the link.
         try:
             await complete_link(
@@ -199,18 +197,18 @@ async def poll_plex_login(
             raise
         except PlexLinkRetryableError:
             # Also not a refusal: the sign-in succeeded, and the server simply did not
-            # answer this instant -- it may be restarting. Leave the pending row intact
-            # and let it bubble, so the browser keeps polling the still-valid sign-in
-            # instead of being sent back through the whole approval round trip. Must sit
-            # ABOVE the PlexLinkError arm below, which is its parent class and would
-            # otherwise consume the pending row (B2-14, in the setup twin of the link
-            # poll).
+            # answer this instant, perhaps because it is restarting. Leave the pending
+            # row intact and let this propagate, so the browser keeps polling the
+            # still-valid sign-in instead of being sent back through the whole approval
+            # round trip. This except clause must sit above the PlexLinkError one below,
+            # which is its parent class and would otherwise consume the pending row.
             raise
         except PlexLinkError as exc:
             await _consume_pending(session_factory, pin_id)
-            # Carries the link failure's own code and params forward rather than flattening
-            # it to a string: this arm is one more raiser of whichever plex.* condition
-            # `complete_link` hit, not a distinct login-time refusal (rule 144).
+            # Carries the link failure's own code and parameters forward rather than
+            # flattening it to a string: this arm just re-raises whichever plex.*
+            # condition `complete_link` hit, rather than describing a distinct
+            # login-time refusal.
             raise LoginError(exc.code, status=exc.status, **exc.params) from exc
 
     async with session_factory() as session:
@@ -275,11 +273,11 @@ async def login_local(
     password: str,
     user_agent: str | None = None,
 ) -> LoginResult:
-    """Verify a local username/password and mint a session.
+    """Verify a local username and password, and mint a session.
 
-    Every failure -- unknown user, Plex-only account, deactivated, wrong password
-    -- returns the same message and takes the same time, so nothing here tells an
-    attacker which usernames exist.
+    Every failure, whether an unknown user, a Plex-only account, a deactivated
+    account, or a wrong password, returns the same message and takes the same time,
+    so nothing here tells an attacker which usernames exist.
     """
     async with session_factory() as session:
         user = await session.scalar(select(AppUser).where(AppUser.username == username))
@@ -290,7 +288,7 @@ async def login_local(
             and user.provider == AuthProvider.LOCAL
             and user.password_hash is not None
         )
-        # Always run a verify, against the real hash if we have one and a decoy
+        # Always run a verify, against the real hash when one exists and a decoy
         # otherwise, so timing does not distinguish the branches.
         stored_hash = user.password_hash if usable and user is not None else _DUMMY_HASH
         ok, new_hash = verify_password(password, stored_hash or _DUMMY_HASH)
@@ -300,7 +298,7 @@ async def login_local(
             raise LoginError("error.auth.wrong_credentials")
 
         if new_hash is not None:
-            # Argon2 parameters were raised since this hash was written; rewrite it.
+            # Argon2 parameters were raised since this hash was written; rewrite it now.
             user.password_hash = new_hash
 
         token = await open_session(session, user, user_agent=user_agent)

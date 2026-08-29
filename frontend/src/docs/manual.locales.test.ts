@@ -78,8 +78,8 @@ function skeleton(doc: Doc): Doc {
 }
 
 describe("every translated manual is the English manual with its words replaced", () => {
-  // Rule 145: the population the walk collects, pinned. A locale landing grows this list by
-  // hand, which is the one moment someone confirms the glob saw it.
+  // The population the walk collects, pinned. A locale landing grows this list by hand, which
+  // is the one moment someone confirms the glob saw it.
   it("finds the manuals the build ships", () => {
     expect(MANUALS.map((m) => m.lng)).toEqual(["en"]);
   });
@@ -104,8 +104,8 @@ describe("every translated manual is the English manual with its words replaced"
   });
 });
 
-// Rule 147: the check compares a shape it computes, so it is proven against a translation it
-// must accept and against each change it must refuse, not only against English versus itself.
+// The check compares a shape it computes, so it must be proven against a translation it must
+// accept and against each change it must refuse, not only against English versus itself.
 describe("the shape check", () => {
   const clone = (): Doc[] => structuredClone(DOCS);
   const english = DOCS.map(skeleton);

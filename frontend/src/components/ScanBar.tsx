@@ -3,11 +3,11 @@
 // The scan, its progress, and the state of the snapshot it produced.
 //
 // The scan runs as a background job on the server (see api/scan.py), detached from the
-// request that starts it -- so closing the tab or switching screens does not stop it. This
-// component starts a scan and then *polls* its progress, which means it also picks up a scan
-// that is already in flight when you return to the page.
+// request that starts it, so closing the tab or switching screens does not stop it. This
+// component starts a scan and then polls its progress, which means it also picks up a scan
+// that is already running when the page loads.
 //
-// A scan is read-only: it reads from the *arr and Tautulli, scores, and writes rows to
+// A scan only reads: it reads from the *arr apps and Tautulli, scores, and writes rows to
 // Reaper's own database. GuardedTransport would refuse a mutating call even if one were tried.
 
 import { useIsFetching, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -26,12 +26,12 @@ import { Notice } from "./Notice";
 import { ProgressBar } from "./ProgressBar";
 import { scanningLabel } from "./ScanLine";
 
-/** Friendly names for the scan's internal phases, so the status line reads in English. A
- *  plain function rather than a frozen table, read from the catalog on every call (each id
- *  gets its own literal `t()` call, since a computed key is unreadable to the missing-key
- *  gate) -- the same shape `JobsPanel`'s own `jobMeta` takes. Exported because the first-run
- *  wizard shows the same progress line; one function keeps the two surfaces from drifting
- *  into raw phase ids. */
+/** Friendly names for the scan's internal phases, so the status line reads in plain words. A
+ *  plain function rather than a frozen table: it reads the catalog on every call, and each id
+ *  gets its own literal `t()` call because a computed key would be unreadable to the
+ *  missing-key gate. `JobsPanel`'s own `jobMeta` takes the same shape. Exported because the
+ *  first-run wizard shows the same progress line, so one function keeps the two surfaces
+ *  from drifting into raw phase ids. */
 export function phaseLabel(phase: string): string {
   const labels: Record<string, string> = {
     starting: i18next.t("shell.scanBar.phase.starting"),
@@ -49,13 +49,14 @@ export function phaseLabel(phase: string): string {
 /** What the totals did between the scan that just finished and the one before it.
  *
  *  A scan replaces the snapshot underneath the whole page, so the queue and the totals
- *  change with nothing to compare them against. Null when nothing moved is deliberate:
- *  a line saying "no change" every time would be noise. */
-/** Scan-to-scan movement. Both byte figures cover only the items that had a size, and
- *  the two scans can have different unmeasured populations -- an item measured last time
- *  and not this time leaves the total on its own, which reads as progress that did not
- *  happen. So when either scan is carrying unknowns the difference is qualified rather
- *  than dropped: a line the operator is used to must never quietly change meaning. */
+ *  change with nothing to compare them against. Null when nothing moved is deliberate: a
+ *  line saying "no change" every time would be noise.
+ *
+ *  Both byte figures cover only the items that had a measured size, and the two scans can
+ *  have different unmeasured populations. An item measured last time but not this time
+ *  drops out of the total on its own, which reads as progress that didn't happen. So when
+ *  either scan carries unknown-size items, the difference is qualified rather than dropped.
+ *  A line the operator already trusts must never quietly change what it means. */
 function scanDelta(
   before: { condemned: number; freeable: number; unknownSize: number },
   after: Snapshot,
@@ -90,10 +91,10 @@ function scanDelta(
   return i18next.t("shell.scanBar.deltaSummary", { parts: parts.join(", ") });
 }
 
-/** The library-scan row on the Jobs page: the marquee run action, its last-scan stats and
- *  live progress, and an Edit that opens the scan's schedule. It owns the scan lifecycle
- *  (start, poll, delta, degraded) exactly as before; the title, description and schedule
- *  line are handed in so the copy lives in one place with the other jobs. */
+/** The library-scan row on the Jobs page: the primary run action, its last-scan stats and
+ *  live progress, and an Edit control that opens the scan's schedule. It owns the whole scan
+ *  lifecycle (start, poll, delta, degraded state). The title, description and schedule line
+ *  are handed in as props, so the copy for every job lives in one place. */
 export function ScanRow({
   snapshot,
   scanJob,
@@ -104,9 +105,9 @@ export function ScanRow({
   canEdit,
 }: {
   snapshot: Snapshot | undefined;
-  /** The scan's own schedule entry. Carries `last_run_at`/`last_ok`/`last_result_reason`
-   *  only for a SCHEDULED scan that crashed outright and wrote no snapshot (see
-   *  `get_schedule`); a successful run is read from `snapshot` below instead. */
+  /** The scan's own schedule entry. Carries `last_run_at`, `last_ok`, and
+   *  `last_result_reason` only for a scheduled scan that crashed outright and wrote no
+   *  snapshot (see `get_schedule`). A successful run is read from `snapshot` below instead. */
   scanJob: ScheduledJob | undefined;
   title: string;
   desc: string;
@@ -132,19 +133,20 @@ export function ScanRow({
   } | null>(null);
   /** Whether the `["snapshot"]` refetch that the finish edge triggers has been seen to
    *  finish, however it finished. Declared beside `before` because it bounds the same
-   *  window; read where `supersededSnapshot` is computed. */
+   *  window. Read where `supersededSnapshot` is computed. */
   const [snapshotReadSettled, setSnapshotReadSettled] = useState(false);
 
-  // The totals from the scan that just ended, captured on the running -> not-running edge so
-  // the new ones have something to be read against. The refresh that edge also triggers is
-  // NOT here: it belongs on the shell, which a scan cannot unmount (`useScanSettled`), or a
-  // scan started from any other screen finished with nothing refreshing the page in front of
-  // the operator. This reads the old snapshot straight out of the cache, which an
-  // invalidation elsewhere in the same tick leaves in place while its refetch is in flight.
+  // The totals from the scan that just ended, captured on the running-to-not-running edge so
+  // the new ones have something to be read against. The refresh that edge also triggers
+  // belongs on the shell instead, because a scan cannot unmount the shell
+  // (`useScanSettled`). A scan started from any other screen still needs the page in front
+  // of the operator to refresh. This reads the old snapshot straight out of the cache: an invalidation
+  // elsewhere in the same tick leaves that cached value in place while its refetch is still
+  // in flight.
   useEffect(() => {
     if (wasScanning.current && !scanning) {
-      // A fresh window opens here, so the "the read has settled" latch that bounds it below
-      // starts closed: the refetch this edge triggers has not been seen to finish yet.
+      // A fresh window opens here, so the "read settled" latch that bounds it below starts
+      // closed. The refetch this edge triggers has not been seen to finish yet.
       setSnapshotReadSettled(false);
       const previous = queryClient.getQueryData<Snapshot>(["snapshot"]);
       setBefore(
@@ -162,50 +164,54 @@ export function ScanRow({
     wasScanning.current = scanning;
   }, [scanning, queryClient]);
 
-  // A mutation, not a fire-and-forget async onClick: a start that fails must say so,
-  // or the button appears to do nothing at all.
+  // A mutation, not a fire-and-forget async onClick. A start that fails must say so, or the
+  // button appears to do nothing at all.
   const start = useMutation({
     mutationFn: () => api.startScan(),
     onSuccess: (started) => {
       // Seed the cache with the returned status so polling begins immediately.
       queryClient.setQueryData(["scanStatus"], started);
-      // The press disables its own button and swaps the schedule line for a progress bar, both
-      // of them visual. Focus is at `<body>` from the disable, the bar announces nothing on its
-      // own, and the next thing said is the finish -- which for a library scan is minutes away
-      // (#177). Said at `onSuccess`, so it reports a scan that actually started rather than one
-      // still being asked for (rule 85); a start that fails speaks through the `Notice` below.
+      // The press disables its own button and swaps the schedule line for a progress bar,
+      // both purely visual changes. Focus lands on `<body>` from the disable, the progress
+      // bar announces nothing on its own, and without this the next thing a screen reader
+      // says would be the finish, minutes away for a library scan. This announces at
+      // `onSuccess`, so it reports a scan that actually started rather than one still being
+      // asked for. A start that fails speaks through the `Notice` below instead.
       announce(`${scanningLabel()}. ${t("shell.scanBar.keepsRunning")}`);
     },
   });
 
-  // The server hands us a monotonic 0-100 that rises smoothly across the scan's phases.
-  // (The old done/total math read 100% before any work began, because the early phases
-  // report total=0, then jumped as the denominator changed meaning between phases.)
+  // The server sends a monotonic 0-100 value that rises smoothly across the scan's phases.
+  // A done/total ratio does not work here: the early phases report total=0, so that ratio
+  // reads 100% before any work begins, and it jumps whenever the denominator's meaning
+  // changes between phases.
   const pct = status ? status.percent : null;
 
-  // Only against a *different* snapshot: the first scan ever has nothing to compare to,
-  // and a scan that wrote no new snapshot must not report a change of zero.
+  // Only compares against a different snapshot. The first scan ever has nothing to compare
+  // to, and a scan that wrote no new snapshot must not report a change of zero.
   const delta =
     before && snapshot && snapshot.id !== before.id ? scanDelta(before, snapshot) : null;
 
-  // The snapshot in hand is not the last scan's, so nothing on this row may speak for it. Two
-  // windows: a scan is running, and the moment after one ends, where `useScanSettled`'s refetch
-  // of `["snapshot"]` is still out and `before` still holds the id that is on screen -- the same
-  // fact `delta` waits on above. A run that ended in an error wrote no snapshot, so the one in
-  // hand is still the newest and still speaks for itself.
+  // The snapshot in hand is not necessarily the last scan's, so nothing on this row may
+  // speak for it during two windows: while a scan is running, and in the moment right after
+  // one ends, while `useScanSettled`'s refetch of `["snapshot"]` is still out and `before`
+  // still holds the id on screen (the same fact `delta` waits on above). A run that ended in
+  // an error wrote no snapshot, so the one in hand is still the newest and still speaks for
+  // itself.
   //
-  // `snapshotReadSettled` is what BOUNDS the second window. `before` is cleared only when the
-  // NEXT scan starts, so on id-equality alone the window never closed if the refetch never
-  // landed with a new id -- and `JobsPanel`'s query is `retry: false`, so one dropped request
-  // does exactly that. The row then went on rendering that snapshot's item and condemned
-  // counts while withholding its "incomplete" verdict, for the life of the mount, which is
-  // the reassuring direction to fail in.
+  // `snapshotReadSettled` bounds the second window. `before` only clears when the next scan
+  // starts, so id-equality alone is not enough: if the refetch never lands with a new id, the
+  // window would never close on its own. `JobsPanel`'s query is `retry: false`, so one
+  // dropped request does exactly that, and without `snapshotReadSettled` the row would keep
+  // rendering that snapshot's item and condemned counts while withholding its "incomplete"
+  // verdict for the rest of the mount. That is the safe direction to fail in, but
+  // `snapshotReadSettled` closes the window properly instead of relying on it.
   //
-  // Keyed on the refetch COMPLETING rather than on one being in flight: between the status
+  // This is keyed on the refetch finishing, not on one being in flight. Between the status
   // going idle and `useScanSettled`'s invalidation actually starting a fetch, nothing is in
-  // flight, and treating that as settled would paint the previous scan's verdict for a tick
-  // as though it were this one's. So the window holds until a fetch has been seen to finish,
-  // whether it finished with a new snapshot or with an error.
+  // flight, and treating that gap as settled would paint the previous scan's verdict onto
+  // this one for a tick. So the window holds until a fetch has been seen to finish, whether
+  // it finished with a new snapshot or with an error.
   const refetchingSnapshot = useIsFetching({ queryKey: ["snapshot"] }) > 0;
   const wasRefetchingSnapshot = useRef(false);
   useEffect(() => {
@@ -230,23 +236,24 @@ export function ScanRow({
       }`
     : t("common.scanning");
   // A finished scan confirms itself in the same slot, then settles to the last-run line. A
-  // scan that reported a problem gets no flash: the error notice below carries the detail,
-  // and a green "done" chip beside it would contradict.
+  // scan that reported a problem gets no flash. The error notice below carries the detail,
+  // and a green "done" chip beside it would contradict it.
   const scanFlash = useJobFlash(
     scanning,
     status?.error_reason ? null : { ok: true, text: t("shell.scanBar.queueRefreshed") },
   );
 
-  // A degraded scan is not an error, so it takes the success flash above -- and that flash
-  // fires on the finish edge, where the snapshot in hand is still the PREVIOUS scan's, so it
-  // cannot speak to how this one came back. The notice that can is `standing`, which announces
-  // nothing by design, so "Queue refreshed" was the only thing a screen-reader user was told
-  // about a scan Reaper will not act on (rules 85, 72). Said here instead: when the fresh
-  // snapshot has landed, the row is speaking for it again, and the verdict is finally known.
+  // A degraded scan is not an error, so it takes the success flash above. That flash fires
+  // on the finish edge, while the snapshot in hand is still the previous scan's, so it
+  // cannot speak to how this one came back. The notice that can is `standing`, which
+  // announces nothing on its own: without this effect, "Queue refreshed" would be the only
+  // thing a screen reader user hears about a scan Reaper will not act on. This announces
+  // instead, once the fresh snapshot has landed and the row is speaking for it again, so the
+  // verdict is finally known.
   //
-  // Once per snapshot, and only after a finish this mount watched (`before`), so navigating
-  // onto an already-degraded snapshot announces nothing -- the same restraint `useJobFlash`
-  // keeps about a job that finished before the page loaded.
+  // This fires once per snapshot, and only after a finish this mount actually watched
+  // (`before`). Navigating onto an already-degraded snapshot announces nothing, the same
+  // restraint `useJobFlash` uses for a job that finished before the page loaded.
   const announcedIncompleteFor = useRef<number | null>(null);
   useEffect(() => {
     if (supersededSnapshot || before === null || !snapshot?.degraded) return;
@@ -256,17 +263,17 @@ export function ScanRow({
   }, [supersededSnapshot, before, snapshot?.degraded, snapshot?.id, t]);
 
   // A scheduled scan that crashed outright writes no snapshot, so it is recorded separately
-  // (job id "scheduled_scan", see get_schedule) instead of being silently invisible here.
-  // Prefer that failure only while it is actually newer than the snapshot on hand -- once a
-  // later scan succeeds, its fresh snapshot wins again with no need to clear the record.
+  // instead (job id "scheduled_scan", see get_schedule). This failure is only shown while it
+  // is actually newer than the snapshot on hand. Once a later scan succeeds, its fresh
+  // snapshot wins again with no need to clear the record.
   const scanFailedAt =
     scanJob && scanJob.last_ok === false && scanJob.last_run_at ? scanJob.last_run_at : null;
   const failureIsCurrent =
     scanFailedAt !== null &&
     (!snapshot || new Date(scanFailedAt).getTime() > new Date(snapshot.created_at).getTime());
-  // A completed-but-degraded scan produced a result, just an incomplete one -- the warning
-  // notice below explains that. It is not a "failed" run, so it must not paint the dot red;
-  // only a scan attempt that crashed outright (above) is a real failure here.
+  // A completed-but-degraded scan produced a result, just an incomplete one. The warning
+  // notice below explains that. It is not a "failed" run, so it must not paint the dot red.
+  // Only a scan attempt that crashed outright (above) counts as a real failure here.
   const lastRunAt = failureIsCurrent ? scanFailedAt : (snapshot?.created_at ?? null);
   const lastOk = failureIsCurrent ? false : snapshot ? true : null;
 
@@ -320,34 +327,33 @@ export function ScanRow({
           </Notice>
         )}
         {/* `standing`, unlike `start.error` directly above it, which answers this bar's own
-            Start press and stays an alert. A scan runs from the scheduler and from other
-            devices, and the shell holds a second observer on `["scanStatus"]` that polls every
-            15s while this row is idle (`App.tsx`), so a scheduled scan crashing writes this into
-            the shared cache and paints it under a page nobody touched. */}
+            Start press and stays an alert. A scan can also run from the scheduler or from
+            another device: the shell polls `["scanStatus"]` every 15s while this row is idle
+            (`App.tsx`), so a scheduled scan crashing writes this notice into the shared cache
+            and paints it under a page nobody touched. */}
         {status?.error_reason && (
           <Notice tone="error" inline standing>
             {t("shell.scanBar.scanProblem", { error: composeError(status.error_reason) })}
           </Notice>
         )}
 
-        {/* `standing`, same route one step later: `useScanSettled` invalidates `["snapshot"]` on
-            the running-to-idle edge it sees through that same 15s poll, so a scheduled scan
+        {/* `standing`, same route one step later: `useScanSettled` invalidates `["snapshot"]`
+            on the running-to-idle edge, seen through that same 15s poll, so a scheduled scan
             finishing incomplete draws this with no press either.
 
-            Held while that snapshot is superseded, which is this notice specifically and not the
-            two others carrying the same claim (rule 72). It renders inside the running scan's own
-            row, under its progress bar, where "This scan" reads as the one in flight -- and the
-            operator starting a rescan has already answered it. The other two sit on pages with no
-            scan in view and stay: `ReapPlan`'s is why Build is disabled over that snapshot, and
-            `ScanFreshness.tsx`'s freshness line is the age of the queue rendered below it, both still true
-            for as long as that snapshot is the one on hand. */}
+            Held while this snapshot is superseded, specifically. Two other notices make the
+            same claim elsewhere and stay up longer: `ReapPlan`'s is why Build is disabled over
+            that snapshot, and `ScanFreshness.tsx`'s freshness line is the age of the queue
+            rendered below it, both true for as long as that snapshot is the one on hand. This
+            one renders inside the running scan's own row, under its progress bar, where "This
+            scan" reads as the one in flight, and the operator starting a rescan has already
+            answered it. */}
         {snapshot?.degraded && !supersededSnapshot && (
           <Notice tone="warn" standing as="div" className="notice-doc">
-            {/* What it means before why it happened. The consequence clause was dropped from
-                here and from the Review page's line, leaving `ReapPlan` the only one of the
-                three still saying it, and whether the operator saw it at all then depended on
-                which source had failed: only `library_index`'s reasons carry "Nothing may be
-                deleted from this scan" in their own text (rules 21, 72, 144). */}
+            {/* Order matters: what the degradation means comes before why it happened. This
+                notice states no separate consequence clause. Only `library_index`'s reasons
+                carry "Nothing may be deleted from this scan" in their own text, so that is
+                the only case where the operator sees it stated here at all. */}
             <span>
               <Trans
                 i18nKey="shell.scanBar.degradedNotice"
@@ -355,9 +361,9 @@ export function ScanRow({
                 components={{ strong: <strong /> }}
               />
             </span>
-            {/* Nothing renders for a degradation with no page, which is most of them, so this
-                notice looks exactly as it did unless the scan named one. `ReapPlan` carries the
-                same pair (rule 72). */}
+            {/* This renders nothing when the degradation names no doc page, which is true for
+                most of them, so the notice looks the same either way. `ReapPlan` carries the
+                same pair. */}
             <DegradedDocLink doc={snapshot.degraded_doc} />
           </Notice>
         )}
@@ -365,8 +371,8 @@ export function ScanRow({
 
       <div className="jobrow-actions">
         <span className="slot-edit">
-          {/* Named for the row it belongs to: this Edit sits on the Jobs page beside one Edit per
-              upkeep job, and by its own text they are indistinguishable (rule 72). */}
+          {/* Named for the row it belongs to: this Edit sits on the Jobs page beside one Edit
+              per upkeep job, and by its own text alone they are indistinguishable. */}
           <button
             className="ghost"
             aria-label={t("shell.scanBar.editScheduleLabel")}

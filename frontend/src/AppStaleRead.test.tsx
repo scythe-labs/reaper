@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The two gates in `App` that sit above the whole signed-in UI, driven through a failed refetch.
 //
-// Both used to test `isError` without asking whether the value was still in hand. React Query
-// keeps the last good data through a failed refetch and raises `isError` beside it, so on a
-// configured install a blinked `["setup"]` read rendered the setup wizard over the Dashboard, and
-// a blinked `["me"]` read rendered the login screen at a signed-in operator (#181). The same
-// divided test #140 made in the settings panels, at the two places whose blast radius is the whole
-// app: everything below unmounts, so Settings' unsaved-edits guard never runs (rule 146).
+// React Query keeps the last good data through a failed refetch and raises `isError` beside
+// it. So a gate that checks only `isError`, without asking whether a value is still in hand,
+// can render the wrong screen on a blink: a configured install's setup wizard over the
+// Dashboard, or the login screen at a signed-in operator. The same failure applies to the
+// settings panels, at the two places whose blast radius is the whole app: everything below
+// them unmounts, so Settings' unsaved-edits guard never runs.
 //
-// Each gate is pinned in BOTH directions, because a fix that simply deleted the `isError` arm
-// would pass a one-sided test while dropping a fresh install onto an empty Dashboard with no way
-// back to the wizard. The never-loaded case is the reason those arms were written.
+// Each gate is pinned in both directions, because a fix that simply deleted the `isError` arm
+// would pass a one-sided test while dropping a fresh install onto an empty Dashboard with no
+// way back to the wizard. The never-loaded case is the reason those arms exist.
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { QueryClient } from "@tanstack/react-query";
@@ -28,10 +28,10 @@ import { renderWithProviders } from "./test/renderWithProviders";
 import { expectNoA11yViolations } from "./test/a11y";
 import { App } from "./App";
 
-// Rule 135: the mock answers everything the tree mounts, not only the gate under test. Rendering
-// `App` all the way through means the shell, the review queue it opens on, and the hooks each of
-// those reads on its own -- a gap in any of them renders that subtree's failed-read branch and
-// would leave this file asserting on the wrong screen for the wrong reason.
+// This mock answers everything the tree mounts, not only the gate under test. Rendering `App`
+// all the way through mounts the shell, the review queue it opens on, and the hooks each of
+// those reads on its own. A gap in any of them renders that subtree's failed-read branch,
+// which would leave this file asserting on the wrong screen for the wrong reason.
 const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("./test/apiMock")).makeApiMock(),
 }));
@@ -55,7 +55,7 @@ const USER: AuthUser = {
   via_recovery: false,
 };
 
-/** A configured install: a password set, everything wired, and scanned once -- which is what
+/** A configured install: a password set, everything wired, and scanned once, which is what
  *  `complete` means. */
 const COMPLETE_SETUP: SetupStatus = {
   admin_exists: true,
@@ -89,22 +89,18 @@ const EMPTY_PAGE: CandidatePage = {
 // whichever section is loading. The wizard and the login screen each render neither this nav nor
 // each other, which is what makes the three screens tellable apart with one assertion each.
 const dashboardNav = () => screen.queryByRole("navigation", { name: "Sections" });
-// The wizard's own marker: the progress row is on every step and on nothing else, which is
-// what the old "Skip to the app" button used to be before the flow became four steps and its
-// way out moved onto each step's own actions.
+// The wizard's own marker: the progress row appears on every step and nowhere else. Each step
+// provides its own way out through its own actions.
 const wizardSteps = () => screen.queryByRole("list", { name: "Setup progress" });
 const WIZARD_UNREADABLE = /Couldn't check what's set up yet/;
 const WIZARD_WAY_OUT = /Go to the app/;
 
 // `App` puts the wizard behind `React.lazy`, so the first render through that boundary in this
-// process pays Vite's cold transform of the wizard's whole module graph -- inside Testing
-// Library's `asyncUtilTimeout`, which `testTimeout` does not reach. Running the whole
-// suite hid it, because another file had already transformed the wizard; this file alone failed
-// (#651). Warm it here rather than lengthening one assertion's timeout: which test pays the cost
-// is then an accident of file order, and the next wizard test written above this one inherits the
-// failure (rule 119). The budget itself was 1000ms then and is 5000ms now
-// (`src/test/setup.ts`, #887). That is headroom for the whole suite, and this warm-up still
-// earns its place: the transform is real work, and it does not belong inside a wait.
+// process pays Vite's cold transform of the wizard's whole module graph, inside Testing
+// Library's `asyncUtilTimeout`, which the suite's `testTimeout` does not reach. Warming it here
+// avoids making which test pays that cost an accident of file order: without this, the next
+// wizard test written above this one in the file would inherit the failure. The transform is
+// real work and does not belong inside a wait.
 beforeAll(async () => {
   await import("./components/SetupWizard");
 });
@@ -179,7 +175,7 @@ describe("the setup gate through a failed refetch", () => {
     renderApp();
     await screen.findByRole("navigation", { name: "Sections" });
     // The audit is itself an await long enough for the shell's remaining reads to land, so it
-    // runs inside `act` or those arrivals are updates outside one (rule 136).
+    // must run inside `act`, or those arrivals become updates outside one.
     await act(async () => {
       await expectNoA11yViolations(document.body, { pageLevel: true });
     });
@@ -221,8 +217,8 @@ describe("the setup gate through a failed refetch", () => {
     });
     renderApp();
 
-    // The half of the old expression that was never in question, kept so a fix that reduced the
-    // gate to `setup === undefined && isError` cannot pass this file (rule 118).
+    // This half of the check was never in question on its own, but keeping it here means a fix
+    // that narrowed the gate to `setup === undefined && isError` would still fail this file.
     expect(await screen.findByRole("list", { name: "Setup progress" })).toBeInTheDocument();
     // The way out is still there on every step past the password, which is what makes
     // routing an unfinished install here safe.
@@ -236,8 +232,9 @@ describe("the sign-in gate through a failed refetch", () => {
     const queryClient = renderApp();
     expect(await screen.findByRole("navigation", { name: "Sections" })).toBeInTheDocument();
 
-    // `signOut.onSettled` refetches this key, so a sign-out that failed on a flaky network reached
-    // here and signed the operator out of the UI anyway -- the opposite of what that failure means.
+    // `signOut.onSettled` refetches this key, so a sign-out that failed on a flaky network can
+    // still reach here and sign the operator out of the UI anyway. That is the opposite of what
+    // the failure means.
     apiMock.me.mockRejectedValue(new Error("boom"));
     await queryClient.invalidateQueries({ queryKey: ["me"] });
     await waitFor(() => expect(apiMock.me).toHaveBeenCalledTimes(2));
@@ -260,12 +257,12 @@ describe("the sign-in gate through a failed refetch", () => {
 
     // A session that expired under an ordinary read. `setUnauthorizedHandler` writes
     // `["me"] = null` rather than refetching (main.tsx), because answering a 401 with a request
-    // that 401s is a loop -- so that expiry arrives as DATA, not as an error, and the gate must
-    // still catch it. This is the case the deleted `isError ||` arm was mistaken for.
+    // that itself 401s is a loop. So that expiry arrives as data, not as an error, and the gate
+    // must still catch it.
     //
-    // It is every 401 except those under `/api/auth/`, exempt from that handler as a whole prefix,
-    // so this stands in for the reads that do write and the sign-out below drives one that does
-    // not.
+    // This covers every 401 except those under `/api/auth/`, which are exempt from that
+    // handler as a whole prefix. It stands in for the reads that do write this way; the
+    // sign-out test below drives one that does not.
     queryClient.setQueryData(["me"], null);
 
     expect(await screen.findByText(/Sign in with Plex/)).toBeInTheDocument();
@@ -277,11 +274,12 @@ describe("the sign-in gate through a failed refetch", () => {
     renderApp();
     expect(await screen.findByRole("navigation", { name: "Sections" })).toBeInTheDocument();
 
-    // The success path, not a failure: the session is gone server-side, so `/api/auth/me` 401s
-    // from here on. That path is exempt from the unauthorized handler (api.ts), so nothing writes
-    // `["me"] = null` for it -- a refetch simply errors while React Query still holds the user,
-    // and the gate reads a held user as signed in. Asking left the operator on their own
-    // dashboard until an unrelated poll happened to 401, so the sign-out writes the answer.
+    // This is the success path, not a failure: the session is gone server-side, so
+    // `/api/auth/me` 401s from here on. That path is exempt from the unauthorized handler
+    // (api.ts), so nothing writes `["me"] = null` for it. A refetch simply errors while React
+    // Query still holds the user, and the gate reads a held user as signed in. So the sign-out
+    // itself has to write the answer, or the operator would stay on their own dashboard until
+    // an unrelated poll happened to 401.
     apiMock.logout.mockResolvedValue({ ok: true });
     apiMock.me.mockRejectedValue(new Error("401"));
 
@@ -320,11 +318,10 @@ describe("the sign-in gate through a failed refetch", () => {
 
 describe("the wizard's own last step finishing", () => {
   // `complete` is `has_password and scan_ready and has_scanned`, and the wizard's last step is
-  // what makes `has_scanned` true. Deriving the gate live therefore unmounted the wizard in the
-  // same commit its finish panel would have rendered in -- so the screen that reports the result
-  // of setup, including "a real reap will still be refused without Plex" (#383), was the one
-  // screen setup could never show. Latched instead: once the wizard has been needed it stays
-  // until the operator leaves it.
+  // what makes `has_scanned` true. If the gate derives live from that flag, the moment
+  // `has_scanned` flips true unmounts the wizard before its own finish panel can render, so the
+  // screen that reports the result of setup would never show. The wizard is latched instead:
+  // once it has been needed, it stays open until the operator leaves it.
   it("keeps the wizard up when the first scan flips complete", async () => {
     // Everything done but the scan, which is where the wizard opens for this install and the
     // only state the finish panel is written for.
@@ -342,11 +339,10 @@ describe("the wizard's own last step finishing", () => {
 
     expect(wizardSteps()).toBeInTheDocument();
     expect(dashboardNav()).toBeNull();
-    // And the panel that only this state renders is finally on screen, saying the thing the
-    // whole #383 change exists to say.
-    // "You're all set" was unreachable through the app in EVERY state before the latch: an
-    // empty blocker list implies has_password and scan_ready, which with has_scanned implies
-    // complete, which is exactly what used to unmount the panel drawing it.
+    // The panel that only this state renders is now on screen. Without the latch, "You're all
+    // set" would be unreachable through the app in every state: an empty blocker list implies
+    // has_password and scan_ready, which together with has_scanned implies complete, and
+    // deriving the gate from that would unmount the panel drawing it.
     expect(await screen.findByText(/you're all set/i)).toBeInTheDocument();
   });
 

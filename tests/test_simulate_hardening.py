@@ -1,28 +1,27 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""An unreadable stored explanation degrades one row of the simulation, toward KEEPING.
+"""An unreadable stored explanation must degrade one row of the simulation toward keeping it.
 
 The policy editor's live preview replays the last snapshot on a 250 ms debounce, so every
-row of it is read on every keystroke of a threshold drag. Two of its readers used to guard
-the ``json.loads`` and then call ``.get`` on whatever came back: a stored top level that is
-a list, a null or a number raised an ``AttributeError`` out of ``POST /api/policy/simulate``
-and 500ed the preview, while the review queue rendered the same row fine.
+row is read on every keystroke of a threshold drag. Reading a stored explanation can fail
+in several ways: the top level can be a list, a null, or a number instead of an object, and
+two of its fields can hold values of different types.
 
-Guarding them is only half of it. The value they fall back to decides which way an
-unreadable row lands, and the two fall opposite ways on purpose (rule 96):
+Each reader falls back in the direction that keeps the file, and the two readers fall
+opposite ways on purpose:
 
 * ``_has_blocked_protections`` is the only thing standing between a row and a score-based
-  condemn, so an explanation nobody can read reads as BLOCKED. The row abstains and stays
+  condemn, so an explanation nobody can read reads as blocked. The row abstains and stays
   out of the previewed deletion count.
-* ``_fired_gates`` only attributes a row the caller has ALREADY counted as protected, so an
+* ``_fired_gates`` only attributes a row the caller has already counted as protected, so an
   unreadable one contributes no attribution and cannot move anything toward deletion.
 
-A third reader, ``_primary_reason``, sorted the condemned lane's signals on a raw stored
-value; two entries of different types raised a ``TypeError`` and blanked the lane.
+A third reader, ``_primary_reason``, sorts the condemned lane's signals by a raw stored
+value, so it must tolerate a mix of types without raising.
 
-The last class covers the simulator's OTHER tier, the frozen-Facts replay, which had no
-route-level test at all: it now judges through ``snapshot.judge_facts`` and applies the hand
-override through ``snapshot.effective_fate`` rather than assembling that pipeline itself
-(rules 3/22), and the case that matters is a hand reap the engine cannot honor.
+The last class covers the simulator's other tier, the frozen-Facts replay: it judges through
+``snapshot.judge_facts`` and applies the hand override through ``snapshot.effective_fate``
+rather than assembling that pipeline itself, and the case that matters most is a hand reap
+the engine cannot honor.
 """
 
 from __future__ import annotations
@@ -76,11 +75,11 @@ from ._lists import seeded_fingerprint
 from ._reasons import catalog
 
 #: The draft policy every simulation below is run under. Its scoring hash has to be the one
-#: the fixture snapshot was "scored" with, or the route refuses to re-decide at all -- so
-#: the gates and signals here and in ``_fixture_scoring_hash`` are the same list. The
-#: ``whitelisted`` gate is retired (list membership protects through ``on_list`` keep rules
-#: now), so it appears in stored EXPLANATIONS below but never in a draft: the save boundary
-#: refuses it, which ``test_a_retired_gate_is_refused_at_the_save_boundary`` pins.
+#: the fixture snapshot was "scored" with, or the route refuses to re-decide at all, so the
+#: gates and signals here and in ``_fixture_scoring_hash`` are the same list. The
+#: ``whitelisted`` gate is retired, since list membership now protects through ``on_list``
+#: keep rules, so it appears in stored explanations below but never in a draft. The save
+#: boundary refuses it, and ``test_a_retired_gate_is_refused_at_the_save_boundary`` pins that.
 GATES: list[dict[str, Any]] = [
     {"gate": "min_dormancy", "threshold": 1095},
     {"gate": "rating_floor", "threshold": 75},
@@ -243,13 +242,12 @@ ROWS: tuple[Row, ...] = (
     ),
 )
 
-#: The counts the table above adds up to, DERIVED from it, so ``Row.bucket`` is the one
+#: The counts the table above adds up to, derived from it, so ``Row.bucket`` is the one
 #: statement of what each row is owed rather than dead data beside a second hand-kept copy.
 #:
-#: What this can and cannot discriminate, stated plainly (rule 118): the route reports bucket
-#: TOTALS, not a bucket per row, so two rows swapping buckets is invisible here and would stay
-#: invisible however these numbers were written. That is what
-#: ``test_the_unreadable_rows_are_kept_and_the_readable_one_is_not`` is for -- it separates the
+#: This check has a real limit: the route reports bucket totals, not a bucket per row, so
+#: two rows swapping buckets would not show up here. That case is covered instead by
+#: ``test_the_unreadable_rows_are_kept_and_the_readable_one_is_not``, which separates the
 #: rows by the property under test instead of counting them.
 EXPECTED = dict(Counter(r.bucket for r in ROWS))
 
@@ -330,13 +328,13 @@ def _simulate(client: TestClient, condemn_at: int = 70) -> dict[str, Any]:
 
 
 class TestBothTiersSendTheChangedCount:
-    """#488: the panel must never have to know which tier answered.
+    """The panel must never have to know which tier answered.
 
     On the threshold path the count cannot exceed the two deltas: a protection wins at any
     threshold and a hand override wins at any threshold, so the only lane move left is across
-    the threshold itself. That is precisely why the number is SENT rather than worked out in
-    the browser from the deltas -- the arithmetic that holds here is wrong on the replay path
-    (``TestTheFrozenFactsReplay``), and a browser cannot tell which one it is reading.
+    the threshold itself. The server sends this number rather than the browser working it out
+    from the deltas, because that arithmetic is wrong on the replay path
+    (``TestTheFrozenFactsReplay``), and the browser cannot tell which tier answered.
 
     Both expectations are read off ``ROWS``: at 70 the readable unblocked row (``radarr:1:4``)
     condemns while the stored-condemn row whose explanation will not parse gives its reap up,
@@ -365,7 +363,7 @@ class TestBothTiersSendTheChangedCount:
 
 class TestTheSimulationSurvivesABrokenRow:
     def test_the_route_answers_at_all(self, client: TestClient) -> None:
-        """The bug, at its plainest: one legacy row 500ed the preview on every keystroke.
+        """A row with an unreadable explanation must not turn the whole preview into a 500.
 
         ``_simulate`` asserts the 200, so this pins that the answer is a real simulation
         (``exact``) rather than the refusal the route returns when it cannot replay.
@@ -386,7 +384,7 @@ class TestTheSimulationSurvivesABrokenRow:
 
         At a threshold of 1 with no coverage floor, every row here scores over the line.
         Only the two rows whose explanations are readable and clear may be previewed as
-        deletions; the three unreadable ones and the genuinely blocked one must not be. A
+        deletions. The three unreadable ones and the genuinely blocked one must not be. A
         fallback of "nothing was blocking" would report six.
         """
         result = _simulate(client, condemn_at=1)
@@ -398,13 +396,13 @@ class TestTheSimulationSurvivesABrokenRow:
     ) -> None:
         """Giving up a reap is a change the owner is owed a number for.
 
-        The row was condemned when they last reviewed it; the preview no longer condemns
+        The row was condemned when they last reviewed it. The preview no longer condemns
         it, so it belongs in the delta, not silently missing from both counts.
         """
         assert _simulate(client)["no_longer_condemned"] == 1
 
     def test_an_unreadable_protection_still_counts_as_protected(self, client: TestClient) -> None:
-        """The other direction. The row keeps its place in the protected count; all that is
+        """The other direction. The row keeps its place in the protected count. All that is
         lost is the name of the protection that saved it, which is the cautious thing to
         lose. Dropping the row instead would under-report what the draft policy keeps."""
         result = _simulate(client)
@@ -416,9 +414,8 @@ class TestTheQueueSurvivesAMixedSignalBlock:
     def test_the_condemned_lane_renders_and_names_the_readable_signal(
         self, client: TestClient
     ) -> None:
-        """Sorting a number against a string used to raise a TypeError, which blanked every
-        condemned card, not just this one. The reason line now falls back to the entries it
-        can read."""
+        """Sorting a number against a string must not raise, or it blanks every condemned
+        card, not just this one. The reason line falls back to the entries it can read."""
         response = client.get("/api/candidates", params={"verdict": "condemn"})
         assert response.status_code == 200
         rows = {str(r["media_key"]): r for r in response.json()["items"]}
@@ -452,9 +449,9 @@ class TestTheHelpersThemselves:
         self, stored: str, expected: bool
     ) -> None:
         """True keeps the file out of the previewed deletion count, so True is the
-        cautious answer everywhere the record cannot be read -- including a block that is
-        there but malformed, which is why the raw list is consulted and not ``_entries``
-        (which drops the malformed entries and would read it as empty)."""
+        cautious answer everywhere the record cannot be read. This includes a block that is
+        present but malformed, which is why the raw list is read directly rather than
+        through ``_entries`` (which drops the malformed entries and would read it as empty)."""
         assert _has_blocked_protections(stored) is expected
 
     @pytest.mark.parametrize(
@@ -524,8 +521,8 @@ def test_the_fixture_gates_and_signals_are_the_wire_shapes() -> None:
 
 def test_a_retired_gate_is_refused_at_the_save_boundary() -> None:
     """A draft naming ``whitelisted`` is operator input asking for a protection that no
-    longer exists as a gate, so the boundary says so. A STORED body naming it converts on
-    load instead (``policy_migrations.convert_list_protections``); refusing the stored copy
+    longer exists as a gate, so the boundary says so. A stored body naming it converts on
+    load instead (``policy_migrations.convert_list_protections``). Refusing the stored copy
     would take the install offline, and dropping the draft silently would hide the typo."""
     with pytest.raises(ValueError, match="whitelisted"):
         GateSettingIn.model_validate({"gate": "whitelisted"})
@@ -536,22 +533,21 @@ def test_a_retired_gate_is_refused_at_the_save_boundary() -> None:
 # ---------------------------------------------------------------------------
 
 
-#: The replay draft's gates: the shared list plus ``streaming_now``, which the other tier
-#: does not need and this one cannot do without. The replay decides a hand reap off the
-#: explanation it BUILDS from the frozen facts, so a gate the draft does not enable is a
-#: protection the replay cannot see -- and ``streaming_now`` is the only kind of stop a hand
-#: reap still cannot pass, which makes it the only way this tier can exercise a refused reap
-#: at all. Kept off the shared ``GATES`` deliberately: that list is the stored-scores
-#: fixture's hash input, and widening it there would move numbers in tests about something
-#: else entirely.
+#: The replay draft's gates: the shared list plus ``streaming_now``, which this tier needs
+#: and the other one does not. The replay decides a hand reap from the explanation it
+#: builds from the frozen facts, so a gate the draft does not enable is a protection the
+#: replay cannot see. ``streaming_now`` is the only kind of stop a hand reap still cannot
+#: pass, so it is the only way this tier can exercise a refused reap at all. It is kept out
+#: of the shared ``GATES`` on purpose: that list is the stored-scores fixture's hash input,
+#: and widening it there would move numbers in unrelated tests.
 REPLAY_GATES: list[dict[str, Any]] = [*GATES, {"gate": "streaming_now"}]
 
 #: The draft the replay fixture is built for: the wire payload, the domain body it becomes,
 #: and the evidence hash that body would gather under. Built through the route's own
-#: ``_to_body`` so the fixture cannot drift from what the request produces. The keep list
-#: protects through the operator's own rule now -- the ``whitelisted`` FIELD, since the gate
-#: of that name is retired -- so the draft carries the rule the fixture's keep-list row
-#: needs to stay held.
+#: ``_to_body`` so the fixture cannot drift from what the request produces. The keep list now
+#: protects through the operator's own rule, the ``whitelisted`` field, since the gate of
+#: that name is retired. So the draft carries the rule the fixture's keep-list row needs to
+#: stay held.
 REPLAY_PAYLOAD = PolicyIn(
     condemn_at=70,
     coverage_floor_bp=0,
@@ -561,10 +557,10 @@ REPLAY_PAYLOAD = PolicyIn(
 )
 REPLAY_BODY = _to_body(REPLAY_PAYLOAD)
 
-#: The shipped movie policy as an UPGRADED install stores it: identical in every way that
+#: The shipped movie policy as an upgraded install stores it: identical in every way that
 #: decides anything, except that it was written before the current ``SCHEMA_VERSION``. The
-#: wire schema does not carry that field, so this is the body whose round trip used to come
-#: back with a different hash and kill the simulator outright.
+#: wire schema does not carry that field, so a round trip of this body must land on the same
+#: hash as the current one, or the simulator answers with a mismatch it can never clear.
 STORED_OLD_BODY = DEFAULT_MOVIE_POLICY.model_copy(update={"schema_version": SCHEMA_VERSION - 1})
 
 
@@ -589,10 +585,10 @@ def _facts(**overrides: Any) -> Facts:
 
 @pytest.fixture
 def replay_client(tmp_path: Path) -> Iterator[TestClient]:
-    """A snapshot the simulator must REPLAY: same evidence, different scoring.
+    """A snapshot the simulator must replay: same evidence, different scoring.
 
     The stored scoring hash is deliberately not the draft's, so the route cannot answer from
-    stored scores; the stored evidence hash is exactly the draft's, so the frozen Facts are
+    stored scores. The stored evidence hash is exactly the draft's, so the frozen facts are
     still what a scan would gather and the replay is allowed.
     """
     settings, engine, list_hash, now = _boot(tmp_path)
@@ -635,10 +631,10 @@ def replay_client(tmp_path: Path) -> Iterator[TestClient]:
                     created_at=now,
                 )
             )
-        # Nothing about this one could be observed, so every protection is blocked -- and the
-        # owner has hand-reaped it anyway. An empty body is what a row scored before a field
-        # shipped thaws to: every fact Unknown. The engine honors that reap: a check that
-        # could not run is a question the owner may answer.
+        # Nothing about this one could be observed, so every protection is blocked, and the
+        # owner has hand-reaped it anyway. An empty body is what a row with no evidence field
+        # thaws to: every fact reads Unknown. The engine honors that reap, because a check
+        # that could not run is a question the owner may answer.
         session.add(
             Candidate(
                 snapshot_id=snapshot.id,
@@ -655,8 +651,8 @@ def replay_client(tmp_path: Path) -> Iterator[TestClient]:
             )
         )
         # ...and one whose reap the engine still refuses, so the class can fail in both
-        # directions. Somebody is playing it: a structural stop, not a judgment about whether
-        # it is wanted, and the one thing a hand reap has never been able to pass.
+        # directions. Someone is watching it right now: a structural stop rather than a
+        # judgment call, the one kind of hold a hand reap can never pass.
         session.add(
             Candidate(
                 snapshot_id=snapshot.id,
@@ -714,12 +710,14 @@ class TestTheFrozenFactsReplay:
     def test_the_dormant_row_is_condemned_and_the_kept_ones_are_named(
         self, replay_client: TestClient
     ) -> None:
-        """Two removals: the dormant row on score, and the hand reap the engine now honors.
-        Two keeps, each named by the gate that earned it -- the tally comes off the live
+        """Two removals: the dormant row on score, and the hand reap the engine honors.
+        Two keeps, each named by the gate that earned it. The tally comes off the live
         replay's protectors, so a keep that stops firing under the draft stops being counted.
         """
         result = self._replay(replay_client)
         assert result["condemned"] == 2
+        # Only one of the two removals is the owner's own doing, and the panel says which.
+        assert result["hand_reaped"] == 1
         assert result["reclaimable_bytes"] == 2 * SIZE
         assert result["protected_by"] == [
             {"gate": "custom", "count": 1},
@@ -729,14 +727,12 @@ class TestTheFrozenFactsReplay:
     def test_a_hand_reap_the_engine_cannot_honor_is_not_previewed_as_a_deletion(
         self, replay_client: TestClient
     ) -> None:
-        """The reap-held case, and the one the refactor turns on.
+        """The reap-held case, the one this class exists to prove.
 
         Counting a refused reap as a deletion would promise the owner a removal the planner
         holds back, at the exact moment they are choosing a threshold. The row that carries
-        it is now the one being played right now: a structural stop, the only kind a hand
-        reap has never passed. It used to be a row whose every protection was merely
-        *blocked*, which stopped refusing anything -- so left as it was, this test would have
-        gone on passing while covering nothing, which is the failure rule 118 is about.
+        it is one someone is watching right now, a structural stop, the only kind a hand
+        reap can never pass.
 
         The blocked row is still in the fixture and is asserted here too, from the other
         side: the simulator must not hold back a reap the planner will honor either. Both
@@ -750,15 +746,14 @@ class TestTheFrozenFactsReplay:
     def test_it_counts_the_lane_moves_neither_delta_can_see(
         self, replay_client: TestClient
     ) -> None:
-        """#488: ``changed_titles`` is a superset of the two deltas, and the gap is the point.
+        """``changed_titles`` is a superset of the two deltas, and the gap is the point.
 
-        Read off the fixture rather than off the branches: two rows land in a different lane
-        than the one they are stored in. ``radarr:1:1`` goes abstain -> condemn, which crosses
-        the threshold and so appears in ``newly_condemned``. ``radarr:1:2`` goes abstain ->
-        protect on the keep-list fact, and **no delta on the panel counts that move** -- the
-        rows beside them report ``protected`` and ``abstained`` as absolute totals with no
-        before to read them against. The other two rows carry hand overrides, which pin a lane
-        at any threshold, so they cannot move.
+        Two rows land in a different lane than the one they are stored in. ``radarr:1:1``
+        goes abstain to condemn, which crosses the threshold and so appears in
+        ``newly_condemned``. ``radarr:1:2`` goes abstain to protect on the keep-list fact,
+        and no delta on the panel counts that move: ``protected`` and ``abstained`` are
+        absolute totals with no before to read them against. The other two rows carry hand
+        overrides, which pin a lane at any threshold, so they cannot move.
 
         So the two deltas describe this draft as "+1 / -0" while it moves two titles, and the
         superset is what separates that screen from one where nothing happened at all.
@@ -773,10 +768,10 @@ class TestTheFrozenFactsReplay:
 def keep_rule_client(tmp_path: Path) -> Iterator[TestClient]:
     """A snapshot of stored condemns, two of which the draft's protections now keep.
 
-    The scenario an operator reported: they add an outright keep, most of the removal list
-    leaves it, and both deltas read zero. Every row here is stored ``condemn`` with no hand
-    override, so ``was`` is condemn for all three and the only thing that moves them is the
-    draft's own protections firing on the frozen facts.
+    The scenario this covers: an operator adds an outright keep, most of the removal list
+    leaves it, and both deltas must not read zero. Every row here is stored ``condemn`` with
+    no hand override, so ``was`` is condemn for all three, and the only thing that moves them
+    is the draft's own protections firing on the frozen facts.
     """
     settings, engine, list_hash, now = _boot(tmp_path)
     # Two ways out of the removal list and one row that stays on it, so the count cannot come
@@ -824,16 +819,15 @@ def keep_rule_client(tmp_path: Path) -> Iterator[TestClient]:
 
 
 class TestATitleAProtectionRescuesLeavesTheRemovalList:
-    """A title going condemn -> protect is one the operator no longer has to review.
+    """A title going from condemn to protect is one the operator no longer has to review.
 
-    ``no_longer_condemned`` was counted in the replay's abstain arm alone, so it meant
-    condemn -> **abstain** and nothing else. A protection edit is the one that takes a title
-    straight from condemn to protect, which is also the edit the delta exists to describe, so
-    the panel answered an outright keep rule with -0 and a compare line that put the draft's
-    own count on both sides of a sentence built to contrast it.
+    ``no_longer_condemned`` must count a title moving straight from condemn to protect, not
+    only one moving from condemn to abstain. An outright protection edit is exactly this
+    move, so the panel must report it rather than showing "-0" for a rescue that plainly
+    happened.
 
     Expectations are read off the fixture: ``radarr:1:1`` is kept by the keep list and
-    ``radarr:1:2`` by the streaming stop, both from stored condemn; ``radarr:1:3`` has nothing
+    ``radarr:1:2`` by the streaming stop, both from stored condemn. ``radarr:1:3`` has nothing
     to keep it and stays condemned.
     """
 
@@ -862,11 +856,12 @@ class TestATitleAProtectionRescuesLeavesTheRemovalList:
     def test_the_saved_policy_count_is_sent_rather_than_derived(
         self, keep_rule_client: TestClient
     ) -> None:
-        """Rule 144: the panel is told what the saved policy flags, never left to rebuild it.
+        """The server sends the panel what the saved policy flags, rather than leaving the
+        browser to rebuild it from the other counts.
 
-        The identity is asserted alongside the value because the browser used to depend on it
-        and could not check it: a delta that misses a direction breaks the derivation while
-        every number it is built from still reads as a plausible count.
+        The identity below is asserted alongside the value so a delta that misses a direction
+        is caught here: without it, each number involved could still look like a plausible
+        count even though the arithmetic connecting them is wrong.
         """
         result = self._replay(keep_rule_client)
         assert result["condemned_before"] == 3
@@ -876,12 +871,12 @@ class TestATitleAProtectionRescuesLeavesTheRemovalList:
 
 
 class TestSwitchingAProtectionIsPreviewedRatherThanRefused:
-    """The edit an operator makes most often on this page, answered off the last scan.
+    """The edit an operator makes most often on this page must answer off the last scan.
 
-    Toggling a protection used to fall to the refusal: the whole ``gates`` list sat in the
-    evidence hash, so unticking a box blanked every number and asked for a scan, while the
-    rating *bar* inside that same box previewed instantly. The frozen Facts were always good
-    enough for both -- a gate reads them, it does not decide what gets gathered.
+    Toggling a protection on or off must not fall back to the refusal path just because it
+    touches the ``gates`` list. A gate only reads the frozen facts, it does not decide what
+    gets gathered, so the frozen facts are good enough to preview a toggled gate the same way
+    they preview a moved rating bar.
     """
 
     @staticmethod
@@ -911,7 +906,7 @@ class TestSwitchingAProtectionIsPreviewedRatherThanRefused:
     ) -> None:
         """The exclusion that survives, from the route rather than from the hash alone.
 
-        The watcher counts on those rows were counted over one span; a draft asking about a
+        The watcher counts on those rows were counted over one span. A draft asking about a
         different one gets the honest blank, because no arithmetic over the frozen numbers
         can answer it.
         """
@@ -943,8 +938,8 @@ class TestTheWireRoundTripPreservesBothHashes:
     from the stored body. The simulator then answers "Needs a fresh scan" forever, and
     scanning does not help, because each scan records the stored value again.
 
-    Asserting on the hashes rather than on a field list is deliberate: it fails for ANY future
-    field dropped from the wire, without anyone remembering to extend a list (rule 103).
+    Asserting on the hashes rather than on a field list is deliberate: it fails for any future
+    field dropped from the wire, without anyone having to remember to extend a list.
     """
 
     @staticmethod
@@ -953,9 +948,9 @@ class TestTheWireRoundTripPreservesBothHashes:
 
         The re-parse is the request parser, not ceremony. ``_policy_out`` answers with
         ``PolicyBodyOut``, which is deliberately wider than what a save accepts, and the
-        browser posts that same body back: FastAPI validates it as a ``PolicyIn`` before any
+        browser posts that same body back. FastAPI validates it as a ``PolicyIn`` before any
         route sees it. Handing the served model straight to ``_to_body`` would skip the one
-        hop where a body the operator cannot save is caught (#627).
+        hop where a body the operator cannot save is caught.
         """
         out = _policy_out(body, "Movies", requests_app_configured=True, settings=ProfileSettings())
         return _to_body(PolicyIn.model_validate(out.body.model_dump(mode="json")))
@@ -975,9 +970,9 @@ class TestTheWireRoundTripPreservesBothHashes:
 def upgraded_install_client(tmp_path: Path) -> Iterator[TestClient]:
     """An install whose stored policy predates a ``SCHEMA_VERSION`` bump.
 
-    The hashes are recorded exactly as a scan records them -- from the STORED body -- while
-    the request will carry that same policy back through the wire schema. Nothing here is
-    contrived except the version number: this is what every upgraded install looks like.
+    The hashes are recorded exactly as a scan records them, from the stored body, while the
+    request carries that same policy back through the wire schema. Nothing here is contrived
+    except the version number. This is what every upgraded install looks like.
     """
     settings, engine, list_hash, now = _boot(tmp_path)
     with Session(engine) as session:
@@ -1021,11 +1016,10 @@ def upgraded_install_client(tmp_path: Path) -> Iterator[TestClient]:
 class TestAnUpgradedInstallStillGetsNumbers:
     """The operator-visible symptom, pinned at the route.
 
-    The three hash tests above pin the mechanism; this one pins what an operator actually
-    saw. On an install whose stored policy predated a ``SCHEMA_VERSION`` bump, the simulator
-    answered "Needs a fresh scan" for **every** edit and no scan could clear it, because each
-    scan recorded the stored version again while the route hashed the round-tripped one. The
-    panel that exists to make a threshold a decision rather than a guess was simply dead.
+    The three hash tests above pin the mechanism. This one pins what the operator sees: on an
+    install whose stored policy predates a ``SCHEMA_VERSION`` bump, the simulator must answer
+    with real numbers for every edit, not "Needs a fresh scan" forever, since no scan can
+    clear a mismatch caused by the schema version itself.
 
     Asserting through ``POST /api/policy/simulate`` rather than on the hashes is the point: a
     future regression in either hash, in the wire schema, or in the tier order fails here.
@@ -1107,8 +1101,8 @@ def _reach_client(
     like on disk.
     """
     settings, engine, list_hash, now = _boot(tmp_path)
-    # Encoded by production's own codec rather than transcribed (rule 119); only the
-    # deletion is done by hand, because no Facts can express "this key was never written".
+    # Encoded by production's own codec rather than transcribed by hand. Only the deletion
+    # below is manual, because no Facts value can express "this key was never written".
     frozen = facts_codec.facts_to_dict(
         _facts()
         if frozen_reach is None
@@ -1153,13 +1147,13 @@ def _reach_client(
 
 
 class TestTheReplayKnowsHowFarTheStoredHistoryReached:
-    """A row frozen before the reach was a fact still replays against a real reach.
+    """A row frozen before the reach was a tracked fact still replays against a real reach.
 
-    ``facts_from_dict`` thaws a field the snapshot predates as ``Unknown`` (rule 104), and
-    ``ServerPopularityGate`` blocks on that -- correct for a fact nobody recorded, but it
-    would report every pre-upgrade row as held and break this tier's promise to be
-    bit-identical to a fresh scan. The snapshot row carries ``horizon_at``, which is the
-    same instant a re-scan would measure from, so the gap is filled from stored evidence.
+    ``facts_from_dict`` reads a field the snapshot predates as ``Unknown``, and
+    ``ServerPopularityGate`` blocks on that. That is correct for a fact nobody recorded, but
+    it would report every pre-upgrade row as held and break this tier's promise to be
+    identical to a fresh scan. The snapshot row carries ``horizon_at``, the same instant a
+    re-scan would measure from, so the gap is filled from stored evidence instead.
     """
 
     def _condemned(self, client: TestClient) -> int:
@@ -1177,13 +1171,13 @@ class TestTheReplayKnowsHowFarTheStoredHistoryReached:
 
     def test_a_shallow_stored_horizon_holds_the_row(self, tmp_path: Path) -> None:
         """Three months of history behind a one-year window. The zero watcher count is a
-        lower bound, so the protection cannot be reported as checked and the row is held --
-        exactly what the fix is for, arriving through the simulator too."""
+        lower bound, so the protection cannot be reported as checked and the row is held.
+        The simulator must hold it too, the same way a fresh scan would."""
         for client in _reach_client(tmp_path, horizon_days=90):
             assert self._condemned(client) == 0
 
     def test_a_row_that_froze_its_own_reach_keeps_it(self, tmp_path: Path) -> None:
-        """The fill never overwrites. This row recorded a 90-day reach; the snapshot's
+        """The fill never overwrites. This row recorded a 90-day reach, and the snapshot's
         horizon says 800. Replaying it on the snapshot's number would re-judge frozen
         evidence against something the scan did not see, so the row's own value wins."""
         for client in _reach_client(tmp_path, horizon_days=800, frozen_reach=90.0):
@@ -1195,9 +1189,9 @@ class TestTheReplayKnowsHowFarTheStoredHistoryReached:
 # ---------------------------------------------------------------------------
 
 
-#: Rows for the attribution fixture: a hand spare over a row that ALSO cleared a protection.
-#: The middle row is the double-count case -- spared by hand and on the keep list, which is
-#: one gate reported twice, once from the stored explanation and once from the hand spare.
+#: Rows for the attribution fixture, each a hand spare over a row that also cleared a
+#: protection. The middle row is spared by hand and also on the keep list. That reports one
+#: gate twice, once from the stored explanation and once from the hand spare.
 SPARED_ROWS: tuple[tuple[str, str, str], ...] = (
     (
         "radarr:9:1",
@@ -1266,16 +1260,13 @@ def spared_client(tmp_path: Path) -> Iterator[TestClient]:
 class TestAHandSpareIsOneProtectionAmongTheRest:
     """The spared-by tally credits every protection that fired, not the hand spare alone.
 
-    The stored-score tier used to answer a hand-spared row with ``["whitelisted"]`` and throw
-    the row's other protections away, while the replay tier counts them all -- so making ANY
-    scoring edit, which is what moves the route from the first tier to the second, jumped the
-    "why titles were spared" list by whatever those discarded protections came to, beside a
-    headline count and byte total that correctly did not move at all. An edit appears to
-    change which protections fired, when a graded keep cannot change that: it is subtracted
-    after normalization, and the verdict reads protection before it ever reads the score.
+    A hand-spared row can also have cleared a real protection, such as the rating floor. The
+    tally must credit both, not report only ``whitelisted`` and drop the rest, which would
+    make an unrelated scoring edit look like it changed which protections fired even though
+    the headline count and byte total did not move at all.
 
     The two tiers are separate fixtures because they need different stored hashes, so this
-    pins the tier that was wrong against the answer the other one already gave.
+    pins the stored-score tier against the answer the replay tier already gives.
     """
 
     def _tally(self, client: TestClient) -> dict[str, int]:
@@ -1296,18 +1287,17 @@ class TestAHandSpareIsOneProtectionAmongTheRest:
     def test_the_other_protection_on_a_spared_row_is_still_named(
         self, spared_client: TestClient
     ) -> None:
-        """The bug, at its plainest. Both rows are spared by hand, so the hand-spare id is
-        owed 2; the first row also cleared the rating floor, which used to vanish from the
-        tally entirely because the hand spare was counted in its place.
+        """Both rows are spared by hand, so the hand-spare id is owed 2. The first row also
+        cleared the rating floor, and that must show up in the tally too, not vanish because
+        the hand spare was counted in its place.
 
-        The hand spare tallies under its OWN id, not under ``whitelisted``. It rode in on the
-        retired gate's id, and the simulator names a tally row by that id's copy -- so on a
-        fresh install, where no gate emits ``whitelisted`` at all, every hand spare was
-        reported to the operator as membership of a list (rule 144).
+        The hand spare tallies under its own id, never under ``whitelisted``: an operator with
+        no gate that emits ``whitelisted`` at all must still see every hand spare reported
+        correctly, rather than as membership of a list that does not apply to their install.
 
-        The second row's stored ``whitelisted`` explanation is now its own entry beside the
-        hand spare, where the two used to collapse into one. That is the split doing its job:
-        the list is still holding that title, and the operator also spared it by hand.
+        The second row's stored ``whitelisted`` explanation is its own entry beside the hand
+        spare, not collapsed into it: the list is still holding that title, and the operator
+        also spared it by hand, and both facts are shown.
         """
         assert self._tally(spared_client) == {
             "hand_spare": 2,
@@ -1320,8 +1310,8 @@ class TestAHandSpareIsOneProtectionAmongTheRest:
     ) -> None:
         """A gate spares a row once. The second row reports its stored ``whitelisted``
         explanation and is also spared by hand, and a tally that added both would claim more
-        spared titles than the fixture has rows -- so the fix that restores the other
-        protections must not restore this one twice.
+        spared titles than the fixture has rows. So restoring the other protections must not
+        restore this one twice.
 
         The two are separate rows now, which is the point: one says what a list is holding,
         the other says what the operator did by hand.
@@ -1331,27 +1321,21 @@ class TestAHandSpareIsOneProtectionAmongTheRest:
 
 
 class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:
-    """The protection lists are not policy, and every tier reads evidence derived from them.
+    """The protection lists are not policy, and every tier must refuse to answer once list
+    membership changes, even though membership lives outside the policy hash entirely.
 
-    While the keep tags lived on the policy body they sat inside ``PolicyBody.evidence_hash``,
-    so retagging them made the panel ask for a scan. Moving membership into gathered evidence
-    (``Facts.on_lists``) moved them out from under that hash and put nothing back: an operator
-    could retag, repoint or rename a list and the panel went on reporting the membership the
-    scan froze, labeled exact (#512). ``Snapshot.list_config_hash`` is what put it back.
+    ``Snapshot.list_config_hash`` records the list membership a scan saw. If the live
+    registry's fingerprint no longer matches it, the simulator must refuse rather than
+    silently reuse the frozen membership and label the answer exact.
 
-    **The operator action here is a tag edit that leaves the name alone**, and the choice is
-    what makes these proofs rather than coincidences. Adding a list attaches a keep rule and
-    renaming one rewrites the rules that spell it (``api.lists``), so both edit the stored
-    policies -- and the route mixes the OTHER media type's stored policy into every hash it
-    compares (``_combined``), so either action refuses through the policy hash whether this
-    interlock exists or not. Verified by deleting the interlock: the add-a-list and rename
-    versions of these tests stayed green, which is rule 118's undiscriminating test exactly.
-    Changing only ``config`` touches no policy, so the fingerprint is the single variable.
+    The operator action driving each test is a tag edit that leaves the list's name alone, so
+    only its membership fingerprint changes and nothing about the stored policy does. That
+    isolates list membership as the one variable moving.
 
-    Both tiers are driven, because the refusal sits above the split and each goes stale by its
-    own route -- the replay through the frozen fact, the threshold path through the stored
-    verdict that fact produced. Gating tier 2 alone would leave the identical wrong number
-    reachable by moving a threshold, which is the edit this page exists for (rule 72).
+    Both tiers are driven, because each can go stale by its own route: the replay through the
+    frozen fact, and the threshold path through the stored verdict that fact produced. Testing
+    only one tier would leave the other free to answer with a stale number by moving a
+    threshold instead.
     """
 
     @staticmethod
@@ -1393,12 +1377,13 @@ class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:
     def test_a_snapshot_that_never_recorded_its_lists_refuses(
         self, client: TestClient, tmp_path: Path
     ) -> None:
-        """The pre-upgrade shape: ``None`` reads as unknown, never as "no lists" (rule 104).
+        """The pre-upgrade shape: a null ``list_config_hash`` must read as unknown, never as
+        "no lists".
 
         Driven by clearing the recorded value rather than by building a second fixture, so
-        what is pinned is the NULL itself and not some other difference between two
-        snapshots. ``tmp_path`` is the one the ``client`` fixture built this database in --
-        pytest hands the same directory to a fixture and the test that asks for it.
+        what is pinned is the null itself and not some other difference between two
+        snapshots. ``tmp_path`` is the one the ``client`` fixture built this database in.
+        Pytest hands the same directory to a fixture and the test that asks for it.
         """
         assert _simulate(client, 40)["exact"] is True
 
@@ -1414,16 +1399,17 @@ class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:
         assert after["stale_reason"]["k"] == "gathers_differently"
 
     def test_two_unknowns_are_not_a_match(self, client: TestClient, tmp_path: Path) -> None:
-        """Both sides ``None`` is the pairing an equality test reads as agreement.
+        """Both sides null must still refuse, even though a plain equality check would read
+        two nulls as a match.
 
-        ``None`` means "unknown" on each side and they are different unknowns: the snapshot's
-        is a scan that degraded for a registry it could not read, and the live one is a
-        registry that cannot be read right now. Comparing them answered "exact" off a scan
-        that had itself given up on the lists, which is the one case where the frozen
-        membership is least trustworthy (rules 93, 104).
+        Null means "unknown" on each side, and they are different unknowns: the snapshot's
+        null means a scan that degraded for a registry it could not read, and the live null
+        means a registry that cannot be read right now. Treating the two as equal would
+        answer "exact" for a scan that had already given up on its lists, which is the one
+        case where the frozen membership is least trustworthy.
 
-        Both sides are driven to ``None`` at once, because either alone already refuses
-        through the inequality and would leave this green with the fix removed (rule 118).
+        Both sides are driven to null at once, because either alone already refuses through
+        the inequality check and would pass even if the null-versus-null case were broken.
         """
         assert _simulate(client, 40)["exact"] is True
 
@@ -1431,9 +1417,9 @@ class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:
         engine = sa_create_engine(settings.sync_database_url)
         with Session(engine) as session:
             session.execute(sa_update(Snapshot).values(list_config_hash=None))
-            # A body that will not parse makes `definitions(strict=True)` raise, which is
-            # what `current_fingerprint` answers `None` to. The row stays in the table, so
-            # this is the live registry being unreadable rather than being empty.
+            # A body that will not parse makes `definitions(strict=True)` raise, and
+            # `current_fingerprint` answers that with `None`. The row stays in the table, so
+            # this is the live registry being unreadable, not empty.
             session.execute(
                 sa_update(ListConfig)
                 .where(ListConfig.source == "arr_tag")
@@ -1448,9 +1434,9 @@ class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:
 
 
 class TestTheSimStaleReasonVocabulary:
-    """Every ``SimStale`` member composes under ``policySim.staleReason.*``, both directions
-    (rule 145's shape, modeled on ``test_review_chips.TestTheChipVocabulary``). The
-    population is the enum itself rather than a hand-maintained id set, since ``_refused``
+    """Every ``SimStale`` member composes under ``policySim.staleReason.*``, in both
+    directions, modeled on ``test_review_chips.TestTheChipVocabulary``. The population
+    checked is the enum itself rather than a hand-maintained id set, since ``_refused``
     (``api/simulate.py``) emits exactly ``kind.value`` for every kind."""
 
     def test_every_sim_stale_value_has_catalog_copy(self) -> None:

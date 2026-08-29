@@ -59,7 +59,7 @@ function Histogram({ buckets, threshold }: { buckets: number[]; threshold: numbe
 
 /** The heading this panel shows while a rescan runs, and the sentence the app says when one
  *  starts. One string, because a reader lands on that heading in the next breath and two
- *  copies of one fact drift (rule 144); `PolicyEditor` announces it from here.
+ *  copies of one fact would drift. `PolicyEditor` announces it from here.
  *
  *  A function, not a constant: a string resolved in a module body stays in whatever language
  *  was serving when the module first loaded (`i18n-module-scope.test.ts`). */
@@ -78,11 +78,11 @@ export const rescanQueuedLead = () => i18next.t("policySim.rescanQueuedLead");
  *  `PolicyEditor`'s save mutation starts that scan itself.
  *
  *  One string, rendered here and in the savebar, because the two surfaces answer the same
- *  question and an operator reads them in either order (rule 144). It used to be the
- *  savebar's alone, which is the bar at the bottom of the LEFT column -- so an operator
- *  watching this panel's numbers move had nowhere on it to learn that the list they review
- *  had not moved with them. The refusal notice below carries the same news for the edits
- *  that cannot preview; this is the sentence for the ones that can. */
+ *  question and an operator reads them in either order. The savebar sits at the bottom of
+ *  the left column, so an operator watching this panel's numbers move needs this sentence
+ *  here too, or they would have nowhere on this panel to learn the list they review has not
+ *  moved with them. The refusal notice below carries the same news for the edits that cannot
+ *  preview; this is the sentence for the ones that can. */
 export const appliesOnNextScan = () => i18next.t("policySim.appliesOnNextScan");
 
 /** The "needs a scan" state. Informational, not an error: you didn't do anything wrong,
@@ -110,8 +110,8 @@ export function StaleNotice({
   onScan: () => void;
   percent: number;
   detail: string;
-  /** Which refusal this is, from the server. Null exactly when the counts are exact --
-   *  nothing is stale, so there is no refusal to name. */
+  /** Which refusal this is, from the server. Null exactly when the counts are exact,
+   *  since nothing is stale, so there is no refusal to name. */
   staleKind: SimStale | null;
   /** The server's typed reason for that refusal, composed here into the body paragraph. */
   staleReason: ReasonKey | null;
@@ -122,24 +122,24 @@ export function StaleNotice({
    *
    *  A heading only. The paragraph under it is the server's own `stale_reason`, so the
    *  sentence the operator reads and the sentence a reviewer reads are one string
-   *  (`api/simulate.py`'s `_refused`, rule 144) -- they used to be two, and the frontend's copy
-   *  was the only one anybody ever saw. An id this build does not know keeps the general
-   *  heading and still renders that sentence, which is rule 66's "fallback handles unknown
-   *  ids only": the server is always able to say what happened, even to an older browser. */
+   *  (`api/simulate.py`'s `_refused`). An id this build does not know keeps the general
+   *  heading and still renders that sentence: the server is always able to say what happened,
+   *  even to an older browser. */
   const STALE_HEADINGS: Record<SimStale, string> = {
     gathers_differently: t("policySim.staleHeadings.gathersDifferently"),
     seasons_not_recorded: t("policySim.staleHeadings.seasonsNotRecorded"),
     // Names the control, never the cause: the episode map is also missing after a scan that
-    // ran WITH the hold on and got no answer from Sonarr, and "turning that on" told that
-    // operator they had done something they had not.
+    // ran with the hold on and got no answer from Sonarr, and "turning that on" would tell
+    // that operator they had done something they had not.
     in_progress_not_read: t("policySim.staleHeadings.inProgressNotRead"),
   };
 
-  // "Scan now" replaces its own branch with the progress bar, and it is `disabled` from the press,
-  // so focus is at `<body>` before the swap. Nothing focusable mounts in its place in ANY state of
-  // this notice, so the target is the heading -- which is the same DOM node either side of the
-  // swap (child 0 of both arms) and whose text becomes the sentence worth hearing (#173). The
-  // pattern `useSavebarFocus` sets: after a completed action, the name of what you are looking at.
+  // "Scan now" replaces its own branch with the progress bar, and it is `disabled` from the
+  // press, so focus is at `<body>` before the swap. Nothing focusable mounts in its place in
+  // any state of this notice, so the target is the heading, which is the same DOM node either
+  // side of the swap (child 0 of both arms) and whose text becomes the sentence worth hearing.
+  // The pattern `useSavebarFocus` sets: after a completed action, the name of what you are
+  // looking at.
   const afterStart = useSuccessorFocus();
   return (
     <div className="sim sim-info">
@@ -166,20 +166,18 @@ export function StaleNotice({
       ) : (
         <>
           {/* The server's reason, composed here rather than restated. It states the condition
-              and never who caused it: this notice used to open "You changed what the scan
-              reads" at operators who had changed nothing, because any upgrade adding a field
-              to the hashed body leaves the recorded hash unmatchable until the next scan.
+              and never who caused it: an operator who changed nothing can still see this,
+              because any upgrade adding a field to the hashed body leaves the recorded hash
+              unmatchable until the next scan.
 
-              It used to be a hardcoded paragraph here that named a keep tag, a season rule
-              and the watch span all at once, beside a second copy in api/simulate.py that
-              nothing ever rendered. Three refusals now, each with its own remedy, and a
-              season rule previews rather than reaching any of them. `policySim.staleReason.<id>`
-              (docs/history/I18N_PLAN.md §5) is composed from the one id `_refused` sends, so
-              the reviewed sentence and the read sentence stay one catalog entry (rule 144).
+              Three refusals exist today, each with its own remedy, and a season rule previews
+              rather than reaching any of them. `policySim.staleReason.<id>` is composed from
+              the one id `_refused` sends, so the reviewed sentence and the read sentence stay
+              one catalog entry.
 
               gathers_differently also fires with no policy edit at all, when the operator
               changes a protection list: the numbers then predate the lists, which is why the
-              sentence states the mismatch and never names an edit (#512). */}
+              sentence states the mismatch and never names an edit. */}
           <p>
             {staleReason
               ? composeIn("policySim.staleReason", staleReason)
@@ -221,7 +219,7 @@ export function Outcome({
    *  False while the answer on screen is a previous draft's. `PolicyEditor` keeps the last
    *  result rendered across a refetch, so "is this an edit" and "what did that edit do" can
    *  describe two different bodies for a round trip, and the sentence below is categorical
-   *  enough that the mismatch reads as a finding rather than as a stale number (rule 85). */
+   *  enough that the mismatch reads as a finding rather than as a stale number. */
   edited: boolean;
   /** Which policy this simulation ran under, so the spared-by list's `gateMeta` label can
    *  pick the movie/TV wording the same way the rewatch card's own copy does. */
@@ -245,11 +243,24 @@ export function Outcome({
         </div>
       </div>
 
+      {/* Hand reaps condemn at any threshold, so without this line a maxed-out slider
+          beside a nonzero headline reads as the sliders not working. */}
+      {simulation.hand_reaped > 0 && (
+        <p className="help">
+          {simulation.hand_reaped === simulation.condemned
+            ? t("policySim.handReapsAll")
+            : t("policySim.handReapsSome", {
+                n: simulation.hand_reaped,
+                count: count(simulation.hand_reaped),
+              })}
+        </p>
+      )}
+
       {/* The comparison needs a draft to compare, so it renders only once there is one: with
           nothing edited it put the same number on both sides of a sentence built to contrast
           them, and the headline above already answers the untouched case on its own. On an
           inert edit the sentence IS the finding, which is why that branch stays. A `Notice`
-          would be the wrong shape -- `NoticeTone` is error/warn and the component treats tone
+          would be the wrong shape: `NoticeTone` is error/warn, and the component treats tone
           as a claim about severity, which this is not. */}
       {edited && (
         <>
@@ -270,7 +281,7 @@ export function Outcome({
           {/* Under the same `edited` gate as the line above, and for the same reason: with
               nothing edited there is no save to describe, and an unprompted "a scan will
               start" beside numbers already drawn from the last one reads as a demand. It
-              belongs on BOTH branches -- an inert edit saves and scans exactly like any
+              belongs on BOTH branches: an inert edit saves and scans exactly like any
               other, and that operator has the most reason to wonder why a scan began. */}
           <p className="help">{appliesOnNextScan()}</p>
         </>
@@ -304,10 +315,10 @@ export function Outcome({
           <h3>{t("policySim.whyTitlesWereSpared")}</h3>
           <dl className="sim-delta">
             {/* Every id the server can send is named in `gateMeta`, which `satisfies` keeps
-                complete over `GateId`. The fallback is rule 66's, for an id from a server
-                newer than this browser: it used to be `titleCase`, which printed the engine's
-                own slug ("Season Progression", "Custom") as the reason a title was kept, in
-                the panel read while deciding what to delete (#551, rule 21). */}
+                complete over `GateId`. The fallback handles an id from a server newer than
+                this browser, and it never prints the raw slug: a `titleCase` fallback would
+                print the engine's own slug ("Season Progression", "Custom") as the reason a
+                title was kept, in the panel read while deciding what to delete. */}
             {simulation.protected_by.map((g) => (
               <div key={g.gate}>
                 <dt>{gateMeta(mediaType)[g.gate]?.label ?? unnamedGateLabel()}</dt>
@@ -322,8 +333,8 @@ export function Outcome({
         {/* First, because it is the only row that summarizes the other four. The two deltas
             below count what enters and leaves the removal list, and the two after them are
             absolute counts with no before to read them against, so a protection edit that
-            moved a sixth of the spared set into "not judged" left every number on this panel
-            holding still (#488). */}
+            moves titles from the spared set into "not judged" can leave every other number on
+            this panel holding still. */}
         <div className="sim-changed">
           <dt>{t("policySim.summary.titlesThatChange")}</dt>
           <dd>{count(simulation.changed_titles)}</dd>
@@ -351,11 +362,11 @@ export function Outcome({
       {pace && (
         <p className="help">
           {/*
-            Grace is a NOTICE, not a gate: nothing on the deletion path reads the window
-            (services/grace.py), so "nothing is removed until it has waited out the
-            N-day grace period" promised a hold that does not exist. What grace does is
-            show a title as leaving for N days; what keeps it is a spare, a play, or the
-            fact that a person starts every run.
+            Grace only displays a countdown. Nothing on the deletion path reads the window
+            (services/grace.py), so "nothing is removed until it has waited out the N-day
+            grace period" would promise a hold that does not exist. Grace shows a title as
+            leaving for N days; what actually keeps it is a spare, a play, or the fact that a
+            person starts every run.
           */}
           {pace.caps_enabled
             ? t("policySim.pace.withCaps", {
@@ -364,7 +375,7 @@ export function Outcome({
                 days: pace.grace_days,
               })
             : // Caps off: the executor skips the per-run and rolling checks, so there is no
-              // size limit to promise here (B-2). The countdown is unaffected by the switch.
+              // size limit to promise here. The countdown is unaffected by the switch.
               t("policySim.pace.noCaps", { days: pace.grace_days })}
         </p>
       )}

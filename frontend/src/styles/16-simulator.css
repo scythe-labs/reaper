@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The live simulator. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* ---- simulator ----------------------------------------------------------- */
+ * The live simulator. See `../index.css` for how this file fits into the stylesheet's load
+ * order. */
 
 .editor-sim {
   position: sticky;
@@ -18,8 +17,8 @@
 }
 
 /* The refusal. It must not look like a result. */
-/* "Needs a scan" is INFORMATION, not a warning: neutral surface, solid border, no alarm
-   color. You didn't do anything wrong; the numbers just need refreshing. */
+/* "Needs a scan" is information, not a warning: neutral surface, solid border, no alarm
+   color. The numbers just need refreshing, and nothing here is the operator's fault. */
 .sim-info {
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
@@ -35,7 +34,7 @@
   margin-top: var(--space-lg);
 }
 
-/* The acknowledgement inside the Plex-trash warning (PlexTrashNotice). It sits INSIDE the
+/* The acknowledgement inside the Plex-trash warning (PlexTrashNotice). It sits inside the
    notice on purpose: the consent is bound to the warning that motivates it, the way help
    text binds to the one control it explains. Its rule is drawn from the notice's own
    border color, so it reads as part of the warning rather than a separate control. */
@@ -152,9 +151,9 @@
 .sim-delta .sim-changed {
   grid-column: 1 / -1;
   /* Packed, not spread. The four rows below inherit `space-between` and read fine because a
-     column is narrow; across both columns it parks the count a whole panel-width from the
-     label it belongs to, and the one row meant to be read at a glance is the one that makes
-     you scan for its number. */
+     column is narrow. Across both columns, `space-between` would park the count a whole
+     panel-width from the label it belongs to, and the one row meant to be read at a glance
+     would be the one that makes you scan for its number. */
   justify-content: start;
   gap: var(--space-md);
 }
@@ -163,7 +162,7 @@
   font-weight: var(--weight-medium);
 }
 /* "New on the list": the titles a draft would newly flag, score on the right in the
-   condemn color -- the same verdict language as everywhere else. */
+   condemn color, the same verdict language as everywhere else. */
 .sim-examples {
   list-style: none;
   margin: 0.4rem 0 0.9rem;
@@ -180,10 +179,11 @@
 .sim-examples li:last-child {
   border-bottom: none;
 }
-/* The break opportunity rule 139 owes a server-supplied title, granted on the title itself and
-   not on the flex row around it. `anywhere` counts its break opportunities in min-content
-   sizing, so a flex item inheriting it has a minimum of one character, and the row squeezed the
-   score down to that: a title long enough to wrap broke "64" into a 6 above a 4. */
+/* The break opportunity a server-supplied title needs is granted on the title itself, not
+   on the flex row around it. `anywhere` counts its break opportunities in min-content
+   sizing, so a flex item inheriting it has a minimum of one character, and the row would
+   squeeze the score down to that: a title long enough to wrap would break "64" into a 6
+   above a 4. */
 .sim-example-title {
   overflow-wrap: anywhere;
 }

@@ -24,10 +24,10 @@ router = APIRouter(prefix="/api")
 
 
 def _db_bytes(base: Path) -> int:
-    """The size of one SQLite database on disk, including its live WAL.
+    """Return one SQLite database's size on disk, including its live WAL.
 
-    The one implementation lives with the backup service, which weighs the same files
-    to size a download; the About page and the Backup panel must not drift apart.
+    The backup service holds the only implementation, since it weighs the same files
+    to size a download. The About page and the Backup panel must show the same number.
     """
     return backup.db_size_on_disk(base)
 
@@ -48,10 +48,13 @@ async def about(request: Request) -> AboutOut:
 
 @router.get("/about/update", tags=[api_tags.ABOUT])
 async def update_status(request: Request) -> UpdateOut:
-    """Whether a newer Reaper exists, from this build's channel: a release compares
-    against the newest published release, a dev build against the tip of the dev
-    branch. Answered from a shared cache that holds for hours; a check that cannot
-    answer returns unknown rather than an error, so this route never fails a page."""
+    """Say whether a newer Reaper is available.
+
+    A release build compares against the newest published release. A dev build
+    compares against the tip of the dev branch. The answer comes from a shared cache
+    that holds for hours. If the check itself fails, the answer is unknown rather
+    than an error, so this route never fails the page.
+    """
     checker: UpdateChecker = request.app.state.update_checker
     status = await checker.status()
     return UpdateOut(

@@ -26,21 +26,10 @@ working in a tree you have not touched yet.
 
 ## The four things most likely to trip you
 
-**A comment may not claim a safeguard that is not implemented.** If a comment names a guard,
-cite the function that is the guard, and confirm it is called. A review pass once found six
-protections that existed only as prose.
-
-**A gate is judged by its exit code.** A pipeline reports its last command's status, so
-piping a build to `tail` reports success while the compiler fails behind it. Run each gate
-alone and read `$?`. Reporting a gate green on a pipe's exit code is a false statement about
-the work.
-
-**Fix every sibling of the thing you fixed, in the same change.** Copied functions, mirrored
-lists, and repeated sentences all drift the same way. Search for them before you close.
-
-**Nothing identifying, anywhere.** No real titles, hostnames, paths, usernames, or library
-statistics, in code, docs, tests, or commit messages. Findings from real data are recorded
-as ratios and shapes.
+Rule 7/24: a comment may not claim a safeguard that isn't implemented. Rule 72: fix every
+sibling of what you fixed, in the same change. Rule 134: a gate is judged by its exit code,
+never the output you kept. The nothing-identifying golden rule: no real titles, hosts, paths,
+usernames, or stats, anywhere in the tree. CLAUDE.md carries all four in full.
 
 ## Ground truth
 

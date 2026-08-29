@@ -1,44 +1,30 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """In-process brute-force throttling and CPU-shedding for the login endpoints.
 
-The login routes (``/api/auth/local``, ``/recover``, and the Plex sign-in pair) are
-the only unauthenticated, state-establishing surface Reaper exposes, and every one
-of them is covered here. ``POST /api/auth/local`` runs a full Argon2id verification on every
-call (deliberately, even for a nonexistent user, so timing does not enumerate
-usernames -- see :mod:`reaper.services.login`). Argon2id is *meant* to be
-expensive, which turns that endpoint into two problems for an internet- or
-LAN-exposed instance:
+Every unauthenticated Reaper endpoint that can open a session is covered here: local
+login, recovery, and the Plex sign-in pair. Local login always runs a full Argon2id
+check, even for a username that does not exist, so timing cannot reveal which
+usernames are real (see :mod:`reaper.services.login`). Argon2id is deliberately slow,
+which creates two risks on an instance reachable over a LAN or the internet: a script
+guessing passwords, and a flood of login attempts that pins the CPU and starves the
+real operator. Plex sign-in has no password to guess, but a flood of successful calls
+to ``POST /api/auth/plex/start`` can still hammer plex.tv, so that endpoint is bounded
+by a plain rate limit instead of a failed-attempt lockout.
 
-* **Credential brute-forcing.** Nothing slows a scripted dictionary attack down
-  except Argon2's per-attempt cost, and attempts can be issued concurrently.
-* **CPU exhaustion.** Each request forces a heavy hash, so a flood pins the CPU
-  and denies the legitimate operator service.
-
-The Plex sign-in endpoints are unauthenticated too, and cost differently: they
-have no password to guess, but ``POST /api/auth/plex/start`` writes a pending row
-and fires an outbound request to plex.tv. A flood of *successful* calls is the
-problem there, so a consecutive-failure lockout never trips -- what bounds it is a
-plain rate limit (S-1).
-
-This module answers all three, dependency-free and in-process (no Redis, no
+Three tools answer this, all in-process with no external dependency (no Redis, no
 slowapi):
 
-* :class:`Throttle` tracks consecutive failures per key -- we key on both the
-  client IP and the attempted username -- and, past a threshold, refuses further
-  attempts for a growing back-off window. That is the brute-force lock.
-* :class:`RateLimiter` caps how many calls one key may make in a window, whether
-  or not they succeed. That is the flood and amplification bound.
-* :class:`ConcurrencyGate` caps how many Argon2 verifications may be in flight at
-  once, shedding load (a fast refusal) rather than piling on more hashing.
+* :class:`Throttle` locks out a key, the client IP plus the attempted username, after
+  too many consecutive failures, with a growing back-off window. This is the
+  brute-force lock.
+* :class:`RateLimiter` caps how many calls one key may make in a window, regardless of
+  outcome. This bounds floods and amplification.
+* :class:`ConcurrencyGate` caps how many Argon2 verifications run at once, so a flood
+  is refused quickly instead of piling on more hashing.
 
-Both are process-local. Under multiple worker processes each keeps its own
-counters; that weakens the global bound but never the fail-closed direction --
-the worst case is an attacker gets N processes' worth of threshold, still finite,
-still far short of unthrottled. A single-worker deployment (the default) gets the
-full guarantee.
-
-Nothing here blocks on I/O or awaits, so every method is atomic with respect to
-the single event loop: there is no read-modify-write race to guard against.
+Each worker process keeps its own counters, so a multi-worker deployment gets a
+looser but still finite bound, while a single-worker deployment, the default, gets the
+full one. Nothing here awaits, so every method runs atomically on the event loop.
 """
 
 from __future__ import annotations
@@ -105,7 +91,7 @@ class Throttle:
         """Note a failed attempt for ``key``; return the resulting lockout seconds.
 
         The return value is 0.0 until the threshold is crossed, then the length of
-        the back-off window now in force -- the caller can log a warning the first
+        the back-off window now in force. The caller can log a warning the first
         time it becomes non-zero.
         """
         now = self.clock()
@@ -126,7 +112,7 @@ class Throttle:
         return 0.0
 
     def record_success(self, key: str) -> None:
-        """Clear ``key`` -- a genuine login forgives its own prior failures."""
+        """Clear ``key``. A genuine login forgives its own prior failures."""
         self._buckets.pop(key, None)
 
     def reset(self) -> None:
@@ -155,14 +141,15 @@ class _Window:
 class RateLimiter:
     """A fixed-window call cap per key, counting every call rather than failures.
 
-    :class:`Throttle` above locks out a key that keeps guessing WRONG, which is the right
+    :class:`Throttle` above locks out a key that keeps guessing wrong, which is the right
     shape for a password. It is the wrong shape for an endpoint whose calls all succeed:
-    ``/api/auth/plex/start`` inserts a pending row and asks plex.tv for a PIN every time,
-    so a script can flood the table and get the install's egress address rate-limited by
-    plex.tv -- locking the real operator out of Plex sign-in -- without ever failing once.
+    ``/api/auth/plex/start`` inserts a pending row and asks plex.tv for a PIN on every
+    call, so a script can flood the table and get the install's egress address
+    rate-limited by plex.tv, locking the real operator out of Plex sign-in, without ever
+    failing once.
 
-    A fixed window (rather than a sliding one) is deliberate: it is a handful of numbers
-    per key, it cannot be gamed into more than ``2 * limit`` calls across a window
+    A fixed window, rather than a sliding one, is deliberate: it needs only a handful of
+    numbers per key, it cannot be gamed into more than ``2 * limit`` calls across a window
     boundary, and that bound is far below what the flood needs. Idle keys are swept the
     same way :class:`Throttle` sweeps its buckets.
     """
@@ -199,20 +186,18 @@ class RateLimiter:
 
 
 class ConcurrencyGate:
-    """A non-blocking cap on how many HASHES may be in flight at once.
+    """A non-blocking cap on how many Argon2 hashes may be in flight at once.
 
-    Used to bound in-flight Argon2 verifications: when the gate is full, a new
-    login sheds load (the caller returns a fast "busy" rather than queuing more
-    expensive hashing). A plain integer counter is correct here because
-    :meth:`acquire` and :meth:`release` never await -- on the single event loop
-    they are atomic -- and the awaits between them (the login's DB work) do not
-    touch the counter.
+    When the gate is full, a new login sheds load: the caller returns a fast "busy"
+    response instead of queuing more expensive hashing. A plain integer counter works
+    here because :meth:`acquire` and :meth:`release` never await. They run atomically on
+    the single event loop, and the awaits between them, the login's own database work,
+    never touch the counter.
 
-    Slots are hashes, not requests. ``admin_password.verify`` runs one Argon2
-    verification per local admin, so a single gated request used to occupy one slot
-    while doing N verifications' worth of work -- the bound rule 11 asks for was
-    counting the wrong thing, and a multi-admin install multiplied the CPU behind
-    every slot (S-4). Callers now take as many slots as hashes they intend to run.
+    A slot counts one hash, not one request. ``admin_password.verify`` runs one Argon2
+    verification per local admin, so a multi-admin install can need several hashes for a
+    single login. Callers take as many slots as hashes they intend to run, so the gate
+    bounds actual CPU work rather than request count.
     """
 
     def __init__(self, limit: int) -> None:
@@ -228,7 +213,7 @@ class ConcurrencyGate:
 
         The count is clamped to the gate's own limit, so a caller wanting more hashes
         than the gate has slots waits for a quiet moment rather than being refused
-        forever -- the clamp is why the return value matters: pass it back to
+        forever. Because of that clamp, the return value matters: pass it back to
         :meth:`release` rather than assuming what was taken.
         """
         want = max(1, min(slots, self._limit))
@@ -260,7 +245,7 @@ recover_throttle = Throttle(threshold=10, base_delay=1.0, max_delay=120.0, decay
 # The settings endpoints that verify the admin password (arming deletion, changing the
 # password itself) share this lockout. They are authenticated, but the admin password is
 # still a guessable secret behind them: a borrowed session cookie or an unattended tab
-# must not get an unthrottled Argon2 oracle. Same strictness as login.
+# must not get unlimited fast guesses against it. Same strictness as login.
 password_throttle = Throttle(threshold=5, base_delay=2.0, max_delay=300.0, decay=900.0)
 argon2_gate = ConcurrencyGate(_ARGON2_MAX_CONCURRENCY)
 

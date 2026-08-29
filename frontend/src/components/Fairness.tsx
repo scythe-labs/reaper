@@ -3,14 +3,14 @@
 // Scales: where the disk went, and to whom.
 //
 // The screen you reach for when the question is not "what should I delete?" but "who is my
-// library actually for?" One card per requester -- the balance bar weighs how much of the
-// disk they were granted the last scan keeps against how much it would reclaim, and the
-// watched % on the side says how much of what they asked for they used themselves.
+// library actually for?" One card per requester. The balance bar weighs how much of the disk
+// they were granted the last scan keeps, against how much it would reclaim. The watched %
+// on the side shows how much of what they asked for they used themselves.
 //
 // Every card opens its person panel (the why-panel shell, in ScalesPanel), whether or not
-// the scan condemns anything of theirs: the panel is their whole request story, not just a
-// reap list. App owns which person is open and renders the panel beside this list, exactly
-// as the review screen renders the why-panel beside the queue.
+// the scan condemns anything of theirs. The panel tells their whole request story, not just
+// a reap list. App owns which person is open and renders the panel beside this list, the same
+// way the review screen renders the why-panel beside the queue.
 //
 // It deletes nothing. It reads the last scan, so it can never disagree with Review.
 
@@ -48,17 +48,17 @@ function RefreshIcon() {
   );
 }
 
-/** Share of their OWN requests this person has watched at least once. A behavioral signal
- *  (did the asker use what they asked for), kept apart from the disk balance below.
+/** Share of their OWN requests this person has watched at least once. This is a behavioral
+ *  signal (did the asker use what they asked for), kept apart from the disk balance below.
  *
- *  `null` when there is no history to take a share OF, which `watchReach` answers for both
- *  surfaces. A Seerr account nobody linked to a Plex account has no watches Reaper can see at
- *  all: `fairness._roll_up` counts plays only inside `if pid is not None`, so `played_by_them`
- *  is structurally 0 rather than measured, and `plays_by`'s own docstring makes guarding the
- *  None the caller's job. An empty mirror is the same zero reached the other way, and used to
- *  slip through here because this only checked the account. Rendering either as a red 0% told
- *  the operator a confident zero about somebody Reaper never looked at, on the screen where
- *  they decide whose files to delete. `ScalesPanel` is the twin (rule 72). */
+ *  Returns `null` when there is no history to take a share of, which `watchReach` answers for
+ *  both surfaces. A Seerr account with no linked Plex account has no watches Reaper can see at
+ *  all. `fairness._roll_up` counts plays only inside `if pid is not None`, so `played_by_them`
+ *  is structurally 0 rather than measured, and `plays_by`'s own docstring puts guarding against
+ *  that None on the caller. An empty mirror produces the same zero from the other direction, so
+ *  this checks both cases, not just the account. Rendering either as a red 0% would tell the
+ *  operator a confident zero about somebody Reaper never looked at, on the screen where they
+ *  decide whose files to delete. `ScalesPanel` carries the same check. */
 function watchedPct(row: RequesterRow, reach: WatchReach): number | null {
   if (!reachIsMeasured(reach)) return null;
   if (row.requests_made === 0) return 0;
@@ -81,10 +81,10 @@ export function PersonCard({
   row: RequesterRow;
   selected: boolean;
   onSelect: (identity: string) => void;
-  /** How far back the watch mirror reaches, from the report the rows came in. Null is an
-   *  empty mirror, where no play is visible for anyone and the card shows no percentage.
-   *  Required rather than defaulted: a card that silently fell back to a span would be the
-   *  confident zero this exists to stop. */
+  /** How far back the watch mirror reaches, from the report the rows came in. Null means an
+   *  empty mirror, where no play is visible for anyone and the card shows no percentage. This
+   *  is required rather than defaulted, since a card that silently fell back to a span would
+   *  produce the confident zero this exists to stop. */
   horizonAt: string | null;
 }) {
   const { t } = useTranslation();
@@ -98,10 +98,10 @@ export function PersonCard({
   const open = () => onSelect(row.identity);
 
   return (
-    // A plain container: `CardOpen` on the name is the control, and this click is the redundant
-    // mouse affordance. It carried `role="button"`, whose Children Presentational pruned the
-    // card's whole body out of the accessibility tree -- the request count, the granted figure,
-    // the kept/reclaimable balance and the watched percentage -- leaving one name (#169).
+    // This is a plain container. `CardOpen` on the name is the control, and this click is a
+    // redundant mouse affordance. A `role="button"` container would prune the card's whole body
+    // from the accessibility tree via Children Presentational, hiding the request count, the
+    // granted figure, the kept/reclaimable balance, and the watched percentage behind one name.
     <div className={`fair-card clickable${selected ? " selected" : ""}`} onClick={open}>
       <span className="fair-avatar" aria-hidden="true">
         {initial(row.name)}
@@ -205,36 +205,38 @@ export function Fairness({
   const queryClient = useQueryClient();
   const select = onSelectPerson ?? (() => {});
 
-  // The board's own copy already warns this can take a moment, so a wait that runs long is the
-  // expected case here rather than a fault. It is still said, because the operator who cannot
-  // see the spinner is the one that copy does not reach (#332).
+  // The board's own copy already warns this can take a moment, so a long wait here is expected
+  // rather than a fault. This still announces it, because an operator who cannot see the
+  // spinner is the one that written copy does not reach.
   useSlowWait(isPending ? t("scales.board.slowWait") : null);
 
   // Scales reads live requests and watch history, so a refresh pulls the latest without a full
   // scan. Invalidating the "fairness" prefix refetches the board and any open person panel.
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ["fairness"] });
 
-  // Defined once and rendered in BOTH states, because the state that needs it most is the one
-  // with no people on the board: a fresh portal, or ids the scan has not backfilled, leaves
-  // every request unmatched, and this tile is the only thing explaining why the page is empty.
-  // It used to live inside the has-people branch, so it was hidden exactly then (B-27).
+  // Defined once and rendered in both states. The state that needs it most is the one with no
+  // people on the board. A fresh portal, or ids the scan has not backfilled yet, leaves every
+  // request unmatched, and this tile is the only thing explaining why the page is empty. Keep
+  // it defined outside both branches, since nesting it inside the has-people branch would hide
+  // it exactly when it matters most.
   const notInScanTile = data && data.not_in_scan > 0 && (
     <button
       type="button"
       className={`fair-stat fair-stat-btn${unmatchedSelected ? " selected" : ""}`}
       onClick={() => onOpenUnmatched?.()}
-      // No `aria-expanded`: this opens NotInScanPanel, which App renders in a different subtree
-      // entirely, so the attribute promised a disclosure whose content sits nowhere near it and
-      // pointed at nothing. It is the same gesture as a review card opening the why panel, and
-      // those claim nothing either. What tells the operator it opened is the panel itself, which
-      // names itself and, on a phone where it covers the screen, takes focus (WhyShell).
+      // This carries no `aria-expanded`. It opens NotInScanPanel, which App renders in a
+      // different subtree entirely, so that attribute would promise a disclosure whose content
+      // sits nowhere near it. This is the same gesture as a review card opening the why panel,
+      // and those carry no such attribute either. What tells the operator it opened is the
+      // panel itself. It names itself, and on a phone, where it covers the screen, it takes
+      // focus (`WhyShell`).
     >
-      {/* The `{" "}` between each span is load-bearing, not formatting. A name is computed by
-          concatenating the text of the children, and JSX drops the newline between two
-          elements -- so with the spans merely stacked, this control announced as one run-on
-          word ("40Not in the last scanrequested since...") and the count an operator is being
-          asked to act on was not heard as a number at all (#284). A whitespace-only anonymous
-          flex item is not rendered (CSS Flexbox 4.1), so the tile draws exactly as before. */}
+      {/* The `{" "}` between each span is load-bearing, not formatting. The accessible name is
+          computed by concatenating the text of the children, and JSX drops the newline between
+          two elements. Without these spaces, the spans would announce as one run-on word
+          ("40Not in the last scanrequested since..."), and the count an operator must act on
+          would not be heard as a number. A whitespace-only anonymous flex item is not rendered
+          (CSS Flexbox 4.1), so the tile still draws the same. */}
       <span className="fair-stat-num amber">{count(data.not_in_scan)}</span>{" "}
       <span className="fair-stat-lbl">{t("scales.board.notInScanLabel")}</span>{" "}
       <span className="fair-stat-sub">{t("scales.board.notInScanSub")}</span>{" "}
@@ -266,16 +268,17 @@ export function Fairness({
         <p className="blurb">{t("scales.board.blurb")}</p>
       </div>
 
-      {/* Divided, and without the exception string rule 21 forbids. The board is refetched by
-          the Refresh button above and by every override, so this sat over a fully drawn board
-          saying the read had failed (#190).
+      {/* This has two branches. The board is refetched by the Refresh button above and by every
+          override, so a single check here could sit over a fully drawn board while claiming
+          the read had failed.
 
-          The server's own sentence is preferred to a fixed one. Scales refuses with a 400
+          The server's own sentence is preferred over a fixed one. Scales refuses with a 400
           naming the services it needs, and an install with Tautulli plus an *arr and no Seerr
-          is scan-ready by the wizard's own account, so that refusal is the DEFAULT reading of
-          this tab: "Couldn't load Scales." left those operators a dead tab naming nothing they
-          could act on (#412). `ApiError` is the gate because only that carries a reason Reaper
-          wrote; a fetch failure's own message is not operator copy (rule 21). */}
+          is scan-ready by the wizard's own account, so that refusal is the common case for this
+          tab. A fixed "Couldn't load Scales." would leave those operators a dead tab naming
+          nothing they could act on. `ApiError` is the gate because only that type carries a
+          reason Reaper wrote. A fetch failure's own message is not written for an operator to
+          read. */}
       {error && !data && (
         <Notice tone="error">
           {error instanceof ApiError ? describeError(error) : t("scales.board.loadFailed")}
@@ -283,8 +286,8 @@ export function Fairness({
       )}
       {error && data && <StaleReadNotice what={t("scales.board.staleWhat")} />}
       {isPending && (
-        // Live region dropped: it was mounted in the same commit as its text, which several
-        // readers never announce (#332). `useSlowWait` above speaks it instead.
+        // This carries no live region. A live region mounted in the same commit as its text is
+        // not announced by several screen readers. `useSlowWait` above announces this instead.
         <div className="fair-loading">
           <span className="spinner spinner-xl" aria-hidden="true" />
           <p className="fair-loading-lead">{t("scales.board.loadingLead")}</p>
@@ -321,10 +324,10 @@ export function Fairness({
             {notInScanTile}
           </div>
 
-          {/* Every card's percentage is counted over this span, so it is named whatever the
-              span is. It used to render only when there WAS one, which left the worst case --
-              a mirror that has never synced, where each card said a red 0% -- as the one case
-              with no caveat at all. The drawer prints the same line (rule 72). */}
+          {/* Every card's percentage is counted over this span, so this line names whatever
+              the span is. This always renders, even for the worst case, a mirror that has
+              never synced, where every card would otherwise show a red 0% with no caveat at
+              all. The drawer prints the same line. */}
           <p className="fair-horizon muted">{mirrorNote(data.horizon_at)}</p>
 
           <div className="fair-list">

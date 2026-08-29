@@ -1,25 +1,22 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Transport-subclass parity for the httpx -> httpx2 migration.
+"""Pins the httpx2 transport-extension contract that ``GuardedTransport`` depends on.
 
-``GuardedTransport`` (clients/base.py) is the safety linchpin: it subclasses
-``httpx2.AsyncBaseTransport``, inspects each request's method / path / extensions, and
-either refuses a mutation or delegates to an inner transport. It is now ported, alongside
-the whole BaseClient stack and its respx tests (see docs/history/PLAN-narrative.md).
-This file pinned the one
-library contract that port depended on before it landed -- that httpx2's
-``AsyncBaseTransport`` extension point behaves identically to httpx's -- and stays as a
-permanent regression pin on that contract now that the port is done.
+``GuardedTransport`` (clients/base.py) is the safety guard on every outgoing request: it
+subclasses ``httpx2.AsyncBaseTransport``, inspects each request's method, path, and
+extensions, and either refuses a mutation or delegates to an inner transport. This file
+proves, independently of that class, that httpx2's ``AsyncBaseTransport`` extension point
+behaves the way ``GuardedTransport`` needs it to.
 
-Three properties, each the exact shape base.py uses:
-  * an override of ``handle_async_request`` is invoked for every request,
+Three properties, each the exact shape base.py relies on:
+  * an override of ``handle_async_request`` runs for every request,
   * it sees the same duck-typed request (``method``, ``url.path``, and the per-request
     ``extensions`` dict that carries ``reaper_mutation_approved``),
-  * its return value reaches the caller, and an exception it raises is NOT swallowed and
-    the inner transport is never touched.
+  * its return value reaches the caller, and an exception it raises also reaches the
+    caller, without the inner transport ever being touched.
 
-If any of these ever regresses, the base.py port is unsafe and must stop here, at a test,
-rather than at a live server. This is a migration probe, not a second home for the guard's
-policy -- ``RuntimeSafety`` and the real refusal messages stay in the one production class.
+If any of these regresses, ``GuardedTransport`` is unsafe, and this test catches it before a
+live server does. This file only checks the library contract; ``RuntimeSafety`` and the real
+refusal messages stay in the one production class.
 """
 
 from __future__ import annotations
@@ -31,10 +28,10 @@ BASE = "https://arr.test"
 
 
 class _RecordingInner(httpx2.AsyncBaseTransport):
-    """Stands in for ``AsyncHTTPTransport``: records what reached the wire and returns 200.
+    """A stand-in for ``AsyncHTTPTransport``. Records what reached the wire and returns 200.
 
-    A request only lands here if the guard above it chose to delegate, so ``seen`` staying
-    empty is the proof that a refusal happened *before* the send.
+    A request only lands here if the guard above it chose to delegate. An empty ``seen``
+    list proves a refusal happened before the send.
     """
 
     def __init__(self) -> None:
@@ -47,13 +44,15 @@ class _RecordingInner(httpx2.AsyncBaseTransport):
 
 
 class _BlockedError(RuntimeError):
-    """The migration probe's stand-in for ``SafetyViolationError``."""
+    """This test file's stand-in for ``SafetyViolationError``."""
 
 
 class _MiniGuard(httpx2.AsyncBaseTransport):
-    """``GuardedTransport``'s shape, minimized to the transport mechanism under test:
-    refuse a non-safe method unless the per-request mutation-approved extension is set,
-    otherwise delegate to the inner transport."""
+    """A minimal version of ``GuardedTransport``'s transport mechanism.
+
+    It refuses a non-safe method unless the per-request mutation-approved extension is
+    set, and otherwise delegates to the inner transport.
+    """
 
     _SAFE = frozenset({"GET", "HEAD", "OPTIONS"})
 

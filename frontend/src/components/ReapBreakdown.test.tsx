@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The reap breakdown: the ledger (policy verdict, hand changes, the net), the by-reason
-// bars, the empty/error/no-scan states, and the two pointers off the page.
-import { screen, waitFor } from "@testing-library/react";
+// The reasons/ledger card: why the policy condemned them, and the folded ledger behind the
+// total. The summary card beside this one (ReapPlan.tsx) owns every other state (loading, a
+// failed read, no scan yet, and nothing to reap), so this card renders nothing at all in
+// those states rather than saying the same thing twice.
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReapBreakdown as Breakdown, ScanStatus } from "../api";
@@ -20,7 +22,7 @@ vi.mock("../api", async (importOriginal) => ({
 
 const GB = 1024 ** 3;
 
-/** A scan status with nothing running -- the shape `api.scanStatus` returns. */
+/** A scan status with nothing running, the shape `api.scanStatus` returns. */
 const idleScan: ScanStatus = {
   running: false,
   phase: "idle",
@@ -72,8 +74,18 @@ function full(overrides: Partial<Breakdown> = {}): Breakdown {
   };
 }
 
-function renderBreakdown(onPlex = () => {}, onReview = () => {}) {
-  return renderWithProviders(<ReapBreakdown onGoToPlexSettings={onPlex} onGoToReview={onReview} />);
+function renderBreakdown(onReview = () => {}) {
+  return renderWithProviders(<ReapBreakdown onGoToReview={onReview} />);
+}
+
+/** Opens the closed-by-default ledger fold and returns its panel. */
+async function openLedger(user: ReturnType<typeof userEvent.setup>) {
+  const summary = await screen.findByText("How this number was reached");
+  const disclosure = summary.closest("details") as HTMLDetailsElement;
+  expect(disclosure.open).toBe(false);
+  await user.click(summary);
+  expect(disclosure.open).toBe(true);
+  return disclosure;
 }
 
 beforeEach(() => {
@@ -85,207 +97,13 @@ beforeEach(() => {
   apiMock.startScan.mockResolvedValue({ ...idleScan, running: true });
 });
 
-describe("the ledger", () => {
-  // This is the count an operator checks before reaping: what the policy condemned, what they
-  // changed by hand, and how many files are actually going. A figure read out without the label
-  // beside it is a number with no meaning, on the page that decides how much gets deleted.
+describe("the by-reason bars", () => {
   it("has no accessibility violations", async () => {
     const { container } = renderBreakdown();
-    await screen.findByText("Condemned by your policy");
+    await screen.findByText("Gone unwatched too long");
     await expectNoA11yViolations(container);
   });
 
-  it("shows the policy verdict, the hand changes, and the net", async () => {
-    renderBreakdown();
-    expect(await screen.findByText("Condemned by your policy")).toBeInTheDocument();
-    expect(screen.getByText("You spared by hand")).toBeInTheDocument();
-    expect(screen.getByText("You marked to reap by hand")).toBeInTheDocument();
-    expect(screen.getByText("Will be reaped")).toBeInTheDocument();
-    expect(screen.getByText(/402 movies, 167 TV seasons/)).toBeInTheDocument();
-  });
-
-  it("collapses to just the net when there are no hand changes", async () => {
-    apiMock.reapBreakdown.mockResolvedValue(
-      full({ hand_spared: 0, hand_reaped: 0, will_reap: 543, policy_condemned: 543 }),
-    );
-    renderBreakdown();
-    expect(await screen.findByText("Will be reaped")).toBeInTheDocument();
-    // The funnel rows only appear once a hand change has moved the number.
-    expect(screen.queryByText("Condemned by your policy")).not.toBeInTheDocument();
-    expect(screen.queryByText("You spared by hand")).not.toBeInTheDocument();
-  });
-
-  it("names how many can't be measured and won't be removed", async () => {
-    apiMock.reapBreakdown.mockResolvedValue(
-      full({ will_reap: 569, will_reap_unknown: 4, movies_unknown: 3, seasons_unknown: 1 }),
-    );
-    renderBreakdown();
-    expect(
-      await screen.findByText(/4 titles can't be measured, so Reaper won't remove/),
-    ).toBeInTheDocument();
-    // With the allowance off the planner drops those 4, so the headline and total count only
-    // 565, and the raw 569 never appears (B-8).
-    expect(screen.getAllByText("565").length).toBeGreaterThan(0);
-    expect(screen.queryByText("569")).not.toBeInTheDocument();
-    // And the split subtracts the same four, so the page states ONE number for one reap:
-    // 399 + 166 = 565, never the raw 402 + 167 (B-5, rule 30).
-    expect(screen.getByText(/399 movies, 166 TV seasons/)).toBeInTheDocument();
-  });
-
-  it("rewords the unmeasured line when the allowance admits them", async () => {
-    apiMock.profile.mockResolvedValue(profileWith(10)); // allowance on
-    apiMock.reapBreakdown.mockResolvedValue(
-      full({ will_reap: 569, will_reap_unknown: 4, movies_unknown: 3, seasons_unknown: 1 }),
-    );
-    renderBreakdown();
-    // Allowance on: the planner admits the unmeasured, so the line must not promise they are
-    // kept, and the count is not reduced (B-8).
-    expect(
-      await screen.findByText(/Only as many as your Unknown-size items limit allows are removed/),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/won't remove them/)).not.toBeInTheDocument();
-    // Not reduced: the unmeasured stay in the count when the allowance admits them -- and in
-    // the split, which follows the same set.
-    expect(screen.getAllByText("569").length).toBeGreaterThan(0);
-    expect(screen.getByText(/402 movies, 167 TV seasons/)).toBeInTheDocument();
-  });
-
-  it("says a reap removes nothing when every condemned title is unmeasured", async () => {
-    // The old empty-state test was `will_reap === 0`, which renders a full ledger totaling
-    // zero when the whole list is held back for want of a size (B-5).
-    apiMock.reapBreakdown.mockResolvedValue(
-      full({
-        will_reap: 4,
-        will_reap_unknown: 4,
-        movies: 3,
-        movies_unknown: 3,
-        seasons: 1,
-        seasons_unknown: 1,
-      }),
-    );
-    renderBreakdown();
-    expect(await screen.findByText(/would remove nothing/)).toBeInTheDocument();
-    expect(screen.getByText(/couldn't measure any of the titles/)).toBeInTheDocument();
-    expect(screen.queryByText("Will be reaped")).not.toBeInTheDocument();
-  });
-
-  it("says it couldn't check the allowance rather than printing an adjusted count", async () => {
-    apiMock.profile.mockRejectedValue(new Error("boom"));
-    apiMock.reapBreakdown.mockResolvedValue(
-      full({ will_reap: 569, will_reap_unknown: 4, movies_unknown: 3, seasons_unknown: 1 }),
-    );
-    renderBreakdown();
-    const notice = await screen.findByText(
-      /couldn't check how many titles with no known size it may remove/,
-    );
-    expect(notice).toHaveClass("notice-warn");
-    // Neither answer may be stated as fact: not the held-back 565, not the raw 569 (B-16).
-    expect(screen.queryByText("565")).not.toBeInTheDocument();
-    expect(screen.queryByText("569")).not.toBeInTheDocument();
-    expect(screen.queryByText("Will be reaped")).not.toBeInTheDocument();
-  });
-
-  it("reports held hand reaps rather than dropping them", async () => {
-    apiMock.reapBreakdown.mockResolvedValue(full({ hand_reaped_held: 2 }));
-    renderBreakdown();
-    // The operator marked reaps the engine won't honor yet: say so (PR-2), and name the
-    // operation that is actually holding them -- this reap, never "a scan" (U-10).
-    expect(await screen.findByText(/2 reaps you marked are on hold/)).toBeInTheDocument();
-    expect(screen.queryByText(/a scan won't remove/)).not.toBeInTheDocument();
-  });
-
-  it("says when expired spares are keeping titles out of the reap, and offers the scan", async () => {
-    // Those titles are counted in "You spared by hand" and absent from the total, and until
-    // this line existed nothing on the page said why. A spare's clock is realized only by a
-    // scan, so a scan is the remedy offered -- and the copy must not claim the reap will take
-    // them, because it will not.
-    apiMock.reapBreakdown.mockResolvedValue(full({ hand_spared: 12, spares_expired: 3 }));
-    renderBreakdown();
-    const notice = (await screen.findByText(/3 titles are kept by spares that expired/)).closest(
-      "p",
-    )!;
-    expect(notice).toHaveClass("notice-warn");
-    expect(notice.textContent).toContain("This reap won't remove them");
-    expect(notice.textContent).toContain("A new scan judges them again");
-    expect(screen.getByRole("button", { name: "Scan now" })).toBeInTheDocument();
-  });
-
-  it("says it in the singular for one, and stays silent at zero", async () => {
-    apiMock.reapBreakdown.mockResolvedValue(full({ spares_expired: 1 }));
-    const { unmount } = renderBreakdown();
-    expect(await screen.findByText(/1 title is kept by a spare that expired/)).toBeInTheDocument();
-    unmount();
-
-    apiMock.reapBreakdown.mockResolvedValue(full({ spares_expired: 0 }));
-    renderBreakdown();
-    await screen.findByText("Will be reaped");
-    expect(screen.queryByText(/expired/)).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Scan now" })).not.toBeInTheDocument();
-  });
-
-  it("starts the scan it offers, and says so while one is running", async () => {
-    // The notice offers exactly one action, so it has to work: a click starts a scan, and a
-    // scan already running (this one, the scheduler's, another device's) replaces the offer
-    // rather than inviting a second start. The refresh when it ends is the shell's job
-    // (useScanSettled), which is why this component may be navigated away from mid-scan.
-    apiMock.reapBreakdown.mockResolvedValue(full({ spares_expired: 2 }));
-    const user = userEvent.setup();
-    renderBreakdown();
-
-    await user.click(await screen.findByRole("button", { name: "Scan now" }));
-
-    expect(apiMock.startScan).toHaveBeenCalledTimes(1);
-    // The started status is seeded into the shared cache, so the label flips without waiting
-    // for a poll to come back around.
-    await waitFor(() => expect(screen.getByRole("button", { name: "Scanning…" })).toBeDisabled());
-  });
-
-  it("says the scan didn't start, in the tone every other failure uses", async () => {
-    // An action that fails silently reads as an action that did nothing. Its own notice in
-    // the shared error tone, not red text tucked inside the warning (rule 42).
-    apiMock.reapBreakdown.mockResolvedValue(full({ spares_expired: 2 }));
-    apiMock.startScan.mockRejectedValue(new Error("nope"));
-    const user = userEvent.setup();
-    renderBreakdown();
-
-    await user.click(await screen.findByRole("button", { name: "Scan now" }));
-
-    const failure = await screen.findByText("The scan didn't start. Try again.");
-    expect(failure).toHaveClass("notice-error");
-  });
-
-  it("reads the count in document order and the press failure as an interruption (#375)", async () => {
-    // The two sit two lines apart and are the clearest statement of the distinction in the
-    // tree: the count is scan-derived and true before the page loaded, so it is furniture; the
-    // failure answers the Scan now press inside it. Both are asserted here rather than only the
-    // first, because the flag that silences one would silence the other just as quietly.
-    apiMock.reapBreakdown.mockResolvedValue(full({ spares_expired: 2 }));
-    apiMock.startScan.mockRejectedValue(new Error("nope"));
-    const user = userEvent.setup();
-    renderBreakdown();
-
-    const standing = await screen.findByText(/2 titles are kept by spares that expired/);
-    expect(standing.closest(".notice")).not.toHaveAttribute("role", "alert");
-
-    await user.click(await screen.findByRole("button", { name: "Scan now" }));
-
-    const failure = await screen.findByText("The scan didn't start. Try again.");
-    expect(failure).toHaveAttribute("role", "alert");
-  });
-
-  it("shows the notice even when the reap would remove nothing", async () => {
-    // The case that matters most: every condemned title was spared, and those spares have
-    // since expired. The ledger collapses to its empty state, so if this line lived inside it
-    // the operator would be told nothing at all.
-    apiMock.reapBreakdown.mockResolvedValue(
-      full({ will_reap: 0, will_reap_bytes: 0, hand_spared: 543, spares_expired: 4 }),
-    );
-    renderBreakdown();
-    expect(await screen.findByText(/4 titles are kept by spares that expired/)).toBeInTheDocument();
-  });
-});
-
-describe("the by-reason bars", () => {
   it("name each signal in plain words and carry the overlap note", async () => {
     renderBreakdown();
     expect(await screen.findByText("Gone unwatched too long")).toBeInTheDocument();
@@ -302,54 +120,243 @@ describe("the by-reason bars", () => {
   });
 });
 
-describe("the states that are not a full ledger", () => {
-  it("says nothing would be reaped when the net is empty", async () => {
+describe("the closed-by-default ledger fold", () => {
+  it("stays closed until opened, then shows the policy verdict, the hand changes, and the net", async () => {
+    const user = userEvent.setup();
+    renderBreakdown();
+    await screen.findByText("Gone unwatched too long");
+
+    const disclosure = await openLedger(user);
+    expect(within(disclosure).getByText("Condemned by your policy")).toBeInTheDocument();
+    expect(within(disclosure).getByText("You spared by hand")).toBeInTheDocument();
+    expect(within(disclosure).getByText("You marked to reap by hand")).toBeInTheDocument();
+    expect(within(disclosure).getByText("Will be reaped")).toBeInTheDocument();
+    expect(within(disclosure).getByText("569")).toBeInTheDocument();
+  });
+
+  it("still shows what was condemned when there are no hand changes to fold in", async () => {
+    // The fold exists to answer "how was this number reached", and condemned is where the
+    // number in front of the fold started, whether or not a hand change moved it since.
+    apiMock.reapBreakdown.mockResolvedValue(
+      full({ hand_spared: 0, hand_reaped: 0, will_reap: 543, policy_condemned: 543 }),
+    );
+    const user = userEvent.setup();
+    renderBreakdown();
+    await screen.findByText("Gone unwatched too long");
+
+    const disclosure = await openLedger(user);
+    expect(within(disclosure).getByText("Condemned by your policy")).toBeInTheDocument();
+    expect(within(disclosure).getByText("Will be reaped")).toBeInTheDocument();
+    // The spared/reaped rows only appear once a hand change has actually moved the number.
+    expect(within(disclosure).queryByText("You spared by hand")).not.toBeInTheDocument();
+    expect(within(disclosure).queryByText("You marked to reap by hand")).not.toBeInTheDocument();
+  });
+
+  it("says the whole count is hand reaps when the policy condemns nothing", async () => {
+    // With no policy-condemned titles there are no reason bars, so this line is the only
+    // thing telling the operator the count is their own doing, not the policy's.
+    apiMock.reapBreakdown.mockResolvedValue(
+      full({
+        policy_condemned: 0,
+        policy_condemned_bytes: 0,
+        condemned_by: [],
+        hand_spared: 0,
+        hand_reaped: 195,
+        will_reap: 195,
+      }),
+    );
+    renderBreakdown();
+    await screen.findByText(/Your policy condemns nothing right now/);
+  });
+
+  it("leaves the hand-reaps line off while the policy condemns anything", async () => {
+    renderBreakdown();
+    await screen.findByText("Gone unwatched too long");
+    expect(screen.queryByText(/Your policy condemns nothing right now/)).not.toBeInTheDocument();
+  });
+
+  it("shows the held-back row when unmeasured titles are actually held back", async () => {
+    apiMock.reapBreakdown.mockResolvedValue(
+      full({ will_reap: 569, will_reap_unknown: 4, movies_unknown: 3, seasons_unknown: 1 }),
+    );
+    const user = userEvent.setup();
+    renderBreakdown();
+    await screen.findByText("Gone unwatched too long");
+
+    const disclosure = await openLedger(user);
+    const row = within(disclosure)
+      .getByText("Held back, size unknown")
+      .closest(".rb-row") as HTMLElement;
+    expect(within(row).getByText("− 4")).toBeInTheDocument();
+  });
+
+  it("leaves the held-back row off when nothing is held back", async () => {
+    const user = userEvent.setup();
+    renderBreakdown(); // the default fixture's will_reap_unknown is 0
+    await screen.findByText("Gone unwatched too long");
+
+    const disclosure = await openLedger(user);
+    expect(within(disclosure).queryByText("Held back, size unknown")).not.toBeInTheDocument();
+  });
+
+  it("leaves the held-back row off once the allowance admits them instead", async () => {
+    apiMock.profile.mockResolvedValue(profileWith(10)); // allowance on: nothing is held back
+    apiMock.reapBreakdown.mockResolvedValue(
+      full({ will_reap: 569, will_reap_unknown: 4, movies_unknown: 3, seasons_unknown: 1 }),
+    );
+    const user = userEvent.setup();
+    renderBreakdown();
+    await screen.findByText("Gone unwatched too long");
+
+    const disclosure = await openLedger(user);
+    expect(within(disclosure).queryByText("Held back, size unknown")).not.toBeInTheDocument();
+  });
+
+  it("subtracts the same unmeasured titles the allowance holds back", async () => {
+    apiMock.reapBreakdown.mockResolvedValue(
+      full({ will_reap: 569, will_reap_unknown: 4, movies_unknown: 3, seasons_unknown: 1 }),
+    );
+    const user = userEvent.setup();
+    renderBreakdown();
+    await screen.findByText("Gone unwatched too long");
+
+    // With the allowance off (the default), the planner drops those 4, so the ledger's total
+    // counts only 565. The raw 569 never appears in it.
+    const disclosure = await openLedger(user);
+    expect(within(disclosure).getByText("565")).toBeInTheDocument();
+    expect(within(disclosure).queryByText("569")).not.toBeInTheDocument();
+  });
+
+  it("keeps the unmeasured in the total once the allowance admits them", async () => {
+    apiMock.profile.mockResolvedValue(profileWith(10)); // allowance on
+    apiMock.reapBreakdown.mockResolvedValue(
+      full({ will_reap: 569, will_reap_unknown: 4, movies_unknown: 3, seasons_unknown: 1 }),
+    );
+    const user = userEvent.setup();
+    renderBreakdown();
+    await screen.findByText("Gone unwatched too long");
+
+    const disclosure = await openLedger(user);
+    expect(within(disclosure).getByText("569")).toBeInTheDocument();
+  });
+
+  it("follows a single title to Review from the footnote", async () => {
+    const onReview = vi.fn();
+    const user = userEvent.setup();
+    renderBreakdown(onReview);
+    await screen.findByText("Gone unwatched too long");
+
+    const disclosure = await openLedger(user);
+    await user.click(within(disclosure).getByRole("button", { name: "Review" }));
+    expect(onReview).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the states this card leaves to the summary card beside it", () => {
+  // Every one of these is already said once, in the summary card. Saying it again here would
+  // tell the operator the same thing twice on one page.
+  it("renders nothing while the read is pending", async () => {
+    apiMock.reapBreakdown.mockReturnValue(new Promise(() => {}));
+    const { container } = renderBreakdown();
+    // The sibling profile and scan-status reads (useHoldsBackUnmeasured, the expired-spares
+    // notice) still resolve, so this waits for them to settle before asserting the empty
+    // read: reapBreakdown itself never does, so the card stays empty either way.
+    await waitFor(() => expect(apiMock.profile).toHaveBeenCalled());
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("renders nothing on a failed read", async () => {
+    apiMock.reapBreakdown.mockRejectedValue(new Error("boom"));
+    const { container } = renderBreakdown();
+    await waitFor(() => expect(apiMock.reapBreakdown).toHaveBeenCalled());
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
+  });
+
+  it("renders nothing before the first scan", async () => {
+    apiMock.reapBreakdown.mockResolvedValue(full({ has_snapshot: false }));
+    const { container } = renderBreakdown();
+    await waitFor(() => expect(apiMock.reapBreakdown).toHaveBeenCalled());
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
+  });
+
+  it("renders nothing when a reap would remove nothing", async () => {
     apiMock.reapBreakdown.mockResolvedValue(
       full({ will_reap: 0, policy_condemned: 0, hand_spared: 0, hand_reaped: 0 }),
     );
-    renderBreakdown();
-    expect(await screen.findByText(/would remove nothing/)).toBeInTheDocument();
-  });
-
-  it("prompts a scan before the first one", async () => {
-    apiMock.reapBreakdown.mockResolvedValue(full({ has_snapshot: false }));
-    renderBreakdown();
-    expect(await screen.findByText(/No scan yet/)).toBeInTheDocument();
-  });
-
-  it("says it couldn't look, in the amber tone, on a failed load", async () => {
-    apiMock.reapBreakdown.mockRejectedValue(new Error("boom"));
-    renderBreakdown();
-    const notice = await screen.findByText(/Couldn't load what a reap would remove/);
-    expect(notice).toHaveClass("notice-warn");
+    const { container } = renderBreakdown();
+    await waitFor(() => expect(apiMock.reapBreakdown).toHaveBeenCalled());
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
   });
 });
 
-describe("the pointers off the page", () => {
-  it("routes to Plex settings and to the review queue", async () => {
-    const onPlex = vi.fn();
-    const onReview = vi.fn();
-    renderBreakdown(onPlex, onReview);
-    const person = userEvent.setup();
-    await person.click(await screen.findByRole("button", { name: /Settings → Plex/ }));
-    await waitFor(() => expect(onPlex).toHaveBeenCalledTimes(1));
-    await person.click(screen.getByRole("button", { name: /Review queue/ }));
-    await waitFor(() => expect(onReview).toHaveBeenCalledTimes(1));
-  });
-});
-
-describe("the arrows drawn on the pointers off this page", () => {
-  // The glyph sat INSIDE the button's text, so it landed in the accessible name and a reader said
-  // the punctuation as part of the control: "See Review right arrow" (#177). Hidden, not removed
-  // -- it is drawn exactly as before.
-  //
-  // `toHaveAccessibleName` with the whole string, never a substring matcher: /Review queue/ was
-  // already satisfied by the broken name and is what let this sit here.
-  it("keeps them out of what a reader calls the control", async () => {
-    renderBreakdown();
-
-    expect(await screen.findByRole("button", { name: /Review queue/ })).toHaveAccessibleName(
-      "Review queue",
+describe("the allowance read failing", () => {
+  it("still shows why, but drops the ledger it cannot stand behind", async () => {
+    apiMock.profile.mockRejectedValue(new Error("boom"));
+    apiMock.reapBreakdown.mockResolvedValue(
+      full({ will_reap: 569, will_reap_unknown: 4, movies_unknown: 3, seasons_unknown: 1 }),
     );
+    renderBreakdown();
+    // The reasons a reap would draw from are still real, even though the total is not.
+    expect(await screen.findByText("Gone unwatched too long")).toBeInTheDocument();
+    expect(screen.queryByText("How this number was reached")).not.toBeInTheDocument();
+  });
+});
+
+describe("the pointers this card still owns", () => {
+  it("reports held hand reaps rather than dropping them", async () => {
+    apiMock.reapBreakdown.mockResolvedValue(full({ hand_reaped_held: 2 }));
+    renderBreakdown();
+    // The operator marked reaps the engine won't honor yet. Say so, and name the operation
+    // actually holding them: this reap, never "a scan".
+    expect(await screen.findByText(/2 reaps you marked are on hold/)).toBeInTheDocument();
+    expect(screen.queryByText(/a scan won't remove/)).not.toBeInTheDocument();
+  });
+
+  it("says when expired spares are keeping titles out of the reap, and offers the scan", async () => {
+    // Those titles are counted in "You spared by hand" and absent from the total. A spare's
+    // clock only advances on a scan, so a scan is the remedy this notice offers, and the copy
+    // must not claim the reap itself will take them.
+    apiMock.reapBreakdown.mockResolvedValue(full({ hand_spared: 12, spares_expired: 3 }));
+    renderBreakdown();
+    const notice = (await screen.findByText(/3 titles are kept by spares that expired/)).closest(
+      "p",
+    )!;
+    expect(notice).toHaveClass("notice-warn");
+    expect(notice.textContent).toContain("This reap won't remove them");
+    expect(notice.textContent).toContain("A new scan judges them again");
+    expect(screen.getByRole("button", { name: "Scan now" })).toBeInTheDocument();
+  });
+
+  it("starts the scan it offers, and says so while one is running", async () => {
+    apiMock.reapBreakdown.mockResolvedValue(full({ spares_expired: 2 }));
+    const user = userEvent.setup();
+    renderBreakdown();
+
+    await user.click(await screen.findByRole("button", { name: "Scan now" }));
+
+    expect(apiMock.startScan).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Scanning…" })).toBeDisabled());
+  });
+
+  it("says the scan didn't start, in the tone every other failure uses", async () => {
+    apiMock.reapBreakdown.mockResolvedValue(full({ spares_expired: 2 }));
+    apiMock.startScan.mockRejectedValue(new Error("nope"));
+    const user = userEvent.setup();
+    renderBreakdown();
+
+    await user.click(await screen.findByRole("button", { name: "Scan now" }));
+
+    const failure = await screen.findByText("The scan didn't start. Try again.");
+    expect(failure).toHaveClass("notice-error");
+  });
+
+  it("shows the expired-spares notice even when the reap would remove nothing", async () => {
+    // Every condemned title was spared, and those spares have since expired: the card would
+    // otherwise render nothing at all (reapCount is 0), and the operator would be told nothing.
+    apiMock.reapBreakdown.mockResolvedValue(
+      full({ will_reap: 0, will_reap_bytes: 0, hand_spared: 543, spares_expired: 4 }),
+    );
+    renderBreakdown();
+    expect(await screen.findByText(/4 titles are kept by spares that expired/)).toBeInTheDocument();
   });
 });

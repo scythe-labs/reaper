@@ -1,21 +1,17 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Every module logger stays interceptable by ``capture_logs``, whatever ran before.
+"""Every module logger stays interceptable by ``capture_logs``, whatever ran before it.
 
-The suite asserts on log events in a few dozen places, and structlog will quietly stop
-delivering them. ``configure_logging`` sets ``cache_logger_on_first_use=True``, so the
-first use of a module logger after it freezes that proxy against the processor LIST
-OBJECT live at that moment. ``capture_logs`` mutates the configured list in place --
-deliberately, to keep bound-logger references working -- so the frozen logger keeps up
-until some later ``configure_logging`` installs a *fresh* list. From then on the frozen
-logger renders through the old one and no ``capture_logs`` can reach it. Two app boots is
-all it takes, and the suite builds many apps.
+The suite asserts on log events in a few dozen places, and structlog can quietly stop
+delivering them. ``configure_logging`` sets ``cache_logger_on_first_use=True``. The first use
+of a module logger after that freezes its proxy against the processor list live at that
+moment. ``capture_logs`` mutates the configured list in place, on purpose, to keep
+bound-logger references working, so the frozen logger keeps up until a later
+``configure_logging`` installs a fresh list. From then on, the frozen logger renders through
+the old list, and no ``capture_logs`` can reach it. Two app boots are enough to cause this,
+and the suite builds many apps.
 
-What that cost: a test asserting the executor names its own failed call read an empty
-event list and failed, on a config-only change touching neither logging nor the executor
-(#481). Whether it failed depended on which xdist worker it landed on, since only a worker
-that had already booted two apps carried the damage. A test that fails for a reason
-unrelated to what it tests is worse than no test: it spends the reviewer's attention and
-teaches them to re-run rather than read.
+A test that fails for a reason unrelated to what it tests is worse than no test. It spends
+the reviewer's attention and teaches them to re-run rather than read.
 """
 
 from __future__ import annotations
@@ -33,9 +29,9 @@ from reaper.logging import configure_logging
 from reaper.services import executor
 from tests.conftest import uncache_module_loggers
 
-#: How every logger in ``src/`` is declared. The walk in ``uncache_module_loggers`` reaches
-#: a proxy held in a module's globals, so a logger built any other way would drop out of
-#: the guard silently; this is the spelling that keeps that true.
+#: How every logger in ``src/`` is declared. The walk in ``uncache_module_loggers`` reaches a
+#: proxy held in a module's globals, so a logger built any other way would silently drop out
+#: of the guard. This is the spelling that keeps that from happening.
 _DECLARATION = re.compile(r"^log = structlog\.get_logger\(__name__\)$", re.MULTILINE)
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "reaper"
@@ -44,9 +40,10 @@ _SRC = Path(__file__).resolve().parents[1] / "src" / "reaper"
 def _freeze_the_executor_logger() -> None:
     """Cache the proxy against one processor list, then leave a newer one configured.
 
-    Both halves through the real ``configure_logging``, which is what a ``create_app``
-    boot calls: the first sets the caching flag and a fresh list, the log freezes the
-    proxy against it, and the second boot swaps the list the proxy no longer holds.
+    Both calls go through the real ``configure_logging``, the function a ``create_app`` boot
+    calls. The first call sets the caching flag and a fresh list, and logging through it
+    freezes the proxy against that list. The second call installs a new list, so the proxy
+    keeps pointing at the one it no longer holds.
     """
     configure_logging()
     executor.log.info("materializing this logger freezes it")
@@ -65,45 +62,27 @@ class TestALoggerFrozenByAnEarlierTestIsStillCapturable:
         assert [entry["event"] for entry in logs] == ["reap.journal_revive_failed"]
 
     def test_without_the_guard_it_is_deaf(self) -> None:
-        """The other half, so the test above cannot pass by the freezing never happening
-        (rule 118). This is #481 reproduced in one process: the event is emitted, and
-        ``capture_logs`` sees nothing at all."""
+        """The other half, so the test above cannot pass just because the freezing never
+        happened. Without the guard, the event is emitted and ``capture_logs`` sees nothing
+        at all."""
         _freeze_the_executor_logger()
 
         with capture_logs() as logs:
             executor.log.warning("reap.journal_revive_failed")
         assert logs == []
 
-        # Left frozen, this leaks into whatever runs next on this worker, which IS the
-        # bug. The autouse fixture thaws it before the next test; so does this, so that
-        # this test cannot be the thing it is complaining about.
+        # Left frozen, this logger would leak into whatever runs next on this worker. The
+        # autouse fixture undoes the freeze before the next test, and so does this line, so
+        # this test cannot cause the bug it demonstrates.
         uncache_module_loggers()
 
 
 class TestTheGuardReachesEveryLoggerInTheTree:
-    """A guard that SCANS is proven against the population it claims to cover, not against
-    one member of it (rule 145). The count is reconciled by hand: 53 files under
-    ``src/reaper`` declare a module-level logger, and ``grep -rl`` over the tree agrees.
-
-    It was 47 before ``services/list_config.py`` (the operator's own protection lists) landed
-    with a logger and this number did not move with it, which is what the guard is for, then 49
-    with ``services/list_rules.py`` (the keep rules a list acts through), 47 again once the two
-    retired lab engines left and took theirs, and 48 with ``api/plex.py``. Then 50, when the old
-    single API routes module became five: three of the five log, so one logger left and three
-    arrived. ``api/vocabulary.py`` and ``api/about.py`` declare none, because neither logs --
-    a split inherits its parent's logger only where it inherited something to say. Then 49:
-    ``clients/arr.py`` declared one and never logged through it, and the line went with the
-    duplication it sat above. Then 50 again, when the admin-password gate moved from
-    ``api/auth.py`` to ``api/deps.py``: the logging function moved with it and ``api/auth.py``
-    still logs three other things, so this is the one shape that only ever adds. Then 51, when
-    ``config.py`` gained one to say which seed variable a half-configured instance is missing
-    (#658); it had none because nothing in it used to have anything to tell the operator. Then
-    52 with ``services/library_seen.py`` (#553), which logs an unreadable stored key set and
-    the scan whose crop of returns the population cap refused. Then 53 with
-    ``services/identity_churn.py`` (#809), which logs every scan's share of the library that
-    changed Plex identity, so the ordinary rate can be read off a second library's logs.
-    Then 54, with ``i18n.py`` (phase 10a), which warns on a catalog it cannot read or
-    parse, a key no catalog carries, and a message this formatter cannot render."""
+    """A guard that scans a tree is proven against the whole population it claims to cover,
+    not just one member that already matches. The count below is reconciled by hand: 54 files
+    under ``src/reaper`` declare a module-level logger, and ``grep -rl`` over the tree agrees.
+    Adding or removing a logger changes this count, and the same ``grep -rl`` search
+    reconciles the new one."""
 
     @staticmethod
     def _modules_declaring_a_logger() -> set[str]:
@@ -129,8 +108,9 @@ class TestTheGuardReachesEveryLoggerInTheTree:
         )
 
     def test_every_declared_logger_is_reachable_from_the_walk(self) -> None:
-        """Imported first, because the walk can only see loaded modules -- which is also
-        why a bare count of what it happens to find would drift with import order."""
+        """Imports every declared module first, because the walk can only see loaded
+        modules. A bare count of what it happens to find would otherwise drift with import
+        order."""
         declared = self._modules_declaring_a_logger()
         for name in declared:
             importlib.import_module(name)

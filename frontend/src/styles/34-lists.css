@@ -1,20 +1,18 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Settings -> Lists, and the list add/edit modal. One piece of Reaper's stylesheet: `../index.css` holds the
- * design charter and the load order, and that order is load-bearing (see the ordering notes in this file). */
+ * Settings -> Lists, and the list add/edit modal. See `../index.css` for how this file fits
+ * into the stylesheet's load order. */
 
-/* Settings -> Lists (#475). Rows are the Jobs tab's `.jobrow`, so the two pages that both
-   answer "is this working, and when did it last run" read the same. What sits where a job's
-   buttons go is a state chip, in the app's verdict language -- because "this list stopped
-   working" and "this title is condemned" are the same fact at two scales, and a list that is
-   not working is the reason a scan cannot delete anything.
+/* Settings -> Lists. Rows are the Jobs tab's `.jobrow`, so the two pages that both answer
+   "is this working, and when did it last run" read the same. What sits where a job's buttons
+   go is a state chip, in the app's verdict language: "this list stopped working" and "this
+   title is condemned" are the same fact at two scales, and a list that is not working is the
+   reason a scan cannot delete anything.
 
-   That chip is the app's ONE chip family, `.status-chip` (23-queue-chips.css), in its
-   non-truncating variant. It was a fourth family here -- `.list-state`, re-declaring the same
-   token pairs the shared tones already carry -- which is what rule 18 refuses. The reason it
-   could not simply reuse the family was real and is fixed at the source: the shared chip
-   truncates for the queue's fixed columns, so it gained `.status-chip-wrap`, and the filled
-   amber this screen needs is now `.status-warn` beside the outlined `.status-look`. */
+   That chip is the app's one chip family, `.status-chip` (23-queue-chips.css), in its
+   non-truncating variant. The shared chip truncates for the queue's fixed columns, so it
+   gained `.status-chip-wrap`, and the filled amber this screen needs is now `.status-warn`
+   beside the outlined `.status-look`. */
 
 /* The name and its state chip share a line: the chip is the answer to the question the row
    asks, so it reads as part of the title rather than as a separate column. It wraps, because a
@@ -47,8 +45,8 @@
 
 /* The kind badge beside a list's name: which family it reads from, in the service brand
    pairs declared beside --plex in 00-tokens.css. It rides `.kind-badge` above but keeps the
-   products' own mixed-case names and the pill shape the approved mockup settled on -- a
-   service card's mark names an INSTANCE the operator connected, this names a family. */
+   products' own mixed-case names and the pill shape the approved mockup settled on. A
+   service card's mark names an instance the operator connected. This names a family. */
 .list-head .kind-badge {
   text-transform: none;
   letter-spacing: normal;
@@ -65,17 +63,17 @@
   background: var(--imdb);
   color: var(--imdb-ink);
 }
-/* Half Sonarr blue, half Radarr gold: a hard split with a thin dark seam, no blend -- the
-   seam is the line separating them. One ink for both halves: --sonarr-ink clears WCAG AA on
+/* Half Sonarr blue, half Radarr gold: a hard split with a thin dark seam, no blend. The seam
+   is the line separating them. One ink for both halves: --sonarr-ink clears WCAG AA on
    either fill.
 
-   Each name is padded inside its OWN half, rather than both being set as one text run over a
-   50% gradient. A gradient stop lands at the pill's midpoint, and the single space between two
-   words of unequal length does not, so the seam cut through "Sonarr Radarr" a few pixels off
-   the space: the words nearly touched across it while the pill's outer padding stayed wide,
-   which read as three different gaps in one pill. Halves make the three equal by construction.
-   `.list-head` on the selector to outrank `.list-head .kind-badge`'s padding just above, which
-   the halves now carry instead. */
+   Each name is padded inside its own half, rather than both being set as one text run over a
+   50% gradient. A gradient stop would land at the pill's midpoint, but the single space
+   between two words of unequal length would not, so the seam would cut through "Sonarr
+   Radarr" a few pixels off the space: the words would nearly touch across it while the
+   pill's outer padding stayed wide, reading as three different gaps in one pill. Halves make
+   the three gaps equal by construction. `.list-head` is on the selector to outrank
+   `.list-head .kind-badge`'s padding just above, which the halves now carry instead. */
 .list-head .kind-arr {
   display: inline-flex;
   align-items: stretch;
@@ -83,9 +81,9 @@
   overflow: hidden;
   color: var(--sonarr-ink);
 }
-/* The two painted halves are the `aria-hidden` ones; the badge's name is a `.sr-only` sibling,
-   so what a reader says does not depend on whitespace between flex items reaching the
-   accessibility tree. `.sr-only` is out of flow, so it takes no part in the seam. */
+/* The two painted halves are the `aria-hidden` ones. The badge's name is a `.sr-only`
+   sibling, so what a reader says does not depend on whitespace between flex items reaching
+   the accessibility tree. `.sr-only` is out of flow, so it takes no part in the seam. */
 .list-head .kind-arr > span[aria-hidden] {
   padding: var(--space-2xs) var(--space-md);
   background: var(--sonarr);
@@ -95,9 +93,9 @@
   background: var(--radarr);
 }
 /* The exposed half: a media type on this list that no keep rule covers, so its titles are
-   still deletable (#533). The brand color fades toward the surface -- dim, not gone, so the
-   pill still reads as Sonarr/Radarr -- and the ink drops to muted. No strikethrough. The
-   sentence under the row and the sr-only name carry the same fact for a reader (rule 21). */
+   still deletable. The brand color fades toward the surface (dim, not gone, so the pill
+   still reads as Sonarr/Radarr) and the ink drops to muted. No strikethrough. The sentence
+   under the row and the sr-only name carry the same fact for a reader. */
 .list-head .kind-arr > span[aria-hidden].dim {
   background: color-mix(in srgb, var(--sonarr) 22%, var(--surface));
   color: var(--muted);
@@ -108,7 +106,7 @@
 }
 
 /* A tag row's display pills: neutral, with the count in accent. Distinct from the green
-   `.tag-chip` on purpose -- one is a fact, the other is a thing you can remove. */
+   `.tag-chip` on purpose: one is a fact, the other is a thing you can remove. */
 .tag-pills {
   display: flex;
   flex-wrap: wrap;
@@ -127,7 +125,7 @@
   padding: var(--space-2xs) var(--space-xl);
   font-size: var(--text-sm);
   font-weight: var(--weight-semi);
-  /* The tag is the operator's typing, so it wraps rather than widening the row (rule 139). */
+  /* The tag is the operator's typing, so it wraps rather than widening the row. */
   overflow-wrap: anywhere;
 }
 /* The gap the flex `gap` used to supply, on top of the space in the text. */
@@ -152,13 +150,14 @@ details.per-server summary:hover {
   color: var(--text);
 }
 
-/* Counts as a matrix: tags down the side, servers across the top, a count at each intersection,
-   with a Total column (per tag) and Total row (per server). It replaced one comma-joined line per
-   server, which turned to mush as tags and servers multiplied. */
+/* Counts as a matrix: tags down the side, servers across the top, a count at each
+   intersection, with a Total column (per tag) and Total row (per server). A matrix stays
+   readable as tags and servers multiply, where one comma-joined line per server would turn
+   to mush. */
 .matrix-scroll {
-  /* Many servers make the matrix wider than a phone, so it scrolls sideways INSIDE this box and
-     the page never does (rules 138/139). The pinned Tag column below keeps every row labeled
-     through that scroll. */
+  /* Many servers make the matrix wider than a phone, so it scrolls sideways inside this box,
+     and the page never does. The pinned Tag column below keeps every row labeled through
+     that scroll. */
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   max-width: 100%;
@@ -169,9 +168,10 @@ details.per-server summary:hover {
 .tag-matrix {
   /* Sizes to its content and scrolls, rather than filling the box and crushing the Tag column:
      `min-width: 100%` fills when the content is narrow, `max-content` overflows (and scrolls)
-     when it is wide. Forcing `width: 100%` squeezed the Tag column on a phone until the name
-     broke one letter per line -- which is also why the Tag cell below is `nowrap`, not
-     `overflow-wrap: anywhere` (that drops its min-content to a single glyph). */
+     when it is wide. Forcing `width: 100%` instead would squeeze the Tag column on a phone
+     until the name broke one letter per line. That is also why the Tag cell below is
+     `nowrap`, not `overflow-wrap: anywhere`, which would drop its min-content to a single
+     glyph. */
   width: max-content;
   min-width: 100%;
   border-collapse: collapse;
@@ -233,9 +233,9 @@ details.per-server summary:hover {
   font-weight: var(--weight-bold);
 }
 
-/* The two ways a row reaches Policy. In use: a muted inline link after the count, to adjust the
-   rule. Not in use: the setup action on its own line, accent, the row's next step. Both open the
-   Policy screen -- you change the policy there, never "on" it from here. */
+/* The two ways a row reaches Policy. In use: a muted inline link after the count, to adjust
+   the rule. Not in use: the setup action on its own line, accent, the row's next step. Both
+   open the Policy screen: you change the policy there, never "on" it from here. */
 button.link.policy-change {
   color: var(--muted);
 }
@@ -296,19 +296,19 @@ button.link.policy-configure::after {
   gap: var(--space-sm);
   margin-top: var(--space-sm);
 }
-/* The presets menu hangs from the BUTTON that opens it, not from the row. Anchored on
-   `.acts`, `left: var(--pop-shift, 0px)` measured from the row's left edge, so the menu drew
-   under `Custom` -- the other button in the row -- and the fit pass was handed the row's edge
-   rather than the trigger's, which is the line back to the control rule 138 is about. An
-   inline-flex wrapper is a flex item of the row, so the card's column is unaffected
-   (`FilterMenu`, anchorClass "preset-anchor"). */
+/* The presets menu hangs from the button that opens it, not from the row. Anchoring it on
+   `.acts` instead would measure `left: var(--pop-shift, 0px)` from the row's left edge, so
+   the menu would draw under `Custom` (the other button in the row), because the fit pass
+   would then be handed the row's edge instead of the trigger's. An inline-flex wrapper is a
+   flex item of the row, so the card's column is unaffected (`FilterMenu`, anchorClass
+   "preset-anchor"). */
 .pick-card .preset-anchor {
   position: relative;
   display: inline-flex;
 }
-/* Opens UPWARD. The IMDb card is the picker's last group, flush with the modal's bottom
-   edge, and the modal clips on its own scroll boundary (`.modal` overflow-y) -- dropped
-   below the row, the menu opened half out of view. Scoped to this card, not every
+/* Opens upward. The IMDb card is the picker's last group, flush with the modal's bottom
+   edge, and the modal clips on its own scroll boundary (`.modal` overflow-y). Dropped below
+   the row instead, the menu would open half out of view. Scoped to this card, not every
    `.pick-card`: it is the only one that opens a menu, and a card added above it would take
    the flip on trust rather than on the geometry that earns it. */
 .pick-card .preset-anchor .filter-menu {
@@ -323,10 +323,8 @@ button.link.policy-configure::after {
   margin-top: var(--space-md);
 }
 
-/* The tag editor (TagsEditor.tsx): removable chips + a free-type box. It lived in
-   15-policy-shell.css beside Policy's keep-tags card; that card is gone, the list modal is
-   the only consumer left, and the comment there still claimed it sat beside a chip shape
-   Policy's rules tables share. */
+/* The tag editor (TagsEditor.tsx): removable chips + a free-type box. The list modal is its
+   only consumer. */
 .tag-editor {
   margin-top: var(--space-md);
 }
@@ -339,10 +337,10 @@ button.link.policy-configure::after {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   /* `--bg`, the control standard's fill, not `--surface`: this bar's only context is the
-     modal, whose own background IS `--surface`, so the bar disappeared into the panel it
-     sits on while the Name and Collection boxes a few pixels above it read as boxes. `.qty`,
-     the composite this control is modeled on, fills with `--bg` for the same reason
-     (rule 40). */
+     modal, whose own background is `--surface`, so using `--surface` here would make the bar
+     disappear into the panel it sits on, while the Name and Collection boxes a few pixels
+     above it still read as boxes. `.qty`, the composite this control is modeled on, fills
+     with `--bg` for the same reason. */
   background: var(--bg);
 }
 .tag-chip {
@@ -356,26 +354,30 @@ button.link.policy-configure::after {
   padding-inline: 0.6rem 0.2rem;
   font-size: var(--text-sm);
   font-weight: var(--weight-semi);
-  /* A tag is spelled on somebody else's keyboard in Sonarr or Radarr. As a flex item this
-     chip floors at its own min-content, so one long tag painted through the bordered bar
-     with no way to reach the tail (`.modal` is `overflow-x: hidden`). `.tag-pill` and
-     `.inst-chip` are the same chip shape and already take this (rules 139, 72). */
+  /* A tag is spelled on somebody else's keyboard in Sonarr or Radarr. As a flex item, this
+     chip floors at its own min-content by default, so without `min-width: 0` one long tag
+     would paint through the bordered bar with no way to reach the tail (`.modal` is
+     `overflow-x: hidden`). `.tag-pill` and `.inst-chip` are the same chip shape and already
+     take this same fix. */
   min-width: 0;
   overflow-wrap: anywhere;
 }
 /* The ✕ is the shared chip-dismiss shape (04-buttons.css), a --tap-min square, which is why
-   the chip's right padding is trimmed above: the button's own hit area supplies the inset the
-   padding used to. Only the hover tint is local, in this chip's own protect tone. */
+   the chip's right padding is trimmed above: the button's own hit area supplies the inset
+   the padding would otherwise need to. Only the hover tint is local, in this chip's own
+   protect tone. */
 .tag-chip button:hover {
   background: color-mix(in srgb, var(--protect) 18%, transparent);
 }
-/* Qualified by `.tag-editor` to outrank `.field-sm input`, which is a bare one-class-plus-type
-   selector (0,1,1) that dresses EVERY input under it in the standard bordered box. This one tied
-   it and lost on load order alone (15 before 26), so dropping the control into the list modal's
-   `.field-sm` drew a second bordered, `--bg`-filled box around the add box, inside the bar --
-   two nested boxes where the policy card, which has no such ancestor, showed one clean bar.
-   `.qty input[type="number"]` survives the same rule by the same trick, an attribute qualifier
-   instead of an ancestor; the composite control has to carry its own chrome wherever it is put. */
+/* Qualified by `.tag-editor` to outrank `.field-sm input`, a bare one-class-plus-type
+   selector (0,1,1) that dresses every input under it in the standard bordered box. Without
+   the `.tag-editor` qualifier, this rule ties that one on specificity and loses on load
+   order alone (15-policy-shell.css loads before 26-settings.css), so the list modal's
+   `.field-sm` wrapper would draw a second bordered, `--bg`-filled box around the add box,
+   inside the bar: two nested boxes, where the policy card, which has no such wrapper, shows
+   one clean bar. `.qty input[type="number"]` survives the same rule by the same trick, an
+   attribute qualifier instead of an ancestor selector. A composite control has to carry its
+   own chrome wherever it is placed. */
 .tag-editor .tag-chips input {
   flex: 1;
   min-width: 6rem;
@@ -387,9 +389,9 @@ button.link.policy-configure::after {
   padding: 0.2rem;
   outline: none;
 }
-/* The free-type box has no border of its own, so the ring goes on the box that does --
-   the same composite-control pattern as .qty:focus-within. Without it, taking the input
-   with the keyboard would show nothing at all. */
+/* The free-type box has no border of its own, so the ring goes on the box that does: the
+   same composite-control pattern as .qty:focus-within. Without it, taking the input with the
+   keyboard would show nothing at all. */
 .tag-chips:focus-within {
   outline: 2px solid var(--accent);
   outline-offset: 1px;

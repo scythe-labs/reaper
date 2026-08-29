@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The review queue is paged.
 
-A real library runs to thousands of protected titles; returning them in one payload was
-capping the list and hiding the tail (the bug: "thousands scanned, fewer than a thousand
-shown"). The endpoint now returns a page of ``limit`` rows at ``offset`` and reports the
-full filtered set -- a count and a byte total measured *before* the page window -- in the
-envelope's ``total`` and ``total_bytes``, so the header can read the whole set's count while
-only a page is on the wire.
+A real library runs to thousands of protected titles. Returning them all in one payload
+capped the list and hid everything past that cap. The endpoint now returns a page of
+``limit`` rows at ``offset``, and reports the full filtered set (a count and a byte total
+measured before the page window) in the envelope's ``total`` and ``total_bytes``, so the
+header can show the whole set's count while only a page is on the wire.
 """
 
 from __future__ import annotations
@@ -31,10 +30,10 @@ from ._auth import login
 SIZE = 2_000_000_000
 N_CONDEMN = 250
 N_PROTECT = 40
-#: How many of the condemned rows Reaper could not measure. Non-zero on purpose: a byte SUM
-#: skips a NULL without saying so, and a fixture where every row has a size cannot tell the
-#: unmeasured count from a hardcoded zero (rule 141). The Kept lane keeps all its sizes, so
-#: the two lanes pin the count from both directions.
+#: How many of the condemned rows Reaper could not measure. This is non-zero on purpose. A
+#: byte sum skips a NULL without saying so, so a fixture where every row has a size could not
+#: tell the unmeasured count from a hardcoded zero. The Kept lane keeps all its sizes, so the
+#: two lanes pin the count from both directions.
 N_UNMEASURED = 3
 
 
@@ -99,8 +98,8 @@ class TestPagination:
     def test_the_totals_report_the_whole_filtered_set(self, client: TestClient) -> None:
         page = client.get("/api/candidates?verdict=condemn&limit=100&offset=0").json()
         assert page["total"] == N_CONDEMN
-        # The count is every row; the byte total is only the rows that have a size, and
-        # `unknown_size` is what it could not include. Three separate figures, so a queue
+        # The count covers every row. The byte total covers only the rows that have a size,
+        # and `unknown_size` is what it could not include. Three separate figures, so a queue
         # header reading the sum alone cannot pass off an unmeasured library as a small one.
         assert page["total_bytes"] == (N_CONDEMN - N_UNMEASURED) * SIZE
         assert page["unknown_size"] == N_UNMEASURED
@@ -108,7 +107,7 @@ class TestPagination:
         assert len(page["items"]) == 100
 
     def test_a_page_is_capped_even_when_more_exist(self, client: TestClient) -> None:
-        # The default page (no limit) no longer returns the whole set.
+        # Omitting the limit still returns a capped page, not the whole set.
         assert len(client.get("/api/candidates?verdict=condemn").json()["items"]) == 100
 
     def test_offset_walks_the_whole_set_without_gaps_or_overlap(self, client: TestClient) -> None:
@@ -152,8 +151,8 @@ class TestPagination:
 
 @pytest.fixture
 def unscanned_client(tmp_path: Path) -> Iterator[TestClient]:
-    """A database with the tables and no snapshot: what an operator sees before the first
-    scan finishes."""
+    """A database with the tables and no snapshot. This is what an operator sees before the
+    first scan finishes."""
     settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
@@ -165,12 +164,12 @@ def unscanned_client(tmp_path: Path) -> Iterator[TestClient]:
 
 
 def test_before_the_first_scan_the_page_is_whole(unscanned_client: TestClient) -> None:
-    """Every field, not the two the headers used to carry.
+    """Every field is present, even before the first scan has run.
 
-    The header form set ``X-Total-Count`` and ``X-Total-Bytes`` on this branch and neither
-    of the other two, so the browser read a missing ``X-Unknown-Size-Count`` as zero and a
-    missing ``X-Snapshot-Id`` as null by two different defaults it wrote itself. One model
-    answers the whole shape or it does not answer at all.
+    An earlier version set ``X-Total-Count`` and ``X-Total-Bytes`` as response headers but
+    left ``X-Unknown-Size-Count`` and ``X-Snapshot-Id`` out, so a browser had to guess: zero
+    for one, null for the other. This response answers the whole shape in one JSON object, so
+    nothing needs to be guessed.
     """
     page = unscanned_client.get("/api/candidates?verdict=condemn&offset=40").json()
     assert page == {
@@ -185,7 +184,7 @@ def test_before_the_first_scan_the_page_is_whole(unscanned_client: TestClient) -
 
 
 # ---------------------------------------------------------------------------
-# B-13: show cards must state what "Reap now" will plan, even across page breaks.
+# Show cards must state what "Reap now" will plan, even across page breaks.
 # ---------------------------------------------------------------------------
 
 SEASON_SIZE = 3_000_000_000
@@ -194,8 +193,8 @@ N_SEASONS = 6
 
 @pytest.fixture
 def tv_client(tmp_path: Path) -> Iterator[TestClient]:
-    """A snapshot where one show's condemned seasons straddle any small page: six
-    seasons at descending scores, padded with condemned movies between them."""
+    """A snapshot where one show's condemned seasons straddle any small page. Six seasons
+    sit at descending scores, padded with condemned movies between them."""
     settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
@@ -256,10 +255,10 @@ def tv_client(tmp_path: Path) -> Iterator[TestClient]:
 def _rollup(page: dict[str, Any], group_key: str) -> dict[str, Any]:
     """The show's rollup off the page, failing loudly when it is absent.
 
-    The count is one because ``groups`` is built over a set of keys, so a duplicate cannot
-    be constructed and this cannot discriminate against one. What it does catch is a show
-    whose rows are on the page carrying no rollup at all, which is the state that leaves the
-    card counting its fetched seasons.
+    The count is always one, because ``groups`` is built over a set of keys, so this
+    assertion cannot catch a duplicate. What it does catch is a show whose rows are on the
+    page but carry no rollup at all, which is the state that leaves the card counting only
+    its fetched seasons.
     """
     entries = [g for g in page["groups"] if g["group_key"] == group_key]
     assert len(entries) == 1, f"expected one rollup for {group_key}, got {len(entries)}"
@@ -270,9 +269,9 @@ class TestGroupCondemnedTotals:
     def test_a_page_holding_part_of_a_show_still_reports_the_whole_plan(
         self, tv_client: TestClient
     ) -> None:
-        """The failure this guards: a small first page holds two of six seasons, and the
-        card built from it used to say "2 seasons" while Reap now planned all six. The
-        show's rollup describes the whole snapshot however little of it the page holds."""
+        """Without this, a small first page holding two of six seasons would make the card
+        say "2 seasons" while Reap now would plan all six. The show's rollup describes the
+        whole snapshot, however little of it the page holds."""
         page = tv_client.get("/api/candidates?verdict=condemn&limit=10&offset=0").json()
         seasons = [r for r in page["items"] if r["group_key"] == "sonarr:1:42"]
         assert seasons, "the page should hold at least one of the show's seasons"
@@ -281,8 +280,8 @@ class TestGroupCondemnedTotals:
         rollup = _rollup(page, "sonarr:1:42")
         assert rollup["condemned_count"] == N_SEASONS
         assert rollup["condemned_bytes"] == N_SEASONS * SEASON_SIZE
-        # Every season of the show, not the ones this page happened to fetch: the strip and a
-        # whole-show Reap are both judged over it.
+        # This is every season of the show, not just the ones this page fetched. The strip
+        # and a whole-show Reap are both judged against the full set.
         assert len(rollup["seasons"]) == N_SEASONS
 
     def test_movies_bring_no_rollup(self, tv_client: TestClient) -> None:
@@ -293,8 +292,8 @@ class TestGroupCondemnedTotals:
         assert {g["group_key"] for g in page["groups"]} == {"sonarr:1:42"}
 
     def test_a_hand_spared_season_leaves_the_plan_totals(self, tv_client: TestClient) -> None:
-        """The totals must match the planner exactly, and the planner drops hand-spares:
-        sparing one season shrinks the card's numbers by exactly that season."""
+        """The totals must match the planner exactly, and the planner drops hand-spares.
+        Sparing one season shrinks the card's numbers by exactly that season."""
         spare = tv_client.post(
             "/api/override",
             json={"media_key": f"sonarr:1:42:{N_SEASONS}", "decision": "spare"},
@@ -315,8 +314,8 @@ class TestGroupCondemnedTotals:
         )
         assert spare.status_code == 200, spare.text
 
-        # A whole-show spare moves its seasons onto the Kept lane (their stored verdict stays pure
-        # policy); the plan they would have fed is now empty.
+        # A whole-show spare moves its seasons onto the Kept lane. Their stored verdict still
+        # reflects the scoring policy alone, but the plan they would have fed is now empty.
         page = tv_client.get("/api/candidates?verdict=protect&limit=10&offset=0").json()
         assert [r for r in page["items"] if r["group_key"] == "sonarr:1:42"]
         rollup = _rollup(page, "sonarr:1:42")
@@ -328,7 +327,7 @@ class TestGroupCondemnedTotals:
     ) -> None:
         """The queue merges rollups by key across every page it has fetched, so a show first
         seen on a later page must bring its own. Reading only the first page would leave that
-        show's card with no count at all, beside its Reap button (rule 30)."""
+        show's card with no count at all, beside its Reap button."""
         pages = [
             tv_client.get(f"/api/candidates?verdict=condemn&limit=10&offset={offset}").json()
             for offset in (0, 10, 20)

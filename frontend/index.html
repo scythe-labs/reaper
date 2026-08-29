@@ -2,13 +2,29 @@
 <html lang="en" dir="ltr">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover is what makes iOS report real env(safe-area-inset-*) values in the
+         installed app. Without it, every inset reads 0 and the bottom bar sits under the home
+         indicator. The stylesheet consumes the insets (styles/10-layout.css and siblings). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
+    <!-- The color a browser paints its own chrome with. Safari 15 to 18, Chrome and Edge on
+         Android, and an installed PWA read this tag. Safari 26 parses it and ignores the
+         value, taking the tint from the page background instead. Desktop Chrome never reads
+         it at all, so on a Mac this tag changes nothing. Safari's behavior is deliberate,
+         confirmed by WebKit at https://bugs.webkit.org/show_bug.cgi?id=301756: the top bar
+         tint extends only from a fixed or sticky element bordering an obscured content inset,
+         and Reaper's masthead is neither. This tag ships at the built-in accent, and the
+         pre-paint script below and accent.ts rewrite it to the install's own accent. The web
+         manifest's theme_color is a static file that cannot follow a per-install setting, so
+         this tag is what carries it instead. -->
+    <meta id="theme-color" name="theme-color" content="#25c3ff" />
     <title>Reaper</title>
-    <!-- Raster fallback FIRST, the accent-following SVG (#favicon, rewritten by accent.ts and
-         the pre-paint script below) LAST: when two icons are equally appropriate the HTML spec
-         has the browser use the last declared, and a sized PNG is a strong match, so the SVG
-         must come after it or a browser shows the stale default icon forever (B-11). -->
+    <!-- The icon link the app rewrites at runtime (#favicon) must stay declared last. A new
+         icon link goes before it, never after. When two icons are equally appropriate, the
+         HTML spec has the browser use the last one declared, and a sized PNG is a strong
+         match, so the accent-following SVG (rewritten by accent.ts and the pre-paint script
+         below) must come after the raster fallbacks, or a browser shows the stale default
+         icon forever. -->
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
@@ -25,17 +41,18 @@
         /* storage unavailable: fall back to the device preference */
       }
       // Apply the saved accent color before first paint too, so a custom color never
-      // flashes the built-in sky blue. Every value here is READ BACK from a cache
-      // accent.ts's applyAccent writes; none of the color maths is repeated in this file.
-      // It used to re-implement accentInk with the dark ink's luminance rounded to 0.012
-      // (the real value is 0.0125359), so for accents around L = 0.2055 the two disagreed
-      // and the ink on every accent-filled button flipped at first paint -- the exact flash
-      // this script exists to prevent (B-34). On the first load after an upgrade the ink
-      // cache is not written yet, so the stylesheet default stands for that one paint.
+      // flashes the built-in sky blue. Every value here is read back from a cache
+      // accent.ts's applyAccent writes. None of the color math is repeated in this file,
+      // since two independent implementations of the same math can silently disagree and
+      // flip the ink on every accent-filled button at first paint. On the first load after
+      // an upgrade, the ink cache is not written yet, so the stylesheet default stands for
+      // that one paint.
       try {
         var reaperAccent = localStorage.getItem("reaper-accent");
         if (reaperAccent && /^#[0-9a-fA-F]{6}$/.test(reaperAccent)) {
           document.documentElement.style.setProperty("--accent", reaperAccent);
+          var reaperChrome = document.getElementById("theme-color");
+          if (reaperChrome) reaperChrome.content = reaperAccent;
         }
         var reaperAccentInk = localStorage.getItem("reaper-accent-ink");
         if (reaperAccentInk && /^#[0-9a-fA-F]{6}$/.test(reaperAccentInk)) {
@@ -46,7 +63,7 @@
       }
       // The accent's readable text inks, the same way. accent.ts searches for these
       // (accentText), and the stylesheet's own fallback covers the built-in accent, so all
-      // that is missing before first paint is a CUSTOM accent's measured pair. Cached as
+      // that is missing before first paint is a custom accent's measured pair. Cached as
       // "#light #dark".
       try {
         var reaperInk = localStorage.getItem("reaper-accent-text");
@@ -60,8 +77,8 @@
         /* storage unavailable: the stylesheet's built-in fallback stands */
       }
       // Apply the saved tab favicon before first paint too, so a custom accent does not flash
-      // the default sky icon. accent.ts caches the app icon as a data URI under this key; here
-      // we only read it back, so the icon drawing lives in exactly one place (appIcon.ts).
+      // the default sky icon. accent.ts caches the app icon as a data URI under this key. This
+      // script only reads it back, so the icon drawing lives in exactly one place (appIcon.ts).
       try {
         var reaperFavicon = localStorage.getItem("reaper-favicon");
         if (reaperFavicon && reaperFavicon.indexOf("data:image/svg+xml,") === 0) {

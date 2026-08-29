@@ -1,19 +1,18 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The operator's own protection lists: naming them, pointing them somewhere, removing them.
 
-Every list used to be derived. Reaper worked out which existed from the keep tags on the
-policy, a Plex collection name it had hardcoded to ``"Never Reap"`` in a library hardcoded to
-``"Movies"``, and the one curated list it ships with. An operator whose library is called
-anything else got nothing, and had no screen on which to say so (#483).
+Every list can be named and configured on Settings -> Lists, rather than only inferred from
+a hardcoded collection name or library, so an operator whose library or collection is named
+anything else still has a working protection.
 
-This module owns the *definitions*. ``services.lists`` still owns fetching and membership,
-and still writes both to ``cache.db``; nothing here touches that. The split is deliberate and
-is the reason for two tables: membership is a rebuildable mirror of somebody else's data, and
-a list the operator named is not rebuildable from anything.
+This module owns the definitions. ``services.lists`` still owns fetching and membership, and
+still writes both to ``cache.db``; nothing here touches that. The split is deliberate and is
+the reason for two tables: membership is a rebuildable mirror of somebody else's data, and a
+list the operator named is not rebuildable from anything.
 
-**Everything here is fail-closed toward keeping.** Removing a list withdraws a protection, so
-the API pairs it with ``list_rules.detach_list``: the keep rules naming the list leave the
-policies in the same request, and none can go on reading as a live protection covering
+Everything here is fail-closed toward keeping. Removing a list withdraws a protection, so the
+API pairs it with ``list_rules.detach_list``: the keep rules naming the list leave the
+policies in the same request, so none of them can go on reading as a live protection covering
 nothing.
 """
 
@@ -60,9 +59,9 @@ class ListConfigError(Refusal):
 
 class ListRegistryUnreadableError(RuntimeError):
     """A stored definition's body will not parse, so the registry cannot say which lists
-    exist. Raised only for a caller that is about to SYNC (``strict=True``), because that
-    pass retires every list the registry no longer produces: a row read as absent is a
-    protection switched off by a decode error. Rules 65/91 -- a read failure is "unknown",
+    exist. Raised only for a caller that is about to sync (``strict=True``), because that
+    pass retires every list the registry no longer produces, and a row read as absent
+    would be a protection switched off by a decode error. A read failure means "unknown,"
     never "nothing configured"."""
 
 
@@ -70,10 +69,10 @@ class ListRegistryUnreadableError(RuntimeError):
 class ListDefinition:
     """One definition, decoded, for the code that builds providers from it.
 
-    A plain value rather than the ORM row, because the sync runs against ``cache.db`` and has
-    no session on the settings database. Passing the row itself would either hold that session
-    open across every network read the sync makes, or hand the sync a detached instance whose
-    attribute access raises.
+    A plain value rather than the ORM row, because the sync runs against ``cache.db`` and
+    has no session on the settings database. Passing the row itself would either hold that
+    session open across every network read the sync makes, or hand the sync a detached
+    instance whose attribute access raises.
     """
 
     id: int
@@ -87,8 +86,8 @@ class ListDefinition:
         """The *arr tag spellings, for an ``ARR_TAG`` definition. Empty for any other source.
 
         Deduplicated on the comparison form here as well as at the save boundary, so a body
-        stored before that check existed reads as one tag per tag rather than reporting a
-        count of zero against the spelling it lost (#509). Read-side too, because the
+        stored before that check existed still reads as one tag per spelling, instead of
+        reporting a zero count for the spelling it lost. Read-side too, because the
         alternative is asking the operator to re-save a list to correct a number.
         """
         raw = self.config.get("tags")
@@ -108,15 +107,15 @@ class ListDefinition:
     @property
     def match(self) -> Literal["any", "all"]:
         """Whether a title needs all the tags or any of them. Anything unrecognized reads as
-        ANY, matching ``_clean_config``: the two spellings of this default must agree, and ANY
-        is the wider list, which is the keep direction."""
+        ANY, matching ``_clean_config``: the two spellings of this default must agree, and
+        ANY is the wider list, which favors keeping."""
         return "all" if self.config.get("match") == "all" else "any"
 
     @property
     def imdb_variant(self) -> str:
         """The mirror path variant for an ``IMDB`` definition: a preset key or a public
-        list id. Anything unrecognized reads as the Top 250, the list Reaper has always
-        shipped, rather than as a request the mirror will 404."""
+        list id. Anything unrecognized reads as the Top 250, the list Reaper always ships,
+        rather than as a request the mirror will 404."""
         preset = str(self.config.get("preset", "")).strip()
         if preset in lists_service.IMDB_PRESETS:
             return preset
@@ -127,28 +126,29 @@ class ListDefinition:
 async def definitions(session: AsyncSession, *, strict: bool = False) -> list[ListDefinition]:
     """Every definition, decoded, shipped ones included.
 
-    Disabled rows are returned too, and deliberately: the sync builds providers only from the
-    enabled ones, and the retire sweep then disables every stored list this configuration no
-    longer produces. A disabled definition that were simply omitted here would be
-    indistinguishable from one that never existed -- and its stored membership would go on
-    protecting, so the switch on the settings screen would be a switch that does nothing.
+    Disabled rows are returned too, and deliberately: the sync builds providers only from
+    the enabled ones, and the retire sweep then disables every stored list this
+    configuration no longer produces. A disabled definition that were simply omitted here
+    would be indistinguishable from one that never existed, and its stored membership
+    would go on protecting, so the switch on the settings screen would be a switch that
+    does nothing.
 
-    ``strict`` is what a caller about to SYNC passes: an unreadable body then raises
-    :class:`ListRegistryUnreadableError` instead of dropping that row, because dropping it is
-    indistinguishable from a delete and the sweep disables its membership. The screens that
-    only DISPLAY the registry stay tolerant, so a single bad row still renders beside the
-    others rather than 500ing the page an operator would fix it from.
+    ``strict`` is what a caller about to sync passes: an unreadable body then raises
+    :class:`ListRegistryUnreadableError` instead of dropping that row, because dropping it
+    is indistinguishable from a delete and the sweep disables its membership. The screens
+    that only display the registry stay tolerant, so a single bad row still renders beside
+    the others rather than 500ing the page an operator would fix it from.
     """
     out: list[ListDefinition] = []
     for row in await all_lists(session):
         try:
             body = json.loads(row.config_json or "{}")
         except ValueError:
-            # Unreadable is not empty. A body that will not parse cannot say which library or
-            # which tags, so nothing may be synced from a guessed configuration (rule 93) --
-            # and dropping the row instead reads to the sweep as a list the operator deleted,
-            # which disables the membership it is still protecting with. `strict` is what
-            # holds the whole pass still; the tolerant path below only ever displays.
+            # Unreadable is not empty. A body that will not parse cannot say which library
+            # or which tags, so nothing may be synced from a guessed configuration, and
+            # dropping the row instead would read to the sweep as a list the operator
+            # deleted, disabling the membership it is still protecting with. `strict` is
+            # what holds the whole pass still; the tolerant path below only ever displays.
             log.warning("list_config.unreadable", list_id=row.id)
             if strict:
                 raise ListRegistryUnreadableError(f"list {row.id} has an unreadable body") from None
@@ -166,20 +166,18 @@ async def definitions(session: AsyncSession, *, strict: bool = False) -> list[Li
 
 
 def fingerprint(definitions: Sequence[ListDefinition]) -> str:
-    """Identifies what these definitions would make a scan GATHER into ``Facts.on_lists``.
+    """Identifies what these definitions would make a scan gather into ``Facts.on_lists``.
 
-    The lists are not policy, so no policy hash can carry them: an operator who retags a list,
-    repoints it, renames it or switches it off changes which titles their ``on_list`` rules
-    protect without touching a policy body. ``PolicyBody.evidence_hash`` used to cover exactly
-    this, back when the tags were ``keep_tags`` on the body; moving membership into gathered
-    evidence moved it out from under that hash, and the simulator went on replaying the
-    membership a scan froze while calling the answer exact (#512).
+    The lists are not policy, so no policy hash can carry them: an operator who retags a
+    list, repoints it, renames it, or switches it off changes which titles their
+    ``on_list`` rules protect without touching a policy body. This fingerprint is what
+    catches that.
 
-    Only the ENABLED rows, because a disabled list gathers nothing: editing one changes no
+    Only the enabled rows, because a disabled list gathers nothing: editing one changes no
     membership and must not cost a scan, while disabling one drops it from this set and
-    rightly does. Name is in because a keep rule matches on it (``lists.on_list_fact`` joins
-    the names, not the ids), so a rename is a membership change even when the list is
-    otherwise untouched. Sorted by id, so the answer does not depend on row order.
+    rightly does. Name is in because a keep rule matches on it (``lists.on_list_fact``
+    joins the names, not the ids), so a rename is a membership change even when the list
+    is otherwise untouched. Sorted by id, so the answer does not depend on row order.
     """
     payload = [
         {
@@ -197,11 +195,11 @@ def fingerprint(definitions: Sequence[ListDefinition]) -> str:
 async def current_fingerprint(session: AsyncSession) -> str | None:
     """:func:`fingerprint` over the stored registry, or ``None`` when it cannot be read.
 
-    ``None`` is "unknown", never "no lists configured" (rules 65/91, 93). **It is not a value
-    to compare**, and a caller must not: a snapshot that degraded for the same unreadable
-    registry recorded ``None`` too, so ``stored != current`` reads two unknowns as agreement
-    and passes. Every caller tests each side for ``None`` first and refuses on either
-    (``api.simulate.simulate``, ``services.executor``).
+    ``None`` means "unknown," never "no lists configured." It is not a value to compare,
+    and a caller must not: a snapshot that degraded for the same unreadable registry
+    recorded ``None`` too, so comparing ``stored != current`` would read two unknowns as
+    agreement and pass. Every caller tests each side for ``None`` first and refuses on
+    either (``api.simulate.simulate``, ``services.executor``).
     """
     try:
         return fingerprint(await definitions(session, strict=True))
@@ -212,8 +210,8 @@ async def current_fingerprint(session: AsyncSession) -> str | None:
 
 #: What a fresh install starts with: the two lists the default policy's keep rules name.
 #: Deletable like any other list, because deleting one takes its rules with it
-#: (``services.list_rules``); the seed runs once, tracked by a flag rather than by the rows,
-#: so removing them does not resurrect them on the next read.
+#: (``services.list_rules``). The seed runs once, tracked by a flag rather than by the
+#: rows, so removing them does not resurrect them on the next read.
 DEFAULT_LISTS: tuple[tuple[str, ListSource, dict[str, Any]], ...] = (
     (DEFAULT_IMDB_LIST_NAME, ListSource.IMDB, {"preset": DEFAULT_IMDB_PRESET}),
     (DEFAULT_TAG_LIST_NAME, ListSource.ARR_TAG, {"tags": [DEFAULT_KEEP_TAG], "match": "any"}),
@@ -223,7 +221,7 @@ DEFAULT_LISTS: tuple[tuple[str, ListSource, dict[str, Any]], ...] = (
 async def ensure_defaults(session: AsyncSession) -> None:
     """Seed the default lists exactly once. The keep-tags upgrade migration sets the same
     flag after seeding from the operator's stored policy, so an upgraded install keeps its
-    own tags and never gains a second, shipped copy beside them."""
+    own tags rather than gaining a second, shipped copy beside them."""
     if await app_settings.lists_seeded(session):
         return
     for name, source, config in DEFAULT_LISTS:
@@ -261,13 +259,13 @@ def _clean_name(name: str) -> str:
     if len(cleaned) > 100:
         raise ListConfigError("error.lists.name_too_long")
     if "," in cleaned:
-        # The ``on_list`` fact comma-joins the names holding an item (``lists.on_list_fact``)
-        # and ``fields._compare`` splits it back on commas, so a name carrying one is never an
-        # element of its own fact: the auto-attached keep rule matches nothing while both the
-        # Lists row and the Policy screen render it as an outright protection. The other
-        # direction is worse -- an item on "Kids, Holiday" alone satisfies a rule naming a
-        # different list called "Holiday". Refused here, where they are looking at the box
-        # (rule 108 is the same check for a rule value that strips to nothing).
+        # The ``on_list`` fact comma-joins the names holding an item (``lists.on_list_fact``),
+        # and ``fields._compare`` splits it back on commas, so a name carrying one is never
+        # an element of its own fact: the auto-attached keep rule matches nothing while both
+        # the Lists row and the Policy screen render it as an outright protection. The other
+        # direction is worse: an item on "Kids, Holiday" alone would satisfy a rule naming a
+        # different list called "Holiday". Refused here, where the operator is looking at
+        # the box.
         raise ListConfigError("error.lists.name_has_comma")
     return cleaned
 
@@ -275,20 +273,20 @@ def _clean_name(name: str) -> str:
 async def _refuse_name_twice(session: AsyncSession, name: str, *, this_row: int | None) -> None:
     """Refuse a name another list already answers to, capitalized differently or not.
 
-    The column's ``NOCASE`` collation is what actually holds (a read-then-insert can be
-    beaten between the two), and it raises ``IntegrityError``, which says nothing an
+    The column's ``NOCASE`` collation is what actually holds, since a read-then-insert can
+    be beaten between the two, and it raises ``IntegrityError``, which says nothing an
     operator can act on. This runs first so they read the reason; the constraint is the
     backstop.
 
-    Case-folded on both sides (rule 88), the comparison every reader of a list name makes:
-    two lists whose names differ only in case are one list to a keep rule naming either.
+    Lower-cased on both sides, the comparison every reader of a list name makes: two lists
+    whose names differ only in case are one list to a keep rule naming either.
 
-    **This is the one comparison that crosses into SQL, and the two halves are not the same
-    function.** ``func.lower()`` runs in SQLite and is ASCII-only; ``text.fold`` is Python's
-    ``casefold``. They agree on every ASCII name and part on the rest, so a German list named
-    ``STRASSE`` is not refused against one named ``Straße``. The ``NOCASE`` collation behind
-    this check is ASCII-only as well, so both layers already answer the same way and the
-    refusal is consistent with what the column will actually enforce.
+    This is the one comparison that crosses into SQL, and the two halves are not the same
+    function. ``func.lower()`` runs in SQLite and is ASCII-only; ``text.fold`` is Python's
+    ``casefold``. They agree on every ASCII name and part ways on the rest, so a German
+    list named ``STRASSE`` is not refused against one named ``Straße``. The ``NOCASE``
+    collation behind this check is ASCII-only as well, so both layers already answer the
+    same way and the refusal is consistent with what the column will actually enforce.
     """
     stmt = select(ListConfig.id).where(func.lower(ListConfig.name) == fold(name))
     if this_row is not None:
@@ -300,10 +298,10 @@ async def _refuse_name_twice(session: AsyncSession, name: str, *, this_row: int 
 def _clean_config(source: ListSource, config: dict[str, Any]) -> str:
     """Refuse a configuration that could never match anything, at the save boundary.
 
-    A list saved with no collection name or no tags syncs to empty and then sits on the
-    screen reading "Nothing on it", which is indistinguishable from a collection the operator
-    has not filled in yet. Refusing here says which box is empty, while they are looking at
-    it (rule 108 is the same check for a rule value that strips to nothing).
+    A list saved with no collection name or no tags would sync to empty and then sit on
+    the screen reading "Nothing on it," which is indistinguishable from a collection the
+    operator has not filled in yet. Refusing here says which box is empty, while they are
+    looking at it.
     """
     if source is ListSource.PLEX_COLLECTION:
         library = str(config.get("library", "")).strip()
@@ -315,12 +313,12 @@ def _clean_config(source: ListSource, config: dict[str, Any]) -> str:
         return json.dumps({"library": library, "collection": collection})
     if source is ListSource.ARR_TAG:
         # One entry per tag, on the comparison form Sonarr and Radarr themselves use: they
-        # lower-case every label, so "Keep" and "keep" are one tag there and were two here.
-        # Stored twice, the pair collapsed to one tag id at fetch time and only the later
-        # spelling was counted, so the Lists screen showed a chip reading "Keep 0" beside
-        # "keep 12" for a tag protecting everything it names -- and under match ALL the
-        # collapsed set made ALL behave as ANY (#509). The FIRST spelling is kept, which is
-        # the one the operator typed before the duplicate.
+        # lower-case every label, so "Keep" and "keep" are one tag there. Storing both
+        # spellings would let the pair collapse to one tag id at fetch time with only the
+        # later spelling counted, showing a chip reading "Keep 0" beside "keep 12" for a tag
+        # protecting everything it names, and under match ALL the collapsed set would make
+        # ALL behave as ANY. The first spelling is kept, since that is the one the operator
+        # typed before the duplicate.
         seen: set[str] = set()
         tags: list[str] = []
         for raw in config.get("tags", []):
@@ -346,9 +344,9 @@ def _clean_config(source: ListSource, config: dict[str, Any]) -> str:
     # being bounced back for retyping.
     found = re.search(r"ls\d{6,}", str(config.get("list_id", "")))
     if not found:
-        # An all-zero id of the right shape, not a real one: this is operator-facing copy, and
-        # a real id is somebody's actual list. The modal's own copy of this sentence and the
-        # placeholder beside it spell the same example (rule 144).
+        # The error text's example id is deliberately an all-zero one of the right shape,
+        # not a real one, since a real id is somebody's actual list. The modal's own copy of
+        # this sentence and the placeholder beside it spell the same example.
         raise ListConfigError("error.lists.imdb_id_invalid")
     return json.dumps({"list_id": found.group(0)})
 
@@ -373,8 +371,8 @@ async def create(
     try:
         await session.commit()
     except IntegrityError:
-        # The unique name. Caught rather than pre-checked, because a read-then-insert can be
-        # beaten between the two and the constraint is the thing that actually holds.
+        # The unique name. Caught rather than pre-checked, because a read-then-insert can
+        # be beaten between the two, and the constraint is the thing that actually holds.
         await session.rollback()
         raise ListConfigError("error.lists.name_exists") from None
     log.info("list_config.created", source=kind.value)
@@ -410,9 +408,10 @@ async def update(
 async def delete(session: AsyncSession, list_id: int) -> None:
     """Remove a list. Every list is removable, the shipped ones included.
 
-    A rule naming the deleted list must not go on rendering as a live protection, so the API
-    route pairs this with ``list_rules.detach_list``, which strips the list's keep rules from
-    every stored policy in the same request; ``tests/test_list_rules.py`` pins the pairing.
+    A rule naming the deleted list must not go on rendering as a live protection, so the
+    API route pairs this with ``list_rules.detach_list``, which strips the list's keep
+    rules from every stored policy in the same request; ``tests/test_list_rules.py`` pins
+    the pairing.
     """
     row = await get(session, list_id)
     await session.delete(row)

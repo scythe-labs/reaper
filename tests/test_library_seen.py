@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""A title that came back (#553): the ledger, the four conditions, and the hold.
+"""A title that came back: the ledger, the four conditions, and the hold.
 
 The rule these pin is stated in ``services/library_seen.py`` and argued in
-``docs/history/RETURN_PLAN.md``. Each condition exists because of a measurement, so each gets a case
-proving it can still hold a return back on its own, and the population that would have shipped
-without condition 2 -- one external id carrying two \\*arr entries -- gets its own
-(``docs/LEARNINGS.md``, assumption 16).
+``docs/history/RETURN_PLAN.md``. Each condition exists because of a measurement, so each
+gets a case proving it can still hold a return back on its own. The population that would
+have shipped without condition 2, one external id carrying two \\*arr entries, gets its own
+case (``docs/LEARNINGS.md``, assumption 16).
 
-Nothing here re-implements the rule (rule 119): every case calls ``is_return``, ``id_key``,
+Nothing here re-implements the rule. Every case calls ``is_return``, ``id_key``,
 ``within_cap`` or the real gate.
 """
 
@@ -38,12 +38,12 @@ from reaper.engine.observation import Absent, Known, Unknown
 from reaper.services import library_seen
 from tests._reasons import text
 
-# Whole seconds: ``UtcTimestamp`` stores epoch seconds, so a microsecond would survive in
+# Whole seconds. ``UtcTimestamp`` stores epoch seconds, so a microsecond would survive in
 # memory and not in the row (``test_watch_evidence``'s NOW, same reason).
 NOW = utcnow().replace(microsecond=0)
 
-#: Deliberately not the shipped 7 (rule 141): a fixture pinning the production default cannot
-#: prove the caller passed anything, because an omission and a correct pass read alike.
+#: Deliberately not the shipped 7. A fixture pinning the production default cannot prove
+#: the caller passed anything, because an omission and a correct pass read alike.
 ABSENCE_DAYS = 11
 
 #: Deliberately not the shipped 548, for the same reason.
@@ -126,7 +126,7 @@ class TestTheLedgerKey:
     """One id, one row, and never two different titles in it."""
 
     def test_a_movie_and_a_show_sharing_a_number_are_two_rows(self) -> None:
-        """Rule 52: movie and TV tmdb ids share one integer space.
+        """Movie and TV tmdb ids share one integer space.
 
         Without the media kind in the key, a film and a show carrying the same tmdb id would
         overwrite each other's rating keys and read as a return on every scan.
@@ -141,7 +141,7 @@ class TestTheLedgerKey:
         assert library_seen.id_key(media_type="season", tvdb=678) == "tv:tvdb:678"
 
     def test_a_season_is_its_show_plus_its_number(self) -> None:
-        """Assumption 16's trap: a show's TVDb id is shared by every season it has, so a key
+        """Assumption 16's trap. A show's TVDb id is shared by every season it has, so a key
         without the number counts the season structure rather than the seasons."""
         s1 = library_seen.id_key(media_type="season", tvdb=678, season=1)
         s3 = library_seen.id_key(media_type="season", tvdb=678, season=3)
@@ -159,9 +159,9 @@ class TestTheLedgerKey:
         assert library_seen.id_key(media_type="season", season=1) is None
 
     def test_the_ladders_are_the_ones_the_plex_resolver_binds_on(self) -> None:
-        """Rule 104's shape across a restatement: the key and the bind must rest on the same
-        id, so the preferred kind here is asserted against the resolver's own tuples rather
-        than transcribed into a comment nobody re-reads."""
+        """The key and the bind must rest on the same id, so the preferred kind here is
+        asserted against the resolver's own tuples rather than transcribed into a comment
+        nobody re-reads."""
         assert library_seen.id_key(media_type="movie", tmdb=1, imdb="tt1") == (
             f"movie:{identity.MOVIE_ID_PRIORITY[0]}:1"
         )
@@ -185,7 +185,7 @@ class TestTheFourConditions:
 
         About one movie entry in 150 shares its TMDb id with a second \\*arr entry, one per
         copy, each bound to a different Plex listing (``docs/LEARNINGS.md``, assumption 16).
-        The bind moving between two listings that BOTH still exist is not a return, and
+        The bind moving between two listings that *both* still exist is not a return, and
         without this the ledger would hold both copies forever.
         """
         assert _is_return(_seen(keys={1}), _sighting(), live_keys={1}) is False
@@ -200,9 +200,9 @@ class TestTheFourConditions:
         assert _is_return(seen, _sighting(added_days_ago=0)) is False
 
     def test_the_bar_is_the_value_passed_not_the_shipped_default(self) -> None:
-        # Rule 141: the fixture bar differs from the production default, so this can only
-        # pass if the argument reaches the comparison. Same seen row and same sighting on
-        # both sides, so the bar is the only thing that moves.
+        # The fixture bar differs from the production default, so this can only pass if
+        # the argument reaches the comparison. Same seen row and same sighting on both
+        # sides, so the bar is the only thing that moves.
         seen = _seen(keys={1}, last_seen_days_ago=60)
         arrived_45_days_ago = _sighting(added_days_ago=45)
         assert _is_return(seen, arrived_45_days_ago) is True
@@ -221,21 +221,21 @@ class TestTheFourConditions:
     def test_one_scan_inside_the_absence_is_not_enough(self) -> None:
         """Condition 4, the half a clock cannot do.
 
-        ``last_seen_at`` is the last time Reaper LOOKED, so on an install with a 202-hour gap
-        between scans a file swapped out in minutes reads as an eight-day absence. Requiring
-        that Reaper actually ran during it closes that.
+        ``last_seen_at`` is the last time Reaper *looked*, so on an install with a 202-hour
+        gap between scans a file swapped out in minutes reads as an eight-day absence.
+        Requiring that Reaper actually ran during it closes that.
         """
         one_scan = [NOW - timedelta(days=30)]
         assert _is_return(_seen(keys={1}), _sighting(), scans=one_scan) is False
 
     def test_no_scan_inside_the_absence_is_not_enough(self) -> None:
-        # A library rebuilt in an afternoon: every key reissued, and nothing ran while it
+        # A library rebuilt in an afternoon. Every key reissued, and nothing ran while it
         # was away.
         assert _is_return(_seen(keys={1}), _sighting(), scans=[]) is False
 
     def test_scans_outside_the_absence_do_not_count(self) -> None:
-        # Both endpoints open: the scan that last saw it did not run while it was missing,
-        # and neither did one simultaneous with the copy's arrival.
+        # Both endpoints are open. The scan that last saw it did not run while it was
+        # missing, and neither did one simultaneous with the copy's arrival.
         outside = [NOW - timedelta(days=60), NOW - timedelta(days=3), NOW]
         assert _is_return(_seen(keys={1}), _sighting(), scans=outside) is False
 
@@ -256,21 +256,23 @@ class TestWhatCannotManufactureAReturn:
     def test_an_arrival_date_in_the_future_is_clamped(self) -> None:
         """A clock ahead of Reaper's must not widen the gap it is measured against.
 
-        **The fixture is chosen so that only the clamp decides it**, which the obvious one
-        does not: with the shared scan history, deleting the clamp leaves this False anyway,
-        because the widened window still holds under two scans and condition 4 refuses it.
-        A test that both the correct and the broken code pass is not a proof (rule 118).
+        The fixture is chosen so that only the clamp decides it, which an obvious fixture
+        does not. With the shared scan history, deleting the clamp leaves this False
+        anyway, because the widened window still holds under two scans and condition 4
+        refuses it on its own. A test that both the correct and the broken code pass is not
+        a proof.
 
-        So: last seen 5 days ago, arriving "in a year", and two scans inside the last 5 days.
-        Clamped, the gap is 5 days and fails the eleven-day bar. Unclamped it is 370 days,
-        clears the bar, and finds both scans inside, so it would return True.
+        Here, last seen was 5 days ago, arrival claims "in a year", and two scans ran
+        inside the last 5 days. Clamped, the gap is 5 days and fails the eleven-day bar.
+        Unclamped it is 370 days, clears the bar, and finds both scans inside, so it would
+        return True.
         """
         seen = _seen(keys={1}, last_seen_days_ago=5)
         ahead = _sighting(added_days_ago=-365)
         recent = [NOW - timedelta(days=4), NOW - timedelta(days=2)]
         assert _is_return(seen, ahead, scans=recent) is False
-        # ...and the same fixture with an honest date DOES return True, so the case above
-        # fails for the clamp and not because nothing could ever pass here.
+        # ...and the same fixture with an honest date *does* return True, so the case
+        # above fails for the clamp and not because nothing could ever pass here.
         honest = _sighting(added_days_ago=1)
         assert _is_return(_seen(keys={1}, last_seen_days_ago=60), honest, scans=recent) is True
 
@@ -295,7 +297,8 @@ class TestTheScanCount:
 
 
 class TestThePopulationCap:
-    """#553's own guard over its own inputs. #809 is the scan-level one and is not this."""
+    """This feature's own guard over its own inputs. A separate scan-level cap exists too,
+    and this is not that one."""
 
     def test_a_small_library_keeps_every_detection(self) -> None:
         # One real return on a 20-item library is 5%, which the share alone would refuse.
@@ -305,7 +308,7 @@ class TestThePopulationCap:
         assert library_seen.within_cap(20, 3500) is True
 
     def test_a_whole_library_looking_returned_at_once_is_refused(self) -> None:
-        # The slow-rebuild residue: every key reissued while Reaper kept scanning.
+        # The slow-rebuild residue. Every key reissued while Reaper kept scanning.
         assert library_seen.within_cap(3500, 3500) is False
 
     def test_the_cap_bites_just_above_its_own_share(self) -> None:
@@ -316,7 +319,7 @@ class TestThePopulationCap:
 
 
 class TestTheObservations:
-    """Rule 93: a lookup that found nothing and a lookup that could not happen are different."""
+    """A lookup that found nothing and a lookup that could not happen are different."""
 
     def test_no_ledger_row_is_unknown_on_both_fields(self) -> None:
         days, by_reaper = library_seen.observations(None, now=NOW)
@@ -336,8 +339,8 @@ class TestTheObservations:
         assert by_reaper == Known(value=True, source="reaper")
 
     def test_a_return_reaper_cannot_claim_is_a_real_false(self) -> None:
-        # Not a gap: it means Reaper has no record of removing it, which is what the second
-        # sentence tells the operator.
+        # Not a gap. It means Reaper has no record of removing it, which is what the
+        # second sentence tells the operator.
         _, by_reaper = library_seen.observations(
             _seen(keys={1}, returned_days_ago=5, by_reaper=False), now=NOW
         )
@@ -384,13 +387,13 @@ class TestTheGate:
         theirs = self._gate().evaluate(self._facts(100, by_reaper=False))
         assert text(ours.detail).startswith("you removed this before")
         assert text(theirs.detail).startswith("this left your library")
-        # Same hold either way: splitting the length would mean a second knob for a
+        # Same hold either way. Splitting the length would mean a second knob for a
         # difference nobody has measured.
         assert ours.outcome == theirs.outcome == PROTECT
 
     def test_the_countdown_is_measured_against_the_configured_hold(self) -> None:
-        # Rule 141 again: HOLD_DAYS is not the shipped default, so a gate reading its own
-        # constant instead of the config cannot pass this.
+        # HOLD_DAYS is not the shipped default, so a gate reading its own constant instead
+        # of the config cannot pass this.
         near_end = self._gate().evaluate(self._facts(HOLD_DAYS - 2))
         assert near_end.outcome == PROTECT
         assert "2 days left" in text(near_end.detail)
@@ -445,14 +448,14 @@ class TestTheLedgerRoundTrip:
     ) -> None:
         """Assumption 16, one layer up from where it was first paid for.
 
-        One external id routinely carries TWO \\*arr entries, one per copy, each bound to a
-        different Plex listing. A batch holding one sighting per id drops whichever copy the
-        scan judged first, so that copy's key is never recorded on ANY scan while its sibling
-        exists -- and a key that was never recorded can never later be noticed as gone, which
-        is the coverage this feature exists to have for exactly that population.
+        One external id routinely carries *two* \\*arr entries, one per copy, each bound to
+        a different Plex listing. A batch holding one sighting per id drops whichever copy
+        the scan judged first, so that copy's key is never recorded on any scan while its
+        sibling exists. A key that was never recorded can never later be noticed as gone,
+        which is the coverage this feature exists to have for exactly that population.
 
-        The stored row was designed as a set for this reason; the batch feeding it has to be
-        one too.
+        The stored row was designed as a set for this reason. The batch feeding it has to
+        be one too.
         """
         first = _sighting(key=11)
         second = _sighting(key=22)
@@ -493,7 +496,7 @@ class TestTheLedgerRoundTrip:
     async def test_unreadable_stored_keys_read_as_none_rather_than_raising(
         self, session: AsyncSession
     ) -> None:
-        # Rule 96's direction: an illegible field costs a detection, never the row.
+        # An illegible field costs a detection, never the row.
         key = SIGHTING_ID
         await library_seen.record(session, _batch(_sighting(key=7)), returns={}, now=NOW)
         await session.flush()

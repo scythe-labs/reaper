@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Sessions and the local-login path.
 
-The invariants that matter for a tool that can delete a library: a revoked or
-expired session stops working *immediately* (we store server-side state precisely
-so it can), a deactivated admin's live sessions die with the account, and a failed
-local login says nothing about which usernames exist.
+Three invariants matter for a tool that can delete a library: a revoked or expired
+session stops working *immediately* (server-side state is stored precisely so it can),
+a deactivated admin's live sessions die with the account, and a failed local login says
+nothing about which usernames exist.
 """
 
 from __future__ import annotations
@@ -224,8 +224,8 @@ class TestLocalLogin:
     async def test_a_plex_only_account_cannot_be_password_guessed(
         self, factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        """A Plex-provisioned admin has no password hash. It must not be loggable-in
-        with an empty or any password."""
+        """A Plex-provisioned admin has no password hash, so no password can sign them
+        in, empty or otherwise."""
         async with factory() as session:
             session.add(
                 AppUser(
@@ -285,17 +285,14 @@ async def _pending(
 
 
 class TestThePinPurposeFence:
-    """``purpose`` is the only thing separating the two plex.tv PIN flows, and until
-    these tests nothing observed it: dropping the discriminator from both pollers left
-    the whole suite green, because the two halves were wrong in agreement.
+    """``purpose`` is the only thing separating the two plex.tv PIN flows.
 
-    It is worth a fence because the flows sit on opposite sides of the auth guard.
-    ``/api/settings/plex/link/*`` needs an admin session; ``/api/auth/plex/*`` is open,
+    The fence matters because the flows sit on opposite sides of the auth guard.
+    ``/api/settings/plex/link/*`` needs an admin session. ``/api/auth/plex/*`` is open,
     since it is how an operator signs in. So the row an admin's re-link leaves behind
     must not be redeemable for a session by whoever can reach the open route.
 
-    ``start_pin`` takes the value as an argument where each flow used to write its own
-    literal, which is exactly when the value earns a test (rule 118).
+    ``start_pin`` takes ``purpose`` as an argument, which is what makes this testable.
     """
 
     @pytest.fixture
@@ -332,9 +329,9 @@ class TestThePinPurposeFence:
         pins: respx.Route,
         purpose: PinPurpose,
     ) -> None:
-        """Both values are swept, so a helper that hardcodes either one fails on the
-        other (rule 141). ``forward_url`` is swept off its ``None`` default in the same
-        call: it is what closes the plex.tv window, and both callers now route it here.
+        """Both purpose values are swept, so a helper that hardcodes either one fails on
+        the other. ``forward_url`` is swept off its ``None`` default in the same call.
+        It is what closes the plex.tv window, and both callers route through here.
         """
         start = await start_pin(
             factory,
@@ -353,25 +350,22 @@ class TestThePinPurposeFence:
     async def test_the_scheduled_sweep_drops_the_expired_pendings_and_only_those(
         self, factory: async_sessionmaker[AsyncSession], pins: respx.Route
     ) -> None:
-        """The sweep covers every purpose: an abandoned link must not keep a row alive
+        """The sweep covers every purpose. An abandoned link must not keep a row alive
         forever, and a live one must survive.
 
-        **It runs on a schedule now, not on the next `start_pin`** (#710). The
-        opportunistic delete fired only when somebody started ANOTHER PIN, so on an install
-        where nobody did, an abandoned sign-in sat there indefinitely. Its sibling
-        `AuthSession` had a scheduled job with the reasoning written down and this table had
-        none; they share that firing now.
+        It runs on a schedule, independent of `start_pin`, the same way `AuthSession`'s
+        sweep does.
 
         Both states are driven, because the sweep and an unconditional
-        ``delete(PendingPlexLogin)`` are indistinguishable when only the expired one is
-        (rule 145). The live row is what makes them differ, and it is not a contrived
-        case: the two flows overlap whenever an admin with a re-link in flight opens the
+        ``delete(PendingPlexLogin)`` are indistinguishable if only the expired row is
+        tested. The live row is what makes them differ, and it is not a contrived case:
+        the two flows overlap whenever an admin with a re-link in flight opens the
         sign-in route in another tab, and wiping it there costs them the whole approval
         round trip.
 
-        `start_pin` is still called afterwards, so the row it mints is on the table when the
-        sweep runs: a sweep that took a *fresh* PIN would strand the flow that just started
-        one, which is the failure this ordering is the cheapest way to catch.
+        `start_pin` is called afterwards, so the row it mints is on the table when the
+        sweep runs. A sweep that took a *fresh* PIN would strand the flow that just
+        started one, which is the failure this ordering catches.
         """
         async with factory() as session:
             session.add(
@@ -408,11 +402,11 @@ class TestThePinPurposeFence:
     async def test_starting_a_pin_no_longer_sweeps(
         self, factory: async_sessionmaker[AsyncSession], pins: respx.Route
     ) -> None:
-        """Starting a PIN is not housekeeping, and the two were tangled (#710).
+        """Starting a PIN does no housekeeping of its own.
 
-        Driven rather than argued, because the opportunistic delete is exactly what a reader
-        reaches for again if the scheduled job is ever doubted: with both in place the
-        scheduled sweep would look like it worked whichever one actually ran.
+        Driven rather than argued, because if starting a PIN also swept, the scheduled
+        sweep would look like it worked whichever one actually ran, hiding a broken
+        scheduled job.
         """
         async with factory() as session:
             session.add(
@@ -434,7 +428,7 @@ class TestThePinPurposeFence:
     async def test_a_link_pin_cannot_be_spent_as_a_sign_in(
         self, factory: async_sessionmaker[AsyncSession], httpx2_mock: respx.Router
     ) -> None:
-        """The direction that matters: the open sign-in route must not redeem the row
+        """The direction that matters. The open sign-in route must not redeem the row
         an authenticated re-link created. Refused before plex.tv is asked anything."""
         await _link_server(factory, "ours")
         await _pending(factory, 42, purpose="link")
@@ -446,16 +440,16 @@ class TestThePinPurposeFence:
         assert not approved.called
         async with factory() as session:
             assert (await session.execute(select(AuthSession))).first() is None
-            # Refusing another flow's PIN must not consume it either: the admin's link
-            # is still in flight and its own poller has to be able to finish it.
+            # Refusing another flow's PIN must not consume it either. The admin's link
+            # is still in flight, and its own poller has to be able to finish it.
             row = (await session.execute(select(PendingPlexLogin))).scalar_one()
             assert row.purpose == "link"
 
     async def test_a_sign_in_pin_cannot_be_spent_as_a_link(
         self, factory: async_sessionmaker[AsyncSession], httpx2_mock: respx.Router
     ) -> None:
-        """The mirror. Without it the fence is pinned in one direction only, which is
-        how both halves drifted into agreeing (rule 72)."""
+        """The mirror test. Without it, the fence would be pinned in one direction only,
+        leaving the other half unchecked."""
         await _pending(factory, 42, purpose="login")
         approved = self._approval_chain(httpx2_mock)
 
@@ -532,10 +526,10 @@ class TestPlexLoginPoll:
 class TestFirstRunServerChoice:
     """First-run setup for an account owning SEVERAL servers.
 
-    The properties that matter for a deletion tool: Reaper never guesses which
-    library to manage, the sign-in survives while the owner picks (no second
-    OAuth round-trip), and a pick can only ever land on a server the account
-    owns -- whatever string the browser sends back.
+    Three properties matter for a deletion tool: Reaper never guesses which library to
+    manage, the sign-in survives while the owner picks (no second OAuth round trip), and
+    a pick can only ever land on a server the account owns, whatever string the browser
+    sends back.
     """
 
     def _mock_signin(self, httpx2_mock: respx.Router, resources: list[dict[str, object]]) -> None:
@@ -568,7 +562,7 @@ class TestFirstRunServerChoice:
         assert offered == {("Den", "machine-a"), ("Attic", "machine-b")}
 
         async with factory() as session:
-            # Nothing was linked and no admin was created: the choice is still open.
+            # Nothing was linked and no admin was created. The choice is still open.
             assert (await session.execute(select(PlexServer))).first() is None
             assert (await session.execute(select(AppUser))).first() is None
             # The pending PIN survives, so the same sign-in can finish the job.
@@ -583,7 +577,7 @@ class TestFirstRunServerChoice:
         with pytest.raises(PlexServerChoiceNeededError):
             await poll_plex_login(factory, _box(), pin_id=42, safety=SAFETY)
 
-        # The re-poll carries the pick; the still-valid PIN completes setup.
+        # The re-poll carries the pick, and the still-valid PIN completes setup.
         self._mock_signin(httpx2_mock, resources)
         result = await poll_plex_login(
             factory, _box(), pin_id=42, safety=SAFETY, choice="machine-b"
@@ -594,7 +588,7 @@ class TestFirstRunServerChoice:
             server = (await session.execute(select(PlexServer))).scalar_one()
             assert server.machine_identifier == "machine-b"
             assert server.name == "Attic"
-            # The pick consumed the pending row: the token cannot be replayed.
+            # The pick consumed the pending row, so the token cannot be replayed.
             assert (await session.execute(select(PendingPlexLogin))).first() is None
             assert await resolve_session(session, result.session_token) is not None
 
@@ -604,10 +598,10 @@ class TestFirstRunServerChoice:
         """The twin of the in-app link flow's transient blip, on the setup path.
 
         ``complete_link`` raises the retryable error when no advertised address answers
-        right now. It is NOT a refusal, so it must not consume the sign-in -- but it is a
-        subclass of the permanent link error, and the arm that consumes the PIN used to
-        catch it first. Getting this wrong forces the owner through the whole OAuth round
-        trip again over a server that was merely restarting.
+        right now. This is not a refusal, so it must not consume the sign-in, even though
+        it is a subclass of the permanent link error that the PIN-consuming arm could
+        otherwise catch first. Getting this wrong forces the owner through the whole
+        OAuth round trip again, over a server that was merely restarting.
         """
         await _pending(factory, 42)
         resources = [_resource("machine-a", "Den"), _resource("machine-b", "Attic")]
@@ -634,7 +628,7 @@ class TestFirstRunServerChoice:
     async def test_a_choice_matching_nothing_owned_is_refused(
         self, factory: async_sessionmaker[AsyncSession], httpx2_mock: respx.Router
     ) -> None:
-        """Fail closed: a stale or hostile identifier can never link a server."""
+        """Fails closed. A stale or hostile identifier can never link a server."""
         await _pending(factory, 42)
         self._mock_signin(
             httpx2_mock, [_resource("machine-a", "Den"), _resource("machine-b", "Attic")]
@@ -652,7 +646,7 @@ class TestFirstRunServerChoice:
     async def test_a_choice_by_exact_name_works_and_a_duplicate_name_is_refused(
         self, factory: async_sessionmaker[AsyncSession], httpx2_mock: respx.Router
     ) -> None:
-        """The CLI passes what a human types: an exact name resolves, an ambiguous
+        """The CLI passes what a human types. An exact name resolves, and an ambiguous
         one is refused rather than guessed."""
         await _pending(factory, 42)
         self._mock_signin(

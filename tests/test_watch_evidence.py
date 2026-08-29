@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The watch-history blindness check.
 
-A Plex rating key is not stable: a re-added file gets a new one, while Tautulli keeps every
-earlier play filed under the old one. The mirror is read by the current key, so those plays
-vanish and the item reads ``Known(0)`` watchers with maximum dormancy -- an affirmative
-"nobody ever watched this" about a title somebody watched.
+A Plex rating key is not stable. A re-added file gets a new one, while Tautulli keeps every
+earlier play filed under the old one. Reaper's local watch-history table is read by the
+current key, so those plays vanish and the item reads ``Known(0)`` watchers with maximum
+dormancy, an affirmative "nobody ever watched this" about a title somebody actually watched.
 
-These tests pin the invariant that separates that from a genuinely unwatched item (all-time
-watch evidence cannot fall), the two branches that detect a fall, the cases that must NOT
-fire (a never-watched item above all, or the whole library stops being reapable), and the
-monotonic write -- including the SQLite trap where ``max()`` of anything and NULL is NULL.
+These tests pin the core invariant that separates this from a genuinely unwatched item.
+All-time watch evidence can never fall. They also cover the two branches that detect a
+fall, the cases that must not fire (a never-watched item above all, or the whole library
+stops being reapable), and the monotonic write, including the SQLite trap where ``max()``
+of anything and NULL is NULL.
 """
 
 from __future__ import annotations
@@ -38,9 +39,10 @@ from reaper.services.watch_evidence import Mark, Reading, went_blind
 from tests._auth import TEST_PASSWORD, clear_admin_password
 
 # Whole seconds. ``UtcTimestamp`` stores epoch seconds (``db.types.EpochDateTime``), so a
-# microsecond here would survive in memory and not in the row, and every round-trip
-# assertion below would fail on the truncation rather than on the behavior. Production never
-# sees it: both sides of the comparison come from epoch seconds already.
+# microsecond here would survive in memory but not in the row, and every round-trip
+# assertion below would fail on the truncation instead of on the actual behavior.
+# Production never hits this, because both sides of a real comparison come from epoch
+# seconds already.
 NOW = utcnow().replace(microsecond=0)
 EARLIER = NOW - timedelta(days=30)
 
@@ -61,9 +63,9 @@ class TestWhatDoesNotFire:
     """The false positives that would cost the operator their whole reap list."""
 
     def test_a_never_watched_item_never_fires(self) -> None:
-        # THE case. Zero to zero is not a fall, so the item keeps its honest Known(0) and
-        # stays condemnable -- which is the entire point of the feature. If this ever
-        # inverts, nothing in the library is reapable again.
+        # The central case. Zero to zero is not a fall, so the item keeps its honest
+        # Known(0) and stays condemnable, which is the entire point of this feature. If
+        # this ever inverts, nothing in the library is reapable again.
         mark = Mark(watchers_all_time=0, last_played_at=None)
         assert went_blind(mark, Reading(watchers_all_time=0, last_played_at=None)) is None
 
@@ -80,8 +82,9 @@ class TestWhatDoesNotFire:
         assert went_blind(mark, Reading(watchers_all_time=5, last_played_at=NOW)) is None
 
     def test_a_partial_drop_that_keeps_the_latest_play_does_not_fire(self) -> None:
-        # Deliberately not flagged: it does not cross the never-watched boundary that drives
-        # the condemn lane, and dormancy is unaffected because the latest play still stands.
+        # Deliberately not flagged. It does not cross the never-watched boundary that
+        # drives the condemn lane, and dormancy is unaffected because the latest play still
+        # stands.
         mark = Mark(watchers_all_time=5, last_played_at=EARLIER)
         assert went_blind(mark, Reading(watchers_all_time=3, last_played_at=EARLIER)) is None
 
@@ -93,9 +96,9 @@ class TestWhatFires:
         assert reason == watch_evidence.BLIND_REASON
 
     def test_the_latest_play_moving_backwards_in_time_fires(self) -> None:
-        # A play cannot un-happen. Catches the partial case the counter misses: some plays
-        # still readable under the current key, but the most recent one was under a key that
-        # moved, so dormancy inflates while the count stays positive.
+        # A play cannot un-happen. This catches the partial case the counter misses. Some
+        # plays are still readable under the current key, but the most recent one was under
+        # a key that moved, so dormancy inflates while the count stays positive.
         mark = Mark(watchers_all_time=5, last_played_at=NOW)
         reason = went_blind(mark, Reading(watchers_all_time=4, last_played_at=EARLIER))
         assert reason == watch_evidence.BLIND_REASON
@@ -106,8 +109,8 @@ class TestWhatFires:
         assert reason == watch_evidence.BLIND_REASON
 
     def test_the_reason_names_no_internal_machinery(self) -> None:
-        # Rule 21: operator copy says the outcome and keeps rating keys, guids and mirrors
-        # out of it. No em dashes either.
+        # Operator copy states the outcome and keeps rating keys, guids, and internal
+        # watch-history tables out of it. No em dashes either.
         reason = watch_evidence.BLIND_REASON
         assert "—" not in reason
         for jargon in ("rating key", "guid", "mirror", "Tautulli", "Plex", "watch_event"):
@@ -116,7 +119,7 @@ class TestWhatFires:
 
 class TestTheReadingIsOnlyTakenForMatchedItems:
     def test_an_unmatched_item_has_no_reading(self) -> None:
-        # It must not be recorded as zero: that mark would hold the item's true evidence
+        # It must not be recorded as zero. That mark would hold the item's true evidence
         # down forever, so the check could never fire for it again.
         assert watch_evidence.reading_for(None, {}, {}) is None
 
@@ -137,10 +140,10 @@ class TestTheMarkOnlyEverRises:
 
     async def test_a_blind_reading_cannot_lower_the_mark(self, session: AsyncSession) -> None:
         # The property the whole check rests on. If a blind scan could lower the mark, the
-        # first one would write zero as the new baseline and no later scan would ever notice.
-        # A fully blind reading carries no evidence, so ``record`` skips it outright; the two
-        # tests below cover the partial case, where a row IS written and the SQL max() is the
-        # only thing holding the mark up.
+        # first one would write zero as the new baseline and no later scan would ever
+        # notice. A fully blind reading carries no evidence, so ``record`` skips it
+        # outright. The two tests below cover the partial case, where a row is written and
+        # the SQL max() is the only thing holding the mark up.
         await watch_evidence.record(session, {"radarr:1:5": Reading(4, NOW)}, now=NOW)
         await watch_evidence.record(session, {"radarr:1:5": Reading(0, None)}, now=NOW)
         marks = await watch_evidence.recall_all(session)
@@ -149,19 +152,20 @@ class TestTheMarkOnlyEverRises:
     async def test_a_lower_but_still_readable_count_cannot_lower_the_mark(
         self, session: AsyncSession
     ) -> None:
-        # The partially blind item: some plays still visible under the current key, so the
-        # reading carries evidence and IS written. Nothing skips this row, which makes the
-        # SQL ``max()`` on the counter the only thing standing between a partial fall and a
-        # mark that quietly follows it down (rule 118).
+        # The partially blind item. Some plays are still visible under the current key, so
+        # the reading carries evidence and is written. Nothing skips this row, which makes
+        # the SQL ``max()`` on the counter the only thing standing between a partial fall
+        # and a mark that quietly follows it down.
         await watch_evidence.record(session, {"radarr:1:5": Reading(5, NOW)}, now=NOW)
         await watch_evidence.record(session, {"radarr:1:5": Reading(2, NOW)}, now=NOW)
         marks = await watch_evidence.recall_all(session)
         assert marks["radarr:1:5"].watchers_all_time == 5
 
     async def test_an_earlier_last_play_cannot_lower_the_mark(self, session: AsyncSession) -> None:
-        # The same partial case on the timestamp arm: the most recent play was recorded under
-        # a key that moved, so the latest one still visible is older. The mark must keep the
-        # later instant, or the next scan compares against the fallen value and reads honest.
+        # The same partial case on the timestamp arm. The most recent play was recorded
+        # under a key that moved, so the latest one still visible is older. The mark must
+        # keep the later instant, or the next scan compares against the fallen value and
+        # mistakes it for honest dormancy.
         await watch_evidence.record(session, {"radarr:1:5": Reading(4, NOW)}, now=NOW)
         await watch_evidence.record(session, {"radarr:1:5": Reading(4, EARLIER)}, now=NOW)
         marks = await watch_evidence.recall_all(session)
@@ -170,9 +174,9 @@ class TestTheMarkOnlyEverRises:
     async def test_a_null_reading_does_not_erase_a_stored_last_played(
         self, session: AsyncSession
     ) -> None:
-        # SQLite's scalar max() returns NULL if ANY argument is NULL, so an unguarded
-        # max(excluded, stored) would wipe a real timestamp the first time an item read
-        # blind -- exactly when the mark is needed.
+        # SQLite's scalar max() returns NULL if any argument is NULL, so an unguarded
+        # max(excluded, stored) would wipe a real timestamp the first time an item reads
+        # blind, exactly when the mark is needed.
         await watch_evidence.record(session, {"radarr:1:5": Reading(4, NOW)}, now=NOW)
         await watch_evidence.record(session, {"radarr:1:5": Reading(4, None)}, now=NOW)
         marks = await watch_evidence.recall_all(session)
@@ -190,22 +194,22 @@ class TestTheMarkOnlyEverRises:
 
 
 class TestAReadingOfNothingIsNotAMark:
-    """No watchers and no play is the ABSENCE of evidence, not a measurement of none.
+    """No watchers and no play is the absence of evidence, not a measurement of none.
 
-    The two are the same thing only for an item whose history was readable, and the read path
-    cannot tell which it has. So no row is written, and an absent mark keeps meaning exactly
-    what it says. This is deliberately behavior-neutral -- a stored zero and no row both make
-    ``went_blind`` return ``None`` -- and the tests below pin both halves of that: the row
-    does not appear, and nothing about what fires moves.
+    The two look the same only for an item whose history was readable, and the read path
+    cannot tell which case it has. So no row is written, and an absent mark keeps meaning
+    exactly what it says. This is deliberately behavior-neutral. A stored zero and no row
+    both make ``went_blind`` return ``None``. The tests below pin both halves of that. The
+    row does not appear, and nothing about what fires changes.
     """
 
     def test_a_reading_of_nothing_carries_no_evidence(self) -> None:
         assert not watch_evidence.carries_evidence(Reading(0, None))
 
     def test_a_play_with_no_counted_watcher_still_carries_evidence(self) -> None:
-        # The arms are independent on purpose: a play Reaper can see is evidence even where
-        # the watcher count did not survive, and dropping it would forfeit the timestamp arm
-        # of the check for that item.
+        # The arms are independent on purpose. A play Reaper can see is evidence even
+        # where the watcher count did not survive, and dropping it would forfeit the
+        # timestamp arm of the check for that item.
         assert watch_evidence.carries_evidence(Reading(0, EARLIER))
 
     def test_a_counted_watcher_with_no_play_still_carries_evidence(self) -> None:
@@ -218,8 +222,8 @@ class TestAReadingOfNothingIsNotAMark:
     async def test_the_watched_item_beside_it_is_still_recorded(
         self, session: AsyncSession
     ) -> None:
-        # The skip is per row, not per call: one unwatched item in a chunk must not cost the
-        # rest of the chunk its marks.
+        # The skip is per row, not per call. One unwatched item in a chunk must not cost
+        # the rest of the chunk its marks.
         await watch_evidence.record(
             session,
             {"radarr:1:5": Reading(0, None), "radarr:1:6": Reading(2, NOW)},
@@ -236,9 +240,10 @@ class TestAReadingOfNothingIsNotAMark:
         assert marks["radarr:1:5"] == Mark(watchers_all_time=1, last_played_at=NOW)
 
     def test_an_absent_mark_decides_exactly_what_a_stored_zero_did(self) -> None:
-        # Why this is safe to change: the two states were already indistinguishable to the
-        # only function that reads them, so removing the row moves no decision. A never-watched
-        # item stays condemnable either way, which is what keeps the check usable library-wide.
+        # This is safe to change because the two states were already indistinguishable to
+        # the only function that reads them, so removing the row moves no decision. A
+        # never-watched item stays condemnable either way, which is what keeps the check
+        # usable library-wide.
         assert went_blind(None, Reading(0, None)) is None
         assert went_blind(Mark(0, None), Reading(0, None)) is None
 
@@ -247,8 +252,8 @@ class TestRecallAndForget:
     async def test_a_library_sized_write_survives_the_sqlite_variable_ceiling(
         self, session: AsyncSession
     ) -> None:
-        # Rule 94: the WRITE binds four variables per row, so it is chunked. The read binds
-        # none (it is the whole table), which is why it needs no chunking of its own.
+        # The write binds four variables per row, so it is chunked. The read binds none,
+        # since it reads the whole table, which is why it needs no chunking of its own.
         keys = [f"radarr:1:{n}" for n in range(1200)]
         await watch_evidence.record(session, {k: Reading(1, NOW) for k in keys}, now=NOW)
         marks = await watch_evidence.recall_all(session)
@@ -271,9 +276,9 @@ class TestRecallAndForget:
     async def test_forget_one_takes_that_title_and_leaves_the_rest(
         self, session: AsyncSession
     ) -> None:
-        # Before #275, clearing one stale mark meant `forget_all`, which discards every
-        # real mark protecting every other title. So the assertion that matters is the
-        # SECOND one -- what survives, not what went.
+        # Clearing one stale mark must not touch the marks protecting every other title.
+        # So the assertion that matters is the second one, what survives, not what was
+        # removed.
         await watch_evidence.record(
             session,
             {"radarr:1:5": Reading(4, NOW), "sonarr:1:9:2": Reading(2, NOW)},
@@ -292,9 +297,9 @@ class TestRecallAndForget:
         assert await watch_evidence.forget_one(session, "radarr:1:404") is False
 
     async def test_a_forgotten_title_reads_honestly_again(self, session: AsyncSession) -> None:
-        # The behavior the operator is buying, driven end to end through the real check
-        # rather than asserted off the row: the mark is what makes `went_blind` fire, so
-        # after the escape the same falling reading must come back clean (rule 118).
+        # This drives the real check end to end instead of asserting off the row directly.
+        # The mark is what makes `went_blind` fire, so after the escape, the same falling
+        # reading must come back clean.
         await watch_evidence.record(session, {"radarr:1:5": Reading(4, NOW)}, now=NOW)
         fallen = Reading(0, None)
         marks = await watch_evidence.recall_all(session)
@@ -309,13 +314,13 @@ class TestRecallAndForget:
 
 
 # ---------------------------------------------------------------------------
-# What the two fact builders do with the flag. Both lanes, deliberately in one place:
-# rule 72 wants the season path treated identically to the movie path, and a reader
-# checking that should not have to visit two files to see it.
+# What the two fact builders do with the flag. Both lanes are covered here, deliberately
+# in one place, so the season path can be checked against the movie path without a reader
+# visiting two files.
 # ---------------------------------------------------------------------------
 
 _EMPTY_INDEX = lists.MembershipIndex({}, {}, {}, {})
-# Recent on purpose. A re-added file carries a FRESH arrival date, so this is exactly the
+# Recent on purpose. A re-added file carries a fresh arrival date, so this is exactly the
 # value that would let the builder measure a confident, tiny dormancy off the one input
 # that still looks readable when the plays behind it are not.
 JUST_ADDED = NOW - timedelta(days=3)
@@ -364,9 +369,9 @@ def _seed_marks(client: TestClient, *keys: str) -> None:
 def _marks_held(client: TestClient) -> int:
     """How many marks survive, read straight out of the table rather than off the route.
 
-    The route's own count is what these tests are judging, so believing it about whether the
-    delete happened would be circular: a refusal that returned ``{"forgotten": 0}`` while
-    emptying the table reads identically from the response body.
+    The route's own count is what these tests are judging, so believing it about whether
+    the delete happened would be circular. A refusal that returned ``{"forgotten": 0}``
+    while emptying the table would read identically from the response body.
     """
     engine = sa_create_engine(client.app.state.settings.sync_database_url)  # type: ignore[attr-defined]
     with engine.begin() as conn:
@@ -376,15 +381,15 @@ def _marks_held(client: TestClient) -> int:
 
 
 class TestTheStartFreshRoute:
-    """The escape hatch. Rebuild a library without repairing its history and every watched
-    title reads zero at once, so every one is held back and nothing is reapable. Correct, and
-    unusable, so the operator can discard the record.
+    """The escape hatch. Rebuild a library without repairing its history, and every watched
+    title reads zero at once, so every title is held back and nothing is reapable. That
+    result is correct, and unusable, so the operator needs a way to discard the record.
 
-    It is gated on the admin password, like arming deletion and confirming a restore, because
-    the record is the only thing separating "plays we can no longer read" from "nobody ever
-    watched this" -- so discarding it withdraws that protection from every title at once, and
-    the next scan scores those titles as never watched. Same gate, same lockout, same refusal
-    with no password set (rule 72).
+    It is gated on the admin password, like arming deletion and confirming a restore,
+    because the record is the only thing separating "plays we can no longer read" from
+    "nobody ever watched this". Discarding it withdraws that protection from every title at
+    once, and the next scan scores those titles as never watched. This route shares the
+    same gate, the same lockout, and the same refusal when no password is set.
     """
 
     def test_it_forgets_every_mark_and_says_how_many(self, client: TestClient) -> None:
@@ -394,7 +399,7 @@ class TestTheStartFreshRoute:
             "/api/settings/watch-evidence/reset", json={"password": TEST_PASSWORD}
         ).json()
         assert body == {"forgotten": 2}
-        # Idempotent: a second press has nothing left to discard and says so rather than
+        # Idempotent. A second press has nothing left to discard and says so instead of
         # failing, so a double click cannot read as an error.
         assert client.post(
             "/api/settings/watch-evidence/reset", json={"password": TEST_PASSWORD}
@@ -403,8 +408,9 @@ class TestTheStartFreshRoute:
     def test_a_wrong_or_missing_password_keeps_every_mark(self, client: TestClient) -> None:
         """Both spellings of "did not confirm" are refused, and the marks are still there.
 
-        The omitted case is not a validator's 422: the field is optional on the wire precisely
-        so that an empty submit gets the same plain sentence a wrong password gets.
+        The omitted case does not produce a validator's 422. The field is optional on the
+        wire precisely so that an empty submit gets the same plain sentence a wrong
+        password gets.
         """
         _seed_marks(client, "radarr:1:5", "radarr:1:6")
 
@@ -416,7 +422,8 @@ class TestTheStartFreshRoute:
             assert refused_body["detail"] == "That password didn't match. The record was kept."
             assert _marks_held(client) == 2
 
-        # And the right one still works afterwards: a refusal locks nothing but the attempt.
+        # And the right password still works afterwards. A refusal locks nothing but the
+        # attempt.
         ok = client.post("/api/settings/watch-evidence/reset", json={"password": TEST_PASSWORD})
         assert ok.status_code == 200, ok.text
         assert _marks_held(client) == 0
@@ -424,9 +431,11 @@ class TestTheStartFreshRoute:
     def test_with_no_admin_password_set_it_points_at_the_password_step(
         self, client: TestClient
     ) -> None:
-        """Not a 403: there is nothing to type, so "that didn't match" would send the operator
-        to guess at a password that does not exist. Same sentence shape as arming deletion and
-        confirming a restore, naming this action (rule 72)."""
+        """This returns 400, not 403, because there is nothing to type. "That didn't
+        match" would send the operator to guess at a password that does not exist. It uses
+        the same sentence shape as arming deletion and confirming a restore, naming this
+        action instead.
+        """
         _seed_marks(client, "radarr:1:5")
         clear_admin_password(client)
 
@@ -440,8 +449,8 @@ class TestTheStartFreshRoute:
         assert _marks_held(client) == 1
 
     def test_repeated_wrong_passwords_are_locked_out(self, client: TestClient) -> None:
-        """This is a password-guessing surface like the other two, so past the threshold it
-        stops hashing and answers 429 instead of running another Argon2 verify (rule 11/98)."""
+        """This is a password-guessing surface like the other two, so past the threshold
+        it stops hashing and answers 429 instead of running another Argon2 verify."""
         codes = [
             client.post(
                 "/api/settings/watch-evidence/reset", json={"password": f"wrong-{n}"}
@@ -453,10 +462,10 @@ class TestTheStartFreshRoute:
     def test_one_title_can_be_forgotten_without_touching_the_others(
         self, client: TestClient
     ) -> None:
-        """The per-title escape over the wire (#275), and the blast radius is the assertion.
+        """The per-title escape over the wire. The blast radius is what this test asserts.
 
-        The global reset above is what this exists to avoid: an operator clearing one stale
-        record should not lose the records holding every other title back.
+        The global reset above is what this route exists to avoid. An operator clearing
+        one stale record should not lose the records holding every other title back.
         """
         engine = sa_create_engine(client.app.state.settings.sync_database_url)  # type: ignore[attr-defined]
         with engine.begin() as conn:
@@ -474,7 +483,7 @@ class TestTheStartFreshRoute:
         assert client.delete("/api/settings/watch-evidence/radarr:1:5").json() == {"removed": True}
         # The other title's record is untouched, which is the whole difference from the reset.
         assert client.get("/api/settings/watch-evidence").json()["titles"] == 1
-        # Idempotent, same as the reset: pressing it again reports nothing to remove.
+        # Idempotent, same as the reset. Pressing it again reports nothing to remove.
         assert client.delete("/api/settings/watch-evidence/radarr:1:5").json() == {"removed": False}
 
 
@@ -497,28 +506,29 @@ def _insert_snapshot(client: TestClient, *, blind: int | None) -> None:
 
 
 class TestTheRouteThatSaysWhetherAnythingIsHeldBack:
-    """The number that decides whether an operator presses the discard, so the three states
-    are pinned separately. ``None`` is "no scan has counted", which is NOT zero: collapsing it
-    would print an affirmative "nothing is being held back" about a scan that never looked
-    (rule 93), on the one surface that talks the operator into discarding protection evidence.
+    """The number that decides whether an operator presses the discard, so the three
+    states are pinned separately. ``None`` means "no scan has counted", which is not the
+    same as zero. Collapsing the two would print an affirmative "nothing is being held
+    back" about a scan that never looked, on the one surface that talks the operator into
+    discarding protection evidence.
     """
 
     def test_a_fresh_install_reports_nothing_recorded(self, client: TestClient) -> None:
-        # No snapshot at all: the honest answer is null, and this is the shape a fresh
-        # install actually returns, which is what the frontend fixture must state.
+        # With no snapshot at all, the honest answer is null. This is the shape a fresh
+        # install actually returns, and what the frontend fixture must state.
         assert client.get("/api/settings/watch-evidence").json() == {
             "titles": 0,
             "held_back": None,
         }
 
     def test_a_snapshot_predating_the_count_stays_unknown(self, client: TestClient) -> None:
-        # An existing database upgraded into this feature: the column is NULL because that
-        # scan could not have counted, not because it counted none.
+        # In a database upgraded into this feature, the column is NULL because that scan
+        # could not have counted, not because it counted none.
         _insert_snapshot(client, blind=None)
         assert client.get("/api/settings/watch-evidence").json()["held_back"] is None
 
     def test_a_scan_that_counted_none_reports_zero(self, client: TestClient) -> None:
-        # The other side of the same coin: zero is a real answer and must survive as zero,
+        # The other side of the same coin. Zero is a real answer and must survive as zero,
         # because "none right now" is what tells the operator to leave the control alone.
         _insert_snapshot(client, blind=0)
         assert client.get("/api/settings/watch-evidence").json()["held_back"] == 0
@@ -552,8 +562,8 @@ class TestTheMovieLaneReportsUnknownNotZero:
         assert facts.distinct_watchers_all_time.reason == watch_evidence.BLIND_REASON
 
     def test_a_flagged_movie_does_not_measure_dormancy_off_a_fresh_arrival(self) -> None:
-        # The trap the ordering exists for: added_at is three days old and perfectly
-        # readable, so the un-flagged builder returns a confident ~3 days dormant.
+        # The trap this ordering exists for. added_at is three days old and perfectly
+        # readable, so the unflagged builder returns a confident ~3 days dormant.
         assert isinstance(_movie_facts(blind=None).days_observed_unwatched, Known)
         assert isinstance(
             _movie_facts(blind=watch_evidence.BLIND_REASON).days_observed_unwatched, Unknown
@@ -596,8 +606,8 @@ def _season_facts(*, blind: str | None) -> Facts:
 
 
 class TestTheSeasonLaneMatchesTheMovieLane:
-    """Rule 72: the season path reads its history by the season's own Plex key, so the same
-    fall is detectable there and must land on the same three observations."""
+    """The season path reads its history by the season's own Plex key, so the same fall is
+    detectable there and must land on the same three observations."""
 
     def test_a_flagged_season_has_unknown_watchers(self) -> None:
         facts = _season_facts(blind=watch_evidence.BLIND_REASON)

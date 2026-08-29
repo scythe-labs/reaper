@@ -4,16 +4,15 @@
 // Two things, and they are one subject: which record it answers with, and whose words it
 // answers in.
 //
-// Every skip in `leaving_soon.after_scan` returns before the pass writes its record, so this
-// row re-read the last COMPLETED pass and answered for the scan with it: a green dot, an old
-// timestamp, and counts, under a line reading "Runs after every scan". The skip is recorded
-// separately and never cleared, so what retires it is a later pass carrying a later timestamp
-// -- which makes the row's own comparison the whole mechanism, and the reason both directions
-// are driven here rather than only the failing one.
+// Every skip in `leaving_soon.after_scan` returns before the pass writes its record. The row
+// must not answer for a skipped scan using the last COMPLETED pass's own green dot, timestamp,
+// and counts. The skip is recorded separately and never cleared, so what retires it is a later
+// pass carrying a later timestamp, which is why the row must compare the two rather than just
+// preferring whichever exists, and why both directions of that comparison are driven here.
 //
-// The words are the server's. The row used to compose its own sentence from the response's
-// counts and flags, so with no library turned on the flash said the shelves had failed while
-// the stored row it sits on rested green (#555).
+// The words shown must be the server's own sentence, not one composed from the response's
+// counts and flags: composing locally can say the shelves failed while the stored row it sits
+// on is green, when no library is turned on.
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -46,10 +45,11 @@ const COMPLETED = {
 };
 
 /** Deliberately AFTER `COMPLETED`, since the row's whole decision is which is newer. A fixture
- *  sharing the completed pass's instant would make the comparison unfalsifiable (rule 141).
- *  `result_reason` is a real catalog code (phase 8b): `error.leaving_soon.skip_unreachable`
- *  composes to exactly "Reaper couldn't reach Plex", which is what the assertions below still
- *  read, so this fixture proves the real composer renders it rather than transcribing it. */
+ *  sharing the completed pass's instant would make the comparison unfalsifiable: an untouched
+ *  ordering would look the same as a correct one. `result_reason` is a real catalog code:
+ *  `error.leaving_soon.skip_unreachable` composes to exactly "Reaper couldn't reach Plex," which
+ *  is what the assertions below read, so this fixture proves the real composer renders it
+ *  rather than transcribing it. */
 const SKIPPED = {
   at: "2026-08-04T20:06:00+00:00",
   result_reason: { k: "error.leaving_soon.skip_unreachable", p: {} },
@@ -117,8 +117,8 @@ describe("the shelf row after a scan that skipped the update", () => {
     const { status, counts } = await shelfRow();
 
     expect(status).toContain("Last run failed");
-    // The reason, named outright: it is the only thing on the row telling the operator what to
-    // go and fix, and "failed" alone would read the same for either skip.
+    // The reason is named outright: it is the only thing on the row telling the operator what
+    // to go and fix, and "failed" alone would read the same for either skip.
     expect(status).toContain("Reaper couldn't reach Plex");
     // The counts survive, because the shelf still holds them -- a skipped pass wrote nothing.
     // Past tense is the correction: they stop reading as this scan's outcome.
@@ -129,9 +129,9 @@ describe("the shelf row after a scan that skipped the update", () => {
   });
 
   it("goes back to the completed pass once a later one lands", async () => {
-    // The direction that proves the row COMPARES the two rather than merely preferring a skip
-    // whenever one exists. Nothing clears the skip record, so without this the row would
-    // report a shelf that recovered as still broken, forever.
+    // The direction that proves the row COMPARES the two, rather than merely preferring a skip
+    // whenever one exists. Nothing clears the skip record, so the row must still report a
+    // recovered shelf as recovered, not as permanently broken.
     apiMock.leavingSoonSettings.mockResolvedValue(
       shelf({
         last: { ...COMPLETED, at: "2026-08-04T22:30:00+00:00" },
@@ -158,9 +158,9 @@ describe("the shelf row after a scan that skipped the update", () => {
   });
 
   it("rests on the reason the pass stored, in the pass's own words", async () => {
-    // The stored end of #555: one pass, one sentence, and the row reads it rather than
-    // deriving a second one. Pins the wiring from the stored summary to the screen -- the
-    // sentence itself is the service's, and `tests/test_leaving_soon.py` owns its wording.
+    // One pass, one sentence: the row reads it rather than deriving a second one. Checks the
+    // wiring from the stored summary to the screen; the sentence itself is the service's, and
+    // `tests/test_leaving_soon.py` owns its wording.
     apiMock.leavingSoonSettings.mockResolvedValue(
       shelf({
         last: { ...COMPLETED, ok: false, result_reason: { k: "shelf_no_libraries", p: null } },
@@ -174,9 +174,9 @@ describe("the shelf row after a scan that skipped the update", () => {
   });
 
   it("reports a skip on an install whose shelf has never completed a pass", async () => {
-    // `last` is null until the first pass lands, and the row's comparison has no second
-    // timestamp to make. It still has to speak: this is the shape where the shelf has been
-    // broken from the day it was switched on, which is when silence misleads most.
+    // `last` is null until the first pass lands, so the row has no second timestamp to compare
+    // against. It must still speak here: this is the shape where the shelf has been broken
+    // from the day it was switched on, which is when silence misleads most.
     apiMock.leavingSoonSettings.mockResolvedValue(shelf({ last: null, last_skip: SKIPPED }));
 
     const { status, counts } = await shelfRow();
@@ -203,8 +203,8 @@ describe("the shelf row while a rename is still outstanding", () => {
 
   it("names the shelf Plex still shows, beside the button that would move it", async () => {
     // Saving a name stores it and nothing else: moving the shelf is a whole-library reconcile
-    // per library. Until a pass runs, what the operator finds in their library is the OLD
-    // name, and this row is where they can do something about that.
+    // per library. Until a pass runs, the operator's library still shows the OLD name, and
+    // this row is where they can act on that.
     apiMock.leavingSoonSettings.mockResolvedValue(
       shelf({ name: "Last chance", applied_name: "Leaving Soon" }),
     );
@@ -223,8 +223,8 @@ describe("the shelf row while a rename is still outstanding", () => {
   });
 
   it("says nothing while the shelf is off", async () => {
-    // No pass runs with the shelf off, so the two names would disagree forever and the
-    // sentence would be about a shelf that is not in the library at all.
+    // No pass runs with the shelf off, so the stored and applied names would disagree forever,
+    // and the sentence would describe a shelf that is not in the library at all.
     apiMock.leavingSoonSettings.mockResolvedValue(
       shelf({ enabled: false, name: "Last chance", applied_name: "Leaving Soon" }),
     );
@@ -237,14 +237,14 @@ describe("the shelf row while a rename is still outstanding", () => {
 
 describe("the shelf row's confirmation after Update now", () => {
   it("flashes what the pass said, and calls it a failure when the pass did", async () => {
-    // The live end of #555, and the one an operator meets first. The row derived this chip
-    // itself from fields describing the WRITES rather than the outcome, which read a pass like
-    // this one as a clean preview and flashed a green tick over a pass that updated nothing.
+    // This is the one an operator meets first. The chip must derive from the pass's own
+    // outcome, not from fields describing only the WRITES, which would read a pass like this
+    // one as a clean preview and flash a green tick over a pass that updated nothing.
     const user = userEvent.setup();
     apiMock.leavingSoonSettings.mockResolvedValue(shelf({ last: null }));
     // Held open, then released: the chip only exists on a running -> finished transition the
-    // row watched, so a mock that answers inside the click can land both states in one commit
-    // and there is nothing to flash.
+    // row watches, so a mock that answers inside the click could land both states in one
+    // commit and leave nothing to flash.
     let finish!: (result: LeavingSoonResult) => void;
     apiMock.syncLeavingSoon.mockReturnValue(
       new Promise<LeavingSoonResult>((resolve) => {

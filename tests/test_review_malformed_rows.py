@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""An unreadable stored explanation degrades one row. It never errors a page.
+"""An unreadable stored explanation degrades one row. It never breaks the whole page.
 
-Every display extractor over ``explanation_json`` shares one contract: it reads what it
+Every display extractor over ``explanation_json`` shares one contract. It reads what it
 can and returns nothing for what it cannot. Reaper writes these documents through a
-pydantic model, so the malformed shapes below need a corrupted or hand-edited database --
-but the contract is what keeps a single bad row from blanking the whole review queue, and
-in the reap-override path it is also what keeps the file (an explanation nobody can read
-is not permission to delete).
+pydantic model, so the malformed shapes below need a corrupted or hand-edited database.
+The contract keeps a single bad row from blanking the whole review queue. In the
+reap-override path it also keeps the file. An explanation nobody can read is not
+permission to delete.
 
-The shapes tested here are the ones that used to raise rather than degrade: a top level
-that is not an object, protection entries that are not objects, entries missing ``detail``,
-and a truthy non-dict ``match``.
+The shapes tested here would otherwise raise instead of degrading gracefully. They are a
+top level that is not an object, protection entries that are not objects, entries missing
+``detail``, and a truthy non-dict ``match``.
 """
 
 from __future__ import annotations
@@ -43,16 +43,16 @@ from tests._reasons import text
 from ._auth import login
 
 #: Stored explanations that are shaped wrong in every way the extractors index into.
-#: Each maps to the access that used to raise on it.
+#: Each maps to the specific access that would otherwise raise on it.
 MALFORMED = {
-    # json.loads succeeds but the top level is not an object -> exp.get(...) was an
-    # AttributeError on a list, and on None.
+    # json.loads succeeds but the top level is not an object, so a naive `exp.get(...)`
+    # would raise AttributeError on a list, and on None.
     "radarr:1:1": "[1, 2, 3]",
     "radarr:1:2": "null",
     # Not JSON at all.
     "radarr:1:3": "not json at all",
-    # An object, but the protection list holds strings -> fired[0]["detail"] was a
-    # TypeError.
+    # An object, but the protection list holds strings, so `fired[0]["detail"]` would
+    # raise TypeError.
     "radarr:1:4": json.dumps(
         {
             "score": 80.0,
@@ -64,8 +64,8 @@ MALFORMED = {
             "protections_unknown": [],
         }
     ),
-    # An object whose protection entry has no detail key -> fired[0]["detail"] was a
-    # KeyError.
+    # An object whose protection entry has no `detail` key, so `fired[0]["detail"]` would
+    # raise KeyError.
     "radarr:1:5": json.dumps(
         {
             "score": 80.0,
@@ -77,8 +77,8 @@ MALFORMED = {
             "protections_unknown": [],
         }
     ),
-    # A truthy non-dict match -> ("x" or {}).get("status") was an AttributeError, in both
-    # the queue's reason line and the reap-override read.
+    # A truthy non-dict match, so `("x" or {}).get("status")` would raise AttributeError,
+    # in both the queue's reason line and the reap-override read.
     "radarr:1:6": json.dumps(
         {
             "score": 40.0,
@@ -93,8 +93,8 @@ MALFORMED = {
     ),
 }
 
-#: One row that is perfectly fine, as the control: every assertion about degrading has to
-#: be paired with proof that a healthy row is NOT degraded, or "it degrades" is
+#: One row that is perfectly fine, used as the control. Every assertion about degrading has
+#: to be paired with proof that a healthy row is not degraded, or "it degrades" would be
 #: indistinguishable from "it always degrades".
 HEALTHY = json.dumps(
     {
@@ -156,8 +156,8 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     created_at=now,
                 )
             )
-        # A hand reap on one of them: the reap-override read runs over a broken
-        # explanation, which is the path that must resolve to "kept", not raise.
+        # A hand reap on one of them. The reap-override read runs over a broken
+        # explanation, and that path must resolve to "kept" instead of raising.
         session.add(
             WhitelistEntry(
                 media_key="radarr:1:6",
@@ -176,7 +176,8 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
 
 class TestTheQueueSurvivesABrokenRow:
     def test_every_lane_renders(self, client: TestClient) -> None:
-        """One unreadable row used to 500 the whole page, not just its own reason line."""
+        """An unreadable row must never 500 the whole page. Only its own reason line is
+        affected."""
         seen: set[str] = set()
         for verdict in ("condemn", "protect", "abstain"):
             response = client.get("/api/candidates", params={"verdict": verdict})
@@ -195,8 +196,8 @@ class TestTheQueueSurvivesABrokenRow:
         assert by_key["radarr:1:4"]["chip"] is None
 
     def test_a_broken_match_does_not_honor_the_hand_reap(self, client: TestClient) -> None:
-        """The reap-override read is documented as "unreadable means kept". A non-dict
-        match used to raise straight past that promise.
+        """The reap-override read follows the rule "unreadable means kept". A non-dict
+        match must not raise past that rule.
 
         The row is stored ``abstain`` but rides the KEPT lane, because a reap the engine
         will not honor keeps the file.
@@ -214,17 +215,18 @@ class TestTheWhyPanelSurvivesABrokenRow:
         assert detail.status_code == 200
         body = detail.json()
         assert body["explanation_unreadable"] is True
-        # The row's own score survives -- it is a column, not part of the document.
+        # The row's own score survives. It is a column, not part of the document.
         assert body["explanation"]["score"] == 80.0
-        # And no threshold is invented: the panel drops that clause rather than state a
-        # policy setting that is not the operator's.
+        # No threshold is invented. The panel drops that clause rather than state a policy
+        # setting that is not the operator's.
         assert body["explanation"]["threshold"] is None
 
     def test_a_readable_row_is_not_flagged(self, client: TestClient) -> None:
-        """The flag means what it says: only a row that really would not read back.
+        """The flag means what it says. Only a row that really cannot be read back is
+        flagged.
 
-        Without this the degradation would be untestable -- a panel that always claimed
-        the reasons were missing would pass every assertion above it.
+        Without this test, the degradation flag would be untestable. A panel that always
+        claimed the reasons were missing would pass every assertion above it.
         """
         rows = client.get("/api/candidates", params={"verdict": "protect"}).json()["items"]
         row = next(r for r in rows if r["media_key"] == "radarr:1:7")
@@ -237,18 +239,16 @@ class TestTheWhyPanelSurvivesABrokenRow:
 
 
 class TestThePanelAndTheReapAgreeOnUnreadable:
-    """One definition of "unreadable", checked from both ends (rule 104, #142).
+    """One definition of "unreadable", checked from both ends.
 
-    These two used to answer it separately. The panel's test was ``Explanation(**decoded)``
-    raising, which is any bad field anywhere in the document; the reap path's was a non-dict
-    test over the two protections lists alone. ``radarr:1:5`` in the table above is a live
-    instance of the gap -- an entry missing ``detail`` -- and it degraded the panel while a
-    hand Reap on it still condemned, which is the one thing ``engine.verdict`` says in writing
-    it will not do. Both now call ``engine.explanation.read_explanation``.
+    The panel (``_explanation_out``) and the reap-override read
+    (``reap_override_verdict``) both call ``engine.explanation.read_explanation``, so they
+    cannot disagree about which rows are unreadable.
 
-    The implication is only worth asserting if BOTH classes are populated, so the counts are
-    pinned rather than left to the fixture (rule 118): a table that drifted to all-readable
-    would satisfy "unreadable implies protect" vacuously and read as a proof.
+    The implication is only worth asserting if both classes, readable and unreadable, are
+    populated. The counts below are pinned by hand rather than left to the fixture. A table
+    that drifted to all-readable would satisfy "unreadable implies protect" vacuously and
+    read as a proof of nothing.
     """
 
     def _rows(self) -> dict[str, Candidate]:
@@ -277,15 +277,16 @@ class TestThePanelAndTheReapAgreeOnUnreadable:
             for k, row in rows.items()
         }
 
-        # Pin both populations by hand (rule 145): four of the seven stored rows here cannot
-        # be rendered. Three can, and they are the ones that make this test discriminate --
-        # ``radarr:1:6`` carries a non-dict ``match``, which ``Explanation._thaw_match`` reads
-        # as an absent block rather than failing the document, so the panel renders it and its
-        # reap is held by the bad match instead; ``radarr:1:5``'s entry has no detail at all,
-        # which the typed-reason conversion made a legal row (a fresh row writes
-        # ``detail_key``; a legacy one ``detail``; one with neither renders no sentence), and
-        # its fired protection still resolves the reap to protect. If either set moves, the
-        # table changed and the implication below may have gone vacuous.
+        # Both populations are pinned by hand. Four of the seven stored rows here cannot be
+        # rendered. Three can, and they are the ones that make this test discriminate.
+        # ``radarr:1:6`` carries a non-dict ``match``, which ``Explanation._thaw_match``
+        # reads as an absent block rather than failing the document, so the panel renders
+        # it and its reap is held by the bad match instead. ``radarr:1:5``'s entry has no
+        # detail at all, which the typed-reason conversion treats as a legal row (a fresh
+        # row writes ``detail_key``, a legacy one writes ``detail``, and one with neither
+        # renders no sentence), and its fired protection still resolves the reap to
+        # protect. If either set changes, the table changed and the implication below may
+        # have gone vacuous.
         assert len(rows) == 7
         assert degraded == {f"radarr:1:{n}" for n in range(1, 5)}
         assert rows.keys() - degraded == {"radarr:1:5", "radarr:1:6", "radarr:1:7"}
@@ -299,7 +300,8 @@ class TestThePanelAndTheReapAgreeOnUnreadable:
         )
 
     def test_the_readable_control_is_still_reapable(self) -> None:
-        """Or "unreadable holds the reap" is indistinguishable from "nothing is reapable"."""
+        """Without this control, "unreadable holds the reap" would be indistinguishable
+        from "nothing is reapable"."""
         row = self._rows()["radarr:1:7"]
         assert _explanation_out(row).unreadable is False
         assert reap_override_verdict(str(row.explanation_json), score=int(row.score)) == "condemn"
@@ -339,10 +341,10 @@ class TestTheExtractorsThemselves:
         assert _primary_reason(exp, "protect", 50) is None
 
     def test_a_malformed_detail_key_degrades_like_the_panel_does(self) -> None:
-        """One stored byte, one legibility rule (rule 104). A ``detail_key`` dict without a
-        legible ``k`` must degrade exactly as ``thaw_reason_key`` degrades it for the panel's
-        models: to the prose fallback, or to nothing -- never through ``from_wire``'s
-        wrap-anything arm, which printed the dict's own repr at the operator (rule 21)."""
+        """A ``detail_key`` dict without a legible ``k`` must degrade exactly as
+        ``thaw_reason_key`` degrades it for the panel's models. It falls back to the prose
+        message, or to nothing, but never through ``from_wire``'s wrap-anything arm, which
+        would show the operator the dict's own raw repr."""
         junk: dict[str, object] = {"gate": "min_dormancy", "detail_key": {"no_k": True}}
         exp = _decode_explanation(json.dumps(_shell(unknown=[junk])))
         assert exp is not None
@@ -357,12 +359,12 @@ class TestTheExtractorsThemselves:
 
     def test_a_non_dict_match_says_it_could_not_be_read(self) -> None:
         """A match block that is THERE but unreadable holds a hand reap
-        (``condemned.match_state``), so the card has to say that.
+        (``condemned.match_state``), so the card must say that.
 
-        It used to fall through to "Scored below your threshold" -- a confident sentence
-        asserting the opposite of the decision in force on the very same row: the queue
-        said the item merely scored low while the reap-override read was holding it as a
-        bad match (rule 61).
+        The card must never fall through to "Scored below your threshold" instead. That
+        sentence would assert the opposite of the decision in force on the same row, since
+        the queue would say the item merely scored low while the reap-override read was
+        holding it as a bad match.
         """
         exp = _decode_explanation(MALFORMED["radarr:1:6"])
         assert exp is not None
@@ -389,7 +391,7 @@ class TestTheReapOverrideReadKeepsTheFile:
         assert reap_override_verdict(MALFORMED["radarr:1:6"], score=99) == "protect"
 
     def test_an_absent_match_block_is_not_treated_as_a_bad_one(self) -> None:
-        """A row scored before the match block shipped carries none, and was judged fine
+        """A row scored before the match block existed carries none, and is judged fine
         without it. Absent is not the same as unreadable."""
         clean = json.dumps(
             {

@@ -19,14 +19,14 @@ from reaper.config import Settings
 def _configure_sqlite(dbapi_conn: DBAPIConnection, _record: ConnectionPoolEntry) -> None:
     """SQLite pragmas.
 
-    WAL matters here: a library scan holds a long read while the UI is still
-    serving requests, and the default rollback journal would block writers for
-    the duration. ``foreign_keys`` is OFF by default in SQLite -- without it our
-    cascade rules are decorative.
+    WAL matters here: a library scan holds a long read while the UI is still serving
+    requests, and the default rollback journal would block writers for the duration.
+    ``foreign_keys`` is off by default in SQLite, and without it Reaper's cascade rules
+    never fire.
 
-    **Asking for WAL is not the same as getting it**, so `journal_mode` reads back
-    what the database settled on and the boot log says which. This runs per pooled
-    connection, which is why the check is not here.
+    Asking for WAL is not the same as getting it, so `journal_mode` reads back what the
+    database actually settled on, and the boot log records which. This runs per pooled
+    connection, which is why the check is not done here.
     """
     cursor = dbapi_conn.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
@@ -61,10 +61,10 @@ def create_engine(settings: Settings) -> AsyncEngine:
 def create_cache_engine(settings: Settings) -> AsyncEngine:
     """The local mirror of other people's data.
 
-    A SEPARATE FILE, deliberately: Tautulli's history and the IMDb dataset are large
-    and take minutes to rebuild, while reaper.db is small and gets migrated, reset and
-    restored. Keeping them in one file means a schema reset destroys hours of sync
-    along with it -- which is exactly what happened during development, twice.
+    A separate file, deliberately: Tautulli's history and the IMDb dataset are large and
+    take minutes to rebuild, while reaper.db is small and gets migrated, reset and
+    restored. Keeping them in one file would mean a schema reset destroys hours of sync
+    along with it.
 
     Nothing in here is a source of truth. It can be deleted at any time and rebuilt.
     """

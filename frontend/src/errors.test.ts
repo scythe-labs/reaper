@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// describeError, proven against the real catalog the same way why.test.ts proves composeIn:
-// a coded ApiError composes through error.*, a 422's several items compose each and join with
-// a space the same way api.ts already joins their English `msg`. A code with no catalog entry
-// composes to its own bare code (`why.ts`'s fallback); only an error with no code at all falls
-// back to the English message it already carried.
+// Tests describeError against the real error.* catalog, the same way why.test.ts tests
+// composeIn. A coded ApiError's message comes from that catalog; a 422 with several items
+// composes each one and joins them with a space, the way api.ts already joins their English
+// `msg`. A code missing from the catalog falls back to the bare code (`why.ts`'s fallback).
+// An error with no code at all falls back to the English message it already carried.
 
 import { describe, expect, it } from "vitest";
 import { ApiError } from "./api";
@@ -29,8 +29,8 @@ describe("describeError", () => {
   });
 
   it("falls back to the bare code when the catalog has no entry for it", () => {
-    // A code this build's catalog does not carry. The same fallback every other typed
-    // reason takes (`why.ts`'s composeIn): the bare code, never the server's English.
+    // A code this build's catalog has no entry for. Falls back to the bare code, the same
+    // way why.ts's composeIn falls back for any other typed reason.
     const err = new ApiError(500, "Something new broke.", "error.not_a_real.code");
     expect(describeError(err)).toBe("not_a_real.code");
   });
@@ -59,7 +59,7 @@ describe("describeError", () => {
   });
 
   it("keeps an uncoded item's own msg beside a coded sibling's composed sentence", () => {
-    // A plain pydantic type error carries no code; validation_error_items leaves it as-is.
+    // A plain pydantic type error carries no code. validation_error_items leaves it as-is.
     const err = new ApiError(422, "Use at least 8 characters. field required", null, {}, [
       {
         code: "error.password.too_short",

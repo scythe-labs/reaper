@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The one walk over the SPA's shipped source, for every test that scans the tree
-// (rule 145: a scan that grows its own copy of the walk can silently diverge from the
-// population its siblings cover). Paths are resolved from this file, so the walk stays
-// inside whatever checkout the suite is running in.
+// The one walk over the SPA's shipped source, for every test that scans the tree. A scan that
+// grows its own copy of the walk can silently diverge from the population its siblings cover.
+// Paths are resolved from this file, so the walk stays inside whatever checkout the suite is
+// running in.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";

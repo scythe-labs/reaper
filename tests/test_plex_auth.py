@@ -4,7 +4,7 @@
 The attack these guard against is not exotic. plex.tv issues a valid token to
 anyone with a free Plex account. If Reaper logs in whoever authenticates, then
 *any person on the internet* can reach an admin console that deletes a media
-library. Maintainerr has no auth at all; Seerr trusts whoever logs in first.
+library. Maintainerr has no auth at all. Seerr trusts whoever logs in first.
 """
 
 from __future__ import annotations
@@ -73,8 +73,8 @@ class TestOwnershipCheck:
     async def test_a_stranger_with_a_valid_plex_account_is_refused(
         self, httpx2_mock: respx.Router
     ) -> None:
-        """They authenticated successfully -- plex.tv gave them a real token -- but
-        they own no server, so they are not our owner."""
+        """plex.tv gave them a real token, so they authenticated successfully. They
+        own no server, though, so they are not our owner."""
         httpx2_mock.get("https://plex.tv/api/v2/resources").mock(
             return_value=httpx.Response(200, json=[])
         )
@@ -96,9 +96,9 @@ class TestOwnershipCheck:
             assert await client.owns_server("other-owner-token", OUR_SERVER) is False
 
     async def test_a_shared_user_of_our_server_is_refused(self, httpx2_mock: respx.Router) -> None:
-        """The most realistic attack: one of the ~100 people you share your Plex
-        library with. They can see the server -- it appears in their resources --
-        but `owned` is false. Reaper is admin-only."""
+        """A person you share your Plex library with can see the server, since it
+        appears in their resources, but `owned` is false for them. Reaper is
+        admin-only, so they are refused."""
         httpx2_mock.get("https://plex.tv/api/v2/resources").mock(
             return_value=httpx.Response(
                 200,
@@ -141,14 +141,14 @@ class TestOwnershipCheck:
             assert await client.owns_server("token", OUR_SERVER) is False
 
     async def test_an_unconfigured_reaper_admits_nobody(self) -> None:
-        """Fail closed. Before setup, no machine id is stored -- and an empty id
-        must match nothing rather than everything."""
+        """Fail closed. Before setup, no machine id is stored, so an empty id must
+        match nothing rather than matching everything."""
         async with PlexTvClient(CID, safety=SAFETY) as client:
             assert await client.owns_server("token", "") is False
 
     async def test_a_plex_tv_outage_is_not_an_open_door(self, httpx2_mock: respx.Router) -> None:
-        """If we cannot verify ownership, we do not grant it. The local admin
-        account is the way in when plex.tv is down -- not a degraded check."""
+        """The check never grants ownership it cannot verify. When plex.tv is down,
+        the local admin account is the way in, not a check that passes by default."""
         httpx2_mock.get("https://plex.tv/api/v2/resources").mock(return_value=httpx.Response(503))
         async with PlexTvClient(CID, safety=SAFETY) as client:
             assert await client.owns_server("token", OUR_SERVER) is False
@@ -215,9 +215,9 @@ class TestPinFlow:
     async def test_the_auth_url_carries_the_same_client_identifier(
         self, httpx2_mock: respx.Router
     ) -> None:
-        """It must be byte-identical across PIN creation, the auth URL and the poll.
-        If it differs, authToken stays null forever -- and it looks exactly as
-        though the user simply never approved."""
+        """It must be byte-identical across PIN creation, the auth URL, and the poll.
+        If it differs, authToken stays null forever, and it looks exactly as though
+        the user simply never approved."""
         httpx2_mock.post("https://plex.tv/api/v2/pins").mock(
             return_value=httpx.Response(201, json={"id": 42, "code": "ABCD"})
         )
@@ -246,27 +246,23 @@ class TestPinFlow:
 
 
 class TestWaitingForAnApprovedPin:
-    """The poll loop itself, which receives a full-power Plex account token.
+    """The poll loop that waits for a full-power Plex account token.
 
-    ``wait_for_pin`` had no test at all while ``conftest.py`` named "the plex.tv pin-poll
-    loop" among the loops its global ``asyncio.sleep`` patch exists to speed up, implying a
-    coverage that did not exist. The two branches that carry the weight: a ``429`` is
-    back-pressure, not an error -- aborting on one would kill a sign-in the owner has not
-    finished, the failure that broke the very first link attempt -- and the deadline is a
-    real bound, not just a loop condition, so a server asking for a long wait cannot hold the
-    call past its timeout.
+    Two branches carry the real risk. A ``429`` response means "slow down", not an error,
+    so aborting on one would kill a sign-in the owner has not finished yet. The deadline is
+    a real bound, not just a loop condition, so a server asking for a long wait cannot hold
+    the call past its timeout.
 
-    The sleeps are recorded rather than waited out, which is what makes the pacing assertable
-    at all: a honored ``Retry-After`` is invisible if the only observable is that the call
-    eventually returned. The ``slept`` fixture (``conftest.py``) records them and owns the
-    clock they advance, so every window below is counted in the delays the loop asked for
-    rather than in how long the machine took to ask.
+    The tests record each sleep instead of waiting it out, using the ``slept`` fixture
+    (``conftest.py``), which also owns the clock those sleeps advance. That makes the pacing
+    assertable: a honored ``Retry-After`` would otherwise be invisible, since the only
+    observable would be that the call eventually returned.
     """
 
     async def test_a_token_that_arrives_on_a_later_poll_is_returned(
         self, httpx2_mock: respx.Router, slept: list[float]
     ) -> None:
-        """The ordinary sign-in: the owner takes a few seconds to approve, and the loop
+        """The ordinary sign-in. The owner takes a few seconds to approve, and the loop
         keeps asking at its own interval until the token appears."""
         httpx2_mock.get(PIN_URL).mock(
             side_effect=[
@@ -284,8 +280,8 @@ class TestWaitingForAnApprovedPin:
     async def test_a_rate_limit_waits_the_time_the_server_asked_for_and_carries_on(
         self, httpx2_mock: respx.Router, slept: list[float]
     ) -> None:
-        """plex.tv named seven seconds, so the loop waits seven -- not its own fixed
-        fallback -- and then keeps polling instead of failing the sign-in."""
+        """plex.tv asks for seven seconds, so the loop waits seven instead of its own
+        fixed fallback, then keeps polling instead of failing the sign-in."""
         httpx2_mock.get(PIN_URL).mock(
             side_effect=[
                 httpx.Response(429, headers={"Retry-After": "7"}, json={}),
@@ -318,8 +314,9 @@ class TestWaitingForAnApprovedPin:
     async def test_an_extravagant_retry_after_is_capped(
         self, httpx2_mock: respx.Router, slept: list[float]
     ) -> None:
-        """The server's pacing is honored, not obeyed blindly: an hour would strand the
-        sign-in in a single sleep with the owner watching a code that expires first."""
+        """The server's pacing is capped, not followed exactly. An hour-long wait would
+        strand the sign-in in a single sleep while the owner watches a code that expires
+        first."""
         httpx2_mock.get(PIN_URL).mock(
             side_effect=[
                 httpx.Response(429, headers={"Retry-After": "3600"}, json={}),
@@ -335,13 +332,13 @@ class TestWaitingForAnApprovedPin:
     async def test_the_deadline_clips_a_backoff_the_server_chose(
         self, httpx2_mock: respx.Router, slept: list[float]
     ) -> None:
-        """A twenty-second backoff is honored while the window has room for it, then clipped
-        to the fifteen seconds left, and the sign-in is reported as not completed. It never
-        sits inside a sleep the server chose, past the deadline the caller set.
+        """A twenty-second backoff is honored while the window has room for it, then it is
+        clipped to the fifteen seconds left, and the sign-in is reported as not completed.
+        The call never sits inside a sleep the server chose past the deadline the caller set.
 
-        The window is spent in sleeps, not in wall clock: ``slept`` advances the clock by
-        each delay, so the two below are what closes it. Asserting against a real 200ms
-        window measured the machine instead, and lost the race under load (#346).
+        The window is spent in sleeps rather than wall-clock time. The ``slept`` fixture
+        advances the clock by each delay, so the two sleeps below are exactly what uses up
+        the window.
         """
         httpx2_mock.get(PIN_URL).mock(
             return_value=httpx.Response(429, headers={"Retry-After": "20"}, json={})
@@ -355,12 +352,12 @@ class TestWaitingForAnApprovedPin:
     async def test_an_unapproved_pin_gives_up_at_the_deadline(
         self, httpx2_mock: respx.Router, slept: list[float]
     ) -> None:
-        """Nobody approved it. The loop polls at its own interval for the whole window, then
-        returns "not completed" rather than raising, so the route above can tell the browser
-        to keep waiting or start over.
+        """Nobody approved it. The loop polls at its own interval for the whole window,
+        then returns "not completed" instead of raising, so the route above can tell the
+        browser to keep waiting or start over.
 
-        Three intervals of window buys exactly three polls, which is the assertion. Racing a
-        real 50ms window instead left the poll count to the machine (#346).
+        A window of exactly three poll intervals produces exactly three polls, which is
+        what this test asserts.
         """
         route = httpx2_mock.get(PIN_URL).mock(
             return_value=httpx.Response(200, json={"id": 77, "authToken": None})
@@ -385,13 +382,13 @@ class TestWaitingForAnApprovedPin:
 
 
 class TestTheSignInExemptionIsNarrow:
-    """Signing in is a POST, so it must be permitted even in read-only mode --
-    requiring the owner to enable deletion before they may log in would be absurd.
+    """Signing in is a POST, so it must be permitted even in read-only mode. Requiring
+    the owner to enable deletion before they can log in would make no sense.
 
-    But the exemption must be exactly one path, not a license for the plex.tv
-    client to write anything. plex.tv has genuinely destructive endpoints
-    (DELETE /devices/{id} unregisters a device; /api/v2/users/signout invalidates
-    tokens), and none of them are ours to call."""
+    The exemption covers exactly one path, though, not a license for the plex.tv
+    client to write anything. plex.tv has genuinely destructive endpoints. DELETE
+    /devices/{id} unregisters a device, and /api/v2/users/signout invalidates tokens.
+    None of them are ours to call."""
 
     async def test_pin_creation_is_allowed_in_read_only_mode(
         self, httpx2_mock: respx.Router
@@ -435,8 +432,8 @@ class TestHeaders:
         assert headers["X-Plex-Product"] == "Reaper"
 
     def test_the_identifier_is_not_derived_from_hardware(self) -> None:
-        """python-plexapi defaults this to hex(getnode()) -- the MAC address --
-        which is unstable in a container and leaks hardware detail."""
+        """python-plexapi defaults this to hex(getnode()), the MAC address, which
+        is unstable in a container and leaks hardware detail."""
         import uuid
 
         assert plex_headers(str(uuid.uuid4()), version="0.1.0")["X-Plex-Client-Identifier"]

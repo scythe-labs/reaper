@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """add snapshot.degraded_doc
 
-The in-app help page that explains a degradation, by its docs registry id (#809). NULL for
-every scan taken before this column existed, and NULL again for a degradation with no page,
-which is most of them. The two are the same thing here: no page to offer, so the notice
-renders exactly as it does today.
+The in-app help page that explains a degradation, identified by its docs
+registry id. NULL for every scan taken before this column existed, and NULL
+again for a degradation with no page, which is most of them. The two are the
+same thing here: no page to offer, so the notice renders exactly as it does
+today.
 
-Non-breaking by construction: one nullable column, no backfill, no table rebuild under
-SQLite's batch mode. Testers never rebuild their database.
+Non-breaking by construction: one nullable column, no backfill, no table
+rebuild under SQLite's batch mode. Testers never rebuild their database.
 
 Revision ID: c0d1e2f3a4b5
 Revises: b9c0d1e2f3a4

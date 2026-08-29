@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Proves the a11y gate can go red, and says what it goes red ABOUT.
+// Proves the a11y gate can go red, and says what it goes red about.
 //
-// Rule 118's shape, for a guard rather than an interlock: a scan nobody has watched fail is
-// indistinguishable from a scan that collects nothing, and this one is a single `axe.run` call
-// away from silently auditing an empty container. So each test here renders markup with one
-// known defect and asserts the gate names that defect -- not merely that it threw.
+// A check nobody has watched fail is indistinguishable from a check that collects nothing, and
+// this one is a single `axe.run` call away from silently auditing an empty container. So each
+// test here renders markup with one known defect and asserts the gate names that defect, not
+// merely that it threw.
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { expectNoA11yViolations, findA11yViolations } from "./a11y";
@@ -17,8 +17,9 @@ describe("the accessibility gate", () => {
   });
 
   it("names a button a screen reader cannot say", async () => {
-    // The defect that actually ships: an icon-only control with nothing to read out. It is what
-    // rule 21 is about at the level of a control rather than a sentence.
+    // This is a defect that actually ships, an icon-only control with nothing to read out. It
+    // is the same plain-language requirement applied at the level of a control rather than a
+    // sentence.
     const { container } = render(
       <button type="button">
         <svg aria-hidden="true" />
@@ -69,7 +70,7 @@ describe("the accessibility gate", () => {
 
   it("refuses a skip with no reason rather than granting it", async () => {
     // The reason is what keeps a suppression arguable by the next reader, so an empty one is
-    // the shape to refuse: it reads in a diff exactly like a considered exemption.
+    // the shape to refuse. An empty reason reads in a diff exactly like a considered exemption.
     const { container } = render(<img src="/poster.png" />);
     await expect(
       expectNoA11yViolations(container, { skip: { "image-alt": "  " } }),
@@ -77,10 +78,10 @@ describe("the accessibility gate", () => {
   });
 
   it("names a rule axe could not decide, which jsdom files apart from its failures", async () => {
-    // The one that made this gate necessary AND nearly made it useless. A focusable element
-    // inside `aria-hidden` is a serious WCAG 4.1.2 failure, and the app maintains that
-    // invariant by hand at every `aria-hidden` site it has -- but under jsdom axe returns
-    // it as `incomplete`, not `violations`. A gate reading only `violations` passes this markup
+    // This is the defect that made this gate necessary, and nearly made it useless. A focusable
+    // element inside `aria-hidden` is a serious WCAG 4.1.2 failure, and the app maintains that
+    // invariant by hand at every `aria-hidden` site it has. Under jsdom, axe returns it as
+    // `incomplete`, not `violations`. A gate reading only `violations` would pass this markup
     // without a word, which is why the deferred bucket counts too.
     const { container } = render(
       <div aria-hidden="true">
@@ -94,9 +95,9 @@ describe("the accessibility gate", () => {
   });
 
   it("audits the tree the test rendered when it is handed no container", async () => {
-    // Seven call sites pass nothing and rely on this default. Nothing used to fail if it were
-    // repointed at another attached-but-empty node -- axe returns [] for one silently, and only
-    // a DETACHED node throws -- so the default that carries those audits was itself unpinned.
+    // Seven call sites pass nothing and rely on this default. Nothing would fail if it were
+    // repointed at another attached-but-empty node, since axe returns [] for one silently, and
+    // only a detached node throws. So the default that carries those audits needs its own test.
     render(<img src="/poster.png" />);
     const violations = await findA11yViolations();
     expect(violations.map((v) => v.id)).toContain("image-alt");
@@ -104,11 +105,12 @@ describe("the accessibility gate", () => {
 
   it("answers `region` only for the caller that says it is the whole page", async () => {
     // `pageLevel` is the only thing that re-enables `region`, and `region` is the only guard on
-    // the landmarks in `App` and `Login`. Neutering the flag used to leave every test green.
+    // the landmarks in `App` and `Login`. Neutering the flag would otherwise leave every test
+    // green.
     //
-    // Audited against `document.body`, the way both real `pageLevel` callers do it: `region`
-    // asks what sits outside a landmark at the top of the PAGE, so scoping it to the render
-    // container asks a question it does not answer, and it returns nothing either way.
+    // This audits against `document.body`, the way both real `pageLevel` callers do. `region`
+    // asks what sits outside a landmark at the top of the page, so scoping it to the render
+    // container would ask a question it does not answer, and it would return nothing either way.
     render(<p>Loose text in no landmark at all.</p>);
     expect(
       (await findA11yViolations(document.body, { pageLevel: true })).map((v) => v.id),

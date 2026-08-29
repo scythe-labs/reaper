@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The all-seasons list under an expanded show card. Two behaviors are load-bearing:
-// the open list must say "loading" and "failed" out loud (an open chevron over silence
-// reads as broken), and every season is actable in place -- each carries its own Spare/Reap,
-// judged by that season's own verdict (rule 51), whatever tab you opened the show from.
+// The all-seasons list under an expanded show card. Two behaviors matter here: the open list
+// must say "loading" and "failed" out loud, since an open chevron over silence reads as
+// broken, and every season is actable in place. Each season carries its own Spare/Reap,
+// judged by that season's own verdict, whatever tab you opened the show from.
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -30,15 +30,15 @@ vi.mock("../api", async (importOriginal) => ({
 
 // Three reads the queue makes for the whole list, through hooks no test here names: the
 // unmeasured allowance (["profile"]), the expand-seasons and spare-length preferences
-// (["general-settings"]), and the genre and library filter choices. Rule 135. The last one
-// is called THROUGH an arrow (`() => api.vocabularyValues("genre")`), so leaving it out of
-// the mock does not trip the missing-queryFn gate -- the queryFn exists and throws inside,
-// and the filter menus quietly render the failed read.
+// (["general-settings"]), and the genre and library filter choices. The last one is called
+// through an arrow (`() => api.vocabularyValues("genre")`), so leaving it out of the mock does
+// not trip the missing-queryFn gate. The queryFn exists and throws inside, and the filter
+// menus quietly render the failed read.
 beforeEach(() => {
   apiMock.profile.mockResolvedValue(DEFAULT_PROFILE);
   apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
   apiMock.vocabularyValues.mockResolvedValue({ field: "", values: [] });
-  // Every card's collection picker reads this unconditionally now (#816 phase 4/5).
+  // Every card's collection picker reads this unconditionally.
   apiMock.latestSnapshot.mockResolvedValue(DEFAULT_SNAPSHOT);
 });
 
@@ -193,7 +193,8 @@ describe("the show card", () => {
     expect(screen.getByTitle("We couldn't check whether this show has ended")).toHaveTextContent(
       "Status unknown",
     );
-    // The still-going show wears nothing: one card, one chip, and neither is its.
+    // The still-going show wears no status word: it owns neither the "Ended" badge nor the
+    // "Status unknown" one.
     expect(screen.queryByText("Still going")).not.toBeInTheDocument();
     expect(screen.getAllByText("Ended")).toHaveLength(1);
     expect(screen.getAllByText("Status unknown")).toHaveLength(1);
@@ -247,12 +248,11 @@ describe("the all-seasons list", () => {
   });
 
   it("strips the show's name from a season row however old the stored title is", async () => {
-    // A title is FROZEN into the snapshot that scanned it, so a library scanned before the
-    // separator changed still holds the older shape, and will until someone rescans. Every
-    // other fixture in this file now uses the comma `season_scan.py` writes today, which left
-    // both legacy branches of `seasonName` with no cover at all -- one refactor from silently
-    // gone (rule 118). What their loss looks like is not subtle: the show's name doubled on
-    // every season row of every older library, on the rows a per-season reap is chosen from.
+    // A title is frozen into the snapshot that scanned it, so a library scanned before the
+    // separator changed still holds the older shape until someone rescans it. This test keeps
+    // both older shapes of `seasonName` covered alongside the current comma form
+    // `season_scan.py` writes today. Losing that cover would double the show's name on every
+    // season row of an older library, on the rows a per-season reap is chosen from.
     const titled = (n: number, title: string) => ({ ...season(n, n, "condemn", 88, null), title });
     apiMock.group.mockResolvedValue({
       group_key: "sonarr:5:42",
@@ -321,23 +321,23 @@ describe("the all-seasons list", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Would be removed")).toBeInTheDocument();
 
-    // Every season is actable in place now, not just this tab's. Scope to the season list
-    // (the card head's whole-show control and the strip squares are also buttons).
+    // Every season is actable in place, not just this tab's. Scope to the season list, since
+    // the card head's whole-show control and the strip squares are also buttons.
     const list = screen.getByRole("list");
     const rows = within(list).getAllByRole("button", { name: /Season \d/ });
     expect(rows).toHaveLength(3);
-    // Spare is on every row; it is never a no-op.
+    // Spare is on every row, and it is never a no-op.
     expect(within(list).getAllByRole("button", { name: /^Spare$/ })).toHaveLength(3);
-    // Reap shows only where it would change something -- the kept season and the limbo one,
-    // never the already-condemned row (reaping it changes nothing).
+    // Reap shows only where it would change something: the kept season and the limbo one,
+    // never the already-condemned row, since reaping it would change nothing.
     expect(within(list).getAllByRole("button", { name: /^Reap$/ })).toHaveLength(2);
   });
 
   it("wears a season-level held reap in the truncating status-chip family, not the card .chip", async () => {
-    // The pill overran the fixed button column because a season-level OverrideChip used the
-    // default `.chip` family (a card's meta line), which never clamps. It must use the season
-    // list's own `.status-chip` family -- exactly like ShowPanel's SeasonPill and the row's
-    // other chips -- so a long "Reap requested" line ellipsizes in place instead (rule 51).
+    // A season-level OverrideChip must use the season list's own `.status-chip` family, the
+    // same one ShowPanel's SeasonPill and the row's other chips use, never the default `.chip`
+    // family a card's meta line uses. The default family never clamps, so a long "Reap
+    // requested" line would overrun the fixed button column instead of ellipsizing in place.
     const held: Candidate = {
       ...season(3, 3, "protect", 90, { tone: "kept", reason: { k: "kept.streaming_now" } }),
       override: "reap",
@@ -391,8 +391,7 @@ describe("the all-seasons list", () => {
     renderQueue();
     await expandSeasons();
 
-    // The click is awaited, the read it starts is not, so the list arrives a beat later
-    // (rule 137).
+    // The click is awaited, but the read it starts is not, so the list arrives a beat later.
     const list = await screen.findByRole("list");
     expect(await within(list).findByText("Size unknown")).toBeInTheDocument();
     expect(within(list).queryByText("0 B")).not.toBeInTheDocument();
@@ -401,9 +400,9 @@ describe("the all-seasons list", () => {
   });
 
   it("states a whole-show reap once and lets only divergent seasons speak", async () => {
-    // A whole-show reap covers every season. The header says so once; a plainly-inheriting
-    // season then carries no per-row note at all (the wall of repeated sentences is gone), and
-    // only a held or against-the-show season adds a chip and a reason.
+    // A whole-show reap covers every season. The header states this once, so a plainly-
+    // inheriting season carries no per-row note at all. Only a held season or one going
+    // against the show adds a chip and a reason.
     const withShow = (id: number, n: number, extra: Partial<Candidate>): Candidate => ({
       ...season(id, n, "abstain", 80, null),
       show_override: "reap",
@@ -418,9 +417,8 @@ describe("the all-seasons list", () => {
       override: "reap",
       override_own: null,
       override_effective: false,
-      // `chip.text.look.unknowable` and `chip.sentence.look.unknowable` read nothing alike,
-      // so a frontend that composed the chip TEXT here instead of the SENTENCE would render
-      // the wrong line and fail (H-1).
+      // `chip.text.look.unknowable` and `chip.sentence.look.unknowable` read nothing alike, so
+      // this fails if the component renders the chip TEXT here instead of the SENTENCE.
       chip: { tone: "look", reason: { k: "look.unknowable" } },
     });
     const sparedAgainst = withShow(23, 3, {
@@ -461,8 +459,9 @@ describe("the all-seasons list", () => {
   });
 
   it("qualifies the whole-show reap banner when the engine holds every season", async () => {
-    // The show is set to reap, but the engine can honor it on no season (all held). The banner
-    // must not assert removal; it says the reap is noted and the seasons are kept for now (U-2).
+    // The show is set to reap, but the engine can honor it on no season, since all are held.
+    // The banner must not assert removal. It says the reap is noted and the seasons are kept
+    // for now.
     const withShow = (id: number, n: number, extra: Partial<Candidate>): Candidate => ({
       ...season(id, n, "abstain", 80, null),
       show_override: "reap",
@@ -502,11 +501,10 @@ describe("the all-seasons list", () => {
     expect(screen.queryByText(/Every season below is removed/i)).not.toBeInTheDocument();
   });
   it("describes the whole-show spare in force, not the shape of a spare in general", async () => {
-    // The banner's mark and words come from the spare actually on the show. A fixed ∞ said
-    // "kept forever" directly above a control counting down, and went on saying it after the
-    // clock passed -- the same bug the Spare button had. Expired is its own wording: the
-    // seasons really are still kept until a scan judges them, so it must not read as a
-    // removal (rule 61).
+    // The banner's mark and words must come from the spare actually on the show, not a fixed
+    // symbol: an infinity mark would keep saying "kept forever" even after a timed spare's
+    // clock runs out. Expired gets its own wording, since the seasons are still kept until a
+    // scan judges them again, so it must not read as a removal.
     const spared = (id: number, n: number): Candidate => ({
       ...season(id, n, "abstain", 80, null),
       show_override: "spare",
@@ -558,11 +556,11 @@ describe("the all-seasons list", () => {
     expect(document.querySelector(".show-inherit-mark .mk-inf")).toBeNull();
   });
   it("marks a season whose own spare ran out, so its row does not disagree with itself", async () => {
-    // The row already draws the third state twice -- a dashed-green score badge and a dashed
-    // strip square (rule 49). The chip beside them said a solid "Spared", so one row claimed
-    // both "your decision holds" and "your decision ran out". The season is kept either way,
-    // which is why the sentence still leads with that; what it adds is the spare running out
-    // and a scan being what ends it (rule 61).
+    // The row already draws this state twice, as a dashed-green score badge and a dashed strip
+    // square. The chip beside them must not also read a solid "Spared", which would claim both
+    // "your decision holds" and "your decision ran out" at once. The season is kept either way,
+    // which is why the sentence still leads with that. What it adds is that the spare ran out
+    // and a scan is what judges the season next.
     const withShow = (id: number, n: number, extra: Partial<Candidate>): Candidate => ({
       ...season(id, n, "abstain", 80, null),
       show_override: "reap",
@@ -618,15 +616,11 @@ describe("the all-seasons list", () => {
 
 describe("what a screen reader hears on a season row", () => {
   // The row's name is the name of the `CardOpen` control on its season title, and that control
-  // is what makes the rest of the row readable at all. The row USED to be a `role="button"`,
-  // which made its own name the whole of what was announced -- so with no `aria-label` it read
-  // out as its score, its chip, the nested Spare/Reap group label and its size run together, and
-  // with one it read out as the label and nothing else. #169 took the role off every card; what
-  // these still pin is that each row names itself for the season it opens.
+  // is what makes the rest of the row readable at all. What this test pins is that each row
+  // names itself for the season it opens.
   //
-  // The existing lane test reaches these rows with `{ name: /Season \d/ }`, which matched the
-  // old computed name just as well as the new one -- the name-blind shape that let this hide.
-  // This asserts the exact string instead.
+  // A looser match like `{ name: /Season \d/ }` would pass on the wrong computed name too, so
+  // this test asserts the exact string instead.
   it("names the row for the season it opens, not for everything inside it", async () => {
     const group: Group = {
       group_key: "sonarr:5:42",
@@ -652,9 +646,9 @@ describe("what a screen reader hears on a season row", () => {
     renderQueue();
     await expandSeasons();
 
-    // Rule 145: the population is every row this group renders, counted, not just the one
-    // looked up. A fourth season that opted out of naming itself would fail the length check
-    // even though the three named rows still answer.
+    // The population checked is every row this group renders, counted, not just the one
+    // looked up. A fourth season that failed to name itself would fail the length check even
+    // though the three named rows still answer.
     const list = screen.getByRole("list");
     const named = within(list).getAllByRole("button", { name: /^Why Season \d+ scored \d+$/ });
     expect(named).toHaveLength(group.seasons.length);

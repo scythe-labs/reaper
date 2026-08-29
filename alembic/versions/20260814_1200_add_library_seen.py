@@ -1,24 +1,25 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """add library_seen
 
-The ledger behind #553, "a title that came back". One row per external id, holding every
-Plex rating key Reaper has ever seen bound to it, when it was last seen, and whether it has
-since come back. A file that leaves the library and returns gets a new Plex key while the
-old one stops existing, and without this table a fresh key is indistinguishable from the
-only key an item ever had.
+The ledger behind "a title that came back": one row per external id, holding
+every Plex rating key Reaper has ever seen bound to it, when it was last seen,
+and whether it has since come back. A file that leaves the library and returns
+gets a new Plex key while the old one stops existing, and without this table a
+fresh key is indistinguishable from the only key an item ever had.
 
-A new table, so nothing existing is touched and no tester rebuilds. It starts empty on every
-install, including one upgrading, which is the feature's stated property: with nothing to
-compare against, no title can look returned until Reaper has watched the library long enough
-to have seen the thing that later leaves.
+A new table, so nothing existing is touched and no tester rebuilds. It starts
+empty on every install, including one upgrading, which is the feature's stated
+property: with nothing to compare against, no title can look returned until
+Reaper has watched the library long enough to have seen the thing that later
+leaves.
 
-``rating_keys_json`` holds a JSON array rather than a second table. The set is one to a
-handful of ints per row, nothing joins on a member, and the only two operations are "is this
-key in the set" and "add one", both of which the reader does in Python over a row it already
-has.
+``rating_keys_json`` holds a JSON array rather than a second table. The set is
+one to a handful of ints per row, nothing joins on a member, and the only two
+operations are "is this key in the set" and "add one," both of which the reader
+does in Python over a row it already has.
 
-No ``needs_snapshot``: ``create_table`` loses nothing, and ``downgrade()`` drops a table this
-revision created.
+No ``needs_snapshot``: ``create_table`` loses nothing, and ``downgrade()`` drops
+a table this revision created.
 
 Revision ID: a8b9c0d1e2f3
 Revises: f7a8b9c0d1e2

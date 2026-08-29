@@ -1829,9 +1829,11 @@ Anomalies found, every one explained and none an ingest bug:
   not a per-library setting: it is what a stock install does.
 - **So the executor's trash interlock is largely decorative on a default server.**
   `_trash_delta_is_ours`, `_mount_is_up` and `_wait_for_scan` all gate `empty_trash`, but
-  when Plex empties the trash itself after every scan, the path refresh Reaper fires per
-  deleted item has already triggered that purge, inside Plex, before the gated call
-  arrives. The interlock is still worth keeping (it is the only thing standing on a server
+  when Plex empties the trash itself after every scan, the path refreshes Reaper fires
+  have already triggered that purge, inside Plex, before the gated call arrives. (Those
+  refreshes fired per deleted item when this was measured. They are sent once at the end
+  of a run now, which changes when Plex purges, not whether.) The interlock is still worth
+  keeping (it is the only thing standing on a server
   where the setting is off), but it was never the whole defense we described it as.
 - **The trash reads empty on every library of a default-configured server**, which is a
   consequence of the above rather than a coincidence, and it means a count-based warning
@@ -4466,6 +4468,113 @@ objects look interchangeable and are not: `{}` breaks, `{mediaType: undefined}` 
 missing-KEY case specifically, not just the missing-VALUE case. `why.ts`'s resolution point now
 defaults `mediaType` onto the params object for every id that carries a select and predates it,
 so the key is always present even when no caller supplied a value.
+
+## The delete threshold buys volume, not precision (2026-08-25)
+
+`scripts/delete_threshold_ratio_measure.py` replays a library at a one-year cutoff, scores
+every title with the shipped `UNWATCHED` signal through the real engine, and counts who came
+back in the following year. Two libraries measured: the live data dir (7.6 years of history
+before the cutoff) and the anonymized second library from `docs/SIGNALS.md`'s backtest (9.5
+years). Both qualify on the criteria the script checks: a year of history before the cutoff
+and cohorts of 30 or more.
+
+- **The score-to-mistake curve is nearly flat.** On the live library, flagged titles fall
+  from 774 at threshold 60 to 374 at 95, but the mistake rate holds at 1 comeback per 8 to
+  10 cleared across the whole range. On the second library, the played-before lane moves
+  from 1-per-11 to 1-per-12 and the never-played lane sits at 1-per-17 everywhere. Raising
+  the threshold shrinks how much is flagged. It barely changes how often a flagged title
+  comes back.
+- **Ratios past the curve's ceiling resolve to no score.** 1 mistake per 20 cleared is
+  reachable at no threshold on either library, in either lane. A control that resolves a
+  ratio into a score needs an explicit "no score delivers this" state on the wire, beside
+  "not enough history". Presets at 1-per-20 and 1-per-50 would sit in that state on both
+  measured libraries.
+- **Never-played titles cannot be back-scored from a data dir.** `reaper.db` keeps no
+  arrival date (`engine/dormancy.py` derives it at scan time and discards it), so that lane
+  is counted but not scored there. The anonymized dump keeps an arrival date, so both lanes
+  measure. Recorded so nobody re-derives it.
+- **Never-played titles come back less, not more.** On the second library the never-played
+  lane's comeback rate is about 6% against the played lane's 9 to 10%. At every threshold
+  measured, a title nobody started is a safer delete than a title somebody once watched.
+
+## Whether an abandoned play predicts a return: it does not, past the noise floor (2026-08-25)
+
+`scripts/abandonment_signal_measure.py` measures whether a partial play -- one
+`services/rewatch.py`'s `qualifies()` discards as abandoned -- predicts a title gets played
+again, on the same two libraries and the same one-year cutoff as the delete-threshold
+measurement above. ABANDONED means every pre-cutoff play failed `qualifies()`; the nearest
+honest same-age control differs by source, since `reaper.db` still keeps no arrival date
+(the same limitation as above): the dump's control is titles with no play at all before the
+cutoff, the live pair's is titles whose only pre-cutoff plays were completed. Both cohorts
+pool only within `REWATCH_BLOCK_FLOOR_N`-sized (30+) dormancy-age bands.
+
+- **The pooled lift sits an order of magnitude under the stop gate on both libraries.** The
+  dump pools one band (47 abandoned titles against 927 control), lift +0.021. The live pair
+  pools two bands (78 against 181), lift +0.012. Neither clears the 0.05 bar this
+  measurement was built to test.
+- **Both libraries lean the same direction, barely.** Abandoners came back slightly more
+  often than their matched control on both sources, never less. If there is a real effect it
+  argues keep, not delete, but it is too small to act on.
+- **Most of the population is too small a cohort to trust.** The abandoned cohort itself is
+  rare: 121 titles on the dump, 148 on the live pair, out of thousands scored. Five of the
+  dump's six dormancy bands and four of the live pair's six sat under the 30-title floor and
+  were excluded from the pooled verdict, several swinging by 0.03 to 0.11 on cohorts of a
+  dozen or two titles.
+- **Verdict: the abandonment signal is not justified.** A negative result, recorded here as
+  prominently as a positive one would be: an "abandoned play" gate or signal is not worth
+  building on what either library's history currently supports.
+
+## What a reap actually asks Plex for, per item (2026-08-28)
+
+Counted by reading every call site in `services/executor.py`. The question was whether the
+streaming veto's per-item session read was loading Plex. It is not the expensive one.
+
+| Per-item call | What Plex does with it |
+|---|---|
+| `active_streams` -> `GET /status/sessions` | reads its in-memory session table |
+| the path refresh -> `GET /library/sections/{k}/refresh?path=` | **queues an asynchronous scan** |
+
+Nothing else in the loop is per item. `_connect` caches the `PlexServer`, so plexapi rides
+one `requests.Session` for the whole run. `section_paths` looks per item and is not: plexapi
+holds `/library/sections` in a `cached_data_property`, so only the first call leaves the
+process.
+
+- **`/status/sessions` is the cheapest read Plex serves, and Tautulli polls it every 1 to 5
+  seconds forever.** A reap issues one per item, seconds apart, between a Radarr delete and
+  its verification. That is noise against Tautulli's standing load. Dropping the veto to
+  save it trades the last check before an irreversible act for nothing measurable.
+- **A websocket listening for `playing` fails the wrong way.** The read raises when Plex is
+  unreachable, and the item is kept. A socket that dropped forty seconds ago looks like a
+  socket where nobody pressed play, so a listener has to read silence as "nobody is
+  watching". A broken connection produces exactly that silence. Closing the hole means
+  polling the endpoint anyway, as the heartbeat, so `websocket-client` stays out of the
+  dependencies.
+- **The refresh is the one Plex does work for**, and it fired immediately after each delete,
+  so a 200-item reap had Plex scanning the folders it was still deleting into. Sending them
+  at the end removes that overlap.
+
+**Sending them at the end makes them later, not fewer.** Each path is one request and one
+scan, and a movie owns its folder, so a 200-movie reap still sends about 200. The queue is
+keyed by path, which collapses only items that share a folder, in practice several seasons
+of one show.
+
+**One library-wide scan instead is the wrong trade, twice over.** A path-scoped refresh can
+only trash items under that path. A section scan can trash anything Plex now fails to find,
+and `autoEmptyTrash` ships ON (measured above), so Plex purges those records before Reaper's
+count-delta gate is consulted at all. It is also more work for Plex, since it walks every
+directory in the library rather than the handful the run emptied. One request, more scanning,
+and an unbounded blast radius.
+
+**`LibrarySection.totalSize` is a plexapi `cached_data_property`, on a section object plexapi
+also caches for the life of the connection.** So the trash gate's before-count and
+after-count were one number, and the shrink it refuses to purge without could only read as
+zero. It worked because `_wait_for_scan` happens to call `section.reload()` in between, which
+invalidates the cache. `item_count` reloads for itself now, and `test_upstream_quirks.py`
+pins both halves.
+
+=> The collections finding above says the only lever is asking fewer times. This is the
+boundary of that rule. Where each request buys a bounded piece of work, batching them into
+one unbounded request costs more and risks more.
 
 ## Prior art
 

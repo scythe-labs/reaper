@@ -1,14 +1,12 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Base elements and the global utility classes. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* WebKit scales text by a factor it derives from the BLOCK's width, not the page's ("text
-   autosizing" / font boosting), so it fires unevenly and only where blocks are wide -- which
-   is why turning the phone landscape put one notice in two sizes ("when you're ready." large,
-   the sentence it finishes small) and grew "589 items - 6.0 TiB would be freed" past the
-   heading above it. This file sizes its own type deliberately; nothing here wants a second
-   opinion scaled off a container width. `100%` rather than `none`: `none` would also take
-   away the reader's own text-size setting and pinch zoom, which are theirs to keep. */
+ * Base elements and the global utility classes. See `../index.css` for how this file fits
+ * into the stylesheet's load order. */
+/* WebKit scales text based on each block's width rather than the page's width, a feature
+   called text autosizing (or font boosting), and it can scale unevenly across a page. This
+   file already sizes its own type deliberately, so nothing here needs a second, automatic
+   size. `100%` instead of `none`, since `none` would also disable the reader's own
+   text-size setting and pinch zoom. */
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
@@ -27,14 +25,14 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* iOS Safari zooms the page whenever a focused field's font-size is under 16px, and that
-   zoom shrinks the visual viewport below the layout width, which unlocks the fixed app
-   shell so it pans ("free floating"). Every control inherits the 15px body font above (the
-   control standard is font: inherit), so hold the text-entry controls at the 16px no-zoom
-   floor on touch devices only; the desktop 15px standard is untouched, and pinch-zoom stays
-   enabled (viewport meta unchanged). The #root id lifts these over the control classes
-   without !important and covers future inputs; the Spare menu's custom-length field is the
-   one input portaled to <body>, outside #root, so it is named alongside. */
+/* iOS Safari zooms the page whenever a focused field's font-size is under 16px. That zoom
+   shrinks the visual viewport below the layout width, which unlocks the fixed app shell so
+   it pans ("free floating"). Every control inherits the 15px body font above (the control
+   standard is font: inherit), so this holds text-entry controls at the 16px no-zoom floor
+   on touch devices only. The desktop 15px standard stays untouched, and pinch zoom stays
+   enabled (viewport meta unchanged). The #root id lifts these rules over the control classes
+   without `!important`, and covers future inputs too. The Spare menu's custom-length field
+   is the one input portaled to <body>, outside #root, so it is named here directly. */
 @media (pointer: coarse) {
   #root input:not([type="checkbox"]):not([type="radio"]),
   #root select,
@@ -85,15 +83,15 @@ a:hover {
   font-weight: var(--weight-normal);
 }
 
-/* Text for a screen reader only: in the layout, out of sight. For the places where meaning is
- * carried by something a reader cannot voice -- a spinner with no words, a bare glyph -- and a
- * visible label would say twice what a sighted operator already sees.
+/* Text for a screen reader only: present for assistive tech, invisible on screen. It covers
+ * places where meaning rides on something a reader cannot voice, such as a wordless spinner
+ * or a bare glyph, where a visible label would just repeat what a sighted operator already
+ * sees.
  *
- * NOT `display: none` or `visibility: hidden`, which take it out of the accessibility tree with
- * everything else; the clip idiom is the one that leaves it readable. Same declarations as
- * `.view-label` (the bottom-bar tab names at a narrow width), which predates this and is the
- * same technique inline; that one stays where it is because it applies only inside its media
- * query. Anything new uses this. */
+ * This clip idiom keeps the text in the accessibility tree. `display: none` and
+ * `visibility: hidden` would remove it along with everything else. `.view-label` (the
+ * bottom-bar tab names at a narrow width) uses the same declarations inline instead, since it
+ * only applies inside its own media query. Anything new uses this class. */
 .sr-only {
   position: absolute;
   width: 1px;
@@ -106,21 +104,22 @@ a:hover {
   border: 0;
 }
 
-/* A decorative glyph that points the way the page is read: the "onward" arrow on a jump link,
- * the "opens elsewhere" arrow on an external one. Under `dir="rtl"` the layout mirrors and the
- * character does not, because only a handful of characters (brackets, angle quotes) carry the
- * Unicode mirroring property and none of these do. So the drawing is flipped here.
+/* A decorative glyph that points the way the page reads: the "onward" arrow on a jump link,
+ * the "opens elsewhere" arrow on an external one. Under `dir="rtl"` the layout mirrors, but
+ * the character itself does not, because only a handful of characters (brackets, angle
+ * quotes) carry the Unicode mirroring property and none of these do. So this class flips
+ * the drawing instead.
  *
- * Every wearer is `aria-hidden` beside a real label, which is what makes flipping the whole fix:
- * nothing is being said that could come out backwards, only drawn. A glyph pointing up or down
- * does NOT wear this -- the account menu's chevron and the sort arrow read the same either way.
+ * Every glyph wearing this is `aria-hidden` beside a real label, so flipping only the
+ * drawing is safe: nothing here is read aloud. A glyph that points up or down, such as the
+ * account menu's chevron or the sort arrow, reads the same either way and skips this class.
  */
 [dir="rtl"] .dir-glyph {
   display: inline-block;
   transform: scaleX(-1);
 }
 
-/* An explanatory line under a heading. Reaper explains itself constantly; this is the
+/* An explanatory line under a heading. Reaper explains itself constantly. This is the
  * voice it does it in. */
 .blurb {
   color: var(--muted);
@@ -129,24 +128,15 @@ a:hover {
   max-width: 62ch;
 }
 
-/* Every <table> in the app sits in one of these. A table's columns cannot shrink below
- * their content, so a wide one scrolls itself here rather than dragging the whole page
- * sideways on a phone. */
-.table-scroll {
-  overflow-x: auto;
-}
-
-/* Severity-typed inline notices, so an error never wears a warning's clothes and vice
- * versa. Error (red): can't be saved. Warning (amber): legal, but probably not meant.
+/* Severity-typed inline notices, so an error and a warning never look alike. Error (red):
+ * can't be saved. Warning (amber): legal, but probably not meant.
  *
- * These live here, with the other shared primitives, because `.notice` is rendered at 143
- * sites across the app. They were written in `16-simulator.css` and stayed there long after
- * they stopped being a simulator control (#779). Two thirds of the way down a 35-file load
- * order is the wrong home for a base rule: a `.notice` variant added to any earlier file
- * would have lost at equal specificity, and that loss is invisible in a diff and invisible
- * in a green suite. `test_the_notice_base_rule_loads_before_the_feature_files` holds the
- * position. The move itself changed nothing, since no other file declared a `.notice` rule
- * to conflict with. */
+ * `.notice` renders at 143 sites across the app, so it lives here with the other shared
+ * primitives rather than in a feature file. A `.notice` variant declared in an earlier file
+ * in the load order would lose to this rule at equal specificity, silently: a diff and a
+ * green test suite would not catch it.
+ * `test_the_notice_base_rule_loads_before_the_feature_files` pins this file's position in
+ * the load order. */
 .notice {
   font-size: var(--text-md);
   padding: var(--space-md) var(--space-xl);
@@ -169,9 +159,9 @@ a:hover {
 .notice-inline {
   margin: 0.55rem 0 0;
 }
-/* A notice that offers the help page for what it just said. The column is what puts the button
-   under the sentence rather than in the middle of it, and it is inert on the notice that has no
-   page to offer, which is most of them: one child, so nothing moves. */
+/* A notice that offers the help page for what it just said. The column layout puts the
+   button under the sentence, not beside it. Most notices have no page to offer and stay a
+   single child, so this layout does nothing there. */
 .notice-doc {
   display: flex;
   flex-direction: column;

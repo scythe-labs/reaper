@@ -17,12 +17,13 @@ import {
 } from "./backnav";
 
 afterEach(() => {
-  // Restore first, and here rather than at the end of each test: a test that fails mid-way never
-  // reaches its own mockRestore, and a leaked history.state spy hands the NEXT test a browser
-  // that lies -- which reads as a second failure in code that is fine.
+  // Restores here, at the start of the next test, rather than at the end of this one. A test
+  // that fails partway through never reaches its own mockRestore, and a leaked history.state spy
+  // would hand the next test a browser that lies, reading as a second failure in code that is
+  // fine.
   vi.restoreAllMocks();
-  // Clear any sentinel left in history.state so the next test's provider mounts clean (its
-  // B-12 reconcile keys on exactly that marker).
+  // Clears any sentinel left in history.state so the next test's provider mounts clean. Its
+  // reconcile step keys on exactly that marker.
   history.replaceState(null, "");
 });
 
@@ -64,7 +65,7 @@ function TwoOverlays() {
 function GuardedOverlay() {
   const [open, setOpen] = useState(false);
   const [locked, setLocked] = useState(false);
-  // The same shape ScheduleModal uses: Back is refused while a save is in flight (locked).
+  // The same shape ScheduleModal uses. Back is refused while a save is in flight (locked).
   useBackGuard(
     open,
     () => setOpen(false),
@@ -80,10 +81,10 @@ function GuardedOverlay() {
   );
 }
 
-/** The split the three real modals use, which `GuardedOverlay` above cannot show: the parent
+/** The split the three real modals use, which `GuardedOverlay` above cannot show. The parent
  *  owns the Back registration and the ref, and the modal inside it mirrors its whole `canClose`
- *  into that ref. No modal here can be the one holding the lock in the parent, because the
- *  reason to stay open is the modal's own mutation state. */
+ *  into that ref. No modal here can hold the lock in the parent directly, because the reason to
+ *  stay open is the modal's own mutation state. */
 function MirroredModal({
   blockCloseRef,
   onClose,
@@ -118,7 +119,7 @@ function MirroredOverlay() {
 }
 
 /** Two overlays sharing one piece of state, so opening the second closes the first in a single
- *  commit -- the swap that used to lose a history entry to its own queued step. */
+ *  commit. This swap is the case that can lose a history entry to its own queued step. */
 function SwapOverlays() {
   const [which, setWhich] = useState<"a" | "b" | null>(null);
   useBackGuard(which === "a", () => setWhich(null));
@@ -132,7 +133,7 @@ function SwapOverlays() {
   );
 }
 
-/** A tab change and an overlay in one tree: the pairing that exposed the shared-entry bug. */
+/** A tab change and an overlay in one tree, the pairing that stresses the shared-entry logic. */
 function TabsThenOverlay() {
   const [view, setView] = useState("first");
   const [open, setOpen] = useState(false);
@@ -232,11 +233,11 @@ describe("backnav", () => {
     await userEvent.click(screen.getByText("lock"));
     expect(screen.getByRole("dialog")).toBeInTheDocument();
 
-    // Locked (a save in flight): Back is refused and the sentinel re-armed, so the overlay stays.
+    // Locked (a save in flight). Back is refused and the sentinel re-armed, so the overlay stays.
     pressBack();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
 
-    // Unlock and press Back again: the re-armed guard now closes it, not a dead press (B-11).
+    // Unlock and press Back again. The re-armed guard now closes it, rather than a dead press.
     await userEvent.click(screen.getByText("unlock"));
     pressBack();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -247,8 +248,9 @@ describe("backnav", () => {
     // nothing but the ref, so a modal whose reason to stay open is its own mutation state has to
     // put the WHOLE predicate there.
     //
-    // Both directions, in one drive. A hook that wrote a constant would pass either half alone,
-    // and one of the two constants is "always refusing", which is the trap rule 146 is about.
+    // Both directions are driven in one pass. A hook that wrote a constant would pass either
+    // half alone, and one of the two constants means the guard always refuses to close, which
+    // is the trap this test is meant to catch.
     render(
       <BackNavProvider>
         <MirroredOverlay />
@@ -265,7 +267,7 @@ describe("backnav", () => {
     pressBack();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
 
-    // Refused, not spent: the sentinel is re-parked, so the modal's own control still closes it.
+    // Refused, not spent. The sentinel is re-parked, so the modal's own control still closes it.
     await userEvent.click(screen.getByText("close it"));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
@@ -274,7 +276,7 @@ describe("backnav", () => {
     // Read at the ref rather than through Back, because no caller can observe it there. All
     // three parents arm the guard on the same state that mounts the modal, so the guard is gone
     // in the same commit, and the next open writes its own value before any press lands. This
-    // pins the hook's contract, not a reachable failure (rule 118).
+    // pins the hook's contract rather than a failure a user could reach.
     const ref = { current: false };
     const { unmount } = render(<MirroredModal blockCloseRef={ref} onClose={() => {}} />);
     expect(ref.current).toBe(false);
@@ -288,10 +290,10 @@ describe("backnav", () => {
   });
 
   it("parks its own history entry per layer, so each Back reveals that layer's own snapshot", async () => {
-    // iOS files a back-forward snapshot against each history entry when the page navigates away
-    // from it, and paints that snapshot during an edge-swipe back. Sharing one entry across
-    // layers meant a card opened after a tab change swiped back to a picture of the list taken at
-    // the tab change -- the top of the list -- frozen there for seconds. Opening a layer must
+    // iOS records a back-forward snapshot against each history entry when the page navigates
+    // away from it, and replays that snapshot during an edge-swipe back. Sharing one entry
+    // across layers would show a card opened after a tab change a frozen picture of the list as
+    // it looked at the tab change, for a few seconds, instead of the card. Opening a layer must
     // push an entry of its own even when one is already parked.
     const pushSpy = vi.spyOn(history, "pushState");
     render(
@@ -305,7 +307,8 @@ describe("backnav", () => {
     await userEvent.click(screen.getByText("open"));
     expect(pushSpy).toHaveBeenCalledTimes(2);
 
-    // Still one Back press per layer, newest-first: the overlay closes, the tab change survives.
+    // Still one Back press per layer, newest first. The overlay closes, and the tab change
+    // survives.
     pressBack();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByText("view: second")).toBeInTheDocument();
@@ -317,8 +320,8 @@ describe("backnav", () => {
   });
 
   it("gives a layer's entry back when it closes by its own control, not only the last one", async () => {
-    // Each layer owns one entry now, so each non-Back close must hand exactly that one back --
-    // otherwise entries pile up and later Back presses are dead.
+    // Each layer owns one entry, so each non-Back close must hand exactly that one back.
+    // Otherwise entries pile up and later Back presses are dead.
     const backSpy = vi.spyOn(history, "back").mockImplementation(() => {});
     const { unmount } = render(
       <BackNavProvider>
@@ -329,15 +332,15 @@ describe("backnav", () => {
     await userEvent.click(screen.getByText("openB"));
     expect(backSpy).not.toHaveBeenCalled();
 
-    // B closes by its own control while A is still open: under the shared-entry model this
-    // un-parked nothing, because a layer remained.
+    // B closes by its own control while A is still open. This must not un-park an entry, since
+    // a layer still remains.
     await userEvent.click(screen.getByText("closeB"));
     expect(backSpy).toHaveBeenCalledTimes(1);
 
-    // Unmount while the mock still stands in for the browser: A is open, so its teardown hands
+    // Unmounts while the mock still stands in for the browser. A is open, so its teardown hands
     // an entry back too, and a real history.back() here would land a stray popstate in whichever
-    // test runs next. The step is deferred to the end of the tick (see `unpark`), so wait one
-    // microtask for it rather than reading the count straight after the unmount.
+    // test runs next. The step is deferred to the end of the tick (see `unpark`), so this waits
+    // one microtask for it rather than reading the count straight after the unmount.
     unmount();
     await Promise.resolve();
     expect(backSpy).toHaveBeenCalledTimes(2);
@@ -345,13 +348,14 @@ describe("backnav", () => {
   });
 
   it("lets a layer opening in the same tick take over the entry of one closing", async () => {
-    // React runs every layout-effect cleanup before any setup, so a swap -- one overlay closing
-    // as another opens -- calls remove() first and register() second. Issuing the history.back()
-    // inline would then land it BEFORE the pushState in the same tick, and a browser resolves
-    // that traversal against the entry that was current when back() was called: the entry just
-    // pushed is discarded and we end a step lower than we count. The next close would then step
-    // off an entry we never parked and leave Reaper with the overlay still open. Nothing should
-    // move: the opening layer takes over the entry the closing one had not handed back yet.
+    // React runs every layout-effect cleanup before any setup, so a swap (one overlay closing as
+    // another opens) calls remove() first and register() second. Issuing the history.back() call
+    // inline would then land it before the pushState in the same tick, and a browser resolves
+    // that traversal against the entry that was current when back() was called. The entry just
+    // pushed would be discarded, ending a step lower than the count expects. The next close
+    // would then step off an entry that was never parked and leave the overlay still open.
+    // Nothing should move here. The opening layer takes over the entry the closing one had not
+    // handed back yet.
     const pushSpy = vi.spyOn(history, "pushState");
     const backSpy = vi.spyOn(history, "back").mockImplementation(() => {});
     render(
@@ -375,8 +379,9 @@ describe("backnav", () => {
   });
 
   it("reconciles a sentinel left parked before a reload, so the first Back is not dead", () => {
-    // Post-reload: the sentinel entry is the current one (its pushState state survived), but the
-    // provider's in-memory count is fresh. On mount it steps back over the stale entry.
+    // After a reload, the sentinel entry is the current one, since its pushState state
+    // survived, but the provider's in-memory count is fresh. On mount it steps back over the
+    // stale entry.
     history.pushState({ __reaperBack: true }, "");
     const backSpy = vi.spyOn(history, "back").mockImplementation(() => {});
     render(
@@ -389,12 +394,12 @@ describe("backnav", () => {
   });
 
   it("walks off every stale sentinel, and stops at the first entry it did not park", () => {
-    // A reload with two layers open leaves two stale entries. Stepping over only the first leaves
-    // the second as a dead Back press, which is the very bug this reconcile exists to prevent.
-    // Driving the same shape in a real browser settled how far it is safe to walk: entries parked
-    // with pushState stay SAME-document with the reloaded page, so each step is a popstate and no
-    // step reloads anything. The walk therefore continues -- one settled step at a time -- and
-    // stops on the entry whose state is not ours, which is the app's own first entry.
+    // A reload with two layers open leaves two stale entries. Stepping over only the first
+    // would leave the second as a dead Back press, so this reconcile has to walk both. Driving
+    // the same shape in a real browser settled how far it is safe to walk: entries parked with
+    // pushState stay same-document with the reloaded page, so each step is a popstate and no
+    // step reloads anything. The walk continues one settled step at a time, and stops on the
+    // entry whose state is not ours, which is the app's own first entry.
     history.pushState({ __reaperBack: true }, ""); // so history.length > 1 whatever ran before
     const stack: (object | null)[] = [null, { __reaperBack: true }, { __reaperBack: true }];
     const backSpy = vi.spyOn(history, "back").mockImplementation(() => {
@@ -419,10 +424,11 @@ describe("backnav", () => {
   });
 
   it("never steps off an entry it did not park, however far its own count has drifted", async () => {
-    // A long-press on Back jumps several entries and reports a single popstate, so our count can
-    // run ahead of the stack. Closing a layer then owes an entry the browser does not have, and
-    // taking that step would navigate out of Reaper with a panel still open. The browser is asked
-    // first -- `history.state` carries our marker -- and a drift costs nothing instead.
+    // A long-press on Back jumps several entries and reports a single popstate, so this
+    // provider's count can run ahead of the actual stack. Closing a layer would then owe an
+    // entry the browser does not have, and taking that step would navigate out of Reaper with a
+    // panel still open. The browser is asked first, since `history.state` carries the app's own
+    // marker, so a drift costs nothing instead.
     history.replaceState(null, ""); // an entry that is not ours, under an open layer
     const backSpy = vi.spyOn(history, "back").mockImplementation(() => {});
     const pushSpy = vi.spyOn(history, "pushState").mockImplementation(() => {});
@@ -441,10 +447,11 @@ describe("backnav", () => {
 
   it("takes scroll restoration off auto while mounted, and restores it on unmount", () => {
     // With the browser default `auto`, the sentinel this provider parks on open and the
-    // history.back() it runs on close both let the engine yank the page to the top (worse
-    // with the card list's CSS containment). The provider takes it to `manual` so the reviewer
-    // stays put, and restores the prior mode on unmount. jsdom leaves scrollRestoration absent
-    // (a real browser always has it); seed it so the guarded path runs, then clear it.
+    // history.back() it runs on close both let the engine yank the page to the top, worse
+    // still with the card list's CSS containment. The provider sets it to `manual` so the
+    // reviewer stays put, and restores the prior mode on unmount. jsdom leaves scrollRestoration
+    // absent, unlike a real browser, so this seeds it to exercise the guarded path, then clears
+    // it.
     history.scrollRestoration = "auto";
     const { unmount } = render(
       <BackNavProvider>
@@ -478,11 +485,11 @@ describe("backnav", () => {
 });
 
 describe("whether a modal is up", () => {
-  // The keyboard handlers that walk a list (↑/↓/j/k in the review queue, Escape in the two
-  // side panels) have to stand down while a modal owns the keyboard. They used to answer that
-  // by probing the DOM for a `[role="dialog"]` element on every keypress -- markup standing in
-  // for state React already owned, so any future overlay that was modal without the attribute,
-  // or carried it without being modal, silently gained or lost the keyboard (H-2).
+  // The keyboard handlers that walk a list (up/down/j/k in the review queue, Escape in the two
+  // side panels) have to stand down while a modal owns the keyboard. `useModalOpen` answers that
+  // from React state rather than by probing the DOM for a `[role="dialog"]` element, so a future
+  // overlay that is modal without the attribute, or carries it without being modal, cannot
+  // silently gain or lose the keyboard.
   function Readout() {
     return <span>modal: {useModalOpen() ? "up" : "none"}</span>;
   }
@@ -541,7 +548,7 @@ describe("whether a modal is up", () => {
 
   it("is not moved by an overlay that merely carries dialog markup", async () => {
     // `Overlay` renders role="dialog" and registers with Back, like a menu or a side panel
-    // would. Neither makes it modal, and the old probe could not tell the difference.
+    // would. Neither makes it modal.
     render(
       <BackNavProvider>
         <Readout />

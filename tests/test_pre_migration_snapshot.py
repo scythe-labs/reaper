@@ -1,19 +1,20 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The copy of the database a destructive migration falls back to (#566).
+"""The copy of the database a destructive migration falls back to.
 
-Nothing sat between preflight and ``alembic upgrade head``. While every migration only ever
-added, that cost little; rule 148's release M+1 drops six columns, and a ``downgrade()``
-recreates a dropped column without its data, so the file written here is the only way back
-from one that goes wrong.
+Nothing sits between preflight and ``alembic upgrade head``. Most migrations only ever add
+columns, so that cost little, but some releases drop columns, and a ``downgrade()``
+recreates a dropped column without its data. The file written here is the only way back
+from a migration that goes wrong.
 
 Four subjects, in the order a boot runs them: which pending revisions ask for a snapshot,
-what the snapshot is and how many are kept, preflight refusing rather than migrating without
-one, and a restore that really does bring a dropped column back.
+what the snapshot is and how many are kept, preflight refusing rather than migrating
+without one, and a restore that really does bring a dropped column back.
 
-The last of those is the point of the whole file. A snapshot nobody has restored from is a
-file, not a recovery path, so ``TestRestoringFromTheSnapshot`` breaks a database the way a
-bad migration would -- a column dropped, and a batch rebuild that forgot to restate
-``COLLATE NOCASE`` -- and puts it back through the restore an operator would use.
+The last of those is the point of the whole file. A snapshot nobody has restored from is
+just a file, not a proven recovery path. ``TestRestoringFromTheSnapshot`` breaks a
+database the same way a bad migration would (a column dropped, and a batch rebuild that
+forgot to restate ``COLLATE NOCASE``) and puts it back through the restore an operator
+would actually use.
 """
 
 from __future__ import annotations
@@ -40,13 +41,13 @@ from reaper.db import schema_gate
 from reaper.services import backup, restore
 from tests.test_migrations import PROJECT_ROOT, _alembic_config
 
-#: Release M, the first revision to carry the marker: four ``batch_alter_table`` blocks are
-#: four full table copies taken from reflection. Its predecessor sits below it, so a walk
-#: starting there finds a marked revision.
+#: Release M, the first revision to carry the marker. Its four ``batch_alter_table``
+#: blocks are four full table copies taken from reflection. Its predecessor sits below
+#: it, so a walk starting there finds a marked revision.
 #:
-#: A walk starting ABOVE release M finds one too, now: ``e2f3a4b5c6d7`` is the M+1 sweep and
-#: carries the marker for a stronger reason, since a dropped column's data is gone rather than
-#: merely at risk. Only a database already at head finds nothing pending.
+#: A walk starting above release M finds one too. ``e2f3a4b5c6d7`` is the M+1 sweep, and
+#: it carries the marker for a stronger reason. A dropped column's data is gone rather
+#: than merely at risk. Only a database already at head finds nothing pending.
 _RELEASE_M = "e6f7a8b9c0d1"
 _BEFORE_RELEASE_M = "d5e6f7a8b9c0"
 
@@ -57,7 +58,7 @@ def _install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Settings,
     """A throwaway install at ``tmp_path`` and the alembic Config that migrates it.
 
     ``_alembic_config`` pins the settings object env.py resolves the database URL from, so
-    it is read back rather than built a second time: one object, one ``reaper.db``.
+    it is read back rather than built a second time, keeping one object and one ``reaper.db``.
     """
     config = _alembic_config(tmp_path, monkeypatch)
     return reaper_config.get_settings(), config
@@ -81,11 +82,10 @@ class TestWhichPendingRevisionsAskForASnapshot:
     def test_only_the_revisions_that_lose_data_carry_the_marker(self) -> None:
         """Every revision pending from release M, and which of them asks for the copy.
 
-        This used to read ``needs_snapshot(_RELEASE_M) is False``, on a tree where everything
-        after release M was additive. ``e2f3a4b5c6d7`` is the M+1 sweep and drops six columns,
-        so the honest answer from release M is now True -- and asserting *which* revision made
-        it True is the stronger version of the same check: a marker landing on one of the four
-        additive revisions beside it fails here, which is what the old case was protecting.
+        ``e2f3a4b5c6d7`` is the M+1 sweep, and it drops six columns, so the honest answer
+        from release M is True. Asserting *which* revision made it True is the stronger
+        check: a marker landing on one of the four additive revisions beside it would fail
+        here.
         """
         pending = list(_script().iterate_revisions("head", _RELEASE_M))
         assert pending, "release M is head; this case needs a revision shipped after it"
@@ -107,17 +107,18 @@ class TestWhichPendingRevisionsAskForASnapshot:
         assert schema_gate.needs_snapshot(head) is False
 
     def test_nothing_on_disk_asks_for_nothing(self) -> None:
-        """No ``alembic_version`` row: a first boot, or a database a test built straight
-        from the models. There is nothing to lose, so there is nothing to copy."""
+        """No ``alembic_version`` row means a first boot, or a database a test built
+        straight from the models. There is nothing to lose, so there is nothing to copy.
+        """
         assert schema_gate.needs_snapshot(None) is False
 
     def test_at_least_one_shipped_revision_carries_the_marker(self) -> None:
-        """Rule 38/117: a protection nothing can trigger is not a protection.
+        """Proves the marker guard can actually fire, by naming a revision that carries it.
 
-        Release M is the one that carries it today. Naming it here is what fails if the
-        attribute is renamed on one side only -- the walk would go on reading ``False`` for
-        every revision and no other test would notice, because "no snapshot needed" is
-        exactly what a green additive upgrade looks like.
+        Release M is the one that carries it today. Naming it here catches the attribute
+        being renamed on only one side. Without this test, the walk would go on reading
+        ``False`` for every revision, and nothing would notice, because "no snapshot
+        needed" is exactly what a green additive upgrade looks like.
         """
         marked = [
             revision.revision
@@ -136,14 +137,18 @@ class TestWhichPendingRevisionsAskForASnapshot:
         assert schema_gate.needs_snapshot(_BEFORE_RELEASE_M) is True
 
     def test_a_revision_that_is_not_on_the_way_to_head_asks_anyway(self) -> None:
-        """Alembic raises on a revision it cannot place, and "I could not tell" is not
-        "nothing needs a copy" (rule 93)."""
+        """Alembic raises on a revision it cannot place, and "I could not tell" must count
+        as "needs a copy," not as certainty that nothing does.
+        """
         assert schema_gate.needs_snapshot("not-a-revision") is True
 
 
 class TestTheSnapshotAndWhatIsKept:
-    """What lands in ``data/pre-migration/``: an ordinary ``.reaper`` archive, owner-only,
-    named for the revision the database sat at, and pruned to the newest few."""
+    """What lands in ``data/pre-migration/``.
+
+    An ordinary ``.reaper`` archive, owner-only, named for the revision the database sat
+    at, and pruned to the newest few.
+    """
 
     def test_it_writes_an_archive_the_restore_side_accepts(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -165,7 +170,7 @@ class TestTheSnapshotAndWhatIsKept:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Each archive carries ``secret.key``, so the folder is as sensitive as the key
-        (rule 14/83)."""
+        itself."""
         settings, config = _install(tmp_path, monkeypatch)
         command.upgrade(config, "head")
 
@@ -202,7 +207,7 @@ class TestTheSnapshotAndWhatIsKept:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A full disk is the case this is written for. The half-written copy must not be
-        left behind, because a stranded multi-gigabyte file makes a full disk worse (PR-3).
+        left behind, because a stranded multi-gigabyte file makes a full disk worse.
         """
         settings, config = _install(tmp_path, monkeypatch)
         command.upgrade(config, "head")
@@ -221,11 +226,11 @@ class TestTheSnapshotAndWhatIsKept:
 
 class TestPreflightRefusesRatherThanMigrateUnprotected:
     """Preflight is the one thing every launcher runs immediately before ``alembic upgrade
-    head`` -- the container entrypoint, ``scripts/dev-local.sh`` and ``launcher.main``
-    alike -- so the wiring is pinned here and the three of them carry no copy to drift.
+    head``. The container entrypoint, ``scripts/dev-local.sh``, and ``launcher.main`` all
+    call it, and the wiring is pinned here so the three callers carry no copy of it to drift.
 
-    These drive the real walk against a real database migrated to a real revision. Nothing
-    is stubbed but the disk failure, which has no other way to happen.
+    These drive the real walk against a real database migrated to a real revision.
+    Nothing is stubbed except the disk failure, which has no other way to happen.
     """
 
     @staticmethod
@@ -252,15 +257,15 @@ class TestPreflightRefusesRatherThanMigrateUnprotected:
     def test_a_database_that_will_not_say_what_it_is_is_copied_rather_than_migrated(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """``stored_revision`` answers ``None`` for three things and only two are "nothing to
-        lose". The third is a database it could not read, and reading that as "no snapshot
-        needed" is rule 93's fail-open: a lock released between preflight's read and alembic's
-        open would let the one migration a ``downgrade()`` cannot undo run unprotected.
+        """``stored_revision`` answers ``None`` for three cases, and only two of them mean
+        "nothing to lose." The third is a database it could not read. Treating that as "no
+        snapshot needed" would be a fail-open: a lock released between preflight's read and
+        alembic's open could let a migration that ``downgrade()`` cannot undo run unprotected.
 
-        A file that exists and carries no ``alembic_version`` is that third answer, driven
-        without a race. ``needs_snapshot(None)`` is asserted to be ``False`` in the same
-        breath, because that is the value the guard has to survive: the branch lives at the
-        call site, and a test that only drove ``needs_snapshot`` could not see it.
+        A file that exists and carries no ``alembic_version`` is that third case, driven
+        without a race. This also asserts ``needs_snapshot(None)`` is ``False``, because
+        that is the value the guard has to survive. The branch lives at the call site, so a
+        test that only drove ``needs_snapshot`` could not see it.
         """
         settings = Settings(data_dir=tmp_path, secret_key="k")
         settings.ensure_data_dir()
@@ -280,10 +285,12 @@ class TestPreflightRefusesRatherThanMigrateUnprotected:
     def test_a_database_held_open_by_something_else_stops_the_boot(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The same guard at its other outcome, and the one an operator can actually hit: a
-        second instance on a shared data dir holds a write lock, so the database will neither
-        answer its revision nor be copied. Refusing is the fail-closed end of that, and it is
-        what the guard buys. Without it this boots and migrates.
+        """The same guard at its other outcome, and the one an operator can actually hit.
+
+        A second instance on a shared data dir holds a write lock, so the database can
+        neither answer its revision nor be copied. Refusing to boot is the fail-closed
+        response, and it is what the guard buys. Without it, this would boot and migrate
+        anyway.
         """
         settings, config = _install(tmp_path, monkeypatch)
         command.upgrade(config, "head")
@@ -304,8 +311,9 @@ class TestPreflightRefusesRatherThanMigrateUnprotected:
     def test_a_first_boot_with_no_database_still_writes_nothing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The other side of the guard above: ``None`` with no file is the ordinary first boot,
-        and copying a database that does not exist yet is work for nothing."""
+        """The other side of the guard above. ``None`` with no file is the ordinary first
+        boot, and copying a database that does not exist yet is work for nothing.
+        """
         settings = Settings(data_dir=tmp_path, secret_key="k")
         monkeypatch.setattr(preflight, "get_settings", lambda: settings)
         assert not settings.database_path.exists()
@@ -319,11 +327,9 @@ class TestPreflightRefusesRatherThanMigrateUnprotected:
     ) -> None:
         """The case an operator on v2026.8.4 actually hits.
 
-        This used to be ``test_an_ordinary_additive_upgrade_writes_nothing``, driven from
-        release M back when everything after it was additive. ``e2f3a4b5c6d7`` drops six
-        columns, so booting from release M now crosses it and the copy is taken. The
-        no-copy side is still pinned, by the two cases above it: a database already at head,
-        and a first boot with no database at all.
+        ``e2f3a4b5c6d7`` drops six columns, so booting from release M crosses it and the
+        copy is taken. The no-copy side is pinned separately, by the two cases above: a
+        database already at head, and a first boot with no database at all.
         """
         self._at(_RELEASE_M, tmp_path, monkeypatch)
 
@@ -334,12 +340,13 @@ class TestPreflightRefusesRatherThanMigrateUnprotected:
     def test_a_snapshot_that_cannot_be_written_stops_the_boot(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Fatal, unlike the two housekeeping sweeps above it in ``preflight.main``. A
-        migration that its own ``downgrade()`` cannot undo must not run with nothing to
+        """Fatal, unlike the two housekeeping sweeps above it in ``preflight.main``.
+
+        A migration whose own ``downgrade()`` cannot undo it must not run with nothing to
         fall back to, so the boot ends here and ``alembic upgrade head`` never starts.
 
-        The message reaches ``refuse`` rather than only stderr: it is the fourth of the
-        fatal four, and a frozen desktop build's stderr is the null device (#622).
+        The message reaches ``refuse`` rather than only stderr, because a frozen desktop
+        build's stderr is the null device.
         """
         self._at(_BEFORE_RELEASE_M, tmp_path, monkeypatch)
 
@@ -357,13 +364,13 @@ class TestPreflightRefusesRatherThanMigrateUnprotected:
 
 
 class TestRestoringFromTheSnapshot:
-    """The whole file exists for this: a snapshot nobody has restored from is a file.
+    """The whole file exists for this. A snapshot nobody has restored from is just a file.
 
     ``list_config`` carries both halves of what has to come back. ``config_json`` is the
-    data a ``drop_column`` takes with it, and ``name`` is the ``COLLATE NOCASE`` unique
-    column release M's own comment says a batch rebuild silently drops -- reflection does
-    not report a collation, so the rebuilt table looks fine and two lists differing only in
-    case can both exist, answering to one keep rule (#508).
+    data a ``drop_column`` takes with it. ``name`` is the ``COLLATE NOCASE`` unique column
+    that a batch rebuild can silently drop, because reflection does not report a collation.
+    Without it, the rebuilt table looks fine, but two names differing only in case can both
+    exist even though the keep rule expects one.
     """
 
     @staticmethod
@@ -382,14 +389,13 @@ class TestRestoringFromTheSnapshot:
     def _damage(settings: Settings) -> None:
         """Break the database the way a migration that went wrong would.
 
-        Alembic's own batch mode, so the rebuild is the real one: no ``collation=`` on the
-        ``alter_column``, which is the two-line authoring slip. Then a column drop no
-        ``downgrade()`` can undo, the shape release M+1 performs six times.
+        This uses Alembic's own batch mode, so the rebuild is the real one. It omits
+        ``collation=`` on the ``alter_column`` call, the same two-line authoring slip a
+        real migration could make, then drops a column the way no ``downgrade()`` can undo.
 
-        The rebuild is triggered on ``enabled``. It used to be ``built_in``, which the M+1
-        sweep (``e2f3a4b5c6d7``) has since dropped; any Boolean on this table reproduces the
-        hazard, because what loses the collation is the rebuild, not which column asked for
-        one.
+        The rebuild is triggered on ``enabled``, but any ``Boolean`` column on this table
+        reproduces the hazard, because what loses the collation is the rebuild itself, not
+        which column asked for one.
         """
         engine = create_engine(settings.sync_database_url)
         try:

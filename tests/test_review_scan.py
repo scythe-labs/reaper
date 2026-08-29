@@ -1,14 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Scan-lane review fixes.
+"""Scan-lane behavior that the rest of the suite does not already cover.
 
-Covers the findings addressed in the scan lane of the code review:
+Two things pinned here:
 
 * the movie -> Plex join must fail closed on duplicate titles, exactly as the season
-  path does, instead of last-write-wins into a title map;
+  path does, instead of resolving to whichever title matched last;
 * the grace clock must restart when a rescued item is re-condemned after a real gap.
-
-Three of this file's original findings were about the historical replay engine, which was
-deleted rather than wired; they left with it.
 """
 
 from __future__ import annotations
@@ -52,7 +49,8 @@ NOW = utcnow().replace(microsecond=0)
 
 class TestMovieDecisionLog:
     """Every movie Radarr returns emits one greppable decision line, so "why isn't my movie
-    in the queue" is answerable from the log -- the movie twin of season_scan.series_decision."""
+    in the queue" is answerable from the log. This is the movie twin of
+    season_scan.series_decision."""
 
     def _index(self) -> identity.PlexIndex:
         return identity.PlexIndex.build(
@@ -106,23 +104,24 @@ class TestTheMovieJoinAtTheScanLane:
     The resolver's own tier logic is unit-tested in ``test_identity.py``."""
 
     def _index(self) -> identity.PlexIndex:
-        # A remake pair, distinguished only by year; no ids -> the title+year backstop.
+        # A remake pair, distinguished only by year. Neither carries an id, so the
+        # title+year backstop is what binds them.
         return identity.PlexIndex.build(
             [
-                identity.PlexItem(rating_key=11, title="The Mummy", year=1999, added_at=NOW),
-                identity.PlexItem(rating_key=22, title="The Mummy", year=2017, added_at=NOW),
+                identity.PlexItem(rating_key=11, title="Same Title", year=1999, added_at=NOW),
+                identity.PlexItem(rating_key=22, title="Same Title", year=2017, added_at=NOW),
             ]
         )
 
     def test_raw_items_leaves_an_ambiguous_movie_unmatched(self) -> None:
-        movie = {"id": 1, "title": "The Mummy", "hasFile": True, "sizeOnDisk": 1}
+        movie = {"id": 1, "title": "Same Title", "hasFile": True, "sizeOnDisk": 1}
         items = _raw_items([movie], self._index(), instance_id=1)
         assert len(items) == 1
         assert items[0].plex_rating_key is None
         assert items[0].added_at is None
 
     def test_raw_items_binds_a_disambiguated_movie_by_title(self) -> None:
-        movie = {"id": 1, "title": "The Mummy", "year": 2017, "hasFile": True, "sizeOnDisk": 1}
+        movie = {"id": 1, "title": "Same Title", "year": 2017, "hasFile": True, "sizeOnDisk": 1}
         items = _raw_items([movie], self._index(), instance_id=1)
         assert items[0].plex_rating_key == 22
         assert items[0].added_at == NOW
@@ -331,8 +330,8 @@ class TestBuildMovieIndex:
         assert item.ids.tmdb == 1001
         assert item.file_basename == "example (2020).mkv"
         assert index.by_tmdb[1001] == [100]
-        # The display metadata must survive the spine rebuild -- this loop copies
-        # fields one by one, and a field missed here silently never reaches a card.
+        # The display metadata must survive the spine rebuild. This loop copies fields one
+        # by one, and a field missed here silently never reaches a card.
         assert item.video_resolution == "1080"
         assert item.content_rating == "PG-13"
         assert item.runtime_minutes == 95
@@ -378,10 +377,10 @@ class TestBuildMovieIndex:
         assert res.status is identity.MatchStatus.MATCHED
 
     async def test_a_sweep_failure_degrades_but_still_matches_by_title(self) -> None:
-        """rule #2: a failed GUID sweep degrades the snapshot (nothing may be deleted from it)
-        rather than silently continuing -- but items still fall through to the title+year
-        backstop. The reason is written for the operator, who reads it verbatim in the
-        incomplete-scan notice: no "GUID", no "un-executable" (rule 21)."""
+        """A failed GUID sweep degrades the snapshot, so nothing may be deleted from it, but
+        items still fall through to the title+year backstop. The reason is written for the
+        operator, who reads it verbatim in the incomplete-scan notice, so it says "Plex" in
+        plain words rather than naming a GUID or calling the scan un-executable."""
         reasons: list[str] = []
         index = await build_movie_index(
             movie_library(_SPINE_ROWS),
@@ -435,10 +434,10 @@ class TestRetiredSpineRows:
     )
 
     async def test_a_row_plex_no_longer_has_cannot_bind_a_live_file(self) -> None:
-        """The condemn-side reach. With the *arr's file renamed, nothing reaches the real
-        row, and before this fix title+year bound the file to the retired key -- which
-        reads as MATCHED, so watchers came back Known(0) and dormancy anchored on the
-        phantom's stale added-at. Unmatched is the right answer, and it keeps the file."""
+        """The condemn-side risk. With the *arr's file renamed, nothing reaches the real row,
+        so title+year binding the file to the retired key would read as matched, report
+        watchers as Known(0), and anchor dormancy on the phantom's stale added-at. Unmatched
+        is the right answer, and it keeps the file."""
         reasons: list[str] = []
         index = await build_movie_index(
             movie_library([self._RETIRED]),
@@ -477,9 +476,9 @@ class TestRetiredSpineRows:
         assert res.status is identity.MatchStatus.MATCHED
 
     async def test_a_failed_sweep_retires_nothing(self) -> None:
-        """rule 2. A sweep that raised returns the same empty map a genuinely empty library
-        does, and reading it as 'Plex has none of these' would retire the whole library on a
-        read that never happened. The pre-fix behavior stands, and the snapshot degrades."""
+        """A sweep that raised returns the same empty map a genuinely empty library does, so
+        reading it as "Plex has none of these" would retire the whole library on a read that
+        never happened. Instead the library stays as it was, and the snapshot degrades."""
         reasons: list[str] = []
         index = await build_movie_index(
             movie_library([self._RETIRED]),
@@ -490,7 +489,7 @@ class TestRetiredSpineRows:
         assert reasons and "couldn't read your Plex libraries" in reasons[0]
 
     async def test_no_plex_configured_retires_nothing(self) -> None:
-        """The other silent-empty: nothing swept because nothing was asked."""
+        """The other silent-empty case. Nothing was swept because nothing was asked."""
         reasons: list[str] = []
         index = await build_movie_index(
             movie_library([self._RETIRED]),
@@ -501,10 +500,11 @@ class TestRetiredSpineRows:
         assert reasons == []
 
     async def test_the_show_index_retires_the_same_rows(self) -> None:
-        """rule 72. ``build_tv_index`` is a thin wrapper over the same builder, so the prune
-        reaches shows for free -- but the resolver above it does not: a show binds on tvdb
-        and a FOLDER name, never a file size, so there is one less corroborator between a
-        phantom and a live series. Both arms, on the show ladder."""
+        """``build_tv_index`` is a thin wrapper over the same builder, so the prune reaches
+        shows for free. The resolver above it still needs its own check, though: a show
+        binds on tvdb and a folder name, never a file size, so it has one less corroborator
+        between a phantom and a live series than a movie does. Both arms are checked here,
+        on the show ladder."""
         retired_show = {
             "rating_key": 100,
             "title": "Example Show",
@@ -538,7 +538,7 @@ class TestRetiredSpineRows:
         assert (bound.rating_key, bound.status) == (300, identity.MatchStatus.MATCHED)
 
         # Sonarr's folder was renamed, so nothing reaches the real show. Unmatched keeps
-        # every season; binding the phantom would have handed them all a dead rating key.
+        # every season. Binding the phantom instead would hand them all a dead rating key.
         stranded = identity.resolve_show(
             ids=identity.ExternalIds.of(tvdb=9009),
             title="Example Show",
@@ -562,7 +562,7 @@ class TestRetiredSpineRows:
     async def test_a_large_gap_degrades_and_a_small_one_does_not(
         self, total: int, retired: int, degrades: bool
     ) -> None:
-        """A stale cache retires a handful; a library the sweep never walked retires all of
+        """A stale cache retires a handful. A library the sweep never walked retires all of
         it, and every item in it would resolve unmatched with nothing saying why. Both
         bounds must be passed, so a small library cannot degrade on one retired row."""
         rows = [
@@ -736,7 +736,7 @@ class TestMergedWatchStatsFold:
             watchers_all_time=ever,
         )
         assert last_played[100] == from_epoch(int(recent.timestamp()))
-        assert window[100] == 2  # users 1 and 2; user 9's play is outside the window
+        assert window[100] == 2  # users 1 and 2, since user 9's play is outside the window
         assert ever[100] == 3  # user 1 counted once despite playing both listings
         # The unrelated item's stats are untouched.
         assert ever.get(300) == 1
@@ -744,8 +744,8 @@ class TestMergedWatchStatsFold:
     async def test_plays_only_under_the_other_listing_still_count(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """Every play sits under the file's OTHER listing; without the fold the canonical
-        key would read 'never watched', the exact under-count that condemns."""
+        """Every play sits under the file's other listing. Without the fold the canonical
+        key would read "never watched", the exact under-count that condemns."""
         recent = NOW - timedelta(days=5)
         await _play_event(cache_engine, 1, 200, 7, recent)
 
@@ -836,15 +836,15 @@ class TestTheGraceClockRestartsOnReCondemnation:
     async def test_a_return_after_a_long_gap_restarts_the_clock(
         self, session: AsyncSession
     ) -> None:
-        """Condemned long ago, rescued, then re-condemned a full dormancy period later:
-        the item must serve a FRESH grace window, or it drops straight into ``ready`` with
+        """Condemned long ago, rescued, then re-condemned a full dormancy period later.
+        The item must serve a fresh grace window, or it drops straight into ``ready`` with
         no countdown and no Leaving Soon warning, and is reaped with zero grace."""
         long_ago = NOW - timedelta(days=400)
         session.add(
             FirstFlagged(
                 media_key="radarr:1:1",
                 first_flagged_at=long_ago,
-                # Last seen condemned 400 days ago -- it left the condemned set for far
+                # Last seen condemned 400 days ago. It left the condemned set for far
                 # longer than a grace window and has now returned.
                 last_seen_condemned_at=long_ago,
             )
@@ -861,8 +861,8 @@ class TestTheGraceClockRestartsOnReCondemnation:
     async def test_an_uninterrupted_condemn_does_not_reset_the_clock(
         self, session: AsyncSession
     ) -> None:
-        """The other direction: an item that stayed condemned (or missed only a snapshot
-        or two to a transient outage) keeps its original clock, so it can age out."""
+        """The other direction. An item that stayed condemned, or missed only a snapshot
+        or two to a transient outage, keeps its original clock, so it can age out."""
         started = NOW - timedelta(days=5)
         session.add(
             FirstFlagged(
@@ -919,7 +919,7 @@ class TestProtectionSyncDegradations:
     async def test_a_failed_whitelist_with_no_members_degrades(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """A whitelist that failed to sync and has no membership fails OPEN -- the worst
+        """A whitelist that failed to sync and has no membership fails open, the worst
         direction. It must degrade the snapshot so no reap runs against an empty keep-list."""
         await _seed_list(cache_engine, slug="reaper-keep", kind="whitelist", members=0)
         reasons = await protection_sync_degradations(cache_engine, {"reaper-keep": "error: boom"})
@@ -929,7 +929,7 @@ class TestProtectionSyncDegradations:
         self, cache_engine: AsyncEngine
     ) -> None:
         """The atomic swap preserved prior membership and the last successful sync is
-        recent, so the keep-list still protects -- a transient failure need not stop the
+        recent, so the keep-list still protects. A transient failure need not stop the
         scan."""
         await _seed_list(
             cache_engine,
@@ -944,15 +944,15 @@ class TestProtectionSyncDegradations:
     async def test_a_failed_whitelist_whose_row_is_disabled_degrades(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """A retired slug keeps its members, so counting rows alone said it still protects.
+        """A retired slug keeps its members, so counting rows alone is not enough to know it
+        still protects.
 
         ``lists.retire_absent`` disables a superseded slug with ``enabled = 0`` and leaves
-        its membership rows in place. But the gate reads membership through
-        ``load_membership_index``, which joins ``WHERE l.enabled = 1`` -- so those rows
-        protect nothing. A slug carries the operator's match mode, so flipping keep-tags
-        from "any" to "all" and back retires and revives slugs in normal use; landing a
-        failed sync in that window let a disabled list vouch for it and skip the degrade,
-        which is the fail-open this check exists to prevent (rules 2 and 115).
+        its membership rows in place. The gate reads membership through
+        ``load_membership_index``, which joins ``WHERE l.enabled = 1``, so those rows protect
+        nothing. A slug carries the operator's match mode, so flipping keep-tags from "any"
+        to "all" and back retires and revives slugs in normal use. A failed sync landing in
+        that window must not let a disabled list vouch for it and skip the degrade.
         """
         await _seed_list(
             cache_engine,
@@ -968,7 +968,7 @@ class TestProtectionSyncDegradations:
     async def test_a_failed_whitelist_stale_beyond_the_bound_degrades(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """P-6: stale-but-populated protects only within the bound. Past it, every title
+        """A stale-but-populated list protects only within the bound. Past it, every title
         keep-tagged since the last successful sync has been unprotected for days, so the
         snapshot degrades until a sync succeeds."""
         await _seed_list(
@@ -1020,9 +1020,9 @@ class TestProtectionSyncDegradations:
         assert reasons == []
 
     async def test_a_failed_soft_list_does_not_degrade(self, cache_engine: AsyncEngine) -> None:
-        """A SOFT-mode list only feeds a scoring nudge; losing it never unprotects a kept
-        title, so even an empty one does not make the snapshot un-executable. This is the
-        real axis: degrade on mode=hard, never on mode=soft."""
+        """A soft-mode list only feeds a scoring nudge, so an empty one costs no protection,
+        and losing it does not make the snapshot un-executable. The mode decides this:
+        degrade on mode=hard, and only on mode=hard."""
         await _seed_list(cache_engine, slug="soft-list", kind="curated", mode="soft", members=0)
         reasons = await protection_sync_degradations(cache_engine, {"soft-list": "error: 503"})
         assert reasons == []
@@ -1033,7 +1033,7 @@ class TestProtectionSyncDegradations:
 
 
 class TestAKeepListNothingCheckedAtAll:
-    """The gap the three checks above cannot see: they walk ``synced``, so a list nothing
+    """The gap the three checks above cannot see. They walk ``synced``, so a list nothing
     built a provider for is absent from it entirely.
 
     Unlinking Plex is the way in. ``DELETE /api/settings/plex`` drops only the server row, so
@@ -1062,8 +1062,8 @@ class TestAKeepListNothingCheckedAtAll:
     async def test_an_unchecked_keep_list_inside_the_bound_does_not_degrade(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """The control, and the reason the bound is a bound: a scan that runs between two
-        nightly list refreshes finds every list unchecked by ITSELF and recently checked by
+        """The control, and the reason the bound exists at all. A scan that runs between two
+        nightly list refreshes finds every list unchecked by itself but recently checked by
         the job, and must not degrade on that."""
         await _seed_list(
             cache_engine,
@@ -1089,7 +1089,7 @@ class TestAKeepListNothingCheckedAtAll:
     async def test_an_install_that_never_synced_the_list_at_all_stays_clean(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """The case this must NOT fire on, and the reason it keys on a stored ROW.
+        """The case this must not fire on, and the reason it keys on a stored row.
 
         The seed migration puts an enabled Plex collection definition on every install,
         including one that has never linked Plex. Nothing ever synced it, so no
@@ -1118,9 +1118,9 @@ class TestAKeepListNothingCheckedAtAll:
     async def test_an_unchecked_curated_list_does_not_degrade_on_staleness(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """Same split as the failed-sync walk above: a curated external list churns slowly
-        and keeps protecting from its stored copy, so the recency bound is a keep-list rule
-        and this stays one line of policy rather than two."""
+        """The same split as the failed-sync walk above. A curated external list churns
+        slowly and keeps protecting from its stored copy, so the recency bound is a
+        keep-list rule and this stays one line of policy rather than two."""
         await _seed_list(
             cache_engine,
             slug="imdb-top-250",

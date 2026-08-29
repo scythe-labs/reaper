@@ -26,13 +26,9 @@ import { SecurityPanel } from "./SecurityPanel";
 import { ServicesPanel } from "./ServicesPanel";
 import { SwitchConfirm, useSwitchConfirm } from "./SwitchConfirm";
 
-// A name that moved out of this file and is still imported FROM it: `SetupPasswordStep` reads
-// the password floor. The name stays available at this path rather than sending that caller to
-// a new one.
-//
-// `PlexPanel` was a second until this split, re-exported for a `SetupWizard` that stopped reading
-// it when #384 broke first-start into four steps; the export outlived its only caller by a year
-// and the comment justifying it was still naming that caller.
+// A name that moved out of this file and is still imported from it: `SetupPasswordStep` reads
+// the password floor. The name stays available at this path rather than sending that caller
+// to a new one.
 export { MIN_ADMIN_PASSWORD } from "./SecurityPanel";
 
 export type Panel =
@@ -47,9 +43,9 @@ export type Panel =
   | "logs"
   | "about";
 
-/** The ten sections, in rail order. Exported for the one test that owns the hand-written label
- *  table this must agree with (SettingsNav.test.tsx), so a section added here fails there naming
- *  what to do rather than as an unexplained label mismatch (rules 103, 144). */
+/** The ten sections, in rail order. Exported for the one test that owns the hand-written
+ *  label table this must agree with (SettingsNav.test.tsx), so a section added here fails
+ *  there naming what to do rather than as an unexplained label mismatch. */
 export const panels = (): { id: Panel; label: string }[] => [
   { id: "general", label: i18next.t("shell.settings.panels.general") },
   { id: "services", label: i18next.t("shell.settings.panels.services") },
@@ -78,8 +74,8 @@ export function Settings({
    *  so this is called with a destination the operator has already agreed to leave for. */
   onPanelChange: (next: Panel) => void;
   /** A panel asked for from outside, by the user menu's update item. An ask rather than an
-   *  instruction: it goes through the same confirm the rail does, so edits on the panel it would
-   *  close are not lost without a word (#794). The nonce makes each ask fire once. */
+   *  instruction: it goes through the same confirm the rail does, so edits on the panel it
+   *  would close are not lost without a word. The nonce makes each ask fire once. */
   jump?: { panel: Panel; nonce: number } | null;
   /** Jump to the Policy screen's keep-rules section, for the Lists rows' policy-use links.
    *  Optional the way `SafetyBanner`'s jump is: tests mount Settings without a navigator. */
@@ -91,25 +87,23 @@ export function Settings({
   // editor's Movies/TV switch uses and in the same place: directly under the control that was
   // clicked, so that control does not move under the pointer.
   //
-  // Five panels report: General's save bar; Plex's web address and manual connection rows; the
-  // Discord webhook URL, a secret the operator has to go back to Discord to re-copy; Security's
-  // three admin-password boxes; and Backup's staged restore, which is the only one whose loss also
-  // strands something on the SERVER. The guard first landed on General alone and then on three, so
-  // the rest went on unmounting silently while the app had already trained the operator to expect
-  // to be asked (rule 72). Each reports through its own `onDirtyChange`; the five are `useState`
-  // setters and so are stable, which that prop requires.
+  // Five panels report. General's save bar, Plex's web address and manual connection rows,
+  // the Discord webhook URL (a secret the operator has to go back to Discord to re-copy),
+  // Security's three admin-password boxes, and Backup's staged restore, which is the only
+  // one whose loss also strands something on the server. Each reports through its own
+  // `onDirtyChange`. The five are `useState` setters, so they are stable, which that prop
+  // requires.
   //
-  // The other five are spelled out below rather than left out, because `dirtyPanels` is a total
-  // `Record<Panel, …>`: a panel missing from it does not compile, where an absent key used to read
-  // as "holds nothing" and switch straight through. That is rule 103's one-declaration branch, and
-  // it replaces a comment claiming these five "are the whole population" -- a claim nothing checked
-  // against the ten in `panels`, so the next section added would have been unguarded and silent
-  // (#156). `npm run build` runs `tsc --noEmit` and is a CI gate, so the compiler is the guard.
+  // The other five are spelled out below rather than left out, because `dirtyPanels` is a
+  // total `Record<Panel, …>`. A panel missing from it does not compile, where an absent key
+  // used to read as "holds nothing" and switch straight through. `npm run build` runs `tsc
+  // --noEmit` as a CI gate, so the compiler is what enforces this list stays complete as
+  // `panels` grows.
   //
-  // The last two took a hop the first three did not: their drafts live in CHILD components
-  // (`AdminPasswordForm`, `RestoreCard`), so the signal is declared there and passed up through
-  // the panel. That hop is what rule 146 is about -- a child that unmounts on its parent's early
-  // return takes the draft with it, so `SecurityPanel`'s failed-read branch had to change too.
+  // The last two took a hop the first three did not: their drafts live in child components
+  // (`AdminPasswordForm`, `RestoreCard`), so the signal is declared there and passed up
+  // through the panel. A child that unmounts on its parent's early return takes the draft
+  // with it, so `SecurityPanel`'s failed-read branch had to change too.
   const [generalDirty, setGeneralDirty] = useState(false);
   const [plexDirty, setPlexDirty] = useState(false);
   const [webhookDirty, setWebhookDirty] = useState(false);
@@ -117,19 +111,17 @@ export function Settings({
   const [backupDirty, setBackupDirty] = useState(false);
 
   // Every panel classified, in `panels` order. A `false` here is a claim that the section has
-  // nothing to lose on the way out, so each one says why -- verified in the tree.
+  // nothing to lose on the way out, so each one says why. That claim is verified in the tree.
   const dirtyPanels: Record<Panel, boolean> = {
     general: generalDirty,
     // Its drafts live in `ServiceModal`, inside a `ModalShell`, whose scrim
-    // covers the rail and whose `trapTab` keeps Tab inside, so the switch cannot be reached while
-    // one is open. A draft added to the panel BEHIND the modal would need to report.
+    // covers the rail and whose `trapTab` keeps Tab inside, so the switch cannot be reached
+    // while one is open. A draft added to the panel behind the modal would need to report.
     services: false,
     plex: plexDirty,
     // Same shape as services: a list's drafts live in `ListModal`, inside a `ModalShell`, so
-    // the rail cannot be reached while one is open. This said the panel was read-only and
-    // "a list is still configured where it always was" -- both untrue as of the Lists screen,
-    // which is now the one place a list IS defined, and the next author to add an inline edit
-    // here would have read that and left this entry alone (rule 146).
+    // the rail cannot be reached while one is open. If this panel ever gains an inline edit
+    // of its own, this entry needs to start reporting dirty state.
     lists: false,
     // Same shape as services: the job editor (`ScheduleModal`) is a `ModalShell` too.
     jobs: false,
@@ -149,9 +141,9 @@ export function Settings({
   // the policy editor's Movies/TV switch. This file supplies only what is local: which panel is
   // open, whether it holds anything, and what a yes does.
   //
-  // A yes commits through `onPanelChange`, which is where the open panel lives now. EVERY switch
-  // goes through this hook: the rail, the narrow-screen picker, the Jobs panel's link to Plex,
-  // and the jump below, which is the one that used to go around it (#794).
+  // A yes commits through `onPanelChange`, which is where the open panel lives now. Every
+  // switch goes through this hook: the rail, the narrow-screen picker, the Jobs panel's link
+  // to Plex, and the jump below.
   const confirmSwitch = useSwitchConfirm(panel, leavingDirty, onPanelChange);
 
   // A jump asks for its panel exactly once. `request` reads `dirty` and either moves or raises
@@ -166,7 +158,7 @@ export function Settings({
   }, [jump, confirmSwitch]);
   const sections = panels();
   const pendingLabel = sections.find((p) => p.id === confirmSwitch.pending)?.label ?? "";
-  // The section being LEFT, so one string serves every panel that raises the shared sentence.
+  // The section being left, so one string serves every panel that raises the shared sentence.
   const leavingLabel = sections.find((p) => p.id === panel)?.label ?? "";
   // Ten labels stop fitting one line well above this, but the app already has exactly one
   // definition of a narrow screen and a second would be worse than swapping a little early:
@@ -207,15 +199,15 @@ export function Settings({
           ))}
         </nav>
       )}
-      {/* Directly under the rail that was clicked, so the rail does not move: the same slot and
-          the same two buttons the policy editor's own switch confirm uses (rule 18).
-          On General the save bar below names WHICH fields are unsaved, so this does not repeat
-          them. The other four have no bar and this line is all they get: an inline Save button is
-          the only other cue, and on Notifications and Security the box is a password field showing
-          dots. Naming the field here is what those actually want.
-          Backup gets its own sentence because the shared one would be false there: what is waiting
-          is an uploaded file, not a setting, and switching does not merely forget it -- the card
-          cancels the staged upload on its way out. */}
+      {/* Directly under the rail that was clicked, so the rail does not move: the same slot
+          and the same two buttons the policy editor's own switch confirm uses.
+          On General the save bar below names which fields are unsaved, so this does not
+          repeat them. The other four have no bar and this line is all they get: an inline
+          Save button is the only other cue, and on Notifications and Security the box is a
+          password field showing dots. Naming the field here is what those actually want.
+          Backup gets its own sentence because the shared one would be false there: what is
+          waiting is an uploaded file, not a setting, and switching does not merely forget
+          it. The card cancels the staged upload on its way out. */}
       {confirmSwitch.pending !== null && (
         <SwitchConfirm
           nonce={confirmSwitch.nonce}

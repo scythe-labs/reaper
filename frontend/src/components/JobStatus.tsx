@@ -8,9 +8,9 @@ import { date, since, time } from "../format";
 import i18next from "../i18n";
 import { composeIn } from "../why";
 
-/** A background job's outcome, composed under `jobs.result.*` -- the server states the
- *  fact (a typed reason), the browser says the words. `null` in, `null` out: a job that has
- *  never run, or a shelf row's `last`/`last_skip` before either exists, carries no reason to
+/** A background job's outcome, composed under `jobs.result.*`. The server states the fact (a
+ *  typed reason), and the browser says the words. `null` in, `null` out: a job that has never
+ *  run, or a shelf row's `last`/`last_skip` before either exists, carries no reason to
  *  compose. */
 export function jobResultText(key: ReasonKey | null): string | null {
   return key ? composeIn("jobs.result", key) : null;
@@ -22,11 +22,11 @@ export interface JobFlash {
   text: string;
 }
 
-/** What a finished job's flash SAYS, written once because two surfaces state it: the chip
- *  renders it, and `useJobFlash` announces it at the transition (#192, rule 144). The chip
- *  otherwise reached only an operator who happened to navigate onto it inside its 4.2-second
- *  window, which for a job they pressed Run now on is nobody. Plain function, not a component:
- *  reads the catalog through the shared `i18next` instance rather than a hook (docs/history/I18N_PLAN.md §3). */
+/** What a finished job's flash says, written once because two surfaces state it: the chip
+ *  renders it, and `useJobFlash` announces it at the transition. The chip otherwise reaches
+ *  only an operator who happens to navigate onto it inside its 4.2-second window, which for a
+ *  job they pressed Run now on is nobody. This is a plain function, not a component: it reads
+ *  the catalog through the shared `i18next` instance rather than a hook (docs/history/I18N_PLAN.md §3). */
 export function flashSentence(flash: JobFlash): string {
   return i18next.t("jobs.status.flashSentence", { lead: flashLead(flash.ok), text: flash.text });
 }
@@ -40,20 +40,20 @@ function flashLead(ok: boolean): string {
 const FLASH_MS = 4200;
 
 /**
- * Turn a job's running -> finished transition into a brief flash.
+ * Turn a job's running-to-finished transition into a brief flash.
  *
  * `running` is the authoritative "executing now" signal (an upkeep job's server flag, the
- * scan-status flag, a sync mutation's pending flag). When it falls from true to false we
- * read the freshly-settled `result` and show it for a few seconds, then clear -- so the one
+ * scan-status flag, a sync mutation's pending flag). When it falls from true to false, this
+ * reads the freshly-settled `result` and shows it for a few seconds, then clears, so the one
  * status line settles back to its resting "Last run ..." state. It only fires for a
- * transition we actually watched, so a page loaded on a just-finished job never flashes.
+ * transition it actually watched, so a page loaded on a just-finished job never flashes.
  *
  * `result` is read only at the moment of the transition (through a ref, so a later change to
  * it never re-arms the timer), which is why the effect depends on `running` alone.
  *
  * A restart while the flash is still showing (a quick re-click right after a run finishes)
- * clears it immediately on the not-running -> running edge, so the spinner is never hidden
- * behind the PREVIOUS run's stale confirmation for the rest of its window.
+ * clears it immediately on the not-running-to-running edge, so the spinner is never hidden
+ * behind the previous run's stale confirmation for the rest of its window.
  */
 export function useJobFlash(running: boolean, result: JobFlash | null): JobFlash | null {
   const [flash, setFlash] = useState<JobFlash | null>(null);
@@ -65,8 +65,8 @@ export function useJobFlash(running: boolean, result: JobFlash | null): JobFlash
   useEffect(() => {
     if (wasRunning.current && !running && latest.current) {
       setFlash(latest.current);
-      // Said at the same moment it is shown, and only on a transition this mount watched --
-      // so a page loaded onto a just-finished job announces nothing, exactly as it flashes
+      // Said at the same moment it is shown, and only on a transition this mount watched, so
+      // a page loaded onto a just-finished job announces nothing, exactly as it flashes
       // nothing. All three job rows and the scan bar reach this one line.
       announce(flashSentence(latest.current));
       if (timer.current !== null) window.clearTimeout(timer.current);
@@ -108,7 +108,7 @@ export function JobStatus({
   lastRunAt: string | null;
   lastOk: boolean | null;
   /** A short plain-language reason for a failed run, shown beside the exact time once the
-   *  flash clears -- otherwise that reason is only ever visible for the few seconds of the
+   *  flash clears. Otherwise that reason is only ever visible for the few seconds of the
    *  flash and is unrecoverable after a reload. Ignored for a run that did not fail. */
   lastResult?: string | null;
   flash: JobFlash | null;
@@ -124,10 +124,10 @@ export function JobStatus({
         <span className="flash-chip">
           {/* The glyph is hidden and the class is a color, so whether the job worked was
               carried by nothing a reader can voice. `flashSentence` is both halves of the
-              answer -- this renders it, and `useJobFlash` announces the same string at the
-              transition, so what is read and what is spoken cannot drift (#192, rule 144).
-              What survives the 4.2-second window either way is the resting line below, which
-              spells a failure out in words and is where the result is recovered from. */}
+              answer: this renders it, and `useJobFlash` announces the same string at the
+              transition, so what is read and what is spoken cannot drift. What survives the
+              4.2-second window either way is the resting line below, which spells a failure
+              out in words and is where the result is recovered from. */}
           <span className="sr-only">{flashLead(flash.ok)}: </span>
           <span className="check" aria-hidden="true">
             {flash.ok ? "✓" : "✕"}

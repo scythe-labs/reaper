@@ -2,11 +2,11 @@
 //
 // The show's own information panel: what opens when you click a show card.
 //
-// A season's why-panel answers "why this season?"; this answers the question above it,
-// "where does the whole show stand?" -- every season across every lane, side by side,
-// plus the one sentence that put the show in front of you (a keep-rule conflict's full
-// wording lives here, under the show it belongs to, not on the card). Clicking a season
-// hands off to that season's complete reasoning.
+// A season's why-panel answers "why this season?". This panel answers the question above
+// it, "where does the whole show stand?" It covers every season across every lane, side by
+// side, plus the one sentence that put the show in front of you (a keep-rule conflict's
+// full wording lives here, under the show it belongs to, not on the card). Clicking a
+// season hands off to that season's complete reasoning.
 
 import { useId } from "react";
 import { useTranslation } from "react-i18next";
@@ -21,7 +21,7 @@ import { MatchCandidates, PanelHead, Synopsis, WhyHero } from "./WhyPanel";
 import { WhyShell } from "./WhyShell";
 
 /** The one pill a season row wears. The owner's hand decision replaces the scan chip
- *  (solid means "you chose this"); a reap the engine can't honor yet reads dashed red and
+ *  (solid means "you chose this"). A reap the engine can't honor yet reads dashed red and
  *  says why, because "you asked" and "it is gone" are different facts. The wording is the
  *  shared chip's, in this list's own class family. */
 function SeasonPill({ season }: { season: Candidate }) {
@@ -52,12 +52,13 @@ export function ShowPanel({
   onOpenSeason: (id: number, lane: Verdict) => void;
   onClose: () => void;
 }) {
-  // The show panel is where a whole-show call gets made, so Spare and Reap live at its bottom
-  // edge too, through the same shared hook the cards and the why-panel use so every view
-  // refreshes together. The decision covers every season; the control toggles the show's OWN
-  // key, so it reads the show's own decision (show_override), never an aggregate of the
-  // seasons' own marks -- clearing this key cannot clear those, so lighting it from them was a
-  // dead toggle. A season overridden on its own keeps its mark in the strip and its row.
+  // The show panel is where a whole-show call gets made, so Spare and Reap live at its
+  // bottom edge too, through the same shared hook the cards and the why-panel use so every
+  // view refreshes together. The decision covers every season. The control toggles the
+  // show's own key, so it reads the show's own decision (show_override), never an
+  // aggregate of the seasons' own marks. Clearing this key cannot clear those, so lighting
+  // it from them would be a dead toggle. A season overridden on its own keeps its mark in
+  // the strip and its row.
   const { t } = useTranslation();
   const { setOverride, clearOverride } = useOverrideMutations();
   const showOverride = group.show_override;
@@ -79,7 +80,7 @@ export function ShowPanel({
               n: group.seasons.length,
               size: totalBytes(group.size_bytes, group.unknown_size_seasons),
             })}
-            {/* The Plex library the show lives in -- the same quiet chip the card carries. */}
+            {/* The Plex library the show lives in, the same quiet chip the card carries. */}
             <LibraryChip library={group.library} />
             {/* Named here as well as on the card: the card is where you notice a show has
                 ended, this is where you came to find out. A panel that dropped the status
@@ -92,14 +93,14 @@ export function ShowPanel({
       {group.summary && <Synopsis text={group.summary} />}
 
       <StatusChip chip={group.chip} />
-      {/* The full sentence behind the chip -- a keep-rule conflict's complete wording,
-          or whatever line put this show in front of you. */}
+      {/* The full sentence behind the chip: a keep-rule conflict's complete wording, or
+          whatever line put this show in front of you. */}
       {reason && <p className="show-reason">{reason}</p>}
       {/* The Plex rows an abstain could not choose between, directly under the sentence
-          naming the problem -- the same pairing the season why-panel uses (rule 72). The
-          header's own Plex link above is built from the show's rating key, which is null on
-          exactly these rows, so without this the panel says Plex and Sonarr disagree and
-          offers nothing to open. Renders nothing on every other show. */}
+          naming the problem, the same pairing the season why-panel uses. The header's own
+          Plex link above is built from the show's rating key, which is null on exactly
+          these rows, so without this the panel says Plex and Sonarr disagree and offers
+          nothing to open. Renders nothing on every other show. */}
       <MatchCandidates links={group.links} />
 
       <section className="block">
@@ -114,10 +115,11 @@ export function ShowPanel({
                 onClick={() => onOpenSeason(season.id, laneOf(season))}
               >
                 <span className={`score score-${handFate(season)}`}>{season.score}</span>
-                {/* Two of these three branches are labels the panel composes, short enough that
-                    the row's nowrap costs them nothing. The third is the server's own title, and
-                    it is the only one that needs rule 139's break opportunity -- so it says so,
-                    rather than the row giving up its steady height for all three. */}
+                {/* Two of these three branches are labels the panel composes, short enough
+                    that the row's nowrap costs them nothing. The third is the server's own
+                    title, and it is the only one that needs a break opportunity, so it
+                    carries one, rather than the row giving up its steady height for all
+                    three. */}
                 <span
                   className={`panel-season-name${
                     season.season_number == null ? " is-server-title" : ""
@@ -138,9 +140,10 @@ export function ShowPanel({
       </section>
 
       {/* Decide the whole show without leaving its reasoning, pinned to the panel's bottom
-          edge like the movie and single-season panels. Both buttons, because a whole-show
-          Reap still takes the seasons the scan kept; it drops only once the whole show is
-          condemned (showReapIsNoop), where it would be the no-op a condemned movie's is. */}
+          edge like the movie and single-season panels. Both buttons stay, because a
+          whole-show Reap still takes the seasons the scan kept. It drops only once the
+          whole show is condemned (showReapIsNoop), the same no-op a condemned movie's Reap
+          already is. */}
       <div className="why-actions">
         <div className="why-actions-row">
           <OverrideControls
