@@ -8,6 +8,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# A node older than the .nvmrc pin installs cleanly and then fails silently later: an
+# outdated jsdom/undici combo throws inside vitest's worker startup, vitest counts that as an
+# "error" rather than a failed file, and the run reports a short file count with no file ever
+# named as skipped. Catch the mismatch here instead, while it is still one line to explain.
+pinned_node="$(cat .nvmrc)"
+node_major="$(node --version | sed -E 's/^v([0-9]+).*/\1/')"
+if [[ "$node_major" != "$pinned_node" ]]; then
+    echo "error: node $(node --version) does not match the version pinned in .nvmrc (${pinned_node}.x.x)." >&2
+    echo "Install the pinned major version (nvm: 'nvm install', from .nvmrc) and re-run." >&2
+    exit 1
+fi
+
 # Plain `uv sync` skips pytest, ruff and mypy: `dev` is an extra, not a dependency group.
 # `--frozen` installs what uv.lock pins. Without it, uv once resolved a newer ruff than CI runs.
 uv sync --frozen --extra dev
