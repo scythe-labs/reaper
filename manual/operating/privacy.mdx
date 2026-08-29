@@ -1,0 +1,50 @@
+---
+id: privacy
+title: Privacy
+description: What Reaper stores about the people who use your library, what leaves your server, and what this site sees.
+sidebar_position: 4
+---
+
+# Privacy
+
+Reaper runs on your hardware. There is no Reaper account, no service behind the app, and nothing reports back to us. Nobody but you can read what your install holds.
+
+## What Reaper knows about people
+
+Reaper decides what nobody watches, so it learns a little about the people who watch. All of it stays in `reaper.db` and `cache.db` in your data directory.
+
+| What | Where it comes from | How it is kept |
+| --- | --- | --- |
+| Your admin name, and your email if Plex gives one | Plex sign-in | Plain text, so the app can show who is signed in. |
+| Who asked for a title | Seerr | The requester's name, as text. Shown to you, never used to decide anything. |
+| Who watched what, and when | Tautulli | Tautulli's own numeric user id. No names. |
+| Your service keys and Plex token | You, in Settings | Encrypted. See [Security](/operating/security). |
+
+A [backup](/operating/backups) carries all of it. Keep a backup file as carefully as you keep the database.
+
+## What leaves your server
+
+Reaper talks to the addresses you enter, plus four fixed ones:
+
+- **plex.tv**, when you sign in with Plex or pick your server. Plex sees that sign-in the same way it sees any Plex app.
+- **GitHub**, once a night, to ask whether a newer Reaper exists. Nothing about your library or your settings goes with the question. Set `REAPER_UPDATE_CHECK=false` to stop it, and no request leaves the box.
+- **IMDb**, for the public ratings file that the rating protection reads. It is the same anonymous download everyone gets, and it names nothing.
+- **Discord**, only if you add a webhook. Those messages carry titles from your library into that channel, so pick a channel you are happy for those titles to sit in.
+
+<Callout tone="caution">
+  **Reaper has no telemetry and no analytics.** There is no crash reporter, no
+  usage counter, and no opt-out to find, because there is nothing to opt out of.
+  The update check above is the only call that is not to a service you chose.
+</Callout>
+
+## Cookies
+
+One cookie, set by your own install, holding your sign-in session. A page script cannot read it. Signing out deletes it. Reaper sets no other cookie and loads nothing from a third party into the page.
+
+## Removing your data
+
+Stop Reaper and delete the data directory. That is all of it. Nothing is held anywhere else, so there is nobody to write to and nothing to request.
+
+## This site
+
+`docs.scythelabs.dev` is a set of static files on Cloudflare Pages. It runs no analytics and sets no cookies. Serving a page means Cloudflare handles the request, and their [privacy policy](https://www.cloudflare.com/privacypolicy/) covers what that involves. Issues and discussions live on GitHub under [their policy](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement).
