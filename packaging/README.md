@@ -162,15 +162,37 @@ and the `:dev` image unattested. Add it there the same way if a dev-channel oper
 Unsigned Windows installers start with zero reputation, so some scanners flag them.
 Four remedies, in order of effect:
 
-1. **Code signing — not wired yet.** It needs a paid identity before any workflow can
-   use it: for Windows an Azure Trusted Signing account (or an EV certificate) and a
-   `signtool` step after the Inno build; for macOS a Developer ID certificate plus a
-   `codesign`/`notarytool` step after PyInstaller (today the binary carries the
-   ad-hoc signature arm64 requires, so macOS warns on first launch instead of
-   refusing). When the accounts exist, both land in `binaries.yml` behind
-   secrets-present guards. Sigstore does not substitute for either identity. Its
-   certificates are not in Microsoft's or Apple's trust programs, so the previous
-   section's attestations sit alongside this remedy rather than in place of it.
+1. **Code signing — not wired yet.** It needs an identity Microsoft or Apple trusts
+   before any workflow can use it: for Windows a `signtool` step after the Inno
+   build; for macOS a Developer ID certificate plus a `codesign`/`notarytool` step
+   after PyInstaller (today the binary carries the ad-hoc signature arm64 requires,
+   so macOS warns on first launch instead of refusing). When the identities exist,
+   both land in `binaries.yml` behind secrets-present guards. Sigstore does not
+   substitute for either. Its certificates are in neither trust program, so the
+   previous section's attestations sit alongside this remedy rather than in place of
+   it.
+
+   The Windows identity has a free route, the macOS one does not. What the options
+   cost, and whether a workflow can drive them unattended:
+
+   | Identity | Cost | Signs unattended |
+   | --- | --- | --- |
+   | [SignPath Foundation](https://signpath.org/) (Windows, open source only) | free | yes, after a human approves each release |
+   | Certum Open Source, cloud (Windows) | about €49/year | yes |
+   | Certum Open Source, smart card (Windows) | about €85 once, then about €25 to €30/year | no, the card is physical |
+   | [Azure Artifact Signing](https://azure.microsoft.com/en-us/products/artifact-signing) Basic (Windows) | $9.99/month | yes |
+   | Apple Developer Program (macOS) | $99/year | yes |
+
+   Reaper meets SignPath Foundation's conditions on their face: an OSI-approved
+   license with no proprietary parts, a public repository, actively maintained, and
+   already released. Two of their terms are decisions rather than paperwork. The
+   project has to publish a code signing policy naming the people who may approve a
+   signature, and every signed release carries the attribution string they specify.
+   The first one puts a name on a page, which is the one place the
+   no-identifying-information rule bends by design rather than by accident.
+
+   Certum's certificate issues to a person, never to an organization, and it wants a
+   link proving they work on the project.
 2. **WinGet presence — wired.** Each release passes Microsoft's validation and
    scanning pipeline on its way into winget-pkgs.
 3. **Per-release submission — manual.** When Defender specifically flags a release,
