@@ -282,14 +282,15 @@
 }
 /* The inline progress track: it grows to fill the space between the count and the actions on
    desktop, and drops to its own full-width line on a phone (below). Decorative; the progressbar
-   role and its aria live on the text, so this replaces the old 3px bottom sliver that read as a
-   hairline rather than progress. */
+   role and its aria live on the text. The trough is the neutral --surface-2 that the Reap tab's
+   own reaping card uses (.prog-track): a red fill on a red trough on this red-tinted card did
+   not read as progress. */
 .reap-bar-track {
   flex: 1;
   min-width: 3rem;
-  height: 6px;
+  height: 8px;
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--condemn) 16%, transparent);
+  background: var(--surface-2);
   overflow: hidden;
 }
 .reap-bar-track-fill {
@@ -356,6 +357,13 @@
   .reap-bar.done .reap-bar-actions,
   .reap-bar.errored .reap-bar-actions {
     justify-content: flex-end;
+  }
+  /* The done and errored bars read as one left-aligned phrase, the outcome then the figures on
+     the next line, rather than the running bar's count-left percent-right split. */
+  .reap-bar.done .reap-bar-text,
+  .reap-bar.errored .reap-bar-text {
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 }
 /* Only what this file declares. `.spinner` and `.why-loading` each stop beside their own

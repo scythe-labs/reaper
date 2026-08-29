@@ -131,9 +131,11 @@ export function ReapBar({
     const errored = status.phase === "error";
     return (
       <div className={errored ? "reap-bar errored" : "reap-bar done"}>
-        <span className="banner-dot" aria-hidden="true" />
         <span className="reap-bar-text">
-          <b>{t("reapConfirm.bar.endedLabel", { phase: status.phase })}</b>{" "}
+          <span className="reap-bar-lead">
+            <span className="banner-dot" aria-hidden="true" />
+            <b>{t("reapConfirm.bar.endedLabel", { phase: status.phase })}</b>
+          </span>
           <span className="reap-bar-sub">
             {t("reapConfirm.bar.removedFreed", {
               souls: souls(status.deleted_items),
