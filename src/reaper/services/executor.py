@@ -1875,6 +1875,24 @@ class Executor:
                 )
 
         if self._dry_run:
+            # The same frozen-size gate the real send runs first (``_send_movie`` and
+            # ``_send_season``): a size from a source the live re-read cannot be compared
+            # against, or no size with the allowance shut, keeps the item there, so it
+            # must not be counted as proven here either. Everything this gate reads is
+            # frozen-side and settings-side, fully available to a dry run, and without it
+            # the practice run's would-delete counts vouch for items the real run refuses.
+            comparable = (
+                _SEASON_COMPARABLE
+                if delete.terminal.kind == "sonarr_delete_files"
+                else _MOVIE_COMPARABLE
+            )
+            if not self._may_send_unmeasured(candidate, comparable):
+                return self._mark_skipped(
+                    delete,
+                    _NO_APPROVED_SIZE_REASON,
+                    check=_NO_APPROVED_SIZE_CHECK,
+                    is_canary=is_canary,
+                )
             # The heart of the dry run: prove everything, send nothing, mutate nothing.
             # The full sequence is shown in the detail, but the step rows are left
             # PENDING so the plan is still runnable for real afterward. The plan text is

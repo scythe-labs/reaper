@@ -143,9 +143,12 @@ async def _seed_instances(session: AsyncSession, media_keys: Iterable[str]) -> N
 
 
 async def _snapshot_with(session: AsyncSession, condemned: Sequence[tuple[str, int | None]]) -> int:
-    """A snapshot plus a set of condemned movie candidates: (media_key, size_bytes).
+    """A snapshot plus a set of condemned candidates: (media_key, size_bytes).
 
-    A ``None`` size is an item nothing would measure, which is not the same as a zero."""
+    A ``None`` size is an item nothing would measure, which is not the same as a zero.
+    Media type and size source come from the key's shape, the way a real scan stamps
+    them: a fixture that stamped a season's size as Radarr's would be refused by the
+    frozen-size gate on a path a real scan's data sails through."""
     now = utcnow()
     await _seed_instances(session, [media_key for media_key, _ in condemned])
     snapshot = Snapshot(
@@ -162,14 +165,15 @@ async def _snapshot_with(session: AsyncSession, condemned: Sequence[tuple[str, i
     await session.flush()
 
     for i, (media_key, size) in enumerate(condemned):
+        media_type = "season" if media_key.startswith("sonarr:") else "movie"
         session.add(
             Candidate(
                 snapshot_id=snapshot.id,
                 media_key=media_key,
                 title=f"Movie {i}",
-                media_type="movie",
+                media_type=media_type,
                 size_bytes=size,
-                size_source=SizeSource.RADARR if size is not None else None,
+                size_source=_source_for(media_type) if size is not None else None,
                 verdict="condemn",
                 score=90,
                 coverage_bp=10_000,
@@ -1071,6 +1075,55 @@ class TestAnApprovedSizeThatWasNeverConfirmed:
         report = await _real(session, run, _gateway(radarr={1: (radarr := FakeRadarr())}))
 
         assert radarr.delete_calls == []
+        assert report.skipped == 1
+
+    async def test_a_dry_run_does_not_prove_a_size_the_real_send_refuses(
+        self, session: AsyncSession
+    ) -> None:
+        """The practice run's counts are what the confirm sheet vouches with, so they
+        must not include an item the real run's own frozen-size gate keeps. Same setup
+        as the real-run test above, walked dry."""
+        snapshot_id = await _snapshot_one(
+            session, media_key="radarr:1:1", rating_key=700, size=1 * GB
+        )
+        run = await _plan(session, snapshot_id)
+        candidate = (
+            await session.execute(select(Candidate).where(Candidate.media_key == "radarr:1:1"))
+        ).scalar_one()
+        candidate.size_source = SizeSource.RADARR_FILE
+        await session.flush()
+
+        report = await Executor(
+            session, safety=_read_only(), settings=ProfileSettings(), dry_run=True
+        ).execute(run.id)
+
+        assert report.would_delete_items == 0
+        assert report.would_delete_bytes == 0
+        assert report.skipped == 1
+        assert report.outcomes[0].detail.id == "error.reap.step.no_approved_size"
+
+    async def test_a_dry_run_honors_an_allowance_lowered_after_planning(
+        self, session: AsyncSession
+    ) -> None:
+        """An unmeasured item planned under the allowance is refused at send once the
+        operator lowers it to zero, so the practice run must not count it as proven
+        either: it reads the same settings the send does."""
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", None, 701), ("radarr:1:2", 1 * GB, 702)]
+        )
+        run = await build_plan(
+            session, snapshot_id=snapshot_id, approved_by="admin", max_unmeasured=1
+        )
+
+        report = await Executor(
+            session,
+            safety=_read_only(),
+            settings=ProfileSettings(max_unmeasured_per_run=0),
+            dry_run=True,
+        ).execute(run.id)
+
+        assert report.would_delete_items == 1  # the measured one alone
+        assert report.would_delete_unmeasured == 0
         assert report.skipped == 1
 
     async def test_the_item_cap_counts_only_items_with_a_confirmed_size(

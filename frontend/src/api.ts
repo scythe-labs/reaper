@@ -1016,7 +1016,7 @@ export interface RunReport {
   /** How many deleted items had no size, so are absent from `deleted_bytes`. Above zero
    *  only when the operator allowed unmeasured items. Hidden at zero. */
   deleted_unmeasured: number;
-  /** Items a live check kept, in a real run and a dry run alike. */
+  /** Items a check kept, in a real run and a dry run alike. */
   skipped: number;
   outcomes: RunOutcome[];
 }

@@ -685,7 +685,7 @@ class RunReportOut(BaseModel):
     would_delete_items: int
     """In a real run, the count of items actually deleted. In a dry run, the count the
     run proved it would delete: every item it walked to the send and stopped, minus the
-    ones a live check kept (those are ``skipped``)."""
+    ones a check kept (those are ``skipped``), the frozen-size gate included."""
 
     deleted_bytes: int = 0
     """Bytes reclaimed by a real run, or, in a dry run, the bytes behind
@@ -700,7 +700,7 @@ class RunReportOut(BaseModel):
     Above zero only when the operator allowed unmeasured items. Hidden at zero."""
 
     skipped: int
-    """Items a live check kept, in a real run and a dry run alike. A dry run's own
+    """Items a check kept, in a real run and a dry run alike. A dry run's own
     prove-don't-send outcomes count into ``would_delete_items``, never here."""
 
     outcomes: list[RunOutcomeOut]
