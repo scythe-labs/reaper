@@ -294,6 +294,10 @@
   overflow: hidden;
 }
 .reap-bar-track-fill {
+  /* block, not the span's default inline: width and height are ignored on an inline box, which
+     is what left this fill invisible while the neutral track showed. `.prog-fill` is a div and
+     never hit this. */
+  display: block;
   height: 100%;
   background: var(--condemn);
   border-radius: var(--radius-pill);
