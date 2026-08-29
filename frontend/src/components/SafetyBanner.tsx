@@ -6,12 +6,66 @@
 // declaration, the way `ScanLine` does for scan progress. Keeping it in one place stops the
 // two surfaces from ever disagreeing about whether deletion is armed.
 
-import { Trans } from "react-i18next";
+import { useState, type MouseEvent, type ReactNode } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { useSafety } from "../useSafety";
+import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
 
 // The copy lives in `locales/en/ui.json` under `safetyBanner.*`, one message per rendered
 // sentence. The linked and link-less variants are separate whole messages, not a shared stem
 // with a bolted-on tail, because word order is the translator's to choose.
+
+/** The banner shell every state renders through, so the tone class and the mobile behavior are
+ *  written once. On a phone the notice collapses to one line and expands on tap, so the safety
+ *  state stops eating three lines at the top of every screen. The state lead comes first in
+ *  every message, so the regime still reads while collapsed. The whole line is a convenience tap
+ *  target, and the chevron is the real, keyboard-reachable toggle, so a link inside the sentence
+ *  (Policy → Deletion) stays reachable rather than pruned as a button's presentational child.
+ *  Desktop renders the notice in full, as it always did. */
+function Banner({ tone, children }: { tone: string; children: ReactNode }) {
+  const { t } = useTranslation();
+  const narrow = useMediaQuery(NARROW_SCREEN_QUERY);
+  const [open, setOpen] = useState(false);
+
+  if (!narrow) {
+    return (
+      <div className={`banner ${tone}`}>
+        <span className="banner-dot" aria-hidden="true" />
+        <span>{children}</span>
+      </div>
+    );
+  }
+
+  const toggle = () => setOpen((o) => !o);
+  return (
+    <div className={`banner ${tone} collapsible${open ? " open" : ""}`}>
+      <span className="banner-dot" aria-hidden="true" />
+      {/* The chevron below is the real toggle; this makes the whole line a tap target too. A
+          link inside the sentence stops its own click here, so tapping it navigates rather than
+          toggling. */}
+      <span className="banner-body" onClick={toggle}>
+        <span className="banner-text">{children}</span>
+      </span>
+      <button
+        type="button"
+        className="banner-chev"
+        aria-expanded={open}
+        aria-label={open ? t("safetyBanner.collapse") : t("safetyBanner.expand")}
+        onClick={toggle}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path
+            d="M6 4l4 4-4 4"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
+    </div>
+  );
+}
 
 /** The safety state, stated permanently and without euphemism.
  *
@@ -41,19 +95,16 @@ export function SafetyBanner({ onGoToDeletion }: { onGoToDeletion?: () => void }
   // amber "could not check" tone so it never reads as safe.
   if (isError || !data) {
     return (
-      <div className="banner banner-unknown">
-        <span className="banner-dot" aria-hidden="true" />
-        <span>
-          {onGoToDeletion ? (
-            <Trans
-              i18nKey="safetyBanner.unknown"
-              components={{ btn: <button className="link" onClick={onGoToDeletion} /> }}
-            />
-          ) : (
-            <Trans i18nKey="safetyBanner.unknownNoLink" />
-          )}
-        </span>
-      </div>
+      <Banner tone="banner-unknown">
+        {onGoToDeletion ? (
+          <Trans
+            i18nKey="safetyBanner.unknown"
+            components={{ btn: <button className="link" onClick={linkClick(onGoToDeletion)} /> }}
+          />
+        ) : (
+          <Trans i18nKey="safetyBanner.unknownNoLink" />
+        )}
+      </Banner>
     );
   }
 
@@ -68,39 +119,39 @@ export function SafetyBanner({ onGoToDeletion }: { onGoToDeletion?: () => void }
   // recovery mode is a file on the host and a restart, which no button here can reach.
   if (data.recovery_mode) {
     return (
-      <div className="banner banner-recovery">
-        <span className="banner-dot" aria-hidden="true" />
-        <span>
-          <Trans i18nKey="safetyBanner.recovery" />
-        </span>
-      </div>
+      <Banner tone="banner-recovery">
+        <Trans i18nKey="safetyBanner.recovery" />
+      </Banner>
     );
   }
 
   if (!data.destructive_enabled) {
     return (
-      <div className="banner banner-safe">
-        <span className="banner-dot" aria-hidden="true" />
-        <span>
-          {onGoToDeletion ? (
-            <Trans
-              i18nKey="safetyBanner.readOnly"
-              components={{ btn: <button className="link" onClick={onGoToDeletion} /> }}
-            />
-          ) : (
-            <Trans i18nKey="safetyBanner.readOnlyNoLink" />
-          )}
-        </span>
-      </div>
+      <Banner tone="banner-safe">
+        {onGoToDeletion ? (
+          <Trans
+            i18nKey="safetyBanner.readOnly"
+            components={{ btn: <button className="link" onClick={linkClick(onGoToDeletion)} /> }}
+          />
+        ) : (
+          <Trans i18nKey="safetyBanner.readOnlyNoLink" />
+        )}
+      </Banner>
     );
   }
 
   return (
-    <div className="banner banner-armed">
-      <span className="banner-dot" aria-hidden="true" />
-      <span>
-        <Trans i18nKey="safetyBanner.armed" />
-      </span>
-    </div>
+    <Banner tone="banner-armed">
+      <Trans i18nKey="safetyBanner.armed" />
+    </Banner>
   );
+}
+
+/** A banner link's click, which must not also toggle the collapsed banner on a phone: it stops
+ *  the click from reaching the line's tap handler, then navigates. */
+function linkClick(go: () => void) {
+  return (e: MouseEvent) => {
+    e.stopPropagation();
+    go();
+  };
 }

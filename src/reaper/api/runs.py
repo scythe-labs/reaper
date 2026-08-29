@@ -26,7 +26,7 @@ from contextlib import AsyncExitStack
 import structlog
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.aio import report_background_failure
@@ -40,20 +40,23 @@ from reaper.api.schemas import (
     ExecuteRunIn,
     ProfileSettingsIO,
     RunCheckOut,
+    RunListOut,
     RunOut,
     RunOutcomeOut,
+    RunOutcomeReadOut,
+    RunOutcomesOut,
     RunReportOut,
     RunStepsOut,
     RunSummaryOut,
 )
 from reaper.config import Settings
 from reaper.crypto import SecretBox
-from reaper.db.models import ActionStep, Candidate, ReapRun, RunState
+from reaper.db.models import ActionStep, Candidate, ReapRun, RunState, StepState
 from reaper.engine.explanation import ReasonKey
 from reaper.engine.policy import ProfileSettings
 from reaper.engine.reason import Reason, from_stored, to_wire
 from reaper.refusal import english
-from reaper.services import app_settings, whitelist
+from reaper.services import app_settings, run_totals, whitelist
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import (
     ExecutionError,
@@ -88,7 +91,18 @@ profile_router = APIRouter(prefix="/api", tags=[api_tags.POLICY])
 #: How many journal rows a run's detail response carries, and the default page of the steps
 #: route. A plan of 500 seasons is 1,500 rows, each with a path and a stringified request body,
 #: and the table draws 50 of them. The rest are a route away rather than in every response.
+#: The outcomes route (GET /runs/{id}/outcomes) reuses this same constant: it pages the
+#: same journal at item granularity instead of step granularity, so producer and consumer
+#: agree on one page size rather than each guessing (rule 131).
 STEP_PAGE = 50
+
+#: The default and max page of GET /runs, named so a page size an operator's history view
+#: reads is a declaration rather than a bare literal repeated at the call site.
+RUN_LIST_PAGE = 50
+
+#: A step this run has decided, one way or another. Filters GET /runs/{id}/outcomes to
+#: items with something to report; a step still PENDING or SENT has not been reached yet.
+_DECIDED_STATES = (StepState.VERIFIED, StepState.FAILED, StepState.SKIPPED)
 
 
 def _reason_key(reason: Reason | None) -> ReasonKey | None:
@@ -364,10 +378,12 @@ async def list_runs(
     # as no limit, returning every run ever made. Cheap rows make that less
     # costly than it would otherwise be, but not bounded, so the bound
     # stays here, where a bad value is refused instead of clamped silently.
-    limit: int = Query(50, ge=1, le=200),
-) -> list[RunSummaryOut]:
+    limit: int = Query(RUN_LIST_PAGE, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    executed_only: bool = Query(False),
+) -> RunListOut:
     """Return the recent plans, as stored rows and nothing more (see
-    ``RunSummaryOut``).
+    ``RunSummaryOut``), plus how many rows match in total.
 
     This deliberately is not ``RunOut``. That shape's counts, totals, and
     phrase are each derived from the effective condemned set of the run's
@@ -375,23 +391,44 @@ async def list_runs(
     profile, and the whole candidate table once per row, fifty times on
     every visit to the Reap page. Opening a run goes to
     ``GET /runs/{id}``, which derives them for the one run being looked at.
+
+    ``offset`` pages the whole history: nothing bounds how many runs a
+    long-lived install has executed, unlike a scan's 30-snapshot retention.
+
+    ``executed_only`` drops every row still PLANNED, a plan that was built
+    (the head Reap button, a standalone practice run) and never executed,
+    from both the page and ``total``: filtering a page after it is fetched
+    would leave the two disagreeing with each other and with the true
+    count. The SPA's one caller, the Reap page's history, passes it true;
+    the default stays permissive for raw API readers, for whom a planned
+    row is data, not noise.
     """
     async with session_factory(request)() as session:
-        runs = list(
-            (await session.execute(select(ReapRun).order_by(ReapRun.id.desc()).limit(limit)))
-            .scalars()
-            .all()
-        )
+        rows_stmt = select(ReapRun).order_by(ReapRun.id.desc()).limit(limit).offset(offset)
+        count_stmt = select(func.count()).select_from(ReapRun)
+        if executed_only:
+            rows_stmt = rows_stmt.where(ReapRun.state != RunState.PLANNED)
+            count_stmt = count_stmt.where(ReapRun.state != RunState.PLANNED)
+        runs = list((await session.execute(rows_stmt)).scalars().all())
+        total = (await session.execute(count_stmt)).scalar_one()
         # No memo needed: nothing here is derived, so there is no expensive read to share.
-        return [
-            RunSummaryOut(
-                id=r.id,
-                state=r.state.value,
-                approved_at=r.approved_at.isoformat(),
-                aborted_reason=_thaw_reason(r.aborted_reason),
-            )
-            for r in runs
-        ]
+        return RunListOut(
+            runs=[
+                RunSummaryOut(
+                    id=r.id,
+                    state=r.state.value,
+                    approved_at=r.approved_at.isoformat(),
+                    finished_at=r.finished_at.isoformat() if r.finished_at else None,
+                    aborted_reason=_thaw_reason(r.aborted_reason),
+                    deleted_items=r.deleted_items,
+                    deleted_bytes=r.deleted_bytes,
+                    deleted_unmeasured=r.deleted_unmeasured,
+                    skipped=r.skipped,
+                )
+                for r in runs
+            ],
+            total=total,
+        )
 
 
 @router.get("/runs/{run_id}")
@@ -445,6 +482,95 @@ async def get_run_steps(
                 for s in steps[offset : offset + limit]
             ],
             step_count=len(steps),
+            offset=offset,
+        )
+
+
+async def _run_outcomes(session: AsyncSession, run: ReapRun) -> list[ActionStep]:
+    """Every item's outcome so far, oldest (the canary) first: the terminal delete step
+    of every item that has reached one.
+
+    One row per item already: a season's reversible unmonitor/verify steps never carry
+    the item's own kind (``run_totals.TERMINAL_DELETE_KINDS`` is the fixed pair that
+    does), so there is no grouping to do. An item still PENDING or SENT has not been
+    decided yet, so it is filtered out here rather than in the caller, which is what lets
+    a run mid-flight and one long finished answer from the very same read: the list
+    simply grows as the run goes, and is complete once it ends.
+    """
+    steps = (
+        (
+            await session.execute(
+                select(ActionStep)
+                .where(
+                    ActionStep.run_id == run.id,
+                    ActionStep.kind.in_(run_totals.TERMINAL_DELETE_KINDS),
+                )
+                .order_by(ActionStep.ordinal, ActionStep.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [s for s in steps if s.state in _DECIDED_STATES]
+
+
+@router.get("/runs/{run_id}/outcomes")
+async def get_run_outcomes(
+    request: Request,
+    run_id: int,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(STEP_PAGE, ge=1, le=500),
+) -> RunOutcomesOut:
+    """Per-item outcomes, reconstructed from the durable journal and the frozen
+    candidates it condemned, rather than the in-memory report a real send builds
+    (``ReapStatus.report``, gone the moment the process restarts).
+
+    Answers a run still executing exactly as it answers one long finished, from the same
+    read: see ``_run_outcomes``. This is what lets an item status log follow a run in
+    flight and a reopened history view render the same way, off one source instead of
+    two that could disagree.
+    """
+    async with session_factory(request)() as session:
+        run = await session.get(ReapRun, run_id)
+        if run is None:
+            refuse(404, "error.runs.not_found")
+        decided = await _run_outcomes(session, run)
+        page = decided[offset : offset + limit]
+
+        candidates: dict[str, Candidate] = {}
+        media_keys = [s.media_key for s in page]
+        if media_keys:
+            rows = (
+                (
+                    await session.execute(
+                        select(Candidate).where(
+                            Candidate.snapshot_id == run.snapshot_id,
+                            Candidate.media_key.in_(media_keys),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            candidates = {c.media_key: c for c in rows}
+
+        return RunOutcomesOut(
+            outcomes=[
+                RunOutcomeReadOut(
+                    media_key=s.media_key,
+                    title=candidates[s.media_key].title if s.media_key in candidates else "",
+                    kind=s.kind,
+                    size_bytes=(
+                        candidates[s.media_key].size_bytes if s.media_key in candidates else None
+                    ),
+                    state=s.state.value,
+                    error_reason=_thaw_reason(s.error),
+                    is_canary=s.ordinal == 0,
+                    file_removed=s.file_removed_at is not None,
+                )
+                for s in page
+            ],
+            outcome_count=len(decided),
             offset=offset,
         )
 
@@ -521,10 +647,6 @@ class ReapStatus(BaseModel):
     #: ``error.reap.unexpected`` for anything else. ``null`` while running
     #: and on a clean finish.
     error_reason: ReasonKey | None = None
-    report: RunReportOut | None = None
-    """The after-action report, set once the run ends. Null while running.
-    The browser reads it when ``running`` turns false, to render the
-    per-item checklist without a second call."""
 
 
 def _reap_status(app: FastAPI) -> ReapStatus:
@@ -622,7 +744,6 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
     status.skipped = 0
     status.title = ""
     status.error_reason = None
-    status.report = None
 
     try:
         async with factory() as session:
@@ -739,15 +860,6 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
                 # the start even if the process dies mid-run.
                 log.info("reap.started", run_id=run_id, planned=status.total)
                 report = await executor.execute(run_id)
-                # This publishes first, ahead of anything else that can
-                # raise. The report is the operator's only account of what
-                # happened to each file, and the executor has already made
-                # the run's own state and journal durable, so nothing below
-                # is load-bearing for it. Publishing the report after the
-                # commit below instead would lose the report whenever the
-                # database was the thing that had gone wrong, leaving phase
-                # "error" and a bare string in place of the per-item record.
-                status.report = _report_out(report)
                 try:
                     # This is a second layer, not the durability itself.
                     # The executor commits its own journal per item and its
@@ -867,9 +979,11 @@ def _report_out(report: RunReport) -> RunReportOut:
         dry_run=report.dry_run,
         state=report.state.value,
         aborted_reason=_reason_key(report.aborted_reason),
-        would_delete_items=report.deleted_items,
-        deleted_bytes=report.deleted_bytes,
-        deleted_unmeasured=report.deleted_unmeasured,
+        would_delete_items=report.would_delete_items if report.dry_run else report.deleted_items,
+        deleted_bytes=report.would_delete_bytes if report.dry_run else report.deleted_bytes,
+        deleted_unmeasured=(
+            report.would_delete_unmeasured if report.dry_run else report.deleted_unmeasured
+        ),
         skipped=report.skipped,
         outcomes=[
             RunOutcomeOut(

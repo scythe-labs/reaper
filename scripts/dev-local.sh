@@ -42,6 +42,14 @@
 #                         branch head usually fails, because the models expect the new
 #                         columns. The upgrade is additive-only, so it is safe to run)
 #
+# Rehearsal proxies (opt-in, for testing a real armed reap with no file ever deleted). `up`
+# starts one proxy per entry, in front of a real Radarr or Sonarr, `down` stops them, and
+# `status`/`logs` cover them. Point each instance's URL in Settings at its proxy port. Set
+# REHEARSAL_PROXIES in the .env.local beside your data dir (loaded like every other value
+# here) to a space-separated list, one "label,upstream,port" per instance. Any number, so two
+# Radarr and two Sonarr each get their own proxy and port. Absent means no proxy and no change:
+#   REHEARSAL_PROXIES="radarr-hd,https://radarr.example,7879 sonarr-hd,https://sonarr.example,8990"
+#
 # Two instances side by side: give the second both REAPER_PORT and REAPER_WEB_PORT. They move
 # together, because Vite's /api proxy target reads REAPER_PORT (see the note further down), so
 # moving only the web port leaves the second UI talking to the first instance's API. Every stop
@@ -141,6 +149,38 @@ WEB_PORT_DEFAULT=5173
 API_PORT="${REAPER_PORT:-$API_PORT_DEFAULT}"
 WEB_PORT="${REAPER_WEB_PORT:-$WEB_PORT_DEFAULT}"
 
+# --- optional: arr rehearsal proxies (opt-in, from the dotenv loaded above) -----------------
+# A real armed reap drives Radarr/Sonarr's delete endpoints. Pointed at one of these proxies
+# instead of the real host, the executor runs its real send path while no file is ever removed
+# upstream (scripts/arr_rehearsal_proxy.py refuses or fakes every write). One entry per
+# instance, so two Radarr and two Sonarr are four proxies on four ports. Collected into three
+# parallel arrays, indexed together, so every place below that acts per instance treats a proxy
+# exactly like the servers: same port scoping, same per-port log file, same start/stop/report.
+# Strictly opt-in: with REHEARSAL_PROXIES unset the arrays stay empty and nothing below changes.
+PROXY_LABELS=(); PROXY_UPSTREAMS=(); PROXY_PORTS=()
+add_proxy() { # label upstream port
+  local label="$1" upstream="$2" port="$3"
+  if [ -z "$label" ] || [ -z "$upstream" ] || [ -z "$port" ]; then
+    warn "rehearsal proxy entry '$label,$upstream,$port' is missing a field (want label,upstream,port); skipping it"
+    return 0
+  fi
+  local taken
+  for taken in ${PROXY_PORTS[@]+"${PROXY_PORTS[@]}"}; do
+    if [ "$taken" = "$port" ]; then
+      warn "rehearsal proxy '$label' wants port $port, already claimed by another entry; skipping it"
+      return 0
+    fi
+  done
+  PROXY_LABELS+=("$label"); PROXY_UPSTREAMS+=("$upstream"); PROXY_PORTS+=("$port")
+}
+# Space-separated entries, each "label,upstream,port". A URL carries no comma or space, so the
+# two delimiters never collide with a field. Under `set -u` the `:-` keeps an unset list empty.
+for _entry in ${REHEARSAL_PROXIES:-}; do
+  IFS=, read -r _label _upstream _port <<<"$_entry"
+  add_proxy "$_label" "$_upstream" "$_port"
+done
+unset _entry _label _upstream _port
+
 # A log belongs to the instance, and what identifies an instance is its port, not the tree
 # it was booted from. So both halves of the path follow the port: the files are named for
 # it, and they sit in the main checkout, which is where data/ already resolves to and where
@@ -172,9 +212,18 @@ wait_ready() { # url label
   fi
 }
 
+# The full set of ports this invocation owns: the two servers, plus any configured proxies.
+# Every stop/wait/force loop runs over this, so a proxy is torn down exactly like a server and
+# scoped the same way (a second instance's ports are never in here).
+all_ports() {
+  printf '%s\n' "$API_PORT" "$WEB_PORT"
+  local port
+  for port in ${PROXY_PORTS[@]+"${PROXY_PORTS[@]}"}; do printf '%s\n' "$port"; done
+}
+
 stop_all() {
-  local killed=0
-  for p in "$API_PORT" "$WEB_PORT"; do
+  local killed=0 p
+  for p in $(all_ports); do
     local pids; pids="$(port_pids "$p")"
     if [ -n "$pids" ]; then log "stopping :$p ($pids)"; kill $pids 2>/dev/null || true; killed=1; fi
   done
@@ -188,17 +237,25 @@ stop_all() {
   # request in the browser against a backend that was gone. The digit class is load-bearing:
   # a bare `--port 6553` is a substring of `--port 65535`.
   pkill -f "uvicorn reaper.main:create_app.*--port $API_PORT([^0-9]|$)" 2>/dev/null || true
+  # A proxy has the same invisible-wrapper problem: `uv run` can hold no socket, so lsof
+  # misses it. Scope the pattern to each proxy's own port, the same digit-class belt as above,
+  # so one instance's teardown never reaches another's. The loop variable is named for the
+  # port on purpose, so the pattern carries a port the way the sweep above does.
+  local PROXY_PORT
+  for PROXY_PORT in ${PROXY_PORTS[@]+"${PROXY_PORTS[@]}"}; do
+    pkill -f "arr_rehearsal_proxy.py.*--port $PROXY_PORT([^0-9]|$)" 2>/dev/null || true
+  done
   # TERM is a request, and a wedged reload supervisor can decline it, leaving the same
   # PID on the port while "stopping" reads as success. So the claim is checked against
   # the port, and a survivor is forced.
   local waited=0
   while [ "$waited" -lt 6 ]; do
     local left=""
-    for p in "$API_PORT" "$WEB_PORT"; do left="$left$(port_pids "$p")"; done
+    for p in $(all_ports); do left="$left$(port_pids "$p")"; done
     [ -n "$left" ] || break
     sleep 0.5; waited=$((waited + 1))
   done
-  for p in "$API_PORT" "$WEB_PORT"; do
+  for p in $(all_ports); do
     local pids; pids="$(port_pids "$p")"
     if [ -n "$pids" ]; then
       warn "still holding :$p ($pids); forcing"
@@ -212,6 +269,29 @@ stop_all() {
   [ "$killed" = 1 ] || log "nothing was running"
 }
 
+proxy_log() { printf '%s/proxy-%s.log' "$LOG_DIR" "$1"; }
+
+# Start every configured proxy that is not already listening. Called from both `up` paths, so
+# a rerun on an already-up stack still brings a missing proxy back. Its own liveness wait is
+# forgiving: a proxy whose upstream is unreachable still binds and answers (with an upstream
+# error), so this confirms the port bound and moves on rather than blocking the boot.
+start_proxies() {
+  mkdir -p "$LOG_DIR"
+  local i label upstream port plog
+  for i in ${PROXY_PORTS[@]+"${!PROXY_PORTS[@]}"}; do
+    label="${PROXY_LABELS[$i]}"; upstream="${PROXY_UPSTREAMS[$i]}"; port="${PROXY_PORTS[$i]}"
+    if [ -n "$(port_pids "$port")" ]; then
+      log "$label rehearsal proxy already on :$port"
+      continue
+    fi
+    plog="$(proxy_log "$port")"
+    log "starting $label rehearsal proxy on :$port -> $upstream (no file is ever deleted)"
+    nohup uv run python scripts/arr_rehearsal_proxy.py --upstream "$upstream" --port "$port" \
+      > "$plog" 2>&1 &
+    wait_ready "http://127.0.0.1:$port/api/v3/system/status" "$label proxy" || true
+  done
+}
+
 cmd="${1:-up}"
 case "$cmd" in
   down|stop) stop_all; exit 0 ;;
@@ -220,6 +300,12 @@ case "$cmd" in
       set -- $pair
       pids="$(port_pids "$2")"
       if [ -n "$pids" ]; then log "$1 :$2 listening ($pids)"; else warn "$1 :$2 not running"; fi
+    done
+    for i in ${PROXY_PORTS[@]+"${!PROXY_PORTS[@]}"}; do
+      port="${PROXY_PORTS[$i]}"; label="${PROXY_LABELS[$i]}"
+      pids="$(port_pids "$port")"
+      if [ -n "$pids" ]; then log "$label proxy :$port listening ($pids)"
+      else warn "$label proxy :$port not running"; fi
     done
     exit 0 ;;
   logs)
@@ -237,7 +323,11 @@ case "$cmd" in
       [ -n "$have" ] && warn "logs on disk for API port(s): $have"
       exit 1
     }
-    tail -n 40 -f "$API_LOG" "$WEB_LOG" ;;
+    logfiles=("$API_LOG" "$WEB_LOG")
+    for i in ${PROXY_PORTS[@]+"${!PROXY_PORTS[@]}"}; do
+      plog="$(proxy_log "${PROXY_PORTS[$i]}")"; [ -f "$plog" ] && logfiles+=("$plog")
+    done
+    tail -n 40 -f "${logfiles[@]}" ;;
   up|"") : ;;  # fall through
   # Prints the header comment however long it grows. A hardcoded line range would truncate
   # the help mid-sentence the first time anything above `set -euo pipefail` is edited.
@@ -260,6 +350,9 @@ mkdir -p "$LOG_DIR"
 if [ -n "$(port_pids "$API_PORT")" ] && [ -n "$(port_pids "$WEB_PORT")" ] \
    && curl -sS -m 5 -o /dev/null "http://127.0.0.1:$API_PORT/api/health" 2>/dev/null; then
   log "already up -- API :$API_PORT, frontend :$WEB_PORT (use 'down' to restart)"
+  # The servers being up does not mean a proxy is: one can have died, or been added to the
+  # dotenv since. Bring up any that are missing rather than leaving the operator without them.
+  start_proxies
   exit 0
 fi
 stop_all  # clear any half-up state / stale listeners
@@ -322,6 +415,10 @@ REAPER_PORT="$API_PORT" \
 wait_ready "http://127.0.0.1:$API_PORT/api/health" "API"
 wait_ready "http://localhost:$WEB_PORT/" "frontend"
 
+# After the servers, since a proxy only matters once there is an app to point at it. No-op
+# unless the dotenv opted in.
+start_proxies
+
 # `logs` and `down` reach the instance whose ports they carry, so a second instance has to
 # be told back in the spelling that reaches it. The bare command sends the reader to the
 # default instance, the same wrong-instance mistake one layer up. Empty for the default pair.
@@ -341,3 +438,7 @@ cat <<EOF
   Log in with your normal account, or mint a throwaway local admin (prints a one-time
   password): uv run reaper-admin create-admin --username local-test
 EOF
+
+for i in ${PROXY_PORTS[@]+"${!PROXY_PORTS[@]}"}; do
+  log "point Reaper's ${PROXY_LABELS[$i]} URL (in Settings) at http://127.0.0.1:${PROXY_PORTS[$i]} to rehearse a reap"
+done

@@ -98,12 +98,27 @@ const HOW_TO_UPDATE =
 //: shrank by exactly as much as it grew would leave them empty while the population changed
 //: underneath everyone.
 //:
-//: The current count is 1179. lists.ago.days/hours/minutes left the required set along with
+//: The current count is 1172. lists.ago.days/hours/minutes left the required set along with
 //: the hand-rolled `ago()` they fed. `since()` in format.ts now formats every relative time
 //: through Intl.RelativeTimeFormat, which needs no catalog string and so no note. When this
 //: count next needs to change, update EXPECTED_REQUIRED_COUNT below and describe what moved,
 //: the same way.
-const EXPECTED_REQUIRED_COUNT = 1179;
+//:
+//: The Reap tab redesign (Phase 2) dropped 18 required keys (the on-page Steps table, the
+//: dry-run Report panel, the phrase chip, and the stale-plan/execute-disabled notices it
+//: replaced) and added 11 (the head Reap button's count, the summary card's tiles and help
+//: sentence, the standalone practice run's result, the history row's freed/removed line, and
+//: the confirm sheet's merged title), for a net change of -7.
+//:
+//: The Reap tab redesign (Phase 3) adds 6: the reaping card's "removed" tile and its "now
+//: removing" line, the progress bar's accessible value text, the item-status log's heading
+//: and its "kept: {reason}" fragment, and the history footer's "Showing N of M" count.
+//:
+//: Mission Control (Phase 4) drops 8: the confirm sheet no longer shows progress, a report, or
+//: a failure of its own. It closes the moment a reap starts, and the Reap tab and app-wide bar
+//: carry the run from there. Gone are the progress tick and item counter, the freed and spared
+//: fragments, the result line's reclaimed/spared/unmeasured pieces, and the failure body.
+const EXPECTED_REQUIRED_COUNT = 1172;
 
 describe("translator notes (locales/en/ui.notes.json)", () => {
   it("classifies a plain literal as not required, and an ICU or tagged one as required (rule 145)", () => {

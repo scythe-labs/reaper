@@ -366,6 +366,30 @@ describe("a bulk override", () => {
     await waitFor(() => expect(apiMock.reapBreakdown).toHaveBeenCalledTimes(2));
   });
 
+  it("widens a show card's clear to its season-level rows, and keeps a movie's exact", async () => {
+    // A selected show card shows every season's hand mark, so its bulk clear must cover
+    // the season-level rows too (include_seasons); without it, a show whose marks were
+    // all season-level cleared nothing. A movie has no children and stays exact.
+    apiMock.candidates.mockResolvedValue(
+      page([movie(1), season(1, "condemn"), season(2, "condemn")]),
+    );
+    apiMock.clearOverride.mockResolvedValue({ removed: true });
+    renderQueue();
+    const user = await selectAllDrawn();
+
+    await user.click(screen.getByRole("button", { name: "Clear override" }));
+
+    await waitFor(() => expect(apiMock.clearOverride).toHaveBeenCalledTimes(2));
+    const calls = apiMock.clearOverride.mock.calls.map((c) => [c[0], c[1]]).sort() as [
+      string,
+      boolean,
+    ][];
+    expect(calls).toEqual([
+      ["radarr:1:1", false],
+      ["sonarr:show:1", true],
+    ]);
+  });
+
   it("blocks the other actions while it is in flight", async () => {
     apiMock.candidates.mockResolvedValue(page([movie(1), movie(2)]));
     // Both writes hang until the test lets them go. One then fails, so a pick survives and

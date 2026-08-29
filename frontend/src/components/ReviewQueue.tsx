@@ -40,6 +40,7 @@ import {
   type OverrideFilter,
   type RequestedFilter,
   type Run,
+  type RunReport,
   type ShowStatus,
   type SortKey,
   type Verdict,
@@ -1582,9 +1583,10 @@ export function ReviewQueue({
   // How many of the last bulk override's requests failed, so the operator learns that a bulk
   // action was partial rather than seeing it silently succeed. 0 means nothing to report.
   const [bulkFailures, setBulkFailures] = useState(0);
-  // The plan whose confirmation sheet is open, if any. Building it is the "Reap now" step;
-  // the sheet then dry-runs, checks arming, and takes the typed confirmation before deleting.
-  const [reapRun, setReapRun] = useState<Run | null>(null);
+  // The plan whose confirmation sheet is open, with the practice run it was proved by. Building
+  // and proving the plan is the "Reap now" step; the sheet then opens ready to arm and take the
+  // typed confirmation. Proving before opening keeps the sheet from opening into an empty check.
+  const [reapRun, setReapRun] = useState<{ run: Run; report: RunReport } | null>(null);
   const menuIdBase = useId();
   // The control that opened the popover, so closing it can hand focus back rather than dropping
   // it on <body>, where the next Tab restarts at the top of the page, above the whole queue.
@@ -1793,15 +1795,20 @@ export function ReviewQueue({
       keys,
       decision,
       spareDays = 0,
+      showKeys,
     }: {
       keys: string[];
       decision: Override | null;
       spareDays?: number;
+      /** The selected keys that are whole shows. A show card shows every season's hand
+       *  mark, so its bulk clear also clears the season-level rows (include_seasons);
+       *  without this a show whose marks are all season-level cleared nothing. */
+      showKeys?: Set<string>;
     }) => {
       const results = await Promise.allSettled(
         keys.map((key) =>
           decision === null
-            ? api.clearOverride(key)
+            ? api.clearOverride(key, showKeys?.has(key) ?? false)
             : api.override(key, decision, undefined, spareDays),
         ),
       );
@@ -1851,18 +1858,21 @@ export function ReviewQueue({
       setBulkFailures(0);
     },
   });
-  // Build a plan for exactly the selected items and open the confirmation sheet. Nothing
-  // deletes here: the sheet is the gauntlet (dry run, arm check, typed phrase).
+  // Build a plan for exactly the selected items, prove it, then open the confirmation sheet.
+  // Nothing deletes here: the sheet is the gauntlet (arm check, typed phrase). Proving before
+  // opening is what lets the sheet open at its settled content rather than into an empty check.
   const reapNow = useMutation({
     // Fails closed on an empty selection rather than posting one: an omitted key list means
     // "the whole condemned set" to the route, so a selection that emptied out (a filter, a
     // race with a refresh) must never widen into a whole-library plan. The disabled button
     // above is a convenience, not the control.
-    mutationFn: (keys: string[]) => {
+    mutationFn: async (keys: string[]) => {
       if (keys.length === 0) throw new Error(t("reviewQueue.nothingSelectedError"));
-      return api.createRun(keys);
+      const run = await api.createRun(keys);
+      const report = await api.dryRun(run.id);
+      return { run, report };
     },
-    onSuccess: (run) => setReapRun(run),
+    onSuccess: (proved) => setReapRun(proved),
   });
   // A write that covers the WHOLE list, so nothing anywhere may be pressed while it is in
   // flight. The single-row writes are deliberately not here (see `pendingFor`).
@@ -2990,7 +3000,13 @@ export function ReviewQueue({
                 type="button"
                 className="sm ghost"
                 disabled={pending || selected.size === 0}
-                onClick={() => bulk.mutate({ keys: [...selected], decision: null })}
+                onClick={() =>
+                  bulk.mutate({
+                    keys: [...selected],
+                    decision: null,
+                    showKeys: new Set(groups.filter((g) => g.isShow).map((g) => g.key)),
+                  })
+                }
                 title={t("reviewQueue.clearOverrideTitle")}
               >
                 {t("reviewQueue.clearOverrideButton")}
@@ -3030,9 +3046,10 @@ export function ReviewQueue({
         {reapNow.error && <p className="error bulk-error">{describeError(reapNow.error)}</p>}
         {reapRun && (
           <ReapConfirm
-            run={reapRun}
+            run={reapRun.run}
+            initialReport={reapRun.report}
             onClose={() => setReapRun(null)}
-            onDone={() => setSelected(new Set())}
+            onStarted={() => setSelected(new Set())}
           />
         )}
       </section>

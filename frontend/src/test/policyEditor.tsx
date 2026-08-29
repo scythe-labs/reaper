@@ -190,6 +190,7 @@ export function policyEditorKit(apiMock: ApiMock) {
       abstained: 0,
       reclaimable_bytes: 0,
       unknown_size_items: 0,
+      hand_reaped: 0,
       newly_condemned: 0,
       no_longer_condemned: 0,
       condemned_before: 0,

@@ -40,6 +40,8 @@ from reaper.db.models import (
     PlexServer,
     Profile,
     ReapRun,
+    RunState,
+    SizeSource,
     Snapshot,
     StepState,
 )
@@ -57,7 +59,7 @@ from reaper.engine.policy import (
 from reaper.engine.reason import Reason, from_wire, to_stored
 from reaper.main import create_app
 from reaper.secrets import resolve_kdf_salt, resolve_old_keys, resolve_secret_key
-from reaper.services import retention
+from reaper.services import retention, run_totals
 from reaper.services.history_sync import SCHEMA
 
 from ._auth import login
@@ -236,6 +238,11 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     title="Example Movie",
                     media_type="movie",
                     size_bytes=5_900_000_000,
+                    # Stamped the way a scan stamps a measured movie. A size with no
+                    # source is kept by the executor's frozen-size gate, dry run
+                    # included, so leaving it off would make every run here decline
+                    # the one condemned item.
+                    size_source=SizeSource.RADARR,
                     year=2013,
                     genres_json=json.dumps(["Documentary", "Drama"]),
                     quality="Bluray-1080p",
@@ -483,7 +490,7 @@ class TestTheRunsApi:
             "k": "legacy",
             "p": {"text": legacy_text},
         }
-        summary = next(r for r in client.get("/api/runs").json() if r["id"] == run["id"])
+        summary = next(r for r in client.get("/api/runs").json()["runs"] if r["id"] == run["id"])
         assert summary["aborted_reason"] == {"k": "legacy", "p": {"text": legacy_text}}
 
         engine = sa_create_engine(db_url)
@@ -500,7 +507,7 @@ class TestTheRunsApi:
             "k": "error.reap.step.no_plex_match",
             "p": None,
         }
-        summary = next(r for r in client.get("/api/runs").json() if r["id"] == run["id"])
+        summary = next(r for r in client.get("/api/runs").json()["runs"] if r["id"] == run["id"])
         assert summary["aborted_reason"] == {"k": "error.reap.canceled", "p": None}
 
     def test_a_step_that_has_not_run_carries_no_reason(self, client: TestClient) -> None:
@@ -516,7 +523,10 @@ class TestTheRunsApi:
 
         assert report["dry_run"] is True
         assert report["state"] == "completed"
-        assert report["would_delete_items"] == 0  # nothing actually deleted
+        # Proven, not deleted: the count says what the run would remove, and nothing a
+        # check kept, so a practice run can tell the operator both numbers honestly.
+        assert report["would_delete_items"] == 1
+        assert report["skipped"] == 0
         assert report["outcomes"][0]["state"] == "skipped"
         assert report["outcomes"][0]["is_canary"] is True  # the sole item is ordinal 0
         detail = report["outcomes"][0]["detail_reason"]
@@ -526,7 +536,7 @@ class TestTheRunsApi:
     def test_a_plan_appears_in_the_run_list(self, client: TestClient) -> None:
         created = client.post("/api/runs").json()
         listed = client.get("/api/runs").json()
-        assert any(r["id"] == created["id"] for r in listed)
+        assert any(r["id"] == created["id"] for r in listed["runs"])
 
     def test_the_run_list_limit_is_bounded_at_both_ends(self, client: TestClient) -> None:
         """``?limit=-1`` rendered as SQL `LIMIT -1`, which SQLite reads as no limit at all.
@@ -542,6 +552,20 @@ class TestTheRunsApi:
         assert client.get("/api/runs", params={"limit": 200}).status_code == 200
         assert client.get("/api/runs", params={"limit": 1}).status_code == 200
 
+    def test_the_run_list_offset_pages_the_whole_history(self, client: TestClient) -> None:
+        """Nothing bounds how many runs a long-lived install has executed, unlike a
+        scan's 30-snapshot retention, so the history needs a way past the first page."""
+        first = client.post("/api/runs").json()
+        second = client.post("/api/runs").json()
+
+        assert client.get("/api/runs", params={"offset": -1}).status_code == 422
+        page = client.get("/api/runs", params={"limit": 1, "offset": 0}).json()
+        assert [r["id"] for r in page["runs"]] == [second["id"]]  # newest first
+        assert page["total"] == 2
+        next_page = client.get("/api/runs", params={"limit": 1, "offset": 1}).json()
+        assert [r["id"] for r in next_page["runs"]] == [first["id"]]
+        assert next_page["total"] == 2
+
     def test_the_run_list_carries_only_what_is_stored(self, client: TestClient) -> None:
         """The history is stored rows, nothing derived.
 
@@ -553,12 +577,115 @@ class TestTheRunsApi:
         to the detail route instead, which derives them for that one.
         """
         client.post("/api/runs")
-        row = client.get("/api/runs").json()[0]
-        assert set(row) == {"id", "state", "approved_at", "aborted_reason"}
+        row = client.get("/api/runs").json()["runs"][0]
+        assert set(row) == {
+            "id",
+            "state",
+            "approved_at",
+            "finished_at",
+            "aborted_reason",
+            "deleted_items",
+            "deleted_bytes",
+            "deleted_unmeasured",
+            "skipped",
+        }
+        # A freshly planned run has not reached a terminal state, so its totals are
+        # unknown, never zero.
+        assert row["finished_at"] is None
+        assert row["deleted_items"] is None
         # ...and the detail route still answers with the whole thing.
         full = client.get(f"/api/runs/{row['id']}").json()
         assert full["confirmation_phrase"].startswith("REAP ")
         assert isinstance(full["steps"], list)
+
+    def test_executed_only_excludes_a_planned_run_from_rows_and_total(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """A plan built and never executed (the head Reap button, a standalone practice
+        run) is not a past reap, so the history view's paging and its "Showing N of M"
+        count must agree on what to leave out: filtering only the page, after the fact,
+        would leave the two disagreeing."""
+        planned = client.post("/api/runs").json()
+        executed = client.post("/api/runs").json()
+
+        db_url = Settings(data_dir=tmp_path, secret_key="k").sync_database_url
+        engine = sa_create_engine(db_url)
+        with Session(engine) as session:
+            run_row = session.get(ReapRun, executed["id"])
+            assert run_row is not None
+            run_row.state = RunState.COMPLETED
+            session.commit()
+        engine.dispose()
+
+        everything = client.get("/api/runs").json()
+        assert {r["id"] for r in everything["runs"]} == {planned["id"], executed["id"]}
+        assert everything["total"] == 2
+
+        executed_only = client.get("/api/runs", params={"executed_only": True}).json()
+        assert {r["id"] for r in executed_only["runs"]} == {executed["id"]}
+        assert executed_only["total"] == 1
+
+    def test_a_missing_runs_outcomes_are_a_404(self, client: TestClient) -> None:
+        assert client.get("/api/runs/9999/outcomes").status_code == 404
+
+    def test_a_freshly_planned_runs_outcomes_are_empty(self, client: TestClient) -> None:
+        """Nothing has been decided for a plan that has not been dry-run or executed, so
+        the read that answers a run 'so far' has nothing to report yet, never a row for
+        a step that is merely PENDING."""
+        run = client.post("/api/runs").json()
+
+        body = client.get(f"/api/runs/{run['id']}/outcomes").json()
+
+        assert body == {"outcomes": [], "outcome_count": 0, "offset": 0}
+
+    def test_the_outcomes_page_is_bounded_at_both_ends(self, client: TestClient) -> None:
+        run = client.post("/api/runs").json()
+        assert (
+            client.get(f"/api/runs/{run['id']}/outcomes", params={"offset": -1}).status_code == 422
+        )
+        assert client.get(f"/api/runs/{run['id']}/outcomes", params={"limit": 0}).status_code == 422
+        assert (
+            client.get(f"/api/runs/{run['id']}/outcomes", params={"limit": 501}).status_code == 422
+        )
+        assert (
+            client.get(f"/api/runs/{run['id']}/outcomes", params={"limit": 500}).status_code == 200
+        )
+
+    def test_an_outcomes_row_says_whether_the_file_was_removed(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """A FAILED step whose delete landed before the failure (the exclusion poll, the
+        Plex refresh) carries the journal's durable stamp onto the wire, so the browser
+        can say "removed" for it instead of telling the operator a file that is off disk
+        was kept."""
+        run = client.post("/api/runs").json()
+
+        db_url = Settings(data_dir=tmp_path, secret_key="k").sync_database_url
+        engine = sa_create_engine(db_url)
+        with Session(engine) as session:
+            step = session.scalars(
+                select(ActionStep)
+                .where(
+                    ActionStep.run_id == run["id"],
+                    ActionStep.kind.in_(run_totals.TERMINAL_DELETE_KINDS),
+                )
+                .order_by(ActionStep.ordinal, ActionStep.id)
+            ).first()
+            assert step is not None, "the plan fixture planned nothing, so nothing is exercised"
+            step.state = StepState.FAILED
+            session.commit()
+
+            unstamped = client.get(f"/api/runs/{run['id']}/outcomes").json()["outcomes"][0]
+            assert unstamped["state"] == "failed"
+            assert unstamped["file_removed"] is False
+
+            step.file_removed_at = utcnow()
+            session.commit()
+        engine.dispose()
+
+        stamped = client.get(f"/api/runs/{run['id']}/outcomes").json()["outcomes"][0]
+        assert stamped["state"] == "failed"
+        assert stamped["file_removed"] is True
 
     def test_dry_running_a_missing_run_is_a_404(self, client: TestClient) -> None:
         assert client.post("/api/runs/9999/dry-run").status_code == 404
@@ -673,7 +800,7 @@ class TestTheRunSelectionIsExplicit:
         assert body["code"] == "error.plan.selection_empty"
         assert "no items were selected" in body["detail"].lower()
         # Nothing was journalled. A refused selection leaves no plan behind at all.
-        assert selection_client.get("/api/runs").json() == []
+        assert selection_client.get("/api/runs").json()["runs"] == []
 
     def test_an_omitted_selection_plans_the_whole_condemned_set(
         self, selection_client: TestClient
@@ -714,7 +841,7 @@ class TestTheRunSelectionIsExplicit:
         )
 
         assert refused.status_code == 422
-        assert selection_client.get("/api/runs").json() == []
+        assert selection_client.get("/api/runs").json()["runs"] == []
 
 
 @pytest.fixture

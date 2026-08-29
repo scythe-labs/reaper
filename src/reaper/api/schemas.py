@@ -603,10 +603,42 @@ class RunSummaryOut(BaseModel):
     id: int
     state: str
     approved_at: str
+    finished_at: str | None = None
+    """When the run reached a terminal state (COMPLETED or ABORTED). ``None`` while a run
+    is PLANNED or EXECUTING."""
+
     aborted_reason: ReasonKey | None = None
     """Why the run stopped early, as a typed reason the browser composes. Read off
     ``ReapRun.aborted_reason`` through ``engine.reason.from_stored``: a row written before
     typed reasons holds a bare English sentence and thaws as a ``legacy`` reason."""
+
+    deleted_items: int | None = None
+    """How many items this run actually deleted. ``None`` until the run reaches a
+    terminal state, read as unknown, never as zero: a run still PLANNED or EXECUTING has
+    not deleted a knowable number of anything yet."""
+
+    deleted_bytes: int | None = None
+    """Bytes reclaimed by ``deleted_items``. ``None`` on the same terms."""
+
+    deleted_unmeasured: int | None = None
+    """How many of ``deleted_items`` had no size, so are absent from ``deleted_bytes``.
+    ``None`` on the same terms; above zero only when the operator's unmeasured allowance
+    was open."""
+
+    skipped: int | None = None
+    """How many planned items this run left alone. ``None`` on the same terms."""
+
+
+class RunListOut(BaseModel):
+    """A page of the run history, plus how many rows match the request as a whole.
+
+    ``total`` counts every row ``executed_only`` and the rest of the request would match,
+    not just the page returned: the history footer's "Showing N of M" and its "Show 50
+    more" button both read it, and neither can page correctly off ``len(runs)`` alone.
+    """
+
+    runs: list[RunSummaryOut]
+    total: int
 
 
 class RunCheckOut(BaseModel):
@@ -651,11 +683,13 @@ class RunReportOut(BaseModel):
     executor recorded on ``RunReport``, as a typed reason the browser composes."""
 
     would_delete_items: int
-    """The count of items removed. In a real run this is what was actually deleted. In a
-    dry run it is 0, because a dry run proves the plan by skipping every send."""
+    """In a real run, the count of items actually deleted. In a dry run, the count the
+    run proved it would delete: every item it walked to the send and stopped, minus the
+    ones a check kept (those are ``skipped``), the frozen-size gate included."""
 
     deleted_bytes: int = 0
-    """Bytes reclaimed by a real run. 0 for a dry run.
+    """Bytes reclaimed by a real run, or, in a dry run, the bytes behind
+    ``would_delete_items``.
 
     Summed from the frozen ``Candidate.size_bytes``, so for movies it is a close lower
     bound on what the disk got back rather than an exact figure. Under-stating is the
@@ -666,9 +700,52 @@ class RunReportOut(BaseModel):
     Above zero only when the operator allowed unmeasured items. Hidden at zero."""
 
     skipped: int
+    """Items a check kept, in a real run and a dry run alike. A dry run's own
+    prove-don't-send outcomes count into ``would_delete_items``, never here."""
+
     outcomes: list[RunOutcomeOut]
     """Per item: what happened, with a typed-reason checklist of the steps performed and
     which (if any) failed, for the browser to compose."""
+
+
+class RunOutcomeReadOut(BaseModel):
+    """One item's outcome, reconstructed from the durable journal rather than the live
+    in-memory report ``RunOutcomeOut`` carries.
+
+    ``error_reason`` is optional here, unlike ``RunOutcomeOut.detail_reason``: a VERIFIED
+    step's success sentence (the exact wording, with its params) lives only in the report
+    a real send builds in memory, and ``ActionStep.error`` is NULL on a step that
+    succeeded, so this mirrors ``ActionStepOut.error_reason``'s own convention instead of
+    inventing a persisted equivalent for a success that was never written down.
+    """
+
+    media_key: str
+    title: str
+    kind: str
+    size_bytes: int | None
+    state: str  # verified | failed | skipped
+    error_reason: ReasonKey | None = None
+    is_canary: bool
+    file_removed: bool
+    """Whether the file's removal was confirmed, off the journal's durable stamp. A FAILED
+    step can carry True: the delete landed and a follow-up (the import exclusion, the Plex
+    refresh) did not, and the browser must say "removed" for it, never "kept"."""
+
+
+class RunOutcomesOut(BaseModel):
+    """One window of a run's outcomes so far: the reconstructed sibling of
+    ``RunStepsOut``, from ``GET /api/runs/{id}/outcomes``.
+
+    Answers a run still executing exactly as it answers one long finished, since both
+    read the same journal rows: an item with no terminal step yet is left out, so the
+    list simply grows as a run in flight goes and is complete once the run ends.
+    """
+
+    outcomes: list[RunOutcomeReadOut]
+    outcome_count: int
+    """How many items have a decided outcome so far. Not the plan's whole item count: an
+    item still PENDING or SENT is not counted here yet."""
+    offset: int
 
 
 #: A media_key's storage bound (``ActionStep.media_key`` / ``WhitelistEntry.media_key`` are
@@ -1168,6 +1245,11 @@ class SimulationOut(BaseModel):
     unknown_size_items: int = 0
     """How many of the condemned have no size, and so are left out of the total above
     rather than folded in as zeros. Hidden at zero."""
+
+    hand_reaped: int = 0
+    """How many of ``condemned`` are titles the owner marked to reap by hand. A hand reap
+    condemns at any threshold, so these never move with the sliders. The panel says so,
+    because a removal count that quietly includes them reads as the policy's doing."""
 
     newly_condemned: int
     """Items this policy would condemn that the current one does not. The number the

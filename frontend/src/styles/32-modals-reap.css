@@ -68,6 +68,45 @@
   letter-spacing: 0.03em;
   color: var(--condemn);
 }
+/* On a phone the confirm sheet becomes a bottom sheet, so the phrase, the field and the
+   buttons sit under a thumb instead of in the middle of the screen. Scoped to `.reap-confirm`
+   alone: every other modal in the app stays a centered dialog at every width. `:has()` lets
+   the scrim react to which sheet it holds without ModalShell taking a variant prop.
+   Coupled to NARROW_SCREEN_QUERY in useMediaQuery.ts; change one and change the other. */
+@media (max-width: 900px) {
+  .modal-scrim:has(.reap-confirm) {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .modal.reap-confirm {
+    max-width: none;
+    width: 100%;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+}
+
+/* The read-only run detail sheet becomes the same bottom sheet on a phone, for the same
+   reason and the same coupling to NARROW_SCREEN_QUERY. */
+@media (max-width: 900px) {
+  .modal-scrim:has(.run-detail) {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .modal.run-detail {
+    max-width: none;
+    width: 100%;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+}
+.run-detail-stats {
+  margin-top: var(--space-2xl);
+}
+.run-detail-scroll {
+  max-height: 44dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin-top: var(--space-lg);
+}
 .small {
   font-size: var(--text-sm);
 }
@@ -131,10 +170,10 @@
   margin: var(--space-lg) var(--space-3xl);
 }
 
-/* A running reap: live progress and the graceful Stop. Stop follows the keep-first grammar:
-   it is the safe action ("keep the rest"), so it wears the green protect invite like Spare,
-   never red, since red means delete everywhere else. Fixed width so "Stop" -> "Stopping…"
-   never resizes it. */
+/* The graceful Stop, shared by the Reap tab's head and the app-wide bar. Stop follows the
+   keep-first grammar: it is the safe action ("keep the rest"), so it wears the green protect
+   invite like Spare, never red, since red means delete everywhere else. Fixed width so
+   "Stop" -> "Stopping…" never resizes it. */
 .stop-btn {
   min-width: 8.2rem;
   border-color: var(--protect);
@@ -146,50 +185,7 @@
   background: color-mix(in srgb, var(--protect) 16%, var(--surface));
   border-color: var(--protect);
 }
-.reap-running {
-  margin-inline-end: auto;
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  font-size: var(--text-base);
-}
-.reap-running.deleting {
-  color: var(--condemn);
-}
-.reap-running.stopping {
-  color: var(--muted);
-}
-/* The reap indicator's own spinner: it rides the parent's currentColor (red while deleting,
-   gray while stopping), so it is scoped to .reap-running. An unscoped `.spinner` here would
-   redefine the shared spinner (top of file) and silently clobber .spinner-lg / .spinner-xl
-   everywhere: a naming collision, not a second spinner. */
-.reap-running .spinner {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
-  border-top-color: currentColor;
-  animation: spin 0.7s linear infinite;
-}
-.reap-progress {
-  margin: 1rem 0 0.2rem;
-}
-.reap-progress .prog-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: var(--space-lg);
-  font-size: var(--text-md);
-  margin-bottom: 0.4rem;
-}
-.prog-count {
-  font-weight: var(--weight-semi);
-  font-variant-numeric: tabular-nums;
-}
-.prog-note {
-  color: var(--muted);
-}
+/* The reap progress bar, on the Reap tab's reaping card and the app-wide bar. */
 .prog-track {
   height: 7px;
   border-radius: var(--radius-pill);
@@ -241,11 +237,31 @@
   background: var(--protect);
   color: var(--protect);
 }
+.reap-bar-text {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  min-width: 0;
+}
 .reap-bar-text b {
   font-variant-numeric: tabular-nums;
 }
+.reap-bar-lead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  white-space: nowrap;
+}
+/* A glance percent, shown on a phone only. On desktop the inline track carries progress, so it
+   would only repeat the count. */
+.reap-bar-pct {
+  display: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
 .reap-bar-sub {
   color: var(--muted);
+  white-space: nowrap;
 }
 .reap-bar-actions {
   margin-inline-start: auto;
@@ -264,98 +280,106 @@
   flex-basis: 100%;
   margin: 0;
 }
-.reap-bar-fill {
-  position: absolute;
-  inset-inline-start: 0;
-  bottom: 0;
-  height: 3px;
+/* The inline progress track: it grows to fill the space between the count and the actions on
+   desktop, and drops to its own full-width line on a phone (below). Decorative; the progressbar
+   role and its aria live on the text. The trough is the neutral --surface-2 that the Reap tab's
+   own reaping card uses (.prog-track): a red fill on a red trough on this red-tinted card did
+   not read as progress. */
+.reap-bar-track {
+  flex: 1;
+  min-width: 3rem;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.reap-bar-track-fill {
+  /* block, not the span's default inline: width and height are ignored on an inline box, which
+     is what left this fill invisible while the neutral track showed. `.prog-fill` is a div and
+     never hit this. */
+  display: block;
+  height: 100%;
   background: var(--condemn);
+  border-radius: var(--radius-pill);
   transition: width 0.4s var(--ease);
+}
+/* A slow pulse on the live dot says the run is moving even between count ticks. Only the running
+   bar: a finished or errored one holds still. */
+.reap-bar:not(.done):not(.errored) .banner-dot {
+  animation: reap-bar-pulse 1.8s var(--ease) infinite;
+}
+@keyframes reap-bar-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--condemn) 18%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--condemn) 6%, transparent);
+  }
+}
+/* Coupled to NARROW_SCREEN_QUERY in useMediaQuery.ts; change one and change the other. On a
+   phone the count and the freed size split one full-width line, the track takes its own, and the
+   actions take theirs. Stop is the urgent action on a live deletion, so it grows to fill the
+   line beside View as the primary tap target. The done and errored bars are not urgent, so their
+   buttons sit compact at the right. */
+@media (max-width: 900px) {
+  /* The running bar stacks: count and percent split line one, the track takes line two, the
+     freed size line three, the actions line four. Each piece is a full-width flex item, and
+     `order` puts them in that sequence whatever the source order (which is desktop's: freed
+     sits inline before the track there). The count/percent line and the freed-size line are the
+     two that only exist on the running bar, so the done and errored bars keep their one text
+     line and their compact right-aligned actions. */
+  .reap-bar-text {
+    order: 0;
+    flex-basis: 100%;
+    justify-content: space-between;
+  }
+  .reap-bar-pct {
+    display: inline;
+  }
+  .reap-bar-track {
+    order: 1;
+    flex-basis: 100%;
+  }
+  .reap-bar-sub {
+    order: 2;
+    flex-basis: 100%;
+  }
+  .reap-bar-actions {
+    order: 3;
+    flex-basis: 100%;
+    margin-inline-start: 0;
+    gap: var(--space-lg);
+  }
+  .reap-bar-error {
+    order: 4;
+  }
+  .reap-bar-actions .stop-btn {
+    flex: 1;
+    padding: var(--space-md) var(--space-2xl);
+  }
+  .reap-bar.done .reap-bar-actions,
+  .reap-bar.errored .reap-bar-actions {
+    justify-content: flex-end;
+  }
+  /* The done and errored bars read as one left-aligned phrase, the outcome then the figures on
+     the next line, rather than the running bar's count-left percent-right split. */
+  .reap-bar.done .reap-bar-text,
+  .reap-bar.errored .reap-bar-text {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
 }
 /* Only what this file declares. `.spinner` and `.why-loading` each stop beside their own
    rule instead. See the note in 06-spinner.css for why. */
 @media (prefers-reduced-motion: reduce) {
-  .reap-running .spinner {
-    animation: none;
-  }
   .prog-fill,
-  .reap-bar-fill {
+  .reap-bar-track-fill {
     transition: none;
   }
-}
-
-/* The reap result: a per-item checklist, like the why-panel's ticks. */
-.reap-result {
-  margin-top: var(--space-3xl);
-  padding-top: var(--space-3xl);
-  border-top: 1px solid var(--border);
-}
-.reap-tally {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.2rem 0.6rem;
-  margin-bottom: 0.9rem;
-}
-.reap-souls {
-  font-size: var(--text-xl);
-  color: var(--condemn);
-}
-.reap-halt {
-  margin: 0 0 0.9rem;
-  padding: 0.6rem 0.8rem;
-  border-radius: var(--radius);
-  background: var(--surface-2);
-  color: var(--text);
-  font-size: var(--text-md);
-}
-.reap-checklist {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xl);
-}
-.reap-item {
-  padding: 0.6rem 0.8rem;
-  border-radius: var(--radius);
-  background: var(--surface-2);
-}
-.reap-item.state-failed {
-  background: var(--condemn-soft);
-}
-.reap-item-title {
-  display: block;
-  font-weight: var(--weight-semi);
-  margin-bottom: var(--space-sm);
-  /* The title, or the media key when there is no title: a machine key with nothing to break
-     on, on the screen that confirms a deletion. */
-  overflow-wrap: anywhere;
-}
-.reap-checks {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-.reap-checks li {
-  display: flex;
-  align-items: baseline;
-  gap: 0.45rem;
-  font-size: var(--text-md);
-  color: var(--muted);
-}
-.reap-checks .check-ok .gate-mark {
-  color: var(--protect);
-}
-.reap-checks .check-bad {
-  color: var(--text);
-}
-.reap-checks .check-bad .gate-mark {
-  color: var(--condemn);
+  .reap-bar .banner-dot {
+    animation: none;
+  }
 }
 
 /* The what-changed modal (About). GitHub release notes are arbitrary markdown from outside

@@ -1215,11 +1215,12 @@ def _selects_processes_by_pattern(line: str) -> bool:
 #: ``docker-entrypoint.sh``, ``scripts/dev-local.sh``, ``scripts/log-instructions-loaded.sh``,
 #: ``scripts/try-image.sh``, ``scripts/worktree-setup.sh``.
 _EXPECTED_SHELL_SCRIPTS = 5
-#: Both in ``dev-local.sh``'s ``stop_all``: the TERM sweep, and the KILL for a survivor of it.
-#: Pinned separately from the script count because the walk and the ban cover different
-#: populations: a script that drops out of the walk is absent from both, so a single figure
-#: would agree with itself while disagreeing with the tree.
-_EXPECTED_PATTERN_KILLS = 2
+#: In ``dev-local.sh``'s ``stop_all``: the API TERM sweep, the KILL for a survivor of it, and
+#: the per-port sweep of any rehearsal proxy's ``uv run`` wrapper. Pinned separately from the
+#: script count because the walk and the ban cover different populations: a script that drops
+#: out of the walk is absent from both, so a single figure would agree with itself while
+#: disagreeing with the tree.
+_EXPECTED_PATTERN_KILLS = 3
 
 
 def test_a_dev_script_kills_only_its_own_ports() -> None:
@@ -3539,7 +3540,7 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # complies from one that dropped out of the walk, and reads green either way.
 #
 # Re-derive this number by running the test. Never update it by hand arithmetic on a diff.
-_EXPECTED_NOTICES = 142
+_EXPECTED_NOTICES = 139
 
 
 def _shipped_tsx() -> list[Path]:
@@ -3621,7 +3622,7 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
 # and says nothing about whether it speaks; this is the count for that other direction.
 #
 # Re-derive this number by running the test. Never update it by hand arithmetic on a diff.
-_EXPECTED_STANDING = 37
+_EXPECTED_STANDING = 38
 
 # ``standing`` as a JSX attribute, never as a substring of a class name or a word in prose.
 _STANDING_ATTR = re.compile(r"(?<![\w-])standing(?![\w-])")
@@ -3769,7 +3770,7 @@ def test_every_silent_notice_says_why_it_is_silent() -> None:
 # defeat that. A ban would have to exempt all of them; a count does not care which way a site
 # resolved, only that nobody added one without deciding.
 _QUERY_FAILURE_HANDLES = {
-    "frontend/src/App.tsx": 7,
+    "frontend/src/App.tsx": 6,
     "frontend/src/components/AboutPanel.tsx": 1,
     "frontend/src/components/BackupPanel.tsx": 1,
     "frontend/src/components/DeletionToggle.tsx": 1,
@@ -3801,13 +3802,13 @@ _QUERY_FAILURE_HANDLES = {
     # nothing here for this walk to count.
     "frontend/src/components/PolicyEditor.tsx": 5,
     "frontend/src/components/PolicyRuleEditors.tsx": 3,
-    "frontend/src/components/ReapBreakdown.tsx": 2,
+    "frontend/src/components/ReapBreakdown.tsx": 3,
     "frontend/src/components/ReapConfirm.tsx": 2,
     # The pre-flight read says what would turn a real run away. Deliberately undivided in the
     # same way as the safety reads above: an unreadable setup status is unknown, and the page
     # says so rather than staying silent, because silence there reads as "nothing is missing"
     # over a run the server is about to refuse.
-    "frontend/src/components/ReapPlan.tsx": 4,
+    "frontend/src/components/ReapPlan.tsx": 3,
     # The collection screen's three fate-lane reads (condemned/protected/abstained) each
     # branch on their own failure. `isPending` alone reads true on an error exactly as it does
     # on a success, so a lane that exhausted its retries would otherwise render as loaded with
@@ -3877,6 +3878,13 @@ _READ_HOOKS = {
     # Wraps the general-settings query and returns the whole result, so `GeneralPanel` still
     # branches on `general.isError` and the number does not move.
     "useGeneralSettings",
+    # Wraps the reap-breakdown query and returns the whole result, so both the Reap page's
+    # summary tiles and its reasons/ledger card branch on `counts.isError`/`counts.isPending`.
+    "useReapCounts",
+    # Wraps the executed-history query (GET /api/runs, paged) and returns the whole result
+    # plus a `showMore` page-advance, so the Reap page's history card branches on
+    # `history.isError`/`history.isPending` the same as a bare `useQuery` would.
+    "useExecutedHistory",
 }
 
 # The hooks that hand back payload and no failure handle at all, so a member of their result
@@ -4225,10 +4233,7 @@ _NEVER_LOADED_COPY = {
     " rules you've already added are still here.": [
         "frontend/src/locales/en/ui.json",
     ],
-    "Reaper couldn't load this plan. Reload the page to try again.": [
-        "frontend/src/locales/en/ui.json",
-    ],
-    "Reaper couldn't load this reap. Close this and try View again.": [
+    "Reaper couldn't load past reaps. Reload to try again.": [
         "frontend/src/locales/en/ui.json",
     ],
     "Reaper couldn't load your lists, so there's nothing to pick from.": [
@@ -5267,7 +5272,7 @@ _LAYERS = ("api", "services", "clients", "engine")
 #: Every `.py` file under those four, which is the population the walk parses. It moves when a
 #: module is added, split or deleted, and it is pinned because a walk that quietly stopped
 #: reading the tree would satisfy every assertion below by finding nothing at all.
-_EXPECTED_LAYERED_MODULES = 89
+_EXPECTED_LAYERED_MODULES = 90
 
 #: Every ordered pair where one of the four imports another, reconciled by hand: all six
 #: downward pairs are live, and no upward pair is. Asserted as an equality rather than a subset,
@@ -5584,7 +5589,7 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
 #: different population from that constant, which counts what is under the four packages
 #: only, so a bump to one has no reason to touch the other. The failure message below names
 #: the constant the same way.
-_EXPECTED_SOURCE_MODULES = 124
+_EXPECTED_SOURCE_MODULES = 125
 
 #: Every import cycle under `src/reaper`, each rotated to start at its smallest member. Two,
 #: and both are one edge: `api/settings.py` imports `reaper.launcher` at module level,
@@ -5798,7 +5803,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: parses. Pinned for the same reason as `_EXPECTED_SOURCE_MODULES`, and it carries more
 #: weight here: the expected cycle set is empty, so a walk that stopped reading the tree
 #: would agree with a clean graph exactly.
-_EXPECTED_FRONTEND_MODULES = 245
+_EXPECTED_FRONTEND_MODULES = 246
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")
@@ -6514,6 +6519,11 @@ _MEMBERSHIP_INVENTORY: dict[str, tuple[int, str]] = {
     "src/reaper/api/review.py::_group_rollups": (2, "chunked"),
     "src/reaper/api/review.py::_decided_keys": (2, "chunked"),
     "src/reaper/api/review.py::group_detail": (1, "bounded: the seasons of one show"),
+    "src/reaper/api/runs.py::_run_outcomes": (
+        1,
+        "bounded: the fixed run_totals.TERMINAL_DELETE_KINDS set",
+    ),
+    "src/reaper/api/runs.py::get_run_outcomes": (1, "bounded: the page (limit le=500)"),
     "src/reaper/services/condemned.py::_reap_overridden_rows": (
         2,
         "bounded: the operator's reap overrides, one row per hand click",
@@ -6546,6 +6556,10 @@ _MEMBERSHIP_INVENTORY: dict[str, tuple[int, str]] = {
     "src/reaper/services/rewatch.py::movie_rewatch_stats": (1, "chunked"),
     "src/reaper/services/rewatch.py::show_rewatch_outcomes": (1, "chunked"),
     "src/reaper/services/rewatch.py::show_rewatch_stats": (1, "chunked"),
+    "src/reaper/services/run_totals.py::totals_query": (
+        1,
+        "bounded: the fixed TERMINAL_DELETE_KINDS set",
+    ),
     "src/reaper/services/season_scan.py::season_watch_stats": (3, "chunked"),
     "src/reaper/services/snapshot.py::record_first_flagged_bulk": (1, "chunked"),
     "src/reaper/services/snapshot.py::_fold_merged_watch_stats": (1, "chunked"),
@@ -7602,7 +7616,7 @@ _UNRECOVERABLE_OPS = frozenset({"alter_column", "drop_column", "drop_table"})
 #: The revision files walked, pinned because a flag-shaped assertion alone cannot tell a
 #: revision that complies from one that dropped out of the walk. Bump the first with any new
 #: revision, the second only with one performing an operation above.
-_EXPECTED_REVISION_FILES = 30
+_EXPECTED_REVISION_FILES = 31
 _EXPECTED_UNRECOVERABLE_REVISIONS = 5
 
 
@@ -7806,7 +7820,7 @@ _EXPECTED_REFUSAL_CODES = 309
 #: reusing an `error.safety.*` code the executor's own backstop already raises, or
 #: `update_check._incomplete()` building one `error.integration.update_check_incomplete`
 #: for several callers. So the site count moves independently of the code count.
-_EXPECTED_REFUSAL_SITES = 360
+_EXPECTED_REFUSAL_SITES = 361
 
 
 def test_every_refusal_code_has_a_raiser_and_a_catalog_entry() -> None:

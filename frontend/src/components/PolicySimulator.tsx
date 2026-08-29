@@ -243,6 +243,19 @@ export function Outcome({
         </div>
       </div>
 
+      {/* Hand reaps condemn at any threshold, so without this line a maxed-out slider
+          beside a nonzero headline reads as the sliders not working. */}
+      {simulation.hand_reaped > 0 && (
+        <p className="help">
+          {simulation.hand_reaped === simulation.condemned
+            ? t("policySim.handReapsAll")
+            : t("policySim.handReapsSome", {
+                n: simulation.hand_reaped,
+                count: count(simulation.hand_reaped),
+              })}
+        </p>
+      )}
+
       {/* The comparison needs a draft to compare, so it renders only once there is one: with
           nothing edited it put the same number on both sides of a sentence built to contrast
           them, and the headline above already answers the untouched case on its own. On an

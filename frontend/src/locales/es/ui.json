@@ -42,7 +42,9 @@
         "recovery": "",
         "readOnly": "",
         "readOnlyNoLink": "",
-        "armed": ""
+        "armed": "",
+        "expand": "",
+        "collapse": ""
     },
     "format": {
         "sizeUnknown": "",
@@ -1031,7 +1033,7 @@
             "seeChanges": ""
         },
         "updatePill": {
-                  "updateAvailable": ""
+            "updateAvailable": ""
         }
     },
     "lists": {
@@ -1327,20 +1329,12 @@
     },
     "reapPlan": {
         "breakdown": {
-            "allowanceUnknown": "",
             "condemnedByPolicy": "",
-            "emptyMeasured": "",
-            "emptyNone": "",
-            "emptySpared": "",
             "expiredSpares": "",
             "handReaped": "",
             "handReapedHeld": "",
             "handSpared": "",
             "kept": "",
-            "loadFailed": "",
-            "noScan": "",
-            "plexNotice": "",
-            "reapCountMeta": "",
             "reasons": {
                 "fewWatchers": "",
                 "lowRating": "",
@@ -1351,91 +1345,26 @@
             "reasonsHeading": "",
             "reasonsOf": "",
             "reasonsOverlap": "",
-            "reviewQueue": "",
-            "reviewQueueLead": "",
             "scanFailed": "",
             "seeReview": "",
-            "split": "",
-            "sub": "",
-            "title": "",
-            "unmeasuredAllowed": "",
-            "unmeasuredHeld": "",
             "willBeReaped": ""
         },
         "degraded": {
             "notice": ""
         },
         "history": {
-            "heading": "",
-            "openAbove": ""
+            "heading": ""
         },
         "page": {
-            "blurb": "",
-            "buildButton": "",
             "title": ""
         },
-        "plan": {
-            "loadFailed": "",
-            "loading": "",
-            "notFound": ""
-        },
-        "report": {
-            "moreOutcomes": "",
-            "outcomesLabel": "",
-            "stoppedTitle": "",
-            "walkedAll": "",
-            "walkedSkipped": ""
-        },
-        "runState": {
-            "done": "",
-            "notRun": "",
-            "running": "",
-            "stopped": ""
-        },
-        "steps": {
-            "headers": {
-                "action": "",
-                "ordinal": "",
-                "request": "",
-                "state": ""
-            },
-            "more": "",
-            "regionLabel": "",
-            "testItem": "",
-            "kind": {
-                "radarrDelete": "",
-                "sonarrUnmonitor": "",
-                "sonarrVerifyUnmonitor": "",
-                "sonarrDeleteFiles": ""
-            },
-            "state": {
-                "pending": "",
-                "sent": "",
-                "verified": "",
-                "failed": "",
-                "skipped": ""
-            }
-        },
         "summary": {
-            "connectPlex": "",
-            "deletionOff": "",
-            "execute": "",
-            "executeDisabledTitle": "",
-            "heldBackUnknownSize": "",
-            "planLine": "",
-            "practiceRun": "",
-            "safetyUnknown": "",
-            "setupUnknown": "",
-            "staleCheckPending": "",
-            "staleRun": "",
-            "staleUnknown": "",
-            "turnOnLink": ""
+            "setupUnknown": ""
         }
     },
     "reapConfirm": {
         "arm": {
             "off": "",
-            "typePhrase": "",
             "unknown": ""
         },
         "bar": {
@@ -1443,18 +1372,13 @@
             "dismiss": "",
             "endedLabel": "",
             "errorSuffix": "",
-            "freedSuffix": "",
+            "freed": "",
             "reapingCount": "",
             "removedFreed": "",
             "stopError": "",
             "view": "",
             "viewReport": ""
         },
-        "failed": {
-            "body": "",
-            "unknownError": ""
-        },
-        "freedAmount": "",
         "heldBack": "",
         "otherRunning": "",
         "practiceRun": {
@@ -1467,27 +1391,13 @@
             "stopped": ""
         },
         "progress": {
-            "announceStopping": "",
-            "announceTick": "",
             "ariaLabel": "",
-            "count": "",
             "valueText": ""
         },
-        "reapCount": "",
         "reapingLabel": "",
-        "result": {
-            "checkFailed": "",
-            "checkPassed": "",
-            "reclaimed": "",
-            "refreshedNote": "",
-            "sparedAtLastMoment": "",
-            "unmeasuredSuffix": ""
-        },
-        "sparedAmount": "",
         "stop": "",
         "stopping": "",
-        "stoppingLabel": "",
-        "summary": ""
+        "stoppingLabel": ""
     },
     "backup": {
         "blurb": "",
@@ -2610,11 +2520,7 @@
     "shell": {
         "app": {
             "brandTagline": "",
-            "loadingReap": "",
             "loadingReaperEllipsis": "",
-            "reapLoadFailed": "",
-            "reapReportTitle": "",
-            "reapUnavailable": "",
             "routeLoadingSlow": "",
             "statusLabel": "",
             "stillLoadingReaper": ""

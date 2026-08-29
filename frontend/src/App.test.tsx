@@ -21,6 +21,7 @@ import { testQueryClient } from "./test/queryClient";
 import { renderWithProviders } from "./test/renderWithProviders";
 import { App } from "./App";
 import { ReapBar } from "./components/ReapBar";
+import { ACK_KEY } from "./components/runAck";
 import { ScanFreshness } from "./components/ScanFreshness";
 import { SectionNav } from "./components/SectionNav";
 import { UserMenu } from "./components/UserMenu";
@@ -430,7 +431,7 @@ describe("the app-wide reap bar", () => {
     renderWithProviders(
       <>
         <Announcer />
-        <ReapBar onView={() => {}} />
+        <ReapBar onGoToReap={() => {}} />
       </>,
       { client: queryClient },
     );
@@ -521,13 +522,81 @@ describe("the app-wide reap bar", () => {
     renderWithProviders(
       <>
         <Announcer />
-        <ReapBar onView={() => {}} />
+        <ReapBar onGoToReap={() => {}} />
       </>,
       { client: queryClient },
     );
 
     await screen.findByText(/Reaped\./);
     expect(screen.queryByText(/Reap finished\./)).not.toBeInTheDocument();
+  });
+
+  it("keeps a dismissed result dismissed across a reload", async () => {
+    // The status poll reports the last run forever, so without a persisted ack every
+    // refresh brought the ended bar back after the operator dismissed it.
+    window.localStorage.removeItem(ACK_KEY);
+    const finished = {
+      ...idle,
+      run_id: 7,
+      phase: "complete",
+      deleted_items: 4,
+      deleted_bytes: 4 * 1024 ** 3,
+    };
+    apiMock.reapStatus.mockResolvedValue(finished);
+    const client = testQueryClient();
+    client.setQueryData(["reapStatus"], finished);
+    const user = userEvent.setup();
+    const first = renderWithProviders(<ReapBar onGoToReap={() => {}} />, { client });
+
+    await user.click(await screen.findByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByText(/Reaped\./)).not.toBeInTheDocument();
+
+    // A fresh mount stands in for the page reload.
+    first.unmount();
+    const client2 = testQueryClient();
+    client2.setQueryData(["reapStatus"], finished);
+    renderWithProviders(<ReapBar onGoToReap={() => {}} />, { client: client2 });
+    expect(screen.queryByText(/Reaped\./)).not.toBeInTheDocument();
+    window.localStorage.removeItem(ACK_KEY);
+  });
+
+  it("draws nothing on the Reap tab, where the page is the dashboard", () => {
+    // The reaping card carries the count, the progress, and its own Stop, so the app-wide bar's
+    // copies would only duplicate them. It shows on every OTHER tab.
+    const queryClient = testQueryClient();
+    queryClient.setQueryData(["reapStatus"], runningAt(1, 4));
+    renderWithProviders(<ReapBar onGoToReap={() => {}} suppressed />, { client: queryClient });
+
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "View" })).not.toBeInTheDocument();
+  });
+
+  it("still refreshes the app when a run ends while suppressed (rule 79)", async () => {
+    // Suppressed hides the bar but keeps it mounted, because the post-run cache invalidation
+    // lives here. Unmounting it on the Reap tab would drop that refresh for a run that finishes
+    // while the operator is watching it there.
+    //
+    // The poll never settles here, so the cache is exactly what these two writes set and the
+    // running-to-ended edge is not raced by a refetch landing back on "running".
+    apiMock.reapStatus.mockImplementation(() => new Promise(() => {}));
+    const queryClient = testQueryClient();
+    queryClient.setQueryData(["reapStatus"], runningAt(1, 4));
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    renderWithProviders(<ReapBar onGoToReap={() => {}} suppressed />, { client: queryClient });
+
+    act(
+      () =>
+        void queryClient.setQueryData(["reapStatus"], {
+          ...idle,
+          run_id: 7,
+          phase: "complete",
+          deleted_items: 4,
+          deleted_bytes: 4 * 1024 ** 3,
+        }),
+    );
+
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["candidates"] }));
   });
 });
 

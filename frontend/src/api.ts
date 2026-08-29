@@ -869,6 +869,10 @@ export interface Simulation {
   reclaimable_bytes: number;
   /** How many of the condemned have no size, left out of the total above. Hidden at zero. */
   unknown_size_items: number;
+  /** How many of `condemned` are titles the operator marked to reap by hand. A hand reap
+   *  condemns at any threshold, so these never move with the sliders and the panel says
+   *  so under the headline. */
+  hand_reaped: number;
   newly_condemned: number;
   no_longer_condemned: number;
   /** How many titles the last scan flags: the stored verdicts with overrides applied,
@@ -949,9 +953,31 @@ export interface RunSummary {
   id: number;
   state: string;
   approved_at: string;
+  /** When the run reached a terminal state (completed or aborted). `null` while a run
+   *  is planned or executing. */
+  finished_at: string | null;
   /** Why the run stopped early, as a typed reason: `null` on a run that did not abort.
    *  Read back from storage the same way `ActionStep.error_reason` is. */
   aborted_reason: ReasonKey | null;
+  /** How many items this run actually deleted. `null` until the run reaches a terminal
+   *  state, read as unknown rather than zero. */
+  deleted_items: number | null;
+  /** Bytes reclaimed by `deleted_items`. `null` on the same terms. */
+  deleted_bytes: number | null;
+  /** How many of `deleted_items` had no size, so are absent from `deleted_bytes`. `null`
+   *  on the same terms; above zero only when the operator's unmeasured allowance was
+   *  open. */
+  deleted_unmeasured: number | null;
+  /** How many planned items this run left alone. `null` on the same terms. */
+  skipped: number | null;
+}
+
+/** A page of the run history, plus how many rows match the request as a whole: the history
+ *  footer's "Showing N of M" and its "Show 50 more" button both need `total`, which
+ *  `runs.length` cannot answer once the list is paged. */
+export interface RunList {
+  runs: RunSummary[];
+  total: number;
 }
 
 export interface RunCheck {
@@ -983,13 +1009,44 @@ export interface RunReport {
   /** Why the run stopped early: the live reason the executor recorded on the run report, as
    *  a typed reason. `null` on a run that did not abort. */
   aborted_reason: ReasonKey | null;
+  /** What a real run actually deleted, or what a dry run proved it would delete. */
   would_delete_items: number;
+  /** The bytes behind `would_delete_items`, real or proven, minus the unmeasured ones. */
   deleted_bytes: number;
   /** How many deleted items had no size, so are absent from `deleted_bytes`. Above zero
    *  only when the operator allowed unmeasured items. Hidden at zero. */
   deleted_unmeasured: number;
+  /** Items a check kept, in a real run and a dry run alike. */
   skipped: number;
   outcomes: RunOutcome[];
+}
+
+/** One item's outcome, reconstructed from the durable journal rather than the live
+ *  in-memory report `RunOutcome` carries. `error_reason` is optional here, unlike
+ *  `RunOutcome.detail_reason`: a verified step's success sentence lives only in the
+ *  in-memory report, and the journal's own error column is null on a step that
+ *  succeeded, so this mirrors `ActionStep.error_reason`'s own convention. */
+export interface RunOutcomeRead {
+  media_key: string;
+  title: string;
+  kind: string;
+  size_bytes: number | null;
+  state: string; // verified | failed | skipped
+  error_reason: ReasonKey | null;
+  is_canary: boolean;
+  /** Whether the file's removal was confirmed. A failed step can carry true: the delete
+   *  landed and a follow-up did not, so the row must say "removed", never "kept". */
+  file_removed: boolean;
+}
+
+/** One window of a run's outcomes so far, from `GET /api/runs/{id}/outcomes`. Answers a
+ *  run still executing exactly as it answers one long finished: an item with no decided
+ *  outcome yet is left out, so the list grows as a run in flight goes. */
+export interface RunOutcomes {
+  outcomes: RunOutcomeRead[];
+  /** How many items have a decided outcome so far, not the plan's whole item count. */
+  outcome_count: number;
+  offset: number;
 }
 
 /** A running (or just-finished) reap. Polled while a reap is in flight, and read once on
@@ -1012,8 +1069,6 @@ export interface ReapStatus {
   /** Why the run stopped, composed under `error.*` with `composeError` (`why.ts`). `null`
    *  while running and on a clean finish. */
   error_reason: ReasonKey | null;
-  /** The after-action report, present once the run has ended (null while running). */
-  report: RunReport | null;
 }
 
 export interface ProfileSettings {
@@ -2327,7 +2382,12 @@ export const api = {
   startScan: () => post<ScanStatus>("/api/scan/start", {}),
   scanStatus: () => request<ScanStatus>("/api/scan/status"),
 
-  runs: () => request<RunSummary[]>("/api/runs"),
+  /** The recent plans, newest first, with `total` (of whatever `executedOnly` matches) for
+   *  the history view's "Showing N of M" and its "Show 50 more" paging. `executedOnly`
+   *  drops a plan that was built and never executed (the head Reap button, a standalone
+   *  practice run): the Reap page's history, the one caller here, reads it true. */
+  runs: (offset = 0, limit = 50, executedOnly = false) =>
+    request<RunList>(`/api/runs?offset=${offset}&limit=${limit}&executed_only=${executedOnly}`),
   run: (id: number) => request<Run>(`/api/runs/${id}`),
   /** A window of one run's journal, past the page the detail route carries. No component
    *  reads this yet: the step table still draws the first page and says how many it is not
@@ -2335,6 +2395,12 @@ export const api = {
    *  table's own paging will read when it is built. */
   runSteps: (id: number, offset = 0, limit = 50) =>
     request<RunSteps>(`/api/runs/${id}/steps?offset=${offset}&limit=${limit}`),
+  /** A window of one run's per-item outcomes, reconstructed from the journal. Answers a
+   *  run still executing exactly as it answers one long finished, which is what lets the
+   *  Reap page's live item-status feed, its done card, and the run detail sheet all read
+   *  the same source. */
+  runOutcomes: (id: number, offset = 0, limit = 50) =>
+    request<RunOutcomes>(`/api/runs/${id}/outcomes?offset=${offset}&limit=${limit}`),
   /** Build a plan, over an explicitly named set. `"all"` covers the whole condemned
    *  set; an array reaps just those items, the safe path for a first, hand-picked
    *  deletion.
@@ -2408,11 +2474,14 @@ export const api = {
       spare_days: spareDays,
     }),
   /** Clear any override (spare or reap). This does not delete anything: the item is
-   *  judged by the policy again on the next scan. */
-  clearOverride: (media_key: string) =>
-    request<{ removed: boolean }>(`/api/override/${encodeURIComponent(media_key)}`, {
-      method: "DELETE",
-    }),
+   *  judged by the policy again on the next scan. `includeSeasons` widens a show key's
+   *  clear to its season-level rows: only the bulk bar sends it, because a selected show
+   *  card shows every season's hand mark; level-scoped controls clear one key. */
+  clearOverride: (media_key: string, includeSeasons = false) =>
+    request<{ removed: boolean }>(
+      `/api/override/${encodeURIComponent(media_key)}${includeSeasons ? "?include_seasons=true" : ""}`,
+      { method: "DELETE" },
+    ),
 
   // --- auth ---------------------------------------------------------------
   me: () => request<AuthUser>("/api/auth/me"),

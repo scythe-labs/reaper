@@ -57,7 +57,9 @@
     "recovery": "<strong>Recovery mode is on.</strong> Deletion is held off. Turn it off and restart once you're back in.",
     "readOnly": "<strong>Read-only.</strong> Reaper can look but can't remove anything. <btn>Turn deletion on in Policy → Deletion</btn> when you're ready.",
     "readOnlyNoLink": "<strong>Read-only.</strong> Reaper can look but can't remove anything. You turn deletion on later, in Policy → Deletion.",
-    "armed": "<strong>Deletion is on.</strong> Reaper can remove media you approve, through Sonarr and Radarr."
+    "armed": "<strong>Deletion is on.</strong> Reaper can remove media you approve, through Sonarr and Radarr.",
+    "expand": "Show the full safety notice",
+    "collapse": "Show less"
   },
   "format": {
     "sizeUnknown": "Size unknown",
@@ -1065,7 +1067,7 @@
         "unmonitor_not_verified": "Unmonitor did not take. Refused to delete files while still monitored.",
         "unmonitor_verify_failed": "The season is still monitored after the unmonitor. Not deleting files."
       },
-      "stopped_by_operator": "You stopped this run, so it halted here. Anything already removed stays removed; nothing further was sent.",
+      "stopped_by_operator": "You stopped this run. Only the titles it had already reached were removed.",
       "unexpected": "The reap hit a problem it didn't expect: {error}",
       "unmeasured_for_caps": "Reaper couldn't measure the size of these items, so it can't check the run against your limits: {keys}. The run is aborted.",
       "unmeasured_over_limit": "This run would delete {unmeasured, plural, one {# item} other {# items}} Reaper couldn't measure, over your limit of {limit, plural, one {# item} other {# items}} per run. It stops rather than deleting just part. Raise the unknown-size allowance in Policy, under Pace and limits."
@@ -1801,21 +1803,20 @@
     }
   },
   "reapPlan": {
+    "actions": {
+      "practiceRun": "Practice run",
+      "reapButton": "Reap {count} {n, plural, one {title} other {titles}}…"
+    },
     "breakdown": {
-      "allowanceUnknown": "Reaper couldn't check how many titles with no known size it may remove, so it can't say how many this reap removes. {count} {n, plural, one {title} other {titles}} on the list can't be measured.",
+      "allHandReaps": "Your policy condemns nothing right now. Everything here is a title you marked to reap by hand.",
       "condemnedByPolicy": "Condemned by your policy",
-      "emptyMeasured": "A reap would remove nothing. Reaper couldn't measure any of the titles on the list, so it won't remove them.",
-      "emptyNone": "A reap would remove nothing. The last scan condemned nothing.",
-      "emptySpared": "A reap would remove nothing. You've spared everything the last scan condemned.",
       "expiredSpares": "<strong>{count} {n, plural, one {title is} other {titles are}} kept by {n, plural, one {a spare that expired} other {spares that expired}}.</strong> This reap won't remove {n, plural, one {it} other {them}}. A new scan judges {n, plural, one {it} other {them}} again.",
       "handReaped": "You marked to reap by hand",
       "handReapedHeld": "{count} {n, plural, one {reap you marked is} other {reaps you marked are}} on hold, so this reap won't remove {n, plural, one {it} other {them}} yet.",
       "handSpared": "You spared by hand",
+      "heldBack": "Held back, size unknown",
       "kept": "kept",
-      "loadFailed": "Couldn't load what a reap would remove. Reload to try again.",
-      "noScan": "No scan yet. Run one, and this shows what a reap would remove.",
-      "plexNotice": "Warning your Plex users first? “Leaving Soon” is in <btn>Settings → Plex</btn>.",
-      "reapCountMeta": "<strong>{count}</strong> {n, plural, one {title} other {titles}},",
+      "ledgerFoldLabel": "How this number was reached",
       "reasons": {
         "fewWatchers": "Few or no watchers",
         "lowRating": "Low rating",
@@ -1826,91 +1827,95 @@
       "reasonsHeading": "Why your policy condemned them",
       "reasonsOf": "of {count} {n, plural, one {title} other {titles}}",
       "reasonsOverlap": "Most titles have more than one reason, so these add up to more than the total.",
-      "reviewQueue": "Review queue",
-      "reviewQueueLead": "To spare a title or change a decision, open the",
       "scanFailed": "The scan didn't start. Try again.",
       "seeReview": "See Review",
-      "split": "{moviesCount} {movies, plural, one {movie} other {movies}}, {seasonsCount} {seasons, plural, one {TV season} other {TV seasons}}, smallest first, test item first.",
-      "sub": "Your policy's verdict from the last scan, with your own changes on top.",
-      "title": "What this reap removes",
-      "unmeasuredAllowed": "{count} {n, plural, one {title} other {titles}} can't be measured. Only as many as your Unknown-size items limit allows are removed.",
-      "unmeasuredHeld": "{count} {n, plural, one {title} other {titles}} can't be measured, so Reaper won't remove {n, plural, one {it} other {them}}.",
+      "singleTitleFootnote": "To spare or reap a single title, use <btn>Review</btn>.",
       "willBeReaped": "Will be reaped"
     },
     "degraded": {
       "notice": "<strong>This scan came back incomplete.</strong> {reason} You can still look at it, but Reaper won't act on it, so a plan can't be built. Fix the source and scan again."
     },
+    "detail": {
+      "itemStatus": "Item status",
+      "noOutcomes": "No titles were handled in this run."
+    },
+    "done": {
+      "heading": "Reap finished",
+      "keptByChecksHeading": "Kept by checks",
+      "problemsHeading": "Needs a look"
+    },
     "history": {
-      "heading": "Recent plans",
-      "openAbove": ", open above"
+      "empty": "No reaps yet.",
+      "freedRemoved": ", {bytes} freed, {count} removed",
+      "heading": "Past reaps",
+      "loadFailed": "Reaper couldn't load past reaps. Reload to try again.",
+      "row": "Run {id}",
+      "runningNow": ", running now",
+      "showMore": "Show 50 more",
+      "showingOf": "Showing {shown} of {total}"
+    },
+    "itemStatus": {
+      "failedReason": ", failed: {reason}",
+      "heading": "Item status, {count} handled",
+      "help": "You can leave this page. The reap keeps going.",
+      "keptReason": ", kept: {reason}",
+      "removedProblem": ", removed. {reason}",
+      "removedSr": "Removed:"
     },
     "page": {
-      "blurb": "A plan records exactly what a reap <em>would</em> do. You can do a practice run first. Nothing will be removed.",
-      "buildButton": "Build a plan from the last scan",
-      "title": "Reap plan"
+      "title": "Reap"
     },
-    "plan": {
-      "loadFailed": "Reaper couldn't load this plan. Reload the page to try again.",
-      "loading": "Loading the plan…",
-      "notFound": "That plan is no longer available."
+    "practiceRun": {
+      "dismiss": "Dismiss",
+      "keptSuffix": " {count} would be kept by checks.",
+      "passed": "Practice run passed. Nothing was deleted. This run would remove {count} {n, plural, one {title} other {titles}} and free about {bytes}.",
+      "running": "Practice run: walking every safety check without deleting anything…"
     },
-    "report": {
-      "moreOutcomes": "…and {count} more.",
-      "outcomesLabel": "What the practice run walked",
-      "stoppedTitle": "The run stopped. Nothing was touched",
-      "walkedAll": "Practice run complete. Every safety check ran and nothing was sent. <walkedNum>{soulsCount}</walkedNum> were walked end to end.",
-      "walkedSkipped": "Practice run complete. Every safety check ran and nothing was sent. <walkedNum>{soulsCount}</walkedNum> were walked, and <skipNum>{skippedCount}</skipNum> of them would be skipped."
-    },
-    "runState": {
-      "done": "done",
-      "notRun": "not run",
-      "running": "running",
-      "stopped": "stopped"
-    },
-    "steps": {
-      "headers": {
-        "action": "Action",
-        "ordinal": "#",
-        "request": "Request",
-        "state": "State"
-      },
-      "more": "…and {count} more {n, plural, one {step} other {steps}}, not shown. The run still covers every one of them.",
-      "regionLabel": "Plan steps",
-      "testItem": "test item",
-      "kind": {
-        "radarrDelete": "Delete the files",
-        "sonarrUnmonitor": "Stop monitoring",
-        "sonarrVerifyUnmonitor": "Confirm monitoring is off",
-        "sonarrDeleteFiles": "Delete the files"
-      },
-      "state": {
-        "pending": "waiting",
-        "sent": "sent",
-        "verified": "confirmed",
-        "failed": "failed",
-        "skipped": "skipped"
-      }
+    "reaping": {
+      "finishingUp": "Finishing up. Refreshing Plex so your library matches.",
+      "nowRemoving": "Now removing: {title}",
+      "progressValueText": "{done} of {total} handled",
+      "stop": "Stop, keep the rest"
     },
     "summary": {
-      "connectPlex": "Connect Plex in Settings",
-      "deletionOff": "Deletion is off, so this plan can't run.",
-      "execute": "Execute…",
-      "executeDisabledTitle": "Turn deletion on first",
-      "heldBackUnknownSize": "{soulsCount} {n, plural, one {is} other {are}} held back. Reaper couldn't measure {n, plural, one {its} other {their}} size, so it won't delete {n, plural, one {it} other {them}}.",
-      "planLine": "{souls}, {bytes}, smallest first, and the first is a test: if it doesn't go exactly as planned, the run stops.",
-      "practiceRun": "Practice run",
-      "safetyUnknown": "Reaper couldn't confirm whether deletion is on, so this plan can't run from here.",
+      "allowanceUnknown": "Reaper couldn't check how many titles with no known size it may remove, so it can't say how many this reap removes. {count} {n, plural, one {title} other {titles}} on the list can't be measured.",
+      "blockers": {
+        "fixArr": "Connect Radarr or Sonarr in Settings → Services",
+        "fixPassword": "Set a password in Settings → Security",
+        "fixPlex": "Connect Plex in Settings",
+        "fixTautulli": "Connect Tautulli in Settings → Services"
+      },
+      "emptyMeasured": "A reap would remove nothing. Reaper couldn't measure any of the titles on the list, so it won't remove them.",
+      "emptyNone": "A reap would remove nothing. The last scan condemned nothing.",
+      "emptySpared": "A reap would remove nothing. You've spared everything the last scan condemned.",
+      "help": {
+        "heldBack": "{count} {n, plural, one {title} other {titles}} with unknown size {n, plural, one {is} other {are}} held back.",
+        "included": "{count} {n, plural, one {title} other {titles}} with unknown size {n, plural, one {is} other {are}} included, up to your allowance.",
+        "review": "See every title in <btn>Review</btn>."
+      },
+      "loadFailed": "Couldn't load what a reap would remove. Reload to try again.",
+      "noScan": "No scan yet. Run one, and this shows what a reap would remove.",
       "setupUnknown": "Reaper couldn't check whether Plex and Tautulli are connected. Without either one a real run is refused.",
-      "staleCheckPending": "Checking whether this plan came from the latest scan…",
-      "staleRun": "This plan came from an older scan, so it can list titles you have since protected. <btn>Build a new plan</btn>",
-      "staleUnknown": "Reaper couldn't check whether this plan came from the latest scan. <btn>Build a new plan</btn>",
-      "turnOnLink": "Turn it on in Policy → Deletion"
+      "tiles": {
+        "movies": "movies",
+        "seasons": "seasons",
+        "titles": "titles",
+        "toFree": "to free"
+      }
+    },
+    "tiles": {
+      "freed": "freed",
+      "freedSoFar": "freed so far",
+      "keptByChecks": "kept by checks",
+      "removed": "removed"
     }
   },
   "reapConfirm": {
     "arm": {
+      "armedLine": "Deletion is armed.",
       "off": "Deletion is <strong>off</strong>. Turn it on in <em>Policy → Deletion</em> (it asks for your admin password), then come back here.",
-      "typePhrase": "Type <code>{phrase}</code> to confirm:",
+      "placeholder": "Type it here",
+      "typePhrase": "Type the phrase to confirm. It names exactly what this run will remove.",
       "unknown": "Reaper couldn't confirm whether deletion is on, so nothing can be reaped from here. Check <em>Policy → Deletion</em>, then reload this page."
     },
     "bar": {
@@ -1918,18 +1923,14 @@
       "dismiss": "Dismiss",
       "endedLabel": "{phase, select, error {Reap failed.} aborted {Stopped.} other {Reaped.}}",
       "errorSuffix": ". {error}",
-      "freedSuffix": ", {bytes} freed",
+      "freed": "{bytes} freed",
       "reapingCount": "Reaping, {done} of {total}",
       "removedFreed": "{souls} removed, {bytes} freed",
       "stopError": "Reaper couldn't stop the reap: {error}",
       "view": "View",
       "viewReport": "View report"
     },
-    "failed": {
-      "body": "<strong>The reap stopped on a problem.</strong> {error} Anything already removed is gone. Check the Review queue after the next scan.",
-      "unknownError": "Reaper couldn't say what went wrong."
-    },
-    "freedAmount": "{bytes} freed",
+    "execute": "Reap",
     "heldBack": "{souls} {n, plural, one {is} other {are}} held back. Reaper couldn't measure {n, plural, one {its} other {their}} size, so it won't delete {n, plural, one {it} other {them}}.",
     "otherRunning": "Another reap is running. Wait for it to finish, then reopen this to reap.",
     "practiceRun": {
@@ -1938,31 +1939,18 @@
       "announceUnknownSafety": "Practice run passed, but Reaper couldn't confirm whether deletion is on.",
       "checking": "Checking every safety stop with a practice run…",
       "failed": "The practice run failed, so nothing can be executed: {message}",
-      "passed": "Practice run passed: the plan is sound, and it sent nothing.",
+      "passed": "Practice run passed. Nothing was deleted.",
       "stopped": "The plan stopped. Nothing would be touched."
     },
     "progress": {
-      "announceStopping": "Stopping after the current one.",
-      "announceTick": "{pct}% deleted.",
       "ariaLabel": "Reaping",
-      "count": "{done} of {total} souls",
       "valueText": "{pct}%, {done} of {total} removed"
     },
-    "reapCount": "Reap {souls}",
     "reapingLabel": "Reaping…",
-    "result": {
-      "checkFailed": "Failed: ",
-      "checkPassed": "Passed: ",
-      "reclaimed": "{souls} reclaimed",
-      "refreshedNote": " Plex is refreshed for what was removed, and a fresh scan is running so the queue matches your library.",
-      "sparedAtLastMoment": ", {n} spared at the last moment",
-      "unmeasuredSuffix": ", {n} of unknown size"
-    },
-    "sparedAmount": ", {n} spared",
     "stop": "Stop",
     "stopping": "Stopping…",
     "stoppingLabel": "Stopping after the current one…",
-    "summary": "{souls}, {bytes}, smallest first, and the first is a test: if it doesn't go exactly as planned, the run stops. This removes the files through Sonarr/Radarr and adds an import exclusion so they won't silently re-download."
+    "title": "Reap {count} {n, plural, one {title} other {titles}}, {bytes}"
   },
   "reapReadiness": {
     "arr": "Reaper can't remove anything until Radarr or Sonarr is connected. It removes files through them, never on its own.",
@@ -2457,6 +2445,8 @@
     "appliesOnNextScan": "Policy changes apply on the next scan, which starts by itself after saving.",
     "comparisonLine": "Your last scan flags <beforeNum>{beforeCount}</beforeNum>. This draft flags <afterNum>{afterCount}</afterNum>.",
     "deltaBlurb": "What changes compared with the list you already reviewed.",
+    "handReapsAll": "All of these are titles you marked to reap by hand. They stay on the list whatever you set here.",
+    "handReapsSome": "{count} of these {n, plural, one {is a title} other {are titles}} you marked to reap by hand. {n, plural, one {It stays} other {They stay}} on the list whatever you set here.",
     "histogram": {
       "bucketTooltip": "{low}–{high}: {n} items"
     },
@@ -2618,7 +2608,7 @@
     "bulkFailuresMessage": "{n, plural, one {1 item could not be updated. It is still selected so you can try again.} other {# items could not be updated. They are still selected so you can try again.}}",
     "clearFilters": "Clear filters",
     "clearOverrideButton": "Clear override",
-    "clearOverrideTitle": "Remove any override and let Reaper judge these again",
+    "clearOverrideTitle": "Remove every override, a show's season decisions included. Reaper judges these again.",
     "clearWholeSelectionTitle": "Clear the whole selection, including the cards not drawn yet",
     "collCounts": "{plexCount} in the collection, {scannedCount} in the last scan.",
     "collFateError": "Couldn't read the counts for this collection.",
@@ -3122,11 +3112,7 @@
   "shell": {
     "app": {
       "brandTagline": "Grave decisions, clearly explained",
-      "loadingReap": "Loading the reap…",
       "loadingReaperEllipsis": "Loading Reaper…",
-      "reapLoadFailed": "Reaper couldn't load this reap. Close this and try View again.",
-      "reapReportTitle": "Reap report",
-      "reapUnavailable": "That reap is no longer available.",
       "routeLoadingSlow": "Still loading. Reaper is fetching this page.",
       "statusLabel": "Status",
       "stillLoadingReaper": "Still loading Reaper."

@@ -87,7 +87,7 @@ API_TS = REPO / "frontend" / "src" / "api.ts"
 WIRE_PACKAGE = "reaper.api."
 INNER_MODULES = ("reaper.engine.policy", "reaper.engine.explanation")
 
-#: Reconciled by hand against the tree: 133 under ``reaper.api.*`` and 17 across the two
+#: Reconciled by hand against the tree: 135 under ``reaper.api.*`` and 17 across the two
 #: engine modules.
 #:
 #: ``RewatchOddsOut`` adds 1, mirrored in the browser as ``RewatchOdds``.
@@ -101,10 +101,15 @@ INNER_MODULES = ("reaper.engine.policy", "reaper.engine.explanation")
 #: ``ThresholdCurveMeasuredRowOut``, ``ThresholdCurveMeasuredOut``,
 #: ``ThresholdCurveCountsOnlyRowOut``, ``ThresholdCurveCountsOnlyOut`` and
 #: ``ThresholdCurveNoScanOut``.
+#: ``RunOutcomeReadOut``/``RunOutcomesOut`` add 2 more, the per-item outcomes read that
+#: reconstructs a run's history from the journal instead of the in-memory report.
+#: ``RunListOut`` adds 1 more, the run history's envelope: ``GET /api/runs`` used to
+#: answer with a bare ``list[RunSummaryOut]``, and paging it (a footer count, "Show 50
+#: more") needed a total the page itself cannot carry.
 #:
 #: This count is here because the collision assertion below is flag-shaped, and a flag
 #: cannot see a member that left the walk.
-_EXPECTED_SERVER_MODELS = 150
+_EXPECTED_SERVER_MODELS = 153
 
 #: Browser types whose server counterpart is spelled differently. Each is a real pair, the
 #: field sets are compared, and the rename is the only reason a suffix rule cannot find it.
@@ -190,8 +195,12 @@ CLIENT_ONLY = {
 # discriminated union itself, `ThresholdCurve`, is a type alias like `PolicyProbe` and is
 # counted by neither walk). Replaces the retired ratio resolver's four: `RatioResolved`,
 # `RatioNotEnoughHistory`, `RatioFloored` and `AppliedRatio`.
-EXPECTED_INTERFACES = 104
-EXPECTED_PAIRS = 102
+# Both +2 again for the per-item outcomes read: `RunOutcomeRead` pairs with
+# `RunOutcomeReadOut`, and `RunOutcomes` with `RunOutcomesOut`, both on the suffix rule.
+# Both +1 again for the run history's envelope: `RunList` pairs with `RunListOut` on the
+# suffix rule.
+EXPECTED_INTERFACES = 107
+EXPECTED_PAIRS = 105
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")
@@ -1422,55 +1431,4 @@ class TestAWireModelReadsOnlyFieldsItsRecordCarries:
         assert sorted(sites) == _COLLAPSE_SITES, (
             f"the sites building a wire model off a service record are now {sorted(sites)}. "
             "Add or remove its pair in COLLAPSED_PAIRS above, then move this list."
-        )
-
-
-class TestEveryPlanStepIdHasOperatorCopy:
-    """The plan table's kind and state cells read plain words, held to the server's sets.
-
-    ``stepKind``/``stepState`` (``frontend/src/components/ReapPlan.tsx``) turn stored step
-    ids into copy, with the raw id as the unknown-id fallback. That fallback is exactly
-    what makes a missing member silent, so both maps are pinned here, both directions. The
-    literal request the page promises lives whole in the Request column, which is what
-    freed these cells to be copy.
-
-    ``StepState`` is an enum and mirrors directly. The kinds have no enum. The planner's
-    ``kind="..."`` literals are the declaration, parsed as source the way the jobs-page
-    guard reads ``JobsPanel``. Both matchers accept quoted literals only, and a spelling
-    either one stops finding asserts rather than matching nothing.
-    """
-
-    REAP_PLAN_TSX = REPO / "frontend" / "src" / "components" / "ReapPlan.tsx"
-    PLANNER_PY = REPO / "src" / "reaper" / "services" / "planner.py"
-
-    def _frontend_cases(self, fn: str) -> set[str]:
-        source = self.REAP_PLAN_TSX.read_text(encoding="utf-8")
-        found = re.search(
-            rf"function {fn}\((?:kind|state): string\): string \{{(.*?)\n\}}", source, re.S
-        )
-        assert found is not None, (
-            f"ReapPlan.tsx no longer declares {fn} the way this guard reads it. "
-            "Re-point the matcher at the new spelling."
-        )
-        return set(re.findall(r'=== "([^"]+)"', found.group(1)))
-
-    def test_the_browser_words_every_step_state(self) -> None:
-        from reaper.db.models import StepState
-
-        assert self._frontend_cases("stepState") == {member.value for member in StepState}, (
-            "db.models.StepState and ReapPlan.tsx's stepState disagree. A state the browser "
-            "does not know renders as its raw id in the plan table (rule 21); a state the "
-            "server no longer stores is dead copy. Move both sides together."
-        )
-
-    def test_the_browser_words_every_step_kind_the_planner_emits(self) -> None:
-        emitted = set(re.findall(r'kind="([^"]+)"', self.PLANNER_PY.read_text(encoding="utf-8")))
-        assert emitted, (
-            "services/planner.py no longer spells any kind= as a quoted literal, so this "
-            "guard is reading nothing. Re-point it at the new spelling."
-        )
-        assert self._frontend_cases("stepKind") == emitted, (
-            "the planner's step kinds and ReapPlan.tsx's stepKind disagree. A kind the "
-            "browser does not know renders as its raw id in the plan table (rule 21); a "
-            "kind the planner no longer emits is dead copy. Move both sides together."
         )

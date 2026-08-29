@@ -377,6 +377,7 @@ async def _replay_simulation(
     newly = gone = 0
     before = 0
     changed = 0
+    hand_reaped = 0
     # (row, re-decided score). This is the new score, since a weight edit
     # moves it, not the stored one.
     newly_rows: list[tuple[Candidate, int]] = []
@@ -470,6 +471,8 @@ async def _replay_simulation(
                 gone += 1
         if verdict == "condemn":
             condemned += 1
+            if override == "reap":
+                hand_reaped += 1
             if row.size_bytes is None:
                 unknown_size += 1
             else:
@@ -494,6 +497,7 @@ async def _replay_simulation(
         abstained=abstained,
         reclaimable_bytes=reclaimable,
         unknown_size_items=unknown_size,
+        hand_reaped=hand_reaped,
         newly_condemned=newly,
         no_longer_condemned=gone,
         condemned_before=before,
@@ -712,6 +716,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
     newly = gone = 0
     before = 0
     changed = 0
+    hand_reaped = 0
     newly_rows: list[Candidate] = []
     spared_by: Counter[str] = Counter()
 
@@ -759,6 +764,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
                 spared_by.update({*_fired_gates(row.explanation_json), HAND_SPARE_TALLY_ID})
             elif reap_is_effective(row):
                 condemned += 1
+                hand_reaped += 1
                 if row.size_bytes is None:
                     unknown_size += 1
                 else:
@@ -843,6 +849,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         abstained=abstained,
         reclaimable_bytes=reclaimable,
         unknown_size_items=unknown_size,
+        hand_reaped=hand_reaped,
         newly_condemned=newly,
         no_longer_condemned=gone,
         condemned_before=before,

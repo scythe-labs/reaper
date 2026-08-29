@@ -74,20 +74,10 @@ const CONTAINERS: Record<string, Container> = {
     reach: "focusable",
     why: "log rows are <span>s; nothing in the console can take focus",
   },
-  ".table-scroll": {
-    file: "components/ReapPlan.tsx",
-    reach: "focusable",
-    why: "the plan-steps table is the journalled record of what a run will send, and no cell is focusable",
-  },
   ".matrix-scroll": {
     file: "components/ListsPanel.tsx",
     reach: "focusable",
     why: "the per-server counts matrix scrolls sideways on a narrow pane and holds no focusable cell, so the box itself takes the tabIndex to carry the scroll",
-  },
-  ".dryrun-outcomes": {
-    file: "components/ReapPlan.tsx",
-    reach: "focusable",
-    why: "the practice-run outcome list is text; the list keeps its listitems and takes the tabIndex itself",
   },
   ".why": {
     file: "components/WhyShell.tsx",
@@ -128,6 +118,16 @@ const CONTAINERS: Record<string, Container> = {
     file: "components/PolicyRuleEditors.tsx",
     reach: "has-controls",
     why: "an aria-activedescendant listbox: the <input> keeps DOM focus and the arrow keys move the active option, so the operator drives it without the list ever taking focus. It holds no focusable child of its own, which is why it reads as an exception here rather than as one of the buttons-inside cases",
+  },
+  ".feed-scroll": {
+    file: "components/ReapPlan.tsx",
+    reach: "focusable",
+    why: "the reaping card's item-status log is icon, title and size spans, none of them focusable",
+  },
+  ".run-detail-scroll": {
+    file: "components/ReapPlan.tsx",
+    reach: "focusable",
+    why: "the run detail sheet's outcomes feed is the same spans as .feed-scroll, with nothing focusable in a row",
   },
 };
 

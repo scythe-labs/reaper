@@ -56,6 +56,21 @@ button.link:hover:not(:disabled) {
   background: none;
   text-decoration: underline;
 }
+/* A solid condemn button, for the one control on a page that starts a real deletion (the
+ * Reap tab's head button). `.danger` alone stays the quieter red-on-gray reserved for a
+ * destructive action beside other ordinary ones (a service row's Remove, the queue's bulk
+ * Reap now); this is for the single button a screen leads with. */
+button.danger.fill {
+  background: var(--condemn);
+  border-color: transparent;
+  color: var(--condemn-soft);
+  font-weight: var(--weight-semi);
+}
+button.danger.fill:hover:not(:disabled) {
+  background: var(--condemn);
+  border-color: transparent;
+  filter: brightness(1.06);
+}
 .btn-block {
   width: 100%;
   justify-content: center;

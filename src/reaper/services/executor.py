@@ -126,18 +126,17 @@ from reaper.db.models import (
 from reaper.engine.policy import ProfileSettings
 from reaper.engine.reason import Reason, to_stored
 from reaper.refusal import MESSAGES, Refusal, english
-from reaper.services import list_config, whitelist
+from reaper.services import list_config, run_totals, whitelist
 from reaper.services.condemned import effective_condemned, effective_verdict
 from reaper.services.planner import MediaRef, manifest_hash
 from reaper.services.profiles import live_policy_hash
 
 log = structlog.get_logger(__name__)
 
-#: The irreversible step of an item's plan, the one that removes files. A movie has a
-#: ``radarr_delete``; a season's file delete is ``sonarr_delete_files``, reached only
-#: after its reversible unmonitor and the verification of it. Everything else in a
-#: season plan is a read or a reversible edit.
-_TERMINAL_DELETE_KINDS = frozenset({"radarr_delete", "sonarr_delete_files"})
+#: The irreversible step of an item's plan, the one that removes files. Declared in
+#: services.run_totals, since the terminal-totals write and the outcomes read need the
+#: same set; see that module for what each kind means.
+_TERMINAL_DELETE_KINDS = run_totals.TERMINAL_DELETE_KINDS
 
 #: How many times each post-delete settle re-reads before concluding it did not land.
 #: Fixed, not injected: no caller ever needed a different count. The paired delays stay
@@ -434,6 +433,19 @@ class StepOutcome:
     stale. A VERIFIED outcome needs no flag (``deleted_items`` already counts it), so this
     defaults False and is set only where a removal is proven under a failure."""
 
+    proven: bool = False
+    """Set on the SKIPPED outcome a dry run records for an item it proved it would delete.
+
+    A dry run's proof and a real check's veto both end SKIPPED, and the report must count
+    them apart: the proof is what the run would remove, the veto is what it would keep.
+    Carried as a flag beside the state rather than inferred from the detail's catalog key,
+    so the tally cannot silently break when the sentence around the plan text changes."""
+
+    proven_size_bytes: int | None = None
+    """The frozen ``Candidate.size_bytes`` of a ``proven`` item, so the report can say how
+    much a dry run would free. ``None`` on a proven item means the size is unknown, the
+    same meaning the column has. Always ``None`` when ``proven`` is False."""
+
     halts_run: bool = False
     """Set on a FAILED outcome the executor could not classify, which stops the whole run.
 
@@ -467,6 +479,18 @@ class RunReport:
     whole story."""
 
     skipped: int = 0
+    """Items a check kept, in a real run and a dry run alike. A dry run's own
+    prove-don't-send outcomes are not in here: those land in ``would_delete_items``."""
+
+    would_delete_items: int = 0
+    """Items a dry run proved it would delete. Always 0 for a real run."""
+
+    would_delete_bytes: int = 0
+    """Frozen bytes behind ``would_delete_items``, minus the unmeasured ones."""
+
+    would_delete_unmeasured: int = 0
+    """How many of ``would_delete_items`` had no size, so are absent from
+    ``would_delete_bytes``."""
 
     removed_unconfirmed: int = 0
     """Items whose file is gone but whose step ended FAILED: a delete Radarr honored whose
@@ -1389,12 +1413,50 @@ class Executor:
             # no stamp is bytes the rolling 30-day budget never charges, so a later run
             # could spend past what the operator set.
             await self._commit_journal(what="the journal writes that did not land", write=pending)
+        if terminal is not None:
+            # Read after the pending retry just above, not before: a file_removed_at
+            # that only just landed there must still be counted, or the totals would
+            # read light by exactly the amount that retry exists to recover. Cheap
+            # either way, one SELECT and one UPDATE, so it runs even on a canceled run.
+            await self._write_run_totals(run_id)
         if canceled:
             if self._pending_refreshes:
                 log.info("reap.plex_tidy_deferred", paths=len(self._pending_refreshes))
             return
         if self._pending_refreshes:
             await self._finalize_plex()
+
+    async def _write_run_totals(self, run_id: int) -> None:
+        """Write the run's four terminal totals, best-effort.
+
+        A query or a write that fails here leaves the four columns exactly as they were,
+        NULL on a run's first terminal write, which reads as unknown rather than a wrong
+        number. The run's own state, written just above, does not depend on this landing:
+        a summary that could not be computed must never hold up the record that the run
+        is over. ``run_totals.aggregate_rows`` is the one place these four numbers are
+        derived, the same one the backfill migration calls for a run that finished before
+        these columns existed.
+        """
+        try:
+            rows = (await self._session.execute(run_totals.totals_query(run_id))).all()
+        except Exception as exc:
+            log.warning("reap.run_totals_unreadable", run_id=run_id, error=str(exc))
+            return
+        totals = run_totals.aggregate_rows(rows)
+        await self._commit_journal(
+            what="the run's totals",
+            write=[
+                update(ReapRun)
+                .where(ReapRun.id == run_id)
+                .values(
+                    deleted_items=totals.deleted_items,
+                    deleted_bytes=totals.deleted_bytes,
+                    deleted_unmeasured=totals.deleted_unmeasured,
+                    skipped=totals.skipped,
+                )
+                .execution_options(synchronize_session=False)
+            ],
+        )
 
     async def _check_rolling_caps(self, deletes: Sequence[_Delete]) -> None:
         """The 30-day budget: past verified deletions plus this run must fit both rolling
@@ -1623,7 +1685,18 @@ class Executor:
             )
 
             if outcome.state == StepState.SKIPPED:
-                report.skipped += 1
+                # A dry run's prove-don't-send outcome and a check's veto share the state,
+                # and the report counts them apart: the first is what the run would
+                # remove, the second is what it kept. Conflating them once made the
+                # practice run tell the operator it would remove nothing.
+                if outcome.proven:
+                    report.would_delete_items += 1
+                    if outcome.proven_size_bytes is None:
+                        report.would_delete_unmeasured += 1
+                    else:
+                        report.would_delete_bytes += outcome.proven_size_bytes
+                else:
+                    report.skipped += 1
                 self._emit_progress(done, total, report, outcome.title)
                 if not journalled:
                     raise ExecutionError("error.reap.journal_halt")
@@ -1802,6 +1875,24 @@ class Executor:
                 )
 
         if self._dry_run:
+            # The same frozen-size gate the real send runs first (``_send_movie`` and
+            # ``_send_season``): a size from a source the live re-read cannot be compared
+            # against, or no size with the allowance shut, keeps the item there, so it
+            # must not be counted as proven here either. Everything this gate reads is
+            # frozen-side and settings-side, fully available to a dry run, and without it
+            # the practice run's would-delete counts vouch for items the real run refuses.
+            comparable = (
+                _SEASON_COMPARABLE
+                if delete.terminal.kind == "sonarr_delete_files"
+                else _MOVIE_COMPARABLE
+            )
+            if not self._may_send_unmeasured(candidate, comparable):
+                return self._mark_skipped(
+                    delete,
+                    _NO_APPROVED_SIZE_REASON,
+                    check=_NO_APPROVED_SIZE_CHECK,
+                    is_canary=is_canary,
+                )
             # The heart of the dry run: prove everything, send nothing, mutate nothing.
             # The full sequence is shown in the detail, but the step rows are left
             # PENDING so the plan is still runnable for real afterward. The plan text is
@@ -1819,6 +1910,8 @@ class Executor:
                 detail=Reason("error.reap.step.dry_run", {"plan": " -> ".join(parts)}),
                 title=candidate.title,
                 is_canary=is_canary,
+                proven=True,
+                proven_size_bytes=candidate.size_bytes,
             )
 
         # A real send. Each step is marked SENT and committed before its guarded call, and

@@ -30,7 +30,7 @@ import { shippedSource, srcRelative } from "./test/sources";
 //: Every `.ts`/`.tsx` the SPA ships, which is the population the ban below scans. Pinned
 //: because the ban's expected result is empty, so a walk that stopped reading the tree would
 //: agree with a clean one exactly. Bump it when you add or delete a module.
-const EXPECTED_SHIPPED_MODULES = 127;
+const EXPECTED_SHIPPED_MODULES = 128;
 
 const parse = (fileName: string, text: string) =>
   ts.createSourceFile(

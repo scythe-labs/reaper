@@ -30,7 +30,7 @@ from sqlalchemy.exc import IntegrityError, PendingRollbackError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
 
-from reaper.api.runs import STEP_PAGE, _planned_candidates, _run_out
+from reaper.api.runs import STEP_PAGE, _planned_candidates, _run_out, _run_outcomes
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import ActiveStream, PlexError, PlexSectionPaths
 from reaper.clock import utcnow
@@ -143,9 +143,12 @@ async def _seed_instances(session: AsyncSession, media_keys: Iterable[str]) -> N
 
 
 async def _snapshot_with(session: AsyncSession, condemned: Sequence[tuple[str, int | None]]) -> int:
-    """A snapshot plus a set of condemned movie candidates: (media_key, size_bytes).
+    """A snapshot plus a set of condemned candidates: (media_key, size_bytes).
 
-    A ``None`` size is an item nothing would measure, which is not the same as a zero."""
+    A ``None`` size is an item nothing would measure, which is not the same as a zero.
+    Media type and size source come from the key's shape, the way a real scan stamps
+    them: a fixture that stamped a season's size as Radarr's would be refused by the
+    frozen-size gate on a path a real scan's data sails through."""
     now = utcnow()
     await _seed_instances(session, [media_key for media_key, _ in condemned])
     snapshot = Snapshot(
@@ -162,14 +165,15 @@ async def _snapshot_with(session: AsyncSession, condemned: Sequence[tuple[str, i
     await session.flush()
 
     for i, (media_key, size) in enumerate(condemned):
+        media_type = "season" if media_key.startswith("sonarr:") else "movie"
         session.add(
             Candidate(
                 snapshot_id=snapshot.id,
                 media_key=media_key,
                 title=f"Movie {i}",
-                media_type="movie",
+                media_type=media_type,
                 size_bytes=size,
-                size_source=SizeSource.RADARR if size is not None else None,
+                size_source=_source_for(media_type) if size is not None else None,
                 verdict="condemn",
                 score=90,
                 coverage_bp=10_000,
@@ -423,6 +427,12 @@ class TestDryRunProvesEverythingAndDeletesNothing:
         assert report.state is RunState.COMPLETED
         assert report.dry_run is True
         assert report.deleted_items == 0  # nothing was actually deleted
+        # What the run proved it would remove is counted apart from anything a check
+        # kept, with the frozen sizes behind it, so a practice run can state both numbers.
+        assert report.would_delete_items == 2
+        assert report.would_delete_bytes == 6 * GB
+        assert report.would_delete_unmeasured == 0
+        assert report.skipped == 0
         # Every step is recorded as what it would have done, as the raw request sequence,
         # not as an English "would" sentence.
         assert all(o.state is StepState.SKIPPED for o in report.outcomes)
@@ -1065,6 +1075,55 @@ class TestAnApprovedSizeThatWasNeverConfirmed:
         report = await _real(session, run, _gateway(radarr={1: (radarr := FakeRadarr())}))
 
         assert radarr.delete_calls == []
+        assert report.skipped == 1
+
+    async def test_a_dry_run_does_not_prove_a_size_the_real_send_refuses(
+        self, session: AsyncSession
+    ) -> None:
+        """The practice run's counts are what the confirm sheet vouches with, so they
+        must not include an item the real run's own frozen-size gate keeps. Same setup
+        as the real-run test above, walked dry."""
+        snapshot_id = await _snapshot_one(
+            session, media_key="radarr:1:1", rating_key=700, size=1 * GB
+        )
+        run = await _plan(session, snapshot_id)
+        candidate = (
+            await session.execute(select(Candidate).where(Candidate.media_key == "radarr:1:1"))
+        ).scalar_one()
+        candidate.size_source = SizeSource.RADARR_FILE
+        await session.flush()
+
+        report = await Executor(
+            session, safety=_read_only(), settings=ProfileSettings(), dry_run=True
+        ).execute(run.id)
+
+        assert report.would_delete_items == 0
+        assert report.would_delete_bytes == 0
+        assert report.skipped == 1
+        assert report.outcomes[0].detail.id == "error.reap.step.no_approved_size"
+
+    async def test_a_dry_run_honors_an_allowance_lowered_after_planning(
+        self, session: AsyncSession
+    ) -> None:
+        """An unmeasured item planned under the allowance is refused at send once the
+        operator lowers it to zero, so the practice run must not count it as proven
+        either: it reads the same settings the send does."""
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", None, 701), ("radarr:1:2", 1 * GB, 702)]
+        )
+        run = await build_plan(
+            session, snapshot_id=snapshot_id, approved_by="admin", max_unmeasured=1
+        )
+
+        report = await Executor(
+            session,
+            safety=_read_only(),
+            settings=ProfileSettings(max_unmeasured_per_run=0),
+            dry_run=True,
+        ).execute(run.id)
+
+        assert report.would_delete_items == 1  # the measured one alone
+        assert report.would_delete_unmeasured == 0
         assert report.skipped == 1
 
     async def test_the_item_cap_counts_only_items_with_a_confirmed_size(
@@ -2532,6 +2591,7 @@ class TestASpareIsHonoredAtExecuteTime:
 
         assert report.state is RunState.COMPLETED
         assert report.skipped == 1
+        assert report.would_delete_items == 0  # a veto is a keep, never a proven send
         assert report.outcomes[0].detail.id == "error.reap.step.spared_by_hand"
 
 
@@ -4240,6 +4300,215 @@ class TestARemovalIsCountedEvenWhenTheStepFails:
 
 
 # ---------------------------------------------------------------------------
+# The run's terminal totals, written once for a real run
+# ---------------------------------------------------------------------------
+
+
+class TestRunTotalsAreWrittenOnATerminalRun:
+    """``ReapRun.deleted_items``/``deleted_bytes``/``deleted_unmeasured``/``skipped`` are
+    written once, inside the same crash-safe path that makes the run's own terminal
+    state durable (``Executor._commit_and_finalize``), so a restart-durable summary
+    survives even though the in-memory ``RunReport`` does not. ``None`` means "not
+    reached a terminal state," never zero, which is what a run still PLANNED, EXECUTING,
+    or run only as a dry run reads.
+    """
+
+    async def test_a_clean_completion(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 2 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+
+        report = await _real(session, run, _gateway(radarr={1: FakeRadarr()}))
+
+        assert report.state is RunState.COMPLETED
+        stored = await _stored_run(async_factory, run.id)
+        assert stored.deleted_items == 2
+        assert stored.deleted_bytes == 3 * GB
+        assert stored.deleted_unmeasured == 0
+        assert stored.skipped == 0
+
+    async def test_an_abort_before_anything_ran_still_writes_zeros_not_none(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A cap breach aborts before ``_run_deletes`` ever starts, so nothing was
+        journalled. The totals are still written, as zero, which is a fact ("this run
+        deleted nothing") and distinct from NULL ("this run never finished")."""
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 1 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+        settings = ProfileSettings(max_items_per_run=1, max_items_per_30d=100)
+
+        report = await _real(session, run, _gateway(radarr={1: FakeRadarr()}), settings=settings)
+
+        assert report.state is RunState.ABORTED
+        stored = await _stored_run(async_factory, run.id)
+        assert (
+            stored.deleted_items,
+            stored.deleted_bytes,
+            stored.deleted_unmeasured,
+            stored.skipped,
+        ) == (0, 0, 0, 0)
+
+    async def test_a_stop_mid_run_records_what_happened_before_it(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+
+        answers = iter([False, True])  # running for the first item, stopped before the second
+
+        async def stopping() -> bool:
+            return next(answers)
+
+        report = await _real(
+            session, run, _gateway(radarr={1: FakeRadarr()}), stop_recheck=stopping
+        )
+
+        assert report.state is RunState.ABORTED
+        stored = await _stored_run(async_factory, run.id)
+        assert stored.deleted_items == 1  # only the first item was ever sent
+        assert stored.deleted_bytes == 1 * GB
+        assert stored.skipped == 0
+
+    async def test_an_unmapped_crash_records_what_happened_before_it(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """The same scenario ``TestAnUnmappedErrorStopsTheRunWithoutWedgingIt`` proves
+        does not wedge the run: an unmapped exception after a file is already gone. The
+        totals must reflect that removal too, read fresh from the journal rather than
+        from the in-memory report the crash interrupted."""
+        snapshot_id = await _snapshot_many(
+            session,
+            [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 2 * GB, 702), ("radarr:1:3", 3 * GB, 703)],
+        )
+        run = await _plan(session, snapshot_id)
+
+        class _SurprisingRadarr(FakeRadarr):
+            async def exclusions(self) -> list[dict[str, Any]]:
+                if self.delete_calls and self.delete_calls[-1] == 2:
+                    raise ValueError("something nobody anticipated")
+                return await super().exclusions()
+
+        report = await _real(session, run, _gateway(radarr={1: _SurprisingRadarr()}))
+
+        assert report.state is RunState.ABORTED
+        stored = await _stored_run(async_factory, run.id)
+        # Item 1 verified and deleted; item 2 failed but its file is confirmed gone
+        # (the same discipline the rolling budget uses), so it still counts; item 3 was
+        # never sent.
+        assert stored.deleted_items == 2
+        assert stored.deleted_bytes == 1 * GB + 2 * GB
+        assert stored.deleted_unmeasured == 0
+        assert stored.skipped == 0
+
+    async def test_a_dry_run_never_writes_totals(self, session: AsyncSession) -> None:
+        """A dry run proves the plan and sends nothing, so it must never consume the
+        run's terminal-totals columns either: they stay NULL, exactly as a run not yet
+        executed for real reads."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+
+        report = await Executor(
+            session, safety=_read_only(), settings=ProfileSettings(), dry_run=True
+        ).execute(run.id)
+
+        assert report.state is RunState.COMPLETED
+        stored = await session.get(ReapRun, run.id)
+        assert stored is not None
+        assert stored.deleted_items is None
+        assert stored.deleted_bytes is None
+        assert stored.deleted_unmeasured is None
+        assert stored.skipped is None
+
+
+class TestAggregateRowsReadsTheStoredSpelling:
+    """``aggregate_rows`` accepts a raw string beside an enum member, and the column
+    stores the member NAME ('VERIFIED'), the spelling the totals migration's raw backfill
+    matches too. A fallback comparing the lowercase value would silently count every raw
+    row as neither deleted nor skipped, an audit record of zero for a run that deleted
+    files."""
+
+    def test_raw_member_names_count_exactly_like_enum_members(self) -> None:
+        from reaper.services.run_totals import aggregate_rows
+
+        as_members = [
+            (StepState.VERIFIED, False, 10),
+            (StepState.FAILED, True, None),
+            (StepState.FAILED, False, 7),
+            (StepState.SKIPPED, False, 5),
+        ]
+        as_stored_strings = [
+            ("VERIFIED", 0, 10),
+            ("FAILED", 1, None),
+            ("FAILED", 0, 7),
+            ("SKIPPED", 0, 5),
+        ]
+
+        assert aggregate_rows(as_stored_strings) == aggregate_rows(as_members)
+        totals = aggregate_rows(as_stored_strings)
+        assert totals.deleted_items == 2  # VERIFIED plus FAILED-with-file-removed
+        assert totals.deleted_unmeasured == 1
+        assert totals.skipped == 1
+
+
+# ---------------------------------------------------------------------------
+# Per-item outcomes, reconstructed from the journal
+# ---------------------------------------------------------------------------
+
+
+class TestRunOutcomesAreReconstructedFromTheJournal:
+    """``api.runs._run_outcomes`` is what lets a run in flight and one long finished
+    answer from the same read, so it must agree exactly with what the journal holds.
+    """
+
+    async def test_an_undecided_item_is_left_out(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """'So far' means exactly that: an item never reached (still PENDING) is not a
+        decided outcome yet, so an aborted run that never sent anything reports none."""
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 1 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+        settings = ProfileSettings(max_items_per_run=1, max_items_per_30d=100)
+        await _real(session, run, _gateway(radarr={1: FakeRadarr()}), settings=settings)
+
+        stored = await _stored_run(async_factory, run.id)
+        outcomes = await _run_outcomes(session, stored)
+
+        assert outcomes == []
+
+    async def test_a_verified_and_a_failed_item_both_read_back_in_order(
+        self, session: AsyncSession
+    ) -> None:
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:2:2", 2 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+
+        report = await _real(
+            session,
+            run,
+            _gateway(radarr={1: FakeRadarr(), 2: FakeRadarr(land_exclusion=False)}),
+        )
+        assert report.state is RunState.COMPLETED  # the canary succeeded, so this carries on
+
+        outcomes = await _run_outcomes(session, run)
+
+        assert [o.media_key for o in outcomes] == ["radarr:1:1", "radarr:2:2"]
+        assert outcomes[0].state is StepState.VERIFIED
+        assert outcomes[0].ordinal == 0  # the canary
+        assert outcomes[1].state is StepState.FAILED
+        assert outcomes[1].error is not None
+
+
+# ---------------------------------------------------------------------------
 # The progress bar counts the set the operator authorized
 # ---------------------------------------------------------------------------
 
@@ -5385,6 +5654,16 @@ _BEFORE_ANY_DELETE_RUN_COLUMNS = frozenset(
     }
 )
 
+#: The run's four terminal totals, written by ``Executor._write_run_totals`` in its own
+#: ``UPDATE``, after ``_Terminal``'s. They need no ``_JournalRow``/``_Terminal``-style
+#: capture object of their own: the hazard those two guard against is an ORM attribute
+#: mutated on a row a rollback can expire before it is replayed, and nothing here ever
+#: sets ``run.deleted_items`` or its siblings as an in-memory attribute at all. Their
+#: values come straight off a fresh ``run_totals.totals_query`` read each time
+#: ``_write_run_totals`` runs, so the same dataclass is what both of ``_commit_journal``'s
+#: attempts send, with nothing to lose to a rollback in between.
+_TOTALS_RUN_COLUMNS = frozenset({"deleted_items", "deleted_bytes", "deleted_unmeasured", "skipped"})
+
 
 class TestARecoveredWriteCarriesEveryColumn:
     """``_JournalRow`` and ``_Terminal`` each mirror a model's columns by hand, and the
@@ -5414,9 +5693,11 @@ class TestARecoveredWriteCarriesEveryColumn:
 
     def test_every_reap_run_column_is_classified_as_terminal_or_already_durable(self) -> None:
         """The sibling of the test above. ``_Terminal`` is the same hand-written mirror
-        over the same hazard, one class above ``_JournalRow`` in the same file."""
+        over the same hazard, one class above ``_JournalRow`` in the same file. The four
+        totals columns are their own third class, written by a later, separate ``UPDATE``
+        that carries no such hazard; see ``_TOTALS_RUN_COLUMNS``."""
         assert {c.key for c in sa_inspect(ReapRun).column_attrs} == (
-            _TERMINAL_RUN_COLUMNS | _BEFORE_ANY_DELETE_RUN_COLUMNS
+            _TERMINAL_RUN_COLUMNS | _BEFORE_ANY_DELETE_RUN_COLUMNS | _TOTALS_RUN_COLUMNS
         )
 
     def test_the_journal_row_carries_every_replayed_column(self) -> None:

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
 import { announce } from "../announce";
@@ -8,13 +8,16 @@ import { describeError } from "../errors";
 import { bytes, count, souls } from "../format";
 import { composeError } from "../why";
 import { Notice } from "./Notice";
+import { ackRun, useAckedRun } from "./runAck";
 
 /** The app-wide reap bar: shown on every screen of the app while a reap runs, so its count and
- *  its Stop are reachable after you close or navigate away from the reap sheet. A reap runs
- *  detached from the request that started it, so this bar (and Stop) survive navigating away
- *  and a tab reload: it re-attaches by polling the shared status. Not a safety surface (the
- *  always-on one is SafetyBanner), so it shows nothing when idle. Stop is graceful: the run
- *  halts after the item in flight and still tidies Plex, and deletion stays armed.
+ *  its Stop are reachable from wherever the operator is. The reap sheet closes the moment a run
+ *  starts, so this bar is the run's presence off the Reap tab. A reap runs detached from the
+ *  request that started it, so this bar (and Stop) survive navigating away and a tab reload: it
+ *  re-attaches by polling the shared status. Its View button opens the Reap tab, the live
+ *  dashboard and, once the run ends, the result. Not a safety surface (the always-on one is
+ *  SafetyBanner), so it shows nothing when idle. Stop is graceful: the run halts after the item
+ *  in flight and still tidies Plex, and deletion stays armed.
  *
  *  "Every screen" means every screen of the app, and the setup wizard is not one:
  *  `App.tsx`'s `Authed` returns it *instead of* `Dashboard`, so nothing under `Dashboard`
@@ -23,21 +26,35 @@ import { Notice } from "./Notice";
  *  `scan_ready` goes false, and the wizard takes the page with no reload, landing on the
  *  Connect step, which has Back and Skip, so Stop is two presses away rather than lost.
  *
- *  It mounts, runs, and reaches its end, "Reap failed." included, and announces each of these
+ *  It mounts, runs, and reaches its end, "Reap failed." included, and announces mount and end
  *  out loud. Its fill also carries `role="progressbar"`, the way `ScanLine`
- *  (components/ScanLine.tsx) does. The running ticks are deliberately not announced here: the
- *  reap sheet throttles and speaks them, and a bar that spoke too would say everything twice
- *  for anyone with the sheet open.
+ *  (components/ScanLine.tsx) does. The running ticks are deliberately not announced, by this bar
+ *  or the Reap tab: the visual progressbar carries them, and a run of hundreds polling every
+ *  second would otherwise hold the app's one polite region for the whole run. The end is the
+ *  moment worth speaking, and it is spoken once, here.
  *
  *  Tested directly rather than through `App`, as `WhyPanelFallback` is: what it owes an
  *  operator is a property of this component, and reaching it through the whole authed `App`
  *  tree would test the login gate instead. This component is exported for its tests; the
  *  export carries no other meaning here, since every file in this codebase exports its
  *  component. */
-export function ReapBar({ onView }: { onView: (runId: number) => void }) {
+export function ReapBar({
+  onGoToReap,
+  suppressed = false,
+}: {
+  onGoToReap: () => void;
+  /** True while the operator is on the Reap tab, which is the run's own live dashboard: the
+   *  bar's count, View, and Stop would only duplicate what is already on that page, so it
+   *  renders nothing there. It stays MOUNTED, not unmounted: the post-run cache invalidation and
+   *  the end announcement below both live here (rule 79) and must still fire when a run ends
+   *  while the operator is watching it on the Reap tab. */
+  suppressed?: boolean;
+}) {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
-  const [dismissed, setDismissed] = useState<number | null>(null);
+  // Shared with the Reap page's Done button and persisted, so dismissing a result on either
+  // surface hides both, and a refresh does not bring it back.
+  const dismissed = useAckedRun();
   // Idle still polls, slowly. A reap can be started from a phone or a second tab, and this
   // bar carries the only Stop on most screens: going silent when nothing is running here
   // would leave an open tab dark through someone else's deletion (the scan line idle-polls
@@ -95,6 +112,11 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
     }
   }, [status, queryClient, t]);
 
+  // On the Reap tab the page itself is the live dashboard, so the bar draws nothing. This sits
+  // AFTER the invalidation effect on purpose: the component stays mounted and that effect still
+  // fires when the run ends here.
+  if (suppressed) return null;
+
   if (!status || status.run_id == null) return null;
   const runId = status.run_id;
   const running = status.running;
@@ -109,9 +131,11 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
     const errored = status.phase === "error";
     return (
       <div className={errored ? "reap-bar errored" : "reap-bar done"}>
-        <span className="banner-dot" aria-hidden="true" />
         <span className="reap-bar-text">
-          <b>{t("reapConfirm.bar.endedLabel", { phase: status.phase })}</b>{" "}
+          <span className="reap-bar-lead">
+            <span className="banner-dot" aria-hidden="true" />
+            <b>{t("reapConfirm.bar.endedLabel", { phase: status.phase })}</b>
+          </span>
           <span className="reap-bar-sub">
             {t("reapConfirm.bar.removedFreed", {
               souls: souls(status.deleted_items),
@@ -123,10 +147,17 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
           </span>
         </span>
         <span className="reap-bar-actions">
-          <button className="link" onClick={() => onView(runId)}>
-            {t("reapConfirm.bar.viewReport")}
-          </button>
-          <button className="sm" onClick={() => setDismissed(runId)}>
+          {/* No report link for an errored run: usually it was refused before anything ran (a
+              changed manifest, a changed policy) and there is nothing to show beyond the
+              failure already on this bar. A crash mid-run also ends in this phase, with the
+              run's row left EXECUTING and no result card on the Reap tab; that run's record
+              stays reachable through its history row there, which opens like any other. */}
+          {!errored && (
+            <button className="link" onClick={onGoToReap}>
+              {t("reapConfirm.bar.viewReport")}
+            </button>
+          )}
+          <button className="sm" onClick={() => ackRun(runId)}>
             {t("reapConfirm.bar.dismiss")}
           </button>
         </span>
@@ -137,7 +168,6 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
   const pct = status.total > 0 ? Math.round((status.done / status.total) * 100) : 0;
   return (
     <div className="reap-bar">
-      <span className="banner-dot" aria-hidden="true" />
       {/* The role goes on the TEXT, never on the bar. `progressbar` carries ARIA's Children
           Presentational: True, so a role on the container would prune everything inside it,
           including View, Stop, and the `role="alert"` that reports a failed Stop: a reader
@@ -160,24 +190,39 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
           total: count(status.total),
         })}
       >
-        {status.stopping ? (
-          <b>{t("reapConfirm.stoppingLabel")}</b>
-        ) : (
-          <>
+        <span className="reap-bar-lead">
+          <span className="banner-dot" aria-hidden="true" />
+          {status.stopping ? (
+            <b>{t("reapConfirm.stoppingLabel")}</b>
+          ) : (
             <b>
               {t("reapConfirm.bar.reapingCount", {
                 done: count(status.done),
                 total: count(status.total),
               })}
             </b>
-            <span className="reap-bar-sub">
-              {t("reapConfirm.bar.freedSuffix", { bytes: bytes(status.deleted_bytes) })}
-            </span>
-          </>
-        )}
+          )}
+        </span>
+        {/* A glance percent, shown on a phone only, where the freed size drops to its own line
+            and would otherwise leave the top line half empty. Decorative: the progressbar aria
+            above already voices the same figure, so this is hidden from a reader. */}
+        {!status.stopping && <span className="reap-bar-pct" aria-hidden="true">{`${pct}%`}</span>}
+      </span>
+      {/* The space freed so far. Inline after the count on desktop, its own line on a phone. */}
+      {!status.stopping && (
+        <span className="reap-bar-sub">
+          {t("reapConfirm.bar.freed", { bytes: bytes(status.deleted_bytes) })}
+        </span>
+      )}
+      {/* The visible progress track. Decorative: the progressbar role and its aria live on the
+          text above (which never prunes to nothing), so this stays aria-hidden. Inline on
+          desktop between the count and the actions, full width on a phone. It replaces the old
+          3px bottom sliver, which read as a hairline rather than progress. */}
+      <span className="reap-bar-track" aria-hidden="true">
+        <span className="reap-bar-track-fill" style={{ width: `${pct}%` }} />
       </span>
       <span className="reap-bar-actions">
-        <button className="link" onClick={() => onView(runId)}>
+        <button className="link" onClick={onGoToReap}>
           {t("reapConfirm.bar.view")}
         </button>
         <button
@@ -195,7 +240,6 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
           {t("reapConfirm.bar.stopError", { error: describeError(stop.error) })}
         </Notice>
       )}
-      <span className="reap-bar-fill" style={{ width: `${pct}%` }} />
     </div>
   );
 }
