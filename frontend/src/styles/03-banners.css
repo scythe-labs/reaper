@@ -105,6 +105,12 @@
   -webkit-line-clamp: 20;
   max-height: 9em;
 }
+/* The link sits in the sentence's tail, past the one-line clamp, and clipped content stays
+   in the tab order: without this, keyboard focus lands on a control nobody can see. Hidden,
+   not clipped, drops it from the tab order until the banner is expanded. */
+.banner.collapsible:not(.open) .banner-text .link {
+  visibility: hidden;
+}
 .banner-chev {
   flex: none;
   margin-top: 0.15em;
