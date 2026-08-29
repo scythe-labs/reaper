@@ -22,17 +22,17 @@
 // invalidation (rule 79); this page only reads.
 //
 // The history card is always visible: past reaps, a pinned non-clickable row for a run still
-// executing, and paging through the whole executed history. Every other row opens a
-// read-only detail sheet with the same persisted totals and the same outcomes journal.
+// executing, and the rest of the executed history loaded ten at a time as you scroll. Every
+// other row opens a read-only detail sheet with the same persisted totals and the same
+// outcomes journal.
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import {
   api,
   type ReapStatus,
   type Run,
-  type RunList,
   type RunOutcomeRead,
   type RunReport,
   type RunSummary,
@@ -217,30 +217,23 @@ function HistoryRow({
   );
 }
 
-//: One page of the run history. Growing `pages` re-fetches every page from offset 0 through
-//: the newest one wanted, in parallel: a handful of small requests, always fresh, and never at
-//: risk of an incremental cache reading stale after ReapBar's own invalidation of `["runs"]`
-//: (a ref-cached "only fetch what's new" design would have to be told to forget itself on
-//: every invalidation it did not cause, which is the bug this avoids by not existing).
-const HISTORY_PAGE = 50;
-
-async function fetchExecutedHistory(pages: number): Promise<RunList> {
-  const responses = await Promise.all(
-    Array.from({ length: pages }, (_, i) => api.runs(i * HISTORY_PAGE, HISTORY_PAGE, true)),
-  );
-  return {
-    runs: responses.flatMap((r) => r.runs),
-    total: responses.at(-1)?.total ?? 0,
-  };
-}
+//: The run history, ten rows at a time as the footer scrolls into view. An infinite query
+//: rather than a hand-rolled cache: ReapBar's own invalidation of `["runs"]` refetches every
+//: loaded page, so the list can never read stale after a run ends.
+const HISTORY_PAGE = 10;
 
 function useExecutedHistory() {
-  const [pages, setPages] = useState(1);
-  const query = useQuery({
-    queryKey: ["runs", "executed", pages],
-    queryFn: () => fetchExecutedHistory(pages),
+  return useInfiniteQuery({
+    queryKey: ["runs", "executed"],
+    queryFn: ({ pageParam }) => api.runs(pageParam, HISTORY_PAGE, true),
+    initialPageParam: 0,
+    // The next offset is however many rows are loaded, until that reaches the total the
+    // newest page reports.
+    getNextPageParam: (last, pages) => {
+      const loaded = pages.reduce((n, p) => n + p.runs.length, 0);
+      return loaded < last.total ? loaded : undefined;
+    },
   });
-  return { ...query, showMore: () => setPages((p) => p + 1) };
 }
 
 //: The reaping card's item-status log: every outcome decided so far, held here and grown a
@@ -703,7 +696,8 @@ export function ReapPlan({
   });
 
   const history = useExecutedHistory();
-  const endedRun = history.data?.runs.find((r) => r.id === endedRunId) ?? null;
+  const runs = useMemo(() => history.data?.pages.flatMap((p) => p.runs) ?? [], [history.data]);
+  const endedRun = runs.find((r) => r.id === endedRunId) ?? null;
 
   const [detailRun, setDetailRun] = useState<RunSummary | null>(null);
 
@@ -753,8 +747,22 @@ export function ReapPlan({
   const practiceReady =
     !degraded && !counts.isPending && !!data?.has_snapshot && counts.reapCount > 0;
 
-  const shown = history.data?.runs.length ?? 0;
-  const historyTotal = history.data?.total ?? 0;
+  const shown = runs.length;
+  const historyTotal = history.data?.pages.at(-1)?.total ?? 0;
+
+  // Load the next ten when the footer scrolls into view. Re-observing on `shown` fires again
+  // for a footer that is still on screen after a page lands, so a tall window fills itself.
+  const { fetchNextPage, hasNextPage } = history;
+  const historyFoot = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = historyFoot.current;
+    if (!node || !hasNextPage) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) void fetchNextPage();
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasNextPage, fetchNextPage, shown]);
 
   return (
     <section className="reap">
@@ -1009,37 +1017,27 @@ export function ReapPlan({
             <p className="muted">{t("common.loading")}</p>
           ) : history.isError || !history.data ? (
             <Notice tone="warn">{t("reapPlan.history.loadFailed")}</Notice>
-          ) : history.data.runs.length === 0 ? (
+          ) : runs.length === 0 ? (
             <p className="muted">{t("reapPlan.history.empty")}</p>
           ) : (
-            <>
-              <div className="reap-runs">
-                {history.data.runs.map((run) => (
-                  <HistoryRow
-                    key={run.id}
-                    run={run}
-                    liveRunId={reaping && status ? status.run_id : null}
-                    onOpen={setDetailRun}
-                  />
-                ))}
+            <div className="reap-runs">
+              {runs.map((run) => (
+                <HistoryRow
+                  key={run.id}
+                  run={run}
+                  liveRunId={reaping && status ? status.run_id : null}
+                  onOpen={setDetailRun}
+                />
+              ))}
+              {/* Inside the scrolling list, not under it: a footer parked below the list would
+                  sit on screen from the first paint and pull the whole history in at once. */}
+              <div ref={historyFoot} className="load-more muted">
+                {t("reapPlan.history.showingOf", {
+                  shown: count(shown),
+                  total: count(historyTotal),
+                })}
               </div>
-              <div className="reap-runs-foot">
-                <span className="num">
-                  {t("reapPlan.history.showingOf", {
-                    shown: count(shown),
-                    total: count(historyTotal),
-                  })}
-                </span>
-                <button
-                  type="button"
-                  className="ghost"
-                  onClick={history.showMore}
-                  disabled={shown >= historyTotal}
-                >
-                  {t("reapPlan.history.showMore")}
-                </button>
-              </div>
-            </>
+            </div>
           )}
         </div>
       </div>

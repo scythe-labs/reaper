@@ -973,8 +973,8 @@ export interface RunSummary {
 }
 
 /** A page of the run history, plus how many rows match the request as a whole: the history
- *  footer's "Showing N of M" and its "Show 50 more" button both need `total`, which
- *  `runs.length` cannot answer once the list is paged. */
+ *  footer's "Showing N of M" and the scroll paging that stops at the end both need `total`,
+ *  which `runs.length` cannot answer once the list is paged. */
 export interface RunList {
   runs: RunSummary[];
   total: number;
@@ -2383,7 +2383,7 @@ export const api = {
   scanStatus: () => request<ScanStatus>("/api/scan/status"),
 
   /** The recent plans, newest first, with `total` (of whatever `executedOnly` matches) for
-   *  the history view's "Showing N of M" and its "Show 50 more" paging. `executedOnly`
+   *  the history view's "Showing N of M" and its scroll paging. `executedOnly`
    *  drops a plan that was built and never executed (the head Reap button, a standalone
    *  practice run): the Reap page's history, the one caller here, reads it true. */
   runs: (offset = 0, limit = 50, executedOnly = false) =>
