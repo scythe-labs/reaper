@@ -34,7 +34,7 @@ from reaper.clients.plex import GuardedSession
 from reaper.clients.plextv import PlexTvClient
 from reaper.clients.public import PublicClient
 from reaper.clients.seerr import SeerrClient
-from reaper.clients.tautulli import ALLOWED_IMAGE_TYPES, TautulliClient
+from reaper.clients.tautulli import ALLOWED_IMAGE_TYPES, READ_COMMANDS, TautulliClient
 from reaper.config import RuntimeSafety
 from reaper.logging import configure_logging
 from reaper.services.plex_link import (
@@ -600,6 +600,50 @@ class TestPlexTvErrorsAreMapped:
         )
         async with PlexTvClient("cid", safety=READ_ONLY) as plextv:
             assert await plextv.owns_server("user-token", "machine-123") is False
+
+
+class TestTheSectionListingDoesNotGoThroughPlex:
+    """``get_libraries`` is not a local read. Tautulli answers it by asking Plex for the
+    section list, then asking again per section for an item count, three times over for a
+    show or artist section. The scan that follows a reap runs while Plex is still
+    rescanning the paths the reap emptied, so those calls expired the read budget and the
+    snapshot came back incomplete on a Tautulli timeout.
+
+    ``get_library_names`` answers the same three fields Reaper reads from one local query.
+    The command that went on the wire is what this pins, since both commands return a list
+    of section rows and a body assertion cannot tell them apart.
+    """
+
+    @staticmethod
+    def _sent(route: respx.Route) -> str:
+        return str(route.calls.last.request.url.params.get("cmd"))
+
+    async def test_the_section_listing_asks_for_names_not_counts(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        route = httpx2_mock.get("https://tautulli.test/api/v2").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "response": {
+                        "result": "success",
+                        "data": [
+                            {"section_id": 4, "section_name": "Films", "section_type": "movie"}
+                        ],
+                    }
+                },
+            )
+        )
+        async with TautulliClient("https://tautulli.test", "k", safety=READ_ONLY) as client:
+            rows = await client.libraries()
+
+        assert self._sent(route) == "get_library_names"
+        assert rows == [{"section_id": 4, "section_name": "Films", "section_type": "movie"}]
+
+    async def test_the_command_is_on_the_read_only_allow_list(self) -> None:
+        """The allow-list is what stops a command reaching the wire, so a swap that
+        forgot it would refuse every scan instead of speeding one up."""
+        assert "get_library_names" in READ_COMMANDS
 
 
 class TestPosterImageAllowList:
