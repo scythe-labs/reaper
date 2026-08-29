@@ -411,6 +411,10 @@ describe("past reaps", () => {
     // page never filters the list it is handed; an "executing" row is the one state that
     // still has no persisted totals AND belongs on the list, so it is the one to prove both
     // halves on: no numbers, and no button (its live view is this page's own left column).
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({ running: true, run_id: 31, phase: "reaping", total: 10 }),
+    );
+    mockOutcomes([]);
     mockHistory([
       summary({
         id: 31,
@@ -427,6 +431,31 @@ describe("past reaps", () => {
     expect(row.textContent).not.toMatch(/freed|removed|\b0\b/);
     expect(row.textContent).toContain("running now");
     expect(row.tagName).toBe("DIV");
+  });
+
+  it("does not pin a run a crash left executing: no running-now claim, and its record still opens", async () => {
+    // Nothing reconciles a run whose process died mid-flight, so its row stays stored as
+    // executing forever. Only the run the status poll actually claims is pinned; this one
+    // stays an ordinary row, or the record of what it removed is unreachable for good.
+    const user = userEvent.setup();
+    mockOutcomes([]);
+    mockHistory([
+      summary({
+        id: 29,
+        state: "executing",
+        finished_at: null,
+        deleted_items: null,
+        deleted_bytes: null,
+        deleted_unmeasured: null,
+        skipped: null,
+      }),
+    ]);
+    renderPlan();
+    const row = (await screen.findByText("Run 29")).closest(".reap-run") as HTMLElement;
+    expect(row.textContent).not.toContain("running now");
+    expect(row.tagName).toBe("BUTTON");
+    await user.click(row);
+    expect(await screen.findByRole("dialog", { name: "Run 29" })).toBeInTheDocument();
   });
 
   it("shows the aborted reason instead of a freed/removed count", async () => {
@@ -834,6 +863,12 @@ describe("run detail sheet", () => {
   });
 
   it("the pinned running-now row does not open a detail", async () => {
+    // Pinned means the status poll claims this exact run; a stored-executing row the poll
+    // does not claim stays openable (the crashed-run test above).
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({ running: true, run_id: 56, phase: "reaping", total: 10 }),
+    );
+    mockOutcomes([]);
     mockHistory([
       summary({
         id: 56,

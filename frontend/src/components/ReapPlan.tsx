@@ -174,14 +174,26 @@ function SummaryTile({ kind, label, value }: { kind: TileKind; label: string; va
   );
 }
 
-/** One row of past-reaps history. A run still executing is the newest row by construction
- *  (history sorts newest first), reads with the condemn "live" dot, and stays a plain
- *  element: the live view of it is already this page's own left column, so opening a second,
- *  read-only copy of the same run would only ever show a stale echo of what is on screen
- *  already. Every other row is a button that opens the read-only detail sheet. */
-function HistoryRow({ run, onOpen }: { run: RunSummary; onOpen: (run: RunSummary) => void }) {
+/** One row of past-reaps history. The run the status poll reports executing right now reads
+ *  with the condemn "live" dot and stays a plain element: the live view of it is already this
+ *  page's own left column, so opening a second, read-only copy of the same run would only
+ *  ever show a stale echo of what is on screen already. Every other row is a button that
+ *  opens the read-only detail sheet, and that includes a row STORED as executing that the
+ *  poll does not claim: a crash mid-run leaves the row in that state forever, and pinning it
+ *  as "running now" would both lie and close the only door to the record of what that run
+ *  removed. Its dot is neutral, since "still executing" is exactly what cannot be claimed. */
+function HistoryRow({
+  run,
+  liveRunId,
+  onOpen,
+}: {
+  run: RunSummary;
+  /** The run the shared status poll reports executing right now, or null. */
+  liveRunId: number | null;
+  onOpen: (run: RunSummary) => void;
+}) {
   const { t } = useTranslation();
-  const live = run.state === "executing";
+  const live = run.state === "executing" && run.id === liveRunId;
   const parts: string[] = [];
   if (live) {
     parts.push(t("reapPlan.history.runningNow"));
@@ -197,7 +209,10 @@ function HistoryRow({ run, onOpen }: { run: RunSummary; onOpen: (run: RunSummary
 
   const content = (
     <>
-      <span className={runDotClass(run.state)} aria-hidden="true" />
+      <span
+        className={runDotClass(run.state === "executing" && !live ? "" : run.state)}
+        aria-hidden="true"
+      />
       <span className="reap-run-what">
         {t("reapPlan.history.row", { id: run.id })}
         {parts.length > 0 && <span className="reap-run-sub">{parts.join(" ")}</span>}
@@ -998,7 +1013,12 @@ export function ReapPlan({
             <>
               <div className="reap-runs">
                 {history.data.runs.map((run) => (
-                  <HistoryRow key={run.id} run={run} onOpen={setDetailRun} />
+                  <HistoryRow
+                    key={run.id}
+                    run={run}
+                    liveRunId={reaping && status ? status.run_id : null}
+                    onOpen={setDetailRun}
+                  />
                 ))}
               </div>
               <div className="reap-runs-foot">
