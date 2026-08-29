@@ -764,7 +764,7 @@ MESSAGES: dict[str, str] = {
         "here. Anything already deleted stays deleted; nothing further was sent."
     ),
     "error.reap.stopped_by_operator": (
-        "You stopped this run. Only the titles already removed are gone."
+        "You stopped this run before it finished, so the rest of the plan was left alone."
     ),
     "error.reap.journal_halt": (
         "Reaper could not save its record of what it just did, so it stopped before "

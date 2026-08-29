@@ -633,7 +633,9 @@ describe("done", () => {
         skipped: 0,
         aborted_reason: {
           k: "legacy",
-          p: { text: "You stopped this run. Only the titles already removed are gone." },
+          p: {
+            text: "You stopped this run before it finished, so the rest of the plan was left alone.",
+          },
         },
       }),
     ]);
@@ -642,7 +644,9 @@ describe("done", () => {
 
     expect(await screen.findByText("Reap finished")).toBeInTheDocument();
     expect(
-      screen.getByText("You stopped this run. Only the titles already removed are gone."),
+      screen.getByText(
+        "You stopped this run before it finished, so the rest of the plan was left alone.",
+      ),
     ).toBeInTheDocument();
   });
 
