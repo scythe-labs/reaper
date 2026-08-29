@@ -85,6 +85,61 @@
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* The idle summary's tiles carry a colored rail and icon keyed to what each counts: the accent
+   for the total, protect green for space freed, and the Radarr and Sonarr brand colors for
+   movies and shows, so a tile's color says what it holds. The label sits above the number here,
+   so the base tile's label margin is reset. Scoped to `.reap-tiles`, so the reaping and done
+   cards keep the plain tile. The Radarr/Sonarr golds and blues are media identity, not a
+   verdict, so they never read as condemn/protect/abstain. */
+.reap-tiles .fair-stat {
+  position: relative;
+  overflow: hidden;
+  padding-inline-start: var(--space-3xl);
+}
+.reap-tiles .fair-stat::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: 4px;
+  background: var(--rt-rail, var(--faint));
+}
+.reap-tiles .rt-cap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  color: var(--muted);
+  margin-bottom: var(--space-sm);
+}
+.reap-tiles .rt-cap .fair-stat-lbl {
+  margin-top: 0;
+}
+.reap-tiles .rt-ic {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  color: var(--rt-rail, var(--faint));
+}
+.reap-tiles .rt-titles {
+  --rt-rail: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+.reap-tiles .rt-free {
+  --rt-rail: var(--protect);
+  background: color-mix(in srgb, var(--protect) 8%, var(--surface));
+}
+.reap-tiles .rt-free .fair-stat-num {
+  color: var(--protect);
+}
+.reap-tiles .rt-movies {
+  --rt-rail: var(--radarr);
+  background: color-mix(in srgb, var(--radarr) 9%, var(--surface));
+}
+.reap-tiles .rt-seasons {
+  --rt-rail: var(--sonarr);
+  background: color-mix(in srgb, var(--sonarr) 9%, var(--surface));
+}
 .rb-empty {
   color: var(--muted);
   font-size: var(--text-md);

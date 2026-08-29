@@ -260,20 +260,54 @@
   flex-basis: 100%;
   margin: 0;
 }
-.reap-bar-fill {
-  position: absolute;
-  inset-inline-start: 0;
-  bottom: 0;
-  height: 3px;
+/* The inline progress track: it grows to fill the space between the count and the actions on
+   desktop, and drops to its own full-width line on a phone (below). Decorative; the progressbar
+   role and its aria live on the text, so this replaces the old 3px bottom sliver that read as a
+   hairline rather than progress. */
+.reap-bar-track {
+  flex: 1;
+  min-width: 3rem;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--condemn) 16%, transparent);
+  overflow: hidden;
+}
+.reap-bar-track-fill {
+  height: 100%;
   background: var(--condemn);
+  border-radius: var(--radius-pill);
   transition: width 0.4s var(--ease);
 }
+/* A slow pulse on the live dot says the run is moving even between count ticks. Only the running
+   bar: a finished or errored one holds still. */
+.reap-bar:not(.done):not(.errored) .banner-dot {
+  animation: reap-bar-pulse 1.8s var(--ease) infinite;
+}
+@keyframes reap-bar-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--condemn) 18%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--condemn) 6%, transparent);
+  }
+}
 /* Coupled to NARROW_SCREEN_QUERY in useMediaQuery.ts; change one and change the other. On a
-   phone the actions drop to their own full-width line instead of bunching into the right of a
-   wrapped row. Stop is the urgent action on a live deletion, so it grows to fill the line beside
-   View as the primary tap target. The done and errored bars are not urgent, so their buttons
-   sit compact at the right. */
+   phone the count and the freed size split one full-width line, the track takes its own, and the
+   actions take theirs. Stop is the urgent action on a live deletion, so it grows to fill the
+   line beside View as the primary tap target. The done and errored bars are not urgent, so their
+   buttons sit compact at the right. */
 @media (max-width: 900px) {
+  .reap-bar-text {
+    flex-basis: 100%;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-md);
+  }
+  .reap-bar-track {
+    flex-basis: 100%;
+  }
   .reap-bar-actions {
     flex-basis: 100%;
     margin-inline-start: 0;
@@ -292,8 +326,11 @@
    rule instead. See the note in 06-spinner.css for why. */
 @media (prefers-reduced-motion: reduce) {
   .prog-fill,
-  .reap-bar-fill {
+  .reap-bar-track-fill {
     transition: none;
+  }
+  .reap-bar .banner-dot {
+    animation: none;
   }
 }
 

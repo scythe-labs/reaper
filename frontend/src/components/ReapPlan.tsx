@@ -70,6 +70,71 @@ function runDotClass(state: string): string {
   return "reap-run-dot";
 }
 
+type TileKind = "titles" | "free" | "movies" | "seasons";
+
+/** The idle-summary tile's icon, one per metric. Decorative: the label beside it names the
+ *  metric, so it carries `aria-hidden`. Color comes from the tile's rail (CSS), not from here. */
+function TileIcon({ kind }: { kind: TileKind }) {
+  if (kind === "titles")
+    return (
+      <svg className="rt-ic" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path
+          d="M12 3l9 5-9 5-9-5 9-5Z"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M3 12l9 5 9-5M3 16l9 5 9-5"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  if (kind === "free")
+    return (
+      <svg className="rt-ic" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <ellipse cx="12" cy="6" rx="8" ry="3" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" stroke="currentColor" strokeWidth="1.6" />
+      </svg>
+    );
+  if (kind === "movies")
+    return (
+      <svg className="rt-ic" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" strokeWidth="1.6" />
+        <path
+          d="M7 4v16M17 4v16M3 8h4M17 8h4M3 12h18M3 16h4M17 16h4"
+          stroke="currentColor"
+          strokeWidth="1.3"
+        />
+      </svg>
+    );
+  return (
+    <svg className="rt-ic" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="3" y="7" width="18" height="12" rx="2" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M8 3l4 4 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** One idle-summary tile: a colored rail and icon keyed to the metric, its label, then the big
+ *  number. The rails read from the palette already in use: accent for the total, protect green
+ *  for space freed, and the Radarr and Sonarr brand colors for movies and shows, so a tile's
+ *  color says what it counts. */
+function SummaryTile({ kind, label, value }: { kind: TileKind; label: string; value: string }) {
+  return (
+    <div className={`fair-stat rt rt-${kind}`}>
+      <span className="rt-cap">
+        <TileIcon kind={kind} />
+        <span className="fair-stat-lbl">{label}</span>
+      </span>
+      <span className="fair-stat-num">{value}</span>
+    </div>
+  );
+}
+
 /** One row of past-reaps history. A run still executing is the newest row by construction
  *  (history sorts newest first), reads with the condemn "live" dot, and stays a plain
  *  element: the live view of it is already this page's own left column, so opening a second,
@@ -692,31 +757,27 @@ export function ReapPlan({
                       </p>
                     ) : (
                       <>
-                        <div className="fair-stats">
-                          <div className="fair-stat">
-                            <span className="fair-stat-num">{count(counts.reapCount)}</span>
-                            <span className="fair-stat-lbl">
-                              {t("reapPlan.summary.tiles.titles")}
-                            </span>
-                          </div>
-                          <div className="fair-stat">
-                            <span className="fair-stat-num">{bytes(counts.reapBytes)}</span>
-                            <span className="fair-stat-lbl">
-                              {t("reapPlan.summary.tiles.toFree")}
-                            </span>
-                          </div>
-                          <div className="fair-stat">
-                            <span className="fair-stat-num">{count(counts.movies)}</span>
-                            <span className="fair-stat-lbl">
-                              {t("reapPlan.summary.tiles.movies")}
-                            </span>
-                          </div>
-                          <div className="fair-stat">
-                            <span className="fair-stat-num">{count(counts.seasons)}</span>
-                            <span className="fair-stat-lbl">
-                              {t("reapPlan.summary.tiles.seasons")}
-                            </span>
-                          </div>
+                        <div className="fair-stats reap-tiles">
+                          <SummaryTile
+                            kind="titles"
+                            label={t("reapPlan.summary.tiles.titles")}
+                            value={count(counts.reapCount)}
+                          />
+                          <SummaryTile
+                            kind="free"
+                            label={t("reapPlan.summary.tiles.toFree")}
+                            value={bytes(counts.reapBytes)}
+                          />
+                          <SummaryTile
+                            kind="movies"
+                            label={t("reapPlan.summary.tiles.movies")}
+                            value={count(counts.movies)}
+                          />
+                          <SummaryTile
+                            kind="seasons"
+                            label={t("reapPlan.summary.tiles.seasons")}
+                            value={count(counts.seasons)}
+                          />
                         </div>
                         <p className="help reap-summary-help">
                           {data.will_reap_unknown > 0 &&

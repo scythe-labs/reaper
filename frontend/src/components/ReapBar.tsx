@@ -203,6 +203,13 @@ export function ReapBar({
           </>
         )}
       </span>
+      {/* The visible progress track. Decorative: the progressbar role and its aria live on the
+          text above (which never prunes to nothing), so this stays aria-hidden. Inline on
+          desktop between the count and the actions, full width on a phone. It replaces the old
+          3px bottom sliver, which read as a hairline rather than progress. */}
+      <span className="reap-bar-track" aria-hidden="true">
+        <span className="reap-bar-track-fill" style={{ width: `${pct}%` }} />
+      </span>
       <span className="reap-bar-actions">
         <button className="link" onClick={onGoToReap}>
           {t("reapConfirm.bar.view")}
@@ -222,7 +229,6 @@ export function ReapBar({
           {t("reapConfirm.bar.stopError", { error: describeError(stop.error) })}
         </Notice>
       )}
-      <span className="reap-bar-fill" style={{ width: `${pct}%` }} />
     </div>
   );
 }
