@@ -129,18 +129,75 @@ release. The free tier covers a release: it allows four requests a minute, and t
 workflow sends two assets a minute because an asset over 32 MB costs two requests.
 Without the secret it skips, green.
 
+## Build provenance
+
+`release.yml` attests every release asset and the release image through
+[Sigstore](https://www.sigstore.dev/), using `actions/attest-build-provenance`. The
+attestation says which repository, workflow and commit built the file. The signing
+certificate comes from the job's OIDC token and expires in about ten minutes, and
+Sigstore's public transparency log is what proves it was valid at the time. That is why
+the setup is a permissions block and nothing else.
+
+Anyone can check a download:
+
+```
+gh attestation verify Reaper-2026.8.1-windows-x64-setup.exe --repo scythe-labs/reaper
+gh attestation verify oci://ghcr.io/scythe-labs/reaper:2026.8.1 --repo scythe-labs/reaper
+```
+
+The image attestation also sits in GHCR next to the image, so a registry client can read
+it straight from the registry.
+
+**Provenance answers one question: did this file come from the commit it claims?**
+SmartScreen and Gatekeeper ask a different one, and they behave exactly as they did.
+Clearing those needs a certificate from Microsoft's or Apple's own trust program, which is
+remedy 1 in the next section.
+
+Provenance covers the release channel. `binaries.yml` publishes the nightly prerelease and
+`:dev` plain. Wire it up there the same way if a dev-channel operator asks.
+
 ## Antivirus false positives, and what is wired
 
 Unsigned Windows installers start with zero reputation, so some scanners flag them.
 Four remedies, in order of effect:
 
-1. **Code signing — not wired yet.** It needs a paid identity before any workflow can
-   use it: for Windows an Azure Trusted Signing account (or an EV certificate) and a
-   `signtool` step after the Inno build; for macOS a Developer ID certificate plus a
-   `codesign`/`notarytool` step after PyInstaller (today the binary carries the
-   ad-hoc signature arm64 requires, so macOS warns on first launch instead of
-   refusing). When the accounts exist, both land in `binaries.yml` behind
-   secrets-present guards.
+1. **Code signing — not wired yet.** It needs an identity Microsoft or Apple trusts
+   before any workflow can use it: for Windows a `signtool` step after the Inno
+   build; for macOS a Developer ID certificate plus a `codesign`/`notarytool` step
+   after PyInstaller (today the binary carries the ad-hoc signature arm64 requires,
+   so macOS warns on first launch instead of refusing). When the identities exist,
+   both land in `binaries.yml` behind secrets-present guards. Microsoft and Apple
+   each trust their own certificate programs, so this remedy needs one of theirs. The
+   attestations in the previous section stand alongside it.
+
+   Windows has a free route. macOS costs $99 a year. What each option costs, and
+   whether a workflow can drive it without a human:
+
+   | Identity | Cost | Signs unattended |
+   | --- | --- | --- |
+   | [SignPath Foundation](https://signpath.org/) (Windows, open source only) | free, if they accept the project | no, a human approves each release |
+   | Certum Open Source, cloud (Windows) | about €49/year | yes |
+   | Certum Open Source, smart card (Windows) | about €85 once, then about €25 to €30/year | no, the card is physical |
+   | [Azure Artifact Signing](https://azure.microsoft.com/en-us/products/artifact-signing) Basic (Windows) | $9.99/month | yes |
+   | Apple Developer Program (macOS) | $99/year | yes |
+
+   **The free row is an application.** Reaper meets everything on SignPath
+   Foundation's published list of conditions. Further down the same page they add
+   one more: before they sign a downloadable executable, they want to see "a certain
+   verifiable reputation". It applies to executables, which is what Reaper ships.
+   They also say plainly that acceptance is theirs to decide and that there is no
+   appeal.
+
+   Three of their terms still apply once a project is in. Someone approves every
+   signature by hand, so releases become attended. The certificate belongs to
+   SignPath Foundation, so Windows shows them as the publisher. And a code signing
+   policy has to sit on the project's home page listing who may approve a release,
+   which puts a real name on a public page. That is the no-identifying-information
+   rule bending on purpose rather than by accident.
+
+   Certum sells to anyone who can show they work on an open source project, and its
+   cloud tier signs unattended. Their certificate names a person, and they want a
+   link showing that person works on the project.
 2. **WinGet presence — wired.** Each release passes Microsoft's validation and
    scanning pipeline on its way into winget-pkgs.
 3. **Per-release submission — manual.** When Defender specifically flags a release,
