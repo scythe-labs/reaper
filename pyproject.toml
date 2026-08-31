@@ -16,7 +16,7 @@ dependencies = [
     # Web
     "fastapi>=0.141.1",          # >=0.138 for app.frontend(), >=0.135 for fastapi.sse
     "starlette>=1.6.0,<2.0.0",   # PIN: 1.0 removed on_startup/on_shutdown; FastAPI declares no upper bound
-    "uvicorn[standard]>=0.52.1",
+    "uvicorn[standard]>=0.52.3",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.15.0",
     "python-dotenv>=1.1.0",      # imported directly (config.load_raw_env), not only transitively
