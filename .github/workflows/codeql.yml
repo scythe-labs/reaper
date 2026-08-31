@@ -100,7 +100,7 @@ jobs:
       # this repository fixed seven and dismissed four, and a suite chosen to raise recall would
       # spend that ratio on a backlog nobody triages. Re-read the ratio before adding it, not the
       # argument.
-      - uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+      - uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           languages: ${{ matrix.language }}
           # Stated rather than left to the default, because it is only correct while every
@@ -114,6 +114,6 @@ jobs:
       # `category` keeps each language's results in their own lane. Without it the second upload
       # is read as a replacement for the first, and the tree that finished earliest is the one
       # that appears to have no findings.
-      - uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+      - uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           category: "/language:${{ matrix.language }}"
