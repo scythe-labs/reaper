@@ -1416,7 +1416,7 @@ requires-dist = [
     { name = "tenacity", specifier = ">=9.1.4" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.12.20260815" },
     { name = "tzlocal", specifier = ">=5.0" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.3" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.4" },
 ]
 provides-extras = ["package", "dev"]
 
