@@ -23,7 +23,7 @@
     "mark": "node scripts/gen-mark.mjs"
   },
   "dependencies": {
-    "@tanstack/react-query": "5.101.4",
+    "@tanstack/react-query": "5.102.2",
     "i18next": "^26.4.0",
     "i18next-icu": "^2.4.4",
     "react": "19.2.8",
@@ -35,17 +35,17 @@
     "@eslint/js": "^10.0.1",
     "@formatjs/icu-messageformat-parser": "3.5.17",
     "@resvg/resvg-js": "^2.6.2",
-    "@scalar/api-reference": "^1.65.1",
+    "@scalar/api-reference": "^1.66.1",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.2",
-    "@testing-library/user-event": "^14.6.4",
+    "@testing-library/user-event": "^14.6.6",
     "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.4",
-    "@vitejs/plugin-react": "6.0.5",
-    "@vitest/coverage-v8": "^4.1.10",
+    "@types/react-dom": "19.2.5",
+    "@vitejs/plugin-react": "6.1.0",
+    "@vitest/coverage-v8": "^4.1.11",
     "axe-core": "^4.13.0",
-    "eslint": "^10.8.1",
+    "eslint": "^10.9.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.11.0",
     "intl-messageformat": "11.2.14",
@@ -53,7 +53,7 @@
     "prettier": "3.9.6",
     "typescript": "5.9.3",
     "typescript-eslint": "^8.67.0",
-    "vite": "8.2.1",
+    "vite": "8.2.2",
     "vitest": "^4.1.10"
   }
 }
