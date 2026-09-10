@@ -399,6 +399,26 @@ class TestConnectionPassDetailIsBareForTheFrontend:
         assert result.ok is True
         assert result.version == "2.16.0-beta1-nightly"
 
+    async def test_a_tautulli_that_cannot_answer_for_its_version_still_passes(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        # get_tautulli_info arrived in Tautulli 2.9, and a proxy may filter commands it
+        # does not know. The first read proved the address and the key, so the test
+        # passes with no version rather than telling the operator Tautulli is down.
+        def _respond(request: httpx.Request) -> httpx.Response:
+            cmd = request.url.params.get("cmd")
+            if cmd == "get_server_info":
+                data: dict[str, object] = {"pms_name": "Vault"}
+                return httpx.Response(200, json={"response": {"result": "success", "data": data}})
+            assert cmd == "get_tautulli_info"
+            return httpx.Response(400, text="Unknown command")
+
+        httpx2_mock.get(f"{TAUTULLI}/api/v2").mock(side_effect=_respond)
+        result = await instances_service.test_connection(InstanceKind.TAUTULLI, TAUTULLI, "k")
+        assert result.ok is True
+        assert result.detail.id == "connectedWatching"
+        assert result.version is None
+
 
 class TestNormalizeVersion:
     """The one shape every service's version string is put in before it reaches the
@@ -420,6 +440,7 @@ class TestNormalizeVersion:
 
     def test_the_release_branch_is_not_appended(self) -> None:
         assert instances_service._normalize_version("v2.15.2", branch="master") == "2.15.2"
+        assert instances_service._normalize_version("v2.15.2", branch="Master ") == "2.15.2"
 
     def test_a_version_already_naming_its_branch_is_not_doubled(self) -> None:
         assert instances_service._normalize_version("v2.16.0-beta", branch="beta") == "2.16.0-beta"

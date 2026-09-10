@@ -197,12 +197,13 @@ class TestOut(BaseModel):
 
     ``detail_reason`` carries a fixed vocabulary. A failure carries
     ``services.instances.explain_failure``'s ``error.instance.*`` code,
-    and a pass carries a ``services.test.*`` id ``ServiceModal.tsx``
-    owns. The mapping a pre-save probe reads lives on
-    :class:`InstanceProbeOut` below, not here, since only that route can
-    answer it. Keeping the mapping fields off this shared base keeps an
-    unrelated test, such as the Discord webhook test, from publishing a
-    schema that claims it might return Sonarr root folders."""
+    and a pass carries a bare id such as ``connected`` that
+    ``ServiceModal.tsx`` composes under ``services.test``. The mapping a
+    pre-save probe reads lives on :class:`InstanceProbeOut` below, not
+    here, since only that route can answer it. Keeping the mapping fields
+    off this shared base keeps an unrelated test, such as the Discord
+    webhook test, from publishing a schema that claims it might return
+    Sonarr root folders."""
 
     ok: bool
     detail_reason: ReasonKey
@@ -668,7 +669,7 @@ async def test_new_instance(request: Request, payload: InstanceTestIn) -> Instan
 
 @router.post("/instances/{instance_id}/test", tags=[api_tags.SERVICES])
 async def test_saved_instance(request: Request, instance_id: int) -> TestOut:
-    """Test a stored instance and record the outcome on it."""
+    """Test a stored instance. The outcome goes to the browser and is not saved."""
     async with session_factory(request)() as session:
         try:
             result = await instances.test_saved_instance(session, secret_box(request), instance_id)

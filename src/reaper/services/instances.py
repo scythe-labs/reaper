@@ -590,7 +590,8 @@ def _normalize_version(raw: str | None, *, branch: str | None = None) -> str | N
     version = _LONG_SHA_RE.sub(lambda m: m.group(0)[:7], _LEADING_V_RE.sub("", raw.strip()))
     if not version:
         return None
-    if branch and branch != _TAUTULLI_RELEASE_BRANCH and branch.lower() not in version.lower():
+    branch = (branch or "").strip().lower()
+    if branch and branch != _TAUTULLI_RELEASE_BRANCH and branch not in version.lower():
         version = f"{version}-{branch}"
     return version
 
@@ -675,11 +676,19 @@ async def test_connection(
                 name = str(info.get("pms_name") or "Plex").strip()
                 # `server_info()` answers about the Plex server Tautulli monitors, not
                 # about Tautulli itself, so its own version comes from a second command.
-                own = await client.tautulli_info()  # type: ignore[attr-defined]
-                version = _normalize_version(
-                    str(own.get("tautulli_version") or "") or None,
-                    branch=str(own.get("tautulli_branch") or "") or None,
-                )
+                # That command arrived in Tautulli 2.9, and a proxy may filter it, so a
+                # failure there costs the badge its version and nothing else: the first
+                # read already proved the address and the key.
+                version = None
+                try:
+                    own = await client.tautulli_info()  # type: ignore[attr-defined]
+                except Exception:
+                    log.info("Tautulli test: get_tautulli_info failed, version left blank")
+                else:
+                    version = _normalize_version(
+                        str(own.get("tautulli_version") or "") or None,
+                        branch=str(own.get("tautulli_branch") or "") or None,
+                    )
                 return TestResult(
                     ok=True,
                     detail=Reason("connectedWatching", {"name": name}),
