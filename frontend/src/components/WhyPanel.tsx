@@ -924,7 +924,7 @@ const FULL_COVERAGE_BP = 10_000;
 const GROUP_ROW_LIMIT = 6;
 
 /** Biggest share first, so whatever gets folded away is always what mattered least.
- *  Weight, then id, break the ties an "argued to keep" group is made of (every one of its
+ *  Weight, then id, break the ties an "in its favor" group is made of (every one of its
  *  shares is 0), so the same rows land in the same order on every render. */
 function byShare(a: Row, b: Row): number {
   return (
@@ -1524,7 +1524,14 @@ export function WhyPanel({
               <li key={keep.name} className={keep.evaluated ? "signal" : "signal signal-unknown"}>
                 <div className="signal-head">
                   <span className="signal-amount">
-                    −{keep.discount.toFixed(1)}
+                    {/* Same grammar as the signal rows: a minus sign is a claim that points
+                        came off. A rule that took nothing shows a plain 0, and one that took
+                        less than a whole point says so rather than printing "−0.0". */}
+                    {Math.round(keep.discount) > 0
+                      ? `−${Math.round(keep.discount)}`
+                      : keep.discount > 0
+                        ? "<1"
+                        : "0"}
                     <span className="muted">/{keep.max_discount}</span>
                   </span>
                   <span className="signal-detail">

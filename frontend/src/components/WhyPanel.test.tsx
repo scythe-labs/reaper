@@ -313,7 +313,7 @@ describe("the scoring receipt", () => {
     );
 
     expect(groupOf("Pushed to remove")).toBeTruthy();
-    expect(groupOf("Argued to keep")).toBeTruthy();
+    expect(groupOf("In its favor")).toBeTruthy();
     // "Couldn't check" keeps its own group and its own words, never folded in with the
     // rows Reaper did read.
     expect(groupOf("Couldn't check")).toBeTruthy();
@@ -345,7 +345,7 @@ describe("the scoring receipt", () => {
       ]),
     );
 
-    expect(screen.queryByRole("heading", { name: "Argued to keep" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "In its favor" })).toBeNull();
     expect(screen.getByText("1 didn't apply here")).toBeTruthy();
     // An old unreadable row still reads as unreadable, on `evaluated` alone.
     expect(groupOf("Couldn't check")).toBeTruthy();
@@ -415,7 +415,7 @@ describe("the scoring receipt", () => {
 
     expect(groupOf("Couldn't check")).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Pushed to remove" })).toBeNull();
-    expect(screen.queryByRole("heading", { name: "Argued to keep" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "In its favor" })).toBeNull();
   });
 
   it("says what an unread reason means once for the group, not once per row", () => {
@@ -575,10 +575,35 @@ describe("the built-in rewatch keep", () => {
     expect(screen.getByText("Keep rules lowered the score.")).toBeTruthy();
     expect(screen.queryByText(/from 94 to 94/)).toBeNull();
   });
+
+  it("prints a rule's points in the signal rows' grammar, never a minus on nothing", () => {
+    // A rule that took 0 off read "−0.0/20" on a phone: a minus sign on a number that
+    // claims nothing came off. Whole points, a plain 0 for nothing, "<1" for a fraction.
+    const base = withKeeps();
+    show({
+      ...base,
+      explanation: {
+        ...base.explanation,
+        keeps: [
+          { ...base.explanation.keeps![0]!, discount: 0 },
+          { ...base.explanation.keeps![1]!, discount: 0.4, max_discount: 15 },
+          {
+            name: "well rated",
+            discount: 7.5,
+            max_discount: 10,
+            detail_key: legacy("IMDb 8.1"),
+            evaluated: true,
+          },
+        ],
+      },
+    });
+    const amounts = [...document.querySelectorAll(".signal-amount")].map((el) => el.textContent);
+    expect(amounts).toEqual(["0/20", "<1/15", "−8/10"]);
+  });
 });
 
 describe("the rewatch-probability block (#554 stage 2)", () => {
-  // This sits after "Leaning toward keeping" and before the protections. It is display only,
+  // This sits after "Keep rules" and before the protections. It is display only,
   // with no verdict input, so its own heading has to sit between those two sections rather
   // than inside either.
   function withOdds(
@@ -641,7 +666,7 @@ describe("the rewatch-probability block (#554 stage 2)", () => {
     expect(screen.queryByRole("heading", { name: "Rewatch probability" })).not.toBeInTheDocument();
   });
 
-  it("sits after Leaning toward keeping and before What spared it", () => {
+  it("sits after Keep rules and before What spared it", () => {
     const base = detail(WORKED_ROWS);
     show(
       detail(WORKED_ROWS, {
@@ -666,7 +691,7 @@ describe("the rewatch-probability block (#554 stage 2)", () => {
     );
 
     const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    const leaning = headings.indexOf("Leaning toward keeping");
+    const leaning = headings.indexOf("Keep rules");
     const odds = headings.indexOf("Rewatch probability");
     const spared = headings.indexOf("What spared it");
     expect(leaning).toBeGreaterThanOrEqual(0);
