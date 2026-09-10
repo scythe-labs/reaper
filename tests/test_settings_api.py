@@ -572,6 +572,10 @@ class TestTheApiPathIsStoredAndUnreachable:
         """The route has no instance-less pass to read folders on, so it cannot answer the
         mapping fields, and its published shape must not say it may. This body was never
         asserted before, so a narrowing that went the wrong way had no guard.
+
+        ``detail`` is the bare id the real probe emits on a pass (never a hand-written
+        ``legacy`` shape it never emits), so this also pins that the route carries it
+        through to the wire unqualified, for ``ServiceModal.tsx`` to compose.
         """
         made = client.post(
             "/api/settings/instances",
@@ -587,7 +591,7 @@ class TestTheApiPathIsStoredAndUnreachable:
 
         async def fake_test(*_a: object, **_k: object) -> instances_service.TestResult:
             return instances_service.TestResult(
-                ok=True, detail=Reason("legacy", {"text": "Connected."}), version="4.0.1"
+                ok=True, detail=Reason("connected", {"service": "Radarr"}), version="4.0.1"
             )
 
         monkeypatch.setattr(instances_service, "test_connection", fake_test)
@@ -596,7 +600,7 @@ class TestTheApiPathIsStoredAndUnreachable:
 
         assert body == {
             "ok": True,
-            "detail_reason": {"k": "legacy", "p": {"text": "Connected."}},
+            "detail_reason": {"k": "connected", "p": {"service": "Radarr"}},
             "version": "4.0.1",
         }
 

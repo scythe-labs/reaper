@@ -51,6 +51,7 @@ READ_COMMANDS: Final[frozenset[str]] = frozenset(
         "get_users",  # includes keep_history, which the scan must know about
         "get_server_info",
         "get_server_identity",
+        "get_tautulli_info",  # Tautulli's own version, for the connection test's badge
         "pms_image_proxy",  # fetch Plex artwork through Tautulli (read-only)
         "status",
     }
@@ -116,6 +117,15 @@ class TautulliClient(BaseClient):
 
     async def server_info(self) -> dict[str, Any]:
         data = await self.call("get_server_info")
+        return data if isinstance(data, dict) else {}
+
+    async def tautulli_info(self) -> dict[str, Any]:
+        """Tautulli's own build: ``tautulli_version``, ``tautulli_branch``,
+        ``tautulli_commit``. ``server_info()`` above answers about the Plex server
+        Tautulli monitors, not about Tautulli itself, so this is the only command that
+        reports Tautulli's own version.
+        """
+        data = await self.call("get_tautulli_info")
         return data if isinstance(data, dict) else {}
 
     # -- users ----------------------------------------------------------------

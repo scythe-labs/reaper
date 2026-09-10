@@ -20,6 +20,7 @@ Two rules run through everything below:
 from __future__ import annotations
 
 import json
+import re
 import ssl
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -126,10 +127,10 @@ class InstanceView:
 class TestResult:
     """The verdict on a connection test. ``detail`` is a typed reason rather than a frozen
     English sentence: :func:`explain_failure`'s own ``error.instance.*`` code on a failure,
-    or a ``services.test.*`` id (composed by ``ServiceModal.tsx``, never rendered
-    server-side) on a pass. Only the failure case is ever stored (``last_error``, via
-    :func:`english` below) or reflected in a log line; a pass's detail travels to the
-    browser as-is."""
+    or a bare id such as ``connected`` on a pass, composed under the ``services.test``
+    namespace by ``ServiceModal.tsx`` (never rendered server-side). Only the failure case
+    is ever stored (``last_error``, via :func:`english` below) or reflected in a log line;
+    a pass's detail travels to the browser as-is."""
 
     ok: bool
     detail: Reason
@@ -601,6 +602,36 @@ def explain_failure(kind: InstanceKind, exc: BaseException) -> Reason:
     return _GENERIC_FAILURE
 
 
+#: Tautulli's own default branch, and the one release copy names as "the stable one."
+#: A card names any other branch so a nightly or beta operator can tell their build apart.
+_TAUTULLI_RELEASE_BRANCH = "master"
+
+_LEADING_V_RE = re.compile(r"^[vV](?=\d)")
+#: A full git commit sha, the shape Seerr's own dev build names itself with
+#: ("develop-<40 hex>"). Bounded on both sides so a shorter hex run is left alone.
+_LONG_SHA_RE = re.compile(r"\b[0-9a-fA-F]{40}\b")
+
+
+def _normalize_version(raw: str | None, *, branch: str | None = None) -> str | None:
+    """The version string a service card shows, in one shared shape.
+
+    Strips a leading "v" ("v2.15.0" -> "2.15.0") and shortens a 40-character commit sha
+    to 7, the way git itself abbreviates one ("develop-<40 hex>" -> "develop-<7 hex>"),
+    so a dev build's own sha does not wrap a card onto three lines. ``branch`` is
+    Tautulli's own: appended as "-{branch}" when it is set and is not the release branch
+    (:data:`_TAUTULLI_RELEASE_BRANCH`), unless the version string already names it, so a
+    nightly or beta operator can tell their build apart from a stable one.
+    """
+    if not raw:
+        return None
+    version = _LONG_SHA_RE.sub(lambda m: m.group(0)[:7], _LEADING_V_RE.sub("", raw.strip()))
+    if not version:
+        return None
+    if branch and branch != _TAUTULLI_RELEASE_BRANCH and branch.lower() not in version.lower():
+        version = f"{version}-{branch}"
+    return version
+
+
 def _client(
     kind: InstanceKind,
     base_url: str,
@@ -646,8 +677,10 @@ async def test_connection(
 
     Each service is probed with cheap reads that also exercise the key. For the *arr the
     status endpoint reports the version, which is shown beside the instance; it carries
-    the key too, so reaching it proves both. Tautulli's status read carries its key as
-    well. Seerr's ``/status`` is public, so it proves the URL and gives the version but
+    the key too, so reaching it proves both. Tautulli takes two reads, both carrying the
+    key: ``get_server_info`` names the Plex server it is watching, and
+    ``get_tautulli_info`` reports Tautulli's own version, which ``server_info`` does not
+    carry. Seerr's ``/status`` is public, so it proves the URL and gives the version but
     would pass with a wrong key, so Seerr is probed a second time on an authenticated
     route, and that probe is what actually confirms the key.
 
@@ -667,21 +700,30 @@ async def test_connection(
         async with client:
             if kind in (InstanceKind.RADARR, InstanceKind.SONARR):
                 status = await client.system_status()  # type: ignore[attr-defined]
-                version = str(status.get("version") or "") or None
+                version = _normalize_version(str(status.get("version") or "") or None)
                 app = str(status.get("appName") or kind.value).strip()
                 return TestResult(
                     ok=True,
-                    detail=Reason("services.test.connected", {"service": app}),
+                    detail=Reason("connected", {"service": app}),
                     version=version,
                 )
             if kind is InstanceKind.TAUTULLI:
                 info = await client.server_info()  # type: ignore[attr-defined]
                 name = str(info.get("pms_name") or "Plex").strip()
+                # `server_info()` answers about the Plex server Tautulli monitors, not
+                # about Tautulli itself, so its own version comes from a second command.
+                own = await client.tautulli_info()  # type: ignore[attr-defined]
+                version = _normalize_version(
+                    str(own.get("tautulli_version") or "") or None,
+                    branch=str(own.get("tautulli_branch") or "") or None,
+                )
                 return TestResult(
-                    ok=True, detail=Reason("services.test.connectedWatching", {"name": name})
+                    ok=True,
+                    detail=Reason("connectedWatching", {"name": name}),
+                    version=version,
                 )
             status = await client.status()  # type: ignore[attr-defined]
-            version = str(status.get("version") or "") or None
+            version = _normalize_version(str(status.get("version") or "") or None)
             # /status needs no key, so it passes even with a wrong one. Probe an
             # authenticated route too, so a rejected key fails the test here instead of
             # surfacing later as a scan warning with the requester signal dark. A
@@ -689,9 +731,7 @@ async def test_connection(
             await client.requests(take=1)  # type: ignore[attr-defined]
             return TestResult(
                 ok=True,
-                detail=Reason(
-                    "services.test.connected", {"service": _KIND_LABEL[InstanceKind.SEERR]}
-                ),
+                detail=Reason("connected", {"service": _KIND_LABEL[InstanceKind.SEERR]}),
                 version=version,
             )
     except Exception as exc:  # network/TLS/timeout/HTTP: report, don't crash the request

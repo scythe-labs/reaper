@@ -31,9 +31,11 @@ vi.mock("../api", async (importOriginal) => ({
   api: apiMock,
 }));
 
+// The real shape the server's connection probe emits on a pass: a bare id, composed
+// under ServiceModal.tsx's own "services.test" namespace, never a pre-composed sentence.
 const PASSED = {
   ok: true,
-  detail_reason: { k: "legacy", p: { text: "Reached" } },
+  detail_reason: { k: "connected", p: { service: "Sonarr" } },
   version: "4.0.1",
 };
 // The Discord webhook test sends a typed reason rather than `PASSED`'s free-form `detail`
@@ -93,7 +95,7 @@ describe("the badge on a saved service card", () => {
     const press = await screen.findByRole("button", { name: /Test/ });
     await waitFor(() => expect(press).toBeEnabled());
     await user.click(press);
-    await waitFor(() => expect(badge()!.textContent).toContain("Reached"));
+    await waitFor(() => expect(badge()!.textContent).toContain("Connected to Sonarr."));
 
     // The save someone made in the modal, arriving the only way this card can see it.
     apiMock.instances.mockResolvedValue([sonarr({ base_url: "http://10.0.0.6:8989" })]);

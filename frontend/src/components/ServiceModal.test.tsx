@@ -639,9 +639,11 @@ describe("what a screen reader hears when a connection is tested", () => {
   }
 
   it("says a connection was reached, and which version", async () => {
+    // The real shape the server's connection probe emits on a pass: a bare id
+    // (`connected`), composed here under `services.test`, never a pre-composed sentence.
     apiMock.testInstance.mockResolvedValue({
       ok: true,
-      detail_reason: { k: "legacy", p: { text: "Connected to Sonarr." } },
+      detail_reason: { k: "connected", p: { service: "Sonarr" } },
       version: "4.0.1",
     });
     const user = await renderWithAnnouncer();
