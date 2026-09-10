@@ -216,7 +216,6 @@
   color: var(--condemn);
 }
 .budget-notice {
-  display: block;
   margin-top: var(--space-md);
 }
 .savebar .notice {
