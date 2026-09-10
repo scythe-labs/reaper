@@ -13,7 +13,7 @@ seeing what is left to set up, and turning deletion on and off. The properties p
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import NoReturn
 
 import httpx
 import httpx2
@@ -34,7 +34,7 @@ from reaper.clients.plex import PlexClient, PlexError, PlexSection
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
-from reaper.db.models import Instance, InstanceKind, PlexServer, Snapshot
+from reaper.db.models import InstanceKind, PlexServer, Snapshot
 from reaper.engine.reason import Reason, from_wire, to_wire
 from reaper.services import instances as instances_service
 
@@ -603,156 +603,6 @@ class TestTheApiPathIsStoredAndUnreachable:
             "detail_reason": {"k": "connected", "p": {"service": "Radarr"}},
             "version": "4.0.1",
         }
-
-
-class TestTheStoredTestResultDescribesWhatWasTested:
-    """A connection test's outcome is stored on the instance row, which must describe
-    the credentials in force, not the ones it was computed from before an edit.
-
-    The service card no longer reads this row on open (`InstanceOut` dropped the three
-    columns from the wire response), so this is now the row's own test record rather
-    than something rendered. The green direction still matters: an ok time or a version
-    left behind after an edit would misrecord Reaper as having reached an address it
-    never tried.
-    """
-
-    @staticmethod
-    def _pass_a_test(client: TestClient, monkeypatch: pytest.MonkeyPatch, instance_id: int) -> None:
-        async def fake_test(
-            kind: InstanceKind,
-            base_url: str,
-            api_key: str,
-            *,
-            verify: bool = True,
-            api_path_prefix: str | None = None,
-        ) -> instances_service.TestResult:
-            return instances_service.TestResult(
-                ok=True, detail=Reason("legacy", {"text": "Connected."}), version="4.0.1"
-            )
-
-        monkeypatch.setattr(instances_service, "test_connection", fake_test)
-        assert client.post(f"/api/settings/instances/{instance_id}/test").status_code == 200
-
-    @staticmethod
-    def _row(client: TestClient, instance_id: int) -> dict[str, Any]:
-        """The row's own test-outcome columns, read straight from the database: the API
-        response no longer carries them, since the service card stopped rendering a
-        saved result on open.
-        """
-        settings: Settings = client.app.state.settings  # type: ignore[attr-defined]
-        engine = sa_create_engine(settings.sync_database_url)
-        try:
-            with Session(engine) as session:
-                row = session.get(Instance, instance_id)
-                assert row is not None
-                return {
-                    "last_ok_at": row.last_ok_at.isoformat() if row.last_ok_at else None,
-                    "last_error": row.last_error,
-                    "detected_version": row.detected_version,
-                }
-        finally:
-            engine.dispose()
-
-    def _saved_and_tested(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> dict[str, Any]:
-        made: dict[str, Any] = client.post(
-            "/api/settings/instances",
-            json={"kind": "radarr", "name": "HD", "base_url": "http://a.local", "api_key": "k"},
-        ).json()
-        self._pass_a_test(client, monkeypatch, made["id"])
-        stored = self._row(client, made["id"])
-        # This precondition is asserted, not assumed. Without a stored pass to clear,
-        # every case below would hold on an empty row and prove nothing.
-        assert stored["last_ok_at"] is not None
-        assert stored["detected_version"] == "4.0.1"
-        return made
-
-    @pytest.mark.parametrize(
-        ("what_changed", "edit"),
-        [
-            ("the address", {"base_url": "http://b.local"}),
-            ("the key", {"api_key": "rotated"}),
-            ("the certificate check", {"verify_tls": False}),
-        ],
-    )
-    def test_changing_what_was_tested_clears_the_stored_outcome(
-        self,
-        client: TestClient,
-        monkeypatch: pytest.MonkeyPatch,
-        what_changed: str,
-        edit: dict[str, object],
-    ) -> None:
-        """Each of the three inputs ``test_saved_instance`` computes its answer from,
-        driven on its own. Nothing cleared these columns except a real test.
-        """
-        made = self._saved_and_tested(client, monkeypatch)
-
-        assert client.put(f"/api/settings/instances/{made['id']}", json=edit).status_code == 200
-
-        after = self._row(client, made["id"])
-        assert after["last_ok_at"] is None, f"a pass survived {what_changed} changing"
-        assert after["last_error"] is None
-        # Cleared too, or the badge would name the build found at the old address.
-        assert after["detected_version"] is None
-
-    def test_an_edit_that_changes_nothing_tested_keeps_the_outcome(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The discriminating case. A rename, and a save that resends the same address,
-        both keep the pass. Without this, the clearing above would be indistinguishable
-        from clearing on every update, which would leave no saved instance able to hold
-        a result at all.
-        """
-        made = self._saved_and_tested(client, monkeypatch)
-
-        renamed = client.put(f"/api/settings/instances/{made['id']}", json={"name": "4K"})
-        assert renamed.status_code == 200
-        assert self._row(client, made["id"])["last_ok_at"] is not None
-
-        resent = client.put(
-            f"/api/settings/instances/{made['id']}",
-            json={"base_url": "http://a.local", "verify_tls": True},  # both unchanged
-        )
-        assert resent.status_code == 200
-        after_resend = self._row(client, made["id"])
-        assert after_resend["last_ok_at"] is not None
-        assert after_resend["detected_version"] == "4.0.1"
-
-    def test_a_stored_failure_is_cleared_by_the_same_edit(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Both directions: ``test_saved_instance`` writes an ok time and a failure to
-        the same two columns, so a stored failure needs its own case for the edit to
-        clear. A failure left behind would blame the new address for the old one's
-        refusal.
-        """
-        made = client.post(
-            "/api/settings/instances",
-            json={"kind": "radarr", "name": "HD", "base_url": "http://a.local", "api_key": "k"},
-        ).json()
-
-        async def failing_test(
-            kind: InstanceKind,
-            base_url: str,
-            api_key: str,
-            *,
-            verify: bool = True,
-            api_path_prefix: str | None = None,
-        ) -> instances_service.TestResult:
-            return instances_service.TestResult(
-                ok=False, detail=Reason("legacy", {"text": "Couldn't reach it."})
-            )
-
-        monkeypatch.setattr(instances_service, "test_connection", failing_test)
-        assert client.post(f"/api/settings/instances/{made['id']}/test").status_code == 200
-        assert self._row(client, made["id"])["last_error"] == "Couldn't reach it."
-
-        moved = client.put(
-            f"/api/settings/instances/{made['id']}", json={"base_url": "http://b.local"}
-        )
-        assert moved.status_code == 200
-        assert self._row(client, made["id"])["last_error"] is None
 
 
 class TestConnectionTestsHonorTheTlsChoice:

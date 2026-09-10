@@ -120,10 +120,10 @@ class InstanceOut(BaseModel):
     # publish its default. `db.models.Instance.api_path_prefix` holds the
     # reasoning.
     #
-    # No `detected_version`, `last_ok_at` or `last_error` either. The service card no
-    # longer shows a saved test result on open, so nothing in the browser reads them.
-    # `test_saved_instance` still writes all three to the row as its own test record;
-    # this model just stops carrying them over the wire.
+    # No `detected_version`, `last_ok_at` or `last_error` either. `db.models.Instance`
+    # carries no attribute for them any more: the columns stay in the schema, nullable
+    # and unwritten, until a follow-up release drops them (`alembic/env.py`'s
+    # `RETIRED_COLUMNS`).
 
     @classmethod
     def of(cls, view: instances.InstanceView) -> InstanceOut:

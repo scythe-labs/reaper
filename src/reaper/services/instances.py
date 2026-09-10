@@ -41,7 +41,7 @@ from reaper.crypto import SecretBox
 from reaper.db.models import Instance, InstanceKind
 from reaper.engine import identity
 from reaper.engine.reason import Reason
-from reaper.refusal import Refusal, english
+from reaper.refusal import Refusal
 
 log = structlog.get_logger(__name__)
 
@@ -125,9 +125,9 @@ class TestResult:
     """The verdict on a connection test. ``detail`` is a typed reason rather than a frozen
     English sentence: :func:`explain_failure`'s own ``error.instance.*`` code on a failure,
     or a bare id such as ``connected`` on a pass, composed under the ``services.test``
-    namespace by ``ServiceModal.tsx`` (never rendered server-side). Only the failure case
-    is ever stored (``last_error``, via :func:`english` below) or reflected in a log line;
-    a pass's detail travels to the browser as-is."""
+    namespace by ``ServiceModal.tsx`` (never rendered server-side). Nothing here is stored:
+    ``last_ok_at``, ``last_error`` and ``detected_version`` retired their writes along with
+    their reads, so a pass's and a failure's detail both travel to the browser as-is."""
 
     ok: bool
     detail: Reason
@@ -377,23 +377,8 @@ async def update_instance(
 
     The key is write-only: the browser cannot read it back, so "no new key" always means
     "leave it alone." Clearing a key would silently break the next scan.
-
-    Changing what a connection test was computed against clears the stored outcome, so
-    the card falls back to "Not tested yet" rather than vouching for credentials nobody
-    has tried (see ``tested_against_changed`` below).
     """
     row = await _get(session, instance_id)
-
-    # The stored outcome of the last connection test describes one exact set of credentials:
-    # `test_saved_instance` computes it from base_url, the key, and verify_tls. Change any of
-    # them and it describes something nobody tried, so it is cleared. The green direction is
-    # the one that matters: "Reached" would tell the operator Reaper can reach the app it
-    # deletes through when nothing has checked the address now configured. The same trio is
-    # what the browser's own freshness pairing watches, in `ServiceModal.testedWith` and
-    # `ServiceCard.testedWith`, one fact, so keep the three lists together. `api_path_prefix`
-    # rides along in that test too, but no route can change it, so it cannot go stale here;
-    # adding a writer for it means adding it here.
-    tested_against_changed = False
 
     if name is not None and name.strip():
         new_name = name.strip()
@@ -413,25 +398,17 @@ async def update_instance(
                 )
         row.name = new_name
     if base_url is not None and base_url.strip():
-        new_base_url = base_url.strip().rstrip("/")
-        tested_against_changed |= new_base_url != row.base_url
-        row.base_url = new_base_url
+        row.base_url = base_url.strip().rstrip("/")
     if external_url is not None:
         # Unlike base_url (blank keeps, since it is required), a blank external_url clears it
         # to NULL: that is how the operator turns off a custom link address and falls back to
         # base_url. Omitting the field (None) still keeps the stored value.
         row.external_url = external_url.strip().rstrip("/") or None
     if api_key:  # a blank/omitted key means "keep the existing one"
-        # A key that arrives at all counts as a rotation, without comparing it to the stored
-        # one: the browser only sends this field when the operator typed in it, and re-typing
-        # the same key costs a truthful "Not tested yet," while guessing the other way would
-        # leave a green badge standing for a key that was never tried.
         row.api_key_enc = box.encrypt(api_key)
-        tested_against_changed = True
     if enabled is not None:
         row.enabled = enabled
     if verify_tls is not None:  # None means "leave it as it is"; an explicit False sticks
-        tested_against_changed |= verify_tls != row.verify_tls
         row.verify_tls = verify_tls
     if add_import_exclusion is not None:  # None keeps the stored value; explicit False sticks
         row.add_import_exclusion = add_import_exclusion
@@ -444,15 +421,6 @@ async def update_instance(
         # An empty dict clears the map to NULL, so "removed every mapping" and "never had one"
         # are the one state build_map reads as "no map" and falls back to the tmdb/tvdb union.
         row.service_instance_map = _encode_service_instance_map(service_instance_map)
-
-    if tested_against_changed:
-        # Cleared together because all three describe one probe. The service card no
-        # longer reads them back, but `test_saved_instance` still writes them as the
-        # row's own test record, and a version or an ok time left behind would misdate a
-        # probe run against a target that no longer exists.
-        row.last_ok_at = None
-        row.last_error = None
-        row.detected_version = None
 
     await session.flush()
     log.info("instance.updated", kind=row.kind.value, name=row.name)
@@ -744,28 +712,15 @@ async def test_connection(
 async def test_saved_instance(
     session: AsyncSession, box: SecretBox, instance_id: int
 ) -> TestResult:
-    """Test a stored instance and record the outcome on the row (last_ok_at / last_error)."""
+    """Test a stored instance's connection. Nothing about the outcome is saved."""
     row = await _get(session, instance_id)
-    result = await test_connection(
+    return await test_connection(
         row.kind,
         row.base_url,
         box.decrypt(row.api_key_enc),
         verify=row.verify_tls,
         api_path_prefix=row.api_path_prefix,
     )
-    if result.ok:
-        row.last_ok_at = utcnow()
-        row.last_error = None
-        if result.version:
-            row.detected_version = result.version
-    else:
-        # `last_error` is a stored, untyped text column (unlike the live test's own
-        # `TestOut.detail_reason`), so this is still where a `Reason` becomes English:
-        # `english()` is the one place that happens, the same catalog the browser's own
-        # build was generated from.
-        row.last_error = english(result.detail)
-    await session.flush()
-    return result
 
 
 @dataclass(frozen=True)
