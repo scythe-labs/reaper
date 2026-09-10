@@ -582,8 +582,12 @@ describe("the built-in rewatch keep", () => {
     const base = withKeeps();
     show({
       ...base,
+      score: 47,
       explanation: {
         ...base.explanation,
+        score: 47.1,
+        base_score: 55,
+        keep_discount: 7.9,
         keeps: [
           { ...base.explanation.keeps![0]!, discount: 0 },
           { ...base.explanation.keeps![1]!, discount: 0.4, max_discount: 15 },
@@ -599,6 +603,33 @@ describe("the built-in rewatch keep", () => {
     });
     const amounts = [...document.querySelectorAll(".signal-amount")].map((el) => el.textContent);
     expect(amounts).toEqual(["0/20", "<1/15", "−8/10"]);
+  });
+
+  it("makes the rows add up to the drop the blurb states", () => {
+    // Three rules at 0.6 each rounded to "−1" apiece beside "from 55 to 53", a drop of 2.
+    // Largest remainder hands the 2 whole points to two rows and the third says "<1".
+    const base = withKeeps();
+    const rule = (name: string) => ({
+      name,
+      discount: 0.6,
+      max_discount: 10,
+      detail_key: legacy(name),
+      evaluated: true,
+    });
+    show({
+      ...base,
+      score: 53,
+      explanation: {
+        ...base.explanation,
+        score: 53.2,
+        base_score: 55,
+        keep_discount: 1.8,
+        keeps: [rule("a"), rule("b"), rule("c")],
+      },
+    });
+    expect(screen.getByText("Keep rules lowered the score from 55 to 53.")).toBeTruthy();
+    const amounts = [...document.querySelectorAll(".signal-amount")].map((el) => el.textContent);
+    expect(amounts.sort()).toEqual(["<1/10", "−1/10", "−1/10"]);
   });
 });
 
