@@ -97,10 +97,10 @@ export function serviceKindLabel(kind: SeerrService["kind"]): string {
 /** A test's own detail, composed from its typed reason. A failure's id is a full `error.*`
  *  catalog code (`explain_failure`'s own, e.g. `error.instance.auth_refused`) and composes
  *  through the error namespace. A pass's id is bare (`services.test.connected` and kin,
- *  `ServiceModal.tsx`'s own namespace) and composes under `services.test`. `ServicesPanel.tsx`
- *  synthesizes a `{k: "legacy", p: {text}}` reason for the persisted card states (the stored
- *  `last_error` string, the fixed "Reached" detail), which `composeIn`/`composeError` both
- *  already render verbatim, the same shape a pre-conversion stored row carries. */
+ *  `ServiceModal.tsx`'s own namespace) and composes under `services.test`.
+ *  `composeDiscordTestResult` below wraps a Discord test's already-composed sentence in a
+ *  `{k: "legacy", p: {text}}` reason instead, which `composeIn`/`composeError` both render
+ *  verbatim, exactly the reason this shape exists to compose through. */
 export function testDetailText(reason: InstanceTest["detail_reason"]): string {
   return reason.k.startsWith("error.") ? composeError(reason) : composeIn("services.test", reason);
 }

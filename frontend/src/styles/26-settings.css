@@ -144,6 +144,9 @@
 .instance-status {
   font-size: var(--text-sm);
   margin-top: var(--space-2xs);
+  /* Reserves one line so the Test/Edit/Remove row below does not shift when a
+     same-visit result fills this otherwise empty slot (ServicesPanel.tsx). */
+  min-height: 1.2em;
 }
 .service-card-foot {
   display: flex;

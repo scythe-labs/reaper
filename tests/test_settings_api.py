@@ -34,7 +34,7 @@ from reaper.clients.plex import PlexClient, PlexError, PlexSection
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
-from reaper.db.models import InstanceKind, PlexServer, Snapshot
+from reaper.db.models import Instance, InstanceKind, PlexServer, Snapshot
 from reaper.engine.reason import Reason, from_wire, to_wire
 from reaper.services import instances as instances_service
 
@@ -606,13 +606,14 @@ class TestTheApiPathIsStoredAndUnreachable:
 
 
 class TestTheStoredTestResultDescribesWhatWasTested:
-    """A connection test's outcome is stored on the instance row and rendered as the
-    service card's badge, so it must describe the credentials in force, not the ones it
-    was computed from before an edit.
+    """A connection test's outcome is stored on the instance row, which must describe
+    the credentials in force, not the ones it was computed from before an edit.
 
-    The green direction is the one that matters. A stale "Reached" tells the operator
-    Reaper can reach the app it deletes through, when nothing has checked the address now
-    configured.
+    The service card no longer reads this row on open (`InstanceOut` dropped the three
+    columns from the wire response), so this is now the row's own test record rather
+    than something rendered. The green direction still matters: an ok time or a version
+    left behind after an edit would misrecord Reaper as having reached an address it
+    never tried.
     """
 
     @staticmethod
@@ -634,9 +635,23 @@ class TestTheStoredTestResultDescribesWhatWasTested:
 
     @staticmethod
     def _row(client: TestClient, instance_id: int) -> dict[str, Any]:
-        listed = client.get("/api/settings/instances").json()
-        row: dict[str, Any] = next(r for r in listed if r["id"] == instance_id)
-        return row
+        """The row's own test-outcome columns, read straight from the database: the API
+        response no longer carries them, since the service card stopped rendering a
+        saved result on open.
+        """
+        settings: Settings = client.app.state.settings  # type: ignore[attr-defined]
+        engine = sa_create_engine(settings.sync_database_url)
+        try:
+            with Session(engine) as session:
+                row = session.get(Instance, instance_id)
+                assert row is not None
+                return {
+                    "last_ok_at": row.last_ok_at.isoformat() if row.last_ok_at else None,
+                    "last_error": row.last_error,
+                    "detected_version": row.detected_version,
+                }
+        finally:
+            engine.dispose()
 
     def _saved_and_tested(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -686,29 +701,31 @@ class TestTheStoredTestResultDescribesWhatWasTested:
     ) -> None:
         """The discriminating case. A rename, and a save that resends the same address,
         both keep the pass. Without this, the clearing above would be indistinguishable
-        from clearing on every update, which would leave no service card able to show a
-        result at all.
+        from clearing on every update, which would leave no saved instance able to hold
+        a result at all.
         """
         made = self._saved_and_tested(client, monkeypatch)
 
         renamed = client.put(f"/api/settings/instances/{made['id']}", json={"name": "4K"})
         assert renamed.status_code == 200
-        assert renamed.json()["last_ok_at"] is not None
+        assert self._row(client, made["id"])["last_ok_at"] is not None
 
         resent = client.put(
             f"/api/settings/instances/{made['id']}",
             json={"base_url": "http://a.local", "verify_tls": True},  # both unchanged
         )
         assert resent.status_code == 200
-        assert resent.json()["last_ok_at"] is not None
-        assert resent.json()["detected_version"] == "4.0.1"
+        after_resend = self._row(client, made["id"])
+        assert after_resend["last_ok_at"] is not None
+        assert after_resend["detected_version"] == "4.0.1"
 
     def test_a_stored_failure_is_cleared_by_the_same_edit(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Both directions, because the badge renders ``last_error`` ahead of
-        ``last_ok_at``. A failure left behind would blame the new address for the old
-        one's refusal.
+        """Both directions: ``test_saved_instance`` writes an ok time and a failure to
+        the same two columns, so a stored failure needs its own case for the edit to
+        clear. A failure left behind would blame the new address for the old one's
+        refusal.
         """
         made = client.post(
             "/api/settings/instances",
@@ -735,7 +752,7 @@ class TestTheStoredTestResultDescribesWhatWasTested:
             f"/api/settings/instances/{made['id']}", json={"base_url": "http://b.local"}
         )
         assert moved.status_code == 200
-        assert moved.json()["last_error"] is None
+        assert self._row(client, made["id"])["last_error"] is None
 
 
 class TestConnectionTestsHonorTheTlsChoice:

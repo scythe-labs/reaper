@@ -119,9 +119,11 @@ class InstanceOut(BaseModel):
     # No `api_path_prefix` here. No route writes it, so it could only ever
     # publish its default. `db.models.Instance.api_path_prefix` holds the
     # reasoning.
-    detected_version: str | None = None
-    last_ok_at: str | None = None
-    last_error: str | None = None
+    #
+    # No `detected_version`, `last_ok_at` or `last_error` either. The service card no
+    # longer shows a saved test result on open, so nothing in the browser reads them.
+    # `test_saved_instance` still writes all three to the row as its own test record;
+    # this model just stops carrying them over the wire.
 
     @classmethod
     def of(cls, view: instances.InstanceView) -> InstanceOut:

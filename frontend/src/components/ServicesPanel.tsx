@@ -42,11 +42,9 @@ function ServiceCard({
   //
   // The address and the certificate setting are what this card can see change. A key
   // rotated at the same address is not visible here (`has_key` stays true), so it is
-  // included for the false-to-true case only. The rotation is answered on the server
-  // instead: `update_instance` clears `last_ok_at`, `last_error` and `detected_version`
-  // whenever the address, the key or the certificate setting changes, so the fallbacks
-  // below cannot outlive what they were computed against either, and this card drops to
-  // "Not tested yet".
+  // included for the false-to-true case only. This is also the badge's only source:
+  // opening the page shows no status on any card, only a result from a Test pressed
+  // this visit, so nothing here can outlive what it was computed against.
   const [test, setTest] = useState<{ result: InstanceTest; of: string } | null>(null);
   const testedWith = () => `${instance.base_url} ${instance.verify_tls} ${instance.has_key}`;
   // A two-step "Remove" -> "Confirm remove" toggle, mirroring the arm confirm in
@@ -105,30 +103,12 @@ function ServiceCard({
         </div>
         <div className="instance-url muted">{instance.base_url}</div>
         <div className="instance-status">
-          {/* All three states render through the one badge. What the card remembers from
-              the last test is the same shape a fresh test returns, so it is handed over as
-              one rather than rebuilt with a second set of markup that can drift. */}
-          {test && test.of === testedWith() ? (
-            <TestBadge result={test.result} />
-          ) : instance.last_error ? (
-            <TestBadge
-              result={{
-                ok: false,
-                detail_reason: { k: "legacy", p: { text: instance.last_error } },
-                version: null,
-              }}
-            />
-          ) : instance.last_ok_at ? (
-            <TestBadge
-              result={{
-                ok: true,
-                detail_reason: { k: "legacy", p: { text: t("services.panel.card.reachedDetail") } },
-                version: instance.detected_version,
-              }}
-            />
-          ) : (
-            <span className="muted">{t("services.panel.card.notTestedYet")}</span>
-          )}
+          {/* A result from a Test pressed this visit, and nothing else. Opening the page,
+              or switching back to this tab, shows no status here, since nobody has just
+              confirmed the service is still reachable. The slot keeps a fixed min-height
+              (styles/26-settings.css) so the Test/Edit/Remove row does not move when the
+              badge appears. */}
+          {test && test.of === testedWith() && <TestBadge result={test.result} />}
         </div>
         {(remove.error ?? testSaved.error) && (
           <Notice tone="error" inline>

@@ -1775,8 +1775,6 @@
         "confirmRemoveAria": "Confirm remove {name}",
         "confirmRemoveTitle": "Only forgets it in Reaper. Nothing is changed in the service itself.",
         "disabledChip": "disabled",
-        "notTestedYet": "Not tested yet",
-        "reachedDetail": "Reached",
         "removeAria": "Remove {name}",
         "removeFailed": "This service wasn't removed: {message}",
         "removedAnnouncement": "{name} removed.",
