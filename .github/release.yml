@@ -26,9 +26,10 @@ changelog:
       labels: [Kind/Bug]
     - title: ♿ Accessibility
       labels: [Kind/Accessibility]
-    - title: 📖 Documentation
-      labels: [Kind/Documentation]
+    # Above Documentation, because Dependabot's /website lane also labels Kind/Documentation.
     - title: 📦 Dependencies
       labels: [dependencies]
+    - title: 📖 Documentation
+      labels: [Kind/Documentation]
     - title: ⚙️ Everything else
       labels: ["*"]
