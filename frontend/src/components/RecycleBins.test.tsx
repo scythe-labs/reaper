@@ -136,4 +136,11 @@ describe("a past run's recycle bin list", () => {
     expect(await screen.findByText("bin on, 2.0 TiB frees when the bin is emptied")).toBeVisible();
     expect(screen.getByText("no recycle bin")).toBeVisible();
   });
+
+  it("says it could not read the bins when the request fails", async () => {
+    apiMock.runBins.mockRejectedValue(new Error("down"));
+    renderWithProviders(<RunBinsList runId={16} />);
+
+    expect(await screen.findByText("Reaper couldn't read the recycle bins.")).toBeVisible();
+  });
 });

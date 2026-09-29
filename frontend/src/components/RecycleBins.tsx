@@ -118,12 +118,13 @@ function whenText(b: RunBin, t: TFunction): string {
 export function RunBinsList({ runId }: { runId: number }) {
   const { t } = useTranslation();
   const query = useRunBins(runId);
-  if (!query.data || query.data.bins.length === 0) return null;
+  if (!query.isError && (!query.data || query.data.bins.length === 0)) return null;
   return (
     <>
       <h3 className="reap-feed-heading">{t("recycleBins.heading")}</h3>
+      {query.isError && <p className="help bins-failed">{t("recycleBins.loadFailed")}</p>}
       <div className="feed run-bins">
-        {query.data.bins.map((b) => (
+        {query.data?.bins.map((b) => (
           <div
             key={`${b.kind}:${b.instance_id}`}
             className={b.bin === "unknown" ? "feed-row kept" : "feed-row gone"}
