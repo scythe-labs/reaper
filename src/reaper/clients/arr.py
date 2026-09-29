@@ -187,19 +187,25 @@ class RadarrClient(ArrClient):
     exclusion_param: ClassVar[str] = "addImportExclusion"
     exclusion_path: ClassVar[str] = "/exclusions"
 
-    async def movies(self) -> list[dict[str, Any]]:
+    async def movies(self, *, tmdb_id: int | None = None) -> list[dict[str, Any]]:
         """Every movie, with ``ratings`` already attached.
 
         Radarr returns a full ratings object (imdb, tmdb, metacritic, rottenTomatoes,
         trakt), so movie ratings cost no extra call and no extra API key. Sonarr does
         not: its ratings are flat TVDB only.
 
+        With ``tmdb_id``, Radarr lists only the movie with that TMDB id, and an empty
+        list once it is deleted. The delete check reads this instead of the movie's own
+        route, which answers 404 once the movie is gone. A reverse proxy running CrowdSec
+        reads a run of 404s as a scan and blocks the Reaper host.
+
         This is the read that first showed why ``get_list`` must raise instead of
         returning an empty list: an auth proxy's error page, read as an empty list,
         once looked like an empty library and silently dropped every movie from the
         scan.
         """
-        return await self.get_list(f"{self.prefix}/movie")
+        params = None if tmdb_id is None else {"tmdbId": tmdb_id}
+        return await self.get_list(f"{self.prefix}/movie", params=params)
 
     async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
         return await self.get_dict(f"{self.prefix}/movie/{movie_id}")

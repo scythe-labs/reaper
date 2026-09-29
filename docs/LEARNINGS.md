@@ -4599,6 +4599,20 @@ pins both halves.
 boundary of that rule. Where each request buys a bounded piece of work, batching them into
 one unbounded request costs more and risks more.
 
+## A reap's 404s trip CrowdSec's probing rule (2026-09-29)
+
+A live reap stopped deleting after a few dozen items. The delete check read
+`GET /api/v3/movie/{id}` and took the 404 as proof the movie was gone. CrowdSec's
+`crowdsecurity/http-probing` rule counts 404s per source IP, and it fired at 12 in 14 seconds.
+The proxy then answered every Sonarr, Radarr and Tautulli call with a captcha page and a 200.
+
+- **Reaper failed closed.** The captcha page does not parse, so every later item was kept
+  and the scan after the reap degraded. One season was deleted with its check unreadable.
+- **Plex kept answering**, because its calls did not pass through the blocked proxy.
+- **The fix reads `GET /api/v3/movie?tmdbId=`.** It answers 200 with an empty list once the
+  movie is gone (Radarr's `MovieController.AllMovie`). The check matches rows by Radarr id,
+  so a Radarr that ignored the filter would still read correctly.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

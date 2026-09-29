@@ -175,6 +175,18 @@ class TestEveryListReadRefusesANonListBody:
         async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
             assert await client.movies() == []
 
+    async def test_a_tmdb_filtered_read_asks_for_that_movie_only(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """The delete check reads this after every movie delete. The filter is what
+        makes it one row and a 200, where the movie's own route would answer 404."""
+        route = httpx2_mock.get("https://radarr.test/api/v3/movie").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
+            assert await client.movies(tmdb_id=5) == []
+        assert route.calls.last.request.url.params["tmdbId"] == "5"
+
 
 class TestEveryObjectReadRefusesANonObjectBody:
     """Every object-returning read must raise on a non-object body, the object guards'

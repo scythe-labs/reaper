@@ -478,7 +478,7 @@ _ID_PAYLOAD_KEYS = frozenset({"imdbId", "ImdbId", "tmdbId", "TmdbId", "tvdbId", 
 #: How many of those literals ``src/`` holds, reconciled by hand against the files. Counting
 #: the population the ban itself scans matters because a flag-shaped assertion alone cannot
 #: tell a compliant site from one the parse silently missed.
-ID_PAYLOAD_KEY_READS = 24
+ID_PAYLOAD_KEY_READS = 25
 
 #: Reads exempted from the identity-read requirement, classified here in writing.
 _NOT_AN_IDENTITY_READ = {
@@ -487,12 +487,15 @@ _NOT_AN_IDENTITY_READ = {
     # the send from deleting anything. Routing it through ExternalIds.of would only change the
     # spelling, since no cross-system id lookup happens here.
     ("services/executor.py", "tmdbId"),
+    # A query parameter's name, never a read: the delete check asks Radarr for the movie
+    # with the TMDB id the executor exemption above already read.
+    ("clients/arr.py", "tmdbId"),
 }
 
 #: How many reads ``_NOT_AN_IDENTITY_READ`` actually exempts. The set is keyed on (file, key)
 #: alone, so a count is what stops a third read in an already-listed file from silently
 #: inheriting the exemption.
-EXEMPTED_ID_KEY_READS = 2
+EXEMPTED_ID_KEY_READS = 3
 
 
 def _is_external_ids_of(func: ast.expr) -> bool:

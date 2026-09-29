@@ -300,7 +300,7 @@ class FakeRadarr(RadarrClient):
         self._root_accessible = root_accessible
         self._fail_movies = fail_movies
 
-    async def movies(self) -> list[dict[str, Any]]:
+    async def movies(self, *, tmdb_id: int | None = None) -> list[dict[str, Any]]:
         if self._fail_movies:
             raise IntegrationError("radarr", "unreachable (boom)")
         return self._movies

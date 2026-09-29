@@ -2119,6 +2119,24 @@ class TestMovieLiveSend:
         assert report.state is RunState.COMPLETED
         assert report.deleted_items == 1
         assert radarr.delete_calls == [1]
+        # Radarr answers a tmdbId=0 filter with an empty list whether or not the movie
+        # is there, so a movie with no TMDB id is checked against the whole list.
+        assert radarr.list_reads == [None]
+
+    async def test_the_delete_check_reads_the_list_and_never_a_404(
+        self, session: AsyncSession
+    ) -> None:
+        """A deleted movie's own route answers 404, and CrowdSec's probing rule blocks
+        the Reaper host after about ten of those, which fails the rest of the reap. The
+        check reads the list filtered by the movie's TMDB id, which answers 200."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+        run = await _plan(session, snapshot_id)
+        radarr = FakeRadarr()
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert report.deleted_items == 1
+        assert radarr.list_reads == [556]  # the fake's TMDB id for movie 1
 
     async def test_a_movie_still_present_after_the_delete_fails(
         self, session: AsyncSession
@@ -3144,6 +3162,7 @@ class FakeRadarr:
         self._deleted: set[int] = set()
         self.delete_calls: list[int] = []
         self.exclusion_args: list[bool] = []  # the add_exclusion value each delete was sent
+        self.list_reads: list[int | None] = []  # the tmdb_id filter of each movie-list read
 
     async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
         if movie_id in self._deleted and self._become_gone:
@@ -3154,6 +3173,13 @@ class FakeRadarr:
         if self._size_on_disk is not None:
             movie["sizeOnDisk"] = self._size_on_disk
         return movie
+
+    async def movies(self, *, tmdb_id: int | None = None) -> list[dict[str, Any]]:
+        # Lists only the movies this fake was asked to delete, since the delete check
+        # never looks for any other. A deleted movie stays listed when it never goes.
+        self.list_reads.append(tmdb_id)
+        rows = [] if self._become_gone else [await self.movie_by_id(i) for i in self._deleted]
+        return [row for row in rows if tmdb_id is None or row.get("tmdbId") == tmdb_id]
 
     async def delete_movie(
         self, movie_id: int, *, delete_files: bool = True, add_exclusion: bool = True
@@ -3187,12 +3213,10 @@ class UnreachableAfterDelete(FakeRadarr):
     re-read. Nobody knows whether the movie is there. Shared by three tests in
     ``TestARemovalIsCountedEvenWhenTheStepFails`` that each drive it a different way."""
 
-    async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
-        if movie_id in self._deleted:
-            # A timeout carries no status at all, which is exactly the case that
-            # must not collapse into "the movie is still present".
-            raise IntegrationError("radarr", "timed out", status=None)
-        return await super().movie_by_id(movie_id)
+    async def movies(self, *, tmdb_id: int | None = None) -> list[dict[str, Any]]:
+        # A timeout carries no status at all, which is exactly the case that must not
+        # collapse into "the movie is still present".
+        raise IntegrationError("radarr", "timed out", status=None)
 
 
 class FakeSonarr:

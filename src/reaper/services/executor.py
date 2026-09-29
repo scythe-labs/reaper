@@ -295,6 +295,7 @@ class MovieDeleter(Protocol):
     """Radarr, for a movie delete + its exclusion verification."""
 
     async def movie_by_id(self, movie_id: int) -> dict[str, Any]: ...
+    async def movies(self, *, tmdb_id: int | None = ...) -> list[dict[str, Any]]: ...
     async def delete_movie(
         self, movie_id: int, *, delete_files: bool = ..., add_exclusion: bool = ...
     ) -> None: ...
@@ -2310,10 +2311,11 @@ class Executor:
         await self._mark_sent(step)
         await radarr.delete_movie(ref.arr_id, delete_files=True, add_exclusion=add_exclusion)
 
-        # Verify the movie is actually gone, always, and immediately (a deleted movie 404s).
-        gone = await self._movie_is_gone(radarr, ref.arr_id)
-        # Only a real 404 passes the check. An unreadable re-read (``None``) is not a
-        # pass: nothing was confirmed, and the checklist must not claim otherwise.
+        # Verify the movie is actually gone, always, and immediately.
+        gone = await self._movie_is_gone(radarr, ref.arr_id, tmdb_id)
+        # Only a clean read without the movie passes the check. An unreadable re-read
+        # (``None``) is not a pass: nothing was confirmed, and the checklist must not
+        # claim otherwise.
         proven_gone = gone is True
         # ``None`` means the re-read failed, so the file's fate is unknown. Below, that
         # is the keep direction (fail the item, do not claim a verification), but for the
@@ -2399,23 +2401,33 @@ class Executor:
             is_canary=is_canary,
         )
 
-    async def _movie_is_gone(self, radarr: MovieDeleter, movie_id: int) -> bool | None:
+    async def _movie_is_gone(
+        self, radarr: MovieDeleter, movie_id: int, tmdb_id: int
+    ) -> bool | None:
         """Did the movie really go? ``True`` gone, ``False`` still there, ``None`` unknown.
 
         Three answers, not two, because the two ends of "not True" need opposite
-        handling. A 404 proves the delete took. A clean read that still finds the movie
-        proves it did not: Radarr returned 200 and did nothing. A timeout or a 502 on
-        this re-read proves neither, and collapsing that into ``False`` would claim the
-        movie was still present when nobody had looked, and would also skip the
-        ``file_removed_at`` stamp, so bytes that really were reclaimed would never reach
-        the rolling 30-day budget. ``delete_movie`` already returned without raising by
-        the time this runs, so an unreadable verification reads as the file being gone.
+        handling. A clean read without the movie proves the delete took. A clean read
+        that still finds the movie proves it did not: Radarr returned 200 and did
+        nothing. A timeout or a 502 on this re-read proves neither, and collapsing that
+        into ``False`` would claim the movie was still present when nobody had looked,
+        and would also skip the ``file_removed_at`` stamp, so bytes that really were
+        reclaimed would never reach the rolling 30-day budget. ``delete_movie`` already
+        returned without raising by the time this runs, so an unreadable verification
+        reads as the file being gone.
+
+        The read is the list filtered by TMDB id, never the movie's own route: that
+        route answers 404 for every deleted movie, and CrowdSec's probing rule blocks a
+        host after about ten 404s. The rows are matched by Radarr id, so a Radarr that
+        ignored the filter would return every movie and still be read correctly. A
+        movie with no TMDB id reads the whole list, since Radarr would answer the
+        ``tmdbId=0`` filter with an empty list whether or not the movie is there.
         """
         try:
-            await radarr.movie_by_id(movie_id)
-        except IntegrationError as exc:
-            return True if exc.status == 404 else None
-        return False
+            rows = await radarr.movies(tmdb_id=tmdb_id or None)
+        except IntegrationError:
+            return None
+        return not any(isinstance(row, dict) and row.get("id") == movie_id for row in rows)
 
     async def _exclusion_landed(self, radarr: MovieDeleter, tmdb_id: int) -> bool:
         """Was the import exclusion for ``tmdb_id`` added? Polled, not read once.
