@@ -109,6 +109,9 @@ class ArrClient(BaseClient):
                     task.result()
                     return
                 misses = 0 if await self._ping() else misses + 1
+                if task.done():
+                    task.result()
+                    return
                 if misses >= _MISSES_ALLOWED:
                     raise IntegrationError(
                         self.service, "error.integration.timed_out", read_timed_out=True

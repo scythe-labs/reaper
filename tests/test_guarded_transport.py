@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
+from itertools import pairwise
 from typing import Any
 
 import httpx
@@ -488,6 +490,7 @@ class _Slow:
     def __init__(self) -> None:
         self.release = asyncio.Event()
         self.canceled = False
+        self.status = 200
 
     async def answer(self, request: httpx.Request) -> httpx.Response:
         try:
@@ -495,7 +498,7 @@ class _Slow:
         except asyncio.CancelledError:
             self.canceled = True
             raise
-        return httpx.Response(200, json={})
+        return httpx.Response(self.status, json={})
 
 
 @pytest.mark.usefixtures("fast_watch")
@@ -508,7 +511,10 @@ class TestAWatchedDelete:
         slow = _Slow()
         delete = httpx2_mock.delete(MOVIE).mock(side_effect=slow.answer)
 
+        times: list[float] = []
+
         def answer(request: httpx.Request) -> httpx.Response:
+            times.append(time.monotonic())
             if ping.call_count >= 4:
                 slow.release.set()
             return httpx.Response(200, json={})
@@ -518,6 +524,8 @@ class TestAWatchedDelete:
             await _delete_movie(client)
         assert delete.call_count == 1
         assert ping.call_count >= 3
+        gaps = [b - a for a, b in pairwise(times)]
+        assert min(gaps) >= arr._PING_EVERY * 0.9
 
     async def test_pings_that_stop_answering_end_the_delete_with_no_status(
         self, httpx2_mock: respx.Router
@@ -553,6 +561,29 @@ class TestAWatchedDelete:
         assert delete.call_count == 1
         assert ping.call_count >= 8
 
+    async def test_a_delete_that_fails_during_the_last_ping_surfaces_its_own_error(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        slow = _Slow()
+        slow.status = 500
+        httpx2_mock.delete(MOVIE).mock(side_effect=slow.answer)
+        pings = 0
+
+        async def answer(request: httpx.Request) -> httpx.Response:
+            nonlocal pings
+            pings += 1
+            if pings == arr._MISSES_ALLOWED:
+                slow.release.set()
+                for _ in range(50):
+                    await asyncio.sleep(0)
+            return httpx.Response(503)
+
+        httpx2_mock.get(f"https://radarr.test{STATUS}").mock(side_effect=answer)
+        async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
+            with pytest.raises(IntegrationError) as caught:
+                await _delete_movie(client)
+        assert caught.value.status == 500
+
     async def test_the_deletes_own_error_surfaces_unchanged(
         self, httpx2_mock: respx.Router
     ) -> None:
@@ -567,16 +598,21 @@ class TestAWatchedDelete:
     ) -> None:
         slow = _Slow()
         httpx2_mock.delete(MOVIE).mock(side_effect=slow.answer)
-        ping = httpx2_mock.get(f"https://radarr.test{STATUS}").mock(
-            return_value=httpx.Response(200, json={})
-        )
+        landed = asyncio.Event()
+
+        def answer(request: httpx.Request) -> httpx.Response:
+            landed.set()
+            return httpx.Response(200, json={})
+
+        ping = httpx2_mock.get(f"https://radarr.test{STATUS}").mock(side_effect=answer)
         async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
             call = asyncio.ensure_future(_delete_movie(client))
-            await asyncio.sleep(0.05)
+            await landed.wait()
             call.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await call
             pings = ping.call_count
+            assert pings >= 1
             await asyncio.sleep(0.1)
         assert slow.canceled
         assert ping.call_count == pings
