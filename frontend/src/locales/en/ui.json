@@ -1007,6 +1007,7 @@
         "not_in_confirmed_run": "Not part of the run you confirmed. Kept.",
         "not_played_since": "Not played since you approved it",
         "not_watching": "Nobody was watching it right now",
+        "play_history_unreadable": "Couldn't read its watch history from Tautulli. Kept.",
         "played_since_approval": "It was played since you approved the plan. Kept.",
         "season_changed_unmonitored": "It changed while Reaper was working. The season was left unmonitored.",
         "season_files_deleted": "Deleted the season's {count} episode file(s)",
@@ -1016,7 +1017,8 @@
         "season_unmonitor_confirmed": "Confirmed the season is no longer monitored",
         "season_unmonitored": "Unmonitored season {season} in Sonarr",
         "size_unconfirmed": "Couldn't confirm its current size. Kept.",
-        "spared_by_hand": "You spared this by hand. Kept."
+        "spared_by_hand": "You spared this by hand. Kept.",
+        "watching_unreadable": "Couldn't ask Plex who is watching. Kept."
       },
       "deletion_disabled_mid_run": "Deletion was turned off while this run was in progress, so the run stopped here. Anything already deleted stays deleted; nothing further was sent.",
       "item_failed_unexplained": "The run stopped at \"{title}\". Reaper could not tell what went wrong there, so it did not touch anything after it. Anything already removed stays removed. The details are in the run's own list and in the log.",
@@ -1052,6 +1054,7 @@
         "no_plex_match": "Plex has no rating key for this item, so Reaper cannot confirm nobody is watching it. Spared.",
         "no_tmdb_id": "Radarr lists no TMDB id for this movie, so the import exclusion could never be verified after deleting. The file was kept. Fix the movie's identification in Radarr, then plan again.",
         "not_in_confirmed_run": "This was not part of the run you confirmed, so it is kept.",
+        "play_history_unreadable": "Couldn't read its watch history from Tautulli.",
         "played_since_approval": "Played since the plan was approved.",
         "route_failed": "Could not route \"{media_key}\": {error}",
         "season_files_arrived": "{count} more file(s) landed in season {season} while Reaper was working, so it is no longer what was approved. Nothing was deleted, and the season was left unmonitored. Run a new scan to review it as it is now.",
@@ -1065,7 +1068,8 @@
         "spared_by_hand": "You spared this by hand, so it is kept even though it was in the plan.",
         "transport_guard_blocked": "The transport guard blocked the delete: {error}",
         "unmonitor_not_verified": "Unmonitor did not take. Refused to delete files while still monitored.",
-        "unmonitor_verify_failed": "The season is still monitored after the unmonitor. Not deleting files."
+        "unmonitor_verify_failed": "The season is still monitored after the unmonitor. Not deleting files.",
+        "watching_unreadable": "Couldn't ask Plex who is watching."
       },
       "stopped_by_operator": "You stopped this run. Only the titles it had already reached were removed.",
       "unexpected": "The reap hit a problem it didn't expect: {error}",

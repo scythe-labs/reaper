@@ -2261,6 +2261,7 @@ class TestStreamingVeto:
         assert report.skipped == 1
         assert report.deleted_items == 0
         assert radarr.delete_calls == []  # never even attempted
+        assert report.outcomes[0].detail.id == "error.reap.step.being_watched"
 
     async def test_watching_an_episode_vetoes_its_whole_season(self, session: AsyncSession) -> None:
         """The stream is an episode (its own rating key), but the prune would take the
@@ -2291,6 +2292,7 @@ class TestStreamingVeto:
 
         assert report.skipped == 1
         assert radarr.delete_calls == []
+        assert report.outcomes[0].detail.id == "error.reap.step.watching_unreadable"
 
     async def test_a_stream_through_the_files_other_listing_vetoes(
         self, session: AsyncSession
@@ -2326,6 +2328,7 @@ class TestWatchedSinceApproval:
 
         assert report.skipped == 1
         assert radarr.delete_calls == []
+        assert report.outcomes[0].detail.id == "error.reap.step.played_since_approval"
 
     async def test_a_play_before_approval_does_not_spare(self, session: AsyncSession) -> None:
         """The precise per-row timestamp compare is what matters here. A play from before
@@ -2355,6 +2358,7 @@ class TestWatchedSinceApproval:
 
         assert report.skipped == 1
         assert radarr.delete_calls == []
+        assert report.outcomes[0].detail.id == "error.reap.step.play_history_unreadable"
 
     async def test_a_present_but_unreadable_row_fails_closed(self, session: AsyncSession) -> None:
         """A history row that survived the date filter but carries no readable timestamp is
@@ -2371,6 +2375,7 @@ class TestWatchedSinceApproval:
 
         assert report.skipped == 1
         assert radarr.delete_calls == []
+        assert report.outcomes[0].detail.id == "error.reap.step.play_history_unreadable"
 
     @pytest.mark.parametrize(
         "body",
@@ -2402,6 +2407,7 @@ class TestWatchedSinceApproval:
 
         assert report.skipped == 1
         assert radarr.delete_calls == []
+        assert report.outcomes[0].detail.id == "error.reap.step.play_history_unreadable"
 
     async def test_a_genuinely_empty_history_still_deletes(self, session: AsyncSession) -> None:
         """The other side of the previous test, so this behavior cannot be "spare on

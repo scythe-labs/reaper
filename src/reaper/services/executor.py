@@ -1859,14 +1859,31 @@ class Executor:
                     check=Reason("error.reap.check.no_plex_match"),
                     is_canary=is_canary,
                 )
-            if await self._being_watched_now(candidate):
+            # None means the check could not be read. It keeps the item under its own reason.
+            watching = await self._being_watched_now(candidate)
+            if watching is None:
+                return self._mark_skipped(
+                    delete,
+                    Reason("error.reap.step.watching_unreadable"),
+                    check=Reason("error.reap.check.watching_unreadable"),
+                    is_canary=is_canary,
+                )
+            if watching:
                 return self._mark_skipped(
                     delete,
                     Reason("error.reap.step.being_watched"),
                     check=Reason("error.reap.check.being_watched"),
                     is_canary=is_canary,
                 )
-            if await self._watched_since_approval(candidate, approved_at):
+            played = await self._watched_since_approval(candidate, approved_at)
+            if played is None:
+                return self._mark_skipped(
+                    delete,
+                    Reason("error.reap.step.play_history_unreadable"),
+                    check=Reason("error.reap.check.play_history_unreadable"),
+                    is_canary=is_canary,
+                )
+            if played:
                 return self._mark_skipped(
                     delete,
                     Reason("error.reap.step.played_since_approval"),
@@ -2006,7 +2023,7 @@ class Executor:
                 keys.append(value)
         return keys
 
-    async def _being_watched_now(self, candidate: Candidate) -> bool:
+    async def _being_watched_now(self, candidate: Candidate) -> bool | None:
         """Is anyone watching this item, or a child of it, right now?
 
         Re-checked per item, never once at the start: a run takes minutes and someone
@@ -2014,13 +2031,12 @@ class Executor:
         show rating keys, so watching one episode protects the whole season a prune
         would take.
 
-        Fails closed: if Plex cannot be read, this cannot conclude nobody is watching,
-        so the item is treated as watched and kept. ``active_streams`` raises rather
-        than returning ``[]`` for exactly this reason.
+        Returns None when Plex cannot be read. ``active_streams`` raises rather than
+        returning ``[]``, so an unreadable Plex never reads as nobody watching.
         """
         gateway = self._gateway
         if gateway is None or gateway.plex is None:  # pragma: no cover - execute() guards this
-            return True
+            return None
         try:
             streams = await gateway.plex.active_streams()
         except Exception as exc:
@@ -2031,7 +2047,7 @@ class Executor:
             log.warning(
                 "reap.stream_veto_unreadable", media_key=candidate.media_key, error=str(exc)
             )
-            return True
+            return None
         veto: set[int] = set()
         for stream in streams:
             veto |= stream.veto_keys
@@ -2039,7 +2055,9 @@ class Executor:
         # listing is someone watching the very file this delete would remove.
         return any(key in veto for key in self._equivalent_keys(candidate))
 
-    async def _watched_since_approval(self, candidate: Candidate, approved_at: datetime) -> bool:
+    async def _watched_since_approval(
+        self, candidate: Candidate, approved_at: datetime
+    ) -> bool | None:
         """Has anyone played this item since the plan was approved?
 
         The grace period exists so a late view can still rescue an item, so this is
@@ -2051,19 +2069,16 @@ class Executor:
         compared against the exact approval instant, so a play genuinely before approval
         does not count and one after it does.
 
-        Fails closed at every step: a Tautulli error, a success response whose history
-        body cannot be read, and a returned row whose timestamp cannot be read, all keep
-        the item. A row present but unreadable survived the ``after`` filter, so it may
-        well be a post-approval play, and this never deletes on the assumption that it
-        was not. Only a genuine list of rows, none of them at or after the approval
-        instant, returns False.
+        Returns None when the history cannot be read: a Tautulli error, an unreadable
+        body, or a row with no readable timestamp. Only a readable list with no play at
+        or after approval returns False.
         """
         gateway = self._gateway
         if gateway is None or gateway.tautulli is None:  # pragma: no cover - execute() guards
-            return True
+            return None
         # The rating-key skip in _one_delete precedes this, so this is belt-and-suspenders.
         if candidate.plex_rating_key is None:  # pragma: no cover
-            return True
+            return None
 
         # One-day margin (see docstring): guards against Tautulli's local-day boundary
         # dropping a real post-approval play near a UTC-midnight approval.
@@ -2090,7 +2105,7 @@ class Executor:
                 log.warning(
                     "reap.watched_since_unreadable", media_key=candidate.media_key, error=str(exc)
                 )
-                return True
+                return None
 
             rows = data.get("data") if isinstance(data, dict) else None
             if not isinstance(rows, list):
@@ -2106,13 +2121,13 @@ class Executor:
                     media_key=candidate.media_key,
                     error="Tautulli returned a history body Reaper could not read",
                 )
-                return True
+                return None
             for row in rows:
                 played_ts = _row_timestamp(row)
-                # An unreadable timestamp (None) keeps the item: the row is present and
-                # passed the date filter, so it is treated as a possible late play
-                # rather than assumed to be old.
-                if played_ts is None or played_ts >= approved_ts:
+                # A row with no readable timestamp may be a late play.
+                if played_ts is None:
+                    return None
+                if played_ts >= approved_ts:
                     return True
         return False
 

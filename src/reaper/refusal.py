@@ -851,6 +851,8 @@ MESSAGES: dict[str, str] = {
     ),
     "error.reap.step.being_watched": "Someone is watching it right now.",
     "error.reap.step.played_since_approval": "Played since the plan was approved.",
+    "error.reap.step.watching_unreadable": "Couldn't ask Plex who is watching.",
+    "error.reap.step.play_history_unreadable": "Couldn't read its watch history from Tautulli.",
     "error.reap.step.dry_run": "Would send: {plan}",
     "error.reap.step.no_approved_size": (
         "Reaper never got a size for this when it was scanned, so it cannot confirm this "
@@ -933,6 +935,10 @@ MESSAGES: dict[str, str] = {
     "error.reap.check.no_plex_match": "No Plex match, so we can't confirm it's idle. Kept.",
     "error.reap.check.being_watched": "Someone is watching it right now. Kept.",
     "error.reap.check.played_since_approval": "It was played since you approved the plan. Kept.",
+    "error.reap.check.watching_unreadable": "Couldn't ask Plex who is watching. Kept.",
+    "error.reap.check.play_history_unreadable": (
+        "Couldn't read its watch history from Tautulli. Kept."
+    ),
     "error.reap.check.movie_removed": "Removed the file through Radarr",
     "error.reap.check.exclusion_confirmed": "Import exclusion confirmed. It won't re-download",
     "error.reap.check.exclusion_off": "Import exclusion off for this Radarr, so none was added",
