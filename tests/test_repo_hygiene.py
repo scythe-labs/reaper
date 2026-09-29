@@ -7839,7 +7839,7 @@ _EXPECTED_REFUSAL_CODES = 311
 #: reusing an `error.safety.*` code the executor's own backstop already raises, or
 #: `update_check._incomplete()` building one `error.integration.update_check_incomplete`
 #: for several callers. So the site count moves independently of the code count.
-_EXPECTED_REFUSAL_SITES = 366
+_EXPECTED_REFUSAL_SITES = 368
 
 
 def test_every_refusal_code_has_a_raiser_and_a_catalog_entry() -> None:

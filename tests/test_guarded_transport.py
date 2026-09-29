@@ -199,6 +199,9 @@ class TestTypedMutationMethods:
 
         assert route.called
         assert json_body(route)["episodeFileIds"] == [11, 22, 33]
+        # Sonarr answers only after every file is gone, so this call waits longer than
+        # the client's 30 seconds.
+        assert route.calls.last.request.extensions["timeout"]["read"] == 300.0
 
     async def test_deleting_an_empty_id_list_sends_nothing(self, httpx2_mock: respx.Router) -> None:
         route = httpx2_mock.delete("https://sonarr.test/api/v3/episodefile/bulk")
