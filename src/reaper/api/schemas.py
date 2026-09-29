@@ -649,6 +649,26 @@ class RunBinOut(BaseModel):
     bytes: int
     """What the plan removes on this instance, or for an executed run, what it removed."""
 
+    skipped: bool = False
+    """The operator turned this bin off for the run."""
+
+    state: str | None = None
+    """For a skipped bin: ``off`` while it is still off, ``restored`` once it is back, or
+    ``left`` when someone set another bin during the reap."""
+
+
+class RecycleBinOffOut(BaseModel):
+    """A recycle bin a reap turned off and could not put back."""
+
+    kind: str
+    instance_id: int
+    name: str
+    run_id: int
+
+
+class RecycleBinsOffOut(BaseModel):
+    bins: list[RecycleBinOffOut]
+
 
 class RunBinsOut(BaseModel):
     bins: list[RunBinOut]
@@ -795,6 +815,11 @@ class CreateRunIn(BaseModel):
     media_keys: list[str] | None = Field(default=None, max_length=_MAX_SELECTED_ITEMS)
 
 
+class BinRefIn(BaseModel):
+    kind: Literal["radarr", "sonarr"]
+    instance_id: int = Field(ge=1, le=2**31 - 1)
+
+
 class ExecuteRunIn(BaseModel):
     """The typed, content-bound confirmation required to execute a real reap.
 
@@ -805,6 +830,9 @@ class ExecuteRunIn(BaseModel):
     """
 
     confirmation_phrase: str
+    skip_bins: list[BinRefIn] = Field(default_factory=list, max_length=50)
+    """The instances whose recycle bin this reap turns off, and puts back when it ends.
+    Each one in the plan adds to the phrase's ``SKIP N BINS``."""
 
 
 class GateSettingOut(BaseModel):

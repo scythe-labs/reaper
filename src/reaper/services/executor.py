@@ -870,6 +870,7 @@ class Executor:
         progress: Callable[[ReapProgress], None] | None = None,
         exclusion_poll_delay: float = 1.0,
         plex_settle_delay: float = 2.0,
+        skip_bins: frozenset[recycle_bins.InstanceKey] = frozenset(),
     ) -> None:
         self._session = session
         self._safety = safety
@@ -895,6 +896,10 @@ class Executor:
         self._gateway = gateway
         # The instances whose recycle bin was on as this run started (``_capture_bins``).
         self._binned: frozenset[recycle_bins.InstanceKey] = frozenset()
+        # The instances whose bin the operator asked this run to turn off, and the bins it
+        # did turn off, which ``_restore_bins`` puts back.
+        self._skip_bins = skip_bins
+        self._turned_off: list[recycle_bins.Bin] = []
         # Radarr adds the import exclusion a moment after the delete returns 200, so the
         # verification re-reads the exclusion list a few times before concluding it did not
         # land. Tests pass a zero delay to stay fast.
@@ -1442,19 +1447,23 @@ class Executor:
             if self._pending_refreshes:
                 log.info("reap.plex_tidy_deferred", paths=len(self._pending_refreshes))
             return
+        await self._restore_bins()
         if self._pending_refreshes:
             await self._finalize_plex()
 
     async def _capture_bins(self, deletes: Sequence[_Delete]) -> None:
-        """Record each instance's recycle bin before anything is deleted. A bin that cannot
-        be read is recorded as unknown, and neither that nor a failed write stops the run."""
+        """Record each instance's recycle bin before anything is deleted, then turn off
+        each bin the operator asked to skip.
+
+        A bin that cannot be read is recorded as unknown, and neither that nor a failed
+        record stops the run. A skipped bin that cannot be turned off and confirmed off
+        stops it, before anything is deleted."""
         assert self._gateway is not None
         bins = await recycle_bins.read_bins(
             self._session,
             recycle_bins.readers(self._gateway.radarr, self._gateway.sonarr),
             recycle_bins.instances_of(d.candidate.media_key for d in deletes),
         )
-        self._binned = frozenset(b.key for b in bins if b.holds_files)
         rows = [
             {
                 "run_id": self._run_id,
@@ -1463,6 +1472,7 @@ class Executor:
                 "instance_name": b.name,
                 "bin_path": b.path,
                 "cleanup_days": b.cleanup_days,
+                "skip": b.key in self._skip_bins,
             }
             for b in bins
         ]
@@ -1471,7 +1481,63 @@ class Executor:
         ]
         if rows:
             write.append(sql_insert(ReapBin).values(rows))
-        await self._commit_journal(what="the run's recycle bins", write=write)
+        recorded = await self._commit_journal(what="the run's recycle bins", write=write)
+
+        switches = recycle_bins.switches(self._gateway.radarr, self._gateway.sonarr)
+        for b in bins:
+            if b.key not in self._skip_bins or b.path == "":
+                continue
+            name = recycle_bins.label(b.kind, b.name)
+            client = switches.get(b.key)
+            # The row is the only record a crash leaves of a bin to put back.
+            if b.path is None or client is None or not recorded:
+                raise ExecutionError("error.reap.bin_not_turned_off", name=name)
+            if not await self._set_bin_state(b, "turning_off"):
+                raise _JournalWriteError(_JOURNAL_HALT)
+            self._turned_off.append(b)
+            try:
+                await recycle_bins.turn_off(client, b.path)
+            except recycle_bins.SWITCH_ERRORS as exc:
+                log.warning("reap.bin_not_turned_off", instance=name, error=str(exc))
+                raise ExecutionError("error.reap.bin_not_turned_off", name=name) from exc
+            await self._set_bin_state(b, "off")
+        off = {b.key for b in self._turned_off}
+        self._binned = frozenset(b.key for b in bins if b.holds_files and b.key not in off)
+
+    async def _set_bin_state(self, b: recycle_bins.Bin, state: str) -> bool:
+        return await self._commit_journal(
+            what="the recycle bin's state",
+            write=[
+                update(ReapBin)
+                .where(
+                    ReapBin.run_id == self._run_id,
+                    ReapBin.kind == b.kind,
+                    ReapBin.instance_id == b.instance_id,
+                )
+                .values(state=state)
+                .execution_options(synchronize_session=False)
+            ],
+        )
+
+    async def _restore_bins(self) -> None:
+        """Put back every bin this run turned off. A bin that will not come back stays
+        recorded as off, for ``recycle_bins.restore_pending`` to retry."""
+        assert self._gateway is not None
+        switches = recycle_bins.switches(self._gateway.radarr, self._gateway.sonarr)
+        for b in self._turned_off:
+            client = switches.get(b.key)
+            if client is None or not b.path:
+                continue
+            try:
+                state = await recycle_bins.put_back(client, b.path)
+            except recycle_bins.SWITCH_ERRORS as exc:
+                log.warning(
+                    "reap.bin_still_off",
+                    instance=recycle_bins.label(b.kind, b.name),
+                    error=str(exc),
+                )
+                continue
+            await self._set_bin_state(b, state)
 
     async def _write_run_totals(self, run_id: int) -> None:
         """Write the run's four terminal totals, best-effort.

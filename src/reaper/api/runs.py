@@ -27,7 +27,7 @@ import structlog
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.aio import report_background_failure
 from reaper.api import tags as api_tags
@@ -39,6 +39,8 @@ from reaper.api.schemas import (
     CreateRunIn,
     ExecuteRunIn,
     ProfileSettingsIO,
+    RecycleBinOffOut,
+    RecycleBinsOffOut,
     RunBinOut,
     RunBinsOut,
     RunCheckOut,
@@ -53,7 +55,7 @@ from reaper.api.schemas import (
 )
 from reaper.config import Settings
 from reaper.crypto import SecretBox
-from reaper.db.models import ActionStep, Candidate, ReapRun, RunState, StepState
+from reaper.db.models import ActionStep, Candidate, ReapBin, ReapRun, RunState, StepState
 from reaper.engine.explanation import ReasonKey
 from reaper.engine.policy import ProfileSettings
 from reaper.engine.reason import Reason, from_stored, to_wire
@@ -584,7 +586,7 @@ async def get_run_outcomes(
         )
 
 
-def _bin_out(b: recycle_bins.Bin, items: int, size: int) -> RunBinOut:
+def _bin_out(b: recycle_bins.Bin, items: int, size: int, row: ReapBin | None = None) -> RunBinOut:
     return RunBinOut(
         kind=b.kind,
         instance_id=b.instance_id,
@@ -593,7 +595,68 @@ def _bin_out(b: recycle_bins.Bin, items: int, size: int) -> RunBinOut:
         cleanup_days=b.cleanup_days,
         items=items,
         bytes=size,
+        skipped=row.skip if row is not None else False,
+        state=row.state if row is not None else None,
     )
+
+
+async def _retry_bins(app: FastAPI, gateway: ReapGateway) -> list[ReapBin]:
+    """Put back any recycle bin a reap left off. Never raises: a bin that stays off is
+    what the recycle bin banner reads."""
+    try:
+        return await recycle_bins.restore_pending(
+            app.state.session_factory,
+            app.state.secret_box,
+            app.state.settings,
+            recycle_bins.switches(gateway.radarr, gateway.sonarr),
+        )
+    except Exception as exc:
+        log.warning("recycle_bin.retry_failed", error=str(exc))
+        return []
+
+
+async def restore_recycle_bins(app: FastAPI) -> None:
+    """Put back any recycle bin a reap left off, with clients built for the purpose. Run
+    at startup and from the banner's button."""
+    factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with factory() as session:
+        if not await recycle_bins.still_off(session):
+            return
+        safety = await app_settings.runtime_safety(session, app.state.settings)
+    gateway, closers = await build_reap_gateway(factory, app.state.secret_box, safety=safety)
+    async with AsyncExitStack() as stack:
+        for client in closers:
+            await stack.enter_async_context(client)
+        await _retry_bins(app, gateway)
+
+
+def _off_out(rows: Sequence[ReapBin]) -> RecycleBinsOffOut:
+    return RecycleBinsOffOut(
+        bins=[
+            RecycleBinOffOut(
+                kind=r.kind, instance_id=r.instance_id, name=r.instance_name, run_id=r.run_id
+            )
+            for r in rows
+        ]
+    )
+
+
+@router.get("/recycle-bins/off")
+async def recycle_bins_off(request: Request) -> RecycleBinsOffOut:
+    """Every Sonarr or Radarr recycle bin a reap turned off and could not put back."""
+    async with session_factory(request)() as session:
+        return _off_out(await recycle_bins.still_off(session))
+
+
+@router.post("/recycle-bins/restore")
+async def restore_bins(request: Request) -> RecycleBinsOffOut:
+    """Try again to put back every recycle bin a reap left off. Answers with the ones
+    still off. Refused while a reap runs, since that reap puts its own bins back."""
+    if reap_in_flight(request.app):
+        refuse(409, "error.runs.already_running")
+    await restore_recycle_bins(request.app)
+    async with session_factory(request)() as session:
+        return _off_out(await recycle_bins.still_off(session))
 
 
 @router.get("/runs/{run_id}/bins")
@@ -609,10 +672,18 @@ async def get_run_bins(request: Request, run_id: int) -> RunBinsOut:
         if run is None:
             refuse(404, "error.runs.not_found")
         if run.state is not RunState.PLANNED:
+            rows = {
+                (r.kind, r.instance_id): r
+                for r in (
+                    await session.execute(select(ReapBin).where(ReapBin.run_id == run_id))
+                ).scalars()
+            }
             out: list[RunBinOut] = []
             for b in await recycle_bins.stored(session, run_id):
                 removed = await recycle_bins.removed_on(session, run_id, [b.key])
-                out.append(_bin_out(b, removed.deleted_items, removed.deleted_bytes))
+                out.append(
+                    _bin_out(b, removed.deleted_items, removed.deleted_bytes, rows.get(b.key))
+                )
             return RunBinsOut(bins=out)
         planned = await _planned_candidates(session, run)
         safety = await app_settings.runtime_safety(session, request.app.state.settings)
@@ -824,7 +895,15 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
                 refuse(404, "error.runs.not_found")
 
             planned = await _planned_candidates(session, run)
-            expected = confirmation_phrase(planned) if planned else "REAP 0 SOULS 0 GB"
+            # Only an instance this plan deletes from has a bin this reap can turn off.
+            skip_bins = frozenset((b.kind, b.instance_id) for b in payload.skip_bins) & frozenset(
+                recycle_bins.instances_of(c.media_key for c in planned)
+            )
+            expected = (
+                confirmation_phrase(planned, skip_bins=len(skip_bins))
+                if planned
+                else "REAP 0 SOULS 0 GB"
+            )
             if payload.confirmation_phrase.strip() != expected:
                 refuse(409, "error.runs.confirmation_mismatch", expected=expected)
             profile_settings = await _saved_limits_or_refuse(session)
@@ -907,6 +986,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
                 for client in closers:
                     await stack.enter_async_context(client)
                 run_session = await stack.enter_async_context(factory())
+                await _retry_bins(app, gateway)
                 executor = Executor(
                     run_session,
                     safety=safety,
@@ -916,6 +996,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
                     armed_recheck=_armed_now,
                     stop_recheck=_stop_now,
                     progress=on_progress,
+                    skip_bins=skip_bins,
                 )
                 # This brackets the run. A real deletion takes minutes, and
                 # without this line nothing would log until it finished.
@@ -923,6 +1004,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
                 # the start even if the process dies mid-run.
                 log.info("reap.started", run_id=run_id, planned=status.total)
                 report = await executor.execute(run_id)
+                await _retry_bins(app, gateway)
                 try:
                     # This is a second layer, not the durability itself.
                     # The executor commits its own journal per item and its

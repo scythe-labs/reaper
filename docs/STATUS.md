@@ -82,6 +82,7 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | Delete mode | **A notice window, not a gate** † |
 | Autonomy | **If ever built**: an earned grant keyed to `policy_hash`, any edit revokes it |
 | Caps | **Four**: items + bytes, per-run + rolling 30-day |
+| Recycle bins | **Off per instance for one whole reap**, put back at every end † |
 | Size acquisition | **Sonarr or Radarr's own total, never a stand-in** † |
 | Kill switch | **Asymmetric, not one-way** † |
 | Section nav | **Its own grammar, not the pill track** † |

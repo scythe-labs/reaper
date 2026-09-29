@@ -1154,6 +1154,17 @@ class ReapBin(Base):
     cleanup_days: Mapped[int | None] = mapped_column(Integer, default=None)
     """How many days the bin keeps a file. 0 means it never empties on its own."""
 
+    skip: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    """The operator ticked this instance's bin off for the reap."""
+
+    state: Mapped[str | None] = mapped_column(String(20), default=None)
+    """Where a skipped bin stands. ``turning_off`` is written before the change is sent,
+    then ``off``. The bin comes back as ``restored``, or ``left`` when someone changed it
+    during the reap. NULL for a bin the reap left alone."""
+
+    announced: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    """Discord was told this bin stayed off after its reap."""
+
 
 class ActionStep(Base):
     """One mutating HTTP call, written to the database before it is sent.

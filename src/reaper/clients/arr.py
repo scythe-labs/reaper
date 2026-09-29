@@ -24,9 +24,13 @@ SeriesResource.
 from __future__ import annotations
 
 from typing import Any, ClassVar
+from urllib.parse import urlsplit
 
 from reaper.clients.base import BaseClient
 from reaper.config import RuntimeSafety
+
+#: Sonarr and Radarr serve one media management settings object, always as id 1.
+_MEDIA_MANAGEMENT_ID = 1
 
 
 class ArrClient(BaseClient):
@@ -56,13 +60,17 @@ class ArrClient(BaseClient):
         api_path_prefix: str | None = None,
         verify: bool = True,
     ) -> None:
+        prefix = api_path_prefix or self.default_prefix
+        settings_path = f"{prefix}/config/mediamanagement/{_MEDIA_MANAGEMENT_ID}"
         super().__init__(
             base_url,
             safety=safety,
             headers={"X-Api-Key": api_key, "Accept": "application/json"},
             verify=verify,
+            restore_paths=frozenset({urlsplit(base_url).path.rstrip("/") + settings_path}),
         )
-        self.prefix = api_path_prefix or self.default_prefix
+        self.prefix = prefix
+        self._settings_path = settings_path
 
     async def system_status(self) -> dict[str, Any]:
         """Check connectivity and read the version.
@@ -103,6 +111,24 @@ class ArrClient(BaseClient):
         (``recycleBin``, empty when there is no bin) and how many days it keeps a file
         (``recycleBinCleanupDays``)."""
         return await self.get_dict(f"{self.prefix}/config/mediamanagement")
+
+    async def turn_off_recycle_bin(self, config: dict[str, Any]) -> None:
+        """Save the media management settings with no recycle bin.
+
+        Sonarr and Radarr save every field of the body, so ``config`` must be the whole
+        object :meth:`media_management` just returned."""
+        await self._mutate("PUT", self._settings_path, json={**config, "recycleBin": ""})
+
+    async def restore_recycle_bin(self, config: dict[str, Any], path: str) -> None:
+        """Save the media management settings with the recycle bin at ``path``.
+
+        The transport guard lets this through with deletion off, so it refuses an empty
+        ``path``: that would turn a bin off."""
+        if not path:
+            raise ValueError("a restored recycle bin needs a folder")
+        await self._mutate(
+            "PUT", self._settings_path, json={**config, "recycleBin": path}, restore=True
+        )
 
     async def exclusions(self) -> list[dict[str, Any]]:
         """The import exclusions this *arr holds, at its own spelling of the path.

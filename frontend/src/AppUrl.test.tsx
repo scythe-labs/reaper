@@ -47,7 +47,13 @@ import {
   type Snapshot,
   type Verdict,
 } from "./api";
-import { DEFAULT_GENERAL, DEFAULT_PROFILE, DEFAULT_UPDATE, IDLE_SCAN } from "./test/apiFixtures";
+import {
+  DEFAULT_GENERAL,
+  DEFAULT_PROFILE,
+  DEFAULT_RECYCLE_BINS_OFF,
+  DEFAULT_UPDATE,
+  IDLE_SCAN,
+} from "./test/apiFixtures";
 import { fill } from "./test/forms";
 import { renderWithProviders } from "./test/renderWithProviders";
 import { filtersKey } from "./components/queueFilters";
@@ -202,6 +208,7 @@ beforeEach(() => {
   apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
   apiMock.profile.mockResolvedValue(DEFAULT_PROFILE);
   apiMock.update.mockResolvedValue(DEFAULT_UPDATE);
+  apiMock.recycleBinsOff.mockResolvedValue(DEFAULT_RECYCLE_BINS_OFF);
   apiMock.saveGeneral.mockResolvedValue(DEFAULT_GENERAL);
   // The two settings panels this file opens. Settings is the real component here, so the panel
   // it lands on does its own reads, and an unanswered one renders a failed-read branch with no

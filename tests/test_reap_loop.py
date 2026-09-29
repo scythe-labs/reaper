@@ -18,7 +18,7 @@ import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest import mock
 
 import httpx
@@ -294,6 +294,13 @@ class TestManifestHash:
             [_fake_candidate("radarr:1:1", 100 * GB), _fake_candidate("radarr:1:2", 114 * GB)]
         )
         assert phrase == "REAP 2 SOULS 214 GB"
+
+    def test_the_phrase_names_the_bins_it_turns_off(self) -> None:
+        """The reap confirm builds the same suffix (``skipPhrase`` in
+        ``frontend/src/components/RecycleBins.tsx``, pinned by its own test)."""
+        items = [_fake_candidate("radarr:1:1", 100 * GB)]
+        assert confirmation_phrase(items, skip_bins=1) == "REAP 1 SOUL 100 GB SKIP 1 BIN"
+        assert confirmation_phrase(items, skip_bins=2) == "REAP 1 SOUL 100 GB SKIP 2 BINS"
 
 
 class TestBuildPlan:
@@ -3085,6 +3092,7 @@ async def _real(
     armed_recheck: Any = _armed_forever,
     stop_recheck: Any = None,
     settings: ProfileSettings | None = None,
+    skip_bins: frozenset[tuple[str, int]] = frozenset(),
 ) -> RunReport:
     """Execute a run for real (armed) against the given gateway of fakes. Zero poll delay so
     the exclusion-verification retry does not slow the suite."""
@@ -3098,6 +3106,7 @@ async def _real(
         stop_recheck=stop_recheck,
         exclusion_poll_delay=0.0,
         plex_settle_delay=0.0,
+        skip_bins=skip_bins,
     )
     return await executor.execute(run.id)
 
@@ -4341,6 +4350,111 @@ class RadarrWithBin(FakeRadarr):
         if self._bin_path is None:
             raise IntegrationError("radarr", "error.integration.timed_out", status=None)
         return {"recycleBin": self._bin_path, "recycleBinCleanupDays": self._days}
+
+
+class RadarrWithSwitchableBin(RadarrWithBin):
+    """A Radarr whose recycle bin Reaper can turn off and put back. ``fail_off`` and
+    ``fail_back`` make either write fail."""
+
+    def __init__(self, *, fail_off: bool = False, fail_back: bool = False) -> None:
+        super().__init__()
+        self._fail_off = fail_off
+        self._fail_back = fail_back
+        self.bin_writes: list[str] = []
+        self.bin_at_delete: list[str | None] = []
+
+    async def turn_off_recycle_bin(self, config: dict[str, Any]) -> None:
+        if self._fail_off:
+            raise IntegrationError("radarr", "error.integration.timed_out", status=None)
+        self.bin_writes.append("")
+        self._bin_path = ""
+
+    async def restore_recycle_bin(self, config: dict[str, Any], path: str) -> None:
+        if self._fail_back:
+            raise IntegrationError("radarr", "error.integration.timed_out", status=None)
+        self.bin_writes.append(path)
+        self._bin_path = path
+
+    async def delete_movie(
+        self, movie_id: int, *, delete_files: bool = True, add_exclusion: bool = True
+    ) -> None:
+        self.bin_at_delete.append(self._bin_path)
+        await super().delete_movie(movie_id, delete_files=delete_files, add_exclusion=add_exclusion)
+
+
+class TestARunCanSkipARecycleBin:
+    """A ticked bin is off for every delete of the reap and back on when it ends. A bin
+    Reaper cannot turn off stops the reap before anything is deleted."""
+
+    SKIP = frozenset({("radarr", 1)})
+
+    @staticmethod
+    async def _row(async_factory: async_sessionmaker[AsyncSession], run_id: int) -> ReapBin:
+        async with async_factory() as fresh:
+            rows = await fresh.execute(select(ReapBin).where(ReapBin.run_id == run_id))
+            return rows.scalars().one()
+
+    async def test_a_skipped_bin_is_off_for_every_delete_and_back_after(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 2 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+        radarr = RadarrWithSwitchableBin()
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}), skip_bins=self.SKIP)
+
+        assert report.state is RunState.COMPLETED
+        assert radarr.bin_at_delete == ["", ""]
+        assert radarr.bin_writes == ["", "/recycle/radarr"]
+        # Nothing waits in a bin, so all of it is freed.
+        assert report.binned_bytes == 0
+        row = await self._row(async_factory, run.id)
+        assert (row.skip, row.state) == (True, "restored")
+
+    async def test_a_bin_that_will_not_turn_off_stops_the_reap_before_any_delete(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        snapshot_id = await _snapshot_many(session, [("radarr:1:1", 1 * GB, 701)])
+        run = await _plan(session, snapshot_id)
+        radarr = RadarrWithSwitchableBin(fail_off=True)
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}), skip_bins=self.SKIP)
+
+        assert report.state is RunState.ABORTED
+        assert report.aborted_reason is not None
+        assert report.aborted_reason.id == "error.reap.bin_not_turned_off"
+        assert report.aborted_reason.params.get("name") == "Radarr i1"
+        assert radarr.delete_calls == []
+        # The bin never went off, so putting it back finds it already there.
+        assert (await self._row(async_factory, run.id)).state == "restored"
+
+    async def test_a_bin_that_will_not_come_back_stays_recorded_off(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        snapshot_id = await _snapshot_many(session, [("radarr:1:1", 1 * GB, 701)])
+        run = await _plan(session, snapshot_id)
+        radarr = RadarrWithSwitchableBin(fail_back=True)
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}), skip_bins=self.SKIP)
+
+        assert report.state is RunState.COMPLETED
+        assert (await self._row(async_factory, run.id)).state == "off"
+
+    async def test_a_bin_nobody_ticked_is_left_alone(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        snapshot_id = await _snapshot_many(session, [("radarr:1:1", 1 * GB, 701)])
+        run = await _plan(session, snapshot_id)
+        radarr = RadarrWithSwitchableBin()
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert radarr.bin_writes == []
+        assert report.binned_bytes == 1 * GB
+        row = await self._row(async_factory, run.id)
+        assert (row.skip, row.state) == (False, None)
 
 
 class TestARunRecordsEachInstancesRecycleBin:
@@ -5864,3 +5978,88 @@ class TestARecoveredWriteCarriesEveryColumn:
                 } == _REPLAYED_STEP_COLUMNS
         finally:
             await engine.dispose()
+
+
+class _Notifier:
+    def __init__(self) -> None:
+        self.still_off: list[tuple[str, int]] = []
+        self.back_on: list[str] = []
+
+    async def announce_bin_still_off(self, name: str, *, run_id: int) -> bool:
+        self.still_off.append((name, run_id))
+        return True
+
+    async def announce_bin_back_on(self, name: str) -> bool:
+        self.back_on.append(name)
+        return True
+
+
+class TestABinLeftOffIsPutBackLater:
+    """A bin a reap could not put back is retried at startup, before the next reap, and
+    from the banner. Discord hears once that it stayed off, and once that it is back."""
+
+    @staticmethod
+    async def _left_off(session: AsyncSession) -> int:
+        snapshot_id = await _snapshot_many(session, [("radarr:1:1", 1 * GB, 701)])
+        run = await _plan(session, snapshot_id)
+        session.add(
+            ReapBin(
+                run_id=run.id,
+                kind="radarr",
+                instance_id=1,
+                instance_name="HD",
+                bin_path="/recycle/radarr",
+                cleanup_days=3,
+                skip=True,
+                state="off",
+            )
+        )
+        await session.commit()
+        return run.id
+
+    async def test_it_comes_back_and_discord_hears_once_each_way(
+        self,
+        session: AsyncSession,
+        async_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from reaper.services import recycle_bins
+
+        run_id = await self._left_off(session)
+        notifier = _Notifier()
+
+        async def _build(*_a: object) -> _Notifier:
+            return notifier
+
+        monkeypatch.setattr(recycle_bins, "build_notifier", _build)
+        stuck = RadarrWithSwitchableBin(fail_back=True)
+        stuck._bin_path = ""
+
+        assert (
+            len(
+                await recycle_bins.restore_pending(
+                    async_factory, cast(Any, None), cast(Any, None), {("radarr", 1): stuck}
+                )
+            )
+            == 1
+        )
+        assert (
+            len(
+                await recycle_bins.restore_pending(
+                    async_factory, cast(Any, None), cast(Any, None), {("radarr", 1): stuck}
+                )
+            )
+            == 1
+        )
+        assert notifier.still_off == [("Radarr HD", run_id)]
+
+        healthy = RadarrWithSwitchableBin()
+        healthy._bin_path = ""
+        assert (
+            await recycle_bins.restore_pending(
+                async_factory, cast(Any, None), cast(Any, None), {("radarr", 1): healthy}
+            )
+            == []
+        )
+        assert healthy.bin_writes == ["/recycle/radarr"]
+        assert notifier.back_on == ["Radarr HD"]

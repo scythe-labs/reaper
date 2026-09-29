@@ -454,10 +454,10 @@
 }
 .bin-row {
   display: grid;
-  grid-template-columns: 9rem minmax(0, 1fr);
+  grid-template-columns: 9rem minmax(0, 1fr) auto;
   grid-template-areas:
-    "app what"
-    "app when";
+    "app what skip"
+    "app when skip";
   column-gap: var(--space-lg);
   row-gap: 0.1rem;
   align-items: center;
@@ -492,6 +492,20 @@
 .bin-unknown .bin-when {
   color: var(--unknown);
 }
+.bin-row.skipped .bin-when {
+  color: var(--condemn);
+}
+/* The skip box sits in its own column, so the shared checkbox row style loses its divider. */
+.trash-ack.bin-skip {
+  grid-area: skip;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  align-items: center;
+}
+.bins-warn {
+  margin-top: var(--space-lg);
+}
 .bins-sum {
   margin: var(--space-lg) 0 0;
   font-size: var(--text-md);
@@ -499,10 +513,10 @@
 }
 @media (max-width: 480px) {
   .bin-row {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
-      "app"
-      "what"
-      "when";
+      "app skip"
+      "what skip"
+      "when skip";
   }
 }

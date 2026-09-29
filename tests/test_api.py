@@ -595,6 +595,8 @@ class TestTheRunsApi:
                     "cleanup_days": 3,
                     "items": 1,
                     "bytes": 5_900_000_000,
+                    "skipped": False,
+                    "state": None,
                 }
             ]
         }
@@ -624,6 +626,31 @@ class TestTheRunsApi:
         [only] = client.get(f"/api/runs/{run['id']}/bins").json()["bins"]
         assert (only["name"], only["bin"], only["items"], only["bytes"]) == ("hd", "unknown", 0, 0)
         assert client.get("/api/runs/99999/bins").status_code == 404
+
+    def test_a_bin_a_reap_left_off_is_listed_until_it_is_back(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        run = client.post("/api/runs").json()
+        assert client.get("/api/recycle-bins/off").json() == {"bins": []}
+        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)
+        with Session(engine) as session:
+            session.add(
+                ReapBin(
+                    run_id=run["id"],
+                    kind="radarr",
+                    instance_id=1,
+                    instance_name="hd",
+                    bin_path="/recycle/radarr",
+                    skip=True,
+                    state="off",
+                )
+            )
+            session.commit()
+        engine.dispose()
+
+        assert client.get("/api/recycle-bins/off").json() == {
+            "bins": [{"kind": "radarr", "instance_id": 1, "name": "hd", "run_id": run["id"]}]
+        }
 
     def test_the_run_list_carries_only_what_is_stored(self, client: TestClient) -> None:
         """The history is stored rows, nothing derived.
@@ -1000,6 +1027,33 @@ class TestExecuteGates:
             json={"confirmation_phrase": run["confirmation_phrase"]},
         )
         assert resp.status_code == 409
+        assert resp.json()["code"] == "error.runs.preflight_no_plex"
+
+    def test_skipping_a_bin_changes_the_phrase(self, armed_client: TestClient) -> None:
+        run = armed_client.post("/api/runs").json()
+        skip = [{"kind": "radarr", "instance_id": 1}]
+        url = f"/api/runs/{run['id']}/execute"
+
+        plain = armed_client.post(
+            url, json={"confirmation_phrase": run["confirmation_phrase"], "skip_bins": skip}
+        )
+        assert plain.json()["code"] == "error.runs.confirmation_mismatch"
+
+        typed = run["confirmation_phrase"] + " SKIP 1 BIN"
+        resp = armed_client.post(url, json={"confirmation_phrase": typed, "skip_bins": skip})
+        assert resp.json()["code"] == "error.runs.preflight_no_plex"
+
+    def test_a_bin_outside_the_plan_adds_nothing_to_the_phrase(
+        self, armed_client: TestClient
+    ) -> None:
+        run = armed_client.post("/api/runs").json()
+        resp = armed_client.post(
+            f"/api/runs/{run['id']}/execute",
+            json={
+                "confirmation_phrase": run["confirmation_phrase"],
+                "skip_bins": [{"kind": "sonarr", "instance_id": 9}],
+            },
+        )
         assert resp.json()["code"] == "error.runs.preflight_no_plex"
 
     def test_executing_a_missing_run_is_a_404(self, armed_client: TestClient) -> None:

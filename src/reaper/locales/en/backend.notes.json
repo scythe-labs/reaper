@@ -12,5 +12,9 @@
   "launcher.dialog.port_in_use": "A native dialog box (and the console line before it starts) shown when the port Reaper would bind is already answering. {port} is a whole number, shown twice. {move} is the fragment from launcher.move.conf or launcher.move.env, already composed in this same language.",
   "launcher.dialog.no_migrations": "A native dialog box (and the console line before it starts) shown when this install has no migrations folder beside it, which normally means a bare `pip install` outside a supported install shape.",
   "launcher.move.conf": "A fragment nested inside launcher.dialog.port_in_use, naming the file a desktop or snap install edits to change the port. {conf} is a file path, shown as the operating system spells it.",
-  "launcher.move.env": "A fragment nested inside launcher.dialog.port_in_use, naming the environment variable a container or source checkout sets instead. Carries no params."
+  "launcher.move.env": "A fragment nested inside launcher.dialog.port_in_use, naming the environment variable a container or source checkout sets instead. Carries no params.",
+  "discord.recycle_bin.still_off_title": "Discord message title when a Sonarr or Radarr recycle bin that a reap turned off could not be turned back on. {name} is the instance's kind and name, such as \"Sonarr HD\".",
+  "discord.recycle_bin.still_off_body": "Discord message body under still_off_title. {name} is the instance's kind and name; {run_id} is the reap's own number, shown as-is. \"Settings → Media Management\" is the Sonarr or Radarr menu path.",
+  "discord.recycle_bin.back_on_title": "Discord message title once that recycle bin is back on. {name} is the instance's kind and name.",
+  "discord.recycle_bin.back_on_body": "Discord message body under back_on_title."
 }

@@ -382,3 +382,65 @@ class TestTheArrRefusalIsOnTheRecordToo:
                 await client.delete_movie(7, delete_files=True, add_exclusion=False)
 
         assert [line for line in logs if line["event"] == "http.write_blocked"] == []
+
+
+_BIN_CONFIG: dict[str, Any] = {
+    "id": 1,
+    "recycleBin": "",
+    "recycleBinCleanupDays": 7,
+    "fileDate": "none",
+}
+
+
+class TestPuttingARecycleBinBack:
+    """Turning a Sonarr or Radarr recycle bin off needs deletion armed. Putting it back
+    does not, so disarming mid-reap never leaves a bin off."""
+
+    async def test_putting_a_bin_back_goes_through_with_deletion_off(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        route = httpx2_mock.put("https://sonarr.test/api/v3/config/mediamanagement/1").mock(
+            return_value=httpx.Response(202, json=1)
+        )
+        async with SonarrClient("https://sonarr.test", "k", safety=READ_ONLY) as client:
+            await client.restore_recycle_bin(dict(_BIN_CONFIG), "/recycle/sonarr")
+
+        # The whole settings object goes back, with only the bin changed.
+        assert json_body(route) == {**_BIN_CONFIG, "recycleBin": "/recycle/sonarr"}
+
+    async def test_the_exemption_follows_a_base_path(self, httpx2_mock: respx.Router) -> None:
+        route = httpx2_mock.put("https://proxy.test/sonarr/api/v3/config/mediamanagement/1").mock(
+            return_value=httpx.Response(202, json=1)
+        )
+        async with SonarrClient("https://proxy.test/sonarr", "k", safety=READ_ONLY) as client:
+            await client.restore_recycle_bin(dict(_BIN_CONFIG), "/recycle/sonarr")
+        assert route.called
+
+    async def test_turning_a_bin_off_is_refused_with_deletion_off(self) -> None:
+        async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
+            with pytest.raises(SafetyViolationError, match="Blocked"):
+                await client.turn_off_recycle_bin({**_BIN_CONFIG, "recycleBin": "/r"})
+
+    async def test_turning_a_bin_off_sends_the_whole_object_when_armed(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        route = httpx2_mock.put("https://radarr.test/api/v3/config/mediamanagement/1").mock(
+            return_value=httpx.Response(202, json=1)
+        )
+        async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
+            await client.turn_off_recycle_bin({**_BIN_CONFIG, "recycleBin": "/r"})
+        assert json_body(route) == _BIN_CONFIG
+
+    async def test_a_restore_cannot_turn_a_bin_off(self) -> None:
+        async with SonarrClient("https://sonarr.test", "k", safety=READ_ONLY) as client:
+            with pytest.raises(ValueError, match="needs a folder"):
+                await client.restore_recycle_bin(dict(_BIN_CONFIG), "")
+
+    async def test_the_restore_flag_reaches_no_other_path(self) -> None:
+        """The exemption is the settings path alone. A delete marked as a restore is still
+        refused with deletion off."""
+        async with SonarrClient("https://sonarr.test", "k", safety=READ_ONLY) as client:
+            with pytest.raises(SafetyViolationError, match="Blocked"):
+                await client._mutate(
+                    "DELETE", "/api/v3/episodefile/bulk", json={"episodeFileIds": [1]}, restore=True
+                )

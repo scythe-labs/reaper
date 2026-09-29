@@ -425,6 +425,11 @@ class GuardedTransport(httpx2.AsyncBaseTransport):
     This is an allow-list of exact paths, not a per-client opt-out, so the
     exemption stays auditable in one place and a new client cannot quietly gain
     permission to write.
+
+    ``restore_paths`` is the one other exemption: a write carrying the
+    ``reaper_restore_approved`` extension may reach these paths with deletion off. It
+    puts a Sonarr or Radarr recycle bin back after a reap, and turning deletion off must
+    never leave a bin off.
     """
 
     def __init__(
@@ -433,10 +438,12 @@ class GuardedTransport(httpx2.AsyncBaseTransport):
         safety: RuntimeSafety,
         *,
         non_media_mutations: frozenset[str] = frozenset(),
+        restore_paths: frozenset[str] = frozenset(),
     ) -> None:
         self._inner = inner
         self._safety = safety
         self._non_media_mutations = non_media_mutations
+        self._restore_paths = restore_paths
 
     async def aclose(self) -> None:
         """Close the transport this one wraps.
@@ -455,7 +462,11 @@ class GuardedTransport(httpx2.AsyncBaseTransport):
         if request.method.upper() not in SAFE_METHODS:
             path = request.url.path
 
-            if path not in self._non_media_mutations:
+            restoring = (
+                path in self._restore_paths
+                and request.extensions.get("reaper_restore_approved") is True
+            )
+            if path not in self._non_media_mutations and not restoring:
                 # An explicit, per-request opt-in. Set only by the action executor,
                 # which writes the intent to the durable journal *before* the call.
                 intended = request.extensions.get("reaper_mutation_approved") is True
@@ -495,6 +506,7 @@ class BaseClient:
         verify: bool = True,
         timeout: httpx2.Timeout | None = None,
         non_media_mutations: frozenset[str] = frozenset(),
+        restore_paths: frozenset[str] = frozenset(),
         allow_cross_origin_redirects: bool = False,
     ) -> None:
         self.base_url = base_url.rstrip("/")
@@ -510,6 +522,7 @@ class BaseClient:
                 httpx2.AsyncHTTPTransport(verify=verify, retries=0),
                 safety,
                 non_media_mutations=non_media_mutations,
+                restore_paths=restore_paths,
             ),
             # Never auto-follow. httpx2 would re-send the credential headers
             # (X-Api-Key and similar) wherever Location points. Redirect policy
@@ -712,8 +725,12 @@ class BaseClient:
         *,
         params: Mapping[str, Any] | None = None,
         json: Any = None,
+        restore: bool = False,
     ) -> httpx2.Response:
         """Issue one mutating request, declared to the transport guard.
+
+        ``restore`` declares a write that puts a recycle bin back, which the guard lets
+        through with deletion off, on the client's ``restore_paths`` only.
 
         Two things are deliberately different from :meth:`_send`, both because this
         changes remote state and ``_send`` does not:
@@ -742,7 +759,9 @@ class BaseClient:
                     path,
                     params=params,
                     json=json,
-                    extensions={"reaper_mutation_approved": True},
+                    extensions={
+                        "reaper_restore_approved" if restore else "reaper_mutation_approved": True
+                    },
                 )
             except httpx2.TransportError as exc:
                 raise transport_failure(self.service, exc) from exc

@@ -159,7 +159,7 @@ export const deletionSafety: Doc = {
       "**A scripted deploy can start armed.** The password gate covers the switch in the app. You can turn deletion on at first boot without a password by setting `REAPER_DESTRUCTIVE_ACTIONS_ENABLED=true` in the environment. This is meant for infrastructure-as-code installs.",
       "**That environment setting is the default until you use the switch.** Once you turn deletion on or off in the app, the app's switch wins for good. Use Policy, Deletion to return a running install to read-only.",
       "**A few read failures keep files, and the scan carries on.** If Reaper can't list a service's folders, it won't match the items it's unsure about, so those files are kept. A small hiccup does not always raise an incomplete-scan banner. Check the logs if you think something is missing.",
-      "**A Sonarr or Radarr recycle bin holds the files first.** When an instance has a bin set, a reap moves its files there, and the space frees only when the bin empties. The reap confirmation lists each bin and says when its space frees.",
+      '**A Sonarr or Radarr recycle bin holds the files first.** When an instance has a bin set, a reap moves its files there, and the space frees only when the bin empties. The reap confirmation lists each bin and says when its space frees. Tick "Skip the bin" to turn one off for that reap, and Reaper turns it back on when the reap ends.',
       '**The Leaving Soon shelf is off until you turn it on.** To update it in Plex, you need deletion armed unless you also turn on "Update while read-only" in Settings, Plex. It only reaches people who browse or pinned that library. Wire up the Discord webhook to warn everyone else.',
     ]),
   ],

@@ -37,7 +37,7 @@ import { useSafety } from "../useSafety";
 import { composeError } from "../why";
 import { ModalShell } from "./ModalShell";
 import { PlexTrashNotice } from "./PlexTrashNotice";
-import { ConfirmBins } from "./RecycleBins";
+import { ConfirmBins, skipPhrase } from "./RecycleBins";
 import { Notice } from "./Notice";
 
 export function ReapConfirm({
@@ -79,6 +79,10 @@ export function ReapConfirm({
     staleTime: Infinity,
   });
   const [typed, setTyped] = useState("");
+  // The instances whose recycle bin this reap turns off, by `binKey`. Each one adds to the
+  // phrase, so ticking one is typed consent too.
+  const [skip, setSkip] = useState<ReadonlySet<string>>(new Set());
+  const phrase = skipPhrase(run.confirmation_phrase, skip.size);
   // Seeded with the caller's proof, so the sheet opens already at its settled content. Only the
   // 409 re-prove below replaces it.
   const [dryReport, setDryReport] = useState<RunReport | null>(initialReport);
@@ -114,7 +118,15 @@ export function ReapConfirm({
     // server re-derives the expected phrase live, so posting our own copy would reduce the
     // human check to a `disabled` attribute the server cannot tell from an echo, and would
     // deadlock the moment the expected phrase moved under an open sheet.
-    mutationFn: () => api.executeRun(run.id, typed.trim()),
+    mutationFn: () =>
+      api.executeRun(
+        run.id,
+        typed.trim(),
+        [...skip].map((key) => {
+          const [kind, id] = key.split(":");
+          return { kind: kind!, instance_id: Number(id) };
+        }),
+      ),
     onSuccess: (s) => {
       // Seed the shared status so the Reap tab and the app-wide bar show "running" at once,
       // without waiting for the first poll. Then hand the run to them and close: the run is
@@ -150,12 +162,13 @@ export function ReapConfirm({
     // items. A tick that survived that would be consent carried from a plan the operator
     // is no longer looking at.
     setTrashAcked(false);
+    setSkip(new Set());
     dry.mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run.id, run.confirmation_phrase]);
 
   const dryClean = dryReport?.dry_run === true && dryReport.state === "completed";
-  const phraseOk = typed.trim() === run.confirmation_phrase;
+  const phraseOk = typed.trim() === phrase;
   // Emptying Plex's trash takes the records of everything already in there, not just what
   // this run deleted, and the executor's count-delta gate structurally cannot see those
   // items. So the operator is told and must tick before Reap enables. The tick is dropped
@@ -281,7 +294,20 @@ export function ReapConfirm({
         />
       )}
 
-      {dryClean && !otherRunning && <ConfirmBins runId={run.id} />}
+      {dryClean && !otherRunning && (
+        <ConfirmBins
+          runId={run.id}
+          skip={skip}
+          onSkip={(key, on) =>
+            setSkip((prev) => {
+              const next = new Set(prev);
+              if (on) next.add(key);
+              else next.delete(key);
+              return next;
+            })
+          }
+        />
+      )}
 
       {/* Stage 2: arm + typed confirmation, shown once the practice run is clean and no other
           run holds the slot. */}
@@ -317,7 +343,7 @@ export function ReapConfirm({
               <label className="reap-confirm-label" htmlFor="reap-phrase">
                 {t("reapConfirm.arm.typePhrase")}
               </label>
-              <p className="reap-confirm-phrase">{run.confirmation_phrase}</p>
+              <p className="reap-confirm-phrase">{phrase}</p>
               <input
                 ref={phraseRef}
                 id="reap-phrase"

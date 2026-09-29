@@ -13,6 +13,7 @@ import {
   DEFAULT_FIELD_VALUES,
   DEFAULT_GENERAL,
   DEFAULT_PROFILE,
+  DEFAULT_RECYCLE_BINS_OFF,
   DEFAULT_UPDATE,
   IDLE_SCAN,
 } from "./test/apiFixtures";
@@ -52,6 +53,7 @@ vi.mock("./api", async (importOriginal) => ({
 // need a different answer set their own value after this reset.
 beforeEach(() => {
   apiMock.update.mockResolvedValue(DEFAULT_UPDATE);
+  apiMock.recycleBinsOff.mockResolvedValue(DEFAULT_RECYCLE_BINS_OFF);
   // ReviewQueue's two filter suggesters call this, and every shell mount here renders the
   // queue. Left unanswered, both filters would silently render their failed-read branch. The
   // test suite's check for unanswered mocks cannot catch this one on its own, because the query
@@ -195,6 +197,7 @@ describe("UserMenu", () => {
     apiMock.logout.mockReset();
     apiMock.update.mockReset();
     apiMock.update.mockResolvedValue(DEFAULT_UPDATE);
+    apiMock.recycleBinsOff.mockResolvedValue(DEFAULT_RECYCLE_BINS_OFF);
   });
 
   it("keeps the panel open so a failed sign-out can be read", async () => {

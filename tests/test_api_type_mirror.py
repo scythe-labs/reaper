@@ -109,10 +109,11 @@ INNER_MODULES = ("reaper.engine.policy", "reaper.engine.explanation")
 #: more") needed a total the page itself cannot carry.
 #:
 #: ``RunBinOut`` and ``RunBinsOut`` add 2, each Sonarr and Radarr instance's recycle bin.
+#: ``BinRefIn``, ``RecycleBinOffOut`` and ``RecycleBinsOffOut`` add 3, a bin a reap turns off.
 #:
 #: This count is here because the collision assertion below is flag-shaped, and a flag
 #: cannot see a member that left the walk.
-_EXPECTED_SERVER_MODELS = 155
+_EXPECTED_SERVER_MODELS = 158
 
 #: Browser types whose server counterpart is spelled differently. Each is a real pair, the
 #: field sets are compared, and the rename is the only reason a suffix rule cannot find it.
@@ -202,8 +203,8 @@ CLIENT_ONLY = {
 # `RunOutcomeReadOut`, and `RunOutcomes` with `RunOutcomesOut`, both on the suffix rule.
 # Both +1 again for the run history's envelope: `RunList` pairs with `RunListOut` on the
 # suffix rule.
-EXPECTED_INTERFACES = 109
-EXPECTED_PAIRS = 107
+EXPECTED_INTERFACES = 111
+EXPECTED_PAIRS = 109
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")

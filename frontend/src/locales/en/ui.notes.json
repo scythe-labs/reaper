@@ -1185,5 +1185,9 @@
   "reapPlan.history.freedBinnedRemoved": "A fragment appended after a past run's id on the Reap page's history list, never shown alone, used when part of the run is still in a recycle bin. {bytes} and {binned} are already-formatted sizes; {count} is the formatted number of items removed.",
   "reapConfirm.bar.removedFreedBinned": "Progress bar summary once items have been removed and part of them wait in a recycle bin. {souls} is the already-formatted item count (format.souls); {bytes} and {binned} are already-formatted sizes.",
   "reapConfirm.bar.freedBinned": "The space freed so far, on its own line of the reap progress bar, when part of it waits in a recycle bin. {bytes} and {binned} are already-formatted sizes.",
-  "reapConfirm.bar.binnedSuffix": "Appended to the screen-reader announcement when a reap ends, never shown alone. {binned} is an already-formatted size still held in a Sonarr or Radarr recycle bin."
+  "reapConfirm.bar.binnedSuffix": "Appended to the screen-reader announcement when a reap ends, never shown alone. {binned} is an already-formatted size still held in a Sonarr or Radarr recycle bin.",
+  "recycleBins.skipFor": "Accessible name of the checkbox beside one instance on the Reap confirmation screen's recycle bin list. {name} is the instance's kind and name, such as \"Sonarr HD\".",
+  "recycleBins.banner.stillOff": "Banner across the top of every page while a Sonarr or Radarr recycle bin that a reap turned off stays off. {name} is the instance's kind and name, such as \"Sonarr HD\"; {run} is the reap's own number, shown as-is. A \"Turn it back on\" button follows.",
+  "recycleBins.banner.retryFailed": "The same banner after its button was pressed and the bin is still off. {name} is the instance's kind and name. A \"Try again\" button follows.",
+  "error.reap.bin_not_turned_off": "Why a reap stopped before deleting anything: Reaper could not turn off a Sonarr or Radarr recycle bin the operator ticked on the Reap confirmation screen. {name} is the instance's kind and name, such as \"Sonarr HD\"."
 }

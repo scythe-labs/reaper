@@ -108,6 +108,7 @@ export function ReapBar({
       ["runs"],
       ["run"],
       ["run-bins"],
+      ["recycle-bins-off"],
       ["candidates"],
       ["reap-breakdown"],
       ["snapshot"],

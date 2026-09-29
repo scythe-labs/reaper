@@ -298,7 +298,7 @@ describe("the execute gate", () => {
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(onStarted).toHaveBeenCalledTimes(1);
-    expect(apiMock.executeRun).toHaveBeenCalledWith(run.id, run.confirmation_phrase);
+    expect(apiMock.executeRun).toHaveBeenCalledWith(run.id, run.confirmation_phrase, []);
     // Seeded so neither the bar nor the tab waits on the first poll to show the run.
     expect(queryClient.getQueryData(["reapStatus"])).toMatchObject({
       running: true,
@@ -358,7 +358,37 @@ describe("the execute gate", () => {
     // a script bypassing it.
     await fill(user, await screen.findByRole("textbox"), `${run.confirmation_phrase}  `);
     await user.click(screen.getByRole("button", { name: /^Reap$/ }));
-    expect(apiMock.executeRun).toHaveBeenCalledWith(run.id, run.confirmation_phrase);
+    expect(apiMock.executeRun).toHaveBeenCalledWith(run.id, run.confirmation_phrase, []);
+  });
+
+  it("adds each skipped recycle bin to the phrase and sends it with the reap", async () => {
+    apiMock.runBins.mockResolvedValue({
+      bins: [
+        {
+          kind: "radarr",
+          instance_id: 1,
+          name: "HD",
+          bin: "on",
+          cleanup_days: 3,
+          items: 1,
+          bytes: 1024 ** 3,
+          skipped: false,
+          state: null,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    renderSheet();
+    const phrase = `${run.confirmation_phrase} SKIP 1 BIN`;
+
+    await user.click(await screen.findByRole("checkbox", { name: /Skip Radarr HD's recycle bin/ }));
+    expect(screen.getByText(phrase)).toBeInTheDocument();
+    await fill(user, await screen.findByRole("textbox"), phrase);
+    await user.click(screen.getByRole("button", { name: /^Reap$/ }));
+
+    expect(apiMock.executeRun).toHaveBeenCalledWith(run.id, phrase, [
+      { kind: "radarr", instance_id: 1 },
+    ]);
   });
 
   it("re-measures against the phrase the server moved to", async () => {

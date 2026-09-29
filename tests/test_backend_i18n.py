@@ -46,9 +46,10 @@ _SAY_CALL_SITES = (
 )
 
 #: The population this file's two scanning guards claim to cover, reconciled by hand
-#: against `backend.json`: 4 discord.leaving_soon.* keys, 2 discord.test.* keys, 3
-#: launcher.tray.* keys, 3 launcher.dialog.* keys, 2 launcher.move.* keys.
-_EXPECTED_CATALOG_KEY_COUNT = 14
+#: against `backend.json`: 4 discord.leaving_soon.* keys, 2 discord.test.* keys, 4
+#: discord.recycle_bin.* keys, 3 launcher.tray.* keys, 3 launcher.dialog.* keys, 2
+#: launcher.move.* keys.
+_EXPECTED_CATALOG_KEY_COUNT = 18
 
 
 def _leaves(node: object, prefix: str = "") -> dict[str, str]:

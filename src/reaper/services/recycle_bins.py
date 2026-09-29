@@ -13,10 +13,13 @@ from typing import Any, Protocol, runtime_checkable
 
 import structlog
 from sqlalchemy import ColumnElement, delete, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from reaper.clients.base import IntegrationError
+from reaper.clients.base import IntegrationError, SafetyViolationError
+from reaper.config import Settings
+from reaper.crypto import SecretBox
 from reaper.db.models import ActionStep, Instance, ReapBin
+from reaper.notify.discord import build_notifier
 from reaper.services import run_totals
 from reaper.services.planner import MediaRef
 
@@ -26,9 +29,32 @@ log = structlog.get_logger(__name__)
 InstanceKey = tuple[str, int]
 
 
+#: The states of a bin a reap turned off and has not yet put back.
+OFF_STATES = ("turning_off", "off")
+
+
 @runtime_checkable
 class BinReader(Protocol):
     async def media_management(self) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class BinSwitch(BinReader, Protocol):
+    async def turn_off_recycle_bin(self, config: dict[str, Any]) -> None: ...
+    async def restore_recycle_bin(self, config: dict[str, Any], path: str) -> None: ...
+
+
+class BinError(Exception):
+    """A bin read back different from what Reaper set or expected."""
+
+
+#: What can go wrong changing a bin: the call, the guard, or the read-back.
+SWITCH_ERRORS = (IntegrationError, SafetyViolationError, BinError)
+
+
+def label(kind: str, name: str) -> str:
+    """How operator copy names an instance: its kind, then its name."""
+    return f"{kind.title()} {name}"
 
 
 @dataclass(frozen=True)
@@ -73,6 +99,18 @@ def readers(
     for kind, clients in (("radarr", radarr), ("sonarr", sonarr)):
         for instance_id, client in clients.items():
             if isinstance(client, BinReader):
+                out[(kind, instance_id)] = client
+    return out
+
+
+def switches(
+    radarr: Mapping[int, object], sonarr: Mapping[int, object]
+) -> dict[InstanceKey, BinSwitch]:
+    """The clients that can also change a bin."""
+    out: dict[InstanceKey, BinSwitch] = {}
+    for kind, clients in (("radarr", radarr), ("sonarr", sonarr)):
+        for instance_id, client in clients.items():
+            if isinstance(client, BinSwitch):
                 out[(kind, instance_id)] = client
     return out
 
@@ -157,3 +195,73 @@ async def removed_on(
         return run_totals.aggregate_rows([])
     rows = (await session.execute(run_totals.totals_query(run_id).where(where))).all()
     return run_totals.aggregate_rows(rows)
+
+
+async def turn_off(client: BinSwitch, path: str) -> None:
+    """Turn off a bin read as ``path`` moments ago, and confirm it reads off."""
+    config = await client.media_management()
+    current, _ = _parse(config)
+    if current == "":
+        return
+    if current != path:
+        raise BinError("the bin changed after it was read")
+    await client.turn_off_recycle_bin(config)
+    if _parse(await client.media_management())[0] != "":
+        raise BinError("the bin still reads on")
+
+
+async def put_back(client: BinSwitch, path: str) -> str:
+    """Put a bin back at ``path``. Returns ``restored``, or ``left`` when it now holds
+    another folder, which means someone set it during the reap."""
+    config = await client.media_management()
+    current, _ = _parse(config)
+    if current is None:
+        raise BinError("the bin could not be read")
+    if current == path:
+        return "restored"
+    if current:
+        return "left"
+    await client.restore_recycle_bin(config, path)
+    if _parse(await client.media_management())[0] != path:
+        raise BinError("the bin did not come back")
+    return "restored"
+
+
+async def still_off(session: AsyncSession) -> list[ReapBin]:
+    """Every bin a reap turned off and has not put back."""
+    rows = await session.execute(
+        select(ReapBin).where(ReapBin.state.in_(OFF_STATES)).order_by(ReapBin.id)
+    )
+    return list(rows.scalars())
+
+
+async def restore_pending(
+    factory: async_sessionmaker[AsyncSession],
+    box: SecretBox,
+    settings: Settings,
+    clients: Mapping[InstanceKey, BinSwitch],
+) -> list[ReapBin]:
+    """Put back every bin a reap left off, and tell Discord once about each one that stays
+    off and once when it comes back. Returns the bins still off."""
+    async with factory() as session:
+        rows = await still_off(session)
+        if not rows:
+            return []
+        notifier = await build_notifier(session, box, settings)
+        for row in rows:
+            name = label(row.kind, row.instance_name)
+            client = clients.get((row.kind, row.instance_id))
+            try:
+                if client is None or not row.bin_path:
+                    raise BinError("no client or no folder to put back")
+                row.state = await put_back(client, row.bin_path)
+            except SWITCH_ERRORS as exc:
+                log.warning("recycle_bin.still_off", instance=name, error=str(exc))
+                if notifier is not None and not row.announced:
+                    row.announced = await notifier.announce_bin_still_off(name, run_id=row.run_id)
+                continue
+            log.info("recycle_bin.restored", instance=name, state=row.state)
+            if notifier is not None and row.announced:
+                await notifier.announce_bin_back_on(name)
+        await session.commit()
+        return [r for r in rows if r.state in OFF_STATES]

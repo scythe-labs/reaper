@@ -987,6 +987,23 @@ export interface RunBin {
   items: number;
   /** What the plan removes on this instance, or for an executed run, what it removed. */
   bytes: number;
+  /** The operator turned this bin off for the run. */
+  skipped: boolean;
+  /** For a skipped bin: `off` while it is still off, `restored` once it is back, or `left`
+   *  when someone set another bin during the reap. */
+  state: string | null;
+}
+
+/** A recycle bin a reap turned off and could not put back. */
+export interface RecycleBinOff {
+  kind: string;
+  instance_id: number;
+  name: string;
+  run_id: number;
+}
+
+export interface RecycleBinsOff {
+  bins: RecycleBinOff[];
 }
 
 /** From `GET /api/runs/{id}/bins`: read live for a planned run, as recorded for any other. */
@@ -2494,8 +2511,19 @@ export const api = {
    *  content-bound confirmation phrase, which the server recomputes and refuses
    *  anything else. The reap then runs detached. This returns the initial status, and
    *  the report lands on the status (poll `reapStatus`) when the run ends. */
-  executeRun: (id: number, confirmationPhrase: string) =>
-    post<ReapStatus>(`/api/runs/${id}/execute`, { confirmation_phrase: confirmationPhrase }),
+  executeRun: (
+    id: number,
+    confirmationPhrase: string,
+    skipBins: { kind: string; instance_id: number }[] = [],
+  ) =>
+    post<ReapStatus>(`/api/runs/${id}/execute`, {
+      confirmation_phrase: confirmationPhrase,
+      skip_bins: skipBins,
+    }),
+  /** Every recycle bin a reap turned off and could not put back. */
+  recycleBinsOff: () => request<RecycleBinsOff>("/api/recycle-bins/off"),
+  /** Try again to put those bins back. Answers with the ones still off. */
+  restoreRecycleBins: () => post<RecycleBinsOff>("/api/recycle-bins/restore", {}),
   /** The running (or last) reap's progress. Polled while a reap runs, and read once on load
    *  to re-attach to one already in flight from any screen. */
   reapStatus: () => request<ReapStatus>("/api/runs/execute/status"),

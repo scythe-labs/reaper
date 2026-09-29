@@ -71,7 +71,8 @@ from tests._auth import login
 #: asserted nothing.
 #: -1 for `PUT /api/settings/notifications/language`, now gone. The language is one
 #: setting now and rides `PUT /api/settings/general`, which was already counted here.
-FENCED_OPERATIONS = 48
+#: +1 for `POST /api/recycle-bins/restore`, which writes Sonarr and Radarr settings.
+FENCED_OPERATIONS = 49
 
 
 class TestScanProgressPercent:

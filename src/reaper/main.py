@@ -48,7 +48,7 @@ from reaper.api.policy import router as policy_router
 from reaper.api.poster import close_artwork_client
 from reaper.api.poster import router as poster_router
 from reaper.api.review import router as review_router
-from reaper.api.runs import profile_router, reap_in_flight
+from reaper.api.runs import profile_router, reap_in_flight, restore_recycle_bins
 from reaper.api.runs import router as runs_router
 from reaper.api.scan import router as scan_router
 from reaper.api.settings import router as settings_router
@@ -438,11 +438,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         catch_up_on_startup(cache_engine, settings.data_dir), name="catch_up"
     )
     catch_up.add_done_callback(report_background_failure)
+    # A reap that crashed or was cut off may have left a Sonarr or Radarr recycle bin off.
+    bins = asyncio.create_task(restore_recycle_bins(app), name="restore_recycle_bins")
+    bins.add_done_callback(report_background_failure)
 
     try:
         yield
     finally:
         catch_up.cancel()
+        # Awaited so a session it holds closes before the engines are disposed.
+        bins.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await bins
         # A background scan (api/scan.py) is detached from any request, so cancel it here
         # rather than leaving a pending task when the loop stops. A scan writes only our own
         # rows and can be dropped, so it is canceled but not awaited.

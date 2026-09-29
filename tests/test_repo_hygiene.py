@@ -72,7 +72,7 @@ DECISIONS_DOC = DOCS / "DECISIONS.md"
 # Count of "Decisions locked" rows carrying the dagger, reconciled by hand against DECISIONS.md's
 # sections. A count catches a row silently dropping out of the table; a set-equality check on
 # its own could not tell a row that matches from one that went missing.
-DECISION_SECTIONS = 19
+DECISION_SECTIONS = 20
 
 
 def _live_docs() -> list[Path]:
@@ -3550,7 +3550,7 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # complies from one that dropped out of the walk, and reads green either way.
 #
 # Re-derive this number by running the test. Never update it by hand arithmetic on a diff.
-_EXPECTED_NOTICES = 139
+_EXPECTED_NOTICES = 140
 
 
 def _shipped_tsx() -> list[Path]:
@@ -6567,6 +6567,7 @@ _MEMBERSHIP_INVENTORY: dict[str, tuple[int, str]] = {
         1,
         "bounded: the Sonarr and Radarr instances one reap deletes from",
     ),
+    "src/reaper/services/recycle_bins.py::still_off": (1, "bounded: the fixed OFF_STATES pair"),
     "src/reaper/services/rewatch.py::movie_rewatch_outcomes": (1, "chunked"),
     "src/reaper/services/rewatch.py::movie_rewatch_stats": (1, "chunked"),
     "src/reaper/services/rewatch.py::show_rewatch_outcomes": (1, "chunked"),
@@ -7631,7 +7632,7 @@ _UNRECOVERABLE_OPS = frozenset({"alter_column", "drop_column", "drop_table"})
 #: The revision files walked, pinned because a flag-shaped assertion alone cannot tell a
 #: revision that complies from one that dropped out of the walk. Bump the first with any new
 #: revision, the second only with one performing an operation above.
-_EXPECTED_REVISION_FILES = 33
+_EXPECTED_REVISION_FILES = 34
 _EXPECTED_UNRECOVERABLE_REVISIONS = 6
 
 
@@ -7830,12 +7831,12 @@ def _refusal_code_sites() -> dict[str, list[str]]:
     return sites
 
 
-_EXPECTED_REFUSAL_CODES = 310
+_EXPECTED_REFUSAL_CODES = 311
 #: Multiple call sites can raise the same code, such as `config.RuntimeSafety.why_blocked`
 #: reusing an `error.safety.*` code the executor's own backstop already raises, or
 #: `update_check._incomplete()` building one `error.integration.update_check_incomplete`
 #: for several callers. So the site count moves independently of the code count.
-_EXPECTED_REFUSAL_SITES = 363
+_EXPECTED_REFUSAL_SITES = 366
 
 
 def test_every_refusal_code_has_a_raiser_and_a_catalog_entry() -> None:
@@ -7899,7 +7900,7 @@ _CLIENT_ONLY_CODES = frozenset(
 
 #: `len(MESSAGES) + len(_CLIENT_ONLY_CODES)`, pinned so the population this test collects
 #: cannot silently shrink to match a catalog that lost entries.
-_EXPECTED_CATALOG_ERROR_KEYS = 314
+_EXPECTED_CATALOG_ERROR_KEYS = 315
 
 
 def test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose() -> None:

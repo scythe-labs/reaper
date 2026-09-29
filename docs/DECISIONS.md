@@ -1149,3 +1149,21 @@ param, and `SafetyViolationError.__str__` renders through `english()` instead of
 `str.format`, so the nested reason composes into its own sentence there too.
 `SafetyOut.note: str | None` becomes `note_reason: ReasonKey | None`, composed by the browser
 the same way every other reason is.
+
+## Recycle bins
+
+**Choice: Off per instance for one whole reap, put back at every end.**
+
+A reap can turn off a Sonarr or Radarr recycle bin for each instance the operator ticks on the
+reap confirm. Ticking one adds `SKIP N BINS` to the typed phrase. The bin goes off before the
+first delete and comes back however the reap ends. A hard cancel is the exception: it leaves
+the bin for the next startup, since shutdown does no network work.
+
+Turning a bin off around each delete alone was offered and declined, since it costs two
+settings writes per item. The whole-reap window has a cost the confirm states: an upgrade that
+replaces a file during the reap skips the bin too.
+
+A bin that will not come back warns and never blocks the next reap. The banner, Discord and the
+report say so, and Reaper retries at startup, before the next reap and from the banner. Putting
+a bin back is the one write the transport guard allows with deletion off, so disarming mid-reap
+cannot leave a bin off. Turning one off still needs deletion armed.

@@ -147,7 +147,7 @@ def plan_bytes(candidates: Sequence[Candidate]) -> tuple[int, int]:
     return sum(measured), len(candidates) - len(measured)
 
 
-def confirmation_phrase(candidates: Sequence[Candidate]) -> str:
+def confirmation_phrase(candidates: Sequence[Candidate], *, skip_bins: int = 0) -> str:
     """The confirmation phrase the operator must type, bound to what the plan will delete.
 
     It carries the item count and total size instead of a static "DELETE", so it cannot
@@ -158,6 +158,10 @@ def confirmation_phrase(candidates: Sequence[Candidate]) -> str:
     ``+ N UNSIZED`` suffix, so the operator acknowledges items the GB figure leaves out.
     With the allowance at its default, the suffix never appears.
 
+    ``skip_bins`` adds ``SKIP N BINS``, so turning recycle bins off is typed too. The reap
+    confirm builds the same suffix in ``frontend/src/components/RecycleBins.tsx``
+    (``skipPhrase``), and ``test_the_phrase_names_the_bins_it_turns_off`` pins both.
+
     ``api.runs.execute_run`` recomputes this string at execute time and compares it to
     what was typed, so any wording change here fails every pending execute with a 409.
     """
@@ -166,7 +170,11 @@ def confirmation_phrase(candidates: Sequence[Candidate]) -> str:
     n = len(candidates)
     noun = "SOUL" if n == 1 else "SOULS"
     phrase = f"REAP {n} {noun} {gib:.0f} GB"
-    return f"{phrase} + {unsized} UNSIZED" if unsized else phrase
+    if unsized:
+        phrase += f" + {unsized} UNSIZED"
+    if skip_bins:
+        phrase += f" SKIP {skip_bins} {'BIN' if skip_bins == 1 else 'BINS'}"
+    return phrase
 
 
 def _movie_steps(

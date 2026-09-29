@@ -28,6 +28,7 @@ import { usePageScrollLock } from "./pageScrollLock";
 import { useGeneralSettings, useSeedLanguage } from "./useGeneralSettings";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "./useMediaQuery";
 import { useScanSettled } from "./useScanSettled";
+import { RecycleBinBanner } from "./components/RecycleBins";
 import { SafetyBanner } from "./components/SafetyBanner";
 import { ScanLine } from "./components/ScanLine";
 
@@ -491,6 +492,7 @@ function Dashboard({ user }: { user: AuthUser }) {
           it runs a page-level axe audit that catches a landmark like this going missing. */}
       <section className="app-status" aria-label={t("shell.app.statusLabel")}>
         <SafetyBanner onGoToDeletion={() => goToPolicySection("deletion")} />
+        <RecycleBinBanner />
         <ReapBar onGoToReap={() => setView("reap")} suppressed={view === "reap"} />
         {view === "review" && (
           <ScanFreshness

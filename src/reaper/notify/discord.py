@@ -189,6 +189,29 @@ class DiscordNotifier:
             )
         )
 
+    async def announce_bin_still_off(self, name: str, *, run_id: int) -> bool:
+        """Say a Sonarr or Radarr recycle bin stayed off after a reap. ``name`` is the
+        instance's kind and name."""
+        tag = self._language
+        return await self.post(
+            Embed(
+                title=say("discord.recycle_bin.still_off_title", tag, name=name),
+                description=say(
+                    "discord.recycle_bin.still_off_body", tag, name=name, run_id=run_id
+                ),
+            )
+        )
+
+    async def announce_bin_back_on(self, name: str) -> bool:
+        """Say a recycle bin that stayed off after a reap is back on."""
+        tag = self._language
+        return await self.post(
+            Embed(
+                title=say("discord.recycle_bin.back_on_title", tag, name=name),
+                description=say("discord.recycle_bin.back_on_body", tag),
+            )
+        )
+
 
 def _parse_retry_after(raw: str | None) -> float | None:
     """Discord sends Retry-After as seconds, often fractional. A value that fails to

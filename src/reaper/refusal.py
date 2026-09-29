@@ -763,6 +763,10 @@ MESSAGES: dict[str, str] = {
     "error.reap.stopped_by_operator": (
         "You stopped this run. Only the titles it had already reached were removed."
     ),
+    "error.reap.bin_not_turned_off": (
+        "Nothing was deleted. Reaper couldn't turn off {name}'s recycle bin. Try again, "
+        "or untick it to reap with the bin on."
+    ),
     "error.reap.journal_halt": (
         "Reaper could not save its record of what it just did, so it stopped before "
         "touching anything else. Anything already removed stays removed. Check the "
