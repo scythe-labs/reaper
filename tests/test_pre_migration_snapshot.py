@@ -82,7 +82,7 @@ class TestWhichPendingRevisionsAskForASnapshot:
     def test_only_the_revisions_that_lose_data_carry_the_marker(self) -> None:
         """Every revision pending from release M, and which of them asks for the copy.
 
-        ``e2f3a4b5c6d7`` is the M+1 sweep, and it drops six columns, so the honest answer
+        ``e2f3a4b5c6d7`` drops six columns and ``0c7f8c5bb333`` drops three, so the answer
         from release M is True. Asserting *which* revision made it True is the stronger
         check: a marker landing on one of the four additive revisions beside it would fail
         here.
@@ -93,7 +93,7 @@ class TestWhichPendingRevisionsAskForASnapshot:
         marked = {
             r.revision for r in pending if getattr(r.module, schema_gate.SNAPSHOT_ATTR, False)
         }
-        assert marked == {"e2f3a4b5c6d7"}, (
+        assert marked == {"e2f3a4b5c6d7", "0c7f8c5bb333"}, (
             "the revisions asking for a pre-migration copy are not the ones that lose data. "
             "A snapshot nobody needs costs a file; a missing one costs the database."
         )

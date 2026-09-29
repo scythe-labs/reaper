@@ -7626,8 +7626,8 @@ _UNRECOVERABLE_OPS = frozenset({"alter_column", "drop_column", "drop_table"})
 #: The revision files walked, pinned because a flag-shaped assertion alone cannot tell a
 #: revision that complies from one that dropped out of the walk. Bump the first with any new
 #: revision, the second only with one performing an operation above.
-_EXPECTED_REVISION_FILES = 31
-_EXPECTED_UNRECOVERABLE_REVISIONS = 5
+_EXPECTED_REVISION_FILES = 32
+_EXPECTED_UNRECOVERABLE_REVISIONS = 6
 
 
 def _revision_modules() -> list[tuple[str, ast.Module]]:

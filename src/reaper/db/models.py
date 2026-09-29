@@ -49,12 +49,6 @@ class Instance(Base):
     Modeled one-to-many from day one: a separate 4K Sonarr/Radarr pair alongside
     the HD pair is the common setup, and retrofitting multi-instance onto a
     single-instance schema means rewriting every foreign key.
-
-    Three columns carry no attribute here: `detected_version`, `last_ok_at` and
-    `last_error`. Nothing reads or writes them any more, and all three were already
-    nullable, so retiring them needed no migration. `alembic/env.py`'s
-    `RETIRED_COLUMNS` bridges autogenerate over the gap until a follow-up release
-    drops the columns.
     """
 
     __tablename__ = "instance"

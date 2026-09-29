@@ -1914,7 +1914,7 @@ _SWEPT = (
 _SWEPT_TABLES = ("candidate", "list_config", "pending_plex_login", "plex_server", "profile")
 
 
-def _shape(engine: Engine) -> dict[str, dict[str, object]]:
+def _shape(engine: Engine, tables: tuple[str, ...] = _SWEPT_TABLES) -> dict[str, dict[str, object]]:
     """Each rebuilt table's indexes, foreign keys and unique constraints, by name.
 
     Read so the comparison can be made by name rather than by eye. A batch recreate
@@ -1930,7 +1930,7 @@ def _shape(engine: Engine) -> dict[str, dict[str, object]]:
             ),
             "unique": sorted(str(u["name"] or "") for u in inspector.get_unique_constraints(table)),
         }
-        for table in _SWEPT_TABLES
+        for table in tables
     }
 
 
@@ -2023,25 +2023,12 @@ class TestTheRetiredColumnSweep:
         engine.dispose()
 
 
-#: What this release's bridge holds in ``alembic/env.py``'s ``RETIRED_COLUMNS``:
-#: ``instance.detected_version``, ``instance.last_ok_at`` and ``instance.last_error`` lost
-#: their ORM attributes with nothing to migrate, since all three were already nullable.
-#: A follow-up release drops the columns and empties the set again -- at which point this
-#: test's own assertion is wrong, which is the point: the next author has to notice and
-#: either delete it (the sweep landed) or extend it (a new entry joined this one).
-_BRIDGED_COLUMNS = {
-    ("instance", "detected_version"),
-    ("instance", "last_ok_at"),
-    ("instance", "last_error"),
-}
-
-
 def _bridge_sets() -> dict[str, ast.expr]:
     """``RETIRED_COLUMNS`` and ``RETIRED_CONSTRAINTS`` as declared in ``alembic/env.py``,
     read from the source rather than imported, because Alembic execs ``env.py`` by path and
     there is no ``alembic.env`` module to import (``_env_py_configure_kwargs`` above says the
     same thing from the other end). Parsed rather than substring-matched, so a set spelled
-    ``{}``-empty, ``set()``, or with entries, all read correctly.
+    ``{}``-empty, ``set()``, or with an entry, all read correctly.
     """
     tree = ast.parse((PROJECT_ROOT / "alembic" / "env.py").read_text(encoding="utf-8"))
     wanted = ("RETIRED_COLUMNS", "RETIRED_CONSTRAINTS")
@@ -2063,27 +2050,6 @@ def _bridge_sets() -> dict[str, ast.expr]:
     return found
 
 
-def _set_literal_pairs(value: ast.expr) -> set[tuple[str, str]] | None:
-    """The two-string-tuple elements of a set literal, or ``None`` for anything else --
-    including the empty ``set()`` call, which is a ``Call`` node, not a ``Set`` one."""
-    if not isinstance(value, ast.Set):
-        return None
-    pairs: set[tuple[str, str]] = set()
-    for elt in value.elts:
-        if not (isinstance(elt, ast.Tuple) and len(elt.elts) == 2):
-            return None
-        first, second = elt.elts
-        if not (
-            isinstance(first, ast.Constant)
-            and isinstance(first.value, str)
-            and isinstance(second, ast.Constant)
-            and isinstance(second.value, str)
-        ):
-            return None
-        pairs.add((first.value, second.value))
-    return pairs
-
-
 def _is_empty_set_call(value: ast.expr) -> bool:
     return (
         isinstance(value, ast.Call)
@@ -2093,25 +2059,89 @@ def _is_empty_set_call(value: ast.expr) -> bool:
     )
 
 
-def test_the_retired_column_bridge_holds_this_releases_columns() -> None:
-    """``alembic/env.py``'s ``RETIRED_COLUMNS`` is a one-release bridge, not a registry, and
-    right now it holds exactly the three columns this release retired (``_BRIDGED_COLUMNS``
-    above). None of them carried a foreign key, so ``RETIRED_CONSTRAINTS`` stays empty.
+def test_the_retired_column_bridge_is_empty() -> None:
+    """``alembic/env.py``'s two sets are a one-release bridge, and empty between releases.
+    An entry is added in the release that removes an ORM attribute, and this assertion is
+    relaxed in that same change."""
+    for name, value in _bridge_sets().items():
+        assert _is_empty_set_call(value), (
+            f"alembic/env.py's {name} is populated. It must empty with the release that "
+            "drops the column. If you are adding an entry alongside a release that removes "
+            "an ORM attribute, relax this assertion in the same change and file the drop."
+        )
 
-    A populated set that outlives its sweep is how a dead column becomes permanent behind a
-    growing exclusion list, so this pins the population rather than merely "is it non-empty":
-    a fourth entry sneaking in unnoticed, and the M+1 sweep landing without also emptying
-    this set and deleting this test, both fail instead of drifting.
-    """
-    found = _bridge_sets()
 
-    assert _set_literal_pairs(found["RETIRED_COLUMNS"]) == _BRIDGED_COLUMNS, (
-        "RETIRED_COLUMNS no longer holds exactly this release's bridged columns. If the "
-        "M+1 sweep just dropped instance.detected_version/last_ok_at/last_error, delete "
-        "this test and restore the empty-set assertion it replaced; if a new entry landed "
-        "alongside it, add it to _BRIDGED_COLUMNS here instead."
-    )
-    assert _is_empty_set_call(found["RETIRED_CONSTRAINTS"]), (
-        "RETIRED_CONSTRAINTS is populated, but none of this release's three columns should "
-        "carry a foreign key -- check what just retired an attribute with one."
-    )
+# Release M+1 for the instance table's three test-result columns.
+_INSTANCE_DROP = "0c7f8c5bb333"
+_INSTANCE_DROPPED = {"detected_version", "last_ok_at", "last_error"}
+
+
+def _instance_columns(engine: Engine) -> dict[str, tuple[str, bool, object]]:
+    return {
+        c["name"]: (str(c["type"]), c["nullable"], c["default"])
+        for c in inspect(engine).get_columns("instance")
+    }
+
+
+class TestTheInstanceTestResultDrop:
+    """The rebuild of ``instance`` drops exactly three columns and keeps everything else,
+    including the unique constraint and ``add_import_exclusion``'s server default."""
+
+    def _at(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, revision: str) -> Engine:
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, revision)
+        return create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+    def test_only_the_three_columns_leave(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        engine = self._at(tmp_path, monkeypatch, _RUN_TOTALS)
+        before_columns = _instance_columns(engine)
+        before_shape = _shape(engine, ("instance",))
+        engine.dispose()
+
+        engine = self._at(tmp_path, monkeypatch, _INSTANCE_DROP)
+        after_columns = _instance_columns(engine)
+        after_shape = _shape(engine, ("instance",))
+        engine.dispose()
+
+        assert set(before_columns) - set(after_columns) == _INSTANCE_DROPPED
+        assert after_columns == {
+            k: v for k, v in before_columns.items() if k not in _INSTANCE_DROPPED
+        }
+        assert after_shape == before_shape
+        assert after_shape["instance"]["unique"] == ["uq_instance_kind"]
+
+    def test_a_saved_service_survives_the_rebuild(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        engine = self._at(tmp_path, monkeypatch, _RUN_TOTALS)
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO instance (kind, name, base_url, api_key_enc, api_path_prefix, "
+                    "detected_version, enabled, verify_tls, created_at, last_ok_at, last_error) "
+                    "VALUES ('SONARR', 'HD', 'http://sonarr.example:8989', 'enc', '/api/v3', "
+                    "'4.0.0', 1, 1, 1750000000, 1750000000, 'refused')"
+                )
+            )
+        engine.dispose()
+
+        engine = self._at(tmp_path, monkeypatch, _INSTANCE_DROP)
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT kind, name, base_url, add_import_exclusion FROM instance")
+            ).one()
+        engine.dispose()
+        assert tuple(row) == ("SONARR", "HD", "http://sonarr.example:8989", 0)
+
+    def test_the_downgrade_puts_the_columns_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Schema only. The values are gone once upgrade runs."""
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, _INSTANCE_DROP)
+        command.downgrade(config, _RUN_TOTALS)
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+        assert set(_instance_columns(engine)) >= _INSTANCE_DROPPED
+        engine.dispose()

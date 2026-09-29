@@ -72,10 +72,7 @@ const badge = () => document.querySelector(".test-badge");
 
 describe("the badge on a saved service card", () => {
   it("shows no status until Test is pressed this visit", async () => {
-    // A saved instance can carry a real test history on the server row (`last_ok_at`,
-    // `last_error`, `detected_version`), but the browser no longer reads any of it, so
-    // opening the page shows nothing here regardless of what was last true. Only a press
-    // this visit fills the slot.
+    // Opening the page shows nothing here. Only a press this visit fills the slot.
     apiMock.instances.mockResolvedValue([sonarr()]);
     renderWithProviders(
       <>
