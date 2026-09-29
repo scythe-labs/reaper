@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { api, type InstanceKind, type RunBin } from "../api";
+import { describeError } from "../errors";
 import { bytes, count } from "../format";
 import { Notice } from "./Notice";
 import { kindLabel } from "./ServiceModal";
@@ -219,31 +220,37 @@ export function RecycleBinBanner() {
   const off = useQuery({ queryKey: ["recycle-bins-off"], queryFn: api.recycleBinsOff });
   const retry = useMutation({
     mutationFn: api.restoreRecycleBins,
-    onSuccess: (result) => queryClient.setQueryData(["recycle-bins-off"], result),
+    onSuccess: (result) => {
+      queryClient.setQueryData(["recycle-bins-off"], result);
+    },
   });
   const bins = off.data?.bins ?? [];
   if (bins.length === 0) return null;
-  // The button was pressed and the bin is still off, or the request itself failed.
-  const retried = retry.isError || (retry.isSuccess && retry.data.bins.length > 0);
+  // The request worked and the bin is still off.
+  const retried = retry.isSuccess && retry.data.bins.length > 0;
   return (
     <>
       {bins.map((b) => (
         <div key={binKey(b)} className="banner banner-unknown">
           <span className="banner-dot" aria-hidden="true" />
           <span>
-            {retried
-              ? t("recycleBins.banner.retryFailed", { name: instanceLabel(b.kind, b.name) })
-              : t("recycleBins.banner.stillOff", {
-                  name: instanceLabel(b.kind, b.name),
-                  run: b.run_id,
-                })}{" "}
+            {retry.isError
+              ? describeError(retry.error)
+              : retried
+                ? t("recycleBins.banner.retryFailed", { name: instanceLabel(b.kind, b.name) })
+                : t("recycleBins.banner.stillOff", {
+                    name: instanceLabel(b.kind, b.name),
+                    run: b.run_id,
+                  })}{" "}
             <button
               type="button"
               className="link"
               onClick={() => retry.mutate()}
               disabled={retry.isPending}
             >
-              {retried ? t("recycleBins.banner.tryAgain") : t("recycleBins.banner.turnBackOn")}
+              {retried || retry.isError
+                ? t("recycleBins.banner.tryAgain")
+                : t("recycleBins.banner.turnBackOn")}
             </button>
           </span>
         </div>

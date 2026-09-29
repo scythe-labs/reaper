@@ -360,7 +360,7 @@
   "error.review.candidate_not_found": "Shown in the review queue, or an item's why panel.",
   "error.review.no_scan": "Shown in the review queue, or an item's why panel.",
   "error.review.show_not_in_scan": "Shown in the review queue, or an item's why panel.",
-  "error.runs.already_running": "Shown when planning, confirming, or stopping a reap, on the Reap page.",
+  "error.runs.already_running": "Shown when planning, confirming, or stopping a reap, or turning a recycle bin back on, on the Reap page.",
   "error.runs.confirmation_mismatch": "Shown when planning, confirming, or stopping a reap, on the Reap page. `{expected}` is the confirmation phrase the server computed for the current plan, so the operator can compare it against what they typed.",
   "error.runs.limits_unreadable": "Shown when planning, confirming, or stopping a reap, on the Reap page.",
   "error.runs.no_scan_to_plan": "Shown when planning, confirming, or stopping a reap, on the Reap page.",

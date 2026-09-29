@@ -3,7 +3,7 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import type { RunBin } from "../api";
+import { ApiError, type RunBin } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { renderWithProviders } from "../test/renderWithProviders";
 import {
@@ -246,6 +246,20 @@ describe("the banner for a bin still off", () => {
 
     expect(await screen.findByText(/Still couldn't reach Sonarr HD/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+  });
+
+  it("shows the server's refusal when the retry itself fails", async () => {
+    apiMock.recycleBinsOff.mockResolvedValue({ bins: [off] });
+    apiMock.restoreRecycleBins.mockRejectedValue(
+      new ApiError(409, "busy", "error.runs.already_running"),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<RecycleBinBanner />);
+
+    await user.click(await screen.findByRole("button", { name: "Turn it back on" }));
+
+    expect(await screen.findByText(/A reap is already running/)).toBeInTheDocument();
+    expect(screen.queryByText(/Still couldn't reach/)).not.toBeInTheDocument();
   });
 
   it("goes away once the bin is back", async () => {

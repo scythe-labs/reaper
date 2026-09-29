@@ -229,11 +229,13 @@ async def put_back(client: BinSwitch, path: str) -> str:
     return "restored"
 
 
-async def still_off(session: AsyncSession) -> list[ReapBin]:
-    """Every bin a reap turned off and has not put back."""
-    rows = await session.execute(
-        select(ReapBin).where(ReapBin.state.in_(OFF_STATES)).order_by(ReapBin.id)
-    )
+async def still_off(session: AsyncSession, *, running_run: int | None = None) -> list[ReapBin]:
+    """Every bin a reap turned off and has not put back. The bins of `running_run` are left
+    out, since that reap holds them off on purpose."""
+    query = select(ReapBin).where(ReapBin.state.in_(OFF_STATES)).order_by(ReapBin.id)
+    if running_run is not None:
+        query = query.where(ReapBin.run_id != running_run)
+    rows = await session.execute(query)
     return list(rows.scalars())
 
 

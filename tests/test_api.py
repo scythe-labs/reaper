@@ -652,6 +652,37 @@ class TestTheRunsApi:
             "bins": [{"kind": "radarr", "instance_id": 1, "name": "hd", "run_id": run["id"]}]
         }
 
+    def test_a_bin_the_running_reap_holds_off_is_not_listed_until_it_ends(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        run = client.post("/api/runs").json()
+        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)
+        with Session(engine) as session:
+            session.add(
+                ReapBin(
+                    run_id=run["id"],
+                    kind="radarr",
+                    instance_id=1,
+                    instance_name="hd",
+                    bin_path="/recycle/radarr",
+                    skip=True,
+                    state="off",
+                )
+            )
+            session.commit()
+        engine.dispose()
+        from reaper.api.runs import _reap_status
+
+        status = _reap_status(client.app)  # type: ignore[arg-type]
+        status.running = True
+        status.run_id = run["id"]
+
+        assert client.get("/api/recycle-bins/off").json() == {"bins": []}
+        assert client.post("/api/recycle-bins/restore").status_code == 409
+
+        status.running = False
+        assert len(client.get("/api/recycle-bins/off").json()["bins"]) == 1
+
     def test_the_run_list_carries_only_what_is_stored(self, client: TestClient) -> None:
         """The history is stored rows, nothing derived.
 

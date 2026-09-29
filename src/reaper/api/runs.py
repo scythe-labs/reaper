@@ -645,7 +645,9 @@ def _off_out(rows: Sequence[ReapBin]) -> RecycleBinsOffOut:
 async def recycle_bins_off(request: Request) -> RecycleBinsOffOut:
     """Every Sonarr or Radarr recycle bin a reap turned off and could not put back."""
     async with session_factory(request)() as session:
-        return _off_out(await recycle_bins.still_off(session))
+        return _off_out(
+            await recycle_bins.still_off(session, running_run=_running_run(request.app))
+        )
 
 
 @router.post("/recycle-bins/restore")
@@ -656,7 +658,9 @@ async def restore_bins(request: Request) -> RecycleBinsOffOut:
         refuse(409, "error.runs.already_running")
     await restore_recycle_bins(request.app)
     async with session_factory(request)() as session:
-        return _off_out(await recycle_bins.still_off(session))
+        return _off_out(
+            await recycle_bins.still_off(session, running_run=_running_run(request.app))
+        )
 
 
 @router.get("/runs/{run_id}/bins")
@@ -783,6 +787,12 @@ class ReapStatus(BaseModel):
 
 def _reap_status(app: FastAPI) -> ReapStatus:
     return state_singleton(app, "reap_status", ReapStatus)
+
+
+def _running_run(app: FastAPI) -> int | None:
+    """The id of the reap mid-run, if any."""
+    status: ReapStatus | None = getattr(app.state, "reap_status", None)
+    return status.run_id if status is not None and status.running else None
 
 
 def reap_in_flight(app: FastAPI) -> bool:
