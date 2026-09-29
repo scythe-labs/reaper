@@ -646,6 +646,28 @@ class TestTheSectionListingDoesNotGoThroughPlex:
         assert "get_library_names" in READ_COMMANDS
 
 
+class TestHistoryAsksForArchivedUsers:
+    """Tautulli leaves an archived user's plays out of ``get_history`` unless asked. The
+    history mirror and the executor's played-since-approval check both read through
+    ``history``, so a request without the parameter hides those plays from both.
+    """
+
+    async def test_every_history_request_asks_for_archived_users(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        route = httpx2_mock.get("https://tautulli.test/api/v2").mock(
+            return_value=httpx.Response(
+                200, json={"response": {"result": "success", "data": {"data": []}}}
+            )
+        )
+        async with TautulliClient("https://tautulli.test", "k", safety=READ_ONLY) as client:
+            await client.history(length=1, include_activity=0)
+            await client.history(parent_rating_key=7, after="2026-01-01")
+
+        assert route.call_count == 2
+        assert [c.request.url.params.get("include_archived") for c in route.calls] == ["1", "1"]
+
+
 class TestPosterImageAllowList:
     """The poster proxy relays bytes same-origin, so it must reject script-bearing types.
 

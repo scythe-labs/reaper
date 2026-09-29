@@ -181,7 +181,9 @@ class TautulliClient(BaseClient):
 
         ``last_played`` and ``play_count`` are recomputed live from the history
         database on every call, so ``refresh=true`` is not needed for fresh watch
-        data. That flag only re-pulls the item list and file sizes from Plex.
+        data. That flag only re-pulls the item list and file sizes from Plex. Both leave out
+        the plays of a user archived in Tautulli, and no parameter brings them back. So read
+        plays from ``history`` instead.
 
         Never send ``section_type`` without a ``rating_key``: doing so corrupts the
         owner's own Tautulli Media Info page. This client never sends it.
@@ -232,10 +234,16 @@ class TautulliClient(BaseClient):
         sweep sets it because it asks for tens of thousands of rows at a time
         (``history_sync.PAGE_READ_TIMEOUT``). A per-item lookup passes nothing and
         keeps the client's shared budget.
+
+        ``include_archived=1`` is always sent. Tautulli leaves out the plays of a user the
+        operator archived there unless asked. Without them, a title only an archived user
+        watched reads as never watched, and their play after approval would not stop the
+        delete. A Tautulli release without archiving ignores the parameter.
         """
         data = await self.call(
             "get_history",
             read_timeout=read_timeout,
+            include_archived=1,
             rating_key=rating_key,
             parent_rating_key=parent_rating_key,
             grandparent_rating_key=grandparent_rating_key,
