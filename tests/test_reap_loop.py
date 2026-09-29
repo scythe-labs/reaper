@@ -54,6 +54,7 @@ from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody, ProfileSettin
 from reaper.engine.reason import Reason, from_stored
 from reaper.refusal import english
 from reaper.services import list_config, whitelist
+from reaper.services import recycle_bins as recycle_bins_module
 from reaper.services import whitelist as whitelist_module
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import (
@@ -4438,6 +4439,25 @@ class TestARunRecordsEachInstancesRecycleBin:
         await executor.execute(run.id)
 
         assert await self._bins(async_factory, run.id) == []
+
+
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        ({}, (None, None)),
+        ({"recycleBin": None}, ("", None)),
+        ({"recycleBin": ""}, ("", None)),
+        ({"recycleBin": 5}, (None, None)),
+        ({"recycleBin": "   "}, (None, None)),
+        ({"recycleBin": " /bin ", "recycleBinCleanupDays": True}, ("/bin", None)),
+        ({"recycleBin": "/bin", "recycleBinCleanupDays": "7"}, ("/bin", None)),
+        ({"recycleBin": "/bin", "recycleBinCleanupDays": 7}, ("/bin", 7)),
+    ],
+)
+def test_a_recycle_bin_setting_that_cannot_be_read_is_never_a_confirmed_answer(
+    config: dict[str, Any], expected: tuple[str | None, int | None]
+) -> None:
+    assert recycle_bins_module._parse(config) == expected
 
 
 class TestRunTotalsAreWrittenOnATerminalRun:
