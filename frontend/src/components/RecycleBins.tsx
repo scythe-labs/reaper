@@ -222,6 +222,7 @@ export function RecycleBinBanner() {
     mutationFn: api.restoreRecycleBins,
     onSuccess: (result) => {
       queryClient.setQueryData(["recycle-bins-off"], result);
+      void queryClient.invalidateQueries({ queryKey: ["run-bins"] });
     },
   });
   const bins = off.data?.bins ?? [];

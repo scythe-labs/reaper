@@ -262,6 +262,20 @@ describe("the banner for a bin still off", () => {
     expect(screen.queryByText(/Still couldn't reach/)).not.toBeInTheDocument();
   });
 
+  it("reads an open report's bins again after a retry", async () => {
+    apiMock.recycleBinsOff.mockResolvedValue({ bins: [off] });
+    apiMock.restoreRecycleBins.mockResolvedValue({ bins: [] });
+    const user = userEvent.setup();
+    const { client } = renderWithProviders(<RecycleBinBanner />);
+    client.setQueryData(["run-bins", 16], { bins: [] });
+
+    await user.click(await screen.findByRole("button", { name: "Turn it back on" }));
+
+    await vi.waitFor(() =>
+      expect(client.getQueryState(["run-bins", 16])?.isInvalidated).toBe(true),
+    );
+  });
+
   it("goes away once the bin is back", async () => {
     apiMock.recycleBinsOff.mockResolvedValue({ bins: [off] });
     apiMock.restoreRecycleBins.mockResolvedValue({ bins: [] });
