@@ -235,9 +235,6 @@ function sonarr(over: Partial<Instance> = {}): Instance {
     plex_library_map: {},
     service_instance_map: {},
     has_key: true,
-    detected_version: null,
-    last_ok_at: null,
-    last_error: null,
     ...over,
   };
 }

@@ -603,15 +603,15 @@ class TestPlexTvErrorsAreMapped:
 
 
 class TestTheSectionListingDoesNotGoThroughPlex:
-    """``get_libraries`` is not a local read. Tautulli answers it by asking Plex for the
-    section list, then asking again per section for an item count, three times over for a
-    show or artist section. The scan that follows a reap runs while Plex is still
-    rescanning the paths the reap emptied, so those calls expired the read budget and the
-    snapshot came back incomplete on a Tautulli timeout.
+    """Tautulli answers ``get_libraries`` by calling Plex. It asks for the section list,
+    then asks again per section for an item count, three times over for a show or artist
+    section. The scan that follows a reap runs while Plex is still rescanning the paths the
+    reap emptied, and those calls expired the read budget. The snapshot came back incomplete
+    on a Tautulli timeout.
 
-    ``get_library_names`` answers the same three fields Reaper reads from one local query.
-    The command that went on the wire is what this pins, since both commands return a list
-    of section rows and a body assertion cannot tell them apart.
+    Tautulli answers ``get_library_names`` from its own table, with the three fields the
+    scan reads. This pins the command that went on the wire. Both commands return a list of
+    section rows, so a body assertion cannot tell them apart.
     """
 
     @staticmethod
@@ -644,6 +644,28 @@ class TestTheSectionListingDoesNotGoThroughPlex:
         """The allow-list is what stops a command reaching the wire, so a swap that
         forgot it would refuse every scan instead of speeding one up."""
         assert "get_library_names" in READ_COMMANDS
+
+
+class TestHistoryAsksForArchivedUsers:
+    """Tautulli leaves an archived user's plays out of ``get_history`` unless asked. The
+    history mirror and the executor's played-since-approval check both read through
+    ``history``, so a request without the parameter hides those plays from both.
+    """
+
+    async def test_every_history_request_asks_for_archived_users(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        route = httpx2_mock.get("https://tautulli.test/api/v2").mock(
+            return_value=httpx.Response(
+                200, json={"response": {"result": "success", "data": {"data": []}}}
+            )
+        )
+        async with TautulliClient("https://tautulli.test", "k", safety=READ_ONLY) as client:
+            await client.history(length=1, include_activity=0)
+            await client.history(parent_rating_key=7, after="2026-01-01")
+
+        assert route.call_count == 2
+        assert [c.request.url.params.get("include_archived") for c in route.calls] == ["1", "1"]
 
 
 class TestPosterImageAllowList:

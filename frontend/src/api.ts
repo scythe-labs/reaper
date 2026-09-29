@@ -1703,16 +1703,13 @@ export interface Instance {
    *  when a title is in more than one library. Empty means the loose union. Seerr only. */
   service_instance_map: Record<string, number>;
   has_key: boolean;
-  detected_version: string | null;
-  last_ok_at: string | null;
-  last_error: string | null;
 }
 
 /** The verdict on a saved-instance connection test. `detail_reason` is a typed
  *  reason, the same move that gave the Discord webhook test its own typed
  *  `DiscordTest` below. A failure carries `explain_failure`'s own `error.instance.*`
- *  code; a pass carries a `services.test.*` id that `ServiceModal.tsx`'s own
- *  `testDetailText` composes. What a pre-save probe additionally reads is on
+ *  code; a pass carries a bare id such as `connected` that `ServiceModal.tsx`'s own
+ *  `testDetailText` composes under `services.test`. What a pre-save probe additionally reads is on
  *  `InstanceProbe`. */
 export interface InstanceTest {
   ok: boolean;

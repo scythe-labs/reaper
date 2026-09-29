@@ -13,7 +13,7 @@ seeing what is left to set up, and turning deletion on and off. The properties p
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import NoReturn
 
 import httpx
 import httpx2
@@ -572,6 +572,10 @@ class TestTheApiPathIsStoredAndUnreachable:
         """The route has no instance-less pass to read folders on, so it cannot answer the
         mapping fields, and its published shape must not say it may. This body was never
         asserted before, so a narrowing that went the wrong way had no guard.
+
+        ``detail`` is the bare id the real probe emits on a pass (never a hand-written
+        ``legacy`` shape it never emits), so this also pins that the route carries it
+        through to the wire unqualified, for ``ServiceModal.tsx`` to compose.
         """
         made = client.post(
             "/api/settings/instances",
@@ -587,7 +591,7 @@ class TestTheApiPathIsStoredAndUnreachable:
 
         async def fake_test(*_a: object, **_k: object) -> instances_service.TestResult:
             return instances_service.TestResult(
-                ok=True, detail=Reason("legacy", {"text": "Connected."}), version="4.0.1"
+                ok=True, detail=Reason("connected", {"service": "Radarr"}), version="4.0.1"
             )
 
         monkeypatch.setattr(instances_service, "test_connection", fake_test)
@@ -596,142 +600,9 @@ class TestTheApiPathIsStoredAndUnreachable:
 
         assert body == {
             "ok": True,
-            "detail_reason": {"k": "legacy", "p": {"text": "Connected."}},
+            "detail_reason": {"k": "connected", "p": {"service": "Radarr"}},
             "version": "4.0.1",
         }
-
-
-class TestTheStoredTestResultDescribesWhatWasTested:
-    """A connection test's outcome is stored on the instance row and rendered as the
-    service card's badge, so it must describe the credentials in force, not the ones it
-    was computed from before an edit.
-
-    The green direction is the one that matters. A stale "Reached" tells the operator
-    Reaper can reach the app it deletes through, when nothing has checked the address now
-    configured.
-    """
-
-    @staticmethod
-    def _pass_a_test(client: TestClient, monkeypatch: pytest.MonkeyPatch, instance_id: int) -> None:
-        async def fake_test(
-            kind: InstanceKind,
-            base_url: str,
-            api_key: str,
-            *,
-            verify: bool = True,
-            api_path_prefix: str | None = None,
-        ) -> instances_service.TestResult:
-            return instances_service.TestResult(
-                ok=True, detail=Reason("legacy", {"text": "Connected."}), version="4.0.1"
-            )
-
-        monkeypatch.setattr(instances_service, "test_connection", fake_test)
-        assert client.post(f"/api/settings/instances/{instance_id}/test").status_code == 200
-
-    @staticmethod
-    def _row(client: TestClient, instance_id: int) -> dict[str, Any]:
-        listed = client.get("/api/settings/instances").json()
-        row: dict[str, Any] = next(r for r in listed if r["id"] == instance_id)
-        return row
-
-    def _saved_and_tested(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> dict[str, Any]:
-        made: dict[str, Any] = client.post(
-            "/api/settings/instances",
-            json={"kind": "radarr", "name": "HD", "base_url": "http://a.local", "api_key": "k"},
-        ).json()
-        self._pass_a_test(client, monkeypatch, made["id"])
-        stored = self._row(client, made["id"])
-        # This precondition is asserted, not assumed. Without a stored pass to clear,
-        # every case below would hold on an empty row and prove nothing.
-        assert stored["last_ok_at"] is not None
-        assert stored["detected_version"] == "4.0.1"
-        return made
-
-    @pytest.mark.parametrize(
-        ("what_changed", "edit"),
-        [
-            ("the address", {"base_url": "http://b.local"}),
-            ("the key", {"api_key": "rotated"}),
-            ("the certificate check", {"verify_tls": False}),
-        ],
-    )
-    def test_changing_what_was_tested_clears_the_stored_outcome(
-        self,
-        client: TestClient,
-        monkeypatch: pytest.MonkeyPatch,
-        what_changed: str,
-        edit: dict[str, object],
-    ) -> None:
-        """Each of the three inputs ``test_saved_instance`` computes its answer from,
-        driven on its own. Nothing cleared these columns except a real test.
-        """
-        made = self._saved_and_tested(client, monkeypatch)
-
-        assert client.put(f"/api/settings/instances/{made['id']}", json=edit).status_code == 200
-
-        after = self._row(client, made["id"])
-        assert after["last_ok_at"] is None, f"a pass survived {what_changed} changing"
-        assert after["last_error"] is None
-        # Cleared too, or the badge would name the build found at the old address.
-        assert after["detected_version"] is None
-
-    def test_an_edit_that_changes_nothing_tested_keeps_the_outcome(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The discriminating case. A rename, and a save that resends the same address,
-        both keep the pass. Without this, the clearing above would be indistinguishable
-        from clearing on every update, which would leave no service card able to show a
-        result at all.
-        """
-        made = self._saved_and_tested(client, monkeypatch)
-
-        renamed = client.put(f"/api/settings/instances/{made['id']}", json={"name": "4K"})
-        assert renamed.status_code == 200
-        assert renamed.json()["last_ok_at"] is not None
-
-        resent = client.put(
-            f"/api/settings/instances/{made['id']}",
-            json={"base_url": "http://a.local", "verify_tls": True},  # both unchanged
-        )
-        assert resent.status_code == 200
-        assert resent.json()["last_ok_at"] is not None
-        assert resent.json()["detected_version"] == "4.0.1"
-
-    def test_a_stored_failure_is_cleared_by_the_same_edit(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Both directions, because the badge renders ``last_error`` ahead of
-        ``last_ok_at``. A failure left behind would blame the new address for the old
-        one's refusal.
-        """
-        made = client.post(
-            "/api/settings/instances",
-            json={"kind": "radarr", "name": "HD", "base_url": "http://a.local", "api_key": "k"},
-        ).json()
-
-        async def failing_test(
-            kind: InstanceKind,
-            base_url: str,
-            api_key: str,
-            *,
-            verify: bool = True,
-            api_path_prefix: str | None = None,
-        ) -> instances_service.TestResult:
-            return instances_service.TestResult(
-                ok=False, detail=Reason("legacy", {"text": "Couldn't reach it."})
-            )
-
-        monkeypatch.setattr(instances_service, "test_connection", failing_test)
-        assert client.post(f"/api/settings/instances/{made['id']}/test").status_code == 200
-        assert self._row(client, made["id"])["last_error"] == "Couldn't reach it."
-
-        moved = client.put(
-            f"/api/settings/instances/{made['id']}", json={"base_url": "http://b.local"}
-        )
-        assert moved.status_code == 200
-        assert moved.json()["last_error"] is None
 
 
 class TestConnectionTestsHonorTheTlsChoice:

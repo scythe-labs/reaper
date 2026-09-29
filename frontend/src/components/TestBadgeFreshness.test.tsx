@@ -31,9 +31,11 @@ vi.mock("../api", async (importOriginal) => ({
   api: apiMock,
 }));
 
+// The real shape the server's connection probe emits on a pass: a bare id, composed
+// under ServiceModal.tsx's own "services.test" namespace, never a pre-composed sentence.
 const PASSED = {
   ok: true,
-  detail_reason: { k: "legacy", p: { text: "Reached" } },
+  detail_reason: { k: "connected", p: { service: "Sonarr" } },
   version: "4.0.1",
 };
 // The Discord webhook test sends a typed reason rather than `PASSED`'s free-form `detail`
@@ -54,12 +56,6 @@ function sonarr(overrides: Partial<Instance> = {}): Instance {
     plex_library_map: {},
     service_instance_map: {},
     has_key: true,
-    detected_version: null,
-    // Never tested server-side, so the card has no stored result to fall back to and the badge on
-    // screen can only be the local one. A `last_ok_at` here would answer in its place and the
-    // assertions could not tell the two apart.
-    last_ok_at: null,
-    last_error: null,
     ...overrides,
   };
 }
@@ -75,6 +71,31 @@ beforeEach(() => {
 const badge = () => document.querySelector(".test-badge");
 
 describe("the badge on a saved service card", () => {
+  it("shows no status until Test is pressed this visit", async () => {
+    // A saved instance can carry a real test history on the server row (`last_ok_at`,
+    // `last_error`, `detected_version`), but the browser no longer reads any of it, so
+    // opening the page shows nothing here regardless of what was last true. Only a press
+    // this visit fills the slot.
+    apiMock.instances.mockResolvedValue([sonarr()]);
+    renderWithProviders(
+      <>
+        <Announcer />
+        <ServicesPanel />
+      </>,
+    );
+
+    await screen.findByText("Main");
+    expect(badge()).toBeNull();
+    expect(document.querySelector(".instance-status")?.textContent).toBe("");
+
+    const user = userEvent.setup();
+    const press = await screen.findByRole("button", { name: /Test/ });
+    await waitFor(() => expect(press).toBeEnabled());
+    await user.click(press);
+
+    await waitFor(() => expect(badge()!.textContent).toContain("Connected to Sonarr."));
+  });
+
   it("goes when the address it was computed for changes under it", async () => {
     // Editing a service through the modal invalidates ["instances"], so this card re-renders with a
     // new address while its local result is untouched. That is the trigger: no press, no typing in
@@ -93,7 +114,7 @@ describe("the badge on a saved service card", () => {
     const press = await screen.findByRole("button", { name: /Test/ });
     await waitFor(() => expect(press).toBeEnabled());
     await user.click(press);
-    await waitFor(() => expect(badge()!.textContent).toContain("Reached"));
+    await waitFor(() => expect(badge()!.textContent).toContain("Connected to Sonarr."));
 
     // The save someone made in the modal, arriving the only way this card can see it.
     apiMock.instances.mockResolvedValue([sonarr({ base_url: "http://10.0.0.6:8989" })]);
@@ -101,7 +122,7 @@ describe("the badge on a saved service card", () => {
 
     await waitFor(() => expect(screen.getByText("http://10.0.0.6:8989")).toBeInTheDocument());
     expect(badge()).toBeNull();
-    expect(screen.getByText("Not tested yet")).toBeInTheDocument();
+    expect(document.querySelector(".instance-status")?.textContent).toBe("");
   });
 });
 

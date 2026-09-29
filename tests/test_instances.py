@@ -321,6 +321,9 @@ class TestSeerrConnectionExercisesTheKey:
         result = await instances_service.test_connection(InstanceKind.SEERR, SEERR, "good-key")
         assert result.ok is True
         assert result.version == "1.33.2"
+        # A bare id: ServiceModal.tsx composes it under its own "services.test"
+        # namespace, so a server-qualified id here would double up and miss the catalog.
+        assert result.detail.id == "connected"
         assert authed.called
 
     async def test_an_instance_with_no_requests_yet_still_connects(
@@ -335,6 +338,116 @@ class TestSeerrConnectionExercisesTheKey:
         )
         result = await instances_service.test_connection(InstanceKind.SEERR, SEERR, "good-key")
         assert result.ok is True
+
+
+RADARR = "https://radarr.test"
+TAUTULLI = "https://tautulli.test"
+
+
+class TestConnectionPassDetailIsBareForTheFrontend:
+    """A pass's ``detail`` id must be bare (``connected``, ``connectedWatching``), never a
+    server-qualified ``services.test.*`` one: ``ServiceModal.tsx`` composes it under that
+    same namespace, so a qualified id there misses the catalog and the badge prints the id
+    itself instead of a sentence.
+    """
+
+    async def test_an_arr_pass_carries_the_bare_connected_id(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        httpx2_mock.get(f"{RADARR}/api/v3/system/status").mock(
+            return_value=httpx.Response(200, json={"version": "4.0.20.3012", "appName": "Radarr"})
+        )
+        result = await instances_service.test_connection(InstanceKind.RADARR, RADARR, "k")
+        assert result.ok is True
+        assert result.detail.id == "connected"
+        assert result.detail.params == {"service": "Radarr"}
+
+    async def test_a_tautulli_pass_carries_the_bare_connectedwatching_id(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        def _respond(request: httpx.Request) -> httpx.Response:
+            cmd = request.url.params.get("cmd")
+            if cmd == "get_server_info":
+                data: dict[str, object] = {"pms_name": "Vault"}
+            else:
+                assert cmd == "get_tautulli_info"
+                data = {"tautulli_version": "v2.15.2", "tautulli_branch": "master"}
+            return httpx.Response(200, json={"response": {"result": "success", "data": data}})
+
+        httpx2_mock.get(f"{TAUTULLI}/api/v2").mock(side_effect=_respond)
+        result = await instances_service.test_connection(InstanceKind.TAUTULLI, TAUTULLI, "k")
+        assert result.ok is True
+        assert result.detail.id == "connectedWatching"
+        assert result.detail.params == {"name": "Vault"}
+        # The release branch (master) is not named; only a nightly/beta build is.
+        assert result.version == "2.15.2"
+
+    async def test_a_tautulli_nightly_build_names_its_branch(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        def _respond(request: httpx.Request) -> httpx.Response:
+            cmd = request.url.params.get("cmd")
+            if cmd == "get_server_info":
+                data: dict[str, object] = {"pms_name": "Vault"}
+            else:
+                assert cmd == "get_tautulli_info"
+                data = {"tautulli_version": "v2.16.0-beta1", "tautulli_branch": "nightly"}
+            return httpx.Response(200, json={"response": {"result": "success", "data": data}})
+
+        httpx2_mock.get(f"{TAUTULLI}/api/v2").mock(side_effect=_respond)
+        result = await instances_service.test_connection(InstanceKind.TAUTULLI, TAUTULLI, "k")
+        assert result.ok is True
+        assert result.version == "2.16.0-beta1-nightly"
+
+    async def test_a_tautulli_that_cannot_answer_for_its_version_still_passes(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        # get_tautulli_info arrived in Tautulli 2.9, and a proxy may filter commands it
+        # does not know. The first read proved the address and the key, so the test
+        # passes with no version rather than telling the operator Tautulli is down.
+        def _respond(request: httpx.Request) -> httpx.Response:
+            cmd = request.url.params.get("cmd")
+            if cmd == "get_server_info":
+                data: dict[str, object] = {"pms_name": "Vault"}
+                return httpx.Response(200, json={"response": {"result": "success", "data": data}})
+            assert cmd == "get_tautulli_info"
+            return httpx.Response(400, text="Unknown command")
+
+        httpx2_mock.get(f"{TAUTULLI}/api/v2").mock(side_effect=_respond)
+        result = await instances_service.test_connection(InstanceKind.TAUTULLI, TAUTULLI, "k")
+        assert result.ok is True
+        assert result.detail.id == "connectedWatching"
+        assert result.version is None
+
+
+class TestNormalizeVersion:
+    """The one shape every service's version string is put in before it reaches the
+    card: no leading "v", no 40-character sha, and Tautulli's own branch named only when
+    it is not the release one."""
+
+    def test_a_leading_v_is_stripped(self) -> None:
+        assert instances_service._normalize_version("v2.15.0") == "2.15.0"
+
+    def test_a_full_commit_sha_is_shortened_to_seven(self) -> None:
+        sha = "68c5bc8c7d8560d295387adeeee73982ea518e8f"
+        assert instances_service._normalize_version(f"develop-{sha}") == "develop-68c5bc8"
+
+    def test_an_ordinary_arr_version_is_unchanged(self) -> None:
+        assert instances_service._normalize_version("4.0.20.3012") == "4.0.20.3012"
+
+    def test_a_tautulli_nightly_branch_is_appended(self) -> None:
+        assert instances_service._normalize_version("v2.16.0", branch="nightly") == "2.16.0-nightly"
+
+    def test_the_release_branch_is_not_appended(self) -> None:
+        assert instances_service._normalize_version("v2.15.2", branch="master") == "2.15.2"
+        assert instances_service._normalize_version("v2.15.2", branch="Master ") == "2.15.2"
+
+    def test_a_version_already_naming_its_branch_is_not_doubled(self) -> None:
+        assert instances_service._normalize_version("v2.16.0-beta", branch="beta") == "2.16.0-beta"
+
+    def test_none_and_blank_are_none(self) -> None:
+        assert instances_service._normalize_version(None) is None
+        assert instances_service._normalize_version("") is None
 
 
 class TestServiceInstanceMapCodec:

@@ -20,6 +20,7 @@ Two rules run through everything below:
 from __future__ import annotations
 
 import json
+import re
 import ssl
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -40,7 +41,7 @@ from reaper.crypto import SecretBox
 from reaper.db.models import Instance, InstanceKind
 from reaper.engine import identity
 from reaper.engine.reason import Reason
-from reaper.refusal import Refusal, english
+from reaper.refusal import Refusal
 
 log = structlog.get_logger(__name__)
 
@@ -117,19 +118,16 @@ class InstanceView:
     plex_library_map: dict[str, str]
     service_instance_map: dict[str, int]
     has_key: bool
-    detected_version: str | None
-    last_ok_at: str | None
-    last_error: str | None
 
 
 @dataclass(frozen=True)
 class TestResult:
     """The verdict on a connection test. ``detail`` is a typed reason rather than a frozen
     English sentence: :func:`explain_failure`'s own ``error.instance.*`` code on a failure,
-    or a ``services.test.*`` id (composed by ``ServiceModal.tsx``, never rendered
-    server-side) on a pass. Only the failure case is ever stored (``last_error``, via
-    :func:`english` below) or reflected in a log line; a pass's detail travels to the
-    browser as-is."""
+    or a bare id such as ``connected`` on a pass, composed under the ``services.test``
+    namespace by ``ServiceModal.tsx`` (never rendered server-side). Nothing here is stored:
+    ``last_ok_at``, ``last_error`` and ``detected_version`` retired their writes along with
+    their reads, so a pass's and a failure's detail both travel to the browser as-is."""
 
     ok: bool
     detail: Reason
@@ -279,9 +277,6 @@ def _view(row: Instance) -> InstanceView:
         plex_library_map=decode_library_map(row.plex_library_map),
         service_instance_map=decode_service_instance_map(row.service_instance_map),
         has_key=bool(row.api_key_enc),
-        detected_version=row.detected_version,
-        last_ok_at=row.last_ok_at.isoformat() if row.last_ok_at else None,
-        last_error=row.last_error,
     )
 
 
@@ -382,23 +377,8 @@ async def update_instance(
 
     The key is write-only: the browser cannot read it back, so "no new key" always means
     "leave it alone." Clearing a key would silently break the next scan.
-
-    Changing what a connection test was computed against clears the stored outcome, so
-    the card falls back to "Not tested yet" rather than vouching for credentials nobody
-    has tried (see ``tested_against_changed`` below).
     """
     row = await _get(session, instance_id)
-
-    # The stored outcome of the last connection test describes one exact set of credentials:
-    # `test_saved_instance` computes it from base_url, the key, and verify_tls. Change any of
-    # them and it describes something nobody tried, so it is cleared. The green direction is
-    # the one that matters: "Reached" would tell the operator Reaper can reach the app it
-    # deletes through when nothing has checked the address now configured. The same trio is
-    # what the browser's own freshness pairing watches, in `ServiceModal.testedWith` and
-    # `ServiceCard.testedWith`, one fact, so keep the three lists together. `api_path_prefix`
-    # rides along in that test too, but no route can change it, so it cannot go stale here;
-    # adding a writer for it means adding it here.
-    tested_against_changed = False
 
     if name is not None and name.strip():
         new_name = name.strip()
@@ -418,25 +398,17 @@ async def update_instance(
                 )
         row.name = new_name
     if base_url is not None and base_url.strip():
-        new_base_url = base_url.strip().rstrip("/")
-        tested_against_changed |= new_base_url != row.base_url
-        row.base_url = new_base_url
+        row.base_url = base_url.strip().rstrip("/")
     if external_url is not None:
         # Unlike base_url (blank keeps, since it is required), a blank external_url clears it
         # to NULL: that is how the operator turns off a custom link address and falls back to
         # base_url. Omitting the field (None) still keeps the stored value.
         row.external_url = external_url.strip().rstrip("/") or None
     if api_key:  # a blank/omitted key means "keep the existing one"
-        # A key that arrives at all counts as a rotation, without comparing it to the stored
-        # one: the browser only sends this field when the operator typed in it, and re-typing
-        # the same key costs a truthful "Not tested yet," while guessing the other way would
-        # leave a green badge standing for a key that was never tried.
         row.api_key_enc = box.encrypt(api_key)
-        tested_against_changed = True
     if enabled is not None:
         row.enabled = enabled
     if verify_tls is not None:  # None means "leave it as it is"; an explicit False sticks
-        tested_against_changed |= verify_tls != row.verify_tls
         row.verify_tls = verify_tls
     if add_import_exclusion is not None:  # None keeps the stored value; explicit False sticks
         row.add_import_exclusion = add_import_exclusion
@@ -449,14 +421,6 @@ async def update_instance(
         # An empty dict clears the map to NULL, so "removed every mapping" and "never had one"
         # are the one state build_map reads as "no map" and falls back to the tmdb/tvdb union.
         row.service_instance_map = _encode_service_instance_map(service_instance_map)
-
-    if tested_against_changed:
-        # All three, because all three are read only beside a passed test: the card prints
-        # `detected_version` inside the "Reached" badge, so a version left behind would name
-        # the build at the old address.
-        row.last_ok_at = None
-        row.last_error = None
-        row.detected_version = None
 
     await session.flush()
     log.info("instance.updated", kind=row.kind.value, name=row.name)
@@ -601,6 +565,37 @@ def explain_failure(kind: InstanceKind, exc: BaseException) -> Reason:
     return _GENERIC_FAILURE
 
 
+#: Tautulli's own default branch, and the one release copy names as "the stable one."
+#: A card names any other branch so a nightly or beta operator can tell their build apart.
+_TAUTULLI_RELEASE_BRANCH = "master"
+
+_LEADING_V_RE = re.compile(r"^[vV](?=\d)")
+#: A full git commit sha, the shape Seerr's own dev build names itself with
+#: ("develop-<40 hex>"). Bounded on both sides so a shorter hex run is left alone.
+_LONG_SHA_RE = re.compile(r"\b[0-9a-fA-F]{40}\b")
+
+
+def _normalize_version(raw: str | None, *, branch: str | None = None) -> str | None:
+    """The version string a service card shows, in one shared shape.
+
+    Strips a leading "v" ("v2.15.0" -> "2.15.0") and shortens a 40-character commit sha
+    to 7, the way git itself abbreviates one ("develop-<40 hex>" -> "develop-<7 hex>"),
+    so a dev build's own sha does not wrap a card onto three lines. ``branch`` is
+    Tautulli's own: appended as "-{branch}" when it is set and is not the release branch
+    (:data:`_TAUTULLI_RELEASE_BRANCH`), unless the version string already names it, so a
+    nightly or beta operator can tell their build apart from a stable one.
+    """
+    if not raw:
+        return None
+    version = _LONG_SHA_RE.sub(lambda m: m.group(0)[:7], _LEADING_V_RE.sub("", raw.strip()))
+    if not version:
+        return None
+    branch = (branch or "").strip().lower()
+    if branch and branch != _TAUTULLI_RELEASE_BRANCH and branch not in version.lower():
+        version = f"{version}-{branch}"
+    return version
+
+
 def _client(
     kind: InstanceKind,
     base_url: str,
@@ -646,8 +641,10 @@ async def test_connection(
 
     Each service is probed with cheap reads that also exercise the key. For the *arr the
     status endpoint reports the version, which is shown beside the instance; it carries
-    the key too, so reaching it proves both. Tautulli's status read carries its key as
-    well. Seerr's ``/status`` is public, so it proves the URL and gives the version but
+    the key too, so reaching it proves both. Tautulli takes two reads, both carrying the
+    key: ``get_server_info`` names the Plex server it is watching, and
+    ``get_tautulli_info`` reports Tautulli's own version, which ``server_info`` does not
+    carry. Seerr's ``/status`` is public, so it proves the URL and gives the version but
     would pass with a wrong key, so Seerr is probed a second time on an authenticated
     route, and that probe is what actually confirms the key.
 
@@ -667,21 +664,38 @@ async def test_connection(
         async with client:
             if kind in (InstanceKind.RADARR, InstanceKind.SONARR):
                 status = await client.system_status()  # type: ignore[attr-defined]
-                version = str(status.get("version") or "") or None
+                version = _normalize_version(str(status.get("version") or "") or None)
                 app = str(status.get("appName") or kind.value).strip()
                 return TestResult(
                     ok=True,
-                    detail=Reason("services.test.connected", {"service": app}),
+                    detail=Reason("connected", {"service": app}),
                     version=version,
                 )
             if kind is InstanceKind.TAUTULLI:
                 info = await client.server_info()  # type: ignore[attr-defined]
                 name = str(info.get("pms_name") or "Plex").strip()
+                # `server_info()` answers about the Plex server Tautulli monitors, not
+                # about Tautulli itself, so its own version comes from a second command.
+                # That command arrived in Tautulli 2.9, and a proxy may filter it, so a
+                # failure there costs the badge its version and nothing else: the first
+                # read already proved the address and the key.
+                version = None
+                try:
+                    own = await client.tautulli_info()  # type: ignore[attr-defined]
+                except Exception:
+                    log.info("Tautulli test: get_tautulli_info failed, version left blank")
+                else:
+                    version = _normalize_version(
+                        str(own.get("tautulli_version") or "") or None,
+                        branch=str(own.get("tautulli_branch") or "") or None,
+                    )
                 return TestResult(
-                    ok=True, detail=Reason("services.test.connectedWatching", {"name": name})
+                    ok=True,
+                    detail=Reason("connectedWatching", {"name": name}),
+                    version=version,
                 )
             status = await client.status()  # type: ignore[attr-defined]
-            version = str(status.get("version") or "") or None
+            version = _normalize_version(str(status.get("version") or "") or None)
             # /status needs no key, so it passes even with a wrong one. Probe an
             # authenticated route too, so a rejected key fails the test here instead of
             # surfacing later as a scan warning with the requester signal dark. A
@@ -689,9 +703,7 @@ async def test_connection(
             await client.requests(take=1)  # type: ignore[attr-defined]
             return TestResult(
                 ok=True,
-                detail=Reason(
-                    "services.test.connected", {"service": _KIND_LABEL[InstanceKind.SEERR]}
-                ),
+                detail=Reason("connected", {"service": _KIND_LABEL[InstanceKind.SEERR]}),
                 version=version,
             )
     except Exception as exc:  # network/TLS/timeout/HTTP: report, don't crash the request
@@ -709,28 +721,15 @@ async def test_connection(
 async def test_saved_instance(
     session: AsyncSession, box: SecretBox, instance_id: int
 ) -> TestResult:
-    """Test a stored instance and record the outcome on the row (last_ok_at / last_error)."""
+    """Test a stored instance's connection. Nothing about the outcome is saved."""
     row = await _get(session, instance_id)
-    result = await test_connection(
+    return await test_connection(
         row.kind,
         row.base_url,
         box.decrypt(row.api_key_enc),
         verify=row.verify_tls,
         api_path_prefix=row.api_path_prefix,
     )
-    if result.ok:
-        row.last_ok_at = utcnow()
-        row.last_error = None
-        if result.version:
-            row.detected_version = result.version
-    else:
-        # `last_error` is a stored, untyped text column (unlike the live test's own
-        # `TestOut.detail_reason`), so this is still where a `Reason` becomes English:
-        # `english()` is the one place that happens, the same catalog the browser's own
-        # build was generated from.
-        row.last_error = english(result.detail)
-    await session.flush()
-    return result
 
 
 @dataclass(frozen=True)

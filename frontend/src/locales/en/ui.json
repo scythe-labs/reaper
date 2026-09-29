@@ -551,7 +551,7 @@
       "keeps": {
         "blurb": "Keep rules lowered the score.",
         "blurbWithScores": "Keep rules lowered the score from {from} to {to}.",
-        "heading": "Leaning toward keeping",
+        "heading": "Keep rules",
         "uncheckedNote": "Reaper couldn’t check this one, so it treated it as a <em>keep</em>."
       },
       "keptNotice": {
@@ -605,7 +605,7 @@
       },
       "signals": {
         "addedLegend": "Added",
-        "arguedTitle": "Argued to keep",
+        "arguedTitle": "In its favor",
         "blurb": "Reasons to believe nobody will watch it again.",
         "coverageBlurb": "Reaper could read {pct} of what it scores on.",
         "coverageBlurbWithFloor": "Reaper could read {pct} of what it scores on, under the {floorPct} it needs to judge this one.",
@@ -1775,8 +1775,6 @@
         "confirmRemoveAria": "Confirm remove {name}",
         "confirmRemoveTitle": "Only forgets it in Reaper. Nothing is changed in the service itself.",
         "disabledChip": "disabled",
-        "notTestedYet": "Not tested yet",
-        "reachedDetail": "Reached",
         "removeAria": "Remove {name}",
         "removeFailed": "This service wasn't removed: {message}",
         "removedAnnouncement": "{name} removed.",

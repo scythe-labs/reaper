@@ -196,9 +196,6 @@ describe("removing a connection from the Connect step", () => {
     plex_library_map: {},
     service_instance_map: {},
     has_key: true,
-    detected_version: null,
-    last_ok_at: null,
-    last_error: null,
   };
 
   it("asks before it forgets one, and names which one it is asking about", async () => {

@@ -2167,8 +2167,10 @@ def test_the_manual_sites_typescript_deferral_still_has_a_reason() -> None:
 #: The advisory-fixed versions the manual site pins by hand. ``serialize-javascript`` 7.0.5
 #: clears GHSA-5c6j-r48x-rmvq (code injection through a spoofed ``RegExp.flags`` or
 #: ``Date.prototype.toISOString``) and GHSA-qj8w-gfj5-8c6v (CPU exhaustion on an array-like);
-#: ``uuid`` 11.1.1 clears GHSA-w5hq-g745-h8pq.
-_WEBSITE_OVERRIDES = {"serialize-javascript": "7.0.7", "uuid": "11.1.1"}
+#: ``uuid`` 11.1.1 clears GHSA-w5hq-g745-h8pq. ``qs`` 6.16.0 clears GHSA-4mjr-xmp4-gh2g
+#: (``qs.stringify`` burns CPU on a crafted object) and GHSA-x5fp-wj9c-mxmx (a parsed query
+#: string walks past ``arrayLimit``).
+_WEBSITE_OVERRIDES = {"qs": "6.16.0", "serialize-javascript": "7.0.7", "uuid": "11.1.1"}
 
 #: Why the pin has to be written by hand: each dependent declares a range that excludes its own
 #: fix, so no semver-compatible upgrade exists and Dependabot raises an alert it cannot propose
@@ -2180,10 +2182,14 @@ _WEBSITE_OVERRIDES = {"serialize-javascript": "7.0.7", "uuid": "11.1.1"}
 #: pins; ``copy-webpack-plugin`` 14 and ``css-minimizer-webpack-plugin`` 8 already take
 #: ``^7.0.3``, so a Docusaurus release that moves to them ends those two. ``sockjs`` 0.3.24 is
 #: the newest there is and still wants ``uuid@^8``, so that one ends when
-#: ``webpack-dev-server`` 6 arrives, having dropped ``sockjs`` for ``ws`` outright.
+#: ``webpack-dev-server`` 6 arrives, having dropped ``sockjs`` for ``ws`` outright. ``express``
+#: and ``body-parser`` both cap ``qs`` at a tilde range on 6.15, so that pin ends when the pair
+#: widens the range in a release ``webpack-dev-server`` takes.
 _WEBSITE_OVERRIDE_CAUSES = {
+    ("body-parser", "qs"): "~6.15.1",
     ("copy-webpack-plugin", "serialize-javascript"): "^6.0.0",
     ("css-minimizer-webpack-plugin", "serialize-javascript"): "^6.0.1",
+    ("express", "qs"): "~6.15.1",
     ("sockjs", "uuid"): "^8.3.2",
 }
 
@@ -2191,17 +2197,19 @@ _WEBSITE_OVERRIDE_CAUSES = {
 def test_the_manual_sites_advisory_pins_still_have_a_reason() -> None:
     """An override that outlives its cause is a version nobody updates any more.
 
-    ``website/package.json`` pins two transitive packages past the range their dependents ask
-    for, because the fixed release sits in a major those dependents exclude. That is a fact
+    ``website/package.json`` pins three transitive packages past the range their dependents ask
+    for, because the fixed release sits outside the range those dependents allow. That is a fact
     about somebody else's package, it stops being true without anyone here doing anything, and
     ``package.json`` has no comment syntax to say so. This is what notices.
 
-    Neither advisory is reachable in this tree, so the pins are hygiene rather than a fix:
+    No advisory here is reachable in this tree, so the pins are hygiene rather than a fix.
     ``copy-webpack-plugin`` reaches ``serialize-javascript`` only for a pattern carrying
     ``transform`` or ``transformAll`` and the site's static-directory copy carries neither,
     ``css-minimizer-webpack-plugin`` serializes build configuration whose one file-derived
     member is a string that cannot reach the vulnerable branch, and ``sockjs`` calls
-    ``uuid.v4()`` with no ``buf`` while the advisory needs ``buf`` on v3, v5 or v6. They are
+    ``uuid.v4()`` with no ``buf`` while the advisory needs ``buf`` on v3, v5 or v6. ``qs`` is
+    reached only through ``express`` inside ``webpack-dev-server``, which ``docusaurus start``
+    loads on a developer's machine and ``docusaurus build`` never loads at all. They are
     held anyway, because an open alert nobody can action is one everybody learns to scroll
     past, and the next reader cannot tell it apart from one that matters.
 

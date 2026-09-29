@@ -22,7 +22,9 @@ version: 2
 #   2. A pull request here carries a `Kind/` and a `Priority/` label, because that is how
 #      the queue is filtered and an unlabeled pull request is missing from it. Dependabot
 #      applies only labels that already exist in the repository and silently drops the
-#      rest, so renaming a label makes these go quiet rather than fail.
+#      rest, so renaming a label makes these go quiet rather than fail. `Kind/Dependency`
+#      puts the pull request in the release notes' Dependencies section
+#      (`.github/release.yml`).
 #   3. A group is one pull request and one CI run. Ungrouped, a quiet week of npm patches
 #      is a dozen of each, and `docker build` runs for every one of them.
 #
@@ -66,7 +68,7 @@ updates:
     groups:
       actions:
         patterns: ["*"]
-    labels: ["Area/CI", "Kind/Chore", "Priority/Low"]
+    labels: ["Area/CI", "Kind/Chore", "Priority/Low", "Kind/Dependency"]
     commit-message:
       prefix: "ci"
       include: "scope"
@@ -102,7 +104,7 @@ updates:
     ignore:
       - dependency-name: "node"
         update-types: ["version-update:semver-major"]
-    labels: ["Area/CI", "Kind/Chore", "Priority/Low"]
+    labels: ["Area/CI", "Kind/Chore", "Priority/Low", "Kind/Dependency"]
     commit-message:
       prefix: "build"
       include: "scope"
@@ -127,7 +129,7 @@ updates:
       python:
         patterns: ["*"]
         update-types: ["minor", "patch"]
-    labels: ["Kind/Backend", "Kind/Chore", "Priority/Low"]
+    labels: ["Kind/Backend", "Kind/Chore", "Priority/Low", "Kind/Dependency"]
     commit-message:
       prefix: "build"
       include: "scope"
@@ -171,7 +173,7 @@ updates:
       # fails the day it changes, which is the day to check whether this can go.
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
-    labels: ["Kind/Frontend", "Kind/Chore", "Priority/Low"]
+    labels: ["Kind/Frontend", "Kind/Chore", "Priority/Low", "Kind/Dependency"]
     commit-message:
       prefix: "build"
       include: "scope"
@@ -216,7 +218,8 @@ updates:
       # is the release to re-read for a dropped `baseUrl`.
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
-    labels: ["Kind/Documentation", "Kind/Chore", "Priority/Low"]
+    labels:
+      ["Kind/Documentation", "Kind/Chore", "Priority/Low", "Kind/Dependency"]
     commit-message:
       prefix: "build"
       include: "scope"

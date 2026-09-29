@@ -49,6 +49,12 @@ class Instance(Base):
     Modeled one-to-many from day one: a separate 4K Sonarr/Radarr pair alongside
     the HD pair is the common setup, and retrofitting multi-instance onto a
     single-instance schema means rewriting every foreign key.
+
+    Three columns carry no attribute here: `detected_version`, `last_ok_at` and
+    `last_error`. Nothing reads or writes them any more, and all three were already
+    nullable, so retiring them needed no migration. `alembic/env.py`'s
+    `RETIRED_COLUMNS` bridges autogenerate over the gap until a follow-up release
+    drops the columns.
     """
 
     __tablename__ = "instance"
@@ -80,14 +86,12 @@ class Instance(Base):
     # an operator only a constant, never anything they could act on: the SPA typed it, no
     # component read it, and no route could change it. Retiring the column would need a
     # migration, and the schema baseline is frozen, so the column stays and only the wire
-    # copy went. Wiring it later needs a writer on `instances.update_instance` (which is
-    # where the connection-test result is cleared, so it joins that trio) and a per-kind
-    # default in the client, because `clients/arr.py` reads `api_path_prefix or
+    # copy went. Wiring it later needs a writer on `instances.update_instance` and a
+    # per-kind default in the client, because `clients/arr.py` reads `api_path_prefix or
     # self.default_prefix`: a stored "/api/v3" is truthy, so handing it to Seerr would
     # override Seerr's own /api/v1. Tautulli and Seerr are not passed the stored value
     # today, and that is load-bearing.
     api_path_prefix: Mapped[str] = mapped_column(String(20), default="/api/v3")
-    detected_version: Mapped[str | None] = mapped_column(String(50), default=None)
 
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
@@ -131,8 +135,6 @@ class Instance(Base):
     service_instance_map: Mapped[str | None] = mapped_column(Text, default=None)
 
     created_at: Mapped[UtcTimestamp]
-    last_ok_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
-    last_error: Mapped[str | None] = mapped_column(Text, default=None)
 
 
 class PlexServer(Base):

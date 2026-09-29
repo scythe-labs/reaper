@@ -1293,25 +1293,26 @@ which is written per play, not from this cache.
 
 ### Tautulli's `get_libraries` is a live Plex read, one request per section (measured 2026-08-29)
 
-It looks like a listing and reads like one. Tautulli answers it with
-`PmsConnect().get_library_details()`: one live Plex call for the section list, one more per
-section for its item count, and two further calls for every show or artist section. Reaper
-reads three fields off that answer, and the item counts it pays for are all discarded.
+Tautulli answers it with `PmsConnect().get_library_details()`. That makes one live Plex call
+for the section list, one more per section for its item count, and two further calls for every
+show or artist section. Reaper reads three fields from the answer. The item counts those calls
+paid for are all discarded.
 
-Measured against a live pair with Plex idle: `get_libraries` 3.6s, `get_library_names` 0.01s.
-`get_library_names` answers from Tautulli's own `library_sections` table in one query, and it
-carries the three fields the scan reads: section id, name and type.
+Measured against a live pair with Plex idle, `get_libraries` took 3.6s and
+`get_library_names` took 0.01s. Tautulli answers `get_library_names` from its own
+`library_sections` table in one query. It carries the three fields the scan reads, which are
+the section id, its name and its type.
 
 The cost only shows as a failure after a reap. The executor refreshes every path the run
-emptied, the run then kicks a fresh scan, and those calls land while Plex is rescanning. The
-30s read budget expires and the snapshot comes back incomplete. Both media lanes report it,
-because `build_index` runs once per lane.
+emptied, and the run then starts a fresh scan. Those calls reach Plex while it is still
+rescanning. The 30s read budget expires and the snapshot comes back incomplete. Both media
+lanes report it, because `build_index` runs once per lane.
 
-=> The scan reads `get_library_names`. Two properties come with it. The table keeps a row for
-a library Plex no longer serves, and a synthetic Live TV row, so the list is a superset of
-Plex's live sections; each extra section answered the sweep with no rows in about 0.1s, so it
-adds nothing to the index. The table is unique on server and section together and the answer
-names no server, so one section id can appear twice, and `library_index` walks each id once.
+=> The scan reads `get_library_names`. The table keeps a row for a library Plex no longer
+serves, and a synthetic Live TV row, so the list is a superset of Plex's live sections. Each
+extra section answered the sweep with no rows in about 0.1s, so it adds nothing to the index.
+The table is unique on server and section together and the answer names no server, so one
+section id can appear twice. `library_index` walks each id once.
 
 ### pydantic drops undeclared keys silently — a wire schema can hide a whole feature
 

@@ -44,9 +44,19 @@ target_metadata = Base.metadata
 #: Add an entry only in the same release that removes the attribute, and delete the entry
 #: once the follow-up release drops the column.
 #:
-#: Empty is the normal state between releases. ``test_repo_hygiene.py`` checks that this
-#: set and ``RETIRED_CONSTRAINTS`` below are both empty.
-RETIRED_COLUMNS: set[tuple[str, str]] = set()
+#: Empty is the normal state between releases. ``tests/test_migrations.py`` checks that
+#: this set and ``RETIRED_CONSTRAINTS`` below match what the current release expects.
+#:
+#: ``instance.detected_version``, ``instance.last_ok_at`` and ``instance.last_error`` are
+#: this release's three: all were already nullable, so no migration was needed to retire
+#: their attributes. A follow-up release drops the columns and empties this set again;
+#: ``test_the_retired_column_bridge_holds_this_releases_columns`` pins the exact
+#: population so that release can't forget to.
+RETIRED_COLUMNS: set[tuple[str, str]] = {
+    ("instance", "detected_version"),
+    ("instance", "last_ok_at"),
+    ("instance", "last_error"),
+}
 
 #: A retired column that carried a foreign key needs its constraint listed here too, or
 #: ``alembic check`` reports ``remove_fk`` and the CI gate fails. Add and remove entries on

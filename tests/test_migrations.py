@@ -2023,17 +2023,25 @@ class TestTheRetiredColumnSweep:
         engine.dispose()
 
 
-def test_the_retired_column_bridge_is_empty() -> None:
-    """``alembic/env.py``'s two sets are a one-release bridge, not a registry.
+#: What this release's bridge holds in ``alembic/env.py``'s ``RETIRED_COLUMNS``:
+#: ``instance.detected_version``, ``instance.last_ok_at`` and ``instance.last_error`` lost
+#: their ORM attributes with nothing to migrate, since all three were already nullable.
+#: A follow-up release drops the columns and empties the set again -- at which point this
+#: test's own assertion is wrong, which is the point: the next author has to notice and
+#: either delete it (the sweep landed) or extend it (a new entry joined this one).
+_BRIDGED_COLUMNS = {
+    ("instance", "detected_version"),
+    ("instance", "last_ok_at"),
+    ("instance", "last_error"),
+}
 
-    Empty is what a followed bridge looks like. A populated set that outlives its sweep is
-    how a dead column becomes permanent behind a growing exclusion list, so adding an entry
-    here means deleting an assertion in this test, and the next author has to mean it.
 
-    Read from the source rather than imported, because Alembic execs ``env.py`` by path and
+def _bridge_sets() -> dict[str, ast.expr]:
+    """``RETIRED_COLUMNS`` and ``RETIRED_CONSTRAINTS`` as declared in ``alembic/env.py``,
+    read from the source rather than imported, because Alembic execs ``env.py`` by path and
     there is no ``alembic.env`` module to import (``_env_py_configure_kwargs`` above says the
     same thing from the other end). Parsed rather than substring-matched, so a set spelled
-    ``{}``-empty, ``set()``, or with an entry, all read correctly.
+    ``{}``-empty, ``set()``, or with entries, all read correctly.
     """
     tree = ast.parse((PROJECT_ROOT / "alembic" / "env.py").read_text(encoding="utf-8"))
     wanted = ("RETIRED_COLUMNS", "RETIRED_CONSTRAINTS")
@@ -2048,22 +2056,62 @@ def test_the_retired_column_bridge_is_empty() -> None:
             continue
         if isinstance(target, ast.Name) and target.id in wanted and node.value is not None:
             found[target.id] = node.value
-
     assert set(found) == {"RETIRED_COLUMNS", "RETIRED_CONSTRAINTS"}, (
         "alembic/env.py no longer declares both bridge sets at module level, so this "
         f"reader found only {sorted(found)}. It is the matcher that broke, not the rule."
     )
-    for name, value in found.items():
-        empty = (
-            isinstance(value, ast.Call)
-            and isinstance(value.func, ast.Name)
-            and value.func.id == "set"
-            and not value.args
-        )
-        assert empty, (
-            f"alembic/env.py's {name} is populated. That is rule 148's bridge, and it empties "
-            "with the M+1 sweep that drops the columns -- an entry that outlives its sweep is "
-            "how a dead column becomes permanent behind a growing exclusion list. If you are "
-            "adding one alongside a release that removes an ORM attribute, delete this "
-            "assertion in the same change and say which release drops the column."
-        )
+    return found
+
+
+def _set_literal_pairs(value: ast.expr) -> set[tuple[str, str]] | None:
+    """The two-string-tuple elements of a set literal, or ``None`` for anything else --
+    including the empty ``set()`` call, which is a ``Call`` node, not a ``Set`` one."""
+    if not isinstance(value, ast.Set):
+        return None
+    pairs: set[tuple[str, str]] = set()
+    for elt in value.elts:
+        if not (isinstance(elt, ast.Tuple) and len(elt.elts) == 2):
+            return None
+        first, second = elt.elts
+        if not (
+            isinstance(first, ast.Constant)
+            and isinstance(first.value, str)
+            and isinstance(second, ast.Constant)
+            and isinstance(second.value, str)
+        ):
+            return None
+        pairs.add((first.value, second.value))
+    return pairs
+
+
+def _is_empty_set_call(value: ast.expr) -> bool:
+    return (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id == "set"
+        and not value.args
+    )
+
+
+def test_the_retired_column_bridge_holds_this_releases_columns() -> None:
+    """``alembic/env.py``'s ``RETIRED_COLUMNS`` is a one-release bridge, not a registry, and
+    right now it holds exactly the three columns this release retired (``_BRIDGED_COLUMNS``
+    above). None of them carried a foreign key, so ``RETIRED_CONSTRAINTS`` stays empty.
+
+    A populated set that outlives its sweep is how a dead column becomes permanent behind a
+    growing exclusion list, so this pins the population rather than merely "is it non-empty":
+    a fourth entry sneaking in unnoticed, and the M+1 sweep landing without also emptying
+    this set and deleting this test, both fail instead of drifting.
+    """
+    found = _bridge_sets()
+
+    assert _set_literal_pairs(found["RETIRED_COLUMNS"]) == _BRIDGED_COLUMNS, (
+        "RETIRED_COLUMNS no longer holds exactly this release's bridged columns. If the "
+        "M+1 sweep just dropped instance.detected_version/last_ok_at/last_error, delete "
+        "this test and restore the empty-set assertion it replaced; if a new entry landed "
+        "alongside it, add it to _BRIDGED_COLUMNS here instead."
+    )
+    assert _is_empty_set_call(found["RETIRED_CONSTRAINTS"]), (
+        "RETIRED_CONSTRAINTS is populated, but none of this release's three columns should "
+        "carry a foreign key -- check what just retired an attribute with one."
+    )

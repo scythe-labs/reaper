@@ -924,7 +924,7 @@ const FULL_COVERAGE_BP = 10_000;
 const GROUP_ROW_LIMIT = 6;
 
 /** Biggest share first, so whatever gets folded away is always what mattered least.
- *  Weight, then id, break the ties an "argued to keep" group is made of (every one of its
+ *  Weight, then id, break the ties an "in its favor" group is made of (every one of its
  *  shares is 0), so the same rows land in the same order on every render. */
 function byShare(a: Row, b: Row): number {
   return (
@@ -1326,6 +1326,20 @@ export function WhyPanel({
   const holdsBack = useHoldsBackUnmeasured().holdsBack;
   const headingId = useId();
 
+  // The keep rows sum to the drop the blurb under their heading prints, the same way the
+  // signal rows sum to the base score: rounding each row on its own let three rules at 0.6
+  // read "−1" apiece beside a sentence saying the score fell by 2. With no recorded base
+  // score (a scan older than the keeps) the drop is the discount itself.
+  const keeps = explanation.keeps ?? [];
+  const dropShown =
+    explanation.base_score != null
+      ? Number(explanation.base_score.toFixed(0)) - Number(explanation.score.toFixed(0))
+      : Math.round(explanation.keep_discount ?? 0);
+  const taken = allocateShares(
+    keeps.map((k) => k.discount),
+    dropShown,
+  );
+
   // Accept what Reaper can see today for this title, the narrow twin of Settings' global
   // Forget. It discards the high-water record and nothing else: no file is deleted and no
   // removal is approved, the title simply goes back to being judged on its current plays
@@ -1520,11 +1534,14 @@ export function WhyPanel({
               : t("why.panel.keeps.blurb")}
           </p>
           <ul className="signals">
-            {explanation.keeps.map((keep) => (
+            {explanation.keeps.map((keep, i) => (
               <li key={keep.name} className={keep.evaluated ? "signal" : "signal signal-unknown"}>
                 <div className="signal-head">
                   <span className="signal-amount">
-                    −{keep.discount.toFixed(1)}
+                    {/* Same grammar as the signal rows: a minus sign is a claim that points
+                        came off. A rule that took nothing shows a plain 0, and one that took
+                        less than a whole point says so rather than printing "−0.0". */}
+                    {(taken[i] ?? 0) > 0 ? `−${taken[i]}` : keep.discount > 0 ? "<1" : "0"}
                     <span className="muted">/{keep.max_discount}</span>
                   </span>
                   <span className="signal-detail">

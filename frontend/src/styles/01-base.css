@@ -145,6 +145,12 @@ a:hover {
   border: 1px solid;
   line-height: 1.45;
 }
+/* A notice rendered as a span, so it can sit inside a paragraph. An inline box paints its
+   padding and border over the lines beside it instead of making room for them, so it lays
+   out as a block anyway. */
+span.notice {
+  display: block;
+}
 .notice-error {
   background: var(--condemn-soft);
   border-color: var(--condemn);
