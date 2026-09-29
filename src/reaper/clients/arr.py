@@ -28,6 +28,10 @@ from typing import Any, ClassVar
 from reaper.clients.base import BaseClient
 from reaper.config import RuntimeSafety
 
+#: Sonarr answers a bulk file delete only after every file is gone, and a recycle bin
+#: on another share turns each delete into a copy.
+_BULK_DELETE_READ_TIMEOUT = 300.0
+
 
 class ArrClient(BaseClient):
     """Shared Sonarr/Radarr behavior.
@@ -177,6 +181,7 @@ class SonarrClient(ArrClient):
             "DELETE",
             f"{self.prefix}/episodefile/bulk",
             json={"episodeFileIds": episode_file_ids},
+            read_timeout=_BULK_DELETE_READ_TIMEOUT,
         )
 
 

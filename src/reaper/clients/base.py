@@ -551,18 +551,27 @@ class BaseClient:
         takes a minute cannot borrow that margin from the client without giving the
         same minute to a call that is answering a browser. Only the read leg moves.
         Connect, write and pool say nothing about how much data was asked for.
-        Passing ``timeout=None`` to httpx2 means no timeout at all, not the
-        client's own timeout, so the untouched case sends the sentinel value
-        instead.
         """
-        budget: Any = httpx2.USE_CLIENT_DEFAULT
-        if read_timeout is not None:
-            shared = self._client.timeout
-            budget = httpx2.Timeout(
-                connect=shared.connect, read=read_timeout, write=shared.write, pool=shared.pool
-            )
         return await self._client.request(
-            method, path, params=params, json=json, headers=headers, timeout=budget
+            method,
+            path,
+            params=params,
+            json=json,
+            headers=headers,
+            timeout=self._read_budget(read_timeout),
+        )
+
+    def _read_budget(self, read_timeout: float | None) -> Any:
+        """The client's own timeout with only the read leg replaced.
+
+        ``None`` returns the sentinel, because ``timeout=None`` means no timeout at all
+        to httpx2.
+        """
+        if read_timeout is None:
+            return httpx2.USE_CLIENT_DEFAULT
+        shared = self._client.timeout
+        return httpx2.Timeout(
+            connect=shared.connect, read=read_timeout, write=shared.write, pool=shared.pool
         )
 
     def _trace(
@@ -712,6 +721,7 @@ class BaseClient:
         *,
         params: Mapping[str, Any] | None = None,
         json: Any = None,
+        read_timeout: float | None = None,
     ) -> httpx2.Response:
         """Issue one mutating request, declared to the transport guard.
 
@@ -721,8 +731,9 @@ class BaseClient:
         * It is not retried. ``_send`` retries transient transport errors, but a
           retried DELETE can double-apply, such as deleting a re-created item or
           failing a second exclusion add. Here a timeout surfaces once, and the
-          executor's verification step, re-reading the world afterward, is the
-          source of truth about whether the write landed, never the HTTP response.
+          executor's re-read afterward (``Executor._send_movie``,
+          ``Executor._send_season``) decides whether the write landed, never the
+          HTTP response.
         * It declares intent. The ``reaper_mutation_approved`` extension is the
           token :class:`GuardedTransport` requires before it will let a mutation
           through. The guard still independently checks that deletion is enabled on
@@ -743,6 +754,7 @@ class BaseClient:
                     params=params,
                     json=json,
                     extensions={"reaper_mutation_approved": True},
+                    timeout=self._read_budget(read_timeout),
                 )
             except httpx2.TransportError as exc:
                 raise transport_failure(self.service, exc) from exc
