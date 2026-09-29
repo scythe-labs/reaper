@@ -4443,6 +4443,63 @@ class TestARunCanSkipARecycleBin:
         assert report.state is RunState.COMPLETED
         assert (await self._row(async_factory, run.id)).state == "off"
 
+    async def test_a_bin_someone_else_set_during_the_reap_is_left_as_they_set_it(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        class SetByAnOperator(RadarrWithSwitchableBin):
+            async def delete_movie(
+                self, movie_id: int, *, delete_files: bool = True, add_exclusion: bool = True
+            ) -> None:
+                await super().delete_movie(
+                    movie_id, delete_files=delete_files, add_exclusion=add_exclusion
+                )
+                self._bin_path = "/somewhere/else"
+
+        snapshot_id = await _snapshot_many(session, [("radarr:1:1", 1 * GB, 701)])
+        run = await _plan(session, snapshot_id)
+        radarr = SetByAnOperator()
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}), skip_bins=self.SKIP)
+
+        assert report.state is RunState.COMPLETED
+        assert radarr.bin_writes == [""]  # the turn-off, and no restore
+        assert radarr._bin_path == "/somewhere/else"
+        assert (await self._row(async_factory, run.id)).state == "left"
+
+    async def test_a_hard_cancel_leaves_the_bin_off_and_sends_no_restore(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        class CancelBeforeSecondItem(FakePlex):
+            def __init__(self, **kw: Any) -> None:
+                super().__init__(**kw)
+                self._polls = 0
+
+            async def active_streams(self) -> list[ActiveStream]:
+                self._polls += 1
+                if self._polls >= 2:
+                    raise asyncio.CancelledError
+                return []
+
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+        plex = CancelBeforeSecondItem(
+            sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 99]}
+        )
+        radarr = RadarrWithSwitchableBin()
+
+        with pytest.raises(asyncio.CancelledError):
+            await _real(
+                session,
+                run,
+                _gateway(radarr={1: radarr}, plex=plex),
+                skip_bins=self.SKIP,
+            )
+
+        assert radarr.bin_writes == [""]  # the turn-off only
+        assert (await self._row(async_factory, run.id)).state == "off"
+
     async def test_a_bin_nobody_ticked_is_left_alone(
         self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
