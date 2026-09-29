@@ -218,7 +218,8 @@ updates:
       # is the release to re-read for a dropped `baseUrl`.
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
-    labels: ["Kind/Documentation", "Kind/Chore", "Priority/Low", "Kind/Dependency"]
+    labels:
+      ["Kind/Documentation", "Kind/Chore", "Priority/Low", "Kind/Dependency"]
     commit-message:
       prefix: "build"
       include: "scope"
