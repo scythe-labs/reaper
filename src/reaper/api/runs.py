@@ -39,6 +39,8 @@ from reaper.api.schemas import (
     CreateRunIn,
     ExecuteRunIn,
     ProfileSettingsIO,
+    RunBinOut,
+    RunBinsOut,
     RunCheckOut,
     RunListOut,
     RunOut,
@@ -56,7 +58,7 @@ from reaper.engine.explanation import ReasonKey
 from reaper.engine.policy import ProfileSettings
 from reaper.engine.reason import Reason, from_stored, to_wire
 from reaper.refusal import english
-from reaper.services import app_settings, run_totals, whitelist
+from reaper.services import app_settings, recycle_bins, run_totals, whitelist
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import (
     ExecutionError,
@@ -66,7 +68,13 @@ from reaper.services.executor import (
     RunReport,
     size_confirmed,
 )
-from reaper.services.planner import PlanError, build_plan, confirmation_phrase, plan_bytes
+from reaper.services.planner import (
+    MediaRef,
+    PlanError,
+    build_plan,
+    confirmation_phrase,
+    plan_bytes,
+)
 from reaper.services.profiles import (
     active_profile,
     active_profile_settings,
@@ -424,6 +432,7 @@ async def list_runs(
                     deleted_bytes=r.deleted_bytes,
                     deleted_unmeasured=r.deleted_unmeasured,
                     skipped=r.skipped,
+                    binned_bytes=r.binned_bytes,
                 )
                 for r in runs
             ],
@@ -575,6 +584,56 @@ async def get_run_outcomes(
         )
 
 
+def _bin_out(b: recycle_bins.Bin, items: int, size: int) -> RunBinOut:
+    return RunBinOut(
+        kind=b.kind,
+        instance_id=b.instance_id,
+        name=b.name,
+        bin=b.state,
+        cleanup_days=b.cleanup_days,
+        items=items,
+        bytes=size,
+    )
+
+
+@router.get("/runs/{run_id}/bins")
+async def get_run_bins(request: Request, run_id: int) -> RunBinsOut:
+    """Each Sonarr and Radarr instance the run deletes from, and its recycle bin.
+
+    A PLANNED run reads each bin now, for the reap confirm. Any other run returns the bins
+    it recorded as it started, and what it removed on each instance.
+    """
+    factory = session_factory(request)
+    async with factory() as session:
+        run = await session.get(ReapRun, run_id)
+        if run is None:
+            refuse(404, "error.runs.not_found")
+        if run.state is not RunState.PLANNED:
+            out: list[RunBinOut] = []
+            for b in await recycle_bins.stored(session, run_id):
+                removed = await recycle_bins.removed_on(session, run_id, [b.key])
+                out.append(_bin_out(b, removed.deleted_items, removed.deleted_bytes))
+            return RunBinsOut(bins=out)
+        planned = await _planned_candidates(session, run)
+        safety = await app_settings.runtime_safety(session, request.app.state.settings)
+
+    per: dict[recycle_bins.InstanceKey, list[Candidate]] = {}
+    for c in planned:
+        ref = MediaRef.parse(c.media_key)
+        per.setdefault((ref.kind, ref.instance_id), []).append(c)
+    gateway, closers = await build_reap_gateway(
+        factory, request.app.state.secret_box, safety=safety
+    )
+    async with AsyncExitStack() as stack:
+        for client in closers:
+            await stack.enter_async_context(client)
+        async with factory() as session:
+            bins = await recycle_bins.read_bins(
+                session, recycle_bins.readers(gateway.radarr, gateway.sonarr), per
+            )
+    return RunBinsOut(bins=[_bin_out(b, len(per[b.key]), plan_bytes(per[b.key])[0]) for b in bins])
+
+
 @router.post("/runs/{run_id}/dry-run")
 async def dry_run(request: Request, run_id: int) -> RunReportOut:
     """Walk the plan end to end with every interlock, and send nothing.
@@ -640,6 +699,8 @@ class ReapStatus(BaseModel):
     total: int = 0
     deleted_items: int = 0
     deleted_bytes: int = 0
+    binned_bytes: int = 0
+    """The part of ``deleted_bytes`` removed on an instance whose recycle bin was on."""
     skipped: int = 0
     title: str = ""
     #: Why the run stopped, as a typed reason. This is the executor's own
@@ -741,6 +802,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
     status.total = 0
     status.deleted_items = 0
     status.deleted_bytes = 0
+    status.binned_bytes = 0
     status.skipped = 0
     status.title = ""
     status.error_reason = None
@@ -831,6 +893,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
         status.total = p.total
         status.deleted_items = p.deleted_items
         status.deleted_bytes = p.deleted_bytes
+        status.binned_bytes = p.binned_bytes
         status.skipped = p.skipped
         status.title = p.title
 
@@ -873,6 +936,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
             status.phase = "aborted" if report.state == RunState.ABORTED else "complete"
             status.deleted_items = report.deleted_items
             status.deleted_bytes = report.deleted_bytes
+            status.binned_bytes = report.binned_bytes
             status.skipped = report.skipped
             log.info(
                 "reap.executed",

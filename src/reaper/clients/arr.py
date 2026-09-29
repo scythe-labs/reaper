@@ -98,6 +98,12 @@ class ArrClient(BaseClient):
         """
         return await self.get_list(f"{self.prefix}/rootfolder")
 
+    async def media_management(self) -> dict[str, Any]:
+        """The media management settings, which hold the recycle bin's folder
+        (``recycleBin``, empty when there is no bin) and how many days it keeps a file
+        (``recycleBinCleanupDays``)."""
+        return await self.get_dict(f"{self.prefix}/config/mediamanagement")
+
     async def exclusions(self) -> list[dict[str, Any]]:
         """The import exclusions this *arr holds, at its own spelling of the path.
 

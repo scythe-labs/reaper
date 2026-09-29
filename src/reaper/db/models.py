@@ -1120,9 +1120,39 @@ class ReapRun(Base):
     """How many planned items this run left alone: a hand spare, a play since approval,
     someone watching right now, or a size that grew past the approved figure."""
 
+    binned_bytes: Mapped[int | None] = mapped_column(Integer, default=None)
+    """The part of ``deleted_bytes`` removed on an instance whose recycle bin was on, so
+    it frees only when that bin empties. Written with the totals above. NULL on a run that
+    finished before this column existed."""
+
     steps: Mapped[list[ActionStep]] = relationship(
         back_populates="run", cascade="all, delete-orphan", order_by="ActionStep.id"
     )
+
+
+class ReapBin(Base):
+    """One Sonarr or Radarr instance a real reap deleted from, and its recycle bin as the
+    reap started. Files deleted through an instance with a bin wait there until the bin's
+    cleanup empties it."""
+
+    __tablename__ = "reap_bin"
+    __table_args__ = (UniqueConstraint("run_id", "kind", "instance_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("reap_run.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(20))
+    """``radarr`` or ``sonarr``, the first part of a ``media_key``."""
+
+    instance_id: Mapped[int] = mapped_column(Integer)
+    instance_name: Mapped[str] = mapped_column(String(100))
+    """The instance's name when the reap ran, so the report still names a deleted one."""
+
+    bin_path: Mapped[str | None] = mapped_column(String(500), default=None)
+    """The bin's folder. Empty means the instance has no bin. NULL means Reaper could not
+    read it."""
+
+    cleanup_days: Mapped[int | None] = mapped_column(Integer, default=None)
+    """How many days the bin keeps a file. 0 means it never empties on its own."""
 
 
 class ActionStep(Base):

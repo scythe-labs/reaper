@@ -39,6 +39,7 @@ from reaper.db.models import (
     ListConfig,
     PlexServer,
     Profile,
+    ReapBin,
     ReapRun,
     RunState,
     SizeSource,
@@ -566,6 +567,64 @@ class TestTheRunsApi:
         assert [r["id"] for r in next_page["runs"]] == [first["id"]]
         assert next_page["total"] == 2
 
+    def test_a_planned_run_reads_each_instances_bin_now(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reaper.api import runs as runs_module
+        from reaper.services.executor import ReapGateway
+
+        class _Radarr:
+            async def media_management(self) -> dict[str, Any]:
+                return {"recycleBin": "/recycle/radarr", "recycleBinCleanupDays": 3}
+
+        radarr: dict[int, Any] = {1: _Radarr()}
+
+        async def _gateway(*_a: object, **_k: object) -> tuple[ReapGateway, list[object]]:
+            return ReapGateway(radarr=radarr), []
+
+        monkeypatch.setattr(runs_module, "build_reap_gateway", _gateway)
+        run = client.post("/api/runs").json()
+
+        assert client.get(f"/api/runs/{run['id']}/bins").json() == {
+            "bins": [
+                {
+                    "kind": "radarr",
+                    "instance_id": 1,
+                    "name": "hd",
+                    "bin": "on",
+                    "cleanup_days": 3,
+                    "items": 1,
+                    "bytes": 5_900_000_000,
+                }
+            ]
+        }
+
+    def test_an_executed_run_reads_back_the_bins_it_recorded(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        run = client.post("/api/runs").json()
+        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)
+        with Session(engine) as session:
+            row = session.get(ReapRun, run["id"])
+            assert row is not None
+            row.state = RunState.COMPLETED
+            session.add(
+                ReapBin(
+                    run_id=run["id"],
+                    kind="radarr",
+                    instance_id=1,
+                    instance_name="hd",
+                    bin_path=None,
+                    cleanup_days=None,
+                )
+            )
+            session.commit()
+        engine.dispose()
+
+        [only] = client.get(f"/api/runs/{run['id']}/bins").json()["bins"]
+        assert (only["name"], only["bin"], only["items"], only["bytes"]) == ("hd", "unknown", 0, 0)
+        assert client.get("/api/runs/99999/bins").status_code == 404
+
     def test_the_run_list_carries_only_what_is_stored(self, client: TestClient) -> None:
         """The history is stored rows, nothing derived.
 
@@ -588,6 +647,7 @@ class TestTheRunsApi:
             "deleted_bytes",
             "deleted_unmeasured",
             "skipped",
+            "binned_bytes",
         }
         # A freshly planned run has not reached a terminal state, so its totals are
         # unknown, never zero.

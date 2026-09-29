@@ -79,7 +79,7 @@ class TestALoggerFrozenByAnEarlierTestIsStillCapturable:
 
 class TestTheGuardReachesEveryLoggerInTheTree:
     """A guard that scans a tree is proven against the whole population it claims to cover,
-    not just one member that already matches. The count below is reconciled by hand: 54 files
+    not just one member that already matches. The count below is reconciled by hand: 55 files
     under ``src/reaper`` declare a module-level logger, and ``grep -rl`` over the tree agrees.
     Adding or removing a logger changes this count, and the same ``grep -rl`` search
     reconciles the new one."""
@@ -99,8 +99,8 @@ class TestTheGuardReachesEveryLoggerInTheTree:
 
     def test_the_count_is_the_one_reconciled_by_hand(self) -> None:
         declared = self._modules_declaring_a_logger()
-        assert len(declared) == 54, (
-            f"expected 54 modules declaring a logger, found {len(declared)}. Bump the number "
+        assert len(declared) == 55, (
+            f"expected 55 modules declaring a logger, found {len(declared)}. Bump the number "
             "here AND in this class's docstring above, which restates it and which nothing "
             "else asserts (rule 144). Those are the only two live copies. The archived "
             "simplification plan restates the figure too, and it is frozen history, so its "

@@ -38,6 +38,7 @@ import {
   type RunSummary,
 } from "../api";
 import { DegradedDocLink } from "../docs/DocLink";
+import { RunBinsList, binDays, freedNow, useRunBins } from "./RecycleBins";
 import { describeError } from "../errors";
 import { bytes, count, date, itemBytes } from "../format";
 import { reapBlockers, type ReapBlocker } from "../reapReadiness";
@@ -71,7 +72,7 @@ function runDotClass(state: string): string {
   return "reap-run-dot";
 }
 
-type TileKind = "titles" | "free" | "movies" | "seasons" | "kept";
+type TileKind = "titles" | "free" | "movies" | "seasons" | "kept" | "bin";
 
 /** A reap-page tile's icon, one per metric. The idle summary uses titles/free/movies/seasons;
  *  the done result reuses `free` and adds `kept`, a shield with a check, for the items a
@@ -112,6 +113,17 @@ function TileIcon({ kind }: { kind: TileKind }) {
           d="M7 4v16M17 4v16M3 8h4M17 8h4M3 12h18M3 16h4M17 16h4"
           stroke="currentColor"
           strokeWidth="1.3"
+        />
+      </svg>
+    );
+  if (kind === "bin")
+    return (
+      <svg className="rt-ic" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path
+          d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinejoin="round"
         />
       </svg>
     );
@@ -181,11 +193,15 @@ function HistoryRow({
   if (live) {
     parts.push(t("reapPlan.history.runningNow"));
   } else if (run.deleted_items != null && run.deleted_bytes != null) {
+    const freed = bytes(freedNow(run.deleted_bytes, run.binned_bytes));
     parts.push(
-      t("reapPlan.history.freedRemoved", {
-        bytes: bytes(run.deleted_bytes),
-        count: count(run.deleted_items),
-      }),
+      run.binned_bytes
+        ? t("reapPlan.history.freedBinnedRemoved", {
+            bytes: freed,
+            binned: bytes(run.binned_bytes),
+            count: count(run.deleted_items),
+          })
+        : t("reapPlan.history.freedRemoved", { bytes: freed, count: count(run.deleted_items) }),
     );
   }
   if (!live && run.aborted_reason) parts.push(composeError(run.aborted_reason));
@@ -410,7 +426,9 @@ function ReapingCard({ status }: { status: ReapStatus }) {
               <TileIcon kind="free" />
               <span className="fair-stat-lbl">{t("reapPlan.tiles.freedSoFar")}</span>
             </span>
-            <span className="fair-stat-num">{bytes(status.deleted_bytes)}</span>
+            <span className="fair-stat-num">
+              {bytes(freedNow(status.deleted_bytes, status.binned_bytes))}
+            </span>
           </div>
           <div className="fair-stat rt-removed">
             <span className="rt-cap">
@@ -498,9 +516,13 @@ function RunTotalsTiles({ run }: { run: RunSummary }) {
           <span className="fair-stat-lbl">{t("reapPlan.tiles.freed")}</span>
         </span>
         <span className="fair-stat-num">
-          <TileValue value={run.deleted_bytes} format={bytes} />
+          <TileValue
+            value={run.deleted_bytes == null ? null : freedNow(run.deleted_bytes, run.binned_bytes)}
+            format={bytes}
+          />
         </span>
       </div>
+      {!!run.binned_bytes && <BinnedTile runId={run.id} binned={run.binned_bytes} />}
       <div className="fair-stat rt-removed">
         <span className="rt-cap">
           <ScytheGlyph className="rt-ic" strokeWidth={4.5} />
@@ -519,6 +541,29 @@ function RunTotalsTiles({ run }: { run: RunSummary }) {
           <TileValue value={run.skipped} format={count} />
         </span>
       </div>
+    </div>
+  );
+}
+
+/** The part of a finished run still held in a recycle bin, and how long until it frees. */
+function BinnedTile({ runId, binned }: { runId: number; binned: number }) {
+  const { t } = useTranslation();
+  const bins = useRunBins(runId);
+  const days = bins.data ? binDays(bins.data.bins) : undefined;
+  return (
+    <div className="fair-stat rt-bin">
+      <span className="rt-cap">
+        <TileIcon kind="bin" />
+        <span className="fair-stat-lbl">{t("reapPlan.tiles.inBin")}</span>
+      </span>
+      <span className="fair-stat-num">{bytes(binned)}</span>
+      {days !== undefined && (
+        <span className="fair-stat-sub">
+          {days == null
+            ? t("reapPlan.tiles.binFreesWhenEmptied")
+            : t("reapPlan.tiles.binFreesWithin", { count: count(days), n: days })}
+        </span>
+      )}
     </div>
   );
 }
@@ -599,6 +644,7 @@ function RunDetailSheet({ run, onClose }: { run: RunSummary; onClose: () => void
       <div className="run-detail-stats">
         <RunTotalsTiles run={run} />
       </div>
+      <RunBinsList runId={run.id} />
       <h3 className="reap-feed-heading">{t("reapPlan.detail.itemStatus")}</h3>
       {/* `tabIndex={0}`: same reasoning as the reaping card's `.feed-scroll` above, and the
           same rows. */}

@@ -42,6 +42,7 @@ from reaper.db.models import (
     Instance,
     InstanceKind,
     Policy,
+    ReapBin,
     ReapRun,
     RunState,
     SizeSource,
@@ -4327,6 +4328,97 @@ class TestARemovalIsCountedEvenWhenTheStepFails:
 # ---------------------------------------------------------------------------
 
 
+class RadarrWithBin(FakeRadarr):
+    """A Radarr whose media management settings name a recycle bin. ``path=None`` makes
+    the read fail."""
+
+    def __init__(self, *, path: str | None = "/recycle/radarr", days: int = 3) -> None:
+        super().__init__()
+        self._bin_path = path
+        self._days = days
+
+    async def media_management(self) -> dict[str, Any]:
+        if self._bin_path is None:
+            raise IntegrationError("radarr", "error.integration.timed_out", status=None)
+        return {"recycleBin": self._bin_path, "recycleBinCleanupDays": self._days}
+
+
+class TestARunRecordsEachInstancesRecycleBin:
+    """A delete through an instance with a recycle bin frees nothing until the bin empties,
+    so the run records each bin as it starts and counts those bytes apart."""
+
+    @staticmethod
+    async def _bins(async_factory: async_sessionmaker[AsyncSession], run_id: int) -> list[ReapBin]:
+        async with async_factory() as fresh:
+            rows = await fresh.execute(select(ReapBin).where(ReapBin.run_id == run_id))
+            return list(rows.scalars())
+
+    async def test_bytes_removed_through_a_bin_are_counted_as_binned(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 2 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+
+        report = await _real(session, run, _gateway(radarr={1: RadarrWithBin(days=5)}))
+
+        assert report.state is RunState.COMPLETED
+        assert report.binned_bytes == 3 * GB
+        stored = await _stored_run(async_factory, run.id)
+        assert stored.binned_bytes == 3 * GB
+        [row] = await self._bins(async_factory, run.id)
+        assert (row.kind, row.instance_id, row.bin_path, row.cleanup_days) == (
+            "radarr",
+            1,
+            "/recycle/radarr",
+            5,
+        )
+
+    async def test_an_instance_with_no_bin_frees_its_bytes_now(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        snapshot_id = await _snapshot_many(session, [("radarr:1:1", 1 * GB, 701)])
+        run = await _plan(session, snapshot_id)
+
+        report = await _real(session, run, _gateway(radarr={1: RadarrWithBin(path="")}))
+
+        assert report.binned_bytes == 0
+        assert (await _stored_run(async_factory, run.id)).binned_bytes == 0
+        [row] = await self._bins(async_factory, run.id)
+        assert row.bin_path == ""
+
+    async def test_an_unreadable_bin_is_recorded_as_unknown_and_the_run_goes_on(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        snapshot_id = await _snapshot_many(session, [("radarr:1:1", 1 * GB, 701)])
+        run = await _plan(session, snapshot_id)
+
+        report = await _real(session, run, _gateway(radarr={1: RadarrWithBin(path=None)}))
+
+        assert report.state is RunState.COMPLETED
+        assert report.deleted_items == 1
+        [row] = await self._bins(async_factory, run.id)
+        assert row.bin_path is None
+
+    async def test_a_dry_run_records_no_bins(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        snapshot_id = await _snapshot_many(session, [("radarr:1:1", 1 * GB, 701)])
+        run = await _plan(session, snapshot_id)
+        executor = Executor(
+            session,
+            safety=_read_only(),
+            settings=ProfileSettings(),
+            dry_run=True,
+            gateway=_gateway(radarr={1: RadarrWithBin()}),
+        )
+
+        await executor.execute(run.id)
+
+        assert await self._bins(async_factory, run.id) == []
+
+
 class TestRunTotalsAreWrittenOnATerminalRun:
     """``ReapRun.deleted_items``/``deleted_bytes``/``deleted_unmeasured``/``skipped`` are
     written once, inside the same crash-safe path that makes the run's own terminal
@@ -5685,7 +5777,9 @@ _BEFORE_ANY_DELETE_RUN_COLUMNS = frozenset(
 #: values come straight off a fresh ``run_totals.totals_query`` read each time
 #: ``_write_run_totals`` runs, so the same dataclass is what both of ``_commit_journal``'s
 #: attempts send, with nothing to lose to a rollback in between.
-_TOTALS_RUN_COLUMNS = frozenset({"deleted_items", "deleted_bytes", "deleted_unmeasured", "skipped"})
+_TOTALS_RUN_COLUMNS = frozenset(
+    {"deleted_items", "deleted_bytes", "deleted_unmeasured", "skipped", "binned_bytes"}
+)
 
 
 class TestARecoveredWriteCarriesEveryColumn:

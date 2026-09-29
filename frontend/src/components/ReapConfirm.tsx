@@ -37,6 +37,7 @@ import { useSafety } from "../useSafety";
 import { composeError } from "../why";
 import { ModalShell } from "./ModalShell";
 import { PlexTrashNotice } from "./PlexTrashNotice";
+import { ConfirmBins } from "./RecycleBins";
 import { Notice } from "./Notice";
 
 export function ReapConfirm({
@@ -279,6 +280,8 @@ export function ReapConfirm({
           onAck={setTrashAcked}
         />
       )}
+
+      {dryClean && !otherRunning && <ConfirmBins runId={run.id} />}
 
       {/* Stage 2: arm + typed confirmation, shown once the practice run is clean and no other
           run holds the slot. */}

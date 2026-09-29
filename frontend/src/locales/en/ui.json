@@ -1849,7 +1849,8 @@
       "loadFailed": "Reaper couldn't load past reaps. Reload to try again.",
       "row": "Run {id}",
       "runningNow": ", running now",
-      "showingOf": "Showing {shown} of {total}"
+      "showingOf": "Showing {shown} of {total}",
+      "freedBinnedRemoved": ", {bytes} freed, {binned} in recycle bin, {count} removed"
     },
     "itemStatus": {
       "failedReason": ", failed: {reason}",
@@ -1904,7 +1905,10 @@
       "freed": "freed",
       "freedSoFar": "freed so far",
       "keptByChecks": "kept by checks",
-      "removed": "removed"
+      "removed": "removed",
+      "inBin": "in recycle bin",
+      "binFreesWithin": "frees within {count} {n, plural, one {day} other {days}}",
+      "binFreesWhenEmptied": "frees when the bin is emptied"
     }
   },
   "reapConfirm": {
@@ -1925,7 +1929,10 @@
       "removedFreed": "{souls} removed, {bytes} freed",
       "stopError": "Reaper couldn't stop the reap: {error}",
       "view": "View",
-      "viewReport": "View report"
+      "viewReport": "View report",
+      "removedFreedBinned": "{souls} removed, {bytes} freed, {binned} in recycle bin",
+      "freedBinned": "{bytes} freed, {binned} in recycle bin",
+      "binnedSuffix": " {binned} is in the recycle bin."
     },
     "execute": "Reap",
     "heldBack": "{souls} {n, plural, one {is} other {are}} held back. Reaper couldn't measure {n, plural, one {its} other {their}} size, so it won't delete {n, plural, one {it} other {them}}.",
@@ -3256,6 +3263,26 @@
     },
     "scanLine": {
       "scanningLabel": "Scanning your library"
+    }
+  },
+  "recycleBins": {
+    "heading": "Recycle bins",
+    "help": "Sonarr and Radarr hold deleted files in a bin before the space frees.",
+    "movies": "{count} {n, plural, one {title} other {titles}}, {bytes}",
+    "seasons": "{count} {n, plural, one {season} other {seasons}}, {bytes}",
+    "freesIn": "Frees in {count} {n, plural, one {day} other {days}}",
+    "freesWhenEmptied": "Frees when the bin is emptied",
+    "noBin": "No bin, frees now",
+    "unknown": "Couldn't read its bin",
+    "summaryNow": "{bytes} frees now.",
+    "summaryLater": "{bytes} frees when the bins empty, within {count} {n, plural, one {day} other {days}}.",
+    "summaryLaterWhenEmptied": "{bytes} frees when the bins are emptied.",
+    "loadFailed": "Reaper couldn't read the recycle bins.",
+    "report": {
+      "on": "bin on, {bytes} frees within {count} {n, plural, one {day} other {days}}",
+      "onWhenEmptied": "bin on, {bytes} frees when the bin is emptied",
+      "noBin": "no recycle bin",
+      "unknown": "couldn't read its recycle bin"
     }
   }
 }

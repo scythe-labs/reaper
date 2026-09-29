@@ -1172,5 +1172,18 @@
   "why.source.tvdb": "The display name for TVDB, a rating source. Product name: leave 'TVDB' untranslated.",
   "why.source.unknown": "The fallback {source_label} when Reaper cannot tell which rating source a value came from. Not a product name: translate it normally.",
   "why.streaming_nobody": "The why-panel's row for the actively-streaming protection when nobody is watching this title right now. A standalone sentence, no params.",
-  "why.streaming_now": "A lowercase fragment meaning someone is watching this title right now, nested inside a larger why-panel sentence. No params."
+  "why.streaming_now": "A lowercase fragment meaning someone is watching this title right now, nested inside a larger why-panel sentence. No params.",
+  "recycleBins.movies": "One Radarr row on the Reap confirmation screen's recycle bin list. {count} is the formatted number of titles this reap removes there; {n} is the same count, used only to pick the plural; {bytes} is an already-formatted size.",
+  "recycleBins.seasons": "One Sonarr row on the Reap confirmation screen's recycle bin list. {count} is the formatted number of seasons this reap removes there; {n} is the same count, used only to pick the plural; {bytes} is an already-formatted size.",
+  "recycleBins.freesIn": "Under an instance on the Reap confirmation screen whose recycle bin is on: how long until the bin empties and the space frees. {count} is the formatted number of days; {n} is the same count, used only to pick the plural.",
+  "recycleBins.summaryNow": "First sentence of the recycle bin summary on the Reap confirmation screen. {bytes} is an already-formatted size, removed on instances with no recycle bin.",
+  "recycleBins.summaryLater": "Sentence in the recycle bin summary on the Reap confirmation screen. {bytes} is an already-formatted size, removed on instances whose recycle bin is on; {count} is the formatted number of days the slowest bin keeps files; {n} is the same count, used only to pick the plural.",
+  "recycleBins.summaryLaterWhenEmptied": "Sentence in the recycle bin summary on the Reap confirmation screen, used when a bin never empties on its own. {bytes} is an already-formatted size.",
+  "recycleBins.report.on": "A fragment after an instance's name in a past run's recycle bin list, never shown alone. {bytes} is an already-formatted size the run removed there; {count} is the formatted number of days the bin keeps files; {n} is the same count, used only to pick the plural.",
+  "recycleBins.report.onWhenEmptied": "A fragment after an instance's name in a past run's recycle bin list, never shown alone, for a bin that never empties on its own. {bytes} is an already-formatted size the run removed there.",
+  "reapPlan.tiles.binFreesWithin": "Small line under the \"in recycle bin\" tile of a finished reap. {count} is the formatted number of days the slowest bin keeps files; {n} is the same count, used only to pick the plural.",
+  "reapPlan.history.freedBinnedRemoved": "A fragment appended after a past run's id on the Reap page's history list, never shown alone, used when part of the run is still in a recycle bin. {bytes} and {binned} are already-formatted sizes; {count} is the formatted number of items removed.",
+  "reapConfirm.bar.removedFreedBinned": "Progress bar summary once items have been removed and part of them wait in a recycle bin. {souls} is the already-formatted item count (format.souls); {bytes} and {binned} are already-formatted sizes.",
+  "reapConfirm.bar.freedBinned": "The space freed so far, on its own line of the reap progress bar, when part of it waits in a recycle bin. {bytes} and {binned} are already-formatted sizes.",
+  "reapConfirm.bar.binnedSuffix": "Appended to the screen-reader announcement when a reap ends, never shown alone. {binned} is an already-formatted size still held in a Sonarr or Radarr recycle bin."
 }

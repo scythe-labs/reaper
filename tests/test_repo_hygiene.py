@@ -3877,6 +3877,7 @@ _READ_HOOKS = {
     "useInfiniteQuery",
     "useSafety",
     "usePlexTrash",
+    "useRunBins",
     "useHoldsBackUnmeasured",
     # Hands back ``{ libraries, sync }``, a query and the mutation that fills it when it has
     # never been filled. Filed as a read because the handle every call site branches on is the
@@ -4758,7 +4759,7 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # file that drops out of the walk is otherwise missing from both halves while the two numbers
 # still agree with each other. Re-derive by running the test, never by arithmetic on the maps
 # above.
-_EXPECTED_RENDERING_TEST_FILES = 63
+_EXPECTED_RENDERING_TEST_FILES = 64
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
@@ -5282,7 +5283,7 @@ _LAYERS = ("api", "services", "clients", "engine")
 #: Every `.py` file under those four, which is the population the walk parses. It moves when a
 #: module is added, split or deleted, and it is pinned because a walk that quietly stopped
 #: reading the tree would satisfy every assertion below by finding nothing at all.
-_EXPECTED_LAYERED_MODULES = 90
+_EXPECTED_LAYERED_MODULES = 91
 
 #: Every ordered pair where one of the four imports another, reconciled by hand: all six
 #: downward pairs are live, and no upward pair is. Asserted as an equality rather than a subset,
@@ -5599,7 +5600,7 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
 #: different population from that constant, which counts what is under the four packages
 #: only, so a bump to one has no reason to touch the other. The failure message below names
 #: the constant the same way.
-_EXPECTED_SOURCE_MODULES = 125
+_EXPECTED_SOURCE_MODULES = 126
 
 #: Every import cycle under `src/reaper`, each rotated to start at its smallest member. Two,
 #: and both are one edge: `api/settings.py` imports `reaper.launcher` at module level,
@@ -5813,7 +5814,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: parses. Pinned for the same reason as `_EXPECTED_SOURCE_MODULES`, and it carries more
 #: weight here: the expected cycle set is empty, so a walk that stopped reading the tree
 #: would agree with a clean graph exactly.
-_EXPECTED_FRONTEND_MODULES = 246
+_EXPECTED_FRONTEND_MODULES = 248
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")
@@ -6562,6 +6563,10 @@ _MEMBERSHIP_INVENTORY: dict[str, tuple[int, str]] = {
         "bounded: both take a subquery, so nothing is bound at all",
     ),
     "src/reaper/services/retention.py::sweep_old_snapshots": (1, "bounded: SWEEP_BATCH ids"),
+    "src/reaper/services/recycle_bins.py::read_bins": (
+        1,
+        "bounded: the Sonarr and Radarr instances one reap deletes from",
+    ),
     "src/reaper/services/rewatch.py::movie_rewatch_outcomes": (1, "chunked"),
     "src/reaper/services/rewatch.py::movie_rewatch_stats": (1, "chunked"),
     "src/reaper/services/rewatch.py::show_rewatch_outcomes": (1, "chunked"),
@@ -7626,7 +7631,7 @@ _UNRECOVERABLE_OPS = frozenset({"alter_column", "drop_column", "drop_table"})
 #: The revision files walked, pinned because a flag-shaped assertion alone cannot tell a
 #: revision that complies from one that dropped out of the walk. Bump the first with any new
 #: revision, the second only with one performing an operation above.
-_EXPECTED_REVISION_FILES = 32
+_EXPECTED_REVISION_FILES = 33
 _EXPECTED_UNRECOVERABLE_REVISIONS = 6
 
 
@@ -7830,7 +7835,7 @@ _EXPECTED_REFUSAL_CODES = 310
 #: reusing an `error.safety.*` code the executor's own backstop already raises, or
 #: `update_check._incomplete()` building one `error.integration.update_check_incomplete`
 #: for several callers. So the site count moves independently of the code count.
-_EXPECTED_REFUSAL_SITES = 362
+_EXPECTED_REFUSAL_SITES = 363
 
 
 def test_every_refusal_code_has_a_raiser_and_a_catalog_entry() -> None:

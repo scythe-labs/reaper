@@ -628,6 +628,31 @@ class RunSummaryOut(BaseModel):
     skipped: int | None = None
     """How many planned items this run left alone. ``None`` on the same terms."""
 
+    binned_bytes: int | None = None
+    """The part of ``deleted_bytes`` still held in a recycle bin. ``None`` on the same
+    terms, and on a run from before bins were read."""
+
+
+class RunBinOut(BaseModel):
+    """One Sonarr or Radarr instance a run deletes from, and its recycle bin."""
+
+    kind: str
+    instance_id: int
+    name: str
+    bin: str
+    """``on``, ``none`` (the instance has no bin), or ``unknown`` (it could not be read)."""
+
+    cleanup_days: int | None = None
+    """How many days the bin keeps a file. 0 means it never empties on its own."""
+
+    items: int
+    bytes: int
+    """What the plan removes on this instance, or for an executed run, what it removed."""
+
+
+class RunBinsOut(BaseModel):
+    bins: list[RunBinOut]
+
 
 class RunListOut(BaseModel):
     """A page of the run history, plus how many rows match the request as a whole.

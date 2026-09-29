@@ -80,6 +80,7 @@ const idleReapStatus: ReapStatus = {
   total: 0,
   deleted_items: 0,
   deleted_bytes: 0,
+  binned_bytes: 0,
   skipped: 0,
   title: "",
   error_reason: null,
@@ -151,6 +152,7 @@ function summary(overrides: Partial<RunSummary> = {}): RunSummary {
     deleted_bytes: 289 * GB,
     deleted_unmeasured: 0,
     skipped: 0,
+    binned_bytes: null,
     ...overrides,
   };
 }
@@ -207,6 +209,7 @@ beforeEach(() => {
   apiMock.dryRun.mockResolvedValue(dryReport());
   apiMock.run.mockResolvedValue(run);
   apiMock.reapStatus.mockResolvedValue(idleReapStatus);
+  apiMock.runBins.mockResolvedValue({ bins: [] });
   apiMock.plexTrash.mockResolvedValue({
     configured: true,
     trashed: 0,
@@ -899,6 +902,41 @@ describe("run detail sheet", () => {
     await screen.findByRole("dialog", { name: "Run 55" });
     await user.click(container.querySelector(".modal-scrim")!);
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("splits what a bin still holds from what is freed", async () => {
+    mockHistory([
+      summary({ id: 61, deleted_items: 8, deleted_bytes: 10 * GB, binned_bytes: 4 * GB }),
+    ]);
+    mockOutcomes([]);
+    apiMock.runBins.mockResolvedValue({
+      bins: [
+        {
+          kind: "sonarr",
+          instance_id: 2,
+          name: "Sonarr",
+          bin: "on",
+          cleanup_days: 7,
+          items: 3,
+          bytes: 4 * GB,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    renderPlan();
+
+    expect(
+      await screen.findByText(/6\.0 GiB freed, 4\.0 GiB in recycle bin, 8 removed/),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Run 61/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Run 61" });
+    expect(within(dialog).getByText("freed").closest(".fair-stat")!.textContent).toContain(
+      "6.0 GiB",
+    );
+    const binTile = within(dialog).getByText("in recycle bin").closest(".fair-stat")!;
+    expect(binTile.textContent).toContain("4.0 GiB");
+    expect(await within(dialog).findByText("frees within 7 days")).toBeInTheDocument();
+    expect(within(dialog).getByText("bin on, 4.0 GiB frees within 7 days")).toBeInTheDocument();
   });
 
   it("shows the operator-stop note on the detail sheet", async () => {

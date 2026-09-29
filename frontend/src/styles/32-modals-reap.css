@@ -428,3 +428,81 @@
 .changes-link {
   margin: var(--space-md) 0 0;
 }
+
+/* The reap confirm's recycle bin list: one row per instance, its bin, and when the space
+   frees. */
+.bins {
+  margin-top: var(--space-3xl);
+  padding-top: var(--space-3xl);
+  border-top: 1px solid var(--border);
+}
+.bins-head {
+  margin: 0 0 0.2rem;
+  font-size: var(--text-base);
+}
+.bins-help {
+  margin: 0 0 var(--space-lg);
+  color: var(--muted);
+  font-size: var(--text-md);
+}
+.bin-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.bin-row {
+  display: grid;
+  grid-template-columns: 9rem minmax(0, 1fr);
+  grid-template-areas:
+    "app what"
+    "app when";
+  column-gap: var(--space-lg);
+  row-gap: 0.1rem;
+  align-items: center;
+  padding: 0.55rem 0.75rem;
+  font-size: var(--text-md);
+  font-variant-numeric: tabular-nums;
+}
+.bin-row + .bin-row {
+  border-top: 1px solid var(--border);
+}
+.bin-app {
+  grid-area: app;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.bin-what {
+  grid-area: what;
+  min-width: 0;
+}
+.bin-when {
+  grid-area: when;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.bin-none .bin-when {
+  color: var(--protect);
+}
+.bin-unknown .bin-when {
+  color: var(--unknown);
+}
+.bins-sum {
+  margin: var(--space-lg) 0 0;
+  font-size: var(--text-md);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 480px) {
+  .bin-row {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "app"
+      "what"
+      "when";
+  }
+}

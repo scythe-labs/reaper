@@ -8,6 +8,7 @@ import { describeError } from "../errors";
 import { bytes, count, souls } from "../format";
 import { composeError } from "../why";
 import { Notice } from "./Notice";
+import { freedNow } from "./RecycleBins";
 import { ackRun, useAckedRun } from "./runAck";
 
 /** The app-wide reap bar: shown on every screen of the app while a reap runs, so its count and
@@ -95,14 +96,18 @@ export function ReapBar({
       t("reapConfirm.bar.announceEnded", {
         phase: status.phase,
         souls: souls(status.deleted_items),
-        bytes: bytes(status.deleted_bytes),
-      }),
+        bytes: bytes(freedNow(status.deleted_bytes, status.binned_bytes)),
+      }) +
+        (status.binned_bytes > 0
+          ? t("reapConfirm.bar.binnedSuffix", { binned: bytes(status.binned_bytes) })
+          : ""),
     );
     // ["run"] as well as ["runs"]: the plan surface reads one run by id, and that key does
     // not match the list's.
     for (const key of [
       ["runs"],
       ["run"],
+      ["run-bins"],
       ["candidates"],
       ["reap-breakdown"],
       ["snapshot"],
@@ -137,10 +142,16 @@ export function ReapBar({
             <b>{t("reapConfirm.bar.endedLabel", { phase: status.phase })}</b>
           </span>
           <span className="reap-bar-sub">
-            {t("reapConfirm.bar.removedFreed", {
-              souls: souls(status.deleted_items),
-              bytes: bytes(status.deleted_bytes),
-            })}
+            {status.binned_bytes > 0
+              ? t("reapConfirm.bar.removedFreedBinned", {
+                  souls: souls(status.deleted_items),
+                  bytes: bytes(freedNow(status.deleted_bytes, status.binned_bytes)),
+                  binned: bytes(status.binned_bytes),
+                })
+              : t("reapConfirm.bar.removedFreed", {
+                  souls: souls(status.deleted_items),
+                  bytes: bytes(status.deleted_bytes),
+                })}
             {errored &&
               status.error_reason &&
               t("reapConfirm.bar.errorSuffix", { error: composeError(status.error_reason) })}
@@ -211,7 +222,12 @@ export function ReapBar({
       {/* The space freed so far. Inline after the count on desktop, its own line on a phone. */}
       {!status.stopping && (
         <span className="reap-bar-sub">
-          {t("reapConfirm.bar.freed", { bytes: bytes(status.deleted_bytes) })}
+          {status.binned_bytes > 0
+            ? t("reapConfirm.bar.freedBinned", {
+                bytes: bytes(freedNow(status.deleted_bytes, status.binned_bytes)),
+                binned: bytes(status.binned_bytes),
+              })
+            : t("reapConfirm.bar.freed", { bytes: bytes(status.deleted_bytes) })}
         </span>
       )}
       {/* The visible progress track. Decorative: the progressbar role and its aria live on the

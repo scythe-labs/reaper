@@ -63,6 +63,7 @@ function status(overrides: Partial<ReapStatus> = {}): ReapStatus {
     total: 0,
     deleted_items: 0,
     deleted_bytes: 0,
+    binned_bytes: 0,
     skipped: 0,
     title: "",
     error_reason: null,
@@ -94,6 +95,7 @@ beforeEach(() => {
   apiMock.run.mockResolvedValue(run); // only ever fetched after a 409 moves the phrase
   apiMock.dryRun.mockResolvedValue(report());
   apiMock.reapStatus.mockResolvedValue(status()); // idle until a reap starts
+  apiMock.runBins.mockResolvedValue({ bins: [] });
   apiMock.executeRun.mockResolvedValue(runningStatus);
   // The default trash is empty and fully readable, so the warning stays out of the way of
   // every test that is about something else. Tests that are about the warning set their own

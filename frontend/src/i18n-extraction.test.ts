@@ -64,6 +64,7 @@ const CONVERTED = [
   "components/ReapBreakdown.tsx",
   "components/ReapConfirm.tsx",
   "components/ReapPlan.tsx",
+  "components/RecycleBins.tsx",
   "components/RestoreCard.tsx",
   "components/ReviewQueue.tsx",
   "components/SafetyBanner.tsx",

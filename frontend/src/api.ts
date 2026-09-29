@@ -970,6 +970,28 @@ export interface RunSummary {
   deleted_unmeasured: number | null;
   /** How many planned items this run left alone. `null` on the same terms. */
   skipped: number | null;
+  /** The part of `deleted_bytes` still held in a recycle bin. `null` on the same terms,
+   *  and on a run from before bins were read. */
+  binned_bytes: number | null;
+}
+
+/** One Sonarr or Radarr instance a run deletes from, and its recycle bin. */
+export interface RunBin {
+  kind: string;
+  instance_id: number;
+  name: string;
+  /** `on`, `none` (the instance has no bin), or `unknown` (it could not be read). */
+  bin: string;
+  /** How many days the bin keeps a file. 0 means it never empties on its own. */
+  cleanup_days: number | null;
+  items: number;
+  /** What the plan removes on this instance, or for an executed run, what it removed. */
+  bytes: number;
+}
+
+/** From `GET /api/runs/{id}/bins`: read live for a planned run, as recorded for any other. */
+export interface RunBins {
+  bins: RunBin[];
 }
 
 /** A page of the run history, plus how many rows match the request as a whole: the history
@@ -1063,6 +1085,8 @@ export interface ReapStatus {
   total: number;
   deleted_items: number;
   deleted_bytes: number;
+  /** The part of `deleted_bytes` removed on an instance whose recycle bin was on. */
+  binned_bytes: number;
   skipped: number;
   /** The item last acted on, for the live line. */
   title: string;
@@ -2449,6 +2473,8 @@ export const api = {
    *  the same source. */
   runOutcomes: (id: number, offset = 0, limit = 50) =>
     request<RunOutcomes>(`/api/runs/${id}/outcomes?offset=${offset}&limit=${limit}`),
+  /** Each Sonarr and Radarr instance a run deletes from, and its recycle bin. */
+  runBins: (id: number) => request<RunBins>(`/api/runs/${id}/bins`),
   /** Build a plan, over an explicitly named set. `"all"` covers the whole condemned
    *  set; an array reaps just those items, the safe path for a first, hand-picked
    *  deletion.

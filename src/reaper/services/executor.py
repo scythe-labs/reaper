@@ -105,7 +105,9 @@ from itertools import batched
 from typing import Any, Protocol, cast
 
 import structlog
-from sqlalchemy import Update, or_, select, update
+from sqlalchemy import Delete, Insert, Update, or_, select, update
+from sqlalchemy import delete as sql_delete
+from sqlalchemy import insert as sql_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -117,6 +119,7 @@ from reaper.db import KEY_CHUNK
 from reaper.db.models import (
     ActionStep,
     Candidate,
+    ReapBin,
     ReapRun,
     RunState,
     SizeSource,
@@ -126,7 +129,7 @@ from reaper.db.models import (
 from reaper.engine.policy import ProfileSettings
 from reaper.engine.reason import Reason, to_stored
 from reaper.refusal import MESSAGES, Refusal, english
-from reaper.services import list_config, run_totals, whitelist
+from reaper.services import list_config, recycle_bins, run_totals, whitelist
 from reaper.services.condemned import effective_condemned, effective_verdict
 from reaper.services.planner import MediaRef, manifest_hash
 from reaper.services.profiles import live_policy_hash
@@ -231,6 +234,11 @@ def size_confirmed(candidate: Candidate) -> bool:
     not trust that one: the host-side checks must hold even if the plan is wrong.
     """
     return candidate.size_bytes is not None
+
+
+def _instance(media_key: str) -> recycle_bins.InstanceKey:
+    ref = MediaRef.parse(media_key)
+    return (ref.kind, ref.instance_id)
 
 
 def _season_number(obj: dict[str, Any]) -> int:
@@ -472,6 +480,9 @@ class RunReport:
     outcomes: list[StepOutcome] = field(default_factory=list)
     deleted_items: int = 0
     deleted_bytes: int = 0
+    binned_bytes: int = 0
+    """The part of ``deleted_bytes`` removed on an instance whose recycle bin was on."""
+
     deleted_unmeasured: int = 0
     """How many of ``deleted_items`` had no size, so contributed nothing to
     ``deleted_bytes``. Only ever above zero when the operator raised
@@ -533,6 +544,7 @@ class ReapProgress:
     total: int
     deleted_items: int
     deleted_bytes: int
+    binned_bytes: int
     skipped: int
     title: str
 
@@ -881,6 +893,8 @@ class Executor:
         # the host via the guard. Nothing deletes by omission.
         self._dry_run = dry_run
         self._gateway = gateway
+        # The instances whose recycle bin was on as this run started (``_capture_bins``).
+        self._binned: frozenset[recycle_bins.InstanceKey] = frozenset()
         # Radarr adds the import exclusion a moment after the delete returns 200, so the
         # verification re-reads the exclusion list a few times before concluding it did not
         # land. Tests pass a zero delay to stay fast.
@@ -934,7 +948,7 @@ class Executor:
         # the run can try them once more. A fault that broke one commit is usually gone
         # seconds later (a vacuum finished, disk space freed), and the write it took down
         # is the record that a file is off disk. See ``_commit_and_finalize``.
-        self._unwritten: list[Update] = []
+        self._unwritten: list[Update | Insert | Delete] = []
         # Whether the item being walked right now has really had its file removed. Tracked
         # here, off the ORM, because the one path that needs to read it is the one where
         # the journal cannot be written and every row is expired. Reset per item by
@@ -1161,6 +1175,8 @@ class Executor:
             # the rolling 30-day budget are checked, dry run included.
             _check_caps(deletes, self._settings, self._effective_keys)
             await self._check_rolling_caps(deletes)
+            if not self._dry_run:
+                await self._capture_bins(deletes)
             await self._run_deletes(deletes, report, run.approved_at)
             report.state = RunState.COMPLETED
             terminal = _Terminal(RunState.COMPLETED, None, utcnow())
@@ -1237,7 +1253,9 @@ class Executor:
 
         return report
 
-    async def _commit_journal(self, *, what: str, write: Sequence[Update]) -> bool:
+    async def _commit_journal(
+        self, *, what: str, write: Sequence[Update | Insert | Delete]
+    ) -> bool:
         """Land one set of journal writes, surviving a transaction that has already failed.
 
         Every journal and state-transition write on the deletion path must be durably
@@ -1427,6 +1445,34 @@ class Executor:
         if self._pending_refreshes:
             await self._finalize_plex()
 
+    async def _capture_bins(self, deletes: Sequence[_Delete]) -> None:
+        """Record each instance's recycle bin before anything is deleted. A bin that cannot
+        be read is recorded as unknown, and neither that nor a failed write stops the run."""
+        assert self._gateway is not None
+        bins = await recycle_bins.read_bins(
+            self._session,
+            recycle_bins.readers(self._gateway.radarr, self._gateway.sonarr),
+            recycle_bins.instances_of(d.candidate.media_key for d in deletes),
+        )
+        self._binned = frozenset(b.key for b in bins if b.holds_files)
+        rows = [
+            {
+                "run_id": self._run_id,
+                "kind": b.kind,
+                "instance_id": b.instance_id,
+                "instance_name": b.name,
+                "bin_path": b.path,
+                "cleanup_days": b.cleanup_days,
+            }
+            for b in bins
+        ]
+        write: list[Update | Insert | Delete] = [
+            sql_delete(ReapBin).where(ReapBin.run_id == self._run_id)
+        ]
+        if rows:
+            write.append(sql_insert(ReapBin).values(rows))
+        await self._commit_journal(what="the run's recycle bins", write=write)
+
     async def _write_run_totals(self, run_id: int) -> None:
         """Write the run's four terminal totals, best-effort.
 
@@ -1444,6 +1490,13 @@ class Executor:
             log.warning("reap.run_totals_unreadable", run_id=run_id, error=str(exc))
             return
         totals = run_totals.aggregate_rows(rows)
+        try:
+            binned = (
+                await recycle_bins.removed_on(self._session, run_id, self._binned)
+            ).deleted_bytes
+        except Exception as exc:
+            log.warning("reap.binned_bytes_unreadable", run_id=run_id, error=str(exc))
+            binned = None
         await self._commit_journal(
             what="the run's totals",
             write=[
@@ -1454,6 +1507,7 @@ class Executor:
                     deleted_bytes=totals.deleted_bytes,
                     deleted_unmeasured=totals.deleted_unmeasured,
                     skipped=totals.skipped,
+                    binned_bytes=binned,
                 )
                 .execution_options(synchronize_session=False)
             ],
@@ -1716,6 +1770,8 @@ class Executor:
                 # imply it is the whole story.
                 if (freed := approved_size) is not None:
                     report.deleted_bytes += freed
+                    if _instance(outcome.media_key) in self._binned:
+                        report.binned_bytes += freed
                 else:
                     report.deleted_unmeasured += 1
 
@@ -1992,6 +2048,7 @@ class Executor:
                     total=total,
                     deleted_items=report.deleted_items,
                     deleted_bytes=report.deleted_bytes,
+                    binned_bytes=report.binned_bytes,
                     skipped=report.skipped,
                     title=title,
                 )
