@@ -4625,6 +4625,20 @@ counts requests whose path has no static file extension, and `http-probing` coun
 - **The fix.** Posters live at `/api/poster/{key}.jpg` and a miss answers a 1x1 PNG with a 200.
   The client batches every show read made in one tick into one `/api/groups` request.
 
+## Sonarr's bulk file delete outlives a 30-second read budget (2026-09-29)
+
+A live reap marked one season failed with "Timed out waiting for an answer". Sonarr deleted it
+anyway. A re-read after the run found none of its 52 episode files.
+
+- **`DELETE /api/v3/episodefile/bulk` answers only after the files are gone.** Across one
+  reap the call took 0.5 to 17 seconds per season, rising with the file count. The season that
+  failed passed the client's 30-second read budget.
+- **The recycle bin adds to it.** Every instance in that reap had one set, so each delete is a
+  move, and a copy when the bin sits on another share than the root folder. Space frees only
+  when the bin's cleanup runs (#1023).
+- **The fix.** The bulk delete gets a 300-second read budget. A delete with no answer goes to
+  the re-read like any other, and it is charged to the rolling budget either way.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

@@ -241,6 +241,26 @@ def _instance(media_key: str) -> recycle_bins.InstanceKey:
     return (ref.kind, ref.instance_id)
 
 
+async def _sent(call: Awaitable[None], *, media_key: str) -> IntegrationError | None:
+    """Await one delete call and return its error instead of raising it.
+
+    The caller's re-read decides what landed, never this response.
+    """
+    try:
+        await call
+    except IntegrationError as exc:
+        log.warning(
+            "reap.delete_call_failed", media_key=media_key, status=exc.status, code=exc.code
+        )
+        return exc
+    return None
+
+
+def _no_answer(error: IntegrationError | None) -> bool:
+    """The delete got no answer, so the *arr may still be removing files."""
+    return error is not None and error.status is None
+
+
 def _season_number(obj: dict[str, Any]) -> int:
     """The season an *arr object belongs to, or -1 when it cannot be read.
 
@@ -2381,7 +2401,10 @@ class Executor:
             )
 
         await self._mark_sent(step)
-        await radarr.delete_movie(ref.arr_id, delete_files=True, add_exclusion=add_exclusion)
+        send_error = await _sent(
+            radarr.delete_movie(ref.arr_id, delete_files=True, add_exclusion=add_exclusion),
+            media_key=delete.candidate.media_key,
+        )
 
         gone = await self._movie_is_gone(radarr, ref.arr_id, tmdb_id)
         # An unreadable re-read is not a pass.
@@ -2390,7 +2413,8 @@ class Executor:
         # is the keep direction (fail the item, do not claim a verification), but for the
         # rolling budget it is the opposite: an uncharged delete buys the next run more
         # room. So "not proven still present" is what charges here, not "proven gone".
-        assume_removed = gone is not False
+        # A delete that got no answer may still be running, so it charges too.
+        assume_removed = gone is not False or _no_answer(send_error)
         checks.append(StepCheck(Reason("error.reap.check.movie_removed"), proven_gone))
 
         # Stamp the removal the moment it is proven, before anything else that could
@@ -2433,11 +2457,15 @@ class Executor:
             # Three different things can go wrong here and they read differently to an
             # operator, so each says what it actually knows rather than printing a tuple
             # of internal flags. With the exclusion off, ``excluded`` is always True, so
-            # the first branch only fires on a movie that would not delete.
-            if gone is False:
-                reason = Reason("error.reap.step.movie_not_removed")
-            elif gone is None:
+            # only a movie not proven gone reaches here.
+            if gone is None:
                 reason = Reason("error.reap.step.movie_removal_unconfirmed")
+            elif gone is False and send_error is not None:
+                reason = Reason(
+                    "error.reap.step.arr_call_failed", {"error": send_error.as_reason()}
+                )
+            elif gone is False:
+                reason = Reason("error.reap.step.movie_not_removed")
             else:
                 reason = Reason("error.reap.step.exclusion_unconfirmed")
             return self._fail(
@@ -2718,7 +2746,9 @@ class Executor:
                 is_canary=is_canary,
             )
         await self._mark_sent(delete_step)
-        await sonarr.delete_episode_files(file_ids)
+        send_error = await _sent(
+            sonarr.delete_episode_files(file_ids), media_key=candidate.media_key
+        )
 
         # 3. Verify no file for this season remains.
         try:
@@ -2726,10 +2756,9 @@ class Executor:
         except IntegrationError:
             # The twin of the movie path's unreadable re-read (``_movie_is_gone``
             # returning ``None``), reached by a raise rather than a return because there
-            # is no 404 to distinguish here. ``delete_episode_files`` already returned
-            # without raising, so the files went; only the confirmation failed. Charge
-            # the bytes before failing the item, or a Sonarr that is unreachable for the
-            # re-read would buy the next run unlimited room.
+            # is no 404 to distinguish here. The files may have gone. Charge the bytes
+            # before failing the item, or a Sonarr that is unreachable for the re-read
+            # would buy the next run unlimited room.
             await self._mark_file_removed(delete_step)
             return self._fail(
                 delete,
@@ -2745,21 +2774,22 @@ class Executor:
                 not still_there,
             )
         )
-        if len(still_there) < len(file_ids):
-            # At least one file really went, so the bytes are reclaimed and the rolling
-            # budget must be charged whichever way the step below ends. Same reasoning as
-            # the movie path: the removal is recorded independently of the verification.
+        # Charged whichever way the step below ends when at least one file went, or when
+        # the delete got no answer and may still be running.
+        removed = len(still_there) < len(file_ids) or _no_answer(send_error)
+        if removed:
             await self._mark_file_removed(delete_step)
         if still_there:
-            return self._fail(
-                delete,
-                Reason(
+            reason = (
+                Reason("error.reap.step.arr_call_failed", {"error": send_error.as_reason()})
+                if send_error is not None
+                else Reason(
                     "error.reap.step.season_files_remain",
                     {"count": len(still_there), "season": ref.season},
-                ),
-                checks=checks,
-                is_canary=is_canary,
-                file_removed=len(still_there) < len(file_ids),
+                )
+            )
+            return self._fail(
+                delete, reason, checks=checks, is_canary=is_canary, file_removed=removed
             )
 
         # The season's files are gone, so tell Plex, the same nudge the movie path sends.

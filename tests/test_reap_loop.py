@@ -4324,6 +4324,104 @@ class TestARemovalIsCountedEvenWhenTheStepFails:
         assert "could not reach it again" in refusal_text(reason.id, **reason.params).lower()
 
 
+def _call_error(service: str, status: int | None) -> IntegrationError:
+    code = "error.integration.timed_out" if status is None else "error.integration.http_failure"
+    return IntegrationError(service, code, status=status)
+
+
+class SonarrThatDoesNotAnswer(FakeSonarr):
+    """Sonarr takes the bulk delete and the call fails. ``finishes`` says whether the files
+    are gone by the time Reaper re-reads them."""
+
+    def __init__(self, *, finishes: bool, status: int | None = None) -> None:
+        super().__init__()
+        self._finishes = finishes
+        self._status = status
+
+    async def delete_episode_files(self, episode_file_ids: list[int]) -> None:
+        if self._finishes:
+            await super().delete_episode_files(episode_file_ids)
+        else:
+            self.delete_calls.append(list(episode_file_ids))
+        raise _call_error("sonarr", self._status)
+
+
+class RadarrThatDoesNotAnswer(FakeRadarr):
+    """Radarr takes the movie delete and never answers."""
+
+    async def delete_movie(
+        self, movie_id: int, *, delete_files: bool = True, add_exclusion: bool = True
+    ) -> None:
+        await super().delete_movie(movie_id, delete_files=delete_files, add_exclusion=add_exclusion)
+        raise _call_error("radarr", None)
+
+
+class TestADeleteThatGetsNoAnswer:
+    """A delete call that times out may still be running on the *arr. The re-read decides
+    what landed, and the rolling budget is charged unless the call was answered."""
+
+    @staticmethod
+    async def _season(session: AsyncSession, sonarr: FakeSonarr) -> tuple[RunReport, ActionStep]:
+        snapshot_id = await _snapshot_one(
+            session, media_key="sonarr:1:42:3", rating_key=800, media_type="season"
+        )
+        run = await _plan(session, snapshot_id)
+        report = await _real(session, run, _gateway(sonarr={1: sonarr}))
+        steps = {s.kind: s for s in await _steps(session, run.id)}
+        return report, steps["sonarr_delete_files"]
+
+    @staticmethod
+    async def _movie(session: AsyncSession, radarr: FakeRadarr) -> tuple[RunReport, ActionStep]:
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+        report = await _real(session, run, _gateway(radarr={1: radarr}))
+        return report, (await _steps(session, run.id))[0]
+
+    async def test_a_season_sonarr_finished_is_verified(self, session: AsyncSession) -> None:
+        report, step = await self._season(session, SonarrThatDoesNotAnswer(finishes=True))
+
+        assert step.state is StepState.VERIFIED
+        assert step.file_removed_at is not None
+        assert report.deleted_items == 1
+
+    async def test_a_season_still_being_deleted_is_charged(self, session: AsyncSession) -> None:
+        report, step = await self._season(session, SonarrThatDoesNotAnswer(finishes=False))
+
+        assert step.state is StepState.FAILED
+        assert step.file_removed_at is not None
+        assert report.library_changed is True
+        reason = from_stored(step.error)
+        assert reason is not None
+        assert reason.id == "error.reap.step.arr_call_failed"
+
+    async def test_an_answered_error_that_removed_nothing_is_not_charged(
+        self, session: AsyncSession
+    ) -> None:
+        report, step = await self._season(
+            session, SonarrThatDoesNotAnswer(finishes=False, status=500)
+        )
+
+        assert step.state is StepState.FAILED
+        assert step.file_removed_at is None
+        assert report.library_changed is False
+
+    async def test_a_movie_radarr_removed_is_verified(self, session: AsyncSession) -> None:
+        report, step = await self._movie(session, RadarrThatDoesNotAnswer())
+
+        assert step.state is StepState.VERIFIED
+        assert report.deleted_items == 1
+
+    async def test_a_movie_still_listed_is_charged(self, session: AsyncSession) -> None:
+        report, step = await self._movie(session, RadarrThatDoesNotAnswer(become_gone=False))
+
+        assert step.state is StepState.FAILED
+        assert step.file_removed_at is not None
+        assert report.library_changed is True
+        reason = from_stored(step.error)
+        assert reason is not None
+        assert reason.id == "error.reap.step.arr_call_failed"
+
+
 # ---------------------------------------------------------------------------
 # The run's terminal totals, written once for a real run
 # ---------------------------------------------------------------------------
