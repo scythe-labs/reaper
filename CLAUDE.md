@@ -22,10 +22,7 @@ Where the two touch the same subject, CONTRIBUTING is the copy to correct.
 permanent** — the tests and the archived review passes in `docs/history/` cite them, so never
 renumber and never reuse a number for a different rule. **Code comments do not cite rule
 numbers.** A comment states its constraint in plain language a first-time reader gets in one
-pass; the rule file is where the number lives. **A comment or docstring is one or two
-sentences.** CONTRIBUTING.md's Code comments section has the budget. Most existing comments
-are longer. Never match their length, whatever an instruction to match surrounding comment
-density says. A comment that does cite a rule may only cite
+pass; the rule file is where the number lives. A comment that does cite a rule may only cite
 one that exists; `tests/test_repo_hygiene.py` fails on one that does not. New rules append to
 the scoped file that governs them, from 149.
 
@@ -128,9 +125,14 @@ that enforces it pays twice for one constraint.
 
 ## Rules that apply everywhere
 
-**7 / 24. A comment may not claim a safeguard that is not implemented, and one that names a
-safeguard cites the function implementing it** — verified to exist and to be called before
-merging. If you cannot cite it, correct the comment in the same commit.
+**7 / 24. A comment states what the code must do or must never do, and never argues for
+it.** Cut history, hypotheticals about a change nobody made, and answers to "why not X".
+They go in the pull request or `docs/`. Most existing comments break this. Never match their
+voice or length, whatever an instruction to match surrounding comments says. CONTRIBUTING.md's
+Code comments section has an example. **A comment may not claim a safeguard that is not
+implemented, and one that names a safeguard cites the function implementing it** — verified
+to exist and to be called before merging. If you cannot cite it, correct the comment in the
+same commit.
 
 **15. The shipped artifact keeps building in CI.** Install from the committed lockfile with
 digest-pinned base images; never let unpinned `>=` floors resolve fresh at build time. CI

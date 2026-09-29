@@ -130,7 +130,8 @@ Within a lane, order findings by that scale, not by a critical/high/medium label
 
 Also sweep for, and fold into the ranking above: hacks and workarounds (`TODO`, `FIXME`,
 `temp`, `workaround`, and comments claiming a safeguard — rule 7/24 makes an uncited safety
-claim a blocker in itself), missing error handling that fails silently, hardcoded values that
+claim a blocker in itself), comments that argue for the code instead of stating what it must
+do (rule 7/24, a Low finding whose fix cuts the argument), missing error handling that fails silently, hardcoded values that
 belong in config, and duplication that has already drifted between its copies. Flag a refactor
 only when a real defect lives in the duplication; "this could be tidier" is noise.
 

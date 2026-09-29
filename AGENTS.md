@@ -26,10 +26,11 @@ working in a tree you have not touched yet.
 
 ## The four things most likely to trip you
 
-Rule 7/24: a comment may not claim a safeguard that isn't implemented. Rule 72: fix every
-sibling of what you fixed, in the same change. Rule 134: a gate is judged by its exit code,
-never the output you kept. The nothing-identifying golden rule: no real titles, hosts, paths,
-usernames, or stats, anywhere in the tree. CLAUDE.md carries all four in full.
+Rule 7/24: a comment states what the code must do and never argues for it, and it may not claim
+a safeguard that isn't implemented. Rule 72: fix every sibling of what you fixed, in the same
+change. Rule 134: a gate is judged by its exit code, never the output you kept. The
+nothing-identifying golden rule: no real titles, hosts, paths, usernames, or stats, anywhere in
+the tree. CLAUDE.md carries all four in full.
 
 ## Ground truth
 
