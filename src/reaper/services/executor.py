@@ -2311,11 +2311,8 @@ class Executor:
         await self._mark_sent(step)
         await radarr.delete_movie(ref.arr_id, delete_files=True, add_exclusion=add_exclusion)
 
-        # Verify the movie is actually gone, always, and immediately.
         gone = await self._movie_is_gone(radarr, ref.arr_id, tmdb_id)
-        # Only a clean read without the movie passes the check. An unreadable re-read
-        # (``None``) is not a pass: nothing was confirmed, and the checklist must not
-        # claim otherwise.
+        # An unreadable re-read is not a pass.
         proven_gone = gone is True
         # ``None`` means the re-read failed, so the file's fate is unknown. Below, that
         # is the keep direction (fail the item, do not claim a verification), but for the
@@ -2406,22 +2403,11 @@ class Executor:
     ) -> bool | None:
         """Did the movie really go? ``True`` gone, ``False`` still there, ``None`` unknown.
 
-        Three answers, not two, because the two ends of "not True" need opposite
-        handling. A clean read without the movie proves the delete took. A clean read
-        that still finds the movie proves it did not: Radarr returned 200 and did
-        nothing. A timeout or a 502 on this re-read proves neither, and collapsing that
-        into ``False`` would claim the movie was still present when nobody had looked,
-        and would also skip the ``file_removed_at`` stamp, so bytes that really were
-        reclaimed would never reach the rolling 30-day budget. ``delete_movie`` already
-        returned without raising by the time this runs, so an unreadable verification
-        reads as the file being gone.
-
-        The read is the list filtered by TMDB id, never the movie's own route: that
-        route answers 404 for every deleted movie, and CrowdSec's probing rule blocks a
-        host after about ten 404s. The rows are matched by Radarr id, so a Radarr that
-        ignored the filter would return every movie and still be read correctly. A
-        movie with no TMDB id reads the whole list, since Radarr would answer the
-        ``tmdbId=0`` filter with an empty list whether or not the movie is there.
+        A failed re-read is ``None``, never ``False``, so the removal is still charged to
+        the rolling budget. It reads the TMDB-filtered list, never the movie's own route:
+        that route answers 404, and CrowdSec blocks a host after about ten of them. Rows
+        match by Radarr id. A movie with no TMDB id reads the whole list, since
+        ``tmdbId=0`` always answers empty.
         """
         try:
             rows = await radarr.movies(tmdb_id=tmdb_id or None)

@@ -178,8 +178,7 @@ class TestEveryListReadRefusesANonListBody:
     async def test_a_tmdb_filtered_read_asks_for_that_movie_only(
         self, httpx2_mock: respx.Router
     ) -> None:
-        """The delete check reads this after every movie delete. The filter is what
-        makes it one row and a 200, where the movie's own route would answer 404."""
+        """The delete check sends the TMDB id as a filter."""
         route = httpx2_mock.get("https://radarr.test/api/v3/movie").mock(
             return_value=httpx.Response(200, json=[])
         )

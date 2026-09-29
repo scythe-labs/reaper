@@ -2119,16 +2119,12 @@ class TestMovieLiveSend:
         assert report.state is RunState.COMPLETED
         assert report.deleted_items == 1
         assert radarr.delete_calls == [1]
-        # Radarr answers a tmdbId=0 filter with an empty list whether or not the movie
-        # is there, so a movie with no TMDB id is checked against the whole list.
-        assert radarr.list_reads == [None]
+        assert radarr.list_reads == [None]  # tmdbId=0 always answers empty
 
     async def test_the_delete_check_reads_the_list_and_never_a_404(
         self, session: AsyncSession
     ) -> None:
-        """A deleted movie's own route answers 404, and CrowdSec's probing rule blocks
-        the Reaper host after about ten of those, which fails the rest of the reap. The
-        check reads the list filtered by the movie's TMDB id, which answers 200."""
+        """CrowdSec blocks a host after about ten 404s, so the check never reads one."""
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
         run = await _plan(session, snapshot_id)
         radarr = FakeRadarr()
@@ -3175,8 +3171,7 @@ class FakeRadarr:
         return movie
 
     async def movies(self, *, tmdb_id: int | None = None) -> list[dict[str, Any]]:
-        # Lists only the movies this fake was asked to delete, since the delete check
-        # never looks for any other. A deleted movie stays listed when it never goes.
+        # Lists only deleted movies that did not go.
         self.list_reads.append(tmdb_id)
         rows = [] if self._become_gone else [await self.movie_by_id(i) for i in self._deleted]
         return [row for row in rows if tmdb_id is None or row.get("tmdbId") == tmdb_id]
@@ -3214,8 +3209,6 @@ class UnreachableAfterDelete(FakeRadarr):
     ``TestARemovalIsCountedEvenWhenTheStepFails`` that each drive it a different way."""
 
     async def movies(self, *, tmdb_id: int | None = None) -> list[dict[str, Any]]:
-        # A timeout carries no status at all, which is exactly the case that must not
-        # collapse into "the movie is still present".
         raise IntegrationError("radarr", "timed out", status=None)
 
 

@@ -487,8 +487,7 @@ _NOT_AN_IDENTITY_READ = {
     # the send from deleting anything. Routing it through ExternalIds.of would only change the
     # spelling, since no cross-system id lookup happens here.
     ("services/executor.py", "tmdbId"),
-    # A query parameter's name, never a read: the delete check asks Radarr for the movie
-    # with the TMDB id the executor exemption above already read.
+    # A query parameter's name, never a read.
     ("clients/arr.py", "tmdbId"),
 }
 

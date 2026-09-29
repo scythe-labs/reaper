@@ -194,10 +194,7 @@ class RadarrClient(ArrClient):
         trakt), so movie ratings cost no extra call and no extra API key. Sonarr does
         not: its ratings are flat TVDB only.
 
-        With ``tmdb_id``, Radarr lists only the movie with that TMDB id, and an empty
-        list once it is deleted. The delete check reads this instead of the movie's own
-        route, which answers 404 once the movie is gone. A reverse proxy running CrowdSec
-        reads a run of 404s as a scan and blocks the Reaper host.
+        With ``tmdb_id``, only that movie, or an empty list once it is deleted.
 
         This is the read that first showed why ``get_list`` must raise instead of
         returning an empty list: an auth proxy's error page, read as an empty list,
