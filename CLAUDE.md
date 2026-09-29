@@ -271,7 +271,8 @@ answer: a test with something to tell you must fail, not warn.
 **Asking whether CI is green** is cheaper than reading a log: `gh pr checks <n>` lists one row per
 job, and `CI gate` is the required check. A `paths` filter that skips a workflow publishes no check
 run. An `if:` that skips a job still publishes one, marked `skipped`, which `CI gate` counts as a
-pass. **Which jobs run depends on what the commit touched.** `ci.yml`'s `changes` job sorts paths
+pass. **Which jobs run depends on the files changed**, a PR's diff or, on a push,
+everything since the branch's last green CI run. `ci.yml`'s `changes` job sorts paths
 into three lanes, first match winning: `manual/*`/`website/*` is site (#589), `docs/*`/`.claude/*`/
 `*.md` is prose, everything else is code. Prose runs `hygiene` alone, code runs `check`, `frontend`
 and `docker`, and site runs `site`, `hygiene` and `frontend` too, since the guards that read

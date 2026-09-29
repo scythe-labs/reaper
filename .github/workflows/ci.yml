@@ -82,6 +82,10 @@ jobs:
   changes:
     name: Decide what to run
     runs-on: ubuntu-latest
+    # `actions: read` lets a push find the last CI run on its branch that succeeded.
+    permissions:
+      contents: read
+      actions: read
     outputs:
       code: ${{ steps.decide.outputs.code }}
       prose: ${{ steps.decide.outputs.prose }}
@@ -108,21 +112,26 @@ jobs:
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
-          PUSH_BEFORE: ${{ github.event.before }}
           PUSH_HEAD: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
+          # A push diffs from the newest CI run on its branch that succeeded, so the
+          # changes of a run a later push cancelled still reach this one.
           if [ "${EVENT}" = "pull_request" ]; then
             base="${PR_BASE}"; head="${PR_HEAD}"
           else
-            base="${PUSH_BEFORE}"; head="${PUSH_HEAD}"
+            base="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow ci.yml \
+              --branch "${GITHUB_REF_NAME}" --event push --status success --limit 1 \
+              --json headSha --jq '.[0].headSha // ""' || true)"
+            head="${PUSH_HEAD}"
           fi
 
           # Every path that leads here means "we cannot tell what changed", and the safe
-          # answer to that is to run everything rather than to skip a gate. A new branch
-          # reports an all-zero `before`, and a force-push can leave a base commit that no
-          # longer exists in this clone.
+          # answer to that is to run everything rather than to skip a gate. A branch with
+          # no successful run yet has no base, and a force-push can leave a base commit
+          # that no longer exists in this clone.
           run_everything() {
             echo "cannot determine the diff ($1); running both lanes"
             echo "code=true"  >> "$GITHUB_OUTPUT"
