@@ -1152,12 +1152,12 @@ the same way every other reason is.
 
 ## Recycle bins
 
-**Choice: Off per instance for one whole reap, put back at every end.**
+**Choice: Off per instance for one whole reap, put back when it ends, retried if that fails.**
 
 A reap can turn off a Sonarr or Radarr recycle bin for each instance the operator ticks on the
 reap confirm. Ticking one adds `SKIP N BINS` to the typed phrase. The bin goes off before the
-first delete and comes back however the reap ends. A hard cancel is the exception: it leaves
-the bin for the next startup, since shutdown does no network work.
+first delete and goes back on when the reap ends. A failed restore or a hard cancel leaves
+the bin off until the next startup, the next reap or the banner. Shutdown does no network work.
 
 Turning a bin off around each delete alone was offered and declined, since it costs two
 settings writes per item. The whole-reap window has a cost the confirm states: an upgrade that
