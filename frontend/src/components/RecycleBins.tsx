@@ -9,15 +9,14 @@ import { api, type InstanceKind, type RunBin } from "../api";
 import { bytes, count } from "../format";
 import { kindLabel } from "./ServiceModal";
 
-/** A run's bins. For a planned run the server reads them live, for any other it returns what
- *  the run recorded as it started. */
-export function useRunBins(runId: number) {
+/** A run's bins. A finished run's are stored and never change, so they are read once per
+ *  sheet. A planned run's are read from the servers each time, so `live` reads them again
+ *  whenever the confirm opens. */
+export function useRunBins(runId: number, live = false) {
   return useQuery({
     queryKey: ["run-bins", runId],
     queryFn: () => api.runBins(runId),
-    // Read once per sheet. A planned run's bins are read live when the confirm opens, and a
-    // finished run's are stored and never change.
-    staleTime: Infinity,
+    staleTime: live ? 0 : Infinity,
   });
 }
 
@@ -42,7 +41,7 @@ export function binDays(bins: RunBin[]): number | null | undefined {
 /** The recycle bin list on the reap confirm: one row per instance, then when the space frees. */
 export function ConfirmBins({ runId }: { runId: number }) {
   const { t } = useTranslation();
-  const { data, isPending } = useRunBins(runId);
+  const { data, isPending } = useRunBins(runId, true);
   if (isPending) return null;
   if (!data) return <p className="help bins-failed">{t("recycleBins.loadFailed")}</p>;
   const bins = data.bins;

@@ -107,6 +107,22 @@ describe("the reap confirm's recycle bin list", () => {
   });
 });
 
+describe("the confirm reads the bins again", () => {
+  it("asks the servers again when the confirm opens a second time", async () => {
+    apiMock.runBins.mockReset();
+    apiMock.runBins.mockResolvedValueOnce({ bins: [bin({ bin: "unknown" })] });
+    apiMock.runBins.mockResolvedValueOnce({ bins: [bin({})] });
+    const first = renderWithProviders(<ConfirmBins runId={7} />);
+    await screen.findByText("Couldn't read its bin");
+    first.unmount();
+
+    renderWithProviders(<ConfirmBins runId={7} />, { client: first.client });
+
+    expect(await screen.findByText("Frees in 3 days")).toBeInTheDocument();
+    expect(apiMock.runBins).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("a past run's recycle bin list", () => {
   it("says what each instance did with the files", async () => {
     apiMock.runBins.mockResolvedValue({

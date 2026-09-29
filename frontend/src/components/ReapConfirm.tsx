@@ -150,6 +150,7 @@ export function ReapConfirm({
     // items. A tick that survived that would be consent carried from a plan the operator
     // is no longer looking at.
     setTrashAcked(false);
+    void queryClient.invalidateQueries({ queryKey: ["run-bins", run.id] });
     dry.mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run.id, run.confirmation_phrase]);
