@@ -1520,7 +1520,7 @@ export interface PersonTitle {
   item_id: number | null;
   group_key: string | null;
   co_requesters: string[];
-  /** A `/api/poster/{key}` URL, or `null` when the title has no poster key. */
+  /** A `/api/poster/{key}.jpg` URL, or `null` when the title has no poster key. */
   poster_url: string | null;
 }
 
@@ -2076,6 +2076,56 @@ const put = <T>(path: string, body: unknown): Promise<T> =>
 
 const del = <T>(path: string): Promise<T> => request<T>(path, { method: "DELETE" });
 
+/** The most shows one `/api/groups` request carries. `GROUP_BATCH_MAX` in `api/review.py`
+ *  is the server's bound, and `test_api_type_mirror.py` pins the two together. */
+const GROUP_BATCH_MAX = 100;
+
+type Waiter = { resolve: (group: Group) => void; reject: (error: unknown) => void };
+let groupWaiters: Map<string, Waiter[]> | null = null;
+
+function group(key: string): Promise<Group> {
+  return new Promise((resolve, reject) => {
+    if (!groupWaiters) {
+      groupWaiters = new Map();
+      setTimeout(flushGroups, 0);
+    }
+    groupWaiters.set(key, [...(groupWaiters.get(key) ?? []), { resolve, reject }]);
+  });
+}
+
+function flushGroups(): void {
+  const batch = groupWaiters!;
+  groupWaiters = null;
+  const keys = [...batch.keys()];
+  for (let i = 0; i < keys.length; i += GROUP_BATCH_MAX) {
+    const chunk = keys.slice(i, i + GROUP_BATCH_MAX);
+    const query = new URLSearchParams(chunk.map((key) => ["key", key]));
+    request<Group[]>(`/api/groups?${query.toString()}`).then(
+      (groups) => {
+        const found = new Map((groups ?? []).map((g) => [g.group_key, g]));
+        for (const key of chunk) {
+          const g = found.get(key);
+          for (const w of batch.get(key)!) {
+            if (g) w.resolve(g);
+            // The server leaves out a show the latest scan does not hold.
+            else
+              w.reject(
+                new ApiError(
+                  404,
+                  "That show is not in the latest scan.",
+                  "error.review.show_not_in_scan",
+                ),
+              );
+          }
+        }
+      },
+      (error: unknown) => {
+        for (const key of chunk) for (const w of batch.get(key)!) w.reject(error);
+      },
+    );
+  }
+}
+
 /** Where plex.tv should send the sign-in window once the operator is done with it.
  *
  *  That page closes the window, which is the only way Reaper can: the window is
@@ -2135,8 +2185,9 @@ export const api = {
     return page;
   },
   candidate: (id: number) => request<CandidateDetail>(`/api/candidates/${id}`),
-  /** One show, whole: every season in the latest snapshot, across all lanes. */
-  group: (key: string) => request<Group>(`/api/groups/${encodeURIComponent(key)}`),
+  /** One show, whole: every season in the latest snapshot, across all lanes. Calls made in
+   *  the same tick share one request. */
+  group,
 
   // --- setup + settings ---------------------------------------------------
   setupStatus: () => request<SetupStatus>("/api/setup/status"),

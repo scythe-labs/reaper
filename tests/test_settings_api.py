@@ -28,6 +28,7 @@ from starlette.requests import Request
 import reaper.api.settings
 import reaper.refusal
 from reaper.api.plex import PlexUpdateIn, update_plex_settings
+from reaper.api.poster import PLACEHOLDER_PNG
 from reaper.auth.ratelimit import argon2_gate
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient, PlexError, PlexSection
@@ -1357,11 +1358,12 @@ class TestRunJob:
 
 
 class TestPoster:
-    def test_no_tautulli_means_a_404_not_a_crash(self, client: TestClient) -> None:
-        """With nothing to fetch artwork from, the poster route 404s and the card falls
-        back to a placeholder. It never 500s.
-        """
-        assert client.get("/api/poster/123").status_code == 404
+    def test_no_tautulli_answers_the_placeholder(self, client: TestClient) -> None:
+        """With nothing to fetch artwork from, the poster route answers the 1x1 placeholder
+        with a 200, which the card reads as no image. It never 500s."""
+        resp = client.get("/api/poster/123.jpg")
+        assert resp.status_code == 200
+        assert resp.content == PLACEHOLDER_PNG
 
 
 class TestPlexStatus:

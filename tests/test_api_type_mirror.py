@@ -61,6 +61,7 @@ from pydantic import BaseModel
 
 import reaper.api
 from reaper.api.backup import RestoreSummaryOut
+from reaper.api.review import GROUP_BATCH_MAX
 from reaper.api.schemas import (
     CandidateLinkOut,
     LinksOut,
@@ -1432,3 +1433,13 @@ class TestAWireModelReadsOnlyFieldsItsRecordCarries:
             f"the sites building a wire model off a service record are now {sorted(sites)}. "
             "Add or remove its pair in COLLAPSED_PAIRS above, then move this list."
         )
+
+
+def test_the_client_splits_show_reads_at_the_server_bound() -> None:
+    """``api.ts`` batches ``/api/groups`` at the same size the route accepts, or a full
+    batch is refused whole and every expanded show on the page fails to load."""
+    declared = re.search(
+        r"^const GROUP_BATCH_MAX = (\d+);$", API_TS.read_text(encoding="utf-8"), re.MULTILINE
+    )
+    assert declared is not None, "frontend/src/api.ts no longer declares GROUP_BATCH_MAX"
+    assert int(declared.group(1)) == GROUP_BATCH_MAX

@@ -639,7 +639,7 @@ class PersonTitle:
     group_key: str | None
     co_requesters: tuple[str, ...]
     poster_url: str | None
-    """A ``/api/poster/{key}`` URL, or ``None`` when the title carries no poster key. The
+    """A ``/api/poster/{key}.jpg`` URL, or ``None`` when the title carries no poster key. The
     panel shows a film-strip placeholder instead of a broken image in that case."""
 
 
@@ -1183,7 +1183,7 @@ async def build_person_detail(
         # The poster comes from Plex, proxied by our own image route: the show's key for a
         # season, since many have no poster of their own, or the item's own key otherwise.
         poster_key = scoped[0].poster_rating_key or scoped[0].plex_rating_key
-        poster_url = f"/api/poster/{poster_key}" if poster_key else None
+        poster_url = f"/api/poster/{poster_key}.jpg" if poster_key else None
         if len(scoped) == 1:
             item_id: int | None = scoped[0].candidate_id
             group_key: str | None = None

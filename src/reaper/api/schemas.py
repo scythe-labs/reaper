@@ -1530,7 +1530,7 @@ class PersonTitleOut(BaseModel):
     group_key: str | None = None
     co_requesters: list[str]
     poster_url: str | None = None
-    """A ``/api/poster/{key}`` URL, or null when the title has no poster key."""
+    """A ``/api/poster/{key}.jpg`` URL, or null when the title has no poster key."""
 
 
 class PersonDetailOut(BaseModel):

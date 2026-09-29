@@ -318,11 +318,9 @@ MESSAGES: dict[str, str] = {
     "error.leaving_soon.skip_unreachable": "Reaper couldn't reach Plex",
     "error.leaving_soon.skip_failed": "the update didn't finish",
     # -----------------------------------------------------------------------------
-    # Logs, poster artwork, Plex trash (read-only surfaces).
+    # Logs, Plex trash (read-only surfaces).
     # -----------------------------------------------------------------------------
     "error.logs.bad_level": "Pick Debug, Info, or Warning.",
-    "error.poster.no_tautulli": "No Tautulli configured to fetch artwork from.",
-    "error.poster.not_found": "No artwork for this item.",
     # -----------------------------------------------------------------------------
     # Whitelist / overrides.
     # -----------------------------------------------------------------------------
@@ -449,7 +447,6 @@ MESSAGES: dict[str, str] = {
     # -----------------------------------------------------------------------------
     "error.review.no_scan": "No scan has run yet.",
     "error.review.candidate_not_found": "No such candidate.",
-    "error.review.show_not_in_scan": "That show is not in the latest scan.",
     # -----------------------------------------------------------------------------
     # Settings: instances, schedule, safety, general.
     # -----------------------------------------------------------------------------

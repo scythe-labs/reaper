@@ -261,8 +261,6 @@
   "error.policy.value_not_numeric": "Shown in the Policy editor when saving the policy fails validation. `{value}` is the value the operator typed or the field itself computed, exactly as it was read.",
   "error.policy.weights_over_100": "Shown in the Policy editor when saving the policy fails validation. `{total}` is the removal weights' current total, a plain number out of 100. `{amount}` is how many removal points to add or take away, a plain number.",
   "error.policy.weights_under_100": "Shown in the Policy editor when saving the policy fails validation. `{total}` is the removal weights' current total, a plain number out of 100. `{amount}` is how many removal points to add or take away, a plain number.",
-  "error.poster.no_tautulli": "Shown when a card's poster art fails to load, in the review queue.",
-  "error.poster.not_found": "Shown when a card's poster art fails to load, in the review queue.",
   "error.reap.already_claimed": "Shown while a reap runs, on the Reap page or the Jobs panel. `{run_id}` is the run's own id; only a log or an API client is likely to see this one.",
   "error.reap.bytes_over_rolling_cap": "Shown while a reap runs, on the Reap page or the Jobs panel. `{gb}` is a size in gigabytes, one decimal place. `{past_gb}` is how many gigabytes were already deleted in the current 30-day window, one decimal place. `{cap_gb}` is the operator's own cap in gigabytes, one decimal place.",
   "error.reap.bytes_over_run_cap": "Shown while a reap runs, on the Reap page or the Jobs panel. `{gb}` is a size in gigabytes, one decimal place. `{cap_gb}` is the operator's own cap in gigabytes, one decimal place.",

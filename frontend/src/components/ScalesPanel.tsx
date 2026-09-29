@@ -15,6 +15,7 @@ import i18next from "../i18n";
 import { BalanceBar } from "./BalanceBar";
 import { PosterFallback } from "./PosterFallback";
 import { ExternalMark } from "./queueIcons";
+import { onPlaceholder } from "./artFallback";
 import { UnmatchedList } from "./UnmatchedList";
 import { type WatchReach, reachIsMeasured, reachNote, watchReach } from "./watchReach";
 import { PanelFallback, WhyShell } from "./WhyShell";
@@ -37,7 +38,13 @@ function Poster({ url }: { url: string | null }) {
   return (
     <span className="scales-poster" aria-hidden="true">
       {url && !failed ? (
-        <img src={url} alt="" loading="lazy" onError={() => setFailed(true)} />
+        <img
+          src={url}
+          alt=""
+          loading="lazy"
+          onError={() => setFailed(true)}
+          onLoad={onPlaceholder(() => setFailed(true))}
+        />
       ) : (
         <PosterFallback />
       )}

@@ -985,10 +985,6 @@
       "weights_over_100": "Your rules add up to {total} points. Take {amount} away before saving. Removal points always total 100, so each one is worth the same wherever you spend it.",
       "weights_under_100": "Your rules add up to {total} points. Give out the other {amount} before saving. Removal points always total 100, so each one is worth the same wherever you spend it."
     },
-    "poster": {
-      "no_tautulli": "No Tautulli configured to fetch artwork from.",
-      "not_found": "No artwork for this item."
-    },
     "reap": {
       "already_claimed": "Run {run_id} was already claimed by another request. A run executes once.",
       "bytes_over_rolling_cap": "This run would delete {gb} GB on top of the {past_gb} GB already deleted in the last 30 days, over the rolling cap of {cap_gb} GB. It stops rather than deleting just part. Wait for the window to pass, raise the cap, or turn limits off in Policy, under Pace and limits.",

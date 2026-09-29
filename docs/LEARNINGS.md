@@ -4613,6 +4613,18 @@ The proxy then answered every Sonarr, Radarr and Tautulli call with a captcha pa
   movie is gone (Radarr's `MovieController.AllMovie`). The check matches rows by Radarr id,
   so a Radarr that ignored the filter would still read correctly.
 
+## The review queue reads as crawling to CrowdSec (2026-09-29)
+
+The same proxy can also block the operator's browser. `crowdsecurity/http-crawl-non_statics`
+counts requests whose path has no static file extension, and `http-probing` counts 404s.
+
+- **Posters were both.** `/api/poster/{key}` had no extension, and a title with no artwork
+  answered 404. A queue of a few hundred cards sent a few hundred of each.
+- **Expanded shows sent one `/api/groups/{key}` each**, so a page of cards was a page of
+  non-static requests.
+- **The fix.** Posters live at `/api/poster/{key}.jpg` and a miss answers a 1x1 PNG with a 200.
+  The client batches every show read made in one tick into one `/api/groups` request.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

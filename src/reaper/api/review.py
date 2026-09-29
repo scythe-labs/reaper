@@ -19,7 +19,7 @@ import enum
 import json
 import re
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, cast
 
 import structlog
 from fastapi import APIRouter, Query, Request
@@ -1392,7 +1392,7 @@ def _candidate_out(
         # (poster_rating_key), since many seasons have no poster of their own. A movie
         # falls back to its own key.
         poster_url=(
-            f"/api/poster/{r.poster_rating_key or r.plex_rating_key}"
+            f"/api/poster/{r.poster_rating_key or r.plex_rating_key}.jpg"
             if (r.poster_rating_key or r.plex_rating_key)
             else None
         ),
@@ -1587,96 +1587,119 @@ async def candidate_detail(request: Request, candidate_id: int) -> CandidateDeta
         )
 
 
-@router.get("/groups/{group_key}", tags=[api_tags.REVIEW])
-async def group_detail(request: Request, group_key: str) -> GroupOut:
-    """One show, whole: every season row in the latest snapshot, across all lanes.
+#: The most shows one ``/api/groups`` request answers. ``frontend/src/api.ts`` splits its
+#: batches at the same number, and ``test_api_type_mirror.py`` pins the two together.
+GROUP_BATCH_MAX = 100
+
+
+@router.get("/groups", tags=[api_tags.REVIEW])
+async def groups(
+    request: Request,
+    key: Annotated[list[str], Query(min_length=1, max_length=GROUP_BATCH_MAX)],
+) -> list[GroupOut]:
+    """Each requested show, whole: every season row in the latest snapshot, across all lanes.
 
     Each queue tab lists only its own lane, so this is where "which seasons stay and
-    which go" is answered in one place. The show info panel and the expanded show card
-    both read it. These are frozen candidate rows only. Nothing here re-decides a verdict.
+    which go" is answered in one place. The show info panel and the expanded show cards
+    read it, one request per page of cards. A key with no rows in the latest scan is left
+    out of the answer. These are frozen candidate rows only. Nothing here re-decides a
+    verdict.
     """
     async with session_factory(request)() as session:
         snapshot = await newest_snapshot(session)
         if snapshot is None:
             refuse(404, "error.review.no_scan")
-        rows = (
-            (
-                await session.execute(
-                    select(Candidate).where(
-                        Candidate.snapshot_id == snapshot.id,
-                        Candidate.group_key == group_key,
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        if not rows:
-            refuse(404, "error.review.show_not_in_scan")
-
-        flagged = {
-            f.media_key: f.first_flagged_at
-            for f in (
-                await session.execute(
-                    select(FirstFlagged).where(
-                        FirstFlagged.media_key.in_([r.media_key for r in rows])
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        }
         decisions = await whitelist.overrides(session)
         expiries = await whitelist.spare_expiries(session)
+        out: list[GroupOut] = []
+        for group_key in dict.fromkeys(key):
+            group = await _group_out(session, snapshot.id, group_key, decisions, expiries)
+            if group is not None:
+                out.append(group)
+        return out
 
-        seasons = [
-            _candidate_out(
-                r,
-                flagged.get(r.media_key),
-                decisions,
-                expiries=expiries,
+
+async def _group_out(
+    session: AsyncSession,
+    snapshot_id: int,
+    group_key: str,
+    decisions: dict[str, str],
+    expiries: dict[str, datetime | None],
+) -> GroupOut | None:
+    rows = (
+        (
+            await session.execute(
+                select(Candidate).where(
+                    Candidate.snapshot_id == snapshot_id,
+                    Candidate.group_key == group_key,
+                )
             )
-            for r in rows
-        ]
-        seasons.sort(key=lambda c: (c.season_number is None, c.season_number or 0))
-
-        # The show-level status line: a season deliberately left for the owner wins (that
-        # is the line that wants eyes), else the highest-scoring season, the same member
-        # the collapsed card leads with.
-        lead = next(
-            (s for s in seasons if s.chip is not None and s.chip.tone == "look"),
-            max(seasons, key=lambda c: c.score),
         )
-        lead_row = next(r for r in rows if r.id == lead.id)
-        # The whole-show spare's countdown, when a show-level spare is set. None for a
-        # forever show-spare, or none at all. The panel reads it only when show_override is
-        # "spare". Same key, same source as the decision below.
-        _show_spare_exp = expiries.get(group_key) if decisions.get(group_key) == "spare" else None
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return None
 
-        return GroupOut(
-            group_key=group_key,
-            title=next((r.group_title for r in rows if r.group_title), rows[0].title),
-            year=min((c.year for c in seasons if c.year), default=None),
-            poster_url=lead.poster_url,
-            summary=next((r.summary for r in rows if r.summary), None),
-            size_bytes=sum(c.size_bytes for c in seasons if c.size_bytes is not None),
-            unknown_size_seasons=sum(1 for c in seasons if c.size_bytes is None),
-            reason_key=lead.reason_key,
-            # A show-level fact: every season shares the show's library, so the first row
-            # that carries one answers for the whole show (None if none do).
-            library=next((r.library_title for r in rows if r.library_title), None),
-            chip=lead.chip,
-            # The show's own decision (the show key), which the panel's whole-show control
-            # toggles. Read straight from the whitelist, never rolled up from the seasons'
-            # own marks. The control clears only this key, so lighting it from an aggregate
-            # it cannot clear would show a state the control has no way to undo.
-            show_override=decisions.get(group_key),
-            show_spare_expires_at=_show_spare_exp.isoformat() if _show_spare_exp else None,
-            links=await _deep_links(session, lead_row),
-            # A show-level fact, so any season carrying it answers for the whole show:
-            # one reading of the series is stamped onto every one of its seasons in the
-            # same scan. Skipping the rows that carry nothing keeps a snapshot taken
-            # before this field existed from blanking a group whose other rows have it.
-            show_status=next((c.show_status for c in seasons if c.show_status), None),
-            seasons=seasons,
+    flagged = {
+        f.media_key: f.first_flagged_at
+        for f in (
+            await session.execute(
+                select(FirstFlagged).where(FirstFlagged.media_key.in_([r.media_key for r in rows]))
+            )
         )
+        .scalars()
+        .all()
+    }
+
+    seasons = [
+        _candidate_out(
+            r,
+            flagged.get(r.media_key),
+            decisions,
+            expiries=expiries,
+        )
+        for r in rows
+    ]
+    seasons.sort(key=lambda c: (c.season_number is None, c.season_number or 0))
+
+    # The show-level status line: a season deliberately left for the owner wins (that
+    # is the line that wants eyes), else the highest-scoring season, the same member
+    # the collapsed card leads with.
+    lead = next(
+        (s for s in seasons if s.chip is not None and s.chip.tone == "look"),
+        max(seasons, key=lambda c: c.score),
+    )
+    lead_row = next(r for r in rows if r.id == lead.id)
+    # The whole-show spare's countdown, when a show-level spare is set. None for a
+    # forever show-spare, or none at all. The panel reads it only when show_override is
+    # "spare". Same key, same source as the decision below.
+    _show_spare_exp = expiries.get(group_key) if decisions.get(group_key) == "spare" else None
+
+    return GroupOut(
+        group_key=group_key,
+        title=next((r.group_title for r in rows if r.group_title), rows[0].title),
+        year=min((c.year for c in seasons if c.year), default=None),
+        poster_url=lead.poster_url,
+        summary=next((r.summary for r in rows if r.summary), None),
+        size_bytes=sum(c.size_bytes for c in seasons if c.size_bytes is not None),
+        unknown_size_seasons=sum(1 for c in seasons if c.size_bytes is None),
+        reason_key=lead.reason_key,
+        # A show-level fact: every season shares the show's library, so the first row
+        # that carries one answers for the whole show (None if none do).
+        library=next((r.library_title for r in rows if r.library_title), None),
+        chip=lead.chip,
+        # The show's own decision (the show key), which the panel's whole-show control
+        # toggles. Read straight from the whitelist, never rolled up from the seasons'
+        # own marks. The control clears only this key, so lighting it from an aggregate
+        # it cannot clear would show a state the control has no way to undo.
+        show_override=decisions.get(group_key),
+        show_spare_expires_at=_show_spare_exp.isoformat() if _show_spare_exp else None,
+        links=await _deep_links(session, lead_row),
+        # A show-level fact, so any season carrying it answers for the whole show:
+        # one reading of the series is stamped onto every one of its seasons in the
+        # same scan. Skipping the rows that carry nothing keeps a snapshot taken
+        # before this field existed from blanking a group whose other rows have it.
+        show_status=next((c.show_status for c in seasons if c.show_status), None),
+        seasons=seasons,
+    )

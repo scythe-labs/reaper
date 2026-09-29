@@ -217,14 +217,14 @@ class TestTheShowCardCarriesTheStatus:
     ) -> None:
         """Any season answers for the show. One reading of the series is stamped onto
         every one of its seasons in the same scan."""
-        group = client.get(f"/api/groups/{group_key}").json()
+        group = client.get("/api/groups", params={"key": group_key}).json()[0]
 
         assert group["show_status"] == expected
 
     def test_a_partly_filled_group_still_reports_the_status(self, client: TestClient) -> None:
         """The ended show has a season with nothing stored. The rollup must skip it
         rather than let row order blank a status the group plainly has."""
-        group = client.get("/api/groups/sonarr:5:1").json()
+        group = client.get("/api/groups", params={"key": "sonarr:5:1"}).json()[0]
 
         assert [s["show_status"] for s in group["seasons"]] == ["ended", None]
         assert group["show_status"] == "ended"
@@ -235,7 +235,7 @@ class TestTheShowCardCarriesTheStatus:
         """Same shape as the test above, in the opposite order. The leading season is
         the empty one here. Reading only the first season would report nothing, so the
         pair pins that the rollup looks at every season rather than at row order."""
-        group = client.get("/api/groups/sonarr:5:4").json()
+        group = client.get("/api/groups", params={"key": "sonarr:5:4"}).json()[0]
 
         assert [s["show_status"] for s in group["seasons"]] == [None, "ended"]
         assert group["show_status"] == "ended"

@@ -335,12 +335,12 @@ export function Synopsis({ text }: { text: string }) {
  *  a title has no separate art, and to nothing at all when it has neither. Shared with the
  *  show panel. */
 export function WhyHero({ posterUrl }: { posterUrl: string }) {
-  const { src, onError } = useArtFallback(posterUrl);
+  const { src, onError, onLoad } = useArtFallback(posterUrl);
 
   if (!src) return null;
   return (
     <div className="why-hero">
-      <img src={src} alt="" aria-hidden="true" onError={onError} />
+      <img src={src} alt="" aria-hidden="true" onError={onError} onLoad={onLoad} />
       <div className="why-hero-fade" aria-hidden="true" />
     </div>
   );

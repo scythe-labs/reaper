@@ -57,7 +57,7 @@ import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { useReviewFreshness } from "../useReviewFreshness";
 import { cardReason, dormantSpan } from "../why";
-import { useArtFallback } from "./artFallback";
+import { onPlaceholder, useArtFallback } from "./artFallback";
 import { CardOpen } from "./CardOpen";
 import { CollectionChip } from "./CollectionChip";
 import { FilterMenu } from "./FilterMenu";
@@ -230,7 +230,7 @@ function FilterChip({
 /** The dimmed backdrop behind a card. Tries the wide Plex art first and falls back to the
  *  poster when a title has no separate backdrop; a paired scrim keeps the text readable. */
 function Backdrop({ posterUrl }: { posterUrl: string | null }) {
-  const { src, onError } = useArtFallback(posterUrl);
+  const { src, onError, onLoad } = useArtFallback(posterUrl);
 
   if (!src) return null;
   return (
@@ -242,6 +242,7 @@ function Backdrop({ posterUrl }: { posterUrl: string | null }) {
         aria-hidden="true"
         loading="lazy"
         onError={onError}
+        onLoad={onLoad}
       />
       <div className="card-scrim" aria-hidden="true" />
     </>
@@ -266,7 +267,14 @@ export function Poster({ url, alt }: { url: string | null; alt: string }) {
     );
   }
   return (
-    <img className="poster" src={url} alt={alt} loading="lazy" onError={() => setBroken(true)} />
+    <img
+      className="poster"
+      src={url}
+      alt={alt}
+      loading="lazy"
+      onError={() => setBroken(true)}
+      onLoad={onPlaceholder(() => setBroken(true))}
+    />
   );
 }
 

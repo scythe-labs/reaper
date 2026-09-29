@@ -18,6 +18,7 @@ Read-only, like everything Reaper does to Tautulli and Plex.
 from __future__ import annotations
 
 import asyncio
+import base64
 from typing import cast
 
 import structlog
@@ -26,7 +27,6 @@ from sqlalchemy import select
 
 from reaper.api import tags as api_tags
 from reaper.api.deps import state_singleton
-from reaper.api.errors import refuse
 from reaper.clients.tautulli import TautulliClient
 from reaper.config import RuntimeSafety
 from reaper.crypto import SecretBox
@@ -94,17 +94,36 @@ async def close_artwork_client(app: FastAPI) -> None:
         await cached[1].aclose()
 
 
+#: A 1x1 transparent PNG, answered with a 200 when there is no image to relay. The UI
+#: treats an image one pixel wide as missing and draws its own placeholder.
+PLACEHOLDER_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII="
+)
+
+
+def _placeholder() -> Response:
+    return Response(
+        content=PLACEHOLDER_PNG,
+        media_type="image/png",
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
 # These are image bytes, not JSON. Without this response class, the route would publish
 # ``application/json`` with an empty schema, telling a script author to parse a PNG as
 # JSON. The download routes in ``api/logs.py`` and ``api/backup.py`` need the same
 # response class for the same reason.
 @router.get(
-    "/poster/{rating_key}",
+    "/poster/{rating_key}.jpg",
     response_class=Response,
     responses={200: {"content": {"image/*": {}}}},
 )
 async def poster(request: Request, rating_key: int, kind: str = "poster") -> Response:
-    """Return one item's Plex artwork as image bytes, or 404 so the UI shows a placeholder.
+    """Return one item's Plex artwork as image bytes, or :data:`PLACEHOLDER_PNG` when there
+    is none.
+
+    The ``.jpg`` suffix and the 200 on a miss let a proxy's crawl detection read the review
+    queue's few hundred poster requests as static files.
 
     ``kind=poster`` (default) is the tall cover. ``kind=art`` is the wide backdrop the
     review cards and the why-panel header fade behind their text. The response caches
@@ -130,13 +149,13 @@ async def poster(request: Request, rating_key: int, kind: str = "poster") -> Res
         )
 
     if row is None:
-        refuse(404, "error.poster.no_tautulli")
+        return _placeholder()
 
     client = await _artwork_client(request.app, row, box)
     result = await (client.art(rating_key) if kind == "art" else client.poster(rating_key))
 
     if result is None:
-        refuse(404, "error.poster.not_found")
+        return _placeholder()
 
     content, content_type = result
     # The bytes are relayed from Plex on Reaper's own origin, so this pins how the

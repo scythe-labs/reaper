@@ -11,24 +11,40 @@ import { Poster } from "./ReviewQueue";
 
 describe("the poster tile", () => {
   it("shows the art when it loads", () => {
-    render(<Poster url="/api/poster/1" alt="Example Show" />);
+    render(<Poster url="/api/poster/1.jpg" alt="Example Show" />);
     expect(screen.getByRole("img", { name: "Example Show" })).toBeInTheDocument();
   });
 
   it("falls back to the placeholder when the image fails", () => {
-    render(<Poster url="/api/poster/1" alt="Example Show" />);
+    render(<Poster url="/api/poster/1.jpg" alt="Example Show" />);
     fireEvent.error(screen.getByRole("img", { name: "Example Show" }));
     expect(screen.queryByRole("img", { name: "Example Show" })).not.toBeInTheDocument();
   });
 
   it("tries again for the next item rather than staying broken", () => {
-    const { rerender } = render(<Poster url="/api/poster/1" alt="Example Show" />);
+    const { rerender } = render(<Poster url="/api/poster/1.jpg" alt="Example Show" />);
     fireEvent.error(screen.getByRole("img", { name: "Example Show" }));
     expect(screen.queryByRole("img", { name: "Example Show" })).not.toBeInTheDocument();
 
     // The same row, now showing a different item: the art must be attempted again.
-    rerender(<Poster url="/api/poster/2" alt="Another Show" />);
+    rerender(<Poster url="/api/poster/2.jpg" alt="Another Show" />);
     expect(screen.getByRole("img", { name: "Another Show" })).toBeInTheDocument();
+  });
+
+  it("falls back when the server answers its one-pixel placeholder", () => {
+    render(<Poster url="/api/poster/1.jpg" alt="Example Show" />);
+    const img = screen.getByRole("img", { name: "Example Show" });
+    Object.defineProperty(img, "naturalWidth", { value: 1 });
+    fireEvent.load(img);
+    expect(screen.queryByRole("img", { name: "Example Show" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a real image that loads", () => {
+    render(<Poster url="/api/poster/1.jpg" alt="Example Show" />);
+    const img = screen.getByRole("img", { name: "Example Show" });
+    Object.defineProperty(img, "naturalWidth", { value: 300 });
+    fireEvent.load(img);
+    expect(screen.getByRole("img", { name: "Example Show" })).toBeInTheDocument();
   });
 
   it("shows the placeholder when there is no art to fetch", () => {

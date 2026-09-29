@@ -6528,7 +6528,7 @@ _MEMBERSHIP_INVENTORY: dict[str, tuple[int, str]] = {
     ),
     "src/reaper/api/review.py::_group_rollups": (2, "chunked"),
     "src/reaper/api/review.py::_decided_keys": (2, "chunked"),
-    "src/reaper/api/review.py::group_detail": (1, "bounded: the seasons of one show"),
+    "src/reaper/api/review.py::_group_out": (1, "bounded: the seasons of one show"),
     "src/reaper/api/runs.py::_run_outcomes": (
         1,
         "bounded: the fixed run_totals.TERMINAL_DELETE_KINDS set",
@@ -7825,12 +7825,12 @@ def _refusal_code_sites() -> dict[str, list[str]]:
     return sites
 
 
-_EXPECTED_REFUSAL_CODES = 313
+_EXPECTED_REFUSAL_CODES = 310
 #: Multiple call sites can raise the same code, such as `config.RuntimeSafety.why_blocked`
 #: reusing an `error.safety.*` code the executor's own backstop already raises, or
 #: `update_check._incomplete()` building one `error.integration.update_check_incomplete`
 #: for several callers. So the site count moves independently of the code count.
-_EXPECTED_REFUSAL_SITES = 365
+_EXPECTED_REFUSAL_SITES = 362
 
 
 def test_every_refusal_code_has_a_raiser_and_a_catalog_entry() -> None:
@@ -7876,23 +7876,25 @@ def test_every_refusal_code_has_a_raiser_and_a_catalog_entry() -> None:
     )
 
 
-#: The three codes `frontend/src/api.ts` sets itself, for a body that carried no coded reason
-#: at all (no reply, a reply with no reason, a reply the browser could not parse). Nothing
-#: under `src/reaper` ever raises them, since there is no Python raise site for "the browser
-#: couldn't reach me", so they are the one deliberate exception to the two-way equality
-#: below, the same shape `NARROWED`/`WIDENED`/`PENDING_PHASE_8B` hold their own deliberate
-#: exceptions in `tests/test_api_type_mirror.py`.
-_TRANSPORT_ONLY_CODES = frozenset(
+#: The codes `frontend/src/api.ts` sets itself, which nothing under `src/reaper` raises. The
+#: three `error.transport.*` codes name a body that carried no coded reason at all (no reply,
+#: a reply with no reason, a reply the browser could not parse).
+#: `error.review.show_not_in_scan` names a show the batched `/api/groups` read left out of
+#: its answer. They are the one deliberate exception to the two-way equality below, the same
+#: shape `NARROWED`/`WIDENED`/`PENDING_PHASE_8B` hold their own deliberate exceptions in
+#: `tests/test_api_type_mirror.py`.
+_CLIENT_ONLY_CODES = frozenset(
     {
         "error.transport.server_unreachable",
         "error.transport.request_failed",
         "error.transport.bad_reply",
+        "error.review.show_not_in_scan",
     }
 )
 
-#: `len(MESSAGES) + len(_TRANSPORT_ONLY_CODES)`, pinned so the population this test collects
+#: `len(MESSAGES) + len(_CLIENT_ONLY_CODES)`, pinned so the population this test collects
 #: cannot silently shrink to match a catalog that lost entries.
-_EXPECTED_CATALOG_ERROR_KEYS = 316
+_EXPECTED_CATALOG_ERROR_KEYS = 314
 
 
 def test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose() -> None:
@@ -7902,7 +7904,7 @@ def test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose() -> None
     has a raise site. This proves the other hop: every ``MESSAGES`` code is also a leaf of
     ``ui.json``'s ``error.*`` namespace (which the browser composes via ``why.ts``'s
     ``composeIn("error", ...)``), and every ``error.*`` leaf is one of those codes or a
-    declared transport-only exception. Never an orphan a translator was handed for nothing,
+    declared client-only exception. Never an orphan a translator was handed for nothing,
     and never a code the browser has no words for.
     """
     catalog_error_keys = {key for key, _ in _ui_catalog_leaves() if key.startswith("error.")}
@@ -7918,16 +7920,16 @@ def test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose() -> None
         "Add each to the catalog's error section so the browser can compose it."
     )
 
-    orphaned = catalog_error_keys - backend - _TRANSPORT_ONLY_CODES
+    orphaned = catalog_error_keys - backend - _CLIENT_ONLY_CODES
     assert orphaned == set(), (
         f"ui.json error.* keys naming no reaper.refusal.MESSAGES code and not a declared "
-        f"transport-only code: {sorted(orphaned)}. Either the code is dead on the server "
-        "side, or _TRANSPORT_ONLY_CODES needs it named."
+        f"client-only code: {sorted(orphaned)}. Either the code is dead on the server "
+        "side, or _CLIENT_ONLY_CODES needs it named."
     )
 
-    missing_transport = _TRANSPORT_ONLY_CODES - catalog_error_keys
-    assert missing_transport == set(), (
-        f"transport-only codes missing from ui.json: {sorted(missing_transport)}. "
+    missing_client = _CLIENT_ONLY_CODES - catalog_error_keys
+    assert missing_client == set(), (
+        f"client-only codes missing from ui.json: {sorted(missing_client)}. "
         "frontend/src/api.ts sets these itself; they still need a catalog entry to compose."
     )
 
