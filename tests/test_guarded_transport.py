@@ -416,6 +416,24 @@ class TestPuttingARecycleBinBack:
             await client.restore_recycle_bin(dict(_BIN_CONFIG), "/recycle/sonarr")
         assert route.called
 
+    @pytest.mark.parametrize(
+        ("base", "put"),
+        [
+            ("https://proxy.test/My%20Sonarr", "https://proxy.test/My%20Sonarr"),
+            ("https://proxy.test/a/./sonarr", "https://proxy.test/a/sonarr"),
+            ("https://proxy.test/%7Euser", "https://proxy.test/~user"),
+        ],
+    )
+    async def test_the_exemption_follows_an_encoded_or_dotted_base_path(
+        self, httpx2_mock: respx.Router, base: str, put: str
+    ) -> None:
+        route = httpx2_mock.put(f"{put}/api/v3/config/mediamanagement/1").mock(
+            return_value=httpx.Response(202, json=1)
+        )
+        async with SonarrClient(base, "k", safety=READ_ONLY) as client:
+            await client.restore_recycle_bin(dict(_BIN_CONFIG), "/recycle/sonarr")
+        assert route.called
+
     async def test_turning_a_bin_off_is_refused_with_deletion_off(self) -> None:
         async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
             with pytest.raises(SafetyViolationError, match="Blocked"):

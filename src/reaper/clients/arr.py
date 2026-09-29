@@ -24,7 +24,8 @@ SeriesResource.
 from __future__ import annotations
 
 from typing import Any, ClassVar
-from urllib.parse import urlsplit
+
+import httpx2
 
 from reaper.clients.base import BaseClient
 from reaper.config import RuntimeSafety
@@ -67,7 +68,7 @@ class ArrClient(BaseClient):
             safety=safety,
             headers={"X-Api-Key": api_key, "Accept": "application/json"},
             verify=verify,
-            restore_paths=frozenset({urlsplit(base_url).path.rstrip("/") + settings_path}),
+            restore_paths=frozenset({httpx2.URL(base_url.rstrip("/") + settings_path).path}),
         )
         self.prefix = prefix
         self._settings_path = settings_path
