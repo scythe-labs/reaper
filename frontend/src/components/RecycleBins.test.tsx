@@ -142,11 +142,11 @@ describe("the confirm reads the bins again", () => {
     apiMock.runBins.mockReset();
     apiMock.runBins.mockResolvedValueOnce({ bins: [bin({ bin: "unknown" })] });
     apiMock.runBins.mockResolvedValueOnce({ bins: [bin({})] });
-    const first = renderWithProviders(<ConfirmBins runId={7} />);
+    const first = renderWithProviders(<Harness runId={7} />);
     await screen.findByText("Couldn't read its bin");
     first.unmount();
 
-    renderWithProviders(<ConfirmBins runId={7} />, { client: first.client });
+    renderWithProviders(<Harness runId={7} />, { client: first.client });
 
     expect(await screen.findByText("Frees in 3 days")).toBeInTheDocument();
     expect(apiMock.runBins).toHaveBeenCalledTimes(2);
