@@ -4,6 +4,7 @@ They stand between a bug and someone's media library."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -13,6 +14,7 @@ import pytest
 import respx
 from structlog.testing import capture_logs
 
+from reaper.clients import arr
 from reaper.clients.arr import RadarrClient, SonarrClient
 from reaper.clients.base import GuardedTransport, IntegrationError, SafetyViolationError
 from reaper.clients.tautulli import READ_COMMANDS, TautulliClient
@@ -199,9 +201,7 @@ class TestTypedMutationMethods:
 
         assert route.called
         assert json_body(route)["episodeFileIds"] == [11, 22, 33]
-        # Sonarr answers only after every file is gone, so this call waits longer than
-        # the client's 30 seconds.
-        assert route.calls.last.request.extensions["timeout"]["read"] == 300.0
+        assert route.calls.last.request.extensions["timeout"]["read"] == arr._DELETE_CEILING
 
     async def test_deleting_an_empty_id_list_sends_nothing(self, httpx2_mock: respx.Router) -> None:
         route = httpx2_mock.delete("https://sonarr.test/api/v3/episodefile/bulk")
@@ -465,3 +465,150 @@ class TestPuttingARecycleBinBack:
                 await client._mutate(
                     "DELETE", "/api/v3/episodefile/bulk", json={"episodeFileIds": [1]}, restore=True
                 )
+
+
+MOVIE = "https://radarr.test/api/v3/movie/1"
+BULK = "https://sonarr.test/api/v3/episodefile/bulk"
+STATUS = "/api/v3/system/status"
+
+
+@pytest.fixture
+def fast_watch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(arr, "_PING_EVERY", 0.02)
+    monkeypatch.setattr(arr, "_PING_TIMEOUT", 0.5)
+    monkeypatch.setattr(arr, "_MISSES_ALLOWED", 3)
+
+
+class _Slow:
+    """A DELETE that answers once ``release`` is set, and records a cancel.
+
+    ``asyncio.sleep`` is instant under test, so the delete waits on an event instead.
+    """
+
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
+        self.canceled = False
+
+    async def answer(self, request: httpx.Request) -> httpx.Response:
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            self.canceled = True
+            raise
+        return httpx.Response(200, json={})
+
+
+@pytest.mark.usefixtures("fast_watch")
+class TestAWatchedDelete:
+    """A delete waits while the instance answers pings and gives up when it stops."""
+
+    async def test_a_slow_delete_with_answering_pings_returns(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        slow = _Slow()
+        delete = httpx2_mock.delete(MOVIE).mock(side_effect=slow.answer)
+
+        def answer(request: httpx.Request) -> httpx.Response:
+            if ping.call_count >= 4:
+                slow.release.set()
+            return httpx.Response(200, json={})
+
+        ping = httpx2_mock.get(f"https://radarr.test{STATUS}").mock(side_effect=answer)
+        async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
+            await _delete_movie(client)
+        assert delete.call_count == 1
+        assert ping.call_count >= 3
+
+    async def test_pings_that_stop_answering_end_the_delete_with_no_status(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        slow = _Slow()
+        httpx2_mock.delete(MOVIE).mock(side_effect=slow.answer)
+        ping = httpx2_mock.get(f"https://radarr.test{STATUS}").mock(
+            return_value=httpx.Response(503)
+        )
+        async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
+            with pytest.raises(IntegrationError) as caught:
+                await _delete_movie(client)
+        assert caught.value.status is None
+        assert caught.value.code == "error.integration.timed_out"
+        assert caught.value.read_timed_out
+        assert ping.call_count == arr._MISSES_ALLOWED
+        assert slow.canceled
+
+    async def test_an_answered_ping_resets_the_miss_count(self, httpx2_mock: respx.Router) -> None:
+        slow = _Slow()
+        delete = httpx2_mock.delete(MOVIE).mock(side_effect=slow.answer)
+        answers = iter([503, 503, 200, 503, 503, 200, 503, 503])
+
+        def answer(request: httpx.Request) -> httpx.Response:
+            status = next(answers, 200)
+            if ping.call_count >= 8:
+                slow.release.set()
+            return httpx.Response(status)
+
+        ping = httpx2_mock.get(f"https://radarr.test{STATUS}").mock(side_effect=answer)
+        async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
+            await _delete_movie(client)
+        assert delete.call_count == 1
+        assert ping.call_count >= 8
+
+    async def test_the_deletes_own_error_surfaces_unchanged(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        httpx2_mock.delete(MOVIE).mock(return_value=httpx.Response(500, text="boom"))
+        async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
+            with pytest.raises(IntegrationError) as caught:
+                await _delete_movie(client)
+        assert caught.value.status == 500
+
+    async def test_cancelling_the_caller_cancels_the_delete_and_sends_no_more_pings(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        slow = _Slow()
+        httpx2_mock.delete(MOVIE).mock(side_effect=slow.answer)
+        ping = httpx2_mock.get(f"https://radarr.test{STATUS}").mock(
+            return_value=httpx.Response(200, json={})
+        )
+        async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
+            call = asyncio.ensure_future(_delete_movie(client))
+            await asyncio.sleep(0.05)
+            call.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await call
+            pings = ping.call_count
+            await asyncio.sleep(0.1)
+        assert slow.canceled
+        assert ping.call_count == pings
+
+    async def test_the_delete_carries_the_ceiling_as_its_read_limit(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        route = httpx2_mock.delete(MOVIE).mock(return_value=httpx.Response(200, json={}))
+        async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
+            await _delete_movie(client)
+        assert route.calls.last.request.extensions["timeout"]["read"] == arr._DELETE_CEILING
+
+    async def test_both_deletes_go_through_the_watched_path(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        httpx2_mock.delete(MOVIE).mock(return_value=httpx.Response(200, json={}))
+        httpx2_mock.delete(BULK).mock(return_value=httpx.Response(200, json={}))
+        watched: list[str] = []
+        real = arr.ArrClient._watched_delete
+
+        async def spy(self: arr.ArrClient, path: str, **kw: Any) -> None:
+            watched.append(path)
+            await real(self, path, **kw)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(arr.ArrClient, "_watched_delete", spy)
+            async with RadarrClient("https://radarr.test", "k", safety=ARMED) as radarr:
+                await _delete_movie(radarr)
+            async with SonarrClient("https://sonarr.test", "k", safety=ARMED) as sonarr:
+                await sonarr.delete_episode_files([1])
+        assert watched == ["/api/v3/movie/1", "/api/v3/episodefile/bulk"]
+
+
+async def _delete_movie(client: RadarrClient) -> None:
+    await client.delete_movie(1)

@@ -23,19 +23,28 @@ SeriesResource.
 
 from __future__ import annotations
 
+import asyncio
+import time
+from collections.abc import Mapping
 from typing import Any, ClassVar
 
 import httpx2
 
-from reaper.clients.base import BaseClient
+from reaper.clients.base import BaseClient, IntegrationError
 from reaper.config import RuntimeSafety
 
 #: Sonarr and Radarr serve one media management settings object, always as id 1.
 _MEDIA_MANAGEMENT_ID = 1
 
-#: Sonarr answers a bulk file delete only after every file is gone, and a recycle bin
-#: on another share turns each delete into a copy.
-_BULK_DELETE_READ_TIMEOUT = 300.0
+#: Read limit for one file delete. It stops an instance that answers pings but never
+#: finishes from holding a reap forever. Loss of contact ends a delete much sooner.
+_DELETE_CEILING = 1800.0
+#: Seconds between liveness pings while a delete runs.
+_PING_EVERY = 10.0
+#: Read limit for one liveness ping.
+_PING_TIMEOUT = 10.0
+#: Consecutive missed pings that end a delete.
+_MISSES_ALLOWED = 3
 
 
 class ArrClient(BaseClient):
@@ -55,6 +64,59 @@ class ArrClient(BaseClient):
     # of silently using the wrong *arr's spelling.
     exclusion_param: ClassVar[str]
     exclusion_path: ClassVar[str]
+
+    async def _ping(self) -> bool:
+        """One liveness check. Any answer other than a 2xx is a miss. Never retried."""
+        started = time.monotonic()
+        status: int | None = None
+        try:
+            response = await self._client.request(
+                "GET",
+                f"{self.prefix}/system/status",
+                timeout=httpx2.Timeout(_PING_TIMEOUT),
+            )
+            status = response.status_code
+            return response.is_success
+        except httpx2.HTTPError:
+            return False
+        finally:
+            self._trace("GET", f"{self.prefix}/system/status", status, started)
+
+    async def _watched_delete(
+        self,
+        path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        json: Any = None,
+    ) -> None:
+        """Send a file delete and wait while the instance still answers pings.
+
+        The delete may run longer than any fixed read limit, because the instance
+        answers only after every file is gone. A ping goes out every ``_PING_EVERY``
+        seconds. After ``_MISSES_ALLOWED`` misses in a row, the delete is canceled and
+        this raises a timeout with no status, which the executor treats as "no answer"
+        and re-reads. The delete's own error is raised unchanged. A cancel of the
+        caller cancels the delete and sends nothing more.
+        """
+        task = asyncio.ensure_future(
+            self._mutate("DELETE", path, params=params, json=json, read_timeout=_DELETE_CEILING)
+        )
+        misses = 0
+        try:
+            while True:
+                done, _ = await asyncio.wait({task}, timeout=_PING_EVERY)
+                if done:
+                    task.result()
+                    return
+                misses = 0 if await self._ping() else misses + 1
+                if misses >= _MISSES_ALLOWED:
+                    raise IntegrationError(
+                        self.service, "error.integration.timed_out", read_timed_out=True
+                    )
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.wait({task})
 
     def __init__(
         self,
@@ -210,11 +272,8 @@ class SonarrClient(ArrClient):
         """
         if not episode_file_ids:
             return
-        await self._mutate(
-            "DELETE",
-            f"{self.prefix}/episodefile/bulk",
-            json={"episodeFileIds": episode_file_ids},
-            read_timeout=_BULK_DELETE_READ_TIMEOUT,
+        await self._watched_delete(
+            f"{self.prefix}/episodefile/bulk", json={"episodeFileIds": episode_file_ids}
         )
 
 
@@ -250,7 +309,7 @@ class RadarrClient(ArrClient):
     ) -> None:
         """Remove a movie, its files, and, by default, add an import exclusion.
 
-        This is the destructive call. It goes through :meth:`_mutate`, so
+        This is the destructive call. It goes through :meth:`_watched_delete`, so
         :class:`~reaper.clients.base.GuardedTransport` refuses it unless deletion is
         enabled on the host and the executor has declared the intent. There is no path
         to this call that skips the guard.
@@ -262,8 +321,7 @@ class RadarrClient(ArrClient):
         :meth:`exclusions` and confirms the tmdbId is present, because Radarr returns
         200 even when it silently did nothing.
         """
-        await self._mutate(
-            "DELETE",
+        await self._watched_delete(
             f"{self.prefix}/movie/{movie_id}",
             params={"deleteFiles": delete_files, self.exclusion_param: add_exclusion},
         )

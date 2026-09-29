@@ -4636,8 +4636,21 @@ anyway. A re-read after the run found none of its 52 episode files.
 - **The recycle bin adds to it.** Every instance in that reap had one set, so each delete is a
   move, and a copy when the bin sits on another share than the root folder. Space frees only
   when the bin's cleanup runs (#1023).
-- **The fix.** The bulk delete gets a 300-second read budget. A delete with no answer goes to
-  the re-read like any other, and it is charged to the rolling budget either way.
+- **The fix.** A delete with no answer goes to the re-read like any other, and it is charged
+  to the rolling budget either way. A fixed read budget was replaced by a liveness watch, below.
+
+## A busy Sonarr still answers pings (2026-09-29)
+
+A fixed read limit cannot fit a delete that takes 5 to 18 seconds today and more on a slow disk.
+
+- **`GET /api/v3/system/status` stays fast during a bulk delete.** All 45 pings, one every
+  2 seconds, answered 200 in 7 to 25 ms while the same instance spent 5 to 18 seconds per
+  season delete.
+- **Progress is visible from outside.** A season's episode-file count fell by 1 to 3 per 2
+  seconds during its delete.
+- **Radarr deletes are short with the recycle bin off.** 244 calls, median 69 ms, max 0.7 s.
+- **The fix.** A delete waits while a ping every 10 seconds is answered. Three misses in a row
+  count as no answer. A 30-minute ceiling stops an instance that pings but never finishes.
 
 ## Prior art
 
