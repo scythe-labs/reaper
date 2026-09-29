@@ -257,6 +257,17 @@ somebody decides what to delete, and long copy does not get read at all.
 
 After you write an operator string, cut it once more.
 
+### Code comments
+
+A comment states the constraint the code cannot show, in one or two sentences. A docstring
+says what the function returns and the one condition a caller must know.
+
+- No history. What the code replaced, which review or incident found it, and why the
+  alternatives lose go in the pull request description, `docs/DECISIONS.md` or
+  `docs/LEARNINGS.md`.
+- Many existing comments are longer than this. Never match them.
+- When you edit a long comment, cut it to this budget.
+
 ### Prose in the repository
 
 American English throughout, including identifiers and commit messages. The exceptions are
