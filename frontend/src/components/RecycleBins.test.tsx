@@ -42,6 +42,13 @@ describe("freedNow and binDays", () => {
     expect(binDays([bin({ cleanup_days: 3 }), bin({ cleanup_days: 0 })])).toBeNull();
     expect(binDays([bin({ cleanup_days: null })])).toBeNull();
   });
+
+  it("knows no date when no bin is on or one could not be read", () => {
+    expect(binDays([bin({ bin: "none", cleanup_days: null })])).toBeUndefined();
+    expect(
+      binDays([bin({ cleanup_days: 3 }), bin({ bin: "unknown", cleanup_days: null })]),
+    ).toBeUndefined();
+  });
 });
 
 describe("the reap confirm's recycle bin list", () => {

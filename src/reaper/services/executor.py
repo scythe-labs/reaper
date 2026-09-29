@@ -1454,7 +1454,7 @@ class Executor:
             recycle_bins.readers(self._gateway.radarr, self._gateway.sonarr),
             recycle_bins.instances_of(d.candidate.media_key for d in deletes),
         )
-        self._binned = frozenset(b.key for b in bins if b.holds_files)
+        self._binned = frozenset(b.key for b in bins if b.state != "none")
         rows = [
             {
                 "run_id": self._run_id,
@@ -1496,7 +1496,7 @@ class Executor:
             ).deleted_bytes
         except Exception as exc:
             log.warning("reap.binned_bytes_unreadable", run_id=run_id, error=str(exc))
-            binned = None
+            binned = totals.deleted_bytes if self._binned else 0
         await self._commit_journal(
             what="the run's totals",
             write=[

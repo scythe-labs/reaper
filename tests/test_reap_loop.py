@@ -4398,8 +4398,29 @@ class TestARunRecordsEachInstancesRecycleBin:
 
         assert report.state is RunState.COMPLETED
         assert report.deleted_items == 1
+        assert report.binned_bytes == 1 * GB
+        assert (await _stored_run(async_factory, run.id)).binned_bytes == 1 * GB
         [row] = await self._bins(async_factory, run.id)
         assert row.bin_path is None
+
+    async def test_bytes_are_never_freed_when_the_binned_total_cannot_be_read(
+        self,
+        session: AsyncSession,
+        async_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def broken(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("query failed")
+
+        monkeypatch.setattr("reaper.services.recycle_bins.removed_on", broken)
+        snapshot_id = await _snapshot_many(session, [("radarr:1:1", 1 * GB, 701)])
+        run = await _plan(session, snapshot_id)
+
+        await _real(session, run, _gateway(radarr={1: RadarrWithBin()}))
+
+        stored = await _stored_run(async_factory, run.id)
+        assert stored.deleted_bytes == 1 * GB
+        assert stored.binned_bytes == 1 * GB
 
     async def test_a_dry_run_records_no_bins(
         self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]

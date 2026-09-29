@@ -45,10 +45,6 @@ class Bin:
         return (self.kind, self.instance_id)
 
     @property
-    def holds_files(self) -> bool:
-        return bool(self.path)
-
-    @property
     def state(self) -> str:
         """``on``, ``none``, or ``unknown``, the wire form the browser reads."""
         if self.path is None:

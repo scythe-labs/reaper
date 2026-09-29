@@ -26,14 +26,15 @@ export function freedNow(deleted: number, binned: number | null | undefined): nu
   return deleted - (binned ?? 0);
 }
 
-/** The longest any bin that is on keeps a file, or `null` when one of them has no cleanup
- *  days to promise (it never empties on its own, or the days could not be read). */
-export function binDays(bins: RunBin[]): number | null {
-  let days = 0;
+/** The longest any bin that is on keeps a file. `null` when an on bin has no cleanup days to
+ *  promise. `undefined` when no bin is on or one could not be read, so no date is known. */
+export function binDays(bins: RunBin[]): number | null | undefined {
+  let days: number | undefined;
   for (const b of bins) {
+    if (b.bin === "unknown") return undefined;
     if (b.bin !== "on") continue;
     if (!b.cleanup_days) return null;
-    days = Math.max(days, b.cleanup_days);
+    days = Math.max(days ?? 0, b.cleanup_days);
   }
   return days;
 }
