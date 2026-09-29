@@ -10,15 +10,14 @@ import { bytes, count } from "../format";
 import { Notice } from "./Notice";
 import { kindLabel } from "./ServiceModal";
 
-/** A run's bins. For a planned run the server reads them live, for any other it returns what
- *  the run recorded as it started. */
-export function useRunBins(runId: number) {
+/** A run's bins. A finished run's are stored and never change, so they are read once per
+ *  sheet. A planned run's are read from the servers each time, so `live` reads them again
+ *  whenever the confirm opens. */
+export function useRunBins(runId: number, live = false) {
   return useQuery({
     queryKey: ["run-bins", runId],
     queryFn: () => api.runBins(runId),
-    // Read once per sheet. A planned run's bins are read live when the confirm opens, and a
-    // finished run's are stored and never change.
-    staleTime: Infinity,
+    staleTime: live ? 0 : Infinity,
   });
 }
 
@@ -27,14 +26,15 @@ export function freedNow(deleted: number, binned: number | null | undefined): nu
   return deleted - (binned ?? 0);
 }
 
-/** The longest any bin that is on keeps a file, or `null` when one of them has no cleanup
- *  days to promise (it never empties on its own, or the days could not be read). */
-export function binDays(bins: RunBin[]): number | null {
-  let days = 0;
+/** The longest any bin that is on keeps a file. `null` when an on bin has no cleanup days to
+ *  promise. `undefined` when no bin is on or one could not be read, so no date is known. */
+export function binDays(bins: RunBin[]): number | null | undefined {
+  let days: number | undefined;
   for (const b of bins) {
+    if (b.bin === "unknown") return undefined;
     if (b.bin !== "on") continue;
     if (!b.cleanup_days) return null;
-    days = Math.max(days, b.cleanup_days);
+    days = Math.max(days ?? 0, b.cleanup_days);
   }
   return days;
 }
@@ -80,7 +80,7 @@ export function ConfirmBins({
   onSkip: (key: string, skipped: boolean) => void;
 }) {
   const { t } = useTranslation();
-  const { data, isPending } = useRunBins(runId);
+  const { data, isPending } = useRunBins(runId, true);
   if (isPending) return null;
   if (!data) return <p className="help bins-failed">{t("recycleBins.loadFailed")}</p>;
   const bins = data.bins;
@@ -171,12 +171,13 @@ function whenText(b: RunBin, t: TFunction): string {
 export function RunBinsList({ runId }: { runId: number }) {
   const { t } = useTranslation();
   const query = useRunBins(runId);
-  if (!query.data || query.data.bins.length === 0) return null;
+  if (!query.isError && (!query.data || query.data.bins.length === 0)) return null;
   return (
     <>
       <h3 className="reap-feed-heading">{t("recycleBins.heading")}</h3>
+      {query.isError && <p className="help bins-failed">{t("recycleBins.loadFailed")}</p>}
       <div className="feed run-bins">
-        {query.data.bins.map((b) => {
+        {query.data?.bins.map((b) => {
           const warn = b.bin === "unknown" || b.state === "off" || b.state === "turning_off";
           return (
             <div key={binKey(b)} className={warn ? "feed-row kept" : "feed-row gone"}>

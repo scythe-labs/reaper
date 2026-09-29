@@ -163,6 +163,7 @@ export function ReapConfirm({
     // is no longer looking at.
     setTrashAcked(false);
     setSkip(new Set());
+    void queryClient.invalidateQueries({ queryKey: ["run-bins", run.id] });
     dry.mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run.id, run.confirmation_phrase]);

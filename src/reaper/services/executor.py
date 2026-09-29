@@ -1502,7 +1502,7 @@ class Executor:
                 raise ExecutionError("error.reap.bin_not_turned_off", name=name) from exc
             await self._set_bin_state(b, "off")
         off = {b.key for b in self._turned_off}
-        self._binned = frozenset(b.key for b in bins if b.holds_files and b.key not in off)
+        self._binned = frozenset(b.key for b in bins if b.state != "none" and b.key not in off)
 
     async def _set_bin_state(self, b: recycle_bins.Bin, state: str) -> bool:
         return await self._commit_journal(
@@ -1562,7 +1562,7 @@ class Executor:
             ).deleted_bytes
         except Exception as exc:
             log.warning("reap.binned_bytes_unreadable", run_id=run_id, error=str(exc))
-            binned = None
+            binned = totals.deleted_bytes if self._binned else 0
         await self._commit_journal(
             what="the run's totals",
             write=[

@@ -416,6 +416,26 @@ describe("the execute gate", () => {
   });
 });
 
+describe("the recycle bins on the sheet", () => {
+  it("are read again when the plan's phrase moves", async () => {
+    const user = userEvent.setup();
+    apiMock.executeRun.mockRejectedValue(new ApiError(409, "The plan changed."));
+    apiMock.run.mockResolvedValue({
+      ...run,
+      item_count: 2,
+      confirmation_phrase: "REAP 2 SOULS 1 GB",
+    });
+    renderSheet();
+    await screen.findByText(/Practice run passed/);
+    await waitFor(() => expect(apiMock.runBins).toHaveBeenCalledTimes(1));
+
+    await fill(user, await screen.findByRole("textbox"), run.confirmation_phrase);
+    await user.click(screen.getByRole("button", { name: /^Reap$/ }));
+
+    await waitFor(() => expect(apiMock.runBins).toHaveBeenCalledTimes(2));
+  });
+});
+
 // This sheet is the one surface in the app that starts a deletion, so it must keep speaking
 // through the gauntlet, not just once at the start. `ModalShell` announces the dialog by name
 // only when it opens. After that the body changes on a poll, moving through the practice run and

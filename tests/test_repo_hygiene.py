@@ -3819,6 +3819,9 @@ _QUERY_FAILURE_HANDLES = {
     # says so rather than staying silent, because silence there reads as "nothing is missing"
     # over a run the server is about to refuse.
     "frontend/src/components/ReapPlan.tsx": 3,
+    # A past report's bins. Undivided like the safety reads: an unreadable list says so, since
+    # an empty one would read as a run that had no bins.
+    "frontend/src/components/RecycleBins.tsx": 1,
     # The collection screen's three fate-lane reads (condemned/protected/abstained) each
     # branch on their own failure. `isPending` alone reads true on an error exactly as it does
     # on a success, so a lane that exhausted its retries would otherwise render as loaded with

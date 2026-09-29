@@ -54,6 +54,7 @@ from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody, ProfileSettin
 from reaper.engine.reason import Reason, from_stored
 from reaper.refusal import english
 from reaper.services import list_config, whitelist
+from reaper.services import recycle_bins as recycle_bins_module
 from reaper.services import whitelist as whitelist_module
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import (
@@ -4512,8 +4513,29 @@ class TestARunRecordsEachInstancesRecycleBin:
 
         assert report.state is RunState.COMPLETED
         assert report.deleted_items == 1
+        assert report.binned_bytes == 1 * GB
+        assert (await _stored_run(async_factory, run.id)).binned_bytes == 1 * GB
         [row] = await self._bins(async_factory, run.id)
         assert row.bin_path is None
+
+    async def test_bytes_are_never_freed_when_the_binned_total_cannot_be_read(
+        self,
+        session: AsyncSession,
+        async_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def broken(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("query failed")
+
+        monkeypatch.setattr("reaper.services.recycle_bins.removed_on", broken)
+        snapshot_id = await _snapshot_many(session, [("radarr:1:1", 1 * GB, 701)])
+        run = await _plan(session, snapshot_id)
+
+        await _real(session, run, _gateway(radarr={1: RadarrWithBin()}))
+
+        stored = await _stored_run(async_factory, run.id)
+        assert stored.deleted_bytes == 1 * GB
+        assert stored.binned_bytes == 1 * GB
 
     async def test_a_dry_run_records_no_bins(
         self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
@@ -4531,6 +4553,25 @@ class TestARunRecordsEachInstancesRecycleBin:
         await executor.execute(run.id)
 
         assert await self._bins(async_factory, run.id) == []
+
+
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        ({}, (None, None)),
+        ({"recycleBin": None}, ("", None)),
+        ({"recycleBin": ""}, ("", None)),
+        ({"recycleBin": 5}, (None, None)),
+        ({"recycleBin": "   "}, (None, None)),
+        ({"recycleBin": " /bin ", "recycleBinCleanupDays": True}, ("/bin", None)),
+        ({"recycleBin": "/bin", "recycleBinCleanupDays": "7"}, ("/bin", None)),
+        ({"recycleBin": "/bin", "recycleBinCleanupDays": 7}, ("/bin", 7)),
+    ],
+)
+def test_a_recycle_bin_setting_that_cannot_be_read_is_never_a_confirmed_answer(
+    config: dict[str, Any], expected: tuple[str | None, int | None]
+) -> None:
+    assert recycle_bins_module._parse(config) == expected
 
 
 class TestRunTotalsAreWrittenOnATerminalRun:

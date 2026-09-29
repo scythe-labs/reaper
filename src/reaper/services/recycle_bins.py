@@ -71,10 +71,6 @@ class Bin:
         return (self.kind, self.instance_id)
 
     @property
-    def holds_files(self) -> bool:
-        return bool(self.path)
-
-    @property
     def state(self) -> str:
         """``on``, ``none``, or ``unknown``, the wire form the browser reads."""
         if self.path is None:
@@ -117,12 +113,18 @@ def switches(
 
 def _parse(config: dict[str, Any]) -> tuple[str | None, int | None]:
     """The bin's folder and cleanup days from a media management body. A missing
-    ``recycleBin`` key is unknown. A null one is no bin."""
+    ``recycleBin`` key is unknown. A null or empty one is no bin. A blank or non-text one is
+    unknown."""
     if "recycleBin" not in config:
         path = None
     else:
         raw = config["recycleBin"]
-        path = "" if raw is None else raw.strip() if isinstance(raw, str) else None
+        if raw is None or raw == "":
+            path = ""
+        elif isinstance(raw, str) and raw.strip():
+            path = raw.strip()
+        else:
+            path = None
     days = config.get("recycleBinCleanupDays")
     return path, days if isinstance(days, int) and not isinstance(days, bool) else None
 

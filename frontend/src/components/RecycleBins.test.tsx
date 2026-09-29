@@ -72,6 +72,13 @@ describe("freedNow and binDays", () => {
     expect(binDays([bin({ cleanup_days: 3 }), bin({ cleanup_days: 0 })])).toBeNull();
     expect(binDays([bin({ cleanup_days: null })])).toBeNull();
   });
+
+  it("knows no date when no bin is on or one could not be read", () => {
+    expect(binDays([bin({ bin: "none", cleanup_days: null })])).toBeUndefined();
+    expect(
+      binDays([bin({ cleanup_days: 3 }), bin({ bin: "unknown", cleanup_days: null })]),
+    ).toBeUndefined();
+  });
 });
 
 describe("the reap confirm's recycle bin list", () => {
@@ -130,6 +137,22 @@ describe("the reap confirm's recycle bin list", () => {
   });
 });
 
+describe("the confirm reads the bins again", () => {
+  it("asks the servers again when the confirm opens a second time", async () => {
+    apiMock.runBins.mockReset();
+    apiMock.runBins.mockResolvedValueOnce({ bins: [bin({ bin: "unknown" })] });
+    apiMock.runBins.mockResolvedValueOnce({ bins: [bin({})] });
+    const first = renderWithProviders(<ConfirmBins runId={7} />);
+    await screen.findByText("Couldn't read its bin");
+    first.unmount();
+
+    renderWithProviders(<ConfirmBins runId={7} />, { client: first.client });
+
+    expect(await screen.findByText("Frees in 3 days")).toBeInTheDocument();
+    expect(apiMock.runBins).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("a past run's recycle bin list", () => {
   it("says what each instance did with the files", async () => {
     apiMock.runBins.mockResolvedValue({
@@ -142,6 +165,13 @@ describe("a past run's recycle bin list", () => {
 
     expect(await screen.findByText("bin on, 2.0 TiB frees when the bin is emptied")).toBeVisible();
     expect(screen.getByText("no recycle bin")).toBeVisible();
+  });
+
+  it("says it could not read the bins when the request fails", async () => {
+    apiMock.runBins.mockRejectedValue(new Error("down"));
+    renderWithProviders(<RunBinsList runId={16} />);
+
+    expect(await screen.findByText("Reaper couldn't read the recycle bins.")).toBeVisible();
   });
 });
 
