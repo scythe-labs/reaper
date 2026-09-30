@@ -4745,3 +4745,20 @@ knew the key.
 - **An assumed removal counts too.** A delete that got no answer still stamps the removal. Its
   reap override is then void and the item stays out of the next plan. That is the keep direction,
   and it says nothing on screen.
+
+## A scan canceled mid-read can hang the event loop's close (2026-09-30)
+
+The backend tests hung at 98% in 4 of about 10 CI runs after #1038 (#1048).
+
+- **The hung test was in its `client` teardown.** One test started a real scan and closed the
+  client at once. Shutdown canceled the scan mid-read, and the test client's event loop never
+  finished closing.
+- **The stuck task was SQLAlchemy's shielded close of an aiosqlite connection.** Its worker
+  thread had already exited. aiosqlite's `close()` then waits on a `stop()` future nobody
+  resolves. aiosqlite 0.22.1 is the current release.
+- **It needs other tests first.** The file alone passed 29 times. The seven `test_plex_*` files
+  in one process hung 1 run in 4. The test repeated 150 times hung by the third, and passed all
+  150 with the scan stubbed.
+- **The stack dump from #1045 never fired in CI.** All 8 runs after it landed passed. Why the
+  rate dropped is not known. A local loop with SIGABRT on a stalled run caught the stack instead.
+- **The fix.** The test stubs the scan. Production shutdown has the same race (#1049).

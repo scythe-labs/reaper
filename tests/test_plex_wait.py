@@ -272,8 +272,14 @@ class TestTheWaitBeforeTheScan:
 
 class TestWhatTheWaitHoldsBack:
     def test_a_scan_start_is_refused_during_the_wait_and_works_after(
-        self, client: TestClient
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # The scan this starts must not reach the database. Shutdown cancels a scan
+        # mid-query, and that can hang the client's close (#1048).
+        async def run_scan(**_: Any) -> Any:
+            return SimpleNamespace(id=1)
+
+        monkeypatch.setattr(scan_runner, "run_scan", run_scan)
         plex_wait.begin()
         refused = client.post("/api/scan/start")
         status = client.get("/api/scan/status").json()
