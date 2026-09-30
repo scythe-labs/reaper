@@ -4727,3 +4727,18 @@ Tautulli's library list named items Plex no longer had, well past a tenth of tha
   up to 37 minutes. A refresh inside that window can still list items Plex is about to drop.
 - **The fix.** The scan refreshes each tripped section once, counts again, and degrades if it
   still trips or the refresh fails.
+
+## Overrides outlived the reap that removed their item
+
+A spare was written 3 minutes after a reap deleted its season. The queue still listed the season,
+because the scan before the reap held it, and the override route only checked that some kept scan
+knew the key.
+
+- **Nothing cleared an override when its item was removed.** A hand reap on a season applied again
+  when the title returned under the same key, and a hand reap overrules every non-structural
+  protection.
+- **A plan built from a scan older than a reap still held the removed items.** A title
+  re-downloaded before the next scan would have been planned for deletion.
+- **The fix.** A reap older than a removal of its key is void, the executor deletes the row it
+  removed, the override route refuses a key removed since the newest scan, and plans leave removed
+  keys out.

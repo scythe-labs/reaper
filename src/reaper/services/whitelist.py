@@ -20,11 +20,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clock import utcnow
-from reaper.db.models import WhitelistEntry
+from reaper.db.models import ActionStep, Candidate, Snapshot, WhitelistEntry
 
 
 def show_key(media_key: str) -> str | None:
@@ -114,6 +114,82 @@ def covering_spare_expiry(
     return max(expires_at for expires_at in candidates if expires_at is not None)
 
 
+async def removal_times(session: AsyncSession) -> dict[str, datetime]:
+    """``media_key -> when Reaper last confirmed that key's file removed``.
+
+    Read from the journal's ``file_removed_at``, which only a real reap sets.
+    """
+    rows = await session.execute(
+        select(ActionStep.media_key, func.max(ActionStep.file_removed_at))
+        .where(ActionStep.file_removed_at.is_not(None))
+        .group_by(ActionStep.media_key)
+    )
+    return {key: at for key, at in rows.tuples().all() if at is not None}
+
+
+async def _live_rows(session: AsyncSession) -> list[tuple[str, str, datetime | None]]:
+    """Every override row as ``(media_key, decision, spare_expires_at)``, minus the reaps
+    that consent to a file Reaper has since removed.
+
+    This is the one place override rows are read to decide a fate. :func:`overrides` and
+    :func:`overrides_effective_at` both build on it, so the planner, executor, grace,
+    Scales, the review queue and the scan cannot disagree about a stale reap.
+
+    A reap is void when its key has a removal at or after the reap itself. Timestamps are
+    whole seconds, so a tie voids: that is the keep direction. A whole-show
+    reap is also void when the show key has such a removal, or when every season the
+    newest snapshot holds for that show does. The consent was for the old files, and a
+    title that comes back under the same key is a new file. A void reap never revives.
+    Spares are never voided: a stale spare can only keep a returned title, which is the
+    keep direction.
+    """
+    rows = (
+        (
+            await session.execute(
+                select(
+                    WhitelistEntry.media_key,
+                    WhitelistEntry.decision,
+                    WhitelistEntry.spare_expires_at,
+                    WhitelistEntry.created_at,
+                )
+            )
+        )
+        .tuples()
+        .all()
+    )
+    reaps = [(k, made) for k, decision, _, made in rows if decision == "reap"]
+    if not reaps:
+        return [(k, d, e) for k, d, e, _ in rows]
+    removed = await removal_times(session)
+    if not removed:
+        return [(k, d, e) for k, d, e, _ in rows]
+    show_keys = [k for k, _ in reaps if k.count(":") == 2 and k.startswith("sonarr:")]
+    seasons: dict[str, set[str]] = {}
+    if show_keys:
+        newest = (
+            await session.execute(select(Snapshot.id).order_by(Snapshot.id.desc()).limit(1))
+        ).scalar_one_or_none()
+        if newest is not None:
+            for key, group in (
+                await session.execute(
+                    select(Candidate.media_key, Candidate.group_key).where(
+                        Candidate.snapshot_id == newest, Candidate.group_key.in_(show_keys)
+                    )
+                )
+            ).tuples():
+                assert group is not None  # filtered by the IN above
+                seasons.setdefault(group, set()).add(key)
+    void: set[str] = set()
+    for key, made in reaps:
+        at = removed.get(key)
+        whole_show_removed = key in seasons and all(
+            (t := removed.get(s)) is not None and t >= made for s in seasons[key]
+        )
+        if (at is not None and at >= made) or whole_show_removed:
+            void.add(key)
+    return [(k, d, e) for k, d, e, _ in rows if k not in void]
+
+
 async def overrides(session: AsyncSession) -> dict[str, str]:
     """``media_key -> decision`` for every manual override, as of this read.
 
@@ -132,8 +208,7 @@ async def overrides(session: AsyncSession) -> dict[str, str]:
     reads it (planner, executor, grace, review queue) converge the moment the snapshot
     commits. Reading the map without the purge would strand the expired spare here forever.
     """
-    rows = await session.execute(select(WhitelistEntry.media_key, WhitelistEntry.decision))
-    return dict(rows.tuples().all())
+    return {key: decision for key, decision, _ in await _live_rows(session)}
 
 
 async def purge_expired_spares(session: AsyncSession, now: datetime) -> list[str]:
@@ -212,12 +287,9 @@ async def overrides_effective_at(session: AsyncSession, now: datetime) -> dict[s
     One query, then :func:`without_expired_spares` applies the rule, the same call the reap
     ledger makes to count what a scan would let go.
     """
-    rows = await session.execute(
-        select(WhitelistEntry.media_key, WhitelistEntry.decision, WhitelistEntry.spare_expires_at)
-    )
     decisions: dict[str, str] = {}
     expiries: dict[str, datetime | None] = {}
-    for media_key, decision, expires_at in rows.tuples().all():
+    for media_key, decision, expires_at in await _live_rows(session):
         decisions[media_key] = decision
         if decision == "spare":
             expiries[media_key] = expires_at
@@ -263,8 +335,9 @@ async def set_override(
     a stale clock.
 
     Idempotent, and switches decision in place: reaping an already-spared item flips it to
-    reap. Flushes so the override is visible to any read later in the same unit of work;
-    the caller owns the commit. ``title`` is denormalized in for display; the media_key is
+    reap. Every call restamps ``created_at``, the moment of the operator's latest consent.
+    Flushes so the override is visible to any read later in the same unit of work; the
+    caller owns the commit. ``title`` is denormalized in for display; the media_key is
     identity.
     """
     now = now or utcnow()
@@ -287,6 +360,7 @@ async def set_override(
         entry.note = note
         entry.decision = decision
         entry.spare_expires_at = expires_at
+        entry.created_at = now
     await session.flush()
     return entry
 

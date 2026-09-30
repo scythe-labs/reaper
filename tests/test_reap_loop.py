@@ -48,6 +48,7 @@ from reaper.db.models import (
     SizeSource,
     Snapshot,
     StepState,
+    WhitelistEntry,
 )
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody, ProfileSettings
@@ -6262,3 +6263,165 @@ class TestABinLeftOffIsPutBackLater:
         )
         assert healthy.bin_writes == ["/recycle/radarr"]
         assert notifier.back_on == ["Radarr HD"]
+
+
+class TestOverridesDoNotOutliveAReap:
+    """A hand decision is consent for the file it was made on. A reap removes that file, so
+    the decision must not carry over to a title that returns under the same key."""
+
+    async def _removed(
+        self, session: AsyncSession, keys: list[tuple[str, int | None, int | None]], **kw: Any
+    ) -> None:
+        """Plan every key, then stamp each step as removed 30 minutes ago."""
+        snapshot_id = await _snapshot_many(session, keys, **kw)
+        run = await _plan(session, snapshot_id)
+        for step in await _steps(session, run.id):
+            step.file_removed_at = utcnow() - timedelta(minutes=30)
+        await session.flush()
+
+    async def _override(self, session: AsyncSession, key: str, decision: str, *, age: int) -> None:
+        """An override whose consent is ``age`` minutes old."""
+        await whitelist.set_override(
+            session, media_key=key, title="T", decision=decision, note=None
+        )
+        entry = await session.get(WhitelistEntry, key)
+        assert entry is not None
+        entry.created_at = utcnow() - timedelta(minutes=age)
+        await session.flush()
+
+    async def _kept_returned_movie(self, session: AsyncSession, key: str) -> int:
+        """A scan taken after the removal, holding the key again with a keep protection."""
+        explanation = _clean_explanation(
+            protections_fired=[{"gate": "rating_floor", "detail": "well rated"}]
+        )
+        snapshot_id = await _snapshot_many(session, [(key, 1 * GB, 701)], explanation=explanation)
+        candidate = (
+            await session.execute(select(Candidate).where(Candidate.snapshot_id == snapshot_id))
+        ).scalar_one()
+        candidate.verdict = "protect"
+        await session.flush()
+        return snapshot_id
+
+    async def test_a_reap_older_than_a_removal_does_not_condemn_the_returned_item(
+        self, session: AsyncSession
+    ) -> None:
+        key = "radarr:1:1"
+        await self._removed(session, [(key, 1 * GB, 701)])
+        snapshot_id = await self._kept_returned_movie(session, key)
+
+        await self._override(session, key, "reap", age=60)
+        decisions = await whitelist.overrides(session)
+
+        assert decisions == {}
+        assert await effective_condemned(session, snapshot_id, decisions) == {}
+
+    async def test_a_reap_made_after_a_removal_still_condemns_the_returned_item(
+        self, session: AsyncSession
+    ) -> None:
+        key = "radarr:1:1"
+        await self._removed(session, [(key, 1 * GB, 701)])
+        snapshot_id = await self._kept_returned_movie(session, key)
+
+        await self._override(session, key, "reap", age=5)
+        decisions = await whitelist.overrides(session)
+
+        assert decisions == {key: "reap"}
+        assert set(await effective_condemned(session, snapshot_id, decisions)) == {key}
+
+    async def test_deciding_again_restamps_the_consent(self, session: AsyncSession) -> None:
+        key = "radarr:1:1"
+        await self._removed(session, [(key, 1 * GB, 701)])
+        await self._override(session, key, "reap", age=60)
+        assert await whitelist.overrides(session) == {}
+
+        await whitelist.set_override(session, media_key=key, title="T", decision="reap", note=None)
+
+        assert await whitelist.overrides(session) == {key: "reap"}
+
+    async def test_a_spare_older_than_a_removal_stays_in_force(self, session: AsyncSession) -> None:
+        """Only reaps are voided. A stale spare can only keep a returned title."""
+        key = "radarr:1:1"
+        await self._removed(session, [(key, 1 * GB, 701)])
+
+        await self._override(session, key, "spare", age=60)
+
+        assert await whitelist.overrides(session) == {key: "spare"}
+        assert await whitelist.overrides_effective_at(session, utcnow()) == {key: "spare"}
+
+    async def test_the_scan_map_drops_a_stale_reap_too(self, session: AsyncSession) -> None:
+        key = "radarr:1:1"
+        await self._removed(session, [(key, 1 * GB, 701)])
+        await self._override(session, key, "reap", age=60)
+
+        assert await whitelist.overrides_effective_at(session, utcnow()) == {}
+
+    async def test_a_whole_show_reap_is_void_once_every_season_was_removed(
+        self, session: AsyncSession
+    ) -> None:
+        show = "sonarr:1:42"
+        await self._removed(
+            session,
+            [(f"{show}:1", 1 * GB, 701), (f"{show}:2", 1 * GB, 702)],
+            media_type="season",
+            group_key=show,
+        )
+        await self._override(session, show, "reap", age=60)
+
+        assert await whitelist.overrides(session) == {}
+
+    async def test_a_whole_show_reap_holds_while_a_season_was_never_removed(
+        self, session: AsyncSession
+    ) -> None:
+        show = "sonarr:1:42"
+        await self._removed(
+            session, [(f"{show}:1", 1 * GB, 701)], media_type="season", group_key=show
+        )
+        await _snapshot_many(
+            session,
+            [(f"{show}:1", 1 * GB, 701), (f"{show}:2", 1 * GB, 702)],
+            media_type="season",
+            group_key=show,
+        )
+        await self._override(session, show, "reap", age=60)
+
+        assert await whitelist.overrides(session) == {show: "reap"}
+
+    async def test_the_executor_deletes_the_override_of_the_item_it_removed(
+        self, session: AsyncSession
+    ) -> None:
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        await whitelist.set_override(
+            session, media_key="radarr:1:1", title="T", decision="reap", note=None
+        )
+        run = await _plan(session, snapshot_id)
+
+        with capture_logs() as logs:
+            report = await _real(session, run, _gateway(radarr={1: FakeRadarr()}))
+
+        assert report.deleted_items == 1
+        assert await session.get(WhitelistEntry, "radarr:1:1") is None
+        cleared = [e for e in logs if e["event"] == "whitelist.override"]
+        assert [(e["decision"], e["prior"], e["cleared_by"]) for e in cleared] == [
+            ("cleared", "reap", "reap")
+        ]
+
+    async def test_a_plan_from_a_snapshot_older_than_a_reap_leaves_out_the_removed_item(
+        self, session: AsyncSession
+    ) -> None:
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 2 * GB, 702)]
+        )
+        first = await build_plan(
+            session, snapshot_id=snapshot_id, approved_by="admin", only_media_keys={"radarr:1:1"}
+        )
+        await _real(session, first, _gateway(radarr={1: FakeRadarr()}))
+
+        with capture_logs() as logs:
+            second = await _plan(session, snapshot_id)
+
+        assert {s.media_key for s in await _steps(session, second.id)} == {"radarr:1:2"}
+        assert [e["count"] for e in logs if e["event"] == "plan.left_out_removed"] == [1]
+        planned = await _planned_candidates(session, second)
+        assert [c.media_key for c in planned] == ["radarr:1:2"]
+        # The run that did the removing still describes what it acted on.
+        assert [c.media_key for c in await _planned_candidates(session, first)] == ["radarr:1:1"]

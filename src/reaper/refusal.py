@@ -324,6 +324,9 @@ MESSAGES: dict[str, str] = {
     # -----------------------------------------------------------------------------
     # Whitelist / overrides.
     # -----------------------------------------------------------------------------
+    "error.override.already_removed": (
+        "Reaper already removed this. It leaves the queue after the next scan."
+    ),
     "error.whitelist.unknown_item": (
         "Reaper has no record of that item. It keeps only the last {keep_scans} scans."
     ),

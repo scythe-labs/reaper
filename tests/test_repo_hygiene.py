@@ -6538,6 +6538,10 @@ _MEMBERSHIP_INVENTORY: dict[str, tuple[int, str]] = {
         "bounded: the fixed run_totals.TERMINAL_DELETE_KINDS set",
     ),
     "src/reaper/api/runs.py::get_run_outcomes": (1, "bounded: the page (limit le=500)"),
+    "src/reaper/services/whitelist.py::_live_rows": (
+        1,
+        "bounded: the operator's own whole-show reap overrides",
+    ),
     "src/reaper/services/condemned.py::_reap_overridden_rows": (
         2,
         "bounded: the operator's reap overrides, one row per hand click",
@@ -7834,12 +7838,12 @@ def _refusal_code_sites() -> dict[str, list[str]]:
     return sites
 
 
-_EXPECTED_REFUSAL_CODES = 312
+_EXPECTED_REFUSAL_CODES = 313
 #: Multiple call sites can raise the same code, such as `config.RuntimeSafety.why_blocked`
 #: reusing an `error.safety.*` code the executor's own backstop already raises, or
 #: `update_check._incomplete()` building one `error.integration.update_check_incomplete`
 #: for several callers. So the site count moves independently of the code count.
-_EXPECTED_REFUSAL_SITES = 371
+_EXPECTED_REFUSAL_SITES = 372
 
 
 def test_every_refusal_code_has_a_raiser_and_a_catalog_entry() -> None:
@@ -7903,7 +7907,7 @@ _CLIENT_ONLY_CODES = frozenset(
 
 #: `len(MESSAGES) + len(_CLIENT_ONLY_CODES)`, pinned so the population this test collects
 #: cannot silently shrink to match a catalog that lost entries.
-_EXPECTED_CATALOG_ERROR_KEYS = 316
+_EXPECTED_CATALOG_ERROR_KEYS = 317
 
 
 def test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose() -> None:

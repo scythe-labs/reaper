@@ -181,6 +181,7 @@
   "error.lists.source_required": "Shown in Settings, Lists, while managing a protection list.",
   "error.lists.tags_required": "Shown in Settings, Lists, while managing a protection list.",
   "error.logs.bad_level": "Shown in Settings, Logs.",
+  "error.override.already_removed": "Shown in the review queue when a Spare or Reap is refused because Reaper already removed the item.",
   "error.password.too_short": "Shown wherever an admin password is first set: initial Setup, or Settings, Security. `{min_length}` is the shortest password Reaper accepts, pluralized.",
   "error.plan.instance_orphaned": "Shown when building a reap plan, on the Reap page.",
   "error.plan.items_not_condemned": "Shown when building a reap plan, on the Reap page. `{keys}` is a plain-English list of the affected items' media keys, already joined by the server.",

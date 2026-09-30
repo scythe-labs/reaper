@@ -45,6 +45,7 @@ from reaper.db.models import (
     SizeSource,
     Snapshot,
     StepState,
+    WhitelistEntry,
 )
 from reaper.db.models import Policy as PolicyModel
 from reaper.engine.gates import wilson_upper
@@ -804,6 +805,33 @@ class TestTheRunsApi:
         stamped = client.get(f"/api/runs/{run['id']}/outcomes").json()["outcomes"][0]
         assert stamped["state"] == "failed"
         assert stamped["file_removed"] is True
+
+    def test_an_override_on_a_key_reaper_already_removed_is_refused_and_clearing_still_works(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        run = client.post("/api/runs").json()
+        db_url = Settings(data_dir=tmp_path, secret_key="k").sync_database_url
+        engine = sa_create_engine(db_url)
+        with Session(engine) as session:
+            step = session.scalars(
+                select(ActionStep).where(ActionStep.run_id == run["id"]).order_by(ActionStep.id)
+            ).first()
+            assert step is not None, "the plan fixture planned nothing, so nothing is exercised"
+            key = step.media_key
+            spared = client.post("/api/override", json={"media_key": key, "decision": "spare"})
+            assert spared.status_code == 200, spared.text
+            step.file_removed_at = utcnow()
+            session.commit()
+        engine.dispose()
+
+        refused = client.post("/api/override", json={"media_key": key, "decision": "reap"})
+
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["code"] == "error.override.already_removed"
+        with Session(sa_create_engine(db_url)) as session:
+            stored = session.scalars(select(WhitelistEntry.decision)).all()
+        assert stored == ["spare"]  # the refused reap wrote nothing
+        assert client.delete(f"/api/override/{key}").json() == {"removed": True}
 
     def test_dry_running_a_missing_run_is_a_404(self, client: TestClient) -> None:
         assert client.post("/api/runs/9999/dry-run").status_code == 404
