@@ -378,11 +378,7 @@ function Dashboard({ user }: { user: AuthUser }) {
     enabled: selectedId !== null,
   });
 
-  const {
-    data: groupDetail,
-    isError: groupError,
-    error: groupErr,
-  } = useQuery({
+  const { data: groupDetail, error: groupErr } = useQuery({
     queryKey: ["group", selectedGroupKey],
     queryFn: () => api.group(selectedGroupKey!),
     enabled: selectedGroupKey !== null,
@@ -390,6 +386,7 @@ function Dashboard({ user }: { user: AuthUser }) {
 
   // A title the newest scan no longer holds closes its panel. Any other failure keeps the
   // panel and its last data.
+  const groupError = groupErr !== null;
   const groupGone =
     groupErr instanceof ApiError && groupErr.code === "error.review.show_not_in_scan";
   const itemGone = detail?.in_latest_scan === false;
