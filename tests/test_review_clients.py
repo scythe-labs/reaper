@@ -586,6 +586,19 @@ class TestOneBulkReadCanWidenItsOwnReadBudget:
         assert route.calls.last.request.url.params["refresh"] == "true"
         assert self._budget(route)["read"] == 300.0
 
+    async def test_a_refresh_that_times_out_is_sent_once(self, httpx2_mock: respx.Router) -> None:
+        """A retry would start a second rebuild inside Tautulli. A plain page keeps its retry."""
+        route = httpx2_mock.get("https://tautulli.test/api/v2").mock(
+            side_effect=httpx2.ReadTimeout("slow")
+        )
+        async with TautulliClient("https://tautulli.test", "k", safety=READ_ONLY) as client:
+            with pytest.raises(IntegrationError):
+                await client.library_media_info(3, refresh=True, read_timeout=300.0)
+            assert route.call_count == 1
+            with pytest.raises(IntegrationError):
+                await client.library_media_info(3)
+            assert route.call_count == 4
+
 
 class TestPlexTvErrorsAreMapped:
     """plex.tv login/authorization calls must fail closed.

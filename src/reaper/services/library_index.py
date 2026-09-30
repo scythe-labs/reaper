@@ -135,11 +135,10 @@ _RETIRED_DEGRADE_FLOOR = 20
 #: other thing that ends the walk (``history_sync.MAX_HISTORY_PAGES`` follows the same
 #: pattern).
 _SPINE_PAGE_SIZE = 1_000
-
-#: Read budget for the one call that asks Tautulli to rebuild a section's list. Tautulli
-#: asks Plex about every item before it answers, so this is far slower than a plain page.
-_REFRESH_READ_TIMEOUT = 300.0
 _SPINE_MAX_PAGES = 1_000
+
+#: Read limit, in seconds, for the one call that rebuilds a section's list.
+_REFRESH_READ_TIMEOUT = 300.0
 
 
 def _as_year(value: Any) -> int | None:
@@ -465,9 +464,8 @@ async def build_index(
             if count > _RETIRED_DEGRADE_SHARE * considered_by_section[section]
         ]
 
-    # A section Tautulli lists from a stale cache trips the check right after a reap. Ask
-    # Tautulli once to rebuild each tripped section and count again. A refresh that fails, or
-    # that comes back unreadable or partial, leaves the first rows and the check as it was.
+    # Rebuild each tripped section once and count again. A refresh that fails, or comes back
+    # empty, unreadable or partial, leaves the first rows and the check as it was.
     tripped = _tripped()
     if tripped:
         before = dict(retired_by_section)
@@ -482,8 +480,12 @@ async def build_index(
             except IntegrationError as exc:
                 log.warning("library_index.refresh_failed", section_id=section, error=str(exc))
                 continue
-            if bad or partial:
-                log.warning("library_index.refresh_failed", section_id=section, error="unreadable")
+            if bad or partial or not rows:
+                log.warning(
+                    "library_index.refresh_failed",
+                    section_id=section,
+                    error="empty, partial or unreadable",
+                )
                 continue
             spine_rows = [r for r in spine_rows if r.get(_SPINE_SECTION) != section] + rows
             refreshed.append(section)

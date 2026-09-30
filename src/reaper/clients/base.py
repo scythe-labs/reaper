@@ -540,8 +540,7 @@ class BaseClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    @transient_retry
-    async def _request(
+    async def _request_once(
         self,
         method: str,
         path: str,
@@ -574,6 +573,9 @@ class BaseClient:
             timeout=self._read_budget(read_timeout),
         )
 
+    #: ``_request_once`` under the shared retry policy.
+    _request = transient_retry(_request_once)
+
     def _read_budget(self, read_timeout: float | None) -> Any:
         """The client's own timeout with only the read leg replaced.
 
@@ -602,6 +604,7 @@ class BaseClient:
         json: Any = None,
         headers: Mapping[str, str] | None = None,
         read_timeout: float | None = None,
+        single_attempt: bool = False,
     ) -> httpx2.Response:
         """Issue a read, retried on transient transport errors, and map any failure.
 
@@ -622,8 +625,10 @@ class BaseClient:
         ``headers`` are per-request extras, such as plex.tv's ``X-Plex-Token``,
         which differs per call and so cannot live on the client's default headers.
         ``read_timeout`` is a per-request read budget for one bulk read, described
-        on :meth:`_request`.
+        on :meth:`_request`. ``single_attempt`` skips the retry, for a call too slow or too
+        costly to send twice.
         """
+        send = self._request_once if single_attempt else self._request
         started = time.monotonic()
         status: int | None = None
         try:
@@ -631,7 +636,7 @@ class BaseClient:
             send_params = params
             for _ in range(4):  # the request itself, plus at most three same-origin redirects
                 try:
-                    response = await self._request(
+                    response = await send(
                         method,
                         target,
                         params=send_params,
@@ -679,9 +684,15 @@ class BaseClient:
         params: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
         read_timeout: float | None = None,
+        single_attempt: bool = False,
     ) -> Any:
         response = await self._send(
-            "GET", path, params=params, headers=headers, read_timeout=read_timeout
+            "GET",
+            path,
+            params=params,
+            headers=headers,
+            read_timeout=read_timeout,
+            single_attempt=single_attempt,
         )
         try:
             return response.json()

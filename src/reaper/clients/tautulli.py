@@ -82,13 +82,21 @@ class TautulliClient(BaseClient):
         )
         self._api_key = api_key
 
-    async def call(self, cmd: str, *, read_timeout: float | None = None, **params: Any) -> Any:
+    async def call(
+        self,
+        cmd: str,
+        *,
+        read_timeout: float | None = None,
+        single_attempt: bool = False,
+        **params: Any,
+    ) -> Any:
         """Issue a read command and unwrap the response envelope.
 
         ``read_timeout`` widens the read budget for this one call (see
         ``BaseClient._request``). Every other command keeps the client's shared
         budget: the history sweep asks for tens of thousands of rows, while the
         artwork proxy on the same client is answering a browser waiting on a page.
+        ``single_attempt`` sends the request once, with no retry on a transport failure.
         """
         if cmd not in READ_COMMANDS:
             # This is a programming error, not an IntegrationError, so the request
@@ -100,7 +108,9 @@ class TautulliClient(BaseClient):
         query: dict[str, Any] = {"apikey": self._api_key, "cmd": cmd}
         query.update({k: v for k, v in params.items() if v is not None})
 
-        payload = await self.get_json("/api/v2", params=query, read_timeout=read_timeout)
+        payload = await self.get_json(
+            "/api/v2", params=query, read_timeout=read_timeout, single_attempt=single_attempt
+        )
         if not isinstance(payload, dict):
             raise IntegrationError(self.service, "error.integration.unexpected_shape", path=cmd)
 
@@ -185,7 +195,8 @@ class TautulliClient(BaseClient):
         database on every call, so ``refresh=true`` is not needed for fresh watch
         data. That flag re-pulls the whole section's item list and file sizes from Plex
         before the call returns, whatever ``start`` is, and rewrites Tautulli's cache. The
-        call is slow, so pass ``read_timeout`` with it. Send it on one page of a section.
+        call is slow, so pass ``read_timeout`` with it. A refresh is sent once and never
+        retried. Send it on one page of a section.
         ``last_played`` and ``play_count`` leave out the plays of a user archived in
         Tautulli, and no parameter brings them back. So read plays from ``history`` instead.
 
@@ -195,6 +206,7 @@ class TautulliClient(BaseClient):
         data = await self.call(
             "get_library_media_info",
             read_timeout=read_timeout,
+            single_attempt=refresh,
             section_id=section_id,
             start=start,
             length=length,

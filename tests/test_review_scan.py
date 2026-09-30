@@ -747,6 +747,19 @@ class TestStaleListRefresh:
         assert tautulli.refreshed == [1]
         assert [r for r in reasons if "no longer in Plex" in r]
 
+    async def test_an_empty_refresh_keeps_the_first_rows_and_degrades(self) -> None:
+        tautulli = FakeTautulli(sections={1: self._rows(range(400))}, after_refresh={1: []})
+        reasons: list[str] = []
+        with capture_logs() as logs:
+            await build_movie_index(
+                tautulli,
+                self._sweep(range(100, 400)),  # type: ignore[arg-type]
+                degrade=reasons.append,
+            )
+        assert tautulli.refreshed == [1]
+        assert [r for r in reasons if "no longer in Plex" in r]
+        assert any(e["event"] == "library_index.refresh_failed" for e in logs)
+
     async def test_a_scan_under_the_bound_never_refreshes(self) -> None:
         tautulli = FakeTautulli(sections={1: self._rows(range(400))})
         reasons: list[str] = []
