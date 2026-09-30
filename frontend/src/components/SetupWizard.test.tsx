@@ -79,6 +79,7 @@ const IDLE = {
   error_reason: null,
   snapshot_id: null,
   followup_queued: false,
+  waiting_for_plex_since: null,
 };
 const RUNNING = {
   ...IDLE,

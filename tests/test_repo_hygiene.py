@@ -4762,7 +4762,7 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # file that drops out of the walk is otherwise missing from both halves while the two numbers
 # still agree with each other. Re-derive by running the test, never by arithmetic on the maps
 # above.
-_EXPECTED_RENDERING_TEST_FILES = 64
+_EXPECTED_RENDERING_TEST_FILES = 65
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
@@ -5286,7 +5286,7 @@ _LAYERS = ("api", "services", "clients", "engine")
 #: Every `.py` file under those four, which is the population the walk parses. It moves when a
 #: module is added, split or deleted, and it is pinned because a walk that quietly stopped
 #: reading the tree would satisfy every assertion below by finding nothing at all.
-_EXPECTED_LAYERED_MODULES = 91
+_EXPECTED_LAYERED_MODULES = 92
 
 #: Every ordered pair where one of the four imports another, reconciled by hand: all six
 #: downward pairs are live, and no upward pair is. Asserted as an equality rather than a subset,
@@ -5603,7 +5603,7 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
 #: different population from that constant, which counts what is under the four packages
 #: only, so a bump to one has no reason to touch the other. The failure message below names
 #: the constant the same way.
-_EXPECTED_SOURCE_MODULES = 126
+_EXPECTED_SOURCE_MODULES = 127
 
 #: Every import cycle under `src/reaper`, each rotated to start at its smallest member. Two,
 #: and both are one edge: `api/settings.py` imports `reaper.launcher` at module level,
@@ -5817,7 +5817,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: parses. Pinned for the same reason as `_EXPECTED_SOURCE_MODULES`, and it carries more
 #: weight here: the expected cycle set is empty, so a walk that stopped reading the tree
 #: would agree with a clean graph exactly.
-_EXPECTED_FRONTEND_MODULES = 248
+_EXPECTED_FRONTEND_MODULES = 250
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")
@@ -7834,12 +7834,12 @@ def _refusal_code_sites() -> dict[str, list[str]]:
     return sites
 
 
-_EXPECTED_REFUSAL_CODES = 311
+_EXPECTED_REFUSAL_CODES = 312
 #: Multiple call sites can raise the same code, such as `config.RuntimeSafety.why_blocked`
 #: reusing an `error.safety.*` code the executor's own backstop already raises, or
 #: `update_check._incomplete()` building one `error.integration.update_check_incomplete`
 #: for several callers. So the site count moves independently of the code count.
-_EXPECTED_REFUSAL_SITES = 369
+_EXPECTED_REFUSAL_SITES = 371
 
 
 def test_every_refusal_code_has_a_raiser_and_a_catalog_entry() -> None:
@@ -7903,7 +7903,7 @@ _CLIENT_ONLY_CODES = frozenset(
 
 #: `len(MESSAGES) + len(_CLIENT_ONLY_CODES)`, pinned so the population this test collects
 #: cannot silently shrink to match a catalog that lost entries.
-_EXPECTED_CATALOG_ERROR_KEYS = 315
+_EXPECTED_CATALOG_ERROR_KEYS = 316
 
 
 def test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose() -> None:

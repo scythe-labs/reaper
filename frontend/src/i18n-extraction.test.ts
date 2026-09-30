@@ -56,6 +56,7 @@ const CONVERTED = [
   "components/PlexPanel.tsx",
   "components/PlexPin.tsx",
   "components/PlexTrashNotice.tsx",
+  "components/PlexWaitNotice.tsx",
   "components/PolicyEditor.tsx",
   "components/PolicyRuleEditors.tsx",
   "components/PolicySimulator.tsx",

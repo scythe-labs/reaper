@@ -1197,6 +1197,25 @@ class PlexClient:
             log.warning("plex.refresh_state_unreadable", section=section_key, error=str(exc))
             return True
 
+    async def is_scanning(self) -> bool:
+        """Is Plex running a library scan right now?
+
+        Reads the server's activity list and looks for one titled ``Scanning``. Plex lists
+        unrelated work there too, such as subscription refreshes, so only that title counts.
+        On any error it reports ``True`` (busy), so an unreadable Plex never ends a wait early.
+        """
+
+        try:
+            server = await self._connect()
+
+            def read() -> bool:
+                return any(a.title == "Scanning" for a in server.activities)
+
+            return await self._call(read, what="read Plex's scan activity")
+        except Exception as exc:
+            log.warning("plex.scan_activity_unreadable", error=str(exc))
+            return True
+
     async def labeled_in_section(self, section_key: int, *, kind: str, label: str) -> set[int]:
         """The rating keys in one section carrying ``label``, at the level the
         shelf works on: movies in a movie section, seasons in a show section.

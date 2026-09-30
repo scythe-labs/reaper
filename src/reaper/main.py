@@ -79,7 +79,7 @@ from reaper.db.session import (
 )
 from reaper.logging import configure_logging
 from reaper.secrets import resolve_kdf_salt, resolve_old_keys, resolve_secret_key
-from reaper.services import app_settings
+from reaper.services import app_settings, plex_wait
 from reaper.services.scheduler import (
     apply_stored_schedules,
     build_scheduler,
@@ -450,6 +450,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         bins.cancel()
         with suppress(asyncio.CancelledError, Exception):
             await bins
+        # The wait after a reap (api/runs.py) only reads Plex, so it is canceled and awaited
+        # before the engines go. It launches no scan when canceled.
+        plex_task = getattr(app.state, "plex_wait_task", None)
+        if plex_task is not None and not plex_task.done():
+            plex_task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await plex_task
+        plex_wait.end()
         # A background scan (api/scan.py) is detached from any request, so cancel it here
         # rather than leaving a pending task when the loop stops. A scan writes only our own
         # rows and can be dropped, so it is canceled but not awaited.

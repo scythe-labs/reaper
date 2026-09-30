@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import Sequence
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, suppress
 
 import structlog
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
@@ -53,6 +54,7 @@ from reaper.api.schemas import (
     RunStepsOut,
     RunSummaryOut,
 )
+from reaper.clients.plex import PlexClient
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import ActionStep, Candidate, ReapBin, ReapRun, RunState, StepState
@@ -60,7 +62,7 @@ from reaper.engine.explanation import ReasonKey
 from reaper.engine.policy import ProfileSettings
 from reaper.engine.reason import Reason, from_stored, to_wire
 from reaper.refusal import english
-from reaper.services import app_settings, recycle_bins, run_totals, whitelist
+from reaper.services import app_settings, plex_wait, recycle_bins, run_totals, whitelist
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import (
     ExecutionError,
@@ -809,6 +811,50 @@ def reap_in_flight(app: FastAPI) -> bool:
     return status is not None and status.running
 
 
+async def _wait_for_plex_then_scan(app: FastAPI) -> None:
+    """Hold until Plex has finished the reap's folder scans, then start the scan.
+
+    Setup trouble falls back to scanning at once. A cancel (shutdown, or a later reap taking
+    over) starts nothing.
+    """
+    began = time.monotonic()
+    reason = "skipped"
+    try:
+        factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+        async with factory() as session:
+            safety = await app_settings.runtime_safety(session, app.state.settings)
+        _gateway, closers = await build_reap_gateway(factory, app.state.secret_box, safety=safety)
+        async with AsyncExitStack() as stack:
+            for client in closers:
+                await stack.enter_async_context(client)
+            plex = next((c for c in closers if isinstance(c, PlexClient)), None)
+            if plex is not None:
+                log.info("reap.plex_wait_started")
+                reason = await plex_wait.wait_until_quiet(plex.is_scanning)
+    except Exception as exc:
+        log.warning("reap.plex_wait_failed", error=str(exc))
+    finally:
+        plex_wait.end()
+    log.info(
+        "reap.plex_wait_ended", reason=reason, minutes=round((time.monotonic() - began) / 60, 1)
+    )
+    launch_scan(app)
+
+
+async def start_plex_wait(app: FastAPI) -> None:
+    """Start the wait that ends in the scan after a reap. A wait already running is replaced,
+    since the newer reap queued more Plex scans."""
+    old: asyncio.Task[None] | None = getattr(app.state, "plex_wait_task", None)
+    if old is not None and not old.done():
+        old.cancel()
+        with suppress(asyncio.CancelledError):
+            await old
+    plex_wait.begin()
+    task = asyncio.create_task(_wait_for_plex_then_scan(app), name="plex_wait")
+    task.add_done_callback(report_background_failure)
+    app.state.plex_wait_task = task
+
+
 def _preflight_refusal(gateway: ReapGateway) -> str | None:
     """Return the executor's client-presence refusals, checked synchronously
     so the endpoint returns them immediately, a clear 409, instead of only
@@ -1053,7 +1099,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
             # ends FAILED, and reading the confirmed count alone would
             # leave the queue offering files that were already gone.
             if report.library_changed:
-                launch_scan(app)
+                await start_plex_wait(app)
         except ExecutionError as exc:
             # A refused run the executor raised rather than executed
             # (changed manifest, not PLANNED, missing clients). The run
@@ -1077,7 +1123,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
             )
             log.warning("reap.background_failed", run_id=run_id, error=str(exc))
             if status.deleted_items > 0:
-                launch_scan(app)
+                await start_plex_wait(app)
         finally:
             status.running = False
             status.stopping = False

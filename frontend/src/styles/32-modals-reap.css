@@ -225,9 +225,20 @@
   background: var(--unknown-soft);
   border-color: color-mix(in srgb, var(--unknown) 45%, transparent);
 }
-.reap-bar.errored .banner-dot {
+.reap-bar.waiting {
+  background: var(--unknown-soft);
+  border-color: color-mix(in srgb, var(--unknown) 45%, transparent);
+}
+.reap-bar.errored .banner-dot,
+.reap-bar.waiting .banner-dot {
   background: var(--unknown);
   color: var(--unknown);
+}
+.reap-bar-wait {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-sm);
 }
 .reap-bar .banner-dot {
   background: var(--condemn);
@@ -305,7 +316,7 @@
 }
 /* A slow pulse on the live dot says the run is moving even between count ticks. Only the running
    bar: a finished or errored one holds still. */
-.reap-bar:not(.done):not(.errored) .banner-dot {
+.reap-bar:not(.done):not(.errored):not(.waiting) .banner-dot {
   animation: reap-bar-pulse 1.8s var(--ease) infinite;
 }
 @keyframes reap-bar-pulse {
@@ -351,7 +362,8 @@
     margin-inline-start: 0;
     gap: var(--space-lg);
   }
-  .reap-bar-error {
+  .reap-bar-error,
+  .reap-bar-wait {
     order: 4;
   }
   .reap-bar-actions .stop-btn {
@@ -359,12 +371,14 @@
     padding: var(--space-md) var(--space-2xl);
   }
   .reap-bar.done .reap-bar-actions,
+  .reap-bar.waiting .reap-bar-actions,
   .reap-bar.errored .reap-bar-actions {
     justify-content: flex-end;
   }
   /* The done and errored bars read as one left-aligned phrase, the outcome then the figures on
      the next line, rather than the running bar's count-left percent-right split. */
   .reap-bar.done .reap-bar-text,
+  .reap-bar.waiting .reap-bar-text,
   .reap-bar.errored .reap-bar-text {
     justify-content: flex-start;
     flex-wrap: wrap;

@@ -56,6 +56,7 @@ from reaper.services import (
     imdb_dataset,
     list_config,
     plex_link,
+    plex_wait,
     retention,
     scan_runner,
 )
@@ -619,7 +620,13 @@ async def scheduled_scan(
     needs no arming. A misconfigured install, such as one with no Radarr or Tautulli yet, is
     a quiet skip rather than an error, since the schedule may have been set before those
     services were added.
+
+    Skips while Reaper waits for Plex to finish a reap's folder scans. The wait starts its own
+    scan when it ends.
     """
+    if plex_wait.waiting_since() is not None:
+        log.info("scheduler.scan_skipped", reason="waiting for Plex to finish updating")
+        return
     try:
         snapshot = await scan_runner.run_scan(
             settings=settings,

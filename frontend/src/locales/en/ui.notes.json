@@ -370,6 +370,7 @@
   "error.runs.preflight_no_tautulli": "Shown when planning, confirming, or stopping a reap, on the Reap page.",
   "error.safety.deletion_off": "Shown when starting a reap while deletion is off, on the Reap page.",
   "error.safety.recovery_mode_active": "Shown when starting a reap while deletion is off, on the Reap page.",
+  "error.scan.waiting_for_plex": "Shown when a scan start or a Leaving Soon update is refused because Reaper is waiting for Plex to finish the folder scans a reap asked for. No params.",
   "error.scan.already_running": "Shown when a background scan is refused because one is already running. No params.",
   "error.scan.gate_unimplemented": "Shown when a scan cannot start, on the Jobs panel. `{gate}` is the protection's own id, exactly as the policy stores it.",
   "error.scan.list_gate_missing_list": "Shown when a scan cannot start, on the Jobs panel.",
