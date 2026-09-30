@@ -724,6 +724,9 @@ async def dry_run(request: Request, run_id: int) -> RunReportOut:
     run on a real send, where the moment is real. The transport guard
     sits underneath as the independent backstop.
     """
+    if plex_wait.waiting_since() is not None:
+        log.info("reap.refused", run_id=run_id, status=409, code="error.scan.waiting_for_plex")
+        refuse(409, "error.scan.waiting_for_plex")
     settings: Settings = request.app.state.settings
 
     async with session_factory(request)() as session:
@@ -842,8 +845,8 @@ async def _wait_for_plex_then_scan(app: FastAPI) -> None:
 
 
 async def start_plex_wait(app: FastAPI) -> None:
-    """Start the wait that ends in the scan after a reap. A wait already running is replaced,
-    since the newer reap queued more Plex scans."""
+    """Start the wait that ends in the scan after a reap. A reap is refused while a wait runs,
+    so replacing a running wait here is only a guard."""
     old: asyncio.Task[None] | None = getattr(app.state, "plex_wait_task", None)
     if old is not None and not old.done():
         old.cancel()
@@ -883,7 +886,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
        plan, so a stale tab, whose phrase was for a different plan,
        cannot replay it.
     3. **Plex must be done with the last reap's scans** (409 otherwise).
-       This is checked first, for real and practice runs alike.
+       This is checked first. The practice-run route refuses the same way.
     4. **The executor's own interlocks**, the manifest re-check, caps
        abort-not-truncate, the canary, the per-item streaming veto, and
        the played-since-approval check, each run and can still spare or
@@ -906,6 +909,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
     app = request.app
 
     if plex_wait.waiting_since() is not None:
+        log.info("reap.refused", run_id=run_id, status=409, code="error.scan.waiting_for_plex")
         refuse(409, "error.scan.waiting_for_plex")
 
     # Claims the single reap slot synchronously, with no await between the
