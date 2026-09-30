@@ -549,6 +549,8 @@ export interface CandidateDetail extends Candidate {
   content_rating: string | null;
   runtime_minutes: number | null;
   genres: string[];
+  /** False when the newest scan holds no row for this item. The panel closes on it. */
+  in_latest_scan: boolean;
 }
 
 export interface GateSetting {

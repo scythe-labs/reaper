@@ -1403,6 +1403,22 @@ class TestTheWhyPanel:
         assert checked
         assert checked[0]["detail_key"] == {"k": "legacy", "p": {"text": CHECKED_DETAIL}}
 
+    def test_the_panel_says_when_the_newest_scan_no_longer_holds_the_item(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        item_id = client.get("/api/candidates?verdict=condemn").json()["items"][0]["id"]
+        assert client.get(f"/api/candidates/{item_id}").json()["in_latest_scan"] is True
+
+        with sqlite3.connect(tmp_path / "reaper.db") as db:
+            db.execute(
+                "INSERT INTO snapshot (created_at, policy_hash, scoring_hash, list_config_hash,"
+                " horizon_at, item_count, degraded)"
+                " SELECT ?, policy_hash, scoring_hash, list_config_hash, horizon_at, 0, 0"
+                " FROM snapshot ORDER BY id DESC LIMIT 1",
+                (utcnow().isoformat(sep=" "),),
+            )
+        assert client.get(f"/api/candidates/{item_id}").json()["in_latest_scan"] is False
+
     def test_a_protected_item_explains_the_keep(self, client: TestClient) -> None:
         """A tool that only explains its deletions cannot be trusted about its keeps.
 

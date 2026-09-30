@@ -5,7 +5,7 @@ import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "re
 import { useTranslation } from "react-i18next";
 import { applyAccent } from "./accent";
 import { Announcer, useSlowWait } from "./announce";
-import { api, type AuthUser, type Verdict } from "./api";
+import { api, ApiError, type AuthUser, type Verdict } from "./api";
 import { BackNavProvider, useBackGuard, useBackNav, useModalOpen } from "./backnav";
 import { Login } from "./components/Login";
 import { NotInScanPanel } from "./components/NotInScanPanel";
@@ -378,11 +378,24 @@ function Dashboard({ user }: { user: AuthUser }) {
     enabled: selectedId !== null,
   });
 
-  const { data: groupDetail, isError: groupError } = useQuery({
+  const {
+    data: groupDetail,
+    isError: groupError,
+    error: groupErr,
+  } = useQuery({
     queryKey: ["group", selectedGroupKey],
     queryFn: () => api.group(selectedGroupKey!),
     enabled: selectedGroupKey !== null,
   });
+
+  // A title the newest scan no longer holds closes its panel. Any other failure keeps the
+  // panel and its last data.
+  const groupGone =
+    groupErr instanceof ApiError && groupErr.code === "error.review.show_not_in_scan";
+  const itemGone = detail?.in_latest_scan === false;
+  useEffect(() => {
+    if (groupGone || itemGone) setSelected(null);
+  }, [groupGone, itemGone]);
 
   const { data: personDetail, isError: personError } = useQuery({
     queryKey: ["fairness", "person", scalesUser],
@@ -533,7 +546,7 @@ function Dashboard({ user }: { user: AuthUser }) {
                 latestScanSnapshotId={scanStatus?.snapshot_id ?? null}
               />
               {selectedId !== null &&
-                (detail ? (
+                (detail && !itemGone ? (
                   <WhyPanel
                     item={detail}
                     onClose={() => setSelected(null)}
@@ -553,7 +566,7 @@ function Dashboard({ user }: { user: AuthUser }) {
                   <WhyPanelFallback error={detailError} onClose={() => setSelected(null)} />
                 ))}
               {selectedGroupKey !== null &&
-                (groupDetail ? (
+                (groupDetail && !groupGone ? (
                   <ShowPanel
                     group={groupDetail}
                     // This one does carry a lane: the panel lists every season a show has,

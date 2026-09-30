@@ -1575,8 +1575,19 @@ async def candidate_detail(request: Request, candidate_id: int) -> CandidateDeta
             expiries=expiries,
         )
         explanation = _explanation_out(row)
+        newest = await newest_snapshot(session)
+        in_latest = newest is not None and (
+            row.snapshot_id == newest.id
+            or await session.scalar(
+                select(Candidate.id)
+                .where(Candidate.snapshot_id == newest.id, Candidate.media_key == row.media_key)
+                .limit(1)
+            )
+            is not None
+        )
         return CandidateDetail(
             **base.model_dump(),
+            in_latest_scan=in_latest,
             explanation=explanation.body,
             explanation_unreadable=explanation.unreadable,
             links=await _deep_links(session, row),

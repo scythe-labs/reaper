@@ -339,6 +339,9 @@ class CandidateDetail(CandidateOut):
     content_rating: str | None = None
     runtime_minutes: int | None = None
     genres: list[str] = Field(default_factory=list)
+    in_latest_scan: bool = True
+    """False when the newest snapshot holds no row for this item's media key. The panel
+    closes on it, since its Spare and Reap buttons would act on a title that is gone."""
 
 
 class GroupRollupOut(BaseModel):

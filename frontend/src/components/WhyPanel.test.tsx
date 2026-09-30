@@ -146,6 +146,7 @@ function detail(
     collections: null,
     content_rating: null,
     runtime_minutes: null,
+    in_latest_scan: true,
     genres: [],
     ratings: null,
     links: {
