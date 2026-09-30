@@ -5,8 +5,9 @@ A reap sends Plex one folder scan per emptied folder. Plex runs them one at a ti
 reap keeps Plex busy long after the last request. A Reaper scan that reads Plex during that
 time sees titles that are still disappearing. This module holds the wait. It only reads.
 
-While the wait runs, ``waiting_since`` is set. Every path that would start a scan or read the
-Plex library checks it and declines.
+While the wait runs, ``waiting_since`` is set. Four things check it and decline: a scan start,
+the scheduled scan, the automatic rescans after a Policy or Lists save, and the Leaving Soon
+update. List refresh still reads Plex collections during the wait.
 """
 
 from __future__ import annotations

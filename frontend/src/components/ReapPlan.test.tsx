@@ -846,6 +846,33 @@ describe("reload", () => {
 
     expect(await screen.findByText("Reap finished")).toBeInTheDocument();
   });
+
+  it("says at the top of the report that Reaper is waiting for Plex, and only then", async () => {
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({ running: false, run_id: 21, phase: "complete" }),
+    );
+    mockHistory([summary({ id: 21 })]);
+    mockOutcomes([]);
+    apiMock.scanStatus.mockResolvedValue({
+      ...IDLE_SCAN,
+      waiting_for_plex_since: "2026-09-29T10:00:00Z",
+    });
+    renderPlan();
+
+    expect(await screen.findByText(/Waiting for Plex to finish updating/)).toBeInTheDocument();
+  });
+
+  it("shows no wait notice on the report when Plex is not being waited for", async () => {
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({ running: false, run_id: 21, phase: "complete" }),
+    );
+    mockHistory([summary({ id: 21 })]);
+    mockOutcomes([]);
+    renderPlan();
+
+    await screen.findByText("Reap finished");
+    expect(screen.queryByText(/Waiting for Plex/)).toBeNull();
+  });
 });
 
 describe("history paging", () => {

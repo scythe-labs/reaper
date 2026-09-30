@@ -4,11 +4,12 @@
 // The server holds the wait and refuses a scan start until it ends. These tests pin the other
 // half: every control that would start a scan or read Plex's library is off and says why, and
 // the controls that do not read Plex stay on.
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReapStatus } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_UPDATE, IDLE_SCAN } from "../test/apiFixtures";
+import { testQueryClient } from "../test/queryClient";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { ReapBar } from "./ReapBar";
 import { Settings } from "./Settings";
@@ -86,6 +87,23 @@ describe("the reap bar while Plex catches up", () => {
     expect(container.querySelector(".reap-bar.waiting")).not.toBeNull();
     expect(screen.getByRole("button", { name: "Dismiss" })).toBeEnabled();
     await expectNoA11yViolations(container);
+  });
+
+  it("shows the wait at once when a running reap ends, without waiting for a poll", async () => {
+    // Nothing polls the scan status while it is idle, so the bar's own end-of-reap refetch is
+    // the only thing that can bring the wait in.
+    const client = testQueryClient();
+    apiMock.reapStatus.mockResolvedValue({ ...ENDED_REAP, running: true, phase: "reaping" });
+    apiMock.scanStatus.mockResolvedValue(IDLE_SCAN);
+    const { container } = renderWithProviders(<ReapBar onGoToReap={() => {}} />, { client });
+    await screen.findByRole("progressbar");
+    expect(screen.queryByText(/Waiting for Plex/)).toBeNull();
+
+    apiMock.scanStatus.mockResolvedValue(WAITING);
+    act(() => client.setQueryData(["reapStatus"], ENDED_REAP));
+
+    expect(await screen.findByText(/Waiting for Plex to finish updating/)).toBeInTheDocument();
+    expect(container.querySelector(".reap-bar.waiting")).not.toBeNull();
   });
 
   it("returns to the green bar once the wait is over", async () => {

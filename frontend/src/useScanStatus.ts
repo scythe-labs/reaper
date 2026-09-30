@@ -40,8 +40,9 @@ export function useScanStatus(): ScanStatus | undefined {
   }).data;
 }
 
-/** True while Reaper waits for Plex to finish the scans a reap asked for. Every control that
- *  starts a scan or reads Plex's library is off for that time, and the server refuses it too. */
+/** True while Reaper waits for Plex to finish the scans a reap asked for. These are off for
+ *  that time: the Scan buttons, the automatic rescans after a Policy or Lists save, and the
+ *  Leaving Soon update. The server refuses the same requests. */
 export function useWaitingForPlex(): boolean {
   return useScanStatus()?.waiting_for_plex_since != null;
 }

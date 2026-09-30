@@ -361,6 +361,8 @@ The two sections after the index are **not** refutations. Read their headings be
 | `docs/LEARNINGS.md:a delete that gets no answer` — timings-are-identifying-stats | The entry names no title, host, path or user. Timings in seconds are recorded the same way in other entries, and one season's file count describes a shape of one reap, never the library. Measured on PR #1024's branch. | `ab856d21` |
 | `docs/STATUS.md` — recycle-bin-report-needs-a-status-row | No STATUS row describes reap reporting, so none became false. The decision lives in the recycle-bins row and DECISIONS section that PR #1026 adds on top of this branch. Measured on PR #1025's branch. | `979bc3ab` |
 | `src/reaper/clients/base.py:GuardedTransport` — restore-exemption-ignores-the-method | Only `_mutate(..., restore=True)` sets `reaper_restore_approved`, and its one caller, `ArrClient.restore_recycle_bin`, always sends a PUT to the settings path. The extension lives in the process, so no HTTP input can set it. A request with the extension on any other path is refused, and `test_guarded_transport.py` pins that. Measured on PR #1026's branch. | `e7dd80b2` |
+| `frontend/src/components/ReapBar.tsx:ReapBar` — errored-bar-hides-the-wait-line | The `waitingForPlex` line renders outside the `!errored` guard, so a red bar after a failed reap that deleted files still shows why scans are paused. Only the amber tint is lost. | `30fd2c37` |
+| `frontend/src/locales/en/ui.json:error.scan.waiting_for_plex` — key-out-of-alphabetical-order | No test or tool requires sorted keys in ui.json, and the i18n tests compare key sets only. | `30fd2c37` |
 
 ## Carried over with NO evidence — unverified, not refuted
 
