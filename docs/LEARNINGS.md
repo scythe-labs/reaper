@@ -4588,6 +4588,14 @@ count-delta gate is consulted at all. It is also more work for Plex, since it wa
 directory in the library rather than the handful the run emptied. One request, more scanning,
 and an unbounded blast radius.
 
+**Rolling up the folder tree is the bounded middle.** A reap of 531 items sent 531 path
+refreshes, one per movie folder and one per season folder. Plex ran them one at a time for 37
+minutes. The 287 season folders sat under 135 show folders. All 244 movie folders sat directly in
+one flat Movies root. The flush now replaces queued folders with their parent when the parent is
+strictly inside a section location and this run deletes at least half the titles under it. Titles
+come from the *arr libraries, read once at flush time. Reaper never sends a section location. A
+flat movie root never rolls up. A library with letter or genre folders rolls up further.
+
 **`LibrarySection.totalSize` is a plexapi `cached_data_property`, on a section object plexapi
 also caches for the life of the connection.** So the trash gate's before-count and
 after-count were one number, and the shrink it refuses to purge without could only read as

@@ -6259,3 +6259,78 @@ class TestABinLeftOffIsPutBackLater:
         )
         assert healthy.bin_writes == ["/recycle/radarr"]
         assert notifier.back_on == ["Radarr HD"]
+
+
+class TestTheRefreshRollUpNeverGuesses:
+    """``_flush_refreshes`` rolls folders up only from a library it could read."""
+
+    class _Movies:
+        def __init__(self, rows: list[dict[str, Any]] | None) -> None:
+            self._rows = rows
+
+        async def movies(self, *, tmdb_id: int | None = None) -> list[dict[str, Any]]:
+            if self._rows is None:
+                raise IntegrationError("radarr", "unreachable")
+            return self._rows
+
+    async def _flush(self, session: AsyncSession, radarr: Any, plex: FakePlex) -> None:
+        executor = Executor(
+            session,
+            safety=_armed(),
+            settings=ProfileSettings(),
+            dry_run=False,
+            gateway=_gateway(radarr={1: radarr}, plex=plex),
+        )
+        for i in range(3):
+            executor._queue_refresh(f"/movies/A/M{i}", plex_keys=(i,))
+        await executor._flush_refreshes()
+
+    async def test_a_failed_read_sends_the_folders_as_queued(self, session: AsyncSession) -> None:
+        plex = FakePlex(sections={"Films": ["/movies"]})
+        await self._flush(session, self._Movies(None), plex)
+        assert sorted(p for _, p in plex.refreshed) == [f"/movies/A/M{i}" for i in range(3)]
+
+    async def test_a_readable_library_rolls_up_but_never_to_the_location(
+        self, session: AsyncSession
+    ) -> None:
+        plex = FakePlex(sections={"Films": ["/movies"]})
+        await self._flush(session, self._Movies([]), plex)
+        assert plex.refreshed == [("Films", "/movies/A")]
+
+    async def test_sonarr_seasons_with_files_are_the_titles_under_a_show(
+        self, session: AsyncSession
+    ) -> None:
+        def season(n: int, files: int) -> dict[str, Any]:
+            return {"seasonNumber": n, "statistics": {"episodeFileCount": files}}
+
+        class _Series:
+            def __init__(self, seasons: list[dict[str, Any]]) -> None:
+                self._seasons = seasons
+
+            async def series(self) -> list[dict[str, Any]]:
+                return [{"path": "/tv/Show", "seasons": self._seasons}]
+
+        async def flushed(seasons: list[dict[str, Any]]) -> list[str]:
+            plex = FakePlex(sections={"TV": ["/tv"]})
+            executor = Executor(
+                session,
+                safety=_armed(),
+                settings=ProfileSettings(),
+                dry_run=False,
+                gateway=_gateway(sonarr={1: _Series(seasons)}, plex=plex),
+            )
+            for n in (1, 2, 3):
+                executor._queue_refresh(f"/tv/Show/Season {n}", plex_keys=())
+            await executor._flush_refreshes()
+            return sorted(p for _, p in plex.refreshed)
+
+        # Season 4 is the only one left with files: 3 of 4 are deleted.
+        assert await flushed([season(1, 0), season(2, 0), season(3, 0), season(4, 5)]) == [
+            "/tv/Show"
+        ]
+        # Four other seasons hold files: 3 of 7 deleted is under half.
+        assert await flushed([season(n, 5) for n in range(4, 8)]) == [
+            f"/tv/Show/Season {n}" for n in (1, 2, 3)
+        ]
+        # A season Sonarr cannot describe blocks the roll-up.
+        assert await flushed([{"seasonNumber": 4}]) == [f"/tv/Show/Season {n}" for n in (1, 2, 3)]

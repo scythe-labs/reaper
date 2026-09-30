@@ -98,7 +98,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from itertools import batched
@@ -113,6 +113,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clients.base import IntegrationError, SafetyViolationError
 from reaper.clients.plex import ActiveStream, PlexSectionPaths, declared_mutation
+from reaper.clients.sonarr_stats import parse_season_stats
 from reaper.clock import utcnow
 from reaper.config import RuntimeSafety
 from reaper.db import KEY_CHUNK
@@ -334,6 +335,7 @@ class MovieDeleter(Protocol):
 class SeasonPruner(Protocol):
     """Sonarr, for the unmonitor, verify, delete-files sequence of a season prune."""
 
+    async def series(self) -> list[dict[str, Any]]: ...
     async def series_by_id(self, series_id: int) -> dict[str, Any]: ...
     async def unmonitor_season(self, series_id: int, season_number: int) -> None: ...
     async def episode_files(self, series_id: int) -> list[dict[str, Any]]: ...
@@ -2956,8 +2958,10 @@ class Executor:
         asynchronous Plex scan, so one per item leaves Plex scanning folders this run is
         still deleting from.
 
-        Keyed by path, so two items in one folder are scanned once. Widening a scan to a
-        shared parent would reach the library root, and the trash purge refuses to follow
+        Keyed by path, so two items in one folder are scanned once. ``_flush_refreshes``
+        rolls the queue up into a parent folder only when this run deletes at least half
+        the titles under that parent and the parent is strictly inside a section
+        location. A section location is never sent, and the trash purge refuses to follow
         a whole-section scan.
 
         The value is which Plex listings this run removes under that path (a merged bind
@@ -3001,7 +3005,11 @@ class Executor:
             return
         for section in sections:
             self._section_titles.setdefault(section.key, section.title)
-        for arr_path, plex_keys in self._pending_refreshes.items():
+        locations = [location for section in sections for location in section.locations]
+        pending = self._pending_refreshes
+        if len(pending) > 1:
+            pending = await self._rolled_up(pending, locations)
+        for arr_path, plex_keys in pending.items():
             for section in sections:
                 if not any(_path_within(arr_path, location) for location in section.locations):
                     continue
@@ -3020,6 +3028,33 @@ class Executor:
                 break
             else:
                 log.info("reap.refresh_unmapped", arr_path=arr_path)
+
+    async def _rolled_up(
+        self, pending: dict[str, set[int]], locations: Sequence[str]
+    ) -> dict[str, set[int]]:
+        """``pending`` rolled up by :func:`roll_up_refreshes`, or unchanged when any read fails.
+
+        The titles left in each *arr library are read once. A failed read or a row whose
+        path cannot be placed leaves the queue as queued: a wider scan is never sent on
+        a guess.
+        """
+        gateway = self._gateway
+        assert gateway is not None
+        try:
+            titles: set[str] = set()
+            for radarr in gateway.radarr.values():
+                for movie in await radarr.movies():
+                    if movie.get("hasFile"):
+                        titles.add(_required_path(movie))
+            for sonarr in gateway.sonarr.values():
+                for series in await sonarr.series():
+                    path = _required_path(series) if _has_files(series) else ""
+                    if path:
+                        titles.update(f"{path}/#season{n}" for n in _seasons_with_files(series))
+        except Exception as exc:
+            log.info("reap.refresh_rollup_skipped", error=str(exc))
+            return pending
+        return roll_up_refreshes(pending, locations, titles)
 
     async def _finalize_plex(self) -> None:
         """Rescan the folders this run emptied, then purge the stale entries, so Plex's
@@ -3447,6 +3482,75 @@ def _path_within(path: str, location: str) -> bool:
     """
     root = location.rstrip("/")
     return path in (root, location) or path.startswith(root + "/")
+
+
+def _required_path(row: Mapping[str, Any]) -> str:
+    """The folder an *arr row sits in. Raises when it has none, so the roll-up backs off."""
+    path = str(row.get("path") or "").rstrip("/")
+    if not path.startswith("/"):
+        raise ValueError("a library row has no usable path")
+    return path
+
+
+def _seasons_with_files(series: Mapping[str, Any]) -> list[int]:
+    """Season numbers of a Sonarr series that hold files. Raises on an unreadable season."""
+    numbers: list[int] = []
+    for entry in series.get("seasons") or []:
+        stats = parse_season_stats(entry) if isinstance(entry, dict) else None
+        if stats is None:
+            raise ValueError("a season has no statistics")
+        if stats.has_content:
+            numbers.append(stats.season_number)
+    return numbers
+
+
+def _has_files(series: Mapping[str, Any]) -> bool:
+    return bool(_seasons_with_files(series))
+
+
+def roll_up_refreshes(
+    queued: Mapping[str, set[int]],
+    locations: Sequence[str],
+    titles: Collection[str],
+) -> dict[str, set[int]]:
+    """Replace queued folders with a shared parent folder when this run deletes most of it.
+
+    ``titles`` are the folders of the titles still in the library, one per movie or per
+    season with files. A parent replaces the queued folders under it only when both hold.
+    It sits strictly inside a section location, so a location and anything above one is
+    never returned. This run deletes at least half the titles under it. The step repeats
+    upward, and each result holds the union of the ``plex_keys`` it replaced.
+    """
+    roots = [loc.rstrip("/") for loc in locations]
+    deleted = list(queued)
+    remaining = {t for t in titles if t not in queued}
+
+    def allowed(parent: str) -> bool:
+        return any(_path_within(parent, r) for r in roots) and not any(
+            _path_within(r, parent) for r in roots
+        )
+
+    def under(parent: str, path: str) -> bool:
+        return path.startswith(parent + "/")
+
+    folders = {p: set(k) for p, k in queued.items()}
+    while True:
+        parents = {p.rsplit("/", 1)[0] for p in folders if "/" in p.strip("/")}
+        for parent in sorted(parents, key=lambda p: -p.count("/")):
+            if not allowed(parent):
+                continue
+            gone = sum(1 for d in deleted if under(parent, d))
+            left = sum(1 for t in remaining if under(parent, t))
+            kids = [p for p in folders if under(parent, p)]
+            if not kids or gone < left:
+                continue
+            merged: set[int] = set()
+            for kid in kids:
+                merged |= folders.pop(kid)
+            folders[parent] = merged
+            break
+        else:
+            return folders
 
 
 def _common_parent(paths: Sequence[str]) -> str:
