@@ -4742,3 +4742,6 @@ knew the key.
 - **The fix.** A reap older than a removal of its key is void, the executor deletes the row it
   removed, the override route refuses a key removed since the newest scan, and plans leave removed
   keys out.
+- **An assumed removal counts too.** A delete that got no answer still stamps the removal. Its
+  reap override is then void and the item stays out of the next plan. That is the keep direction,
+  and it says nothing on screen.

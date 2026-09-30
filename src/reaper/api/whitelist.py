@@ -212,8 +212,8 @@ async def _refuse_if_removed(session: AsyncSession, media_key: str) -> None:
     """Refuse a decision on a key Reaper removed at or after the newest scan: the row it would
     act on describes files that are gone."""
     taken = await session.scalar(select(Snapshot.created_at).order_by(Snapshot.id.desc()).limit(1))
-    removed = (await whitelist.removal_times(session)).get(media_key)
-    if taken is not None and removed is not None and removed >= taken:
+    removed = await whitelist.removal_times(session)
+    if taken is not None and whitelist.removed_since(removed, media_key, taken):
         refuse(409, "error.override.already_removed")
 
 
@@ -226,8 +226,8 @@ async def set_override(request: Request, payload: OverrideIn) -> WhitelistEntryO
     time, not here.
     """
     async with session_factory(request)() as session:
-        title = await _resolve_title(session, payload.media_key)
         await _refuse_if_removed(session, payload.media_key)
+        title = await _resolve_title(session, payload.media_key)
         prior = await whitelist.override_for(session, payload.media_key)
         entry = await whitelist.set_override(
             session,

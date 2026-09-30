@@ -6369,22 +6369,69 @@ class TestOverridesDoNotOutliveAReap:
 
         assert await whitelist.overrides(session) == {}
 
-    async def test_a_whole_show_reap_holds_while_a_season_was_never_removed(
+    async def test_a_whole_show_reap_does_not_condemn_a_season_that_arrives_later(
+        self, session: AsyncSession
+    ) -> None:
+        show = "sonarr:1:42"
+        await self._removed(
+            session,
+            [(f"{show}:1", 1 * GB, 701), (f"{show}:2", 1 * GB, 702)],
+            media_type="season",
+            group_key=show,
+        )
+        explanation = _clean_explanation(
+            protections_fired=[{"gate": "rating_floor", "detail": "well rated"}]
+        )
+        snapshot_id = await _snapshot_many(
+            session,
+            [(f"{show}:4", 1 * GB, 704)],
+            media_type="season",
+            group_key=show,
+            explanation=explanation,
+        )
+        candidate = (
+            await session.execute(select(Candidate).where(Candidate.snapshot_id == snapshot_id))
+        ).scalar_one()
+        candidate.verdict = "protect"
+        await self._override(session, show, "reap", age=60)
+
+        decisions = await whitelist.overrides(session)
+
+        assert decisions == {}
+        assert await effective_condemned(session, snapshot_id, decisions) == {}
+
+    async def test_a_whole_show_reap_made_after_the_removals_still_holds(
         self, session: AsyncSession
     ) -> None:
         show = "sonarr:1:42"
         await self._removed(
             session, [(f"{show}:1", 1 * GB, 701)], media_type="season", group_key=show
         )
-        await _snapshot_many(
-            session,
-            [(f"{show}:1", 1 * GB, 701), (f"{show}:2", 1 * GB, 702)],
-            media_type="season",
-            group_key=show,
-        )
-        await self._override(session, show, "reap", age=60)
+        await self._override(session, show, "reap", age=5)
 
         assert await whitelist.overrides(session) == {show: "reap"}
+
+    async def test_the_executor_keeps_a_spare_when_it_clears_a_removed_item(
+        self, session: AsyncSession
+    ) -> None:
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+        await whitelist.set_override(
+            session, media_key="radarr:1:1", title="T", decision="spare", note=None
+        )
+        executor = Executor(
+            session,
+            safety=_armed(),
+            settings=ProfileSettings(),
+            dry_run=False,
+            gateway=_gateway(radarr={1: FakeRadarr()}),
+            armed_recheck=_armed_forever,
+        )
+        step = (await _steps(session, run.id))[0]
+
+        await executor._mark_file_removed(step)
+
+        assert (await session.get(WhitelistEntry, "radarr:1:1")) is not None
 
     async def test_the_executor_deletes_the_override_of_the_item_it_removed(
         self, session: AsyncSession

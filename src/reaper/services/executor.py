@@ -3353,21 +3353,30 @@ class Executor:
         await self._clear_override_of(step.media_key)
 
     async def _clear_override_of(self, media_key: str) -> None:
-        """Delete the removed item's own override row and log it as cleared by the reap.
+        """Delete the removed item's own reap override and log it as cleared by the reap.
+
+        A spare stays: the removal may only be assumed, and a spare that outlives its file
+        only keeps a returned title.
 
         Tidy-up only. The removal stamp already voids a stale reap wherever overrides are
         read (``whitelist._live_rows``), so a write that does not land changes nothing.
         """
         prior = (
             await self._session.execute(
-                select(WhitelistEntry.decision).where(WhitelistEntry.media_key == media_key)
+                select(WhitelistEntry.decision).where(
+                    WhitelistEntry.media_key == media_key, WhitelistEntry.decision == "reap"
+                )
             )
         ).scalar_one_or_none()
         if prior is None:
             return
         landed = await self._commit_journal(
             what="override cleared",
-            write=[sql_delete(WhitelistEntry).where(WhitelistEntry.media_key == media_key)],
+            write=[
+                sql_delete(WhitelistEntry).where(
+                    WhitelistEntry.media_key == media_key, WhitelistEntry.decision == "reap"
+                )
+            ],
         )
         if landed:
             log.info(

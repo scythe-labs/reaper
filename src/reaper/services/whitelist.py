@@ -24,7 +24,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clock import utcnow
-from reaper.db.models import ActionStep, Candidate, Snapshot, WhitelistEntry
+from reaper.db.models import ActionStep, WhitelistEntry
 
 
 def show_key(media_key: str) -> str | None:
@@ -127,6 +127,13 @@ async def removal_times(session: AsyncSession) -> dict[str, datetime]:
     return {key: at for key, at in rows.tuples().all() if at is not None}
 
 
+def removed_since(removed: dict[str, datetime], key: str, since: datetime) -> bool:
+    """Whether ``key``, or any season under it when it is a show key, was removed at or
+    after ``since``."""
+    prefix = key + ":"
+    return any(at >= since for k, at in removed.items() if k == key or k.startswith(prefix))
+
+
 async def _live_rows(session: AsyncSession) -> list[tuple[str, str, datetime | None]]:
     """Every override row as ``(media_key, decision, spare_expires_at)``, minus the reaps
     that consent to a file Reaper has since removed.
@@ -137,8 +144,8 @@ async def _live_rows(session: AsyncSession) -> list[tuple[str, str, datetime | N
 
     A reap is void when its key has a removal at or after the reap itself. Timestamps are
     whole seconds, so a tie voids: that is the keep direction. A whole-show
-    reap is also void when the show key has such a removal, or when every season the
-    newest snapshot holds for that show does. The consent was for the old files, and a
+    reap is also void when any season under the show has such a removal, so a season that
+    arrives later falls back to policy. The consent was for the old files, and a
     title that comes back under the same key is a new file. A void reap never revives.
     Spares are never voided: a stale spare can only keep a returned title, which is the
     keep direction.
@@ -163,30 +170,7 @@ async def _live_rows(session: AsyncSession) -> list[tuple[str, str, datetime | N
     removed = await removal_times(session)
     if not removed:
         return [(k, d, e) for k, d, e, _ in rows]
-    show_keys = [k for k, _ in reaps if k.count(":") == 2 and k.startswith("sonarr:")]
-    seasons: dict[str, set[str]] = {}
-    if show_keys:
-        newest = (
-            await session.execute(select(Snapshot.id).order_by(Snapshot.id.desc()).limit(1))
-        ).scalar_one_or_none()
-        if newest is not None:
-            for key, group in (
-                await session.execute(
-                    select(Candidate.media_key, Candidate.group_key).where(
-                        Candidate.snapshot_id == newest, Candidate.group_key.in_(show_keys)
-                    )
-                )
-            ).tuples():
-                assert group is not None  # filtered by the IN above
-                seasons.setdefault(group, set()).add(key)
-    void: set[str] = set()
-    for key, made in reaps:
-        at = removed.get(key)
-        whole_show_removed = key in seasons and all(
-            (t := removed.get(s)) is not None and t >= made for s in seasons[key]
-        )
-        if (at is not None and at >= made) or whole_show_removed:
-            void.add(key)
+    void = {key for key, made in reaps if removed_since(removed, key, made)}
     return [(k, d, e) for k, d, e, _ in rows if k not in void]
 
 

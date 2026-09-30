@@ -6538,10 +6538,6 @@ _MEMBERSHIP_INVENTORY: dict[str, tuple[int, str]] = {
         "bounded: the fixed run_totals.TERMINAL_DELETE_KINDS set",
     ),
     "src/reaper/api/runs.py::get_run_outcomes": (1, "bounded: the page (limit le=500)"),
-    "src/reaper/services/whitelist.py::_live_rows": (
-        1,
-        "bounded: the operator's own whole-show reap overrides",
-    ),
     "src/reaper/services/condemned.py::_reap_overridden_rows": (
         2,
         "bounded: the operator's reap overrides, one row per hand click",

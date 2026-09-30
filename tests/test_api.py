@@ -833,6 +833,30 @@ class TestTheRunsApi:
         assert stored == ["spare"]  # the refused reap wrote nothing
         assert client.delete(f"/api/override/{key}").json() == {"removed": True}
 
+    def test_an_override_on_a_show_key_with_a_removed_season_is_refused(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        run = client.post("/api/runs").json()
+        db_url = Settings(data_dir=tmp_path, secret_key="k").sync_database_url
+        engine = sa_create_engine(db_url)
+        with Session(engine) as session:
+            step = session.scalars(
+                select(ActionStep).where(ActionStep.run_id == run["id"]).order_by(ActionStep.id)
+            ).first()
+            assert step is not None, "the plan fixture planned nothing, so nothing is exercised"
+            step.media_key = "sonarr:1:42:3"
+            step.file_removed_at = utcnow()
+            session.commit()
+        engine.dispose()
+
+        refused = client.post(
+            "/api/override", json={"media_key": "sonarr:1:42", "decision": "reap"}
+        )
+
+        assert refused.status_code == 409, refused.text
+        with Session(sa_create_engine(db_url)) as session:
+            assert session.scalars(select(WhitelistEntry.decision)).all() == []
+
     def test_dry_running_a_missing_run_is_a_404(self, client: TestClient) -> None:
         assert client.post("/api/runs/9999/dry-run").status_code == 404
 
