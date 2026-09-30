@@ -965,7 +965,9 @@ class PlexClient:
         short files one reason with :func:`collecting_incomplete_reads`, which
         ``services.library_index.build_index`` opens and marks the snapshot
         untrusted from. The ratings that read carries are a protection, and
-        losing them quietly makes titles look more deletable, not less.
+        losing them quietly makes titles look more deletable, not less. A rating key
+        Plex answers 404 to when read alone is a deleted title and is dropped from the
+        sweep.
         """
         server = await self._connect()
         from plexapi.exceptions import NotFound
@@ -1008,26 +1010,36 @@ class PlexClient:
             # the rest of the scan already froze.
             for chunk_start in range(0, len(batch_keys), METADATA_BATCH_SIZE):
                 chunk = batch_keys[chunk_start : chunk_start + METADATA_BATCH_SIZE]
-                batch = list(
-                    server.query(  # type: ignore[no-untyped-call]
-                        "/library/metadata/" + ",".join(str(k) for k in chunk)
+                # A chunk whose keys Plex all destroyed answers 404 as a whole. That is
+                # an empty batch, and the per-key reads below sort it out.
+                try:
+                    batch = list(
+                        server.query(  # type: ignore[no-untyped-call]
+                            "/library/metadata/" + ",".join(str(k) for k in chunk)
+                        )
                     )
-                )
+                except NotFound:
+                    batch = []
                 if len(batch) < len(chunk):
                     # A key missing from the answer is either a title Plex deleted since
                     # the listing or a tail the server dropped. Only a per-key read tells
                     # them apart. A 404 is a deleted title and leaves the sweep, so the
                     # scan treats it as not in Plex. Any other outcome loses the rating
                     # children, the only source of per-provider scores, and reports the
-                    # scan incomplete through ``_report_incomplete`` below. It is
-                    # reported, never raised, so a complete id sweep is not thrown away.
+                    # scan incomplete through ``_report_incomplete`` below.
                     returned_keys = {
                         int(el.get("ratingKey")) for el in batch if el.get("ratingKey")
                     }
                     vanished: list[int] = []
                     unexplained: list[int] = []
+                    stopped = False
                     for key in chunk:
                         if key in returned_keys:
+                            continue
+                        # After one error that is not a 404, every later read would wait
+                        # out the same timeout while the sweep lock is held.
+                        if stopped:
+                            unexplained.append(key)
                             continue
                         try:
                             single = list(
@@ -1036,7 +1048,9 @@ class PlexClient:
                         except NotFound:
                             vanished.append(key)
                             continue
-                        except Exception:
+                        except Exception as exc:
+                            log.warning("plex.metadata_key_read_failed", error=type(exc).__name__)
+                            stopped = True
                             unexplained.append(key)
                             continue
                         found = [el for el in single if el.get("ratingKey") == str(key)]
@@ -1052,7 +1066,8 @@ class PlexClient:
                         requested=len(chunk),
                         returned=len(chunk) - len(vanished) - len(unexplained),
                         vanished=len(vanished),
-                        missing_keys=vanished + unexplained,
+                        missing=len(vanished) + len(unexplained),
+                        missing_keys=(vanished + unexplained)[:20],
                     )
                     if unexplained:
                         asked = len(chunk) - len(vanished)

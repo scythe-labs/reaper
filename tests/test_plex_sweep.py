@@ -397,6 +397,56 @@ class TestVanishedTitles:
         assert "for only 2 of 3" not in reasons[0]
         assert "only 1 of 2 movie titles" in reasons[0]
 
+    async def test_a_batch_of_only_destroyed_keys_answers_404_and_drops_them(self) -> None:
+        from plexapi.exceptions import NotFound
+
+        gone = NotFound("(404) not_found")
+        server = self._server({"/library/metadata/41,42": gone, "/library/metadata/41": gone})
+        server._answers["/library/metadata/42"] = gone
+        with collecting_incomplete_reads() as reasons:
+            index = await _client_with(server).library_guid_index(section_type="movie")
+        assert index == {}
+        assert reasons == []
+
+    async def test_a_batch_404_with_one_key_alive_keeps_that_key(self) -> None:
+        from plexapi.exceptions import NotFound
+
+        server = self._server(
+            {
+                "/library/metadata/41,42": NotFound("(404) not_found"),
+                "/library/metadata/41": NotFound("(404) not_found"),
+                "/library/metadata/42": self.SECOND_ALONE,
+            }
+        )
+        with collecting_incomplete_reads() as reasons:
+            index = await _client_with(server).library_guid_index(section_type="movie")
+        assert set(index) == {42}
+        assert reasons == []
+
+    async def test_the_first_non_404_error_stops_the_per_key_reads(self) -> None:
+        server = self._server(
+            {"/library/metadata/41,42": self.FIRST_ONLY, "/library/metadata/42": RuntimeError("x")}
+        )
+        server._answers["/library/metadata/41,42"] = '<MediaContainer size="0"/>'
+        server._answers["/library/metadata/41"] = RuntimeError("boom")
+        with collecting_incomplete_reads() as reasons:
+            index = await _client_with(server).library_guid_index(section_type="movie")
+        assert set(index) == {41, 42}
+        assert len(reasons) == 1
+        assert [q for q in server.queries if q.count("/") == 3 and "," not in q] == [
+            "/library/metadata/41"
+        ]
+
+    @staticmethod
+    def _server(answers: dict[str, Any]) -> _ExactServer:
+        listing_key = (
+            "/library/sections/1/all?includeGuids=1&X-Plex-Container-Start=0"
+            f"&X-Plex-Container-Size={SWEEP_PAGE_SIZE}"
+        )
+        return _ExactServer(
+            [_FakeSection(1, "movie")], {listing_key: TestVanishedTitles.LISTING, **answers}
+        )
+
     async def test_an_empty_answer_for_a_key_still_reports_incomplete(self) -> None:
         index, reasons, _ = await self._sweep('<MediaContainer size="0"/>')
         assert set(index) == {41, 42}
