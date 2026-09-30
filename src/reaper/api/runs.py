@@ -210,7 +210,7 @@ class _RunReads:
         self._session = session
         self._decisions: dict[str, str] | None = None
         self._allow_unmeasured: bool | None = None
-        self._condemned: dict[int, dict[str, Candidate]] = {}
+        self._condemned: dict[tuple[int, bool], dict[str, Candidate]] = {}
 
     async def decisions(self) -> dict[str, str]:
         if self._decisions is None:
@@ -223,11 +223,18 @@ class _RunReads:
             self._allow_unmeasured = settings.max_unmeasured_per_run > 0
         return self._allow_unmeasured
 
-    async def condemned(self, snapshot_id: int) -> dict[str, Candidate]:
-        cached = self._condemned.get(snapshot_id)
+    async def condemned(
+        self, snapshot_id: int, *, include_removed: bool = False
+    ) -> dict[str, Candidate]:
+        cached = self._condemned.get((snapshot_id, include_removed))
         if cached is None:
-            cached = await effective_condemned(self._session, snapshot_id, await self.decisions())
-            self._condemned[snapshot_id] = cached
+            cached = await effective_condemned(
+                self._session,
+                snapshot_id,
+                await self.decisions(),
+                include_removed=include_removed,
+            )
+            self._condemned[(snapshot_id, include_removed)] = cached
         return cached
 
 
@@ -266,7 +273,8 @@ async def _planned_candidates(
     memo = reads if reads is not None else _RunReads(session)
     if steps is None:
         steps = await _run_steps(session, run)
-    by_key = await memo.condemned(run.snapshot_id)
+    # A run that has started describes what it acted on, so its own removals stay in.
+    by_key = await memo.condemned(run.snapshot_id, include_removed=run.state != RunState.PLANNED)
     # The allowance is read here, at the moment the numbers are produced,
     # so the count and total in front of the owner describe the set the
     # executor will act on under the settings in force now, not the ones

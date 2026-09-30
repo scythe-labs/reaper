@@ -390,6 +390,10 @@ async def build_plan(
     # override changed later in the grace window still takes effect.
     decisions = await whitelist.overrides(session)
     effective = await effective_condemned(session, snapshot_id, decisions)
+    left_out = len(await effective_condemned(session, snapshot_id, decisions, include_removed=True))
+    left_out -= len(effective)
+    if left_out:
+        log.info("plan.left_out_removed", snapshot_id=snapshot_id, count=left_out)
 
     # An item with no known size is not plannable on its own. A plan must be able to say
     # what it will free, and an unmeasured item cannot count against a byte cap.

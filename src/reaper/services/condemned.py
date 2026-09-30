@@ -30,7 +30,7 @@ from typing import Any
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from reaper.db.models import Candidate
+from reaper.db.models import Candidate, Snapshot
 from reaper.engine.explanation import read_explanation
 from reaper.engine.identity import MatchStatus
 from reaper.engine.verdict import STRUCTURAL_GATES, decide_verdict
@@ -298,7 +298,11 @@ async def _reap_overridden_rows(
 
 
 async def effective_condemned(
-    session: AsyncSession, snapshot_id: int, decisions: dict[str, str]
+    session: AsyncSession,
+    snapshot_id: int,
+    decisions: dict[str, str],
+    *,
+    include_removed: bool = False,
 ) -> dict[str, Candidate]:
     """Every candidate in this snapshot a reap may act on, keyed by ``media_key``.
 
@@ -306,6 +310,10 @@ async def effective_condemned(
     caller's whole request. Spares win over everything (a per-season spare beats a
     show-level reap, exactly as ``effective_override`` resolves it); a hand reap adds a
     row only when :func:`reap_override_verdict` condemns it.
+
+    A key Reaper removed at or after this snapshot was taken is left out: the row describes files
+    that are gone, and a title re-downloaded under the same key must wait for a new scan.
+    ``include_removed`` keeps them, for describing a run that has already acted.
     """
     condemned = (
         (
@@ -331,7 +339,13 @@ async def effective_condemned(
             continue
         if reap_is_effective(c):
             out[c.media_key] = c
-    return out
+    if include_removed or not out:
+        return out
+    taken = await session.scalar(select(Snapshot.created_at).where(Snapshot.id == snapshot_id))
+    if taken is None:
+        return out
+    removed = await whitelist.removal_times(session)
+    return {k: c for k, c in out.items() if (at := removed.get(k)) is None or at < taken}
 
 
 async def overridden_lane_shifts(

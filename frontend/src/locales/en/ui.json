@@ -893,6 +893,9 @@
     "logs": {
       "bad_level": "Pick Debug, Info, or Warning."
     },
+    "override": {
+      "already_removed": "Reaper already removed this. It leaves the queue after the next scan."
+    },
     "password": {
       "too_short": "Use at least {min_length, plural, one {# character} other {# characters}}."
     },

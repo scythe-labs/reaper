@@ -56,7 +56,11 @@ to keep something, while a badly written removal rule deletes a file.
 
 ## What a hand reap may overrule
 
-**Choice: Everything except a structural stop.**
+**Choice: Everything except a structural stop, and only for the file it was made on.**
+
+A hand reap is void once Reaper has removed its key after the reap was made, so a title that
+returns under the same key is judged fresh. `whitelist._live_rows` applies that to every reader.
+A spare is never voided, because a stale spare can only keep a returned title.
 
 A hand reap condemns past every cautious protection, whether it FIRED or merely could not be
 CHECKED. The only two refusals left are a *fired* `verdict.STRUCTURAL_GATES` member: something

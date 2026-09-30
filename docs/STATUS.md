@@ -73,7 +73,7 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | Protect authoring | **Catalog + user-authored protect rules** (worst case is nothing deleted) |
 | Signals | **Unsigned**, fixed denominator including unknown weights |
 | Observations | **Known / Absent / Unknown** — never conflated |
-| What a hand reap may overrule | **Everything except a structural stop** † |
+| What a hand reap may overrule | **Everything but a structural stop, for its own file** † |
 | Watch-history reach | **Every reader that goes through `Facts`** † |
 | Watch history that vanished | **A high-water mark that cannot fall**, never a remapped key † |
 | A rebuilt source | **Tautulli's total aborts the scan, Plex's reissued keys degrade it** |

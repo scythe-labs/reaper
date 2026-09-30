@@ -125,6 +125,7 @@ from reaper.db.models import (
     SizeSource,
     Snapshot,
     StepState,
+    WhitelistEntry,
 )
 from reaper.engine.policy import ProfileSettings
 from reaper.engine.reason import Reason, to_stored
@@ -3349,6 +3350,43 @@ class Executor:
         # expired.
         self._file_is_gone = True
         await self._mark(step, "file removed", file_removed_at=utcnow())
+        await self._clear_override_of(step.media_key)
+
+    async def _clear_override_of(self, media_key: str) -> None:
+        """Delete the removed item's own reap override and log it as cleared by the reap.
+
+        A spare stays: the removal may only be assumed, and a spare that outlives its file
+        only keeps a returned title.
+
+        Tidy-up only. The removal stamp already voids a stale reap wherever overrides are
+        read (``whitelist._live_rows``), so a write that does not land changes nothing.
+        """
+        prior = (
+            await self._session.execute(
+                select(WhitelistEntry.decision).where(
+                    WhitelistEntry.media_key == media_key, WhitelistEntry.decision == "reap"
+                )
+            )
+        ).scalar_one_or_none()
+        if prior is None:
+            return
+        landed = await self._commit_journal(
+            what="override cleared",
+            write=[
+                sql_delete(WhitelistEntry).where(
+                    WhitelistEntry.media_key == media_key, WhitelistEntry.decision == "reap"
+                )
+            ],
+        )
+        if landed:
+            log.info(
+                "whitelist.override",
+                media_key=media_key,
+                decision="cleared",
+                prior=prior,
+                spare_days=None,
+                cleared_by="reap",
+            )
 
     def _stage_step_failed(self, step: ActionStep, reason: Reason) -> None:
         """In memory only. Durable once ``_run_deletes`` commits this item's journal."""
