@@ -1111,6 +1111,7 @@
     },
     "scan": {
       "already_running": "A scan is already running. Wait for it to finish, then start another.",
+      "waiting_for_plex": "Plex is still updating after a reap. Reaper scans on its own when it's done.",
       "gate_unimplemented": "Policy enables the \"{gate}\" protection, but Reaper has no implementation for it. Refusing to scan rather than silently skipping a protection you asked for.",
       "list_gate_missing_list": "A protection you set up is pointing at a list that is no longer there, so the scan stopped instead of leaving titles unprotected. Add the list back on Settings, Lists, then open Policy and save. Turning that protection off instead drops it for good.",
       "missing_sources": "A scan needs a Tautulli instance plus at least one Radarr or Sonarr. Add them in Settings first.",
@@ -2053,6 +2054,13 @@
     "turnOnHelp": "Reaper will be allowed to delete media you approve. You'll still review and approve every run.",
     "turningOff": "Turning off…",
     "unknownNotice": "Reaper couldn't confirm whether deletion is on. Until it can, treat it as on."
+  },
+  "plexWait": {
+    "bar": "Waiting for Plex to finish updating. Scans start when it's done.",
+    "button": "Waits for Plex to finish updating",
+    "jobsNotice": "Plex is still updating after the last reap. Jobs that read Plex wait until it's done, up to 3 hours.",
+    "scanRow": "Starts on its own when Plex is done",
+    "shelfRow": "Waits for Plex"
   },
   "policyEditor": {
     "announce": {

@@ -12,6 +12,9 @@ import { api, type ScanStatus } from "./api";
 /** How often a running scan is re-read. Fast, because the bar it feeds is watched. */
 const RUNNING_POLL_MS = 1000;
 
+/** How often the status is re-read while Reaper waits for Plex, so a button re-enables soon after. */
+const WAITING_POLL_MS = 5000;
+
 /** A surface that wants the scan's live progress.
  *
  *  This observer polls only while a scan is running, but the query itself does not go quiet
@@ -28,6 +31,18 @@ export function useScanStatus(): ScanStatus | undefined {
   return useQuery({
     queryKey: ["scanStatus"],
     queryFn: api.scanStatus,
-    refetchInterval: (query) => (query.state.data?.running ? RUNNING_POLL_MS : false),
+    refetchInterval: (query) =>
+      query.state.data?.running
+        ? RUNNING_POLL_MS
+        : query.state.data?.waiting_for_plex_since
+          ? WAITING_POLL_MS
+          : false,
   }).data;
+}
+
+/** True while Reaper waits for Plex to finish the scans a reap asked for. These are off for
+ *  that time: the Scan buttons, the automatic rescans after a Policy or Lists save, and the
+ *  Leaving Soon update. The server refuses the same requests. */
+export function useWaitingForPlex(): boolean {
+  return useScanStatus()?.waiting_for_plex_since != null;
 }

@@ -146,6 +146,7 @@ export const IDLE_SCAN: ScanStatus = {
   error_reason: null,
   snapshot_id: 1,
   followup_queued: false,
+  waiting_for_plex_since: null,
 };
 
 /** A fully configured install. Everything is connected, a scan is behind it, and a real run is

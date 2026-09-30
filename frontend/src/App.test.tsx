@@ -443,6 +443,7 @@ describe("the app-wide reap bar", () => {
 
   beforeEach(() => {
     apiMock.reapStatus.mockResolvedValue(runningAt(1, 4));
+    apiMock.scanStatus.mockResolvedValue(IDLE_SCAN);
   });
 
   it("states its progress as a progressbar, in words rather than a bare number", async () => {

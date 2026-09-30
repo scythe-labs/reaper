@@ -4612,6 +4612,22 @@ pins both halves.
 boundary of that rule. Where each request buys a bounded piece of work, batching them into
 one unbounded request costs more and risks more.
 
+## Plex queues one "Scanning" activity per refresh and runs them one at a time (2026-09-29)
+
+A reap of about 530 items sent 531 path refreshes in 3 seconds. Plex registered one activity
+titled exactly `Scanning` per refresh, 532 in all, and ran them one at a time for 37 minutes.
+
+- **`GET /activities` never goes quiet as a whole.** It also lists unrelated work, about 20
+  of type `provider.subscription.refresh` titled `Refreshing Sub`. Only `title == "Scanning"`
+  ends.
+- **A quiet read is not proof.** Between two queued scans there can be a gap with no
+  `Scanning` activity. Right after the refreshes are sent, Plex may not have started yet.
+- **This server scans only when asked.** Automatic scan, periodic scan and partial scan are
+  all off, and `autoEmptyTrash` is on, so nothing but Reaper's own requests keeps it busy.
+
+=> Reaper waits 60 s, polls every 20 s, and reads 3 quiet polls in a row as done. A 3 hour
+ceiling ends a wait that never goes quiet. An unreadable Plex counts as busy.
+
 ## A reap's 404s trip CrowdSec's probing rule (2026-09-29)
 
 A live reap stopped deleting after a few dozen items. The delete check read
@@ -4665,6 +4681,18 @@ A fixed read limit cannot fit a delete that takes 5 to 18 seconds today and more
 - **The fix.** A delete waits while a ping every 10 seconds is answered. Three misses in a row
   count as no answer. A 30-minute ceiling stops an instance that pings but never finishes.
 
+## Plex removes trashed titles after the reap ends (2026-09-29)
+
+- **The scan starts 2 seconds after the trash empties.** Plex deletes the titles in the
+  background, so some vanish between the listing and the batched metadata read.
+- **The batches came back short.** A reap of a few hundred movies gave 9 short movie batches,
+  1 to 6 titles each and about 25 in all. A rescan 27 minutes later had none.
+- **TV stays short longer.** That rescan had one short show batch, 399 of 400, while Plex
+  still dropped shows whose seasons the reap removed.
+- **A vanished title answers 404 when read alone.** The sweep reads each missing key on its
+  own and drops the ones Plex reports as not found. Any other outcome still marks the scan
+  incomplete.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have
@@ -4683,3 +4711,19 @@ The common thread: **protections live inside the same boolean expression as the
 condemnations**, so an unknown value, an API failure or a mis-set operator silently
 *disarms* a protection. Hence Reaper's two-lane design: gates have no `CONDEMN`
 constructor and cannot delete a file no matter how they are misconfigured.
+
+## Tautulli's library list stays stale after a reap
+
+A reap that removed 287 seasons left the next two scans blocked. About 100 TV rows in
+Tautulli's library list named items Plex no longer had, well past a tenth of that section.
+
+- **Tautulli logs nothing when Plex deletes an item.** Both scans read the section from its
+  cached list ("Loaded media info from cache"), so the removed shows stayed listed until
+  something refreshed the cache.
+- **`refresh=true` rebuilds the whole section inside the call.** Tautulli asks Plex about
+  every item, rewrites the cache, then serves the page from it. It ignores `start`, so one page
+  is enough, and the call is slow.
+- **Plex keeps cleaning up after a reap.** Its own log showed path scans and item removals for
+  up to 37 minutes. A refresh inside that window can still list items Plex is about to drop.
+- **The fix.** The scan refreshes each tripped section once, counts again, and degrades if it
+  still trips or the refresh fails.

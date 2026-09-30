@@ -363,7 +363,8 @@ function Dashboard({ user }: { user: AuthUser }) {
   const { data: scanStatus } = useQuery({
     queryKey: ["scanStatus"],
     queryFn: api.scanStatus,
-    refetchInterval: (query) => (query.state.data?.running ? 1000 : 15000),
+    refetchInterval: (query) =>
+      query.state.data?.running ? 1000 : query.state.data?.waiting_for_plex_since ? 5000 : 15000,
   });
   // When a scan ends, refresh whatever the new snapshot changed. This runs off the shell's
   // own poll, for the same reason the code above does: a scan started from the Reap page,

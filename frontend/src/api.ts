@@ -1644,6 +1644,9 @@ export interface ScanStatus {
    *  mid-run (a policy save, usually): the running scan began under the old policies,
    *  so only a scan started after the request can reflect the change. */
   followup_queued: boolean;
+  /** Set while Reaper waits for Plex to finish the folder scans a reap asked for. A scan
+   *  starts by itself when the wait ends, and a start request is refused until then. */
+  waiting_for_plex_since: string | null;
 }
 
 export interface AuthUser {

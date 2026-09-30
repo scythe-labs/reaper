@@ -33,6 +33,7 @@ const idleScan: ScanStatus = {
   error_reason: null,
   snapshot_id: 1,
   followup_queued: false,
+  waiting_for_plex_since: null,
 };
 
 // The component consults the profile (via useHoldsBackUnmeasured) to know whether the planner

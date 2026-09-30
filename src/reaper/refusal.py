@@ -819,6 +819,9 @@ MESSAGES: dict[str, str] = {
     "error.scan.already_running": (
         "A scan is already running. Wait for it to finish, then start another."
     ),
+    "error.scan.waiting_for_plex": (
+        "Plex is still updating after a reap. Reaper scans on its own when it's done."
+    ),
     "error.scan.source_unreachable": "Reaper couldn't reach one of your sources: {error}",
     "error.scan.unexpected": "The scan hit a problem it didn't expect: {error}",
     # -----------------------------------------------------------------------------

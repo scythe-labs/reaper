@@ -43,11 +43,13 @@ import { describeError } from "../errors";
 import { bytes, count, date, itemBytes } from "../format";
 import { reapBlockers, type ReapBlocker } from "../reapReadiness";
 import { useSafety } from "../useSafety";
+import { useWaitingForPlex } from "../useScanStatus";
 import { composeError } from "../why";
 import { ReapBreakdown, useReapCounts } from "./ReapBreakdown";
 import { ReapConfirm } from "./ReapConfirm";
 import { ModalShell } from "./ModalShell";
 import { Notice } from "./Notice";
+import { PlexWaitNotice } from "./PlexWaitNotice";
 import { ackRun, useAckedRun } from "./runAck";
 import { ScytheGlyph } from "./ScytheGlyph";
 
@@ -580,10 +582,12 @@ function DoneCard({ run, onDismiss }: { run: RunSummary; onDismiss: () => void }
   const decided = [...outcomes.items].reverse();
   const problems = decided.filter((o) => o.state === "failed");
   const kept = decided.filter((o) => o.state === "skipped");
+  const waitingForPlex = useWaitingForPlex();
 
   return (
     <>
       <div className="reap-card">
+        {waitingForPlex && <PlexWaitNotice>{t("plexWait.bar")}</PlexWaitNotice>}
         <h3 className="reap-finished-head">{t("reapPlan.done.heading")}</h3>
         <RunTotalsTiles run={run} />
         {run.aborted_reason && (

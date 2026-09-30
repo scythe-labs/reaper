@@ -6,6 +6,7 @@ import { announce } from "../announce";
 import { api } from "../api";
 import { describeError } from "../errors";
 import { bytes, count, souls } from "../format";
+import { useWaitingForPlex } from "../useScanStatus";
 import { composeError } from "../why";
 import { Notice } from "./Notice";
 import { freedNow } from "./RecycleBins";
@@ -56,6 +57,7 @@ export function ReapBar({
   // Shared with the Reap page's Done button and persisted, so dismissing a result on either
   // surface hides both, and a refresh does not bring it back.
   const dismissed = useAckedRun();
+  const waitingForPlex = useWaitingForPlex();
   // Idle still polls, slowly. A reap can be started from a phone or a second tab, and this
   // bar carries the only Stop on most screens: going silent when nothing is running here
   // would leave an open tab dark through someone else's deletion (the scan line idle-polls
@@ -113,6 +115,8 @@ export function ReapBar({
       ["reap-breakdown"],
       ["snapshot"],
       ["fairness"],
+      // The wait for Plex starts as the reap ends, so the buttons that read it turn off now.
+      ["scanStatus"],
     ]) {
       void queryClient.invalidateQueries({ queryKey: key });
     }
@@ -136,7 +140,11 @@ export function ReapBar({
   if (ended) {
     const errored = status.phase === "error";
     return (
-      <div className={errored ? "reap-bar errored" : "reap-bar done"}>
+      <div
+        className={
+          errored ? "reap-bar errored" : waitingForPlex ? "reap-bar waiting" : "reap-bar done"
+        }
+      >
         <span className="reap-bar-text">
           <span className="reap-bar-lead">
             <span className="banner-dot" aria-hidden="true" />
@@ -173,6 +181,11 @@ export function ReapBar({
             {t("reapConfirm.bar.dismiss")}
           </button>
         </span>
+        {waitingForPlex && (
+          <p className="reap-bar-wait" role="status">
+            {t("plexWait.bar")}
+          </p>
+        )}
       </div>
     );
   }

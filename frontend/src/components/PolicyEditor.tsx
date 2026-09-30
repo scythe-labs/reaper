@@ -78,7 +78,7 @@ import { FixedQuantity, QuantityInput, sizeUnits, timeUnits } from "./QuantityIn
 import { Segmented } from "./Segmented";
 import { probeSaid, rampFill, rampStrip, rampUnits } from "./signalRamp";
 import { SETTLE_MS, usePolicyProbe } from "../usePolicyProbe";
-import { useScanStatus } from "../useScanStatus";
+import { useScanStatus, useWaitingForPlex } from "../useScanStatus";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
 import { SwitchConfirm, useSwitchConfirm } from "./SwitchConfirm";
@@ -1649,6 +1649,7 @@ export function PolicyEditor({
   // A background scan, so the "Scan now" button in the stale notice actually does something.
   const scanState = useScanStatus();
   const scanning = scanState?.running ?? false;
+  const waitingForPlex = useWaitingForPlex();
   // No running->stopped effect here. `simulate`, `snapshot` and `validate` all belong in the
   // shell's `SCAN_SETTLED_KEYS` list, not in a second copy owned by this panel: the shell
   // cannot be unmounted by a scan, and both read the same `["scanStatus"]` cache, so the
@@ -1711,8 +1712,10 @@ export function PolicyEditor({
       // queue and the simulator read the last snapshot's stored verdicts, which were produced
       // by the OLD policy. A rescan re-scores the library under the new one, and the shell's
       // `useScanSettled` refreshes the simulator and queue when it lands.
-      // Idempotent server-side: if a scan is already running this just follows it.
-      startScan.mutate();
+      // Idempotent server-side: if a scan is already running this just follows it. While Reaper
+      // waits for Plex the server refuses a start, and the scan it runs afterwards reads this
+      // saved policy.
+      if (!waitingForPlex) startScan.mutate();
     },
   });
 
@@ -2993,6 +2996,7 @@ export function PolicyEditor({
               starting={startScan.isPending}
               startError={startScan.error ? describeError(startScan.error) : null}
               onScan={() => startScan.mutate()}
+              waitingForPlex={waitingForPlex}
               percent={scanState?.percent ?? 0}
               detail={
                 scanState?.detail_reason
