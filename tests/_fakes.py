@@ -82,7 +82,13 @@ class FakeTautulli(TautulliClient):
         user_rows: list[dict[str, Any]] | None = None,
         fail_libraries: bool = False,
         fail_users: bool = False,
+        after_refresh: dict[int, list[dict[str, Any]]] | None = None,
+        fail_refresh: bool = False,
     ) -> None:
+        #: What a section lists once a refresh reaches it, and every section id refreshed.
+        self._after_refresh = after_refresh or {}
+        self._fail_refresh = fail_refresh
+        self.refreshed: list[int] = []
         self._sections = sections or {}
         self._section_types = section_types or {}
         self._children = children or {}
@@ -111,7 +117,15 @@ class FakeTautulli(TautulliClient):
         length: int = 100,
         order_column: str = "added_at",
         order_dir: str = "desc",
+        refresh: bool = False,
+        read_timeout: float | None = None,
     ) -> dict[str, Any]:
+        if refresh:
+            self.refreshed.append(section_id)
+            if self._fail_refresh:
+                raise IntegrationError("tautulli", "refresh failed")
+            if section_id in self._after_refresh:
+                self._sections = {**self._sections, section_id: self._after_refresh[section_id]}
         return {"data": self._sections.get(section_id, []) if start == 0 else []}
 
     async def children_metadata(self, rating_key: int) -> list[dict[str, Any]]:

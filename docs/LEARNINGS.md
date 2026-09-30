@@ -4670,3 +4670,19 @@ The common thread: **protections live inside the same boolean expression as the
 condemnations**, so an unknown value, an API failure or a mis-set operator silently
 *disarms* a protection. Hence Reaper's two-lane design: gates have no `CONDEMN`
 constructor and cannot delete a file no matter how they are misconfigured.
+
+## Tautulli's library list stays stale after a reap
+
+A reap that removed 287 seasons left the next two scans blocked. About 100 TV rows in
+Tautulli's library list named items Plex no longer had, well past a tenth of that section.
+
+- **Tautulli logs nothing when Plex deletes an item.** Both scans read the section from its
+  cached list ("Loaded media info from cache"), so the removed shows stayed listed until
+  something refreshed the cache.
+- **`refresh=true` rebuilds the whole section inside the call.** Tautulli asks Plex about
+  every item, rewrites the cache, then serves the page from it. It ignores `start`, so one page
+  is enough, and the call is slow.
+- **Plex keeps cleaning up after a reap.** Its own log showed path scans and item removals for
+  up to 37 minutes. A refresh inside that window can still list items Plex is about to drop.
+- **The fix.** The scan refreshes each tripped section once, counts again, and degrades if it
+  still trips or the refresh fails.

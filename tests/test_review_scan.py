@@ -674,6 +674,91 @@ class TestRetiredSpineRows:
         assert [r for r in reasons if "no longer in Plex" in r] == []
 
 
+class TestStaleListRefresh:
+    """A list Tautulli cached before a reap trips the retired check. Reaper asks Tautulli to
+    rebuild each tripped section once, counts again, and degrades only if it still trips."""
+
+    @staticmethod
+    def _rows(keys: range) -> list[dict[str, object]]:
+        return [
+            {"rating_key": k, "title": f"Example {k}", "year": 2020, "added_at": "1500000000"}
+            for k in keys
+        ]
+
+    @staticmethod
+    def _sweep(keys: range) -> _FakePlexSweep:
+        return _FakePlexSweep(
+            {
+                k: identity.PlexItem(
+                    rating_key=k,
+                    title=f"Example {k}",
+                    year=2020,
+                    added_at=from_epoch("1700000000"),
+                    ids=identity.ExternalIds.of(tmdb=5000 + k),
+                )
+                for k in keys
+            }
+        )
+
+    async def test_a_refreshed_clean_list_does_not_degrade(self) -> None:
+        stale, fresh = self._rows(range(400)), self._rows(range(100, 400))
+        tautulli = FakeTautulli(
+            sections={1: stale, 2: self._rows(range(1000, 1100))}, after_refresh={1: fresh}
+        )
+        reasons: list[str] = []
+        with capture_logs() as logs:
+            index = await build_movie_index(
+                tautulli,
+                _FakePlexSweep(
+                    {**self._sweep(range(100, 400))._items, **self._sweep(range(1000, 1100))._items}
+                ),  # type: ignore[arg-type]
+                degrade=reasons.append,
+            )
+        assert reasons == []
+        assert len(index.by_rating_key) == 400
+        assert tautulli.refreshed == [1], "only the section that tripped is refreshed"
+        done = [e for e in logs if e["event"] == "library_index.refreshed"]
+        assert [(e["retired_before"], e["retired_after"]) for e in done] == [(100, 0)]
+
+    async def test_a_refreshed_list_that_still_trips_degrades_after_one_refresh(self) -> None:
+        stale = self._rows(range(400))
+        tautulli = FakeTautulli(sections={1: stale}, after_refresh={1: stale})
+        reasons: list[str] = []
+        await build_movie_index(
+            tautulli,
+            self._sweep(range(100, 400)),  # type: ignore[arg-type]
+            degrade=reasons.append,
+        )
+        assert tautulli.refreshed == [1]
+        assert [r for r in reasons if "no longer in Plex" in r]
+
+    async def test_a_failed_refresh_degrades(self) -> None:
+        tautulli = FakeTautulli(
+            sections={1: self._rows(range(400))},
+            after_refresh={1: self._rows(range(100, 400))},
+            fail_refresh=True,
+        )
+        reasons: list[str] = []
+        await build_movie_index(
+            tautulli,
+            self._sweep(range(100, 400)),  # type: ignore[arg-type]
+            degrade=reasons.append,
+        )
+        assert tautulli.refreshed == [1]
+        assert [r for r in reasons if "no longer in Plex" in r]
+
+    async def test_a_scan_under_the_bound_never_refreshes(self) -> None:
+        tautulli = FakeTautulli(sections={1: self._rows(range(400))})
+        reasons: list[str] = []
+        await build_movie_index(
+            tautulli,
+            self._sweep(range(40, 400)),  # type: ignore[arg-type]
+            degrade=reasons.append,
+        )
+        assert tautulli.refreshed == []
+        assert reasons == []
+
+
 # ---------------------------------------------------------------------------
 # A cache database, for everything below that reads the watch mirror or the lists.
 # ---------------------------------------------------------------------------

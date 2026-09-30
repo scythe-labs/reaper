@@ -256,6 +256,8 @@ class _RawLibraries(TautulliClient):
         length: int = 100,
         order_column: str = "added_at",
         order_dir: str = "desc",
+        refresh: bool = False,
+        read_timeout: float | None = None,
     ) -> dict[str, Any]:
         self.starts.append(start)
         served = min(length, self._page) if self._page is not None else length
