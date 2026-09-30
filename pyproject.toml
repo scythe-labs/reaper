@@ -150,6 +150,9 @@ asyncio_mode = "auto"
 # one, so the worker holding the 5-7s property tests finishes alone while the rest idle. Measured
 # 53s -> 43-46s for the same 562s of CPU (docs/LEARNINGS.md, 2026-08-20).
 addopts = "--strict-markers --strict-config -m 'not live' --dist worksteal"
+# A test still running after this many seconds prints every thread's stack, so a hung test
+# names itself in the CI log. It only prints. The job's own timeout still ends the run.
+faulthandler_timeout = 120
 markers = [
     "live: talks to a real instance; requires .env.local. Deselected by default.",
     # pytest-httpx2 registers this in its own pytest_configure, but exposes only the
