@@ -162,6 +162,12 @@ class ArrClient(BaseClient):
         """
         return await self.get_list(f"{self.prefix}/tag")
 
+    async def filesystem(self, path: str) -> dict[str, Any]:
+        """The directories and files directly in ``path``, as this instance sees the disk."""
+        return await self.get_dict(
+            f"{self.prefix}/filesystem", params={"path": path, "includeFiles": "true"}
+        )
+
     async def root_folders(self) -> list[dict[str, Any]]:
         """Root folders, including ``accessible``.
 

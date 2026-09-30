@@ -4591,10 +4591,15 @@ and an unbounded blast radius.
 **Rolling up the folder tree is the bounded middle.** A reap of 531 items sent 531 path
 refreshes, one per movie folder and one per season folder. Plex ran them one at a time for 37
 minutes. The 287 season folders sat under 135 show folders. All 244 movie folders sat directly in
-one flat Movies root. The flush now replaces queued folders with their parent when the parent is
-strictly inside a section location and this run deletes at least half the titles under it. Titles
-come from the *arr libraries, read once at flush time. Reaper never sends a section location. A
-flat movie root never rolls up. A library with letter or genre folders rolls up further.
+one flat Movies root. The flush replaces queued folders with their parent when this run deletes
+at least half of what is on disk directly under it. The parent must be strictly inside both a Plex
+location and an *arr root folder. The count comes from the *arr's `filesystem` listing, never from
+its library, because disk and library disagree. One measured Radarr root held 3390 folders on disk
+against 3413 movies, plus 3 loose files, and its root folder listed 13 unmapped folders. One show
+folder held 5 folders against 4 seasons with files. Every unmanaged entry counts as kept, since
+Plex empties its trash after each scan and loses any title the scan cannot see. Reaper never sends
+a Plex location or an *arr root. A flat movie root never rolls up. A library with letter or
+genre folders rolls up further.
 
 **`LibrarySection.totalSize` is a plexapi `cached_data_property`, on a section object plexapi
 also caches for the life of the connection.** So the trash gate's before-count and
