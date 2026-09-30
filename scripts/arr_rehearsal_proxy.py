@@ -20,8 +20,9 @@ Sonarr's own endpoint paths never collide, so one script covers both.
 The safety property: every GET is forwarded to the upstream untouched, so a scan behaves
 exactly as it would against the real server. A write that actually removes something
 (a movie delete, a season's episode-file delete, the Sonarr unmonitor that must precede
-it) is never forwarded. It is faked in memory instead, and the fake is stateful enough
-that a later read through this same proxy sees the fake removal, which is what lets the
+it, the recycle bin switched off for a reap and back on after it) is never forwarded.
+It is faked in memory instead, and the fake is stateful enough that a later read
+through this same proxy sees the fake removal, which is what lets the
 executor's own post-delete verification reads pass. Any other write this proxy does not
 recognize is refused outright, loudly, with a 501, rather than being guessed at and
 possibly sent upstream by accident.
@@ -101,6 +102,9 @@ _SONARR_EPISODEFILE_LIST = re.compile(r"/episodefile/?$")
 # proxy, so a POST to it is faked rather than left to fall through to the write refusal.
 _ARR_COMMAND = re.compile(r"/command/?$")
 
+# Reaper reads the media management settings without an id and saves them at id 1.
+_MEDIA_MANAGEMENT = re.compile(r"/config/mediamanagement(?:/\d+)?/?$")
+
 # Measured in one live reap with the recycle bin off: 244 Radarr movie deletes, median
 # 69 ms, max 0.7 s.
 _RADARR_DELETE_MEDIAN = 0.069
@@ -146,6 +150,10 @@ class ProxyState:
     this before it goes back to Reaper."""
 
     next_command_id: int = 0
+
+    recycle_bin: str | None = None
+    """The recycle bin folder a faked settings save set, ``""`` for off. None until a
+    save arrives. Every later settings read is patched with it."""
 
 
 def _log(message: str) -> None:
@@ -266,6 +274,11 @@ async def _maybe_patch(method: str, path: str, resp: httpx.Response, state: Prox
             if not (isinstance(row, dict) and row.get("id") in state.radarr_deleted)
         ]
         return _json_response(resp.status_code, kept)
+
+    if _MEDIA_MANAGEMENT.search(path) and isinstance(data, dict):
+        if state.recycle_bin is not None:
+            data["recycleBin"] = state.recycle_bin
+        return _json_response(resp.status_code, data)
 
     if _RADARR_EXCLUSIONS.search(path) and isinstance(data, list):
         return _json_response(resp.status_code, [*data, *state.radarr_exclusions.values()])
@@ -415,6 +428,20 @@ async def _fake_sonarr_delete_files(
     return _json_response(200, {})
 
 
+async def _fake_media_management(
+    request: Request, match: re.Match[str], state: ProxyState
+) -> Response:
+    del match
+    payload = await _json_body(request)
+    folder = payload.get("recycleBin") if isinstance(payload, dict) else None
+    if not isinstance(folder, str):
+        _log(f"[REFUSED] PUT {request.url.path}: no recycleBin in the body, nothing sent upstream")
+        return _json_response(400, {"detail": "arr-rehearsal-proxy wants a recycleBin string"})
+    state.recycle_bin = folder
+    _log(f"[FAKED] PUT {request.url.path}: recycleBin={folder!r} -- nothing sent upstream")
+    return _json_response(202, payload)
+
+
 async def _fake_command(request: Request, match: re.Match[str], state: ProxyState) -> Response:
     del match
     payload = await _json_body(request)
@@ -444,6 +471,7 @@ _MUTATION_HANDLERS: list[tuple[frozenset[str], re.Pattern[str], _MutationHandler
     (frozenset({"DELETE"}), _RADARR_MOVIE_BY_ID, _fake_radarr_delete_movie),
     (frozenset({"POST"}), _SONARR_SEASONPASS, _fake_sonarr_unmonitor),
     (frozenset({"DELETE"}), _SONARR_EPISODEFILE_BULK, _fake_sonarr_delete_files),
+    (frozenset({"PUT"}), _MEDIA_MANAGEMENT, _fake_media_management),
     (frozenset({"POST"}), _ARR_COMMAND, _fake_command),
 ]
 
