@@ -2462,7 +2462,7 @@ export function ReviewQueue({
           <>
             {/* A view-level heading, for parity with Policy/Fairness/Settings so heading
               navigation can land on "Review queue" the way it lands on those views. */}
-            <h2>{t("reviewQueue.heading")}</h2>
+            <h2 tabIndex={-1}>{t("reviewQueue.heading")}</h2>
             <nav className="tabs" aria-label={t("reviewQueue.tabsNavAria")}>
               {tabList.map((tb) => (
                 <button

@@ -302,6 +302,13 @@ function queuePage(items: Candidate[]) {
   };
 }
 
+/** What only the loaded panel renders, and none of the loading or failure text. */
+function expectRealPanel(marker: string) {
+  expect(document.querySelector(marker)).not.toBeNull();
+  expect(screen.queryByText(/fetching what reaper saw|still loading what reaper saw/i)).toBeNull();
+  expect(screen.queryByText(/couldn't load the reasons/i)).toBeNull();
+}
+
 /** Lets a settled refetch reach the render before a "stays open" claim is read. */
 const settled = () =>
   act(async () => {
@@ -339,7 +346,23 @@ describe("the show panel", () => {
     await client.invalidateQueries({ queryKey: ["group"] });
     await waitFor(() => expect(apiMock.group.mock.calls.length).toBeGreaterThan(1));
     await settled();
+    expectRealPanel(".panel-seasons");
+  });
+
+  it("stays open when a show that was gone comes back and is opened again", async () => {
+    const { client } = await openShow();
+    apiMock.group.mockRejectedValue(new ApiError(404, "gone", "error.review.show_not_in_scan"));
+    await client.invalidateQueries({ queryKey: ["group"] });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Close" })).toBeNull());
+    expect(await screen.findByText(/left the latest scan/i)).toBeInTheDocument();
+
+    apiMock.group.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve(GROUP), 100)),
+    );
+    await userEvent.setup().click(await screen.findByRole("button", { name: /example show/i }));
+    await settled();
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
+    await waitFor(() => expectRealPanel(".panel-seasons"));
   });
 });
 
@@ -363,6 +386,7 @@ describe("the item panel", () => {
     apiMock.candidate.mockResolvedValue(itemDetail({ in_latest_scan: false }));
     await client.invalidateQueries({ queryKey: ["candidate"] });
     await waitFor(() => expect(screen.queryByRole("button", { name: "Close" })).toBeNull());
+    expect(await screen.findByText(/left the latest scan/i)).toBeInTheDocument();
   });
 
   it("stays open when the new scan still holds the item", async () => {
@@ -370,6 +394,6 @@ describe("the item panel", () => {
     await client.invalidateQueries({ queryKey: ["candidate"] });
     await waitFor(() => expect(apiMock.candidate.mock.calls.length).toBeGreaterThan(1));
     await settled();
-    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
+    expectRealPanel(".why-head");
   });
 });

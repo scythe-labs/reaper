@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { applyAccent } from "./accent";
-import { Announcer, useSlowWait } from "./announce";
+import { Announcer, announce, useSlowWait } from "./announce";
 import { api, ApiError, type AuthUser, type Verdict } from "./api";
 import { BackNavProvider, useBackGuard, useBackNav, useModalOpen } from "./backnav";
 import { Login } from "./components/Login";
@@ -378,7 +378,11 @@ function Dashboard({ user }: { user: AuthUser }) {
     enabled: selectedId !== null,
   });
 
-  const { data: groupDetail, error: groupErr } = useQuery({
+  const {
+    data: groupDetail,
+    error: groupErr,
+    isFetching: groupFetching,
+  } = useQuery({
     queryKey: ["group", selectedGroupKey],
     queryFn: () => api.group(selectedGroupKey!),
     enabled: selectedGroupKey !== null,
@@ -387,12 +391,24 @@ function Dashboard({ user }: { user: AuthUser }) {
   // A title the newest scan no longer holds closes its panel. Any other failure keeps the
   // panel and its last data.
   const groupError = groupErr !== null;
+  // Read only once the refetch has settled: a show that came back still carries the old
+  // error in the cache until its new answer lands.
   const groupGone =
-    groupErr instanceof ApiError && groupErr.code === "error.review.show_not_in_scan";
+    !groupFetching &&
+    groupErr instanceof ApiError &&
+    groupErr.code === "error.review.show_not_in_scan";
   const itemGone = detail?.in_latest_scan === false;
   useEffect(() => {
-    if (groupGone || itemGone) setSelected(null);
-  }, [groupGone, itemGone]);
+    if (!groupGone && !itemGone) return;
+    setSelected(null);
+    announce(t("reviewQueue.announce.panelGone"));
+    // The closed panel held focus, or the card that opened it is gone. Land on the queue's
+    // heading instead of the page body.
+    setTimeout(() => {
+      if (document.activeElement === document.body)
+        document.querySelector<HTMLElement>("main h2")?.focus();
+    }, 0);
+  }, [groupGone, itemGone, t]);
 
   const { data: personDetail, isError: personError } = useQuery({
     queryKey: ["fairness", "person", scalesUser],

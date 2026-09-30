@@ -2613,6 +2613,7 @@
     "addFilterLabel": "Add a filter",
     "announce": {
       "backInQueue": "Back in the review queue.",
+      "panelGone": "That title left the latest scan, so its panel closed.",
       "showingCollection": "Showing the {collection} collection."
     },
     "bulkActionsAria": "Bulk actions",

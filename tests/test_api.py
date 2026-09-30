@@ -1419,6 +1419,44 @@ class TestTheWhyPanel:
             )
         assert client.get(f"/api/candidates/{item_id}").json()["in_latest_scan"] is False
 
+    def test_the_panel_finds_the_item_under_its_media_key_in_the_newest_scan(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        item_id = client.get("/api/candidates?verdict=condemn").json()["items"][0]["id"]
+        with sqlite3.connect(tmp_path / "reaper.db") as db:
+            db.execute(
+                "INSERT INTO snapshot (created_at, policy_hash, scoring_hash, list_config_hash,"
+                " horizon_at, item_count, degraded)"
+                " SELECT ?, policy_hash, scoring_hash, list_config_hash, horizon_at, 1, 0"
+                " FROM snapshot ORDER BY id DESC LIMIT 1",
+                (utcnow().isoformat(sep=" "),),
+            )
+            newest = db.execute("SELECT max(id) FROM snapshot").fetchone()[0]
+            columns = [
+                r[1]
+                for r in db.execute("PRAGMA table_info(candidate)")
+                if r[1] not in ("id", "snapshot_id")
+            ]
+            names = ", ".join(columns)
+            # Another title in the newest scan does not hold this one.
+            db.execute(
+                f"INSERT INTO candidate (snapshot_id, {names})"  # noqa: S608
+                f" SELECT ?, {names} FROM candidate WHERE id = ?",
+                (newest, item_id),
+            )
+            db.execute(
+                "UPDATE candidate SET media_key = media_key || ':other' WHERE snapshot_id = ?",
+                (newest,),
+            )
+        assert client.get(f"/api/candidates/{item_id}").json()["in_latest_scan"] is False
+        with sqlite3.connect(tmp_path / "reaper.db") as db:
+            db.execute(
+                f"INSERT INTO candidate (snapshot_id, {names})"  # noqa: S608
+                f" SELECT ?, {names} FROM candidate WHERE id = ?",
+                (newest, item_id),
+            )
+        assert client.get(f"/api/candidates/{item_id}").json()["in_latest_scan"] is True
+
     def test_a_protected_item_explains_the_keep(self, client: TestClient) -> None:
         """A tool that only explains its deletions cannot be trusted about its keeps.
 
