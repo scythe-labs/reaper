@@ -10,6 +10,8 @@ fixture drives the loop clock, so the ceiling and the grace are asserted as reco
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -95,6 +97,27 @@ class TestWaitUntilQuiet:
 
         assert slept[0] == 60
         assert len(reads.calls) == 1
+
+    async def test_it_waits_out_a_recorded_queue_of_531_scans(self, slept: list[float]) -> None:
+        """Replays ``plex_scan_timeline.json``, the scan times Plex showed after a 531-item reap."""
+        scans = json.loads(
+            (Path(__file__).parent / "fixtures" / "plex_scan_timeline.json").read_text()
+        )["scans"]
+        last_end = max(end for _, end in scans)
+        loop = asyncio.get_running_loop()
+        t0 = loop.time()
+
+        async def is_scanning() -> bool:
+            now = loop.time() - t0
+            return any(start <= now < end for start, end in scans)
+
+        result = await plex_wait.wait_until_quiet(is_scanning)
+
+        ended = loop.time() - t0
+        quiet_window = plex_wait.QUIET_POLLS * plex_wait.POLL_S
+        assert result == "quiet"
+        assert ended > last_end
+        assert ended <= last_end + quiet_window + plex_wait.POLL_S
 
 
 class TestAnUnreadablePlexIsBusy:
