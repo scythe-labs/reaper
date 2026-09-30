@@ -329,6 +329,7 @@ class MovieDeleter(Protocol):
     ) -> None: ...
     async def exclusions(self) -> list[dict[str, Any]]: ...
     async def root_folders(self) -> list[dict[str, Any]]: ...
+    async def filesystem(self, path: str) -> dict[str, Any]: ...
 
 
 class SeasonPruner(Protocol):
@@ -339,6 +340,7 @@ class SeasonPruner(Protocol):
     async def episode_files(self, series_id: int) -> list[dict[str, Any]]: ...
     async def delete_episode_files(self, episode_file_ids: list[int]) -> None: ...
     async def root_folders(self) -> list[dict[str, Any]]: ...
+    async def filesystem(self, path: str) -> dict[str, Any]: ...
 
 
 class PlexOps(Protocol):
@@ -2956,9 +2958,11 @@ class Executor:
         asynchronous Plex scan, so one per item leaves Plex scanning folders this run is
         still deleting from.
 
-        Keyed by path, so two items in one folder are scanned once. Widening a scan to a
-        shared parent would reach the library root, and the trash purge refuses to follow
-        a whole-section scan.
+        Keyed by path, so two items in one folder are scanned once. ``_flush_refreshes``
+        rolls the queue up into a parent folder only when this run deletes at least half
+        of what an *arr lists on disk directly under that parent. The parent must be
+        strictly inside both a section location and an *arr root folder. A location and
+        a root are never sent, and the trash purge refuses to follow a whole-section scan.
 
         The value is which Plex listings this run removes under that path (a merged bind
         lists one file under several), unioned rather than counted, so a listing two
@@ -2985,6 +2989,9 @@ class Executor:
         safe. The section is recorded for that purge, with the listings this run removed
         under it, feeding the count-delta gate.
 
+        With more than one path queued, ``_rolled_up`` first replaces folders by a parent
+        this run mostly deletes. The purge allowance is the union of the rolled keys.
+
         A path inside no section location is logged and skipped. The file is already
         gone, and Plex notices it on the next scheduled scan.
         """
@@ -3001,7 +3008,11 @@ class Executor:
             return
         for section in sections:
             self._section_titles.setdefault(section.key, section.title)
-        for arr_path, plex_keys in self._pending_refreshes.items():
+        locations = [location for section in sections for location in section.locations]
+        pending = self._pending_refreshes
+        if len(pending) > 1:
+            pending = await self._rolled_up(pending, locations)
+        for arr_path, plex_keys in pending.items():
             for section in sections:
                 if not any(_path_within(arr_path, location) for location in section.locations):
                     continue
@@ -3020,6 +3031,48 @@ class Executor:
                 break
             else:
                 log.info("reap.refresh_unmapped", arr_path=arr_path)
+
+    async def _rolled_up(
+        self, pending: dict[str, set[int]], locations: Sequence[str]
+    ) -> dict[str, set[int]]:
+        """``pending`` rolled up by :func:`roll_up_refreshes`, or unchanged when a read fails.
+
+        Reads every instance's root folders (``GET rootfolder``). Lists a candidate
+        parent through the instance whose root holds it (``GET filesystem``). A failed
+        read, or a parent no single instance owns, leaves the queue as queued.
+        """
+        gateway = self._gateway
+        assert gateway is not None
+        clients: list[MovieDeleter | SeasonPruner] = [
+            *gateway.radarr.values(),
+            *gateway.sonarr.values(),
+        ]
+        owners: list[tuple[str, MovieDeleter | SeasonPruner]] = []
+        try:
+            for client in clients:
+                for folder in await client.root_folders():
+                    if folder.get("accessible") is True and str(folder.get("path") or ""):
+                        owners.append((str(folder["path"]).rstrip("/"), client))
+        except Exception as exc:
+            log.info("reap.refresh_rollup_skipped", error=str(exc))
+            return pending
+
+        async def list_dir(parent: str) -> list[str] | None:
+            holders = [c for root, c in owners if _path_within(parent, root)]
+            if len(holders) != 1:
+                return None
+            try:
+                listing = await holders[0].filesystem(parent + "/")
+                return [
+                    str(entry["path"]).rstrip("/")
+                    for key in ("directories", "files")
+                    for entry in listing[key]
+                ]
+            except Exception as exc:
+                log.info("reap.refresh_rollup_unlisted", parent=parent, error=str(exc))
+                return None
+
+        return await roll_up_refreshes(pending, locations, [r for r, _ in owners], list_dir)
 
     async def _finalize_plex(self) -> None:
         """Rescan the folders this run emptied, then purge the stale entries, so Plex's
@@ -3447,6 +3500,63 @@ def _path_within(path: str, location: str) -> bool:
     """
     root = location.rstrip("/")
     return path in (root, location) or path.startswith(root + "/")
+
+
+async def roll_up_refreshes(
+    queued: Mapping[str, set[int]],
+    locations: Sequence[str],
+    arr_roots: Sequence[str],
+    list_dir: Callable[[str], Awaitable[list[str] | None]],
+) -> dict[str, set[int]]:
+    """Replace queued folders with a shared parent folder when this run deletes most of it.
+
+    A parent qualifies only when it is strictly inside a Plex section location and
+    strictly inside an *arr root folder, never equal to or above either. ``list_dir``
+    returns the paths on disk directly under a parent, or None when it cannot. The
+    fully deleted folders directly under the parent count as deleted, and every other
+    entry counts as kept, whether or not an *arr manages it. A queued folder is fully
+    deleted. A rolled folder is fully deleted only when nothing on disk under it was
+    kept. The parent qualifies when deleted is at least kept. A parent that cannot be
+    listed does not qualify.
+
+    Each parent is listed once. The step repeats upward, and each result holds the
+    union of the ``plex_keys`` it replaced.
+    """
+
+    def allowed(parent: str, bounds: Sequence[str]) -> bool:
+        roots = [b.rstrip("/") for b in bounds]
+        return any(_path_within(parent, r) for r in roots) and not any(
+            _path_within(r, parent) for r in roots
+        )
+
+    listings: dict[str, list[str] | None] = {}
+    refused: set[str] = set()
+    folders = {p.rstrip("/"): set(k) for p, k in queued.items()}
+    whole = set(folders)
+    while True:
+        parents = {p.rsplit("/", 1)[0] for p in folders if "/" in p.strip("/")}
+        for parent in sorted(parents - refused, key=lambda p: -p.count("/")):
+            if not (allowed(parent, locations) and allowed(parent, arr_roots)):
+                refused.add(parent)
+                continue
+            if parent not in listings:
+                listings[parent] = await list_dir(parent)
+            entries = listings[parent]
+            kids = {p for p in folders if p.rsplit("/", 1)[0] == parent}
+            gone = kids & whole
+            kept = None if entries is None else len((set(entries) - gone) | (kids - gone))
+            if kept is None or len(gone) < kept:
+                continue
+            merged = set(folders.pop(parent, set()))
+            swallowed = [p for p in folders if p.startswith(parent + "/")]
+            for path in swallowed:
+                merged |= folders.pop(path)
+            folders[parent] = merged
+            if kept == 0 and all(p in whole for p in swallowed):
+                whole.add(parent)
+            break
+        else:
+            return folders
 
 
 def _common_parent(paths: Sequence[str]) -> str:

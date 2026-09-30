@@ -3219,6 +3219,9 @@ class FakeRadarr:
     async def root_folders(self) -> list[dict[str, Any]]:
         return [{"path": "/movies", "accessible": self._root_accessible}]
 
+    async def filesystem(self, path: str) -> dict[str, Any]:
+        raise IntegrationError("radarr", "no disk listing in this fake")
+
 
 class UnreachableAfterDelete(FakeRadarr):
     """A movie Radarr accepted the delete for, then went unreachable for the confirming
