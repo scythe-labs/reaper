@@ -69,7 +69,9 @@ match by title and year, but no run may execute against the result. A sweep that
 succeeds but could not read every item's ratings degrades too, without discarding the
 ids it did read (``plex.collecting_incomplete_reads``, opened around the gather
 below): a title whose ratings went missing is a title the rating bar can no longer
-keep. A deployment with no Plex configured simply gets no enrichment.
+keep. A rating key Plex answers 404 to when read alone is a deleted title, and the sweep
+drops it as it would a key absent from the listing.
+A deployment with no Plex configured simply gets no enrichment.
 
 The sweep and the spine read different services, so they run concurrently and are
 joined only afterwards. The pairing goes through ``aio.gather_reaped``, so a spine
@@ -136,6 +138,9 @@ _RETIRED_DEGRADE_FLOOR = 20
 #: pattern).
 _SPINE_PAGE_SIZE = 1_000
 _SPINE_MAX_PAGES = 1_000
+
+#: Read limit, in seconds, for the one call that rebuilds a section's list.
+_REFRESH_READ_TIMEOUT = 300.0
 
 
 def _as_year(value: Any) -> int | None:
@@ -225,6 +230,8 @@ async def build_index(
             )
             return {}, False
 
+    section_names: dict[int, str | None] = {}
+
     async def _spine() -> list[Mapping[str, Any]]:
         try:
             return await _spine_rows()
@@ -239,6 +246,74 @@ async def build_index(
                 "scan could be matched to your libraries"
             )
             return []
+
+    async def _walk_section(
+        section_id: int, section_name: str | None, *, refresh: bool
+    ) -> tuple[list[Mapping[str, Any]], int, str | None]:
+        """One section's rows, its count of unreadable rows, and a degrade reason when the
+        walk ended before Tautulli's reported count. ``refresh`` asks Tautulli to rebuild
+        the section's list first."""
+        collected: list[Mapping[str, Any]] = []
+        malformed = 0
+        start = 0
+        pages = 0
+        total: int | None = None
+        capped = False
+        while True:
+            # The refresh rides the first page only. Tautulli rebuilds the whole section
+            # during that call, so later pages read the rebuilt list.
+            extra: dict[str, Any] = (
+                {"refresh": True, "read_timeout": _REFRESH_READ_TIMEOUT}
+                if refresh and pages == 0
+                else {}
+            )
+            page = await tautulli.library_media_info(
+                section_id, start=start, length=_SPINE_PAGE_SIZE, **extra
+            )
+            pages += 1
+            rows = page.get("data") or []
+            if total is None:
+                # Tautulli's own count for this section, read the way ``history_sync``
+                # reads it off the same API. No search filter is sent, so
+                # ``recordsFiltered`` counts the whole section. ``recordsTotal`` is the
+                # same number, and stands in for it where only ``recordsTotal`` is
+                # served.
+                total = _as_count(page.get("recordsFiltered")) or _as_count(
+                    page.get("recordsTotal")
+                )
+            if not rows:
+                break
+            # Paging always advances on the RAW page length, never the filtered one: a
+            # malformed row must not shorten a page and end the walk early, which would
+            # silently truncate the library.
+            usable = [row for row in rows if isinstance(row, Mapping)]
+            malformed += len(rows) - len(usable)
+            collected.extend(
+                {**row, _SPINE_LIBRARY: section_name, _SPINE_SECTION: section_id} for row in usable
+            )
+            # By what the page actually held, never by the constant: a server that clamps
+            # the page would otherwise have `start` step over the rows it did not serve.
+            start += len(rows)
+            if total is not None and start >= total:
+                break
+            if pages >= _SPINE_MAX_PAGES:
+                # A reported count ends the walk long before this at any library size
+                # that exists, so reaching it means the server is serving rows,
+                # reporting no count, and ignoring `start`. Stop rather than spin.
+                log.warning("library_index.page_cap", section_id=section_id, fetched=start)
+                capped = True
+                break
+        partial = None
+        if capped or (total is not None and start < total):
+            # Without this reason, a library read only in part looks read in full:
+            # every item the walk never listed resolves unmatched, which keeps it, and
+            # the why-panel then explains a live file as one Plex has not matched.
+            counted = f"{start} of {total}" if total is not None else str(start)
+            partial = (
+                f"Tautulli listed only {counted} items in one of your libraries, so the "
+                "rest could not be matched and nothing may be deleted from this scan"
+            )
+        return collected, malformed, partial
 
     async def _spine_rows() -> list[Mapping[str, Any]]:
         collected: list[Mapping[str, Any]] = []
@@ -284,57 +359,12 @@ async def build_index(
             # The library title, stamped onto each of its rows so the item build loop has a
             # library even for a row the plexapi sweep did not (or could not) enrich.
             section_name = str(library.get("section_name") or "") or None
-            start = 0
-            pages = 0
-            total: int | None = None
-            capped = False
-            while True:
-                page = await tautulli.library_media_info(
-                    section_id, start=start, length=_SPINE_PAGE_SIZE
-                )
-                pages += 1
-                rows = page.get("data") or []
-                if total is None:
-                    # Tautulli's own count for this section, read the way ``history_sync``
-                    # reads it off the same API. No search filter is sent, so
-                    # ``recordsFiltered`` counts the whole section. ``recordsTotal`` is the
-                    # same number, and stands in for it where only ``recordsTotal`` is
-                    # served.
-                    total = _as_count(page.get("recordsFiltered")) or _as_count(
-                        page.get("recordsTotal")
-                    )
-                if not rows:
-                    break
-                # Paging always advances on the RAW page length, never the filtered one: a
-                # malformed row must not shorten a page and end the walk early, which would
-                # silently truncate the library.
-                usable = [row for row in rows if isinstance(row, Mapping)]
-                malformed += len(rows) - len(usable)
-                collected.extend(
-                    {**row, _SPINE_LIBRARY: section_name, _SPINE_SECTION: section_id}
-                    for row in usable
-                )
-                # By what the page actually held, never by the constant: a server that clamps
-                # the page would otherwise have `start` step over the rows it did not serve.
-                start += len(rows)
-                if total is not None and start >= total:
-                    break
-                if pages >= _SPINE_MAX_PAGES:
-                    # A reported count ends the walk long before this at any library size
-                    # that exists, so reaching it means the server is serving rows,
-                    # reporting no count, and ignoring `start`. Stop rather than spin.
-                    log.warning("library_index.page_cap", section_id=section_id, fetched=start)
-                    capped = True
-                    break
-            if capped or (total is not None and start < total):
-                # Without this warning, a library read only in part looks read in full:
-                # every item the walk never listed resolves unmatched, which keeps it, and
-                # the why-panel then explains a live file as one Plex has not matched.
-                counted = f"{start} of {total}" if total is not None else str(start)
-                degrade(
-                    f"Tautulli listed only {counted} items in one of your libraries, so the "
-                    "rest could not be matched and nothing may be deleted from this scan"
-                )
+            section_names[section_id] = section_name
+            walked, bad, partial = await _walk_section(section_id, section_name, refresh=False)
+            collected.extend(walked)
+            malformed += bad
+            if partial:
+                degrade(partial)
         if malformed:
             degrade(
                 f"{malformed} row(s) in your Plex library listing could not be read, so "
@@ -352,70 +382,126 @@ async def build_index(
     for reason in incomplete:
         degrade(f"{reason}. Nothing may be deleted from this scan.")
 
-    items: list[identity.PlexItem] = []
-    unusable = 0
-    retired = 0
-    # Retired and considered rows per section, so the share below is measured against the
-    # library the rows came from. ``considered`` counts only rows that reached the enrichment
-    # look-up, so rows already dropped for a missing or unusable id cannot inflate the
-    # denominator and hold the degrade back.
-    retired_by_section: dict[object, int] = defaultdict(int)
-    considered_by_section: dict[object, int] = defaultdict(int)
-    for row in spine_rows:
-        # A row with no rating key, or one that is not a number, cannot become a
-        # candidate's join (its rating_key read would fail), so it is dropped, identically
-        # for movies and shows. An item missing from the index resolves unmatched, which
-        # keeps it.
-        #
-        # Only the malformed case is counted and degrades the snapshot. A row with no
-        # rating_key at all is a row Tautulli has not tied to Plex yet, which is an
-        # ordinary state on a library mid-scan. A rating_key that is present and not a
-        # number is a row that should have joined and could not, which is evidence this
-        # scan lost.
-        rk = row.get("rating_key")
-        if rk is None:
-            continue
-        try:
-            rating_key = int(rk)
-        except (TypeError, ValueError):
-            unusable += 1
-            continue
-        considered_by_section[row.get(_SPINE_SECTION)] += 1
-        enriched = plex_items.get(rating_key)
-        if enriched is None and swept:
-            # Tautulli still lists it, but Plex, asked directly over the same sections,
-            # does not. The item is gone, and a row for it would be a phantom the title
-            # tier can bind a live file to (see the module docstring). Dropping it
-            # resolves that file unmatched, which keeps it.
-            retired += 1
-            retired_by_section[row.get(_SPINE_SECTION)] += 1
-            continue
-        items.append(
-            identity.PlexItem(
-                rating_key=rating_key,
-                title=str(row.get("title") or ""),
-                year=_as_year(row.get("year")),
-                added_at=from_epoch(row.get("added_at")),
-                ids=enriched.ids if enriched is not None else identity.ExternalIds(),
-                file_basename=enriched.file_basename if enriched is not None else None,
-                files=enriched.files if enriched is not None else (),
-                # Display metadata from the plexapi sweep. Rows the sweep did not list, or
-                # a failed sweep, simply carry none of it. Shows carry no media, so
-                # video_resolution stays None for them by construction.
-                video_resolution=(enriched.video_resolution if enriched is not None else None),
-                content_rating=enriched.content_rating if enriched is not None else None,
-                runtime_minutes=(enriched.runtime_minutes if enriched is not None else None),
-                ratings=enriched.ratings if enriched is not None else (),
-                # The sweep's section title when it enriched this row, or else the one the
-                # spine stamped from Tautulli's own library listing, so a row the sweep
-                # missed, or a failed sweep, still carries its library.
-                library=(
-                    enriched.library
-                    if (enriched is not None and enriched.library)
-                    else row.get(_SPINE_LIBRARY)
-                ),
+    def _classify(
+        rows: list[Mapping[str, Any]],
+    ) -> tuple[list[identity.PlexItem], int, int, dict[object, int], dict[object, int]]:
+        """Turn spine rows into index items. Returns the items, the count of rows with an
+        unusable id, the retired count, and the retired and considered counts per section."""
+        items: list[identity.PlexItem] = []
+        unusable = 0
+        retired = 0
+        # Retired and considered rows per section, so the share below is measured against the
+        # library the rows came from. ``considered`` counts only rows that reached the enrichment
+        # look-up, so rows already dropped for a missing or unusable id cannot inflate the
+        # denominator and hold the degrade back.
+        retired_by_section: dict[object, int] = defaultdict(int)
+        considered_by_section: dict[object, int] = defaultdict(int)
+        for row in rows:
+            # A row with no rating key, or one that is not a number, cannot become a
+            # candidate's join (its rating_key read would fail), so it is dropped, identically
+            # for movies and shows. An item missing from the index resolves unmatched, which
+            # keeps it.
+            #
+            # Only the malformed case is counted and degrades the snapshot. A row with no
+            # rating_key at all is a row Tautulli has not tied to Plex yet, which is an
+            # ordinary state on a library mid-scan. A rating_key that is present and not a
+            # number is a row that should have joined and could not, which is evidence this
+            # scan lost.
+            rk = row.get("rating_key")
+            if rk is None:
+                continue
+            try:
+                rating_key = int(rk)
+            except (TypeError, ValueError):
+                unusable += 1
+                continue
+            considered_by_section[row.get(_SPINE_SECTION)] += 1
+            enriched = plex_items.get(rating_key)
+            if enriched is None and swept:
+                # Tautulli still lists it, but Plex, asked directly over the same sections,
+                # does not. The item is gone, and a row for it would be a phantom the title
+                # tier can bind a live file to (see the module docstring). Dropping it
+                # resolves that file unmatched, which keeps it.
+                retired += 1
+                retired_by_section[row.get(_SPINE_SECTION)] += 1
+                continue
+            items.append(
+                identity.PlexItem(
+                    rating_key=rating_key,
+                    title=str(row.get("title") or ""),
+                    year=_as_year(row.get("year")),
+                    added_at=from_epoch(row.get("added_at")),
+                    ids=enriched.ids if enriched is not None else identity.ExternalIds(),
+                    file_basename=enriched.file_basename if enriched is not None else None,
+                    files=enriched.files if enriched is not None else (),
+                    # Display metadata from the plexapi sweep. Rows the sweep did not list, or
+                    # a failed sweep, simply carry none of it. Shows carry no media, so
+                    # video_resolution stays None for them by construction.
+                    video_resolution=(enriched.video_resolution if enriched is not None else None),
+                    content_rating=enriched.content_rating if enriched is not None else None,
+                    runtime_minutes=(enriched.runtime_minutes if enriched is not None else None),
+                    ratings=enriched.ratings if enriched is not None else (),
+                    # The sweep's section title when it enriched this row, or else the one the
+                    # spine stamped from Tautulli's own library listing, so a row the sweep
+                    # missed, or a failed sweep, still carries its library.
+                    library=(
+                        enriched.library
+                        if (enriched is not None and enriched.library)
+                        else row.get(_SPINE_LIBRARY)
+                    ),
+                )
             )
-        )
+        return items, unusable, retired, retired_by_section, considered_by_section
+
+    items, unusable, retired, retired_by_section, considered_by_section = _classify(spine_rows)
+
+    def _tripped() -> list[object]:
+        """The sections whose retired share is past the bound, once the total clears the
+        floor."""
+        if retired <= _RETIRED_DEGRADE_FLOOR:
+            return []
+        return [
+            section
+            for section, count in retired_by_section.items()
+            if count > _RETIRED_DEGRADE_SHARE * considered_by_section[section]
+        ]
+
+    # Rebuild each tripped section once and count again. A refresh that fails, or comes back
+    # empty, unreadable or partial, leaves the first rows and the check as it was.
+    tripped = _tripped()
+    if tripped:
+        before = dict(retired_by_section)
+        refreshed: list[int] = []
+        for section in tripped:
+            if not isinstance(section, int):
+                continue
+            try:
+                rows, bad, partial = await _walk_section(
+                    section, section_names.get(section), refresh=True
+                )
+            except IntegrationError as exc:
+                log.warning("library_index.refresh_failed", section_id=section, error=str(exc))
+                continue
+            if bad or partial or not rows:
+                log.warning(
+                    "library_index.refresh_failed",
+                    section_id=section,
+                    error="empty, partial or unreadable",
+                )
+                continue
+            spine_rows = [r for r in spine_rows if r.get(_SPINE_SECTION) != section] + rows
+            refreshed.append(section)
+        if refreshed:
+            items, unusable, retired, retired_by_section, considered_by_section = _classify(
+                spine_rows
+            )
+            for section in refreshed:
+                log.info(
+                    "library_index.refreshed",
+                    section_id=section,
+                    retired_before=before.get(section, 0),
+                    retired_after=retired_by_section.get(section, 0),
+                )
 
     if unusable:
         degrade(
@@ -430,14 +516,11 @@ async def build_index(
     # says so. This checks any one section rather than the overall share, so a small
     # library vanishing whole beside a large healthy one is announced instead of being
     # averaged away.
-    if retired > _RETIRED_DEGRADE_FLOOR and any(
-        count > _RETIRED_DEGRADE_SHARE * considered_by_section[section]
-        for section, count in retired_by_section.items()
-    ):
+    if _tripped():
         degrade(
             f"{retired} items in Tautulli's library list are no longer in Plex, so the two "
-            "don't line up and nothing may be deleted from this scan. Refreshing the "
-            "libraries in Tautulli usually fixes it."
+            "don't line up and nothing may be deleted from this scan. Scan again in a few "
+            "minutes, after Plex finishes updating."
         )
 
     # Items Plex has that the Tautulli cache has not listed yet (fresh additions).
