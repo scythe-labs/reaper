@@ -326,6 +326,42 @@ def collecting_incomplete_reads() -> Iterator[list[str]]:
         _incomplete.reset(token)
 
 
+def _merge_metadata_element(out: dict[int, PlexItem], el: Element) -> None:
+    """Fold one ``/library/metadata`` element into its sweep row.
+
+    The rating children add only sources the listing's slots did not carry. The
+    ``Location`` folders fill the basename and files a listing never has.
+    """
+    rk = el.get("ratingKey")
+    if rk is None or int(rk) not in out:
+        return
+    item = out[int(rk)]
+
+    known = {r.source for r in item.ratings}
+    extra: list[Rating] = []
+    for rating in _parse_rating_children(el):
+        if rating.source not in known:
+            known.add(rating.source)
+            extra.append(rating)
+    if extra:
+        item = replace(item, ratings=item.ratings + tuple(extra))
+
+    paths = [loc.get("path") for loc in el.findall("Location") if loc.get("path")]
+    # The leaf feeds the global by_basename map. The full path rides along on each
+    # PlexFile because a show folder has no size, so the segments above the leaf are the
+    # only thing that can separate the same title listed in two sections
+    # (identity._narrow_by_path_depth).
+    located = [(to_basename(p), p) for p in paths]
+    leaves = [(leaf, p) for leaf, p in located if leaf]
+    if leaves:
+        item = replace(
+            item,
+            file_basename=leaves[0][0],
+            files=item.files or tuple(PlexFile(basename=leaf, path=p) for leaf, p in leaves),
+        )
+    out[int(rk)] = item
+
+
 def _report_incomplete(reason: str) -> None:
     sink = _incomplete.get()
     if sink is not None:
@@ -932,6 +968,8 @@ class PlexClient:
         losing them quietly makes titles look more deletable, not less.
         """
         server = await self._connect()
+        from plexapi.exceptions import NotFound
+
         # Filled inside the worker thread, read back on the event loop below. A
         # short metadata batch is a lost protection source, so the caller has to
         # hear about it.
@@ -976,58 +1014,51 @@ class PlexClient:
                     )
                 )
                 if len(batch) < len(chunk):
-                    # A server that windows the multi-id response drops the tail of
-                    # the chunk, and those Rating children are the only source of
-                    # the per-provider scores (for shows, of any score at all).
-                    # Losing them removes the rating protection from every title in
-                    # the tail, so this marks the snapshot untrusted through
-                    # ``_report_incomplete`` below, which reaches the scan via the
-                    # ``collecting_incomplete_reads`` sink the caller opens.
-                    #
-                    # This is reported rather than raised, deliberately, as the
-                    # narrower response: raising here would also throw away a
-                    # complete id sweep, dropping the whole library to title-only
-                    # matching on top of the lost ratings. The map returned is
-                    # exactly as complete as it was. The snapshot simply cannot be
-                    # executed as is.
+                    # A key missing from the answer is either a title Plex deleted since
+                    # the listing or a tail the server dropped. Only a per-key read tells
+                    # them apart. A 404 is a deleted title and leaves the sweep, so the
+                    # scan treats it as not in Plex. Any other outcome loses the rating
+                    # children, the only source of per-provider scores, and reports the
+                    # scan incomplete through ``_report_incomplete`` below. It is
+                    # reported, never raised, so a complete id sweep is not thrown away.
+                    returned_keys = {
+                        int(el.get("ratingKey")) for el in batch if el.get("ratingKey")
+                    }
+                    vanished: list[int] = []
+                    unexplained: list[int] = []
+                    for key in chunk:
+                        if key in returned_keys:
+                            continue
+                        try:
+                            single = list(
+                                server.query(f"/library/metadata/{key}")  # type: ignore[no-untyped-call]
+                            )
+                        except NotFound:
+                            vanished.append(key)
+                            continue
+                        except Exception:
+                            unexplained.append(key)
+                            continue
+                        found = [el for el in single if el.get("ratingKey") == str(key)]
+                        if found:
+                            batch.append(found[0])
+                        else:
+                            unexplained.append(key)
+                    for key in vanished:
+                        out.pop(key, None)
                     log.warning(
                         "plex.metadata_batch_short",
                         section_type=section_type,
                         requested=len(chunk),
-                        returned=len(batch),
+                        returned=len(chunk) - len(vanished) - len(unexplained),
+                        vanished=len(vanished),
+                        missing_keys=vanished + unexplained,
                     )
-                    short_batches.append((len(chunk), len(batch)))
+                    if unexplained:
+                        asked = len(chunk) - len(vanished)
+                        short_batches.append((asked, asked - len(unexplained)))
                 for el in batch:
-                    rk = el.get("ratingKey")
-                    if rk is None or int(rk) not in out:
-                        continue
-                    item = out[int(rk)]
-
-                    known = {r.source for r in item.ratings}
-                    extra: list[Rating] = []
-                    for rating in _parse_rating_children(el):
-                        if rating.source not in known:
-                            known.add(rating.source)
-                            extra.append(rating)
-                    if extra:
-                        item = replace(item, ratings=item.ratings + tuple(extra))
-
-                    paths = [loc.get("path") for loc in el.findall("Location") if loc.get("path")]
-                    # The leaf feeds the global by_basename map. The full path rides
-                    # along on each PlexFile because a show folder has no size, so
-                    # the segments above the leaf are the only thing that can
-                    # separate the same title listed in two sections
-                    # (identity._narrow_by_path_depth).
-                    located = [(to_basename(p), p) for p in paths]
-                    leaves = [(leaf, p) for leaf, p in located if leaf]
-                    if leaves:
-                        item = replace(
-                            item,
-                            file_basename=leaves[0][0],
-                            files=item.files
-                            or tuple(PlexFile(basename=leaf, path=p) for leaf, p in leaves),
-                        )
-                    out[int(rk)] = item
+                    _merge_metadata_element(out, el)
             return out
 
         async with self._sweep_lock:

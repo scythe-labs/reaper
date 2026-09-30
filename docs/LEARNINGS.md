@@ -4652,6 +4652,18 @@ A fixed read limit cannot fit a delete that takes 5 to 18 seconds today and more
 - **The fix.** A delete waits while a ping every 10 seconds is answered. Three misses in a row
   count as no answer. A 30-minute ceiling stops an instance that pings but never finishes.
 
+## Plex removes trashed titles after the reap ends (2026-09-29)
+
+- **The scan starts 2 seconds after the trash empties.** Plex deletes the titles in the
+  background, so some vanish between the listing and the batched metadata read.
+- **The batches came back short.** A reap of a few hundred movies gave 9 short movie batches,
+  1 to 6 titles each and about 25 in all. A rescan 27 minutes later had none.
+- **TV stays short longer.** That rescan had one short show batch, 399 of 400, while Plex
+  still dropped shows whose seasons the reap removed.
+- **A vanished title answers 404 when read alone.** The sweep reads each missing key on its
+  own and drops the ones Plex reports as not found. Any other outcome still marks the scan
+  incomplete.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have
