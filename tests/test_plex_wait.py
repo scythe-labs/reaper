@@ -286,6 +286,28 @@ class TestWhatTheWaitHoldsBack:
         assert after["waiting_for_plex_since"] is None
         assert client.post("/api/scan/start").status_code == 200
 
+    def test_a_reap_is_refused_during_the_wait_and_starts_no_run(self, client: TestClient) -> None:
+        plex_wait.begin()
+        try:
+            refused = client.post("/api/runs/1/execute", json={"confirmation_phrase": "x"})
+            running = client.get("/api/runs/execute/status").json()["running"]
+        finally:
+            plex_wait.end()
+
+        assert refused.status_code == 409
+        assert refused.json()["code"] == "error.scan.waiting_for_plex"
+        assert running is False
+
+    def test_a_practice_run_is_refused_during_the_wait(self, client: TestClient) -> None:
+        plex_wait.begin()
+        try:
+            refused = client.post("/api/runs/1/dry-run")
+        finally:
+            plex_wait.end()
+
+        assert refused.status_code == 409
+        assert refused.json()["code"] == "error.scan.waiting_for_plex"
+
     def test_the_leaving_soon_update_is_refused_during_the_wait(self, client: TestClient) -> None:
         plex_wait.begin()
         refused = client.post("/api/leaving-soon/sync")

@@ -655,6 +655,43 @@ describe("reaping", () => {
   });
 });
 
+describe("while Plex catches up after a reap", () => {
+  const WAITING = { ...IDLE_SCAN, waiting_for_plex_since: "2026-09-29T10:00:00Z" };
+
+  it("says so, and turns Reap and Practice off with the reason when no result is showing", async () => {
+    apiMock.scanStatus.mockResolvedValue(WAITING);
+    renderPlan();
+
+    expect(await screen.findByText(/Waiting for Plex to finish updating/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Reap 47 titles…$/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Practice run" })).toBeDisabled();
+    expect(screen.getByText("Waits for Plex to finish updating")).toBeInTheDocument();
+  });
+
+  it("leaves both buttons on and shows no notice when Plex is not busy", async () => {
+    renderPlan();
+
+    const reapButton = await screen.findByRole("button", { name: /^Reap 47 titles…$/ });
+    await waitFor(() => expect(reapButton).toBeEnabled());
+    expect(screen.getByRole("button", { name: "Practice run" })).toBeEnabled();
+    expect(screen.queryByText(/Waiting for Plex/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Waits for Plex to finish updating")).not.toBeInTheDocument();
+  });
+
+  it("shows the notice once beside the result card", async () => {
+    apiMock.scanStatus.mockResolvedValue(WAITING);
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({ running: false, run_id: 12, phase: "complete" }),
+    );
+    mockHistory([summary({ id: 12, state: "completed", deleted_items: 44 })]);
+    mockOutcomes([]);
+    renderPlan();
+
+    expect(await screen.findByText("Reap finished")).toBeInTheDocument();
+    expect(screen.getAllByText(/Waiting for Plex to finish updating/)).toHaveLength(1);
+  });
+});
+
 describe("done", () => {
   it("shows the result read back from what the run persisted, never the in-memory report, with Done back to idle", async () => {
     apiMock.reapStatus.mockResolvedValue(
