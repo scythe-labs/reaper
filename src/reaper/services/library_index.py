@@ -69,7 +69,9 @@ match by title and year, but no run may execute against the result. A sweep that
 succeeds but could not read every item's ratings degrades too, without discarding the
 ids it did read (``plex.collecting_incomplete_reads``, opened around the gather
 below): a title whose ratings went missing is a title the rating bar can no longer
-keep. A deployment with no Plex configured simply gets no enrichment.
+keep. A rating key Plex answers 404 to when read alone is a deleted title, and the sweep
+drops it as it would a key absent from the listing.
+A deployment with no Plex configured simply gets no enrichment.
 
 The sweep and the spine read different services, so they run concurrently and are
 joined only afterwards. The pairing goes through ``aio.gather_reaped``, so a spine
