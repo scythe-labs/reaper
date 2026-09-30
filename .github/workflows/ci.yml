@@ -82,6 +82,7 @@ jobs:
   changes:
     name: Decide what to run
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     # `actions: read` lets a push find the last CI run on its branch that succeeded.
     permissions:
       contents: read
@@ -187,6 +188,7 @@ jobs:
 
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: changes
     if: needs.changes.outputs.code == 'true'
     steps:
@@ -278,6 +280,7 @@ jobs:
   # as a right one (#783).
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: changes
     if: needs.changes.outputs.code == 'true' || needs.changes.outputs.site == 'true'
     defaults:
@@ -347,6 +350,7 @@ jobs:
   # the one that did not run (#783).
   hygiene:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: changes
     if: needs.changes.outputs.prose == 'true' || needs.changes.outputs.site == 'true'
     steps:
@@ -375,6 +379,7 @@ jobs:
   # needs: ensures the image is never built from code that failed lint, type, or test.
   docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [changes, check, frontend]
     if: needs.changes.outputs.code == 'true'
     permissions:
@@ -471,6 +476,7 @@ jobs:
   site:
     name: Manual site
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: changes
     if: needs.changes.outputs.site == 'true'
     defaults:
@@ -501,6 +507,7 @@ jobs:
   ci-gate:
     name: CI gate
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: always()
     needs: [changes, check, frontend, hygiene, docker, site]
     steps:
