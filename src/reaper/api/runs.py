@@ -882,7 +882,9 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
        exactly** (409 otherwise). The phrase is recomputed here from the
        plan, so a stale tab, whose phrase was for a different plan,
        cannot replay it.
-    3. **The executor's own interlocks**, the manifest re-check, caps
+    3. **Plex must be done with the last reap's scans** (409 otherwise).
+       This is checked first, for real and practice runs alike.
+    4. **The executor's own interlocks**, the manifest re-check, caps
        abort-not-truncate, the canary, the per-item streaming veto, and
        the played-since-approval check, each run and can still spare or
        abort.
@@ -902,6 +904,9 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
     box: SecretBox = request.app.state.secret_box
     factory = session_factory(request)
     app = request.app
+
+    if plex_wait.waiting_since() is not None:
+        refuse(409, "error.scan.waiting_for_plex")
 
     # Claims the single reap slot synchronously, with no await between the
     # check and the set, so two execute requests racing each other cannot

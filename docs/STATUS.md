@@ -82,7 +82,7 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | Delete mode | **A notice window, not a gate** † |
 | Autonomy | **If ever built**: an earned grant keyed to `policy_hash`, any edit revokes it |
 | Caps | **Four**: items + bytes, per-run + rolling 30-day |
-| Scan after a reap | **Waits for Plex's scans to go quiet**, 3 h ceiling, lost on restart |
+| Scan after a reap | **Waits for Plex's scans; holds reaps too**, 3 h cap, lost on restart |
 | Recycle bins | **Off per instance for one whole reap**, put back at the end, retried † |
 | Size acquisition | **Sonarr or Radarr's own total, never a stand-in** † |
 | Kill switch | **Asymmetric, not one-way** † |

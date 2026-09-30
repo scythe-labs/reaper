@@ -582,12 +582,10 @@ function DoneCard({ run, onDismiss }: { run: RunSummary; onDismiss: () => void }
   const decided = [...outcomes.items].reverse();
   const problems = decided.filter((o) => o.state === "failed");
   const kept = decided.filter((o) => o.state === "skipped");
-  const waitingForPlex = useWaitingForPlex();
 
   return (
     <>
       <div className="reap-card">
-        {waitingForPlex && <PlexWaitNotice>{t("plexWait.bar")}</PlexWaitNotice>}
         <h3 className="reap-finished-head">{t("reapPlan.done.heading")}</h3>
         <RunTotalsTiles run={run} />
         {run.aborted_reason && (
@@ -740,6 +738,8 @@ export function ReapPlan({
   const dismissedRunId = useAckedRun();
   const showDone = endedRunId != null && endedRunId !== dismissedRunId;
 
+  const waitingForPlex = useWaitingForPlex();
+
   const stop = useMutation({
     mutationFn: () => api.stopRun(status?.run_id ?? 0),
     onSuccess: (s) => queryClient.setQueryData(["reapStatus"], s),
@@ -836,7 +836,7 @@ export function ReapPlan({
                 type="button"
                 className="ghost"
                 onClick={() => practice.mutate()}
-                disabled={practice.isPending || !practiceReady}
+                disabled={practice.isPending || !practiceReady || waitingForPlex}
               >
                 {t("reapPlan.actions.practiceRun")}
               </button>
@@ -844,7 +844,7 @@ export function ReapPlan({
                 type="button"
                 className="danger fill"
                 onClick={() => createAndConfirm.mutate()}
-                disabled={createAndConfirm.isPending || !reapReady}
+                disabled={createAndConfirm.isPending || !reapReady || waitingForPlex}
               >
                 {createAndConfirm.isPending
                   ? t("common.planning")
@@ -853,10 +853,12 @@ export function ReapPlan({
                       n: counts.reapCount,
                     })}
               </button>
+              {waitingForPlex && <span className="muted">{t("plexWait.button")}</span>}
             </div>
           )
         )}
       </div>
+      {waitingForPlex && <PlexWaitNotice>{t("plexWait.bar")}</PlexWaitNotice>}
       {reaping && stop.isError && (
         <Notice tone="error" className="reap-stop-error">
           {t("reapConfirm.bar.stopError", { error: describeError(stop.error) })}
