@@ -145,6 +145,54 @@ async def test_each_parent_is_listed_once() -> None:
     assert sorted(disk.asked) == ["/tv/S"]
 
 
+async def test_a_half_kept_show_does_not_count_as_deleted_at_the_next_level() -> None:
+    queued = _q("/d/G/A/Season 1")
+    disk = _Disk(
+        {
+            "/d/G/A": ["/d/G/A/Season 2"],
+            "/d/G": ["/d/G/A", "/d/G/B"],
+        }
+    )
+    out = await roll_up_refreshes(queued, ["/d"], ["/d"], disk)
+    assert set(out) == {"/d/G/A"}
+
+
+async def test_a_half_kept_show_rolls_to_the_show_but_stops_there() -> None:
+    queued = _q("/d/G/A/Season 1", "/d/G/A/Season 2", "/d/G/A/Season 3")
+    disk = _Disk(
+        {
+            "/d/G/A": ["/d/G/A/Season 4"],
+            "/d/G": ["/d/G/A", "/d/G/B"],
+        }
+    )
+    out = await roll_up_refreshes(queued, ["/d"], ["/d"], disk)
+    assert set(out) == {"/d/G/A"}
+
+
+async def test_two_fully_deleted_shows_roll_into_a_genre_with_one_untouched_show() -> None:
+    queued = _q("/d/G/A/S1", "/d/G/B/S1")
+    disk = _Disk({"/d/G/A": [], "/d/G/B": [], "/d/G": ["/d/G/A", "/d/G/B", "/d/G/C"]})
+    out = await roll_up_refreshes(queued, ["/d"], ["/d"], disk)
+    assert set(out) == {"/d/G"}
+
+
+async def test_a_queued_kid_still_on_disk_and_one_gone_are_both_counted_once() -> None:
+    queued = _q("/tv/S/Season 1", "/tv/S/Season 2", "/tv/S/Season 3")
+    # Season 1 is an empty folder still on disk. Season 2 is gone. Season 4 is kept.
+    on_disk = ["/tv/S/Season 1", "/tv/S/Season 3", "/tv/S/Season 4", "/tv/S/Season 5"]
+    disk = _Disk({"/tv/S": on_disk})
+    # 3 deleted against 2 kept rolls up. Counting the queued folders still on disk as
+    # kept too would make it 3 against 4 and refuse.
+    assert set(await roll_up_refreshes(queued, ["/tv"], ["/tv"], disk)) == {"/tv/S"}
+
+
+async def test_nested_arr_roots_never_roll_above_the_inner_root() -> None:
+    gone = _kids("/data/movies", [f"G{i}" for i in range(4)])
+    disk = _Disk({"/data/movies": [], "/data": ["/data/movies"]})
+    out = await roll_up_refreshes(_q(*gone), ["/data"], ["/data", "/data/movies"], disk)
+    assert set(out) == set(gone)
+
+
 class _Arr:
     def __init__(self, listing: dict[str, Any] | None, root: str = "/movies") -> None:
         self._listing, self._root = listing, root
@@ -187,3 +235,37 @@ async def test_a_failed_listing_in_the_flush_sends_the_folders_as_queued(
     plex = FakePlex(sections={"Films": ["/movies"]})
     await _flush(session, _Arr(None), plex)
     assert sorted(p for _, p in plex.refreshed) == [f"/movies/A/M{i}" for i in range(3)]
+
+
+async def test_two_instances_with_overlapping_roots_never_roll_up(session: AsyncSession) -> None:
+    plex = FakePlex(sections={"Films": ["/movies"]})
+    listing: dict[str, Any] = {"directories": [], "files": []}
+    first, second = _Arr(listing), _Arr(listing)
+    executor = Executor(
+        session,
+        safety=_armed(),
+        settings=ProfileSettings(),
+        dry_run=False,
+        gateway=_gateway(radarr={1: first, 2: second}, plex=plex),
+    )
+    for i in range(3):
+        executor._queue_refresh(f"/movies/A/M{i}", plex_keys=(i,))
+    await executor._flush_refreshes()
+    assert sorted(p for _, p in plex.refreshed) == [f"/movies/A/M{i}" for i in range(3)]
+
+
+async def test_the_flush_lists_a_show_through_sonarr(session: AsyncSession) -> None:
+    plex = FakePlex(sections={"TV": ["/tv"]})
+    sonarr = _Arr({"directories": [{"path": "/tv/S/Season 4"}], "files": []}, root="/tv")
+    executor = Executor(
+        session,
+        safety=_armed(),
+        settings=ProfileSettings(),
+        dry_run=False,
+        gateway=_gateway(sonarr={1: sonarr}, plex=plex),
+    )
+    for n in (1, 2, 3):
+        executor._queue_refresh(f"/tv/S/Season {n}", plex_keys=())
+    await executor._flush_refreshes()
+    assert plex.refreshed == [("TV", "/tv/S")]
+    assert sonarr.listed == ["/tv/S/"]

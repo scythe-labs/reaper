@@ -3513,9 +3513,11 @@ async def roll_up_refreshes(
     A parent qualifies only when it is strictly inside a Plex section location and
     strictly inside an *arr root folder, never equal to or above either. ``list_dir``
     returns the paths on disk directly under a parent, or None when it cannot. The
-    queued folders directly under the parent count as deleted, and every other entry
-    counts as kept, whether or not an *arr manages it. The parent qualifies when
-    deleted is at least kept. A parent that cannot be listed does not qualify.
+    fully deleted folders directly under the parent count as deleted, and every other
+    entry counts as kept, whether or not an *arr manages it. A queued folder is fully
+    deleted. A rolled folder is fully deleted only when nothing on disk under it was
+    kept. The parent qualifies when deleted is at least kept. A parent that cannot be
+    listed does not qualify.
 
     Each parent is listed once. The step repeats upward, and each result holds the
     union of the ``plex_keys`` it replaced.
@@ -3530,6 +3532,7 @@ async def roll_up_refreshes(
     listings: dict[str, list[str] | None] = {}
     refused: set[str] = set()
     folders = {p.rstrip("/"): set(k) for p, k in queued.items()}
+    whole = set(folders)
     while True:
         parents = {p.rsplit("/", 1)[0] for p in folders if "/" in p.strip("/")}
         for parent in sorted(parents - refused, key=lambda p: -p.count("/")):
@@ -3540,13 +3543,17 @@ async def roll_up_refreshes(
                 listings[parent] = await list_dir(parent)
             entries = listings[parent]
             kids = {p for p in folders if p.rsplit("/", 1)[0] == parent}
-            kept = None if entries is None else len(set(entries) - kids)
-            if kept is None or len(kids) < kept:
+            gone = kids & whole
+            kept = None if entries is None else len((set(entries) - gone) | (kids - gone))
+            if kept is None or len(gone) < kept:
                 continue
             merged = set(folders.pop(parent, set()))
-            for path in [p for p in folders if p.startswith(parent + "/")]:
+            swallowed = [p for p in folders if p.startswith(parent + "/")]
+            for path in swallowed:
                 merged |= folders.pop(path)
             folders[parent] = merged
+            if kept == 0 and all(p in whole for p in swallowed):
+                whole.add(parent)
             break
         else:
             return folders
