@@ -4599,6 +4599,22 @@ pins both halves.
 boundary of that rule. Where each request buys a bounded piece of work, batching them into
 one unbounded request costs more and risks more.
 
+## Plex queues one "Scanning" activity per refresh and runs them one at a time (2026-09-29)
+
+A reap of about 530 items sent 531 path refreshes in 3 seconds. Plex registered one activity
+titled exactly `Scanning` per refresh, 532 in all, and ran them one at a time for 37 minutes.
+
+- **`GET /activities` never goes quiet as a whole.** It also lists unrelated work, about 20
+  of type `provider.subscription.refresh` titled `Refreshing Sub`. Only `title == "Scanning"`
+  ends.
+- **A quiet read is not proof.** Between two queued scans there can be a gap with no
+  `Scanning` activity. Right after the refreshes are sent, Plex may not have started yet.
+- **This server scans only when asked.** Automatic scan, periodic scan and partial scan are
+  all off, and `autoEmptyTrash` is on, so nothing but Reaper's own requests keeps it busy.
+
+=> Reaper waits 60 s, polls every 20 s, and reads 3 quiet polls in a row as done. A 3 hour
+ceiling ends a wait that never goes quiet. An unreadable Plex counts as busy.
+
 ## A reap's 404s trip CrowdSec's probing rule (2026-09-29)
 
 A live reap stopped deleting after a few dozen items. The delete check read
