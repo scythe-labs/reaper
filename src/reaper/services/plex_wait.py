@@ -13,6 +13,7 @@ update. List refresh still reads Plex collections during the wait.
 from __future__ import annotations
 
 import asyncio
+import math
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Literal
@@ -58,12 +59,13 @@ async def wait_until_quiet(
 
     ``is_scanning`` answers ``True`` when it cannot tell, so an unreadable Plex never ends
     the wait. Any busy read resets the count.
+
+    A count of polls bounds the wait, ``ceil((ceiling - grace) / poll)`` and at least one.
+    The clock does not, so a sleep that returns early cannot make the loop spin.
     """
-    loop = asyncio.get_running_loop()
-    started = loop.time()
     await asyncio.sleep(grace)
     quiet = 0
-    while loop.time() - started < ceiling:
+    for _ in range(max(1, math.ceil((ceiling - grace) / poll))):
         quiet = 0 if await is_scanning() else quiet + 1
         if quiet >= quiet_polls:
             return "quiet"

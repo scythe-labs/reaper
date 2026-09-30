@@ -90,6 +90,14 @@ class TestWaitUntilQuiet:
         assert slept[0] == 60
         assert sum(slept) == 200
 
+    async def test_the_ceiling_holds_when_sleep_does_not_move_the_clock(self) -> None:
+        async def always_busy() -> bool:
+            return True
+
+        result = await asyncio.wait_for(plex_wait.wait_until_quiet(always_busy), 30)
+
+        assert result == "ceiling"
+
     async def test_nothing_is_read_during_the_grace(self, slept: list[float]) -> None:
         reads = _script()
 
