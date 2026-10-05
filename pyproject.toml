@@ -21,7 +21,7 @@ dependencies = [
     "pydantic-settings>=2.15.0",
     "python-dotenv>=1.2.3",      # imported directly (config.load_raw_env), not only transitively
     # Persistence
-    "sqlalchemy>=2.0.53",        # plain SQLAlchemy, NOT SQLModel (see docs/STATUS.md)
+    "sqlalchemy>=2.0.54",        # plain SQLAlchemy, NOT SQLModel (see docs/STATUS.md)
     "alembic>=1.20.0",
     "aiosqlite>=0.22.1",
     "greenlet>=3.5.6",
@@ -49,7 +49,7 @@ package = [
     "pystray>=0.19.5",  # the menu-bar/tray icon the desktop builds keep while serving
 ]
 dev = [
-    "ruff>=0.16.7",
+    "ruff>=0.16.8",
     "mypy>=2.3.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
