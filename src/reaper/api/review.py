@@ -666,7 +666,7 @@ async def list_candidates(
                 for key in sorted(group_keys)
             ],
             total=int(totals[0]),
-            total_bytes=int(totals[1]),
+            total_bytes=int(totals[1] or 0),
             unknown_size=int(totals[2]),
             offset=offset,
             # Which snapshot this page was drawn from. The queue compares it against the newest
@@ -747,6 +747,7 @@ async def _group_rollups(
             )
         ).all()
         for candidate_id, media_key, group_key, size_bytes, verdict in members:
+            assert group_key is not None  # the IN filter above never matches NULL
             override = whitelist.effective_override(media_key, decisions)
             # The spare in effect on this season, matching `override` above: its own if it
             # has one, else its show's. Read only alongside a "spare" decision, exactly as

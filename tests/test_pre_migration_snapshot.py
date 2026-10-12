@@ -442,7 +442,7 @@ class TestRestoringFromTheSnapshot:
         try:
             assert "config_json" in [c["name"] for c in inspect(engine).get_columns("list_config")]
             with engine.connect() as conn:
-                stored = conn.execute(
+                stored: str = conn.execute(
                     text("SELECT config_json FROM list_config WHERE name = 'Keepers'")
                 ).scalar_one()
                 assert json.loads(stored) == json.loads(_LIST_BODY)

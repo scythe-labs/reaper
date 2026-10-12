@@ -1076,7 +1076,7 @@ class TestRestartNow:
         read = sa_create_engine(settings.sync_database_url)
         try:
             with read.connect() as conn:
-                stored = conn.execute(
+                stored: str | None = conn.execute(
                     text("SELECT value_json FROM app_setting WHERE key = :key"),
                     {"key": app_settings.BACKUP_LAST_AT_KEY},
                 ).scalar_one_or_none()

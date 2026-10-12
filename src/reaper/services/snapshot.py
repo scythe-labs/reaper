@@ -3218,7 +3218,7 @@ async def protection_sync_degradations(
             # use. Counting rows alone would let a disabled list vouch for a failed sync
             # and skip the degrade, which is exactly the state where the gate protects
             # nothing.
-            members = (
+            members: int = (
                 await conn.execute(
                     text(
                         "SELECT COUNT(*) FROM protection_list_item i "

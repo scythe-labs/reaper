@@ -112,7 +112,7 @@ def test_batch_mode_can_drop_a_named_constraint(sqlite_engine: Engine) -> None:
         conn.exec_driver_sql("INSERT INTO thing (id, code) VALUES (2, 'dup')")
         conn.commit()
 
-        count = conn.exec_driver_sql("SELECT COUNT(*) FROM thing").scalar_one()
+        count: int = conn.exec_driver_sql("SELECT COUNT(*) FROM thing").scalar_one()
         assert count == 2
 
 
@@ -214,7 +214,8 @@ _IMPORT_EXCLUSION = "2b3c4d5e6f70"
 def _table_names(engine: Engine) -> list[str]:
     with engine.connect() as conn:
         rows = conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type = 'table'")
-        return sorted(str(name) for name in rows.scalars().all())
+        names: list[str] = list(rows.scalars().all())
+        return sorted(names)
 
 
 @contextmanager
@@ -1730,8 +1731,8 @@ class TestReleaseMLetsTheRetiredColumnsBeOmitted:
                 )
             )
         with engine.begin() as conn:
-            enabled = conn.execute(text("SELECT enabled FROM profile")).scalar_one()
-            pin = conn.execute(text("SELECT pin_code FROM pending_plex_login")).scalar_one()
+            enabled: int = conn.execute(text("SELECT enabled FROM profile")).scalar_one()
+            pin: str = conn.execute(text("SELECT pin_code FROM pending_plex_login")).scalar_one()
         assert (enabled, pin) == (1, "ABCD")
         engine.dispose()
 
@@ -1817,8 +1818,10 @@ class TestReleaseMLetsTheRetiredColumnsBeOmitted:
         command.downgrade(config, _PRIOR_RELEASE_M)
 
         with engine.begin() as conn:
-            pointed_at = conn.execute(text("SELECT active_policy_id FROM profile")).scalar_one()
-            oldest = conn.execute(text("SELECT MIN(id) FROM policy")).scalar_one()
+            pointed_at: int = conn.execute(
+                text("SELECT active_policy_id FROM profile")
+            ).scalar_one()
+            oldest: int = conn.execute(text("SELECT MIN(id) FROM policy")).scalar_one()
         assert pointed_at == oldest
         engine.dispose()
 

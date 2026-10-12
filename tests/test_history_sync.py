@@ -624,7 +624,7 @@ class TestAnUnreportedCompletionIsStoredAsUnknown:
 
     async def _status(self, engine: AsyncEngine, row_id: int) -> float | None:
         async with engine.connect() as conn:
-            value = (
+            value: float | None = (
                 await conn.execute(
                     text("SELECT watched_status FROM watch_event WHERE row_id = :id"),
                     {"id": row_id},

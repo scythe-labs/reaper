@@ -103,7 +103,7 @@ COMPACT_MIN_FREE_RATIO = 0.25
 COMPACT_MIN_FREE_BYTES = 64 * 1024 * 1024
 
 
-def _doomed(keep: int) -> Select[tuple[int]]:
+def _doomed(keep: int) -> Select[int]:
     """Snapshot ids eligible to be swept, oldest first.
 
     Two exclusions, both erring toward keeping. ``NOT IN`` over an empty ``reap_run`` is

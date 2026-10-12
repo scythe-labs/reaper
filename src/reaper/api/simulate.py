@@ -176,9 +176,7 @@ async def _season_payloads(session: AsyncSession, *, snapshot_id: int) -> dict[s
                     SeasonPruneEvidence.snapshot_id == snapshot_id
                 )
             )
-        )
-        .tuples()
-        .all()
+        ).all()
     )
 
 

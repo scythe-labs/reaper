@@ -37,7 +37,7 @@ from __future__ import annotations
 import enum
 import json
 import re
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal, Protocol
@@ -1042,7 +1042,7 @@ async def sync(
             )
     except ContainerMissingError as exc:
         async with engine.connect() as conn:
-            stored = (
+            stored: int = (
                 await conn.execute(
                     text("SELECT COUNT(*) FROM protection_list_item WHERE slug = :slug"),
                     {"slug": provider.slug},
@@ -1251,7 +1251,7 @@ async def retire_absent(engine: AsyncEngine, *, family: str, current: Collection
     async with engine.begin() as conn:
         # Read and write inside one transaction: the set being retired is decided from the
         # rows this statement will update, not from an earlier snapshot.
-        rows = (
+        rows: Iterable[str] = (
             await conn.execute(
                 text("SELECT slug FROM protection_list WHERE enabled = 1 AND slug LIKE :family"),
                 {"family": family},

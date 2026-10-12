@@ -3471,16 +3471,12 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
 
     async def _bundles_json(self, session: AsyncSession, snapshot_id: int) -> dict[str, str]:
         rows = (
-            (
-                await session.execute(
-                    select(SeasonPruneEvidence.group_key, SeasonPruneEvidence.payload_json).where(
-                        SeasonPruneEvidence.snapshot_id == snapshot_id
-                    )
+            await session.execute(
+                select(SeasonPruneEvidence.group_key, SeasonPruneEvidence.payload_json).where(
+                    SeasonPruneEvidence.snapshot_id == snapshot_id
                 )
             )
-            .tuples()
-            .all()
-        )
+        ).all()
         return dict(rows)
 
     async def test_turning_the_mid_binge_hold_on_refuses(

@@ -124,7 +124,7 @@ async def removal_times(session: AsyncSession) -> dict[str, datetime]:
         .where(ActionStep.file_removed_at.is_not(None))
         .group_by(ActionStep.media_key)
     )
-    return {key: at for key, at in rows.tuples().all() if at is not None}
+    return {key: at for key, at in rows.all() if at is not None}
 
 
 def removed_since(removed: dict[str, datetime], key: str, since: datetime) -> bool:
@@ -151,19 +151,15 @@ async def _live_rows(session: AsyncSession) -> list[tuple[str, str, datetime | N
     keep direction.
     """
     rows = (
-        (
-            await session.execute(
-                select(
-                    WhitelistEntry.media_key,
-                    WhitelistEntry.decision,
-                    WhitelistEntry.spare_expires_at,
-                    WhitelistEntry.created_at,
-                )
+        await session.execute(
+            select(
+                WhitelistEntry.media_key,
+                WhitelistEntry.decision,
+                WhitelistEntry.spare_expires_at,
+                WhitelistEntry.created_at,
             )
         )
-        .tuples()
-        .all()
-    )
+    ).all()
     reaps = [(k, made) for k, decision, _, made in rows if decision == "reap"]
     if not reaps:
         return [(k, d, e) for k, d, e, _ in rows]
@@ -221,10 +217,7 @@ async def purge_expired_spares(session: AsyncSession, now: datetime) -> list[str
         & (WhitelistEntry.spare_expires_at <= now)
     )
     keys = [
-        key
-        for (key,) in (
-            await session.execute(select(WhitelistEntry.media_key).where(predicate))
-        ).tuples()
+        key for (key,) in (await session.execute(select(WhitelistEntry.media_key).where(predicate)))
     ]
     if not keys:
         return []
@@ -291,7 +284,7 @@ async def spare_expiries(session: AsyncSession) -> dict[str, datetime | None]:
             WhitelistEntry.decision == "spare"
         )
     )
-    return dict(rows.tuples().all())
+    return dict(rows.all())
 
 
 async def override_for(session: AsyncSession, media_key: str) -> str | None:

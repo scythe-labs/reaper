@@ -49,7 +49,7 @@ class RunTotals:
     skipped: int
 
 
-def totals_query(run_id: int) -> Select[tuple[StepState, bool, int | None]]:
+def totals_query(run_id: int) -> Select[StepState, bool, int | None]:
     """Every terminal delete step of one run, joined back to its frozen candidate for
     the size the operator approved: the one statement both callers run.
 

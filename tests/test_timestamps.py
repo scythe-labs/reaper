@@ -145,7 +145,7 @@ async def _read_back_with_created_at(session: AsyncSession, raw: str) -> Recover
     await _store(session, now, now + timedelta(minutes=15))
     await session.execute(text("UPDATE recovery_token SET created_at = :raw"), {"raw": raw})
     session.expunge_all()
-    row = await session.scalar(select(RecoveryToken))
+    row: RecoveryToken | None = await session.scalar(select(RecoveryToken))
     assert row is not None
     return row
 
