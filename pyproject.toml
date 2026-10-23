@@ -45,7 +45,7 @@ dependencies = [
 # uv.lock so the bundler is as pinned as everything it bundles (rule 15).
 package = [
     "pyinstaller>=6.22.3",
-    "pillow>=11.0.0",   # lets PyInstaller cut .ico/.icns from the one committed PNG
+    "pillow>=13.0.0",   # lets PyInstaller cut .ico/.icns from the one committed PNG
     "pystray>=0.19.5",  # the menu-bar/tray icon the desktop builds keep while serving
 ]
 dev = [
