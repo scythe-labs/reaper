@@ -18,7 +18,7 @@ import axe from "axe-core";
 // computed color reports against a fiction. None of these four rules can fail here.
 // `color-contrast` reads pixels, gets none, and defers. `label-content-name-mismatch` draws text
 // on a canvas to spot icon fonts, and jsdom has no canvas, so it errors and defers on every
-// labelled button. `scrollable-region-focusable` does not
+// labeled button. `scrollable-region-focusable` does not
 // apply with no scroll box. `target-size` is off by default in axe-core and outside the tags
 // below as well. They are listed here anyway, because a rule this gate cannot answer should say
 // so by name rather than be silently absent, and because turning any of them on for a real
