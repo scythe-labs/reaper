@@ -25,6 +25,7 @@ import type {
   Snapshot,
   Update,
   WatchEvidence,
+  RecycleBinsOff,
 } from "../api";
 
 export const DEFAULT_PROFILE: ProfileSettings = {
@@ -62,6 +63,9 @@ export const DEFAULT_GENERAL: GeneralSettings = {
  *  and every test that does not care about this read would render the "counted none" sentence
  *  instead of the "not recorded" one. */
 export const DEFAULT_WATCH_EVIDENCE: WatchEvidence = { titles: 0, held_back: null };
+
+/** No recycle bin left off by a reap, so the shell draws no bin banner. */
+export const DEFAULT_RECYCLE_BINS_OFF: RecycleBinsOff = { bins: [] };
 
 /** The update check with nothing to say. Enabled but unanswered, this renders no pill, no chip
  *  light, and no banner, the same nothing a tree rendered before the check existed. A test that
@@ -142,6 +146,7 @@ export const IDLE_SCAN: ScanStatus = {
   error_reason: null,
   snapshot_id: 1,
   followup_queued: false,
+  waiting_for_plex_since: null,
 };
 
 /** A fully configured install. Everything is connected, a scan is behind it, and a real run is

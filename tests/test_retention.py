@@ -326,7 +326,7 @@ class TestPreexistingInstalls:
         calls = {"n": 0}
         real = retention._doomed
 
-        def _fails_on_the_third_batch(keep: int) -> Select[tuple[int]]:
+        def _fails_on_the_third_batch(keep: int) -> Select[int]:
             calls["n"] += 1
             if calls["n"] > 2:
                 raise OSError("database is locked")

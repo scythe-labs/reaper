@@ -119,11 +119,6 @@ class InstanceOut(BaseModel):
     # No `api_path_prefix` here. No route writes it, so it could only ever
     # publish its default. `db.models.Instance.api_path_prefix` holds the
     # reasoning.
-    #
-    # No `detected_version`, `last_ok_at` or `last_error` either. `db.models.Instance`
-    # carries no attribute for them any more: the columns stay in the schema, nullable
-    # and unwritten, until a follow-up release drops them (`alembic/env.py`'s
-    # `RETIRED_COLUMNS`).
 
     @classmethod
     def of(cls, view: instances.InstanceView) -> InstanceOut:

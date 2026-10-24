@@ -254,3 +254,50 @@ describe("starting a Plex sign-in", () => {
     expect(window.location.origin).toBeTruthy();
   });
 });
+
+describe("show reads made in the same tick", () => {
+  const show = (key: string) => ({ group_key: key, seasons: [] });
+
+  it("share one request, and each caller gets its own show", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(new Response(JSON.stringify([show("a"), show("b")]), { status: 200 })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const [a, b, again] = await Promise.all([api.group("a"), api.group("b"), api.group("a")]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toBe("/api/groups?key=a&key=b");
+    expect([a.group_key, b.group_key, again.group_key]).toEqual(["a", "b", "a"]);
+  });
+
+  it("reject only the show the latest scan does not hold", async () => {
+    vi.stubGlobal("fetch", reply(JSON.stringify([show("a")])));
+
+    const [a, gone] = await Promise.allSettled([api.group("a"), api.group("gone")]);
+
+    expect(a.status).toBe("fulfilled");
+    expect(gone.status).toBe("rejected");
+    const err = (gone as PromiseRejectedResult).reason as ApiError;
+    expect(err.status).toBe(404);
+    expect(err.code).toBe("error.review.show_not_in_scan");
+  });
+
+  it("all fail together when the request fails", async () => {
+    vi.stubGlobal("fetch", reply(JSON.stringify({ detail: "down" }), { status: 500 }));
+
+    const results = await Promise.allSettled([api.group("a"), api.group("b")]);
+
+    expect(results.map((r) => r.status)).toEqual(["rejected", "rejected"]);
+  });
+
+  it("split past the server's bound", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response("[]", { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const keys = Array.from({ length: 101 }, (_, n) => `s${n}`);
+    await Promise.allSettled(keys.map((k) => api.group(k)));
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});

@@ -19,6 +19,7 @@ import type { AuthUser, CandidatePage, SetupStatus } from "./api";
 import {
   DEFAULT_GENERAL,
   DEFAULT_PROFILE,
+  DEFAULT_RECYCLE_BINS_OFF,
   DEFAULT_UPDATE,
   DEFAULT_WATCH_EVIDENCE,
   IDLE_SCAN,
@@ -107,6 +108,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   apiMock.update.mockResolvedValue(DEFAULT_UPDATE);
+  apiMock.recycleBinsOff.mockResolvedValue(DEFAULT_RECYCLE_BINS_OFF);
   vi.stubGlobal("IntersectionObserver", NoopObserver);
   vi.clearAllMocks();
   apiMock.me.mockResolvedValue(USER);

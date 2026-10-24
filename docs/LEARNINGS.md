@@ -4588,6 +4588,19 @@ count-delta gate is consulted at all. It is also more work for Plex, since it wa
 directory in the library rather than the handful the run emptied. One request, more scanning,
 and an unbounded blast radius.
 
+**Rolling up the folder tree is the bounded middle.** A reap of 531 items sent 531 path
+refreshes, one per movie folder and one per season folder. Plex ran them one at a time for 37
+minutes. The 287 season folders sat under 135 show folders. All 244 movie folders sat directly in
+one flat Movies root. The flush replaces queued folders with their parent when this run deletes
+at least half of what is on disk directly under it. The parent must be strictly inside both a Plex
+location and an *arr root folder. The count comes from the *arr's `filesystem` listing, never from
+its library, because disk and library disagree. One measured Radarr root held 3390 folders on disk
+against 3413 movies, plus 3 loose files, and its root folder listed 13 unmapped folders. One show
+folder held 5 folders against 4 seasons with files. Every unmanaged entry counts as kept, since
+Plex empties its trash after each scan and loses any title the scan cannot see. Reaper never sends
+a Plex location or an *arr root. A flat movie root never rolls up. A library with letter or
+genre folders rolls up further.
+
 **`LibrarySection.totalSize` is a plexapi `cached_data_property`, on a section object plexapi
 also caches for the life of the connection.** So the trash gate's before-count and
 after-count were one number, and the shrink it refuses to purge without could only read as
@@ -4598,6 +4611,87 @@ pins both halves.
 => The collections finding above says the only lever is asking fewer times. This is the
 boundary of that rule. Where each request buys a bounded piece of work, batching them into
 one unbounded request costs more and risks more.
+
+## Plex queues one "Scanning" activity per refresh and runs them one at a time (2026-09-29)
+
+A reap of about 530 items sent 531 path refreshes in 3 seconds. Plex registered one activity
+titled exactly `Scanning` per refresh, 532 in all, and ran them one at a time for 37 minutes.
+
+- **`GET /activities` never goes quiet as a whole.** It also lists unrelated work, about 20
+  of type `provider.subscription.refresh` titled `Refreshing Sub`. Only `title == "Scanning"`
+  ends.
+- **A quiet read is not proof.** Between two queued scans there can be a gap with no
+  `Scanning` activity. Right after the refreshes are sent, Plex may not have started yet.
+- **This server scans only when asked.** Automatic scan, periodic scan and partial scan are
+  all off, and `autoEmptyTrash` is on, so nothing but Reaper's own requests keeps it busy.
+
+=> Reaper waits 60 s, polls every 20 s, and reads 3 quiet polls in a row as done. A 3 hour
+ceiling ends a wait that never goes quiet. An unreadable Plex counts as busy.
+
+## A reap's 404s trip CrowdSec's probing rule (2026-09-29)
+
+A live reap stopped deleting after a few dozen items. The delete check read
+`GET /api/v3/movie/{id}` and took the 404 as proof the movie was gone. CrowdSec's
+`crowdsecurity/http-probing` rule counts 404s per source IP, and it fired at 12 in 14 seconds.
+The proxy then answered every Sonarr, Radarr and Tautulli call with a captcha page and a 200.
+
+- **Reaper failed closed.** The captcha page does not parse, so every later item was kept
+  and the scan after the reap degraded. One season was deleted with its check unreadable.
+- **Plex kept answering**, because its calls did not pass through the blocked proxy.
+- **The fix reads `GET /api/v3/movie?tmdbId=`.** It answers 200 with an empty list once the
+  movie is gone (Radarr's `MovieController.AllMovie`). The check matches rows by Radarr id,
+  so a Radarr that ignored the filter would still read correctly.
+
+## The review queue reads as crawling to CrowdSec (2026-09-29)
+
+The same proxy can also block the operator's browser. `crowdsecurity/http-crawl-non_statics`
+counts requests whose path has no static file extension, and `http-probing` counts 404s.
+
+- **Posters were both.** `/api/poster/{key}` had no extension, and a title with no artwork
+  answered 404. A queue of a few hundred cards sent a few hundred of each.
+- **Expanded shows sent one `/api/groups/{key}` each**, so a page of cards was a page of
+  non-static requests.
+- **The fix.** Posters live at `/api/poster/{key}.jpg` and a miss answers a 1x1 PNG with a 200.
+  The client batches every show read made in one tick into one `/api/groups` request.
+
+## Sonarr's bulk file delete outlives a 30-second read budget (2026-09-29)
+
+A live reap marked one season failed with "Timed out waiting for an answer". Sonarr deleted it
+anyway. A re-read after the run found none of its 52 episode files.
+
+- **`DELETE /api/v3/episodefile/bulk` answers only after the files are gone.** Across one
+  reap the call took 0.5 to 17 seconds per season, rising with the file count. The season that
+  failed passed the client's 30-second read budget.
+- **The recycle bin adds to it.** Every instance in that reap had one set, so each delete is a
+  move, and a copy when the bin sits on another share than the root folder. Space frees only
+  when the bin's cleanup runs (#1023).
+- **The fix.** A delete with no answer goes to the re-read like any other, and it is charged
+  to the rolling budget either way. A fixed read budget was replaced by a liveness watch, below.
+
+## A busy Sonarr still answers pings (2026-09-29)
+
+A fixed read limit cannot fit a delete that takes 5 to 18 seconds today and more on a slow disk.
+
+- **`GET /api/v3/system/status` stays fast during a bulk delete.** All 45 pings, one every
+  2 seconds, answered 200 in 7 to 25 ms while the same instance spent 5 to 18 seconds per
+  season delete.
+- **Progress is visible from outside.** A season's episode-file count fell by 1 to 3 per 2
+  seconds during its delete.
+- **Radarr deletes are short with the recycle bin off.** 244 calls, median 69 ms, max 0.7 s.
+- **The fix.** A delete waits while a ping every 10 seconds is answered. Three misses in a row
+  count as no answer. A 30-minute ceiling stops an instance that pings but never finishes.
+
+## Plex removes trashed titles after the reap ends (2026-09-29)
+
+- **The scan starts 2 seconds after the trash empties.** Plex deletes the titles in the
+  background, so some vanish between the listing and the batched metadata read.
+- **The batches came back short.** A reap of a few hundred movies gave 9 short movie batches,
+  1 to 6 titles each and about 25 in all. A rescan 27 minutes later had none.
+- **TV stays short longer.** That rescan had one short show batch, 399 of 400, while Plex
+  still dropped shows whose seasons the reap removed.
+- **A vanished title answers 404 when read alone.** The sweep reads each missing key on its
+  own and drops the ones Plex reports as not found. Any other outcome still marks the scan
+  incomplete.
 
 ## Prior art
 
@@ -4617,3 +4711,54 @@ The common thread: **protections live inside the same boolean expression as the
 condemnations**, so an unknown value, an API failure or a mis-set operator silently
 *disarms* a protection. Hence Reaper's two-lane design: gates have no `CONDEMN`
 constructor and cannot delete a file no matter how they are misconfigured.
+
+## Tautulli's library list stays stale after a reap
+
+A reap that removed 287 seasons left the next two scans blocked. About 100 TV rows in
+Tautulli's library list named items Plex no longer had, well past a tenth of that section.
+
+- **Tautulli logs nothing when Plex deletes an item.** Both scans read the section from its
+  cached list ("Loaded media info from cache"), so the removed shows stayed listed until
+  something refreshed the cache.
+- **`refresh=true` rebuilds the whole section inside the call.** Tautulli asks Plex about
+  every item, rewrites the cache, then serves the page from it. It ignores `start`, so one page
+  is enough, and the call is slow.
+- **Plex keeps cleaning up after a reap.** Its own log showed path scans and item removals for
+  up to 37 minutes. A refresh inside that window can still list items Plex is about to drop.
+- **The fix.** The scan refreshes each tripped section once, counts again, and degrades if it
+  still trips or the refresh fails.
+
+## Overrides outlived the reap that removed their item
+
+A spare was written 3 minutes after a reap deleted its season. The queue still listed the season,
+because the scan before the reap held it, and the override route only checked that some kept scan
+knew the key.
+
+- **Nothing cleared an override when its item was removed.** A hand reap on a season applied again
+  when the title returned under the same key, and a hand reap overrules every non-structural
+  protection.
+- **A plan built from a scan older than a reap still held the removed items.** A title
+  re-downloaded before the next scan would have been planned for deletion.
+- **The fix.** A reap older than a removal of its key is void, the executor deletes the row it
+  removed, the override route refuses a key removed since the newest scan, and plans leave removed
+  keys out.
+- **An assumed removal counts too.** A delete that got no answer still stamps the removal. Its
+  reap override is then void and the item stays out of the next plan. That is the keep direction,
+  and it says nothing on screen.
+
+## A scan canceled mid-read can hang the event loop's close (2026-09-30)
+
+The backend tests hung at 98% in 4 of about 10 CI runs after #1038 (#1048).
+
+- **The hung test was in its `client` teardown.** One test started a real scan and closed the
+  client at once. Shutdown canceled the scan mid-read, and the test client's event loop never
+  finished closing.
+- **The stuck task was SQLAlchemy's shielded close of an aiosqlite connection.** Its worker
+  thread had already exited. aiosqlite's `close()` then waits on a `stop()` future nobody
+  resolves. aiosqlite 0.22.1 is the current release.
+- **It needs other tests first.** The file alone passed 29 times. The seven `test_plex_*` files
+  in one process hung 1 run in 4. The test repeated 150 times hung by the third, and passed all
+  150 with the scan stubbed.
+- **The stack dump from #1045 never fired in CI.** All 8 runs after it landed passed. Why the
+  rate dropped is not known. A local loop with SIGABRT on a stalled run caught the stack instead.
+- **The fix.** The test stubs the scan. Production shutdown has the same race (#1049).

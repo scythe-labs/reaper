@@ -39,11 +39,13 @@ from reaper.db.models import (
     ListConfig,
     PlexServer,
     Profile,
+    ReapBin,
     ReapRun,
     RunState,
     SizeSource,
     Snapshot,
     StepState,
+    WhitelistEntry,
 )
 from reaper.db.models import Policy as PolicyModel
 from reaper.engine.gates import wilson_upper
@@ -566,6 +568,122 @@ class TestTheRunsApi:
         assert [r["id"] for r in next_page["runs"]] == [first["id"]]
         assert next_page["total"] == 2
 
+    def test_a_planned_run_reads_each_instances_bin_now(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reaper.api import runs as runs_module
+        from reaper.services.executor import ReapGateway
+
+        class _Radarr:
+            async def media_management(self) -> dict[str, Any]:
+                return {"recycleBin": "/recycle/radarr", "recycleBinCleanupDays": 3}
+
+        radarr: dict[int, Any] = {1: _Radarr()}
+
+        async def _gateway(*_a: object, **_k: object) -> tuple[ReapGateway, list[object]]:
+            return ReapGateway(radarr=radarr), []
+
+        monkeypatch.setattr(runs_module, "build_reap_gateway", _gateway)
+        run = client.post("/api/runs").json()
+
+        assert client.get(f"/api/runs/{run['id']}/bins").json() == {
+            "bins": [
+                {
+                    "kind": "radarr",
+                    "instance_id": 1,
+                    "name": "hd",
+                    "bin": "on",
+                    "cleanup_days": 3,
+                    "items": 1,
+                    "bytes": 5_900_000_000,
+                    "skipped": False,
+                    "state": None,
+                }
+            ]
+        }
+
+    def test_an_executed_run_reads_back_the_bins_it_recorded(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        run = client.post("/api/runs").json()
+        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)
+        with Session(engine) as session:
+            row = session.get(ReapRun, run["id"])
+            assert row is not None
+            row.state = RunState.COMPLETED
+            session.add(
+                ReapBin(
+                    run_id=run["id"],
+                    kind="radarr",
+                    instance_id=1,
+                    instance_name="hd",
+                    bin_path=None,
+                    cleanup_days=None,
+                )
+            )
+            session.commit()
+        engine.dispose()
+
+        [only] = client.get(f"/api/runs/{run['id']}/bins").json()["bins"]
+        assert (only["name"], only["bin"], only["items"], only["bytes"]) == ("hd", "unknown", 0, 0)
+        assert client.get("/api/runs/99999/bins").status_code == 404
+
+    def test_a_bin_a_reap_left_off_is_listed_until_it_is_back(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        run = client.post("/api/runs").json()
+        assert client.get("/api/recycle-bins/off").json() == {"bins": []}
+        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)
+        with Session(engine) as session:
+            session.add(
+                ReapBin(
+                    run_id=run["id"],
+                    kind="radarr",
+                    instance_id=1,
+                    instance_name="hd",
+                    bin_path="/recycle/radarr",
+                    skip=True,
+                    state="off",
+                )
+            )
+            session.commit()
+        engine.dispose()
+
+        assert client.get("/api/recycle-bins/off").json() == {
+            "bins": [{"kind": "radarr", "instance_id": 1, "name": "hd", "run_id": run["id"]}]
+        }
+
+    def test_a_bin_the_running_reap_holds_off_is_not_listed_until_it_ends(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        run = client.post("/api/runs").json()
+        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)
+        with Session(engine) as session:
+            session.add(
+                ReapBin(
+                    run_id=run["id"],
+                    kind="radarr",
+                    instance_id=1,
+                    instance_name="hd",
+                    bin_path="/recycle/radarr",
+                    skip=True,
+                    state="off",
+                )
+            )
+            session.commit()
+        engine.dispose()
+        from reaper.api.runs import _reap_status
+
+        status = _reap_status(client.app)  # type: ignore[arg-type]
+        status.running = True
+        status.run_id = run["id"]
+
+        assert client.get("/api/recycle-bins/off").json() == {"bins": []}
+        assert client.post("/api/recycle-bins/restore").status_code == 409
+
+        status.running = False
+        assert len(client.get("/api/recycle-bins/off").json()["bins"]) == 1
+
     def test_the_run_list_carries_only_what_is_stored(self, client: TestClient) -> None:
         """The history is stored rows, nothing derived.
 
@@ -588,6 +706,7 @@ class TestTheRunsApi:
             "deleted_bytes",
             "deleted_unmeasured",
             "skipped",
+            "binned_bytes",
         }
         # A freshly planned run has not reached a terminal state, so its totals are
         # unknown, never zero.
@@ -686,6 +805,57 @@ class TestTheRunsApi:
         stamped = client.get(f"/api/runs/{run['id']}/outcomes").json()["outcomes"][0]
         assert stamped["state"] == "failed"
         assert stamped["file_removed"] is True
+
+    def test_an_override_on_a_key_reaper_already_removed_is_refused_and_clearing_still_works(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        run = client.post("/api/runs").json()
+        db_url = Settings(data_dir=tmp_path, secret_key="k").sync_database_url
+        engine = sa_create_engine(db_url)
+        with Session(engine) as session:
+            step = session.scalars(
+                select(ActionStep).where(ActionStep.run_id == run["id"]).order_by(ActionStep.id)
+            ).first()
+            assert step is not None, "the plan fixture planned nothing, so nothing is exercised"
+            key = step.media_key
+            spared = client.post("/api/override", json={"media_key": key, "decision": "spare"})
+            assert spared.status_code == 200, spared.text
+            step.file_removed_at = utcnow()
+            session.commit()
+        engine.dispose()
+
+        refused = client.post("/api/override", json={"media_key": key, "decision": "reap"})
+
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["code"] == "error.override.already_removed"
+        with Session(sa_create_engine(db_url)) as session:
+            stored = session.scalars(select(WhitelistEntry.decision)).all()
+        assert stored == ["spare"]  # the refused reap wrote nothing
+        assert client.delete(f"/api/override/{key}").json() == {"removed": True}
+
+    def test_an_override_on_a_show_key_with_a_removed_season_is_refused(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        run = client.post("/api/runs").json()
+        db_url = Settings(data_dir=tmp_path, secret_key="k").sync_database_url
+        engine = sa_create_engine(db_url)
+        with Session(engine) as session:
+            step = session.scalars(
+                select(ActionStep).where(ActionStep.run_id == run["id"]).order_by(ActionStep.id)
+            ).first()
+            assert step is not None, "the plan fixture planned nothing, so nothing is exercised"
+            step.media_key = "sonarr:1:42:3"
+            step.file_removed_at = utcnow()
+            session.commit()
+        engine.dispose()
+
+        refused = client.post(
+            "/api/override", json={"media_key": "sonarr:1:42", "decision": "reap"}
+        )
+
+        assert refused.status_code == 409, refused.text
+        with Session(sa_create_engine(db_url)) as session:
+            assert session.scalars(select(WhitelistEntry.decision)).all() == []
 
     def test_dry_running_a_missing_run_is_a_404(self, client: TestClient) -> None:
         assert client.post("/api/runs/9999/dry-run").status_code == 404
@@ -940,6 +1110,33 @@ class TestExecuteGates:
             json={"confirmation_phrase": run["confirmation_phrase"]},
         )
         assert resp.status_code == 409
+        assert resp.json()["code"] == "error.runs.preflight_no_plex"
+
+    def test_skipping_a_bin_changes_the_phrase(self, armed_client: TestClient) -> None:
+        run = armed_client.post("/api/runs").json()
+        skip = [{"kind": "radarr", "instance_id": 1}]
+        url = f"/api/runs/{run['id']}/execute"
+
+        plain = armed_client.post(
+            url, json={"confirmation_phrase": run["confirmation_phrase"], "skip_bins": skip}
+        )
+        assert plain.json()["code"] == "error.runs.confirmation_mismatch"
+
+        typed = run["confirmation_phrase"] + " SKIP 1 BIN"
+        resp = armed_client.post(url, json={"confirmation_phrase": typed, "skip_bins": skip})
+        assert resp.json()["code"] == "error.runs.preflight_no_plex"
+
+    def test_a_bin_outside_the_plan_adds_nothing_to_the_phrase(
+        self, armed_client: TestClient
+    ) -> None:
+        run = armed_client.post("/api/runs").json()
+        resp = armed_client.post(
+            f"/api/runs/{run['id']}/execute",
+            json={
+                "confirmation_phrase": run["confirmation_phrase"],
+                "skip_bins": [{"kind": "sonarr", "instance_id": 9}],
+            },
+        )
         assert resp.json()["code"] == "error.runs.preflight_no_plex"
 
     def test_executing_a_missing_run_is_a_404(self, armed_client: TestClient) -> None:
@@ -1257,6 +1454,60 @@ class TestTheWhyPanel:
         checked = detail["explanation"]["protections_checked"]
         assert checked
         assert checked[0]["detail_key"] == {"k": "legacy", "p": {"text": CHECKED_DETAIL}}
+
+    def test_the_panel_says_when_the_newest_scan_no_longer_holds_the_item(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        item_id = client.get("/api/candidates?verdict=condemn").json()["items"][0]["id"]
+        assert client.get(f"/api/candidates/{item_id}").json()["in_latest_scan"] is True
+
+        with sqlite3.connect(tmp_path / "reaper.db") as db:
+            db.execute(
+                "INSERT INTO snapshot (created_at, policy_hash, scoring_hash, list_config_hash,"
+                " horizon_at, item_count, degraded)"
+                " SELECT ?, policy_hash, scoring_hash, list_config_hash, horizon_at, 0, 0"
+                " FROM snapshot ORDER BY id DESC LIMIT 1",
+                (utcnow().isoformat(sep=" "),),
+            )
+        assert client.get(f"/api/candidates/{item_id}").json()["in_latest_scan"] is False
+
+    def test_the_panel_finds_the_item_under_its_media_key_in_the_newest_scan(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        item_id = client.get("/api/candidates?verdict=condemn").json()["items"][0]["id"]
+        with sqlite3.connect(tmp_path / "reaper.db") as db:
+            db.execute(
+                "INSERT INTO snapshot (created_at, policy_hash, scoring_hash, list_config_hash,"
+                " horizon_at, item_count, degraded)"
+                " SELECT ?, policy_hash, scoring_hash, list_config_hash, horizon_at, 1, 0"
+                " FROM snapshot ORDER BY id DESC LIMIT 1",
+                (utcnow().isoformat(sep=" "),),
+            )
+            newest = db.execute("SELECT max(id) FROM snapshot").fetchone()[0]
+            columns = [
+                r[1]
+                for r in db.execute("PRAGMA table_info(candidate)")
+                if r[1] not in ("id", "snapshot_id")
+            ]
+            names = ", ".join(columns)
+            # Another title in the newest scan does not hold this one.
+            db.execute(
+                f"INSERT INTO candidate (snapshot_id, {names})"  # noqa: S608
+                f" SELECT ?, {names} FROM candidate WHERE id = ?",
+                (newest, item_id),
+            )
+            db.execute(
+                "UPDATE candidate SET media_key = media_key || ':other' WHERE snapshot_id = ?",
+                (newest,),
+            )
+        assert client.get(f"/api/candidates/{item_id}").json()["in_latest_scan"] is False
+        with sqlite3.connect(tmp_path / "reaper.db") as db:
+            db.execute(
+                f"INSERT INTO candidate (snapshot_id, {names})"  # noqa: S608
+                f" SELECT ?, {names} FROM candidate WHERE id = ?",
+                (newest, item_id),
+            )
+        assert client.get(f"/api/candidates/{item_id}").json()["in_latest_scan"] is True
 
     def test_a_protected_item_explains_the_keep(self, client: TestClient) -> None:
         """A tool that only explains its deletions cannot be trusted about its keeps.

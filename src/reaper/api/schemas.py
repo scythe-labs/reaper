@@ -339,6 +339,9 @@ class CandidateDetail(CandidateOut):
     content_rating: str | None = None
     runtime_minutes: int | None = None
     genres: list[str] = Field(default_factory=list)
+    in_latest_scan: bool = True
+    """False when the newest snapshot holds no row for this item's media key. The panel
+    closes on it, since its Spare and Reap buttons would act on a title that is gone."""
 
 
 class GroupRollupOut(BaseModel):
@@ -628,6 +631,51 @@ class RunSummaryOut(BaseModel):
     skipped: int | None = None
     """How many planned items this run left alone. ``None`` on the same terms."""
 
+    binned_bytes: int | None = None
+    """The part of ``deleted_bytes`` still held in a recycle bin. ``None`` on the same
+    terms, and on a run from before bins were read."""
+
+
+class RunBinOut(BaseModel):
+    """One Sonarr or Radarr instance a run deletes from, and its recycle bin."""
+
+    kind: str
+    instance_id: int
+    name: str
+    bin: str
+    """``on``, ``none`` (the instance has no bin), or ``unknown`` (it could not be read)."""
+
+    cleanup_days: int | None = None
+    """How many days the bin keeps a file. 0 means it never empties on its own."""
+
+    items: int
+    bytes: int
+    """What the plan removes on this instance, or for an executed run, what it removed."""
+
+    skipped: bool = False
+    """The operator turned this bin off for the run."""
+
+    state: str | None = None
+    """For a skipped bin: ``off`` while it is still off, ``restored`` once it is back, or
+    ``left`` when someone set another bin during the reap."""
+
+
+class RecycleBinOffOut(BaseModel):
+    """A recycle bin a reap turned off and could not put back."""
+
+    kind: str
+    instance_id: int
+    name: str
+    run_id: int
+
+
+class RecycleBinsOffOut(BaseModel):
+    bins: list[RecycleBinOffOut]
+
+
+class RunBinsOut(BaseModel):
+    bins: list[RunBinOut]
+
 
 class RunListOut(BaseModel):
     """A page of the run history, plus how many rows match the request as a whole.
@@ -770,6 +818,11 @@ class CreateRunIn(BaseModel):
     media_keys: list[str] | None = Field(default=None, max_length=_MAX_SELECTED_ITEMS)
 
 
+class BinRefIn(BaseModel):
+    kind: Literal["radarr", "sonarr"]
+    instance_id: int = Field(ge=1, le=2**31 - 1)
+
+
 class ExecuteRunIn(BaseModel):
     """The typed, content-bound confirmation required to execute a real reap.
 
@@ -780,6 +833,9 @@ class ExecuteRunIn(BaseModel):
     """
 
     confirmation_phrase: str
+    skip_bins: list[BinRefIn] = Field(default_factory=list, max_length=50)
+    """The instances whose recycle bin this reap turns off, and puts back when it ends.
+    Each one in the plan adds to the phrase's ``SKIP N BINS``."""
 
 
 class GateSettingOut(BaseModel):
@@ -1530,7 +1586,7 @@ class PersonTitleOut(BaseModel):
     group_key: str | None = None
     co_requesters: list[str]
     poster_url: str | None = None
-    """A ``/api/poster/{key}`` URL, or null when the title has no poster key."""
+    """A ``/api/poster/{key}.jpg`` URL, or null when the title has no poster key."""
 
 
 class PersonDetailOut(BaseModel):

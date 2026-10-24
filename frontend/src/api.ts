@@ -549,6 +549,8 @@ export interface CandidateDetail extends Candidate {
   content_rating: string | null;
   runtime_minutes: number | null;
   genres: string[];
+  /** False when the newest scan holds no row for this item. The panel closes on it. */
+  in_latest_scan: boolean;
 }
 
 export interface GateSetting {
@@ -970,6 +972,45 @@ export interface RunSummary {
   deleted_unmeasured: number | null;
   /** How many planned items this run left alone. `null` on the same terms. */
   skipped: number | null;
+  /** The part of `deleted_bytes` still held in a recycle bin. `null` on the same terms,
+   *  and on a run from before bins were read. */
+  binned_bytes: number | null;
+}
+
+/** One Sonarr or Radarr instance a run deletes from, and its recycle bin. */
+export interface RunBin {
+  kind: string;
+  instance_id: number;
+  name: string;
+  /** `on`, `none` (the instance has no bin), or `unknown` (it could not be read). */
+  bin: string;
+  /** How many days the bin keeps a file. 0 means it never empties on its own. */
+  cleanup_days: number | null;
+  items: number;
+  /** What the plan removes on this instance, or for an executed run, what it removed. */
+  bytes: number;
+  /** The operator turned this bin off for the run. */
+  skipped: boolean;
+  /** For a skipped bin: `off` while it is still off, `restored` once it is back, or `left`
+   *  when someone set another bin during the reap. */
+  state: string | null;
+}
+
+/** A recycle bin a reap turned off and could not put back. */
+export interface RecycleBinOff {
+  kind: string;
+  instance_id: number;
+  name: string;
+  run_id: number;
+}
+
+export interface RecycleBinsOff {
+  bins: RecycleBinOff[];
+}
+
+/** From `GET /api/runs/{id}/bins`: read live for a planned run, as recorded for any other. */
+export interface RunBins {
+  bins: RunBin[];
 }
 
 /** A page of the run history, plus how many rows match the request as a whole: the history
@@ -1063,6 +1104,8 @@ export interface ReapStatus {
   total: number;
   deleted_items: number;
   deleted_bytes: number;
+  /** The part of `deleted_bytes` removed on an instance whose recycle bin was on. */
+  binned_bytes: number;
   skipped: number;
   /** The item last acted on, for the live line. */
   title: string;
@@ -1520,7 +1563,7 @@ export interface PersonTitle {
   item_id: number | null;
   group_key: string | null;
   co_requesters: string[];
-  /** A `/api/poster/{key}` URL, or `null` when the title has no poster key. */
+  /** A `/api/poster/{key}.jpg` URL, or `null` when the title has no poster key. */
   poster_url: string | null;
 }
 
@@ -1603,6 +1646,9 @@ export interface ScanStatus {
    *  mid-run (a policy save, usually): the running scan began under the old policies,
    *  so only a scan started after the request can reflect the change. */
   followup_queued: boolean;
+  /** Set while Reaper waits for Plex to finish the folder scans a reap asked for. A scan
+   *  starts by itself when the wait ends, and a start request is refused until then. */
+  waiting_for_plex_since: string | null;
 }
 
 export interface AuthUser {
@@ -2076,6 +2122,56 @@ const put = <T>(path: string, body: unknown): Promise<T> =>
 
 const del = <T>(path: string): Promise<T> => request<T>(path, { method: "DELETE" });
 
+/** The most shows one `/api/groups` request carries. `GROUP_BATCH_MAX` in `api/review.py`
+ *  is the server's bound, and `test_api_type_mirror.py` pins the two together. */
+const GROUP_BATCH_MAX = 100;
+
+type Waiter = { resolve: (group: Group) => void; reject: (error: unknown) => void };
+let groupWaiters: Map<string, Waiter[]> | null = null;
+
+function group(key: string): Promise<Group> {
+  return new Promise((resolve, reject) => {
+    if (!groupWaiters) {
+      groupWaiters = new Map();
+      setTimeout(flushGroups, 0);
+    }
+    groupWaiters.set(key, [...(groupWaiters.get(key) ?? []), { resolve, reject }]);
+  });
+}
+
+function flushGroups(): void {
+  const batch = groupWaiters!;
+  groupWaiters = null;
+  const keys = [...batch.keys()];
+  for (let i = 0; i < keys.length; i += GROUP_BATCH_MAX) {
+    const chunk = keys.slice(i, i + GROUP_BATCH_MAX);
+    const query = new URLSearchParams(chunk.map((key) => ["key", key]));
+    request<Group[]>(`/api/groups?${query.toString()}`).then(
+      (groups) => {
+        const found = new Map((groups ?? []).map((g) => [g.group_key, g]));
+        for (const key of chunk) {
+          const g = found.get(key);
+          for (const w of batch.get(key)!) {
+            if (g) w.resolve(g);
+            // The server leaves out a show the latest scan does not hold.
+            else
+              w.reject(
+                new ApiError(
+                  404,
+                  "That show is not in the latest scan.",
+                  "error.review.show_not_in_scan",
+                ),
+              );
+          }
+        }
+      },
+      (error: unknown) => {
+        for (const key of chunk) for (const w of batch.get(key)!) w.reject(error);
+      },
+    );
+  }
+}
+
 /** Where plex.tv should send the sign-in window once the operator is done with it.
  *
  *  That page closes the window, which is the only way Reaper can: the window is
@@ -2135,8 +2231,9 @@ export const api = {
     return page;
   },
   candidate: (id: number) => request<CandidateDetail>(`/api/candidates/${id}`),
-  /** One show, whole: every season in the latest snapshot, across all lanes. */
-  group: (key: string) => request<Group>(`/api/groups/${encodeURIComponent(key)}`),
+  /** One show, whole: every season in the latest snapshot, across all lanes. Calls made in
+   *  the same tick share one request. */
+  group,
 
   // --- setup + settings ---------------------------------------------------
   setupStatus: () => request<SetupStatus>("/api/setup/status"),
@@ -2398,6 +2495,8 @@ export const api = {
    *  the same source. */
   runOutcomes: (id: number, offset = 0, limit = 50) =>
     request<RunOutcomes>(`/api/runs/${id}/outcomes?offset=${offset}&limit=${limit}`),
+  /** Each Sonarr and Radarr instance a run deletes from, and its recycle bin. */
+  runBins: (id: number) => request<RunBins>(`/api/runs/${id}/bins`),
   /** Build a plan, over an explicitly named set. `"all"` covers the whole condemned
    *  set; an array reaps just those items, the safe path for a first, hand-picked
    *  deletion.
@@ -2417,8 +2516,19 @@ export const api = {
    *  content-bound confirmation phrase, which the server recomputes and refuses
    *  anything else. The reap then runs detached. This returns the initial status, and
    *  the report lands on the status (poll `reapStatus`) when the run ends. */
-  executeRun: (id: number, confirmationPhrase: string) =>
-    post<ReapStatus>(`/api/runs/${id}/execute`, { confirmation_phrase: confirmationPhrase }),
+  executeRun: (
+    id: number,
+    confirmationPhrase: string,
+    skipBins: { kind: string; instance_id: number }[] = [],
+  ) =>
+    post<ReapStatus>(`/api/runs/${id}/execute`, {
+      confirmation_phrase: confirmationPhrase,
+      skip_bins: skipBins,
+    }),
+  /** Every recycle bin a reap turned off and could not put back. */
+  recycleBinsOff: () => request<RecycleBinsOff>("/api/recycle-bins/off"),
+  /** Try again to put those bins back. Answers with the ones still off. */
+  restoreRecycleBins: () => post<RecycleBinsOff>("/api/recycle-bins/restore", {}),
   /** The running (or last) reap's progress. Polled while a reap runs, and read once on load
    *  to re-attach to one already in flight from any screen. */
   reapStatus: () => request<ReapStatus>("/api/runs/execute/status"),

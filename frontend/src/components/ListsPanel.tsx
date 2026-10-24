@@ -36,6 +36,7 @@ import i18next from "../i18n";
 import { composeIn } from "../why";
 import { ListModal } from "./ListModal";
 import { Notice } from "./Notice";
+import { useWaitingForPlex } from "../useScanStatus";
 import { rescanHeading, rescanQueuedLead } from "./PolicySimulator";
 
 function titles(n: number): string {
@@ -466,6 +467,7 @@ export function ListsPanel({
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const waitingForPlex = useWaitingForPlex();
   const health = useQuery({ queryKey: ["lists"], queryFn: api.lists });
   const definitions = useQuery({ queryKey: ["lists-configured"], queryFn: api.listConfigs });
 
@@ -746,7 +748,9 @@ export function ListsPanel({
           // Only when the change moved what a keep rule protects: an edit or a remove of a
           // list a rule names re-judges the queue, and an add, which writes no rule, does
           // not.
-          onChanged={(rescore) => rescore && startScan.mutate()}
+          // While Reaper waits for Plex the server refuses a start, and the scan it runs
+          // afterwards reads these lists.
+          onChanged={(rescore) => rescore && !waitingForPlex && startScan.mutate()}
         />
       )}
     </div>

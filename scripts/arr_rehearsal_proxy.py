@@ -20,8 +20,9 @@ Sonarr's own endpoint paths never collide, so one script covers both.
 The safety property: every GET is forwarded to the upstream untouched, so a scan behaves
 exactly as it would against the real server. A write that actually removes something
 (a movie delete, a season's episode-file delete, the Sonarr unmonitor that must precede
-it) is never forwarded. It is faked in memory instead, and the fake is stateful enough
-that a later read through this same proxy sees the fake removal, which is what lets the
+it, the recycle bin switched off for a reap and back on after it) is never forwarded.
+It is faked in memory instead, and the fake is stateful enough that a later read
+through this same proxy sees the fake removal, which is what lets the
 executor's own post-delete verification reads pass. Any other write this proxy does not
 recognize is refused outright, loudly, with a 501, rather than being guessed at and
 possibly sent upstream by accident.
@@ -31,12 +32,20 @@ history rows, and its rolling-caps bookkeeping, still record the rehearsal run a
 were real, because none of that lives here. Nothing was actually removed upstream, so
 restarting the proxy (or pointing Reaper back at the real host directly) makes the next
 scan see every "removed" item again, exactly as if the run had never happened.
+
+A faked delete answers only after the time the real call took in a measured reap (see
+``docs/LEARNINGS.md``, "A busy Sonarr still answers pings"). The client's liveness pings
+during that wait are GETs, so they reach the real upstream. ``--delay-scale 0`` answers
+every faked delete at once.
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
+import math
+import random
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
@@ -93,6 +102,18 @@ _SONARR_EPISODEFILE_LIST = re.compile(r"/episodefile/?$")
 # proxy, so a POST to it is faked rather than left to fall through to the write refusal.
 _ARR_COMMAND = re.compile(r"/command/?$")
 
+# Reaper reads the media management settings without an id and saves them at id 1.
+_MEDIA_MANAGEMENT = re.compile(r"/config/mediamanagement(?:/\d+)?/?$")
+
+# Measured in one live reap with the recycle bin off: 244 Radarr movie deletes, median
+# 69 ms, max 0.7 s.
+_RADARR_DELETE_MEDIAN = 0.069
+_RADARR_DELETE_SPREAD = 0.8
+_RADARR_DELETE_MAX = 0.7
+# Measured in the same reap with a recycle bin set: a Sonarr bulk delete removes one file
+# every 0.5 to 0.7 s, so a 52-file season passes 30 s.
+_SONARR_SECONDS_PER_FILE = (0.5, 0.7)
+
 
 @dataclass
 class ProxyState:
@@ -106,6 +127,8 @@ class ProxyState:
     upstream: str
     verbose: bool
     client: httpx.AsyncClient
+    delay_scale: float = 1.0
+    """Multiplies every faked delete's measured duration. 0 answers at once."""
 
     # Radarr. Keyed by movie id, the id every call in this proxy's scope addresses a
     # movie by.
@@ -127,6 +150,10 @@ class ProxyState:
     this before it goes back to Reaper."""
 
     next_command_id: int = 0
+
+    recycle_bin: str | None = None
+    """The recycle bin folder a faked settings save set, ``""`` for off. None until a
+    save arrives. Every later settings read is patched with it."""
 
 
 def _log(message: str) -> None:
@@ -248,6 +275,11 @@ async def _maybe_patch(method: str, path: str, resp: httpx.Response, state: Prox
         ]
         return _json_response(resp.status_code, kept)
 
+    if _MEDIA_MANAGEMENT.search(path) and isinstance(data, dict):
+        if state.recycle_bin is not None:
+            data["recycleBin"] = state.recycle_bin
+        return _json_response(resp.status_code, data)
+
     if _RADARR_EXCLUSIONS.search(path) and isinstance(data, list):
         return _json_response(resp.status_code, [*data, *state.radarr_exclusions.values()])
 
@@ -312,6 +344,11 @@ async def _fake_radarr_delete_movie(
     tmdb_id = state.radarr_tmdb.get(movie_id)
     if add_exclusion and tmdb_id is None:
         tmdb_id = await _probe_tmdb_id(request, match, state, movie_id)
+    seconds = state.delay_scale * min(
+        _RADARR_DELETE_MAX,
+        random.lognormvariate(math.log(_RADARR_DELETE_MEDIAN), _RADARR_DELETE_SPREAD),
+    )
+    await asyncio.sleep(seconds)
     state.radarr_deleted[movie_id] = {
         "delete_files": delete_files,
         "add_exclusion": add_exclusion,
@@ -326,7 +363,8 @@ async def _fake_radarr_delete_movie(
         }
     _log(
         f"[FAKED] Radarr DELETE movie {movie_id}: deleteFiles={delete_files} "
-        f"addImportExclusion={add_exclusion} tmdbId={tmdb_id} -- nothing sent upstream"
+        f"addImportExclusion={add_exclusion} tmdbId={tmdb_id} after {seconds:.2f}s "
+        "-- nothing sent upstream"
     )
     return _json_response(200, {})
 
@@ -377,9 +415,31 @@ async def _fake_sonarr_delete_files(
     payload = await _json_body(request)
     ids = payload.get("episodeFileIds") if isinstance(payload, dict) else None
     recorded = [value for value in ids if isinstance(value, int)] if isinstance(ids, list) else []
-    state.sonarr_deleted_files.update(recorded)
-    _log(f"[FAKED] Sonarr DELETE episodefile/bulk: ids={recorded} -- nothing sent upstream")
+    started = asyncio.get_running_loop().time()
+    # Files leave one at a time, so a read during the delete sees the count fall.
+    for file_id in recorded:
+        await asyncio.sleep(state.delay_scale * random.uniform(*_SONARR_SECONDS_PER_FILE))
+        state.sonarr_deleted_files.add(file_id)
+    seconds = asyncio.get_running_loop().time() - started
+    _log(
+        f"[FAKED] Sonarr DELETE episodefile/bulk: ids={recorded} after {seconds:.2f}s "
+        "-- nothing sent upstream"
+    )
     return _json_response(200, {})
+
+
+async def _fake_media_management(
+    request: Request, match: re.Match[str], state: ProxyState
+) -> Response:
+    del match
+    payload = await _json_body(request)
+    folder = payload.get("recycleBin") if isinstance(payload, dict) else None
+    if not isinstance(folder, str):
+        _log(f"[REFUSED] PUT {request.url.path}: no recycleBin in the body, nothing sent upstream")
+        return _json_response(400, {"detail": "arr-rehearsal-proxy wants a recycleBin string"})
+    state.recycle_bin = folder
+    _log(f"[FAKED] PUT {request.url.path}: recycleBin={folder!r} -- nothing sent upstream")
+    return _json_response(202, payload)
 
 
 async def _fake_command(request: Request, match: re.Match[str], state: ProxyState) -> Response:
@@ -411,6 +471,7 @@ _MUTATION_HANDLERS: list[tuple[frozenset[str], re.Pattern[str], _MutationHandler
     (frozenset({"DELETE"}), _RADARR_MOVIE_BY_ID, _fake_radarr_delete_movie),
     (frozenset({"POST"}), _SONARR_SEASONPASS, _fake_sonarr_unmonitor),
     (frozenset({"DELETE"}), _SONARR_EPISODEFILE_BULK, _fake_sonarr_delete_files),
+    (frozenset({"PUT"}), _MEDIA_MANAGEMENT, _fake_media_management),
     (frozenset({"POST"}), _ARR_COMMAND, _fake_command),
 ]
 
@@ -439,11 +500,13 @@ async def _handle(request: Request) -> Response:
     )
 
 
-def build_app(upstream: str, *, verbose: bool = False) -> FastAPI:
+def build_app(upstream: str, *, verbose: bool = False, delay_scale: float = 1.0) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         async with httpx.AsyncClient(base_url=upstream.rstrip("/"), timeout=30.0) as client:
-            app.state.proxy = ProxyState(upstream=upstream, verbose=verbose, client=client)
+            app.state.proxy = ProxyState(
+                upstream=upstream, verbose=verbose, client=client, delay_scale=delay_scale
+            )
             yield
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -471,9 +534,15 @@ def main() -> None:
     parser.add_argument("--port", required=True, type=int, help="port this proxy listens on")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--verbose", action="store_true", help="also log every forwarded read")
+    parser.add_argument(
+        "--delay-scale",
+        type=float,
+        default=1.0,
+        help="multiplies the measured time a faked delete takes; 0 answers at once",
+    )
     args = parser.parse_args()
 
-    app = build_app(args.upstream, verbose=args.verbose)
+    app = build_app(args.upstream, verbose=args.verbose, delay_scale=args.delay_scale)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 

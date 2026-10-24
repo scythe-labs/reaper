@@ -161,6 +161,18 @@
   --rt-rail: var(--protect);
   background: color-mix(in srgb, var(--protect) 8%, var(--surface));
 }
+/* Removed, but held in a recycle bin until it empties: not freed yet, so neutral gray. */
+.reap-tiles .rt-bin {
+  --rt-rail: var(--abstain);
+  background: color-mix(in srgb, var(--abstain) 8%, var(--surface));
+}
+/* Four tiles in the narrow run detail sheet: two rows of two, never three and one. */
+.run-detail .reap-tiles:has(> .rt-bin) {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.run-detail .run-bins {
+  margin-bottom: var(--space-2xl);
+}
 .rb-empty {
   color: var(--muted);
   font-size: var(--text-md);

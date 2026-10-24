@@ -82,6 +82,11 @@ jobs:
   changes:
     name: Decide what to run
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # `actions: read` lets a push find the last CI run on its branch that succeeded.
+    permissions:
+      contents: read
+      actions: read
     outputs:
       code: ${{ steps.decide.outputs.code }}
       prose: ${{ steps.decide.outputs.prose }}
@@ -108,21 +113,26 @@ jobs:
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
-          PUSH_BEFORE: ${{ github.event.before }}
           PUSH_HEAD: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
+          # A push diffs from the newest CI run on its branch that succeeded, so the
+          # changes of a run a later push cancelled still reach this one.
           if [ "${EVENT}" = "pull_request" ]; then
             base="${PR_BASE}"; head="${PR_HEAD}"
           else
-            base="${PUSH_BEFORE}"; head="${PUSH_HEAD}"
+            base="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow ci.yml \
+              --branch "${GITHUB_REF_NAME}" --event push --status success --limit 1 \
+              --json headSha --jq '.[0].headSha // ""' || true)"
+            head="${PUSH_HEAD}"
           fi
 
           # Every path that leads here means "we cannot tell what changed", and the safe
-          # answer to that is to run everything rather than to skip a gate. A new branch
-          # reports an all-zero `before`, and a force-push can leave a base commit that no
-          # longer exists in this clone.
+          # answer to that is to run everything rather than to skip a gate. A branch with
+          # no successful run yet has no base, and a force-push can leave a base commit
+          # that no longer exists in this clone.
           run_everything() {
             echo "cannot determine the diff ($1); running both lanes"
             echo "code=true"  >> "$GITHUB_OUTPUT"
@@ -178,6 +188,7 @@ jobs:
 
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: changes
     if: needs.changes.outputs.code == 'true'
     steps:
@@ -190,7 +201,7 @@ jobs:
       # misses is far from free: it once cost this job ~40s and `frontend` ~9m per run, to
       # fetch nothing. If those timeouts reappear, suspect the runner's network, not this.
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
 
@@ -249,7 +260,7 @@ jobs:
       # same way, so a green pull request is no evidence the upload worked. The step passes
       # either way, which leaves a badge reading "unknown" as the only symptom.
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: coverage.xml
           disable_search: true
@@ -269,6 +280,7 @@ jobs:
   # as a right one (#783).
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: changes
     if: needs.changes.outputs.code == 'true' || needs.changes.outputs.site == 'true'
     defaults:
@@ -315,7 +327,7 @@ jobs:
       # `defaults.run.working-directory` above governs `run` steps only and never reaches a
       # `uses` step, so this path is relative to the workspace and not to frontend/.
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: frontend/coverage/lcov.info
           disable_search: true
@@ -338,13 +350,14 @@ jobs:
   # the one that did not run (#783).
   hygiene:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: changes
     if: needs.changes.outputs.prose == 'true' || needs.changes.outputs.site == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
 
@@ -366,6 +379,7 @@ jobs:
   # needs: ensures the image is never built from code that failed lint, type, or test.
   docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [changes, check, frontend]
     if: needs.changes.outputs.code == 'true'
     permissions:
@@ -462,6 +476,7 @@ jobs:
   site:
     name: Manual site
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: changes
     if: needs.changes.outputs.site == 'true'
     defaults:
@@ -492,6 +507,7 @@ jobs:
   ci-gate:
     name: CI gate
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: always()
     needs: [changes, check, frontend, hygiene, docker, site]
     steps:

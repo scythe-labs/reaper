@@ -375,7 +375,7 @@ def _marks_held(client: TestClient) -> int:
     """
     engine = sa_create_engine(client.app.state.settings.sync_database_url)  # type: ignore[attr-defined]
     with engine.begin() as conn:
-        held = conn.execute(text("SELECT count(*) FROM watch_high_water")).scalar_one()
+        held: int = conn.execute(text("SELECT count(*) FROM watch_high_water")).scalar_one()
     engine.dispose()
     return int(held)
 

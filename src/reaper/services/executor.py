@@ -105,7 +105,9 @@ from itertools import batched
 from typing import Any, Protocol, cast
 
 import structlog
-from sqlalchemy import Update, or_, select, update
+from sqlalchemy import Delete, Insert, Update, or_, select, update
+from sqlalchemy import delete as sql_delete
+from sqlalchemy import insert as sql_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -117,16 +119,18 @@ from reaper.db import KEY_CHUNK
 from reaper.db.models import (
     ActionStep,
     Candidate,
+    ReapBin,
     ReapRun,
     RunState,
     SizeSource,
     Snapshot,
     StepState,
+    WhitelistEntry,
 )
 from reaper.engine.policy import ProfileSettings
 from reaper.engine.reason import Reason, to_stored
 from reaper.refusal import MESSAGES, Refusal, english
-from reaper.services import list_config, run_totals, whitelist
+from reaper.services import list_config, recycle_bins, run_totals, whitelist
 from reaper.services.condemned import effective_condemned, effective_verdict
 from reaper.services.planner import MediaRef, manifest_hash
 from reaper.services.profiles import live_policy_hash
@@ -233,6 +237,31 @@ def size_confirmed(candidate: Candidate) -> bool:
     return candidate.size_bytes is not None
 
 
+def _instance(media_key: str) -> recycle_bins.InstanceKey:
+    ref = MediaRef.parse(media_key)
+    return (ref.kind, ref.instance_id)
+
+
+async def _sent(call: Awaitable[None], *, media_key: str) -> IntegrationError | None:
+    """Await one delete call and return its error instead of raising it.
+
+    The caller's re-read decides what landed, never this response.
+    """
+    try:
+        await call
+    except IntegrationError as exc:
+        log.warning(
+            "reap.delete_call_failed", media_key=media_key, status=exc.status, code=exc.code
+        )
+        return exc
+    return None
+
+
+def _no_answer(error: IntegrationError | None) -> bool:
+    """The delete got no answer, so the *arr may still be removing files."""
+    return error is not None and error.status is None
+
+
 def _season_number(obj: dict[str, Any]) -> int:
     """The season an *arr object belongs to, or -1 when it cannot be read.
 
@@ -295,11 +324,13 @@ class MovieDeleter(Protocol):
     """Radarr, for a movie delete + its exclusion verification."""
 
     async def movie_by_id(self, movie_id: int) -> dict[str, Any]: ...
+    async def movies(self, *, tmdb_id: int | None = ...) -> list[dict[str, Any]]: ...
     async def delete_movie(
         self, movie_id: int, *, delete_files: bool = ..., add_exclusion: bool = ...
     ) -> None: ...
     async def exclusions(self) -> list[dict[str, Any]]: ...
     async def root_folders(self) -> list[dict[str, Any]]: ...
+    async def filesystem(self, path: str) -> dict[str, Any]: ...
 
 
 class SeasonPruner(Protocol):
@@ -310,6 +341,7 @@ class SeasonPruner(Protocol):
     async def episode_files(self, series_id: int) -> list[dict[str, Any]]: ...
     async def delete_episode_files(self, episode_file_ids: list[int]) -> None: ...
     async def root_folders(self) -> list[dict[str, Any]]: ...
+    async def filesystem(self, path: str) -> dict[str, Any]: ...
 
 
 class PlexOps(Protocol):
@@ -471,6 +503,9 @@ class RunReport:
     outcomes: list[StepOutcome] = field(default_factory=list)
     deleted_items: int = 0
     deleted_bytes: int = 0
+    binned_bytes: int = 0
+    """The part of ``deleted_bytes`` removed on an instance whose recycle bin was on."""
+
     deleted_unmeasured: int = 0
     """How many of ``deleted_items`` had no size, so contributed nothing to
     ``deleted_bytes``. Only ever above zero when the operator raised
@@ -532,6 +567,7 @@ class ReapProgress:
     total: int
     deleted_items: int
     deleted_bytes: int
+    binned_bytes: int
     skipped: int
     title: str
 
@@ -857,6 +893,7 @@ class Executor:
         progress: Callable[[ReapProgress], None] | None = None,
         exclusion_poll_delay: float = 1.0,
         plex_settle_delay: float = 2.0,
+        skip_bins: frozenset[recycle_bins.InstanceKey] = frozenset(),
     ) -> None:
         self._session = session
         self._safety = safety
@@ -880,6 +917,12 @@ class Executor:
         # the host via the guard. Nothing deletes by omission.
         self._dry_run = dry_run
         self._gateway = gateway
+        # The instances whose recycle bin was on as this run started (``_capture_bins``).
+        self._binned: frozenset[recycle_bins.InstanceKey] = frozenset()
+        # The instances whose bin the operator asked this run to turn off, and the bins it
+        # did turn off, which ``_restore_bins`` puts back.
+        self._skip_bins = skip_bins
+        self._turned_off: list[recycle_bins.Bin] = []
         # Radarr adds the import exclusion a moment after the delete returns 200, so the
         # verification re-reads the exclusion list a few times before concluding it did not
         # land. Tests pass a zero delay to stay fast.
@@ -933,7 +976,7 @@ class Executor:
         # the run can try them once more. A fault that broke one commit is usually gone
         # seconds later (a vacuum finished, disk space freed), and the write it took down
         # is the record that a file is off disk. See ``_commit_and_finalize``.
-        self._unwritten: list[Update] = []
+        self._unwritten: list[Update | Insert | Delete] = []
         # Whether the item being walked right now has really had its file removed. Tracked
         # here, off the ORM, because the one path that needs to read it is the one where
         # the journal cannot be written and every row is expired. Reset per item by
@@ -1160,6 +1203,8 @@ class Executor:
             # the rolling 30-day budget are checked, dry run included.
             _check_caps(deletes, self._settings, self._effective_keys)
             await self._check_rolling_caps(deletes)
+            if not self._dry_run:
+                await self._capture_bins(deletes)
             await self._run_deletes(deletes, report, run.approved_at)
             report.state = RunState.COMPLETED
             terminal = _Terminal(RunState.COMPLETED, None, utcnow())
@@ -1236,7 +1281,9 @@ class Executor:
 
         return report
 
-    async def _commit_journal(self, *, what: str, write: Sequence[Update]) -> bool:
+    async def _commit_journal(
+        self, *, what: str, write: Sequence[Update | Insert | Delete]
+    ) -> bool:
         """Land one set of journal writes, surviving a transaction that has already failed.
 
         Every journal and state-transition write on the deletion path must be durably
@@ -1423,8 +1470,97 @@ class Executor:
             if self._pending_refreshes:
                 log.info("reap.plex_tidy_deferred", paths=len(self._pending_refreshes))
             return
+        await self._restore_bins()
         if self._pending_refreshes:
             await self._finalize_plex()
+
+    async def _capture_bins(self, deletes: Sequence[_Delete]) -> None:
+        """Record each instance's recycle bin before anything is deleted, then turn off
+        each bin the operator asked to skip.
+
+        A bin that cannot be read is recorded as unknown, and neither that nor a failed
+        record stops the run. A skipped bin that cannot be turned off and confirmed off
+        stops it, before anything is deleted."""
+        assert self._gateway is not None
+        bins = await recycle_bins.read_bins(
+            self._session,
+            recycle_bins.readers(self._gateway.radarr, self._gateway.sonarr),
+            recycle_bins.instances_of(d.candidate.media_key for d in deletes),
+        )
+        rows = [
+            {
+                "run_id": self._run_id,
+                "kind": b.kind,
+                "instance_id": b.instance_id,
+                "instance_name": b.name,
+                "bin_path": b.path,
+                "cleanup_days": b.cleanup_days,
+                "skip": b.key in self._skip_bins,
+            }
+            for b in bins
+        ]
+        write: list[Update | Insert | Delete] = [
+            sql_delete(ReapBin).where(ReapBin.run_id == self._run_id)
+        ]
+        if rows:
+            write.append(sql_insert(ReapBin).values(rows))
+        recorded = await self._commit_journal(what="the run's recycle bins", write=write)
+
+        switches = recycle_bins.switches(self._gateway.radarr, self._gateway.sonarr)
+        for b in bins:
+            if b.key not in self._skip_bins or b.path == "":
+                continue
+            name = recycle_bins.label(b.kind, b.name)
+            client = switches.get(b.key)
+            # The row is the only record a crash leaves of a bin to put back.
+            if b.path is None or client is None or not recorded:
+                raise ExecutionError("error.reap.bin_not_turned_off", name=name)
+            if not await self._set_bin_state(b, "turning_off"):
+                raise _JournalWriteError(_JOURNAL_HALT)
+            self._turned_off.append(b)
+            try:
+                await recycle_bins.turn_off(client, b.path)
+            except recycle_bins.SWITCH_ERRORS as exc:
+                log.warning("reap.bin_not_turned_off", instance=name, error=str(exc))
+                raise ExecutionError("error.reap.bin_not_turned_off", name=name) from exc
+            await self._set_bin_state(b, "off")
+        off = {b.key for b in self._turned_off}
+        self._binned = frozenset(b.key for b in bins if b.state != "none" and b.key not in off)
+
+    async def _set_bin_state(self, b: recycle_bins.Bin, state: str) -> bool:
+        return await self._commit_journal(
+            what="the recycle bin's state",
+            write=[
+                update(ReapBin)
+                .where(
+                    ReapBin.run_id == self._run_id,
+                    ReapBin.kind == b.kind,
+                    ReapBin.instance_id == b.instance_id,
+                )
+                .values(state=state)
+                .execution_options(synchronize_session=False)
+            ],
+        )
+
+    async def _restore_bins(self) -> None:
+        """Put back every bin this run turned off. A bin that will not come back stays
+        recorded as off, for ``recycle_bins.restore_pending`` to retry."""
+        assert self._gateway is not None
+        switches = recycle_bins.switches(self._gateway.radarr, self._gateway.sonarr)
+        for b in self._turned_off:
+            client = switches.get(b.key)
+            if client is None or not b.path:
+                continue
+            try:
+                state = await recycle_bins.put_back(client, b.path)
+            except recycle_bins.SWITCH_ERRORS as exc:
+                log.warning(
+                    "reap.bin_still_off",
+                    instance=recycle_bins.label(b.kind, b.name),
+                    error=str(exc),
+                )
+                continue
+            await self._set_bin_state(b, state)
 
     async def _write_run_totals(self, run_id: int) -> None:
         """Write the run's four terminal totals, best-effort.
@@ -1443,6 +1579,13 @@ class Executor:
             log.warning("reap.run_totals_unreadable", run_id=run_id, error=str(exc))
             return
         totals = run_totals.aggregate_rows(rows)
+        try:
+            binned = (
+                await recycle_bins.removed_on(self._session, run_id, self._binned)
+            ).deleted_bytes
+        except Exception as exc:
+            log.warning("reap.binned_bytes_unreadable", run_id=run_id, error=str(exc))
+            binned = totals.deleted_bytes if self._binned else 0
         await self._commit_journal(
             what="the run's totals",
             write=[
@@ -1453,6 +1596,7 @@ class Executor:
                     deleted_bytes=totals.deleted_bytes,
                     deleted_unmeasured=totals.deleted_unmeasured,
                     skipped=totals.skipped,
+                    binned_bytes=binned,
                 )
                 .execution_options(synchronize_session=False)
             ],
@@ -1715,6 +1859,8 @@ class Executor:
                 # imply it is the whole story.
                 if (freed := approved_size) is not None:
                     report.deleted_bytes += freed
+                    if _instance(outcome.media_key) in self._binned:
+                        report.binned_bytes += freed
                 else:
                     report.deleted_unmeasured += 1
 
@@ -1859,14 +2005,31 @@ class Executor:
                     check=Reason("error.reap.check.no_plex_match"),
                     is_canary=is_canary,
                 )
-            if await self._being_watched_now(candidate):
+            # None means the check could not be read. It keeps the item under its own reason.
+            watching = await self._being_watched_now(candidate)
+            if watching is None:
+                return self._mark_skipped(
+                    delete,
+                    Reason("error.reap.step.watching_unreadable"),
+                    check=Reason("error.reap.check.watching_unreadable"),
+                    is_canary=is_canary,
+                )
+            if watching:
                 return self._mark_skipped(
                     delete,
                     Reason("error.reap.step.being_watched"),
                     check=Reason("error.reap.check.being_watched"),
                     is_canary=is_canary,
                 )
-            if await self._watched_since_approval(candidate, approved_at):
+            played = await self._watched_since_approval(candidate, approved_at)
+            if played is None:
+                return self._mark_skipped(
+                    delete,
+                    Reason("error.reap.step.play_history_unreadable"),
+                    check=Reason("error.reap.check.play_history_unreadable"),
+                    is_canary=is_canary,
+                )
+            if played:
                 return self._mark_skipped(
                     delete,
                     Reason("error.reap.step.played_since_approval"),
@@ -1974,6 +2137,7 @@ class Executor:
                     total=total,
                     deleted_items=report.deleted_items,
                     deleted_bytes=report.deleted_bytes,
+                    binned_bytes=report.binned_bytes,
                     skipped=report.skipped,
                     title=title,
                 )
@@ -2006,7 +2170,7 @@ class Executor:
                 keys.append(value)
         return keys
 
-    async def _being_watched_now(self, candidate: Candidate) -> bool:
+    async def _being_watched_now(self, candidate: Candidate) -> bool | None:
         """Is anyone watching this item, or a child of it, right now?
 
         Re-checked per item, never once at the start: a run takes minutes and someone
@@ -2014,13 +2178,12 @@ class Executor:
         show rating keys, so watching one episode protects the whole season a prune
         would take.
 
-        Fails closed: if Plex cannot be read, this cannot conclude nobody is watching,
-        so the item is treated as watched and kept. ``active_streams`` raises rather
-        than returning ``[]`` for exactly this reason.
+        Returns None when Plex cannot be read. ``active_streams`` raises rather than
+        returning ``[]``, so an unreadable Plex never reads as nobody watching.
         """
         gateway = self._gateway
         if gateway is None or gateway.plex is None:  # pragma: no cover - execute() guards this
-            return True
+            return None
         try:
             streams = await gateway.plex.active_streams()
         except Exception as exc:
@@ -2031,7 +2194,7 @@ class Executor:
             log.warning(
                 "reap.stream_veto_unreadable", media_key=candidate.media_key, error=str(exc)
             )
-            return True
+            return None
         veto: set[int] = set()
         for stream in streams:
             veto |= stream.veto_keys
@@ -2039,7 +2202,9 @@ class Executor:
         # listing is someone watching the very file this delete would remove.
         return any(key in veto for key in self._equivalent_keys(candidate))
 
-    async def _watched_since_approval(self, candidate: Candidate, approved_at: datetime) -> bool:
+    async def _watched_since_approval(
+        self, candidate: Candidate, approved_at: datetime
+    ) -> bool | None:
         """Has anyone played this item since the plan was approved?
 
         The grace period exists so a late view can still rescue an item, so this is
@@ -2051,19 +2216,16 @@ class Executor:
         compared against the exact approval instant, so a play genuinely before approval
         does not count and one after it does.
 
-        Fails closed at every step: a Tautulli error, a success response whose history
-        body cannot be read, and a returned row whose timestamp cannot be read, all keep
-        the item. A row present but unreadable survived the ``after`` filter, so it may
-        well be a post-approval play, and this never deletes on the assumption that it
-        was not. Only a genuine list of rows, none of them at or after the approval
-        instant, returns False.
+        Returns None when the history cannot be read: a Tautulli error, an unreadable
+        body, or a row with no readable timestamp. Only a readable list with no play at
+        or after approval returns False.
         """
         gateway = self._gateway
         if gateway is None or gateway.tautulli is None:  # pragma: no cover - execute() guards
-            return True
+            return None
         # The rating-key skip in _one_delete precedes this, so this is belt-and-suspenders.
         if candidate.plex_rating_key is None:  # pragma: no cover
-            return True
+            return None
 
         # One-day margin (see docstring): guards against Tautulli's local-day boundary
         # dropping a real post-approval play near a UTC-midnight approval.
@@ -2090,7 +2252,7 @@ class Executor:
                 log.warning(
                     "reap.watched_since_unreadable", media_key=candidate.media_key, error=str(exc)
                 )
-                return True
+                return None
 
             rows = data.get("data") if isinstance(data, dict) else None
             if not isinstance(rows, list):
@@ -2106,13 +2268,13 @@ class Executor:
                     media_key=candidate.media_key,
                     error="Tautulli returned a history body Reaper could not read",
                 )
-                return True
+                return None
             for row in rows:
                 played_ts = _row_timestamp(row)
-                # An unreadable timestamp (None) keeps the item: the row is present and
-                # passed the date filter, so it is treated as a possible late play
-                # rather than assumed to be old.
-                if played_ts is None or played_ts >= approved_ts:
+                # A row with no readable timestamp may be a late play.
+                if played_ts is None:
+                    return None
+                if played_ts >= approved_ts:
                     return True
         return False
 
@@ -2308,18 +2470,20 @@ class Executor:
             )
 
         await self._mark_sent(step)
-        await radarr.delete_movie(ref.arr_id, delete_files=True, add_exclusion=add_exclusion)
+        send_error = await _sent(
+            radarr.delete_movie(ref.arr_id, delete_files=True, add_exclusion=add_exclusion),
+            media_key=delete.candidate.media_key,
+        )
 
-        # Verify the movie is actually gone, always, and immediately (a deleted movie 404s).
-        gone = await self._movie_is_gone(radarr, ref.arr_id)
-        # Only a real 404 passes the check. An unreadable re-read (``None``) is not a
-        # pass: nothing was confirmed, and the checklist must not claim otherwise.
+        gone = await self._movie_is_gone(radarr, ref.arr_id, tmdb_id)
+        # An unreadable re-read is not a pass.
         proven_gone = gone is True
         # ``None`` means the re-read failed, so the file's fate is unknown. Below, that
         # is the keep direction (fail the item, do not claim a verification), but for the
         # rolling budget it is the opposite: an uncharged delete buys the next run more
         # room. So "not proven still present" is what charges here, not "proven gone".
-        assume_removed = gone is not False
+        # A delete that got no answer may still be running, so it charges too.
+        assume_removed = gone is not False or _no_answer(send_error)
         checks.append(StepCheck(Reason("error.reap.check.movie_removed"), proven_gone))
 
         # Stamp the removal the moment it is proven, before anything else that could
@@ -2362,11 +2526,15 @@ class Executor:
             # Three different things can go wrong here and they read differently to an
             # operator, so each says what it actually knows rather than printing a tuple
             # of internal flags. With the exclusion off, ``excluded`` is always True, so
-            # the first branch only fires on a movie that would not delete.
-            if gone is False:
-                reason = Reason("error.reap.step.movie_not_removed")
-            elif gone is None:
+            # only a movie not proven gone reaches here.
+            if gone is None:
                 reason = Reason("error.reap.step.movie_removal_unconfirmed")
+            elif gone is False and send_error is not None:
+                reason = Reason(
+                    "error.reap.step.arr_call_failed", {"error": send_error.as_reason()}
+                )
+            elif gone is False:
+                reason = Reason("error.reap.step.movie_not_removed")
             else:
                 reason = Reason("error.reap.step.exclusion_unconfirmed")
             return self._fail(
@@ -2399,23 +2567,22 @@ class Executor:
             is_canary=is_canary,
         )
 
-    async def _movie_is_gone(self, radarr: MovieDeleter, movie_id: int) -> bool | None:
+    async def _movie_is_gone(
+        self, radarr: MovieDeleter, movie_id: int, tmdb_id: int
+    ) -> bool | None:
         """Did the movie really go? ``True`` gone, ``False`` still there, ``None`` unknown.
 
-        Three answers, not two, because the two ends of "not True" need opposite
-        handling. A 404 proves the delete took. A clean read that still finds the movie
-        proves it did not: Radarr returned 200 and did nothing. A timeout or a 502 on
-        this re-read proves neither, and collapsing that into ``False`` would claim the
-        movie was still present when nobody had looked, and would also skip the
-        ``file_removed_at`` stamp, so bytes that really were reclaimed would never reach
-        the rolling 30-day budget. ``delete_movie`` already returned without raising by
-        the time this runs, so an unreadable verification reads as the file being gone.
+        A failed re-read is ``None``, never ``False``, so the removal is still charged to
+        the rolling budget. It reads the TMDB-filtered list, never the movie's own route:
+        that route answers 404, and CrowdSec blocks a host after about ten of them. Rows
+        match by Radarr id. A movie with no TMDB id reads the whole list, since
+        ``tmdbId=0`` always answers empty.
         """
         try:
-            await radarr.movie_by_id(movie_id)
-        except IntegrationError as exc:
-            return True if exc.status == 404 else None
-        return False
+            rows = await radarr.movies(tmdb_id=tmdb_id or None)
+        except IntegrationError:
+            return None
+        return not any(isinstance(row, dict) and row.get("id") == movie_id for row in rows)
 
     async def _exclusion_landed(self, radarr: MovieDeleter, tmdb_id: int) -> bool:
         """Was the import exclusion for ``tmdb_id`` added? Polled, not read once.
@@ -2648,7 +2815,9 @@ class Executor:
                 is_canary=is_canary,
             )
         await self._mark_sent(delete_step)
-        await sonarr.delete_episode_files(file_ids)
+        send_error = await _sent(
+            sonarr.delete_episode_files(file_ids), media_key=candidate.media_key
+        )
 
         # 3. Verify no file for this season remains.
         try:
@@ -2656,10 +2825,9 @@ class Executor:
         except IntegrationError:
             # The twin of the movie path's unreadable re-read (``_movie_is_gone``
             # returning ``None``), reached by a raise rather than a return because there
-            # is no 404 to distinguish here. ``delete_episode_files`` already returned
-            # without raising, so the files went; only the confirmation failed. Charge
-            # the bytes before failing the item, or a Sonarr that is unreachable for the
-            # re-read would buy the next run unlimited room.
+            # is no 404 to distinguish here. The files may have gone. Charge the bytes
+            # before failing the item, or a Sonarr that is unreachable for the re-read
+            # would buy the next run unlimited room.
             await self._mark_file_removed(delete_step)
             return self._fail(
                 delete,
@@ -2675,21 +2843,22 @@ class Executor:
                 not still_there,
             )
         )
-        if len(still_there) < len(file_ids):
-            # At least one file really went, so the bytes are reclaimed and the rolling
-            # budget must be charged whichever way the step below ends. Same reasoning as
-            # the movie path: the removal is recorded independently of the verification.
+        # Charged whichever way the step below ends when at least one file went, or when
+        # the delete got no answer and may still be running.
+        removed = len(still_there) < len(file_ids) or _no_answer(send_error)
+        if removed:
             await self._mark_file_removed(delete_step)
         if still_there:
-            return self._fail(
-                delete,
-                Reason(
+            reason = (
+                Reason("error.reap.step.arr_call_failed", {"error": send_error.as_reason()})
+                if send_error is not None
+                else Reason(
                     "error.reap.step.season_files_remain",
                     {"count": len(still_there), "season": ref.season},
-                ),
-                checks=checks,
-                is_canary=is_canary,
-                file_removed=len(still_there) < len(file_ids),
+                )
+            )
+            return self._fail(
+                delete, reason, checks=checks, is_canary=is_canary, file_removed=removed
             )
 
         # The season's files are gone, so tell Plex, the same nudge the movie path sends.
@@ -2790,9 +2959,11 @@ class Executor:
         asynchronous Plex scan, so one per item leaves Plex scanning folders this run is
         still deleting from.
 
-        Keyed by path, so two items in one folder are scanned once. Widening a scan to a
-        shared parent would reach the library root, and the trash purge refuses to follow
-        a whole-section scan.
+        Keyed by path, so two items in one folder are scanned once. ``_flush_refreshes``
+        rolls the queue up into a parent folder only when this run deletes at least half
+        of what an *arr lists on disk directly under that parent. The parent must be
+        strictly inside both a section location and an *arr root folder. A location and
+        a root are never sent, and the trash purge refuses to follow a whole-section scan.
 
         The value is which Plex listings this run removes under that path (a merged bind
         lists one file under several), unioned rather than counted, so a listing two
@@ -2819,6 +2990,9 @@ class Executor:
         safe. The section is recorded for that purge, with the listings this run removed
         under it, feeding the count-delta gate.
 
+        With more than one path queued, ``_rolled_up`` first replaces folders by a parent
+        this run mostly deletes. The purge allowance is the union of the rolled keys.
+
         A path inside no section location is logged and skipped. The file is already
         gone, and Plex notices it on the next scheduled scan.
         """
@@ -2835,7 +3009,11 @@ class Executor:
             return
         for section in sections:
             self._section_titles.setdefault(section.key, section.title)
-        for arr_path, plex_keys in self._pending_refreshes.items():
+        locations = [location for section in sections for location in section.locations]
+        pending = self._pending_refreshes
+        if len(pending) > 1:
+            pending = await self._rolled_up(pending, locations)
+        for arr_path, plex_keys in pending.items():
             for section in sections:
                 if not any(_path_within(arr_path, location) for location in section.locations):
                     continue
@@ -2854,6 +3032,48 @@ class Executor:
                 break
             else:
                 log.info("reap.refresh_unmapped", arr_path=arr_path)
+
+    async def _rolled_up(
+        self, pending: dict[str, set[int]], locations: Sequence[str]
+    ) -> dict[str, set[int]]:
+        """``pending`` rolled up by :func:`roll_up_refreshes`, or unchanged when a read fails.
+
+        Reads every instance's root folders (``GET rootfolder``). Lists a candidate
+        parent through the instance whose root holds it (``GET filesystem``). A failed
+        read, or a parent no single instance owns, leaves the queue as queued.
+        """
+        gateway = self._gateway
+        assert gateway is not None
+        clients: list[MovieDeleter | SeasonPruner] = [
+            *gateway.radarr.values(),
+            *gateway.sonarr.values(),
+        ]
+        owners: list[tuple[str, MovieDeleter | SeasonPruner]] = []
+        try:
+            for client in clients:
+                for folder in await client.root_folders():
+                    if folder.get("accessible") is True and str(folder.get("path") or ""):
+                        owners.append((str(folder["path"]).rstrip("/"), client))
+        except Exception as exc:
+            log.info("reap.refresh_rollup_skipped", error=str(exc))
+            return pending
+
+        async def list_dir(parent: str) -> list[str] | None:
+            holders = [c for root, c in owners if _path_within(parent, root)]
+            if len(holders) != 1:
+                return None
+            try:
+                listing = await holders[0].filesystem(parent + "/")
+                return [
+                    str(entry["path"]).rstrip("/")
+                    for key in ("directories", "files")
+                    for entry in listing[key]
+                ]
+            except Exception as exc:
+                log.info("reap.refresh_rollup_unlisted", parent=parent, error=str(exc))
+                return None
+
+        return await roll_up_refreshes(pending, locations, [r for r, _ in owners], list_dir)
 
     async def _finalize_plex(self) -> None:
         """Rescan the folders this run emptied, then purge the stale entries, so Plex's
@@ -3130,6 +3350,43 @@ class Executor:
         # expired.
         self._file_is_gone = True
         await self._mark(step, "file removed", file_removed_at=utcnow())
+        await self._clear_override_of(step.media_key)
+
+    async def _clear_override_of(self, media_key: str) -> None:
+        """Delete the removed item's own reap override and log it as cleared by the reap.
+
+        A spare stays: the removal may only be assumed, and a spare that outlives its file
+        only keeps a returned title.
+
+        Tidy-up only. The removal stamp already voids a stale reap wherever overrides are
+        read (``whitelist._live_rows``), so a write that does not land changes nothing.
+        """
+        prior = (
+            await self._session.execute(
+                select(WhitelistEntry.decision).where(
+                    WhitelistEntry.media_key == media_key, WhitelistEntry.decision == "reap"
+                )
+            )
+        ).scalar_one_or_none()
+        if prior is None:
+            return
+        landed = await self._commit_journal(
+            what="override cleared",
+            write=[
+                sql_delete(WhitelistEntry).where(
+                    WhitelistEntry.media_key == media_key, WhitelistEntry.decision == "reap"
+                )
+            ],
+        )
+        if landed:
+            log.info(
+                "whitelist.override",
+                media_key=media_key,
+                decision="cleared",
+                prior=prior,
+                spare_days=None,
+                cleared_by="reap",
+            )
 
     def _stage_step_failed(self, step: ActionStep, reason: Reason) -> None:
         """In memory only. Durable once ``_run_deletes`` commits this item's journal."""
@@ -3281,6 +3538,63 @@ def _path_within(path: str, location: str) -> bool:
     """
     root = location.rstrip("/")
     return path in (root, location) or path.startswith(root + "/")
+
+
+async def roll_up_refreshes(
+    queued: Mapping[str, set[int]],
+    locations: Sequence[str],
+    arr_roots: Sequence[str],
+    list_dir: Callable[[str], Awaitable[list[str] | None]],
+) -> dict[str, set[int]]:
+    """Replace queued folders with a shared parent folder when this run deletes most of it.
+
+    A parent qualifies only when it is strictly inside a Plex section location and
+    strictly inside an *arr root folder, never equal to or above either. ``list_dir``
+    returns the paths on disk directly under a parent, or None when it cannot. The
+    fully deleted folders directly under the parent count as deleted, and every other
+    entry counts as kept, whether or not an *arr manages it. A queued folder is fully
+    deleted. A rolled folder is fully deleted only when nothing on disk under it was
+    kept. The parent qualifies when deleted is at least kept. A parent that cannot be
+    listed does not qualify.
+
+    Each parent is listed once. The step repeats upward, and each result holds the
+    union of the ``plex_keys`` it replaced.
+    """
+
+    def allowed(parent: str, bounds: Sequence[str]) -> bool:
+        roots = [b.rstrip("/") for b in bounds]
+        return any(_path_within(parent, r) for r in roots) and not any(
+            _path_within(r, parent) for r in roots
+        )
+
+    listings: dict[str, list[str] | None] = {}
+    refused: set[str] = set()
+    folders = {p.rstrip("/"): set(k) for p, k in queued.items()}
+    whole = set(folders)
+    while True:
+        parents = {p.rsplit("/", 1)[0] for p in folders if "/" in p.strip("/")}
+        for parent in sorted(parents - refused, key=lambda p: -p.count("/")):
+            if not (allowed(parent, locations) and allowed(parent, arr_roots)):
+                refused.add(parent)
+                continue
+            if parent not in listings:
+                listings[parent] = await list_dir(parent)
+            entries = listings[parent]
+            kids = {p for p in folders if p.rsplit("/", 1)[0] == parent}
+            gone = kids & whole
+            kept = None if entries is None else len((set(entries) - gone) | (kids - gone))
+            if kept is None or len(gone) < kept:
+                continue
+            merged = set(folders.pop(parent, set()))
+            swallowed = [p for p in folders if p.startswith(parent + "/")]
+            for path in swallowed:
+                merged |= folders.pop(path)
+            folders[parent] = merged
+            if kept == 0 and all(p in whole for p in swallowed):
+                whole.add(parent)
+            break
+        else:
+            return folders
 
 
 def _common_parent(paths: Sequence[str]) -> str:

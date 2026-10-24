@@ -24,7 +24,7 @@ from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.engine.explanation import ReasonKey
 from reaper.engine.reason import to_wire
-from reaper.services import leaving_soon
+from reaper.services import leaving_soon, plex_wait
 from reaper.services.leaving_soon import (
     LeavingSoonDegradedError,
     LeavingSoonDisabledError,
@@ -36,6 +36,8 @@ router = APIRouter(prefix="/api", tags=[api_tags.JOBS])
 
 @router.post("/leaving-soon/sync")
 async def sync_leaving_soon(request: Request) -> LeavingSoonOut:
+    if plex_wait.waiting_since() is not None:
+        refuse(409, "error.scan.waiting_for_plex")
     settings: Settings = request.app.state.settings
     box: SecretBox = request.app.state.secret_box
 

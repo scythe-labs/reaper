@@ -19,12 +19,14 @@ import { count, weekday } from "../format";
 import i18next from "../i18n";
 import { shelfRenamePending, shelfSkipIsCurrent } from "../shelfStatus";
 import { useGeneralSettings } from "../useGeneralSettings";
+import { useWaitingForPlex } from "../useScanStatus";
 import { composeError } from "../why";
 import { JobStatus, jobResultText, useJobFlash } from "./JobStatus";
 import { ModalShell } from "./ModalShell";
 import { ScanRow } from "./ScanBar";
 import { type StaleReadPlan, StaleReadSlot, collapseStaleReads } from "./StaleReadNotice";
 import { Notice } from "./Notice";
+import { PlexWaitNotice } from "./PlexWaitNotice";
 
 const SCAN_ID = "scheduled_scan";
 
@@ -445,6 +447,7 @@ function LeavingSoonRow({
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const ls = useQuery({ queryKey: ["leaving-soon-settings"], queryFn: api.leavingSoonSettings });
+  const waitingForPlex = useWaitingForPlex();
   const runSync = useMutation({
     mutationFn: api.syncLeavingSoon,
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["leaving-soon-settings"] }),
@@ -600,7 +603,9 @@ function LeavingSoonRow({
             {t("jobs.leavingSoon.renaming", { was: ls.data.applied_name })}
           </div>
         )}
-        <div className="jobrow-sched">{t("jobs.leavingSoon.runsAfterScan")}</div>
+        <div className="jobrow-sched">
+          {waitingForPlex ? t("plexWait.shelfRow") : t("jobs.leavingSoon.runsAfterScan")}
+        </div>
         <div className="jobrow-link">
           <button className="link" onClick={onGoToPlex}>
             {t("jobs.leavingSoon.manageLink")}
@@ -623,7 +628,7 @@ function LeavingSoonRow({
                 : t("jobs.leavingSoon.updateNowAria", { shelf })
             }
             onClick={() => runSync.mutate()}
-            disabled={running}
+            disabled={running || waitingForPlex}
           >
             {running ? t("jobs.leavingSoon.updating") : t("jobs.leavingSoon.updateNow")}
           </button>
@@ -677,11 +682,13 @@ export function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
 
   const jobsById = new Map<string, ScheduledJob>((schedule.data?.jobs ?? []).map((j) => [j.id, j]));
   const scanJob = jobsById.get(SCAN_ID);
+  const waitingForPlex = useWaitingForPlex();
 
   return (
     <div className="panel">
       <h2>{t("jobs.panel.heading")}</h2>
       <p className="blurb">{t("jobs.panel.blurb")}</p>
+      {waitingForPlex && <PlexWaitNotice>{t("plexWait.jobsNotice")}</PlexWaitNotice>}
 
       {schedule.isPending && <p className="muted">{t("jobs.panel.loadingJobs")}</p>}
       {/* The rows below render from the last good row either way (`schedule.data?.jobs ?? []`),

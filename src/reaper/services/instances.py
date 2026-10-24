@@ -125,9 +125,8 @@ class TestResult:
     """The verdict on a connection test. ``detail`` is a typed reason rather than a frozen
     English sentence: :func:`explain_failure`'s own ``error.instance.*`` code on a failure,
     or a bare id such as ``connected`` on a pass, composed under the ``services.test``
-    namespace by ``ServiceModal.tsx`` (never rendered server-side). Nothing here is stored:
-    ``last_ok_at``, ``last_error`` and ``detected_version`` retired their writes along with
-    their reads, so a pass's and a failure's detail both travel to the browser as-is."""
+    namespace by ``ServiceModal.tsx`` (never rendered server-side). Nothing here is stored,
+    so a pass's and a failure's detail both travel to the browser as-is."""
 
     ok: bool
     detail: Reason

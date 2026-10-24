@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { expectNoA11yViolations } from "../test/a11y";
 import { renderWithProviders } from "../test/renderWithProviders";
 import type { ListConfig, ListPolicyUse, ProtectionList } from "../api";
+import { IDLE_SCAN } from "../test/apiFixtures";
 import { ListsPanel } from "./ListsPanel";
 
 // Mock every read the tree performs, including the modal's. A missing one makes React Query
@@ -129,6 +130,7 @@ beforeEach(() => {
   apiMock.syncPlexLibraries.mockResolvedValue([]);
   apiMock.syncLists.mockResolvedValue({ checked: 1, failed: 0, plex_error_reason: null });
   apiMock.startScan.mockResolvedValue({ running: true, followup_queued: false });
+  apiMock.scanStatus.mockResolvedValue(IDLE_SCAN);
 });
 
 describe("the Lists panel", () => {

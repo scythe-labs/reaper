@@ -225,9 +225,20 @@
   background: var(--unknown-soft);
   border-color: color-mix(in srgb, var(--unknown) 45%, transparent);
 }
-.reap-bar.errored .banner-dot {
+.reap-bar.waiting {
+  background: var(--unknown-soft);
+  border-color: color-mix(in srgb, var(--unknown) 45%, transparent);
+}
+.reap-bar.errored .banner-dot,
+.reap-bar.waiting .banner-dot {
   background: var(--unknown);
   color: var(--unknown);
+}
+.reap-bar-wait {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-sm);
 }
 .reap-bar .banner-dot {
   background: var(--condemn);
@@ -305,7 +316,7 @@
 }
 /* A slow pulse on the live dot says the run is moving even between count ticks. Only the running
    bar: a finished or errored one holds still. */
-.reap-bar:not(.done):not(.errored) .banner-dot {
+.reap-bar:not(.done):not(.errored):not(.waiting) .banner-dot {
   animation: reap-bar-pulse 1.8s var(--ease) infinite;
 }
 @keyframes reap-bar-pulse {
@@ -351,7 +362,8 @@
     margin-inline-start: 0;
     gap: var(--space-lg);
   }
-  .reap-bar-error {
+  .reap-bar-error,
+  .reap-bar-wait {
     order: 4;
   }
   .reap-bar-actions .stop-btn {
@@ -359,12 +371,14 @@
     padding: var(--space-md) var(--space-2xl);
   }
   .reap-bar.done .reap-bar-actions,
+  .reap-bar.waiting .reap-bar-actions,
   .reap-bar.errored .reap-bar-actions {
     justify-content: flex-end;
   }
   /* The done and errored bars read as one left-aligned phrase, the outcome then the figures on
      the next line, rather than the running bar's count-left percent-right split. */
   .reap-bar.done .reap-bar-text,
+  .reap-bar.waiting .reap-bar-text,
   .reap-bar.errored .reap-bar-text {
     justify-content: flex-start;
     flex-wrap: wrap;
@@ -427,4 +441,96 @@
 }
 .changes-link {
   margin: var(--space-md) 0 0;
+}
+
+/* The reap confirm's recycle bin list: one row per instance, its bin, and when the space
+   frees. */
+.bins {
+  margin-top: var(--space-3xl);
+  padding-top: var(--space-3xl);
+  border-top: 1px solid var(--border);
+}
+.bins-head {
+  margin: 0 0 0.2rem;
+  font-size: var(--text-base);
+}
+.bins-help {
+  margin: 0 0 var(--space-lg);
+  color: var(--muted);
+  font-size: var(--text-md);
+}
+.bin-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.bin-row {
+  display: grid;
+  grid-template-columns: 9rem minmax(0, 1fr) auto;
+  grid-template-areas:
+    "app what skip"
+    "app when skip";
+  column-gap: var(--space-lg);
+  row-gap: 0.1rem;
+  align-items: center;
+  padding: 0.55rem 0.75rem;
+  font-size: var(--text-md);
+  font-variant-numeric: tabular-nums;
+}
+.bin-row + .bin-row {
+  border-top: 1px solid var(--border);
+}
+.bin-app {
+  grid-area: app;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.bin-what {
+  grid-area: what;
+  min-width: 0;
+}
+.bin-when {
+  grid-area: when;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.bin-none .bin-when {
+  color: var(--protect);
+}
+.bin-unknown .bin-when {
+  color: var(--unknown);
+}
+.bin-row.skipped .bin-when {
+  color: var(--condemn);
+}
+/* The skip box sits in its own column, so the shared checkbox row style loses its divider. */
+.trash-ack.bin-skip {
+  grid-area: skip;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  align-items: center;
+}
+.bins-warn {
+  margin-top: var(--space-lg);
+}
+.bins-sum {
+  margin: var(--space-lg) 0 0;
+  font-size: var(--text-md);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 480px) {
+  .bin-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "app skip"
+      "what skip"
+      "when skip";
+  }
 }

@@ -73,7 +73,7 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | Protect authoring | **Catalog + user-authored protect rules** (worst case is nothing deleted) |
 | Signals | **Unsigned**, fixed denominator including unknown weights |
 | Observations | **Known / Absent / Unknown** — never conflated |
-| What a hand reap may overrule | **Everything except a structural stop** † |
+| What a hand reap may overrule | **Everything but a structural stop, for its own file** † |
 | Watch-history reach | **Every reader that goes through `Facts`** † |
 | Watch history that vanished | **A high-water mark that cannot fall**, never a remapped key † |
 | A rebuilt source | **Tautulli's total aborts the scan, Plex's reissued keys degrade it** |
@@ -82,6 +82,8 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | Delete mode | **A notice window, not a gate** † |
 | Autonomy | **If ever built**: an earned grant keyed to `policy_hash`, any edit revokes it |
 | Caps | **Four**: items + bytes, per-run + rolling 30-day |
+| Scan after a reap | **Waits for Plex's scans; holds reaps too**, 3 h cap, lost on restart |
+| Recycle bins | **Off per instance for one whole reap**, put back at the end, retried † |
 | Size acquisition | **Sonarr or Radarr's own total, never a stand-in** † |
 | Kill switch | **Asymmetric, not one-way** † |
 | Section nav | **Its own grammar, not the pill track** † |

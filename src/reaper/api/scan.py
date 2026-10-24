@@ -19,6 +19,7 @@ database. ``GuardedTransport`` would refuse a mutating call even if one were att
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 
 import structlog
 from fastapi import APIRouter, FastAPI, Request
@@ -27,12 +28,13 @@ from pydantic import BaseModel
 from reaper.aio import report_background_failure
 from reaper.api import tags as api_tags
 from reaper.api.deps import state_singleton
+from reaper.api.errors import refuse
 from reaper.clients.base import IntegrationError
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.engine.explanation import ReasonKey
 from reaper.engine.reason import Reason, to_wire
-from reaper.services import scan_runner
+from reaper.services import plex_wait, scan_runner
 from reaper.services.snapshot import Progress
 
 log = structlog.get_logger(__name__)
@@ -102,10 +104,16 @@ class ScanStatus(BaseModel):
     a scan that starts after the request can reflect the caller's changes. Without
     this flag, a save landing mid-scan would go unscanned. The snapshot would carry
     the old policy's hashes, and the "needs a fresh scan" notice would never clear."""
+    waiting_for_plex_since: datetime | None = None
+    """Set while Reaper waits for Plex to finish the folder scans a reap asked for. A scan
+    starts by itself when the wait ends, and a start request is refused until then. The value
+    is read from ``plex_wait`` each time the status is handed out (``_status``)."""
 
 
 def _status(app: FastAPI) -> ScanStatus:
-    return state_singleton(app, "scan_status", ScanStatus)
+    status = state_singleton(app, "scan_status", ScanStatus)
+    status.waiting_for_plex_since = plex_wait.waiting_since()
+    return status
 
 
 def launch_scan(app: FastAPI) -> ScanStatus:
@@ -237,7 +245,10 @@ def launch_scan(app: FastAPI) -> ScanStatus:
 
 @router.post("/scan/start")
 async def start_scan(request: Request) -> ScanStatus:
-    """Start a background scan from the browser (or queue one behind a running scan)."""
+    """Start a background scan from the browser (or queue one behind a running scan).
+    Refused while Reaper waits for Plex to finish updating after a reap."""
+    if plex_wait.waiting_since() is not None:
+        refuse(409, "error.scan.waiting_for_plex")
     return launch_scan(request.app)
 
 

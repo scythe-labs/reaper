@@ -21,6 +21,7 @@ from reaper.clients.plex import (
     PlexCollectionRow,
     PlexError,
     _parse_sweep_element,
+    collecting_incomplete_reads,
 )
 from reaper.config import RuntimeSafety
 from reaper.ratings import RatingSource
@@ -302,6 +303,154 @@ class TestCollectionTags:
         tags = await _client_with(server).collection_tags(1, kind="movie")
 
         assert tags == {41: ("Cult Classics",)}
+
+
+class _ExactServer(_FakeServer):
+    """Answers each metadata path exactly. A value that is an exception is raised."""
+
+    def __init__(self, sections: list[_FakeSection], answers: dict[str, Any]) -> None:
+        super().__init__(sections, {})
+        self._answers = answers
+
+    def query(self, path: str) -> Any:
+        self.queries.append(path)
+        answer = self._answers[path]
+        if isinstance(answer, Exception):
+            raise answer
+        return fromstring(answer)
+
+
+class TestVanishedTitles:
+    """A title Plex deletes between the listing and the batched read is not a lost rating."""
+
+    LISTING = (
+        '<MediaContainer size="2" totalSize="2">'
+        '<Video ratingKey="41"/><Video ratingKey="42"/></MediaContainer>'
+    )
+    FIRST_ONLY = (
+        '<MediaContainer size="1"><Video ratingKey="41">'
+        '<Rating image="imdb://image.rating" value="5.7" type="audience"/>'
+        "</Video></MediaContainer>"
+    )
+    SECOND_ALONE = (
+        '<MediaContainer size="1"><Video ratingKey="42">'
+        '<Rating image="imdb://image.rating" value="6.1" type="audience"/>'
+        '<Location path="/movies/second (2001)/second.mkv"/>'
+        "</Video></MediaContainer>"
+    )
+
+    async def _sweep(self, second: Any) -> tuple[dict[int, Any], list[str], _ExactServer]:
+        server = _ExactServer(
+            [_FakeSection(1, "movie")],
+            {
+                "/library/sections/1/all?includeGuids=1&X-Plex-Container-Start=0"
+                f"&X-Plex-Container-Size={SWEEP_PAGE_SIZE}": self.LISTING,
+                "/library/metadata/41,42": self.FIRST_ONLY,
+                "/library/metadata/42": second,
+            },
+        )
+        with collecting_incomplete_reads() as reasons:
+            index = await _client_with(server).library_guid_index(section_type="movie")
+        return index, reasons, server
+
+    async def test_a_key_plex_answers_as_not_found_leaves_the_sweep(self) -> None:
+        from plexapi.exceptions import NotFound
+
+        index, reasons, _ = await self._sweep(NotFound("(404) not_found"))
+        assert set(index) == {41}
+        assert reasons == []
+
+    async def test_a_key_that_comes_back_alone_is_merged(self) -> None:
+        index, reasons, _ = await self._sweep(self.SECOND_ALONE)
+        assert set(index) == {41, 42}
+        assert [(r.source, r.value) for r in index[42].ratings] == [(RatingSource.IMDB, 6.1)]
+        assert index[42].file_basename == "second.mkv"
+        assert reasons == []
+
+    async def test_a_key_whose_read_errors_still_reports_the_scan_incomplete(self) -> None:
+        index, reasons, _ = await self._sweep(RuntimeError("boom"))
+        assert set(index) == {41, 42}
+        assert len(reasons) == 1
+
+    async def test_the_count_names_only_the_unexplained_key(self) -> None:
+        from plexapi.exceptions import NotFound
+
+        listing = (
+            '<MediaContainer size="3" totalSize="3">'
+            '<Video ratingKey="41"/><Video ratingKey="42"/><Video ratingKey="43"/>'
+            "</MediaContainer>"
+        )
+        server = _ExactServer(
+            [_FakeSection(1, "movie")],
+            {
+                "/library/sections/1/all?includeGuids=1&X-Plex-Container-Start=0"
+                f"&X-Plex-Container-Size={SWEEP_PAGE_SIZE}": listing,
+                "/library/metadata/41,42,43": self.FIRST_ONLY,
+                "/library/metadata/42": NotFound("(404) not_found"),
+                "/library/metadata/43": RuntimeError("boom"),
+            },
+        )
+        with collecting_incomplete_reads() as reasons:
+            index = await _client_with(server).library_guid_index(section_type="movie")
+        assert set(index) == {41, 43}
+        assert len(reasons) == 1
+        assert "for only 2 of 3" not in reasons[0]
+        assert "only 1 of 2 movie titles" in reasons[0]
+
+    async def test_a_batch_of_only_destroyed_keys_answers_404_and_drops_them(self) -> None:
+        from plexapi.exceptions import NotFound
+
+        gone = NotFound("(404) not_found")
+        server = self._server({"/library/metadata/41,42": gone, "/library/metadata/41": gone})
+        server._answers["/library/metadata/42"] = gone
+        with collecting_incomplete_reads() as reasons:
+            index = await _client_with(server).library_guid_index(section_type="movie")
+        assert index == {}
+        assert reasons == []
+
+    async def test_a_batch_404_with_one_key_alive_keeps_that_key(self) -> None:
+        from plexapi.exceptions import NotFound
+
+        server = self._server(
+            {
+                "/library/metadata/41,42": NotFound("(404) not_found"),
+                "/library/metadata/41": NotFound("(404) not_found"),
+                "/library/metadata/42": self.SECOND_ALONE,
+            }
+        )
+        with collecting_incomplete_reads() as reasons:
+            index = await _client_with(server).library_guid_index(section_type="movie")
+        assert set(index) == {42}
+        assert reasons == []
+
+    async def test_the_first_non_404_error_stops_the_per_key_reads(self) -> None:
+        server = self._server(
+            {"/library/metadata/41,42": self.FIRST_ONLY, "/library/metadata/42": RuntimeError("x")}
+        )
+        server._answers["/library/metadata/41,42"] = '<MediaContainer size="0"/>'
+        server._answers["/library/metadata/41"] = RuntimeError("boom")
+        with collecting_incomplete_reads() as reasons:
+            index = await _client_with(server).library_guid_index(section_type="movie")
+        assert set(index) == {41, 42}
+        assert len(reasons) == 1
+        assert [q for q in server.queries if q.count("/") == 3 and "," not in q] == [
+            "/library/metadata/41"
+        ]
+
+    @staticmethod
+    def _server(answers: dict[str, Any]) -> _ExactServer:
+        listing_key = (
+            "/library/sections/1/all?includeGuids=1&X-Plex-Container-Start=0"
+            f"&X-Plex-Container-Size={SWEEP_PAGE_SIZE}"
+        )
+        return _ExactServer(
+            [_FakeSection(1, "movie")], {listing_key: TestVanishedTitles.LISTING, **answers}
+        )
+
+    async def test_an_empty_answer_for_a_key_still_reports_incomplete(self) -> None:
+        index, reasons, _ = await self._sweep('<MediaContainer size="0"/>')
+        assert set(index) == {41, 42}
+        assert len(reasons) == 1
 
 
 SEASON_LISTING = """

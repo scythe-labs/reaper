@@ -27,7 +27,13 @@ import { act, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthUser, Safety, Snapshot } from "./api";
-import { DEFAULT_GENERAL, DEFAULT_PROFILE, DEFAULT_UPDATE, IDLE_SCAN } from "./test/apiFixtures";
+import {
+  DEFAULT_GENERAL,
+  DEFAULT_PROFILE,
+  DEFAULT_RECYCLE_BINS_OFF,
+  DEFAULT_UPDATE,
+  IDLE_SCAN,
+} from "./test/apiFixtures";
 import { renderWithProviders } from "./test/renderWithProviders";
 import { App } from "./App";
 
@@ -99,6 +105,7 @@ beforeEach(() => {
   apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
   apiMock.profile.mockResolvedValue(DEFAULT_PROFILE);
   apiMock.update.mockResolvedValue(DEFAULT_UPDATE);
+  apiMock.recycleBinsOff.mockResolvedValue(DEFAULT_RECYCLE_BINS_OFF);
   apiMock.reapBreakdown.mockResolvedValue({ has_snapshot: true, will_reap: 0, condemned_by: [] });
   // Nothing running, and the queue's two filter suggesters have nothing to suggest. These three
   // reads go through an arrow or return a bare value, so a mock gap here would render the

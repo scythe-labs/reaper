@@ -80,6 +80,7 @@ const idleReapStatus: ReapStatus = {
   total: 0,
   deleted_items: 0,
   deleted_bytes: 0,
+  binned_bytes: 0,
   skipped: 0,
   title: "",
   error_reason: null,
@@ -151,6 +152,7 @@ function summary(overrides: Partial<RunSummary> = {}): RunSummary {
     deleted_bytes: 289 * GB,
     deleted_unmeasured: 0,
     skipped: 0,
+    binned_bytes: null,
     ...overrides,
   };
 }
@@ -207,6 +209,7 @@ beforeEach(() => {
   apiMock.dryRun.mockResolvedValue(dryReport());
   apiMock.run.mockResolvedValue(run);
   apiMock.reapStatus.mockResolvedValue(idleReapStatus);
+  apiMock.runBins.mockResolvedValue({ bins: [] });
   apiMock.plexTrash.mockResolvedValue({
     configured: true,
     trashed: 0,
@@ -652,6 +655,43 @@ describe("reaping", () => {
   });
 });
 
+describe("while Plex catches up after a reap", () => {
+  const WAITING = { ...IDLE_SCAN, waiting_for_plex_since: "2026-09-29T10:00:00Z" };
+
+  it("says so, and turns Reap and Practice off with the reason when no result is showing", async () => {
+    apiMock.scanStatus.mockResolvedValue(WAITING);
+    renderPlan();
+
+    expect(await screen.findByText(/Waiting for Plex to finish updating/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Reap 47 titles…$/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Practice run" })).toBeDisabled();
+    expect(screen.getByText("Waits for Plex to finish updating")).toBeInTheDocument();
+  });
+
+  it("leaves both buttons on and shows no notice when Plex is not busy", async () => {
+    renderPlan();
+
+    const reapButton = await screen.findByRole("button", { name: /^Reap 47 titles…$/ });
+    await waitFor(() => expect(reapButton).toBeEnabled());
+    expect(screen.getByRole("button", { name: "Practice run" })).toBeEnabled();
+    expect(screen.queryByText(/Waiting for Plex/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Waits for Plex to finish updating")).not.toBeInTheDocument();
+  });
+
+  it("shows the notice once beside the result card", async () => {
+    apiMock.scanStatus.mockResolvedValue(WAITING);
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({ running: false, run_id: 12, phase: "complete" }),
+    );
+    mockHistory([summary({ id: 12, state: "completed", deleted_items: 44 })]);
+    mockOutcomes([]);
+    renderPlan();
+
+    expect(await screen.findByText("Reap finished")).toBeInTheDocument();
+    expect(screen.getAllByText(/Waiting for Plex to finish updating/)).toHaveLength(1);
+  });
+});
+
 describe("done", () => {
   it("shows the result read back from what the run persisted, never the in-memory report, with Done back to idle", async () => {
     apiMock.reapStatus.mockResolvedValue(
@@ -843,6 +883,33 @@ describe("reload", () => {
 
     expect(await screen.findByText("Reap finished")).toBeInTheDocument();
   });
+
+  it("says at the top of the report that Reaper is waiting for Plex, and only then", async () => {
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({ running: false, run_id: 21, phase: "complete" }),
+    );
+    mockHistory([summary({ id: 21 })]);
+    mockOutcomes([]);
+    apiMock.scanStatus.mockResolvedValue({
+      ...IDLE_SCAN,
+      waiting_for_plex_since: "2026-09-29T10:00:00Z",
+    });
+    renderPlan();
+
+    expect(await screen.findByText(/Waiting for Plex to finish updating/)).toBeInTheDocument();
+  });
+
+  it("shows no wait notice on the report when Plex is not being waited for", async () => {
+    apiMock.reapStatus.mockResolvedValue(
+      reapStatus({ running: false, run_id: 21, phase: "complete" }),
+    );
+    mockHistory([summary({ id: 21 })]);
+    mockOutcomes([]);
+    renderPlan();
+
+    await screen.findByText("Reap finished");
+    expect(screen.queryByText(/Waiting for Plex/)).toBeNull();
+  });
 });
 
 describe("history paging", () => {
@@ -899,6 +966,41 @@ describe("run detail sheet", () => {
     await screen.findByRole("dialog", { name: "Run 55" });
     await user.click(container.querySelector(".modal-scrim")!);
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("splits what a bin still holds from what is freed", async () => {
+    mockHistory([
+      summary({ id: 61, deleted_items: 8, deleted_bytes: 10 * GB, binned_bytes: 4 * GB }),
+    ]);
+    mockOutcomes([]);
+    apiMock.runBins.mockResolvedValue({
+      bins: [
+        {
+          kind: "sonarr",
+          instance_id: 2,
+          name: "Sonarr",
+          bin: "on",
+          cleanup_days: 7,
+          items: 3,
+          bytes: 4 * GB,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    renderPlan();
+
+    expect(
+      await screen.findByText(/6\.0 GiB freed, 4\.0 GiB in recycle bin, 8 removed/),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Run 61/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Run 61" });
+    expect(within(dialog).getByText("freed").closest(".fair-stat")!.textContent).toContain(
+      "6.0 GiB",
+    );
+    const binTile = within(dialog).getByText("in recycle bin").closest(".fair-stat")!;
+    expect(binTile.textContent).toContain("4.0 GiB");
+    expect(await within(dialog).findByText("frees within 7 days")).toBeInTheDocument();
+    expect(within(dialog).getByText("bin on, 4.0 GiB frees within 7 days")).toBeInTheDocument();
   });
 
   it("shows the operator-stop note on the detail sheet", async () => {

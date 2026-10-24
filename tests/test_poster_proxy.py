@@ -12,6 +12,7 @@ through the old connection. It must be closed at shutdown, so it does not leak.
 
 from __future__ import annotations
 
+import struct
 from collections.abc import Iterator
 from typing import cast
 
@@ -21,6 +22,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
 
+from reaper.api.poster import PLACEHOLDER_PNG
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.crypto import SecretBox
@@ -81,18 +83,18 @@ class TestTheArtworkClientIsShared:
     def test_many_requests_share_one_client(self, client: TestClient) -> None:
         assert _built(client) is None  # built lazily, so an install with no queue pays nothing
 
-        assert client.get("/api/poster/1").status_code == 200
+        assert client.get("/api/poster/1.jpg").status_code == 200
         first = _built(client)
         assert first is not None
 
         for key in range(2, 20):
-            assert client.get(f"/api/poster/{key}").status_code == 200
+            assert client.get(f"/api/poster/{key}.jpg").status_code == 200
         assert _built(client) is first
 
     def test_the_backdrop_shares_it_too(self, client: TestClient) -> None:
-        assert client.get("/api/poster/1").status_code == 200
+        assert client.get("/api/poster/1.jpg").status_code == 200
         first = _built(client)
-        assert client.get("/api/poster/1", params={"kind": "art"}).status_code == 200
+        assert client.get("/api/poster/1.jpg", params={"kind": "art"}).status_code == 200
         assert _built(client) is first
 
 
@@ -102,7 +104,7 @@ class TestItIsRetiredWhenTheInstanceChanges:
     ) -> None:
         """A cached client holds the old credential in its headers. If it outlived a key
         rotation, it would keep authenticating with a key the operator already replaced."""
-        assert client.get("/api/poster/1").status_code == 200
+        assert client.get("/api/poster/1.jpg").status_code == 200
         old = _built(client)
         assert old is not None
 
@@ -114,13 +116,13 @@ class TestItIsRetiredWhenTheInstanceChanges:
         )
         assert updated.status_code == 200, updated.text
 
-        assert client.get("/api/poster/1").status_code == 200
+        assert client.get("/api/poster/1.jpg").status_code == 200
         new = _built(client)
         assert new is not None and new is not old
         assert _is_closed(old)
 
     def test_an_edited_url_retires_it_too(self, client: TestClient) -> None:
-        assert client.get("/api/poster/1").status_code == 200
+        assert client.get("/api/poster/1.jpg").status_code == 200
         old = _built(client)
 
         instance_id = client.get("/api/settings/instances").json()[0]["id"]
@@ -130,7 +132,7 @@ class TestItIsRetiredWhenTheInstanceChanges:
         )
         assert updated.status_code == 200, updated.text
 
-        assert client.get("/api/poster/1").status_code == 200
+        assert client.get("/api/poster/1.jpg").status_code == 200
         assert _built(client) is not old
 
 
@@ -165,10 +167,39 @@ class TestItHasAnOwner:
         app = create_app(settings)
         with TestClient(app) as c:
             login(c, settings)
-            assert c.get("/api/poster/1").status_code == 200
+            assert c.get("/api/poster/1.jpg").status_code == 200
             built = app.state.artwork_client[1]
             assert not _is_closed(built)
 
         # The lifespan has exited by here.
         assert _is_closed(built)
         assert getattr(app.state, "artwork_client", None) is None
+
+
+class TestAMissingImage:
+    """A miss answers a 200 placeholder, so a proxy's crawl detection counts it as a
+    static file. A 404 there reads as probing."""
+
+    def test_the_placeholder_is_one_transparent_pixel(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reaper.clients.tautulli import TautulliClient
+
+        async def no_image(self: TautulliClient, rating_key: int) -> None:
+            return None
+
+        monkeypatch.setattr(TautulliClient, "poster", no_image)
+        monkeypatch.setattr(TautulliClient, "art", no_image)
+        for params in ({}, {"kind": "art"}):
+            resp = client.get("/api/poster/7.jpg", params=params)
+            assert resp.status_code == 200
+            assert resp.headers["content-type"] == "image/png"
+            assert resp.headers["cache-control"] == "no-store"
+            assert resp.content == PLACEHOLDER_PNG
+        # The UI reads an image one pixel wide as missing. IHDR's width and height.
+        assert struct.unpack(">II", PLACEHOLDER_PNG[16:24]) == (1, 1)
+
+    def test_a_real_image_is_relayed_and_cached(self, client: TestClient) -> None:
+        resp = client.get("/api/poster/7.jpg")
+        assert resp.content == PNG[0]
+        assert resp.headers["cache-control"] == "private, max-age=86400"

@@ -119,6 +119,7 @@ export function ScanRow({
   const queryClient = useQueryClient();
 
   const status = useScanStatus();
+  const waitingForPlex = status?.waiting_for_plex_since != null;
 
   const scanning = status?.running ?? false;
   const wasScanning = useRef(false);
@@ -318,7 +319,9 @@ export function ScanRow({
             <div className="jobrow-sched">{t("shell.scanBar.keepsRunning")}</div>
           </>
         ) : (
-          <div className="jobrow-sched">{scheduleText}</div>
+          <div className="jobrow-sched">
+            {waitingForPlex ? t("plexWait.scanRow") : scheduleText}
+          </div>
         )}
 
         {start.error && (
@@ -386,7 +389,7 @@ export function ScanRow({
           <button
             className="primary"
             onClick={() => start.mutate()}
-            disabled={scanning || start.isPending}
+            disabled={scanning || start.isPending || waitingForPlex}
           >
             {scanning
               ? t("common.scanning")

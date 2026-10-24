@@ -9,6 +9,12 @@
     "test": {
       "title": "Reaper is connected",
       "body": "This is a test message. If you can see it, your users will get a heads-up here before any title is removed."
+    },
+    "recycle_bin": {
+      "still_off_title": "{name}'s recycle bin is still off",
+      "still_off_body": "Reaper couldn't turn it back on after reap {run_id}. Turn it back on in Reaper, or in {name} under Settings → Media Management.",
+      "back_on_title": "{name}'s recycle bin is back on",
+      "back_on_body": "Deleted files go to its recycle bin again."
     }
   },
   "launcher": {

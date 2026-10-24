@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { type SyntheticEvent, useEffect, useRef, useState } from "react";
+
+/** An `onLoad` that calls `fallback` when the image is the poster route's 1x1 placeholder,
+ *  which it answers with a 200 when there is no artwork. */
+export function onPlaceholder(fallback: () => void) {
+  return (e: SyntheticEvent<HTMLImageElement>) => {
+    if (e.currentTarget.naturalWidth <= 1) fallback();
+  };
+}
 
 /** The art-then-poster ladder: ask Plex for the wide art, fall back once to the poster when a
  *  title has no separate backdrop, then give up. A null `src` tells the caller to render
@@ -22,6 +30,7 @@ import { useEffect, useRef, useState } from "react";
 export function useArtFallback(posterUrl: string | null): {
   src: string | null;
   onError: () => void;
+  onLoad: (e: SyntheticEvent<HTMLImageElement>) => void;
 } {
   const [src, setSrc] = useState(posterUrl ? `${posterUrl}?kind=art` : null);
   const fellBack = useRef(false);
@@ -40,5 +49,5 @@ export function useArtFallback(posterUrl: string | null): {
     setSrc(posterUrl);
   };
 
-  return { src, onError };
+  return { src, onError, onLoad: onPlaceholder(onError) };
 }

@@ -122,6 +122,7 @@ export function ReapBreakdown({ onGoToReview }: { onGoToReview: () => void }) {
   const queryClient = useQueryClient();
   const { data: scanStatus } = useQuery({ queryKey: ["scanStatus"], queryFn: api.scanStatus });
   const scanning = scanStatus?.running ?? false;
+  const waitingForPlex = scanStatus?.waiting_for_plex_since != null;
   const startScan = useMutation({
     mutationFn: () => api.startScan(),
     onSuccess: (started) => queryClient.setQueryData(["scanStatus"], started),
@@ -231,7 +232,7 @@ export function ReapBreakdown({ onGoToReview }: { onGoToReview: () => void }) {
           <button
             className="link"
             onClick={() => startScan.mutate()}
-            disabled={startScan.isPending || scanning}
+            disabled={startScan.isPending || scanning || waitingForPlex}
           >
             {scanning
               ? t("common.scanning")
@@ -239,6 +240,7 @@ export function ReapBreakdown({ onGoToReview }: { onGoToReview: () => void }) {
                 ? t("common.starting")
                 : t("common.scanNow")}
           </button>
+          {waitingForPlex && <span className="muted"> {t("plexWait.button")}</span>}
         </Notice>
       )}
       {showExpiredSpares && startScan.isError && (

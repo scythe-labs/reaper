@@ -20,14 +20,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import Sequence
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, suppress
 
 import structlog
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.aio import report_background_failure
 from reaper.api import tags as api_tags
@@ -39,6 +40,10 @@ from reaper.api.schemas import (
     CreateRunIn,
     ExecuteRunIn,
     ProfileSettingsIO,
+    RecycleBinOffOut,
+    RecycleBinsOffOut,
+    RunBinOut,
+    RunBinsOut,
     RunCheckOut,
     RunListOut,
     RunOut,
@@ -49,14 +54,15 @@ from reaper.api.schemas import (
     RunStepsOut,
     RunSummaryOut,
 )
+from reaper.clients.plex import PlexClient
 from reaper.config import Settings
 from reaper.crypto import SecretBox
-from reaper.db.models import ActionStep, Candidate, ReapRun, RunState, StepState
+from reaper.db.models import ActionStep, Candidate, ReapBin, ReapRun, RunState, StepState
 from reaper.engine.explanation import ReasonKey
 from reaper.engine.policy import ProfileSettings
 from reaper.engine.reason import Reason, from_stored, to_wire
 from reaper.refusal import english
-from reaper.services import app_settings, run_totals, whitelist
+from reaper.services import app_settings, plex_wait, recycle_bins, run_totals, whitelist
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import (
     ExecutionError,
@@ -66,7 +72,13 @@ from reaper.services.executor import (
     RunReport,
     size_confirmed,
 )
-from reaper.services.planner import PlanError, build_plan, confirmation_phrase, plan_bytes
+from reaper.services.planner import (
+    MediaRef,
+    PlanError,
+    build_plan,
+    confirmation_phrase,
+    plan_bytes,
+)
 from reaper.services.profiles import (
     active_profile,
     active_profile_settings,
@@ -198,7 +210,7 @@ class _RunReads:
         self._session = session
         self._decisions: dict[str, str] | None = None
         self._allow_unmeasured: bool | None = None
-        self._condemned: dict[int, dict[str, Candidate]] = {}
+        self._condemned: dict[tuple[int, bool], dict[str, Candidate]] = {}
 
     async def decisions(self) -> dict[str, str]:
         if self._decisions is None:
@@ -211,11 +223,18 @@ class _RunReads:
             self._allow_unmeasured = settings.max_unmeasured_per_run > 0
         return self._allow_unmeasured
 
-    async def condemned(self, snapshot_id: int) -> dict[str, Candidate]:
-        cached = self._condemned.get(snapshot_id)
+    async def condemned(
+        self, snapshot_id: int, *, include_removed: bool = False
+    ) -> dict[str, Candidate]:
+        cached = self._condemned.get((snapshot_id, include_removed))
         if cached is None:
-            cached = await effective_condemned(self._session, snapshot_id, await self.decisions())
-            self._condemned[snapshot_id] = cached
+            cached = await effective_condemned(
+                self._session,
+                snapshot_id,
+                await self.decisions(),
+                include_removed=include_removed,
+            )
+            self._condemned[(snapshot_id, include_removed)] = cached
         return cached
 
 
@@ -254,7 +273,8 @@ async def _planned_candidates(
     memo = reads if reads is not None else _RunReads(session)
     if steps is None:
         steps = await _run_steps(session, run)
-    by_key = await memo.condemned(run.snapshot_id)
+    # A run that has started describes what it acted on, so its own removals stay in.
+    by_key = await memo.condemned(run.snapshot_id, include_removed=run.state != RunState.PLANNED)
     # The allowance is read here, at the moment the numbers are produced,
     # so the count and total in front of the owner describe the set the
     # executor will act on under the settings in force now, not the ones
@@ -424,6 +444,7 @@ async def list_runs(
                     deleted_bytes=r.deleted_bytes,
                     deleted_unmeasured=r.deleted_unmeasured,
                     skipped=r.skipped,
+                    binned_bytes=r.binned_bytes,
                 )
                 for r in runs
             ],
@@ -575,6 +596,129 @@ async def get_run_outcomes(
         )
 
 
+def _bin_out(b: recycle_bins.Bin, items: int, size: int, row: ReapBin | None = None) -> RunBinOut:
+    return RunBinOut(
+        kind=b.kind,
+        instance_id=b.instance_id,
+        name=b.name,
+        bin=b.state,
+        cleanup_days=b.cleanup_days,
+        items=items,
+        bytes=size,
+        skipped=row.skip if row is not None else False,
+        state=row.state if row is not None else None,
+    )
+
+
+async def _retry_bins(app: FastAPI, gateway: ReapGateway) -> list[ReapBin]:
+    """Put back any recycle bin a reap left off. Never raises: a bin that stays off is
+    what the recycle bin banner reads."""
+    try:
+        return await recycle_bins.restore_pending(
+            app.state.session_factory,
+            app.state.secret_box,
+            app.state.settings,
+            recycle_bins.switches(gateway.radarr, gateway.sonarr),
+        )
+    except Exception as exc:
+        log.warning("recycle_bin.retry_failed", error=str(exc))
+        return []
+
+
+async def restore_recycle_bins(app: FastAPI) -> None:
+    """Put back any recycle bin a reap left off, with clients built for the purpose. Run
+    at startup and from the banner's button."""
+    factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with factory() as session:
+        if not await recycle_bins.still_off(session):
+            return
+        safety = await app_settings.runtime_safety(session, app.state.settings)
+    gateway, closers = await build_reap_gateway(factory, app.state.secret_box, safety=safety)
+    async with AsyncExitStack() as stack:
+        for client in closers:
+            await stack.enter_async_context(client)
+        await _retry_bins(app, gateway)
+
+
+def _off_out(rows: Sequence[ReapBin]) -> RecycleBinsOffOut:
+    return RecycleBinsOffOut(
+        bins=[
+            RecycleBinOffOut(
+                kind=r.kind, instance_id=r.instance_id, name=r.instance_name, run_id=r.run_id
+            )
+            for r in rows
+        ]
+    )
+
+
+@router.get("/recycle-bins/off")
+async def recycle_bins_off(request: Request) -> RecycleBinsOffOut:
+    """Every Sonarr or Radarr recycle bin a reap turned off and could not put back."""
+    async with session_factory(request)() as session:
+        return _off_out(
+            await recycle_bins.still_off(session, running_run=_running_run(request.app))
+        )
+
+
+@router.post("/recycle-bins/restore")
+async def restore_bins(request: Request) -> RecycleBinsOffOut:
+    """Try again to put back every recycle bin a reap left off. Answers with the ones
+    still off. Refused while a reap runs, since that reap puts its own bins back."""
+    if reap_in_flight(request.app):
+        refuse(409, "error.runs.already_running")
+    await restore_recycle_bins(request.app)
+    async with session_factory(request)() as session:
+        return _off_out(
+            await recycle_bins.still_off(session, running_run=_running_run(request.app))
+        )
+
+
+@router.get("/runs/{run_id}/bins")
+async def get_run_bins(request: Request, run_id: int) -> RunBinsOut:
+    """Each Sonarr and Radarr instance the run deletes from, and its recycle bin.
+
+    A PLANNED run reads each bin now, for the reap confirm. Any other run returns the bins
+    it recorded as it started, and what it removed on each instance.
+    """
+    factory = session_factory(request)
+    async with factory() as session:
+        run = await session.get(ReapRun, run_id)
+        if run is None:
+            refuse(404, "error.runs.not_found")
+        if run.state is not RunState.PLANNED:
+            rows = {
+                (r.kind, r.instance_id): r
+                for r in (
+                    await session.execute(select(ReapBin).where(ReapBin.run_id == run_id))
+                ).scalars()
+            }
+            out: list[RunBinOut] = []
+            for b in await recycle_bins.stored(session, run_id):
+                removed = await recycle_bins.removed_on(session, run_id, [b.key])
+                out.append(
+                    _bin_out(b, removed.deleted_items, removed.deleted_bytes, rows.get(b.key))
+                )
+            return RunBinsOut(bins=out)
+        planned = await _planned_candidates(session, run)
+        safety = await app_settings.runtime_safety(session, request.app.state.settings)
+
+    per: dict[recycle_bins.InstanceKey, list[Candidate]] = {}
+    for c in planned:
+        ref = MediaRef.parse(c.media_key)
+        per.setdefault((ref.kind, ref.instance_id), []).append(c)
+    gateway, closers = await build_reap_gateway(
+        factory, request.app.state.secret_box, safety=safety
+    )
+    async with AsyncExitStack() as stack:
+        for client in closers:
+            await stack.enter_async_context(client)
+        async with factory() as session:
+            bins = await recycle_bins.read_bins(
+                session, recycle_bins.readers(gateway.radarr, gateway.sonarr), per
+            )
+    return RunBinsOut(bins=[_bin_out(b, len(per[b.key]), plan_bytes(per[b.key])[0]) for b in bins])
+
+
 @router.post("/runs/{run_id}/dry-run")
 async def dry_run(request: Request, run_id: int) -> RunReportOut:
     """Walk the plan end to end with every interlock, and send nothing.
@@ -588,6 +732,9 @@ async def dry_run(request: Request, run_id: int) -> RunReportOut:
     run on a real send, where the moment is real. The transport guard
     sits underneath as the independent backstop.
     """
+    if plex_wait.waiting_since() is not None:
+        log.info("reap.refused", run_id=run_id, status=409, code="error.scan.waiting_for_plex")
+        refuse(409, "error.scan.waiting_for_plex")
     settings: Settings = request.app.state.settings
 
     async with session_factory(request)() as session:
@@ -640,6 +787,8 @@ class ReapStatus(BaseModel):
     total: int = 0
     deleted_items: int = 0
     deleted_bytes: int = 0
+    binned_bytes: int = 0
+    """The part of ``deleted_bytes`` removed on an instance whose recycle bin was on."""
     skipped: int = 0
     title: str = ""
     #: Why the run stopped, as a typed reason. This is the executor's own
@@ -651,6 +800,12 @@ class ReapStatus(BaseModel):
 
 def _reap_status(app: FastAPI) -> ReapStatus:
     return state_singleton(app, "reap_status", ReapStatus)
+
+
+def _running_run(app: FastAPI) -> int | None:
+    """The id of the reap mid-run, if any."""
+    status: ReapStatus | None = getattr(app.state, "reap_status", None)
+    return status.run_id if status is not None and status.running else None
 
 
 def reap_in_flight(app: FastAPI) -> bool:
@@ -665,6 +820,50 @@ def reap_in_flight(app: FastAPI) -> bool:
     """
     status: ReapStatus | None = getattr(app.state, "reap_status", None)
     return status is not None and status.running
+
+
+async def _wait_for_plex_then_scan(app: FastAPI) -> None:
+    """Hold until Plex has finished the reap's folder scans, then start the scan.
+
+    Setup trouble falls back to scanning at once. A cancel (shutdown, or a later reap taking
+    over) starts nothing.
+    """
+    began = time.monotonic()
+    reason = "skipped"
+    try:
+        factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+        async with factory() as session:
+            safety = await app_settings.runtime_safety(session, app.state.settings)
+        _gateway, closers = await build_reap_gateway(factory, app.state.secret_box, safety=safety)
+        async with AsyncExitStack() as stack:
+            for client in closers:
+                await stack.enter_async_context(client)
+            plex = next((c for c in closers if isinstance(c, PlexClient)), None)
+            if plex is not None:
+                log.info("reap.plex_wait_started")
+                reason = await plex_wait.wait_until_quiet(plex.is_scanning)
+    except Exception as exc:
+        log.warning("reap.plex_wait_failed", error=str(exc))
+    finally:
+        plex_wait.end()
+    log.info(
+        "reap.plex_wait_ended", reason=reason, minutes=round((time.monotonic() - began) / 60, 1)
+    )
+    launch_scan(app)
+
+
+async def start_plex_wait(app: FastAPI) -> None:
+    """Start the wait that ends in the scan after a reap. A reap is refused while a wait runs,
+    so replacing a running wait here is only a guard."""
+    old: asyncio.Task[None] | None = getattr(app.state, "plex_wait_task", None)
+    if old is not None and not old.done():
+        old.cancel()
+        with suppress(asyncio.CancelledError):
+            await old
+    plex_wait.begin()
+    task = asyncio.create_task(_wait_for_plex_then_scan(app), name="plex_wait")
+    task.add_done_callback(report_background_failure)
+    app.state.plex_wait_task = task
 
 
 def _preflight_refusal(gateway: ReapGateway) -> str | None:
@@ -694,7 +893,9 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
        exactly** (409 otherwise). The phrase is recomputed here from the
        plan, so a stale tab, whose phrase was for a different plan,
        cannot replay it.
-    3. **The executor's own interlocks**, the manifest re-check, caps
+    3. **Plex must be done with the last reap's scans** (409 otherwise).
+       This is checked first. The practice-run route refuses the same way.
+    4. **The executor's own interlocks**, the manifest re-check, caps
        abort-not-truncate, the canary, the per-item streaming veto, and
        the played-since-approval check, each run and can still spare or
        abort.
@@ -714,6 +915,10 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
     box: SecretBox = request.app.state.secret_box
     factory = session_factory(request)
     app = request.app
+
+    if plex_wait.waiting_since() is not None:
+        log.info("reap.refused", run_id=run_id, status=409, code="error.scan.waiting_for_plex")
+        refuse(409, "error.scan.waiting_for_plex")
 
     # Claims the single reap slot synchronously, with no await between the
     # check and the set, so two execute requests racing each other cannot
@@ -741,6 +946,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
     status.total = 0
     status.deleted_items = 0
     status.deleted_bytes = 0
+    status.binned_bytes = 0
     status.skipped = 0
     status.title = ""
     status.error_reason = None
@@ -762,7 +968,15 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
                 refuse(404, "error.runs.not_found")
 
             planned = await _planned_candidates(session, run)
-            expected = confirmation_phrase(planned) if planned else "REAP 0 SOULS 0 GB"
+            # Only an instance this plan deletes from has a bin this reap can turn off.
+            skip_bins = frozenset((b.kind, b.instance_id) for b in payload.skip_bins) & frozenset(
+                recycle_bins.instances_of(c.media_key for c in planned)
+            )
+            expected = (
+                confirmation_phrase(planned, skip_bins=len(skip_bins))
+                if planned
+                else "REAP 0 SOULS 0 GB"
+            )
             if payload.confirmation_phrase.strip() != expected:
                 refuse(409, "error.runs.confirmation_mismatch", expected=expected)
             profile_settings = await _saved_limits_or_refuse(session)
@@ -831,6 +1045,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
         status.total = p.total
         status.deleted_items = p.deleted_items
         status.deleted_bytes = p.deleted_bytes
+        status.binned_bytes = p.binned_bytes
         status.skipped = p.skipped
         status.title = p.title
 
@@ -844,6 +1059,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
                 for client in closers:
                     await stack.enter_async_context(client)
                 run_session = await stack.enter_async_context(factory())
+                await _retry_bins(app, gateway)
                 executor = Executor(
                     run_session,
                     safety=safety,
@@ -853,6 +1069,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
                     armed_recheck=_armed_now,
                     stop_recheck=_stop_now,
                     progress=on_progress,
+                    skip_bins=skip_bins,
                 )
                 # This brackets the run. A real deletion takes minutes, and
                 # without this line nothing would log until it finished.
@@ -860,6 +1077,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
                 # the start even if the process dies mid-run.
                 log.info("reap.started", run_id=run_id, planned=status.total)
                 report = await executor.execute(run_id)
+                await _retry_bins(app, gateway)
                 try:
                     # This is a second layer, not the durability itself.
                     # The executor commits its own journal per item and its
@@ -873,6 +1091,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
             status.phase = "aborted" if report.state == RunState.ABORTED else "complete"
             status.deleted_items = report.deleted_items
             status.deleted_bytes = report.deleted_bytes
+            status.binned_bytes = report.binned_bytes
             status.skipped = report.skipped
             log.info(
                 "reap.executed",
@@ -897,7 +1116,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
             # ends FAILED, and reading the confirmed count alone would
             # leave the queue offering files that were already gone.
             if report.library_changed:
-                launch_scan(app)
+                await start_plex_wait(app)
         except ExecutionError as exc:
             # A refused run the executor raised rather than executed
             # (changed manifest, not PLANNED, missing clients). The run
@@ -921,7 +1140,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
             )
             log.warning("reap.background_failed", run_id=run_id, error=str(exc))
             if status.deleted_items > 0:
-                launch_scan(app)
+                await start_plex_wait(app)
         finally:
             status.running = False
             status.stopping = False

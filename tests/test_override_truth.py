@@ -786,14 +786,14 @@ class TestOverrideViewsInResponses:
     SHOW = "sonarr:1:42"
 
     def _seasons(self, client: TestClient) -> dict[str, Any]:
-        group = client.get(f"/api/groups/{self.SHOW}").json()
+        group = client.get("/api/groups", params={"key": self.SHOW}).json()[0]
         return {s["media_key"]: s for s in group["seasons"]}
 
     def test_a_whole_show_spare_reads_as_inherited_on_each_season(
         self, show_client: TestClient
     ) -> None:
         show_client.post("/api/override", json={"media_key": self.SHOW, "decision": "spare"})
-        group = show_client.get(f"/api/groups/{self.SHOW}").json()
+        group = show_client.get("/api/groups", params={"key": self.SHOW}).json()[0]
         # The whole-show control toggles the show key, so the group reports the show's decision.
         assert group["show_override"] == "spare"
         season = self._seasons(show_client)[f"{self.SHOW}:1"]
@@ -803,7 +803,7 @@ class TestOverrideViewsInResponses:
 
     def test_a_season_spared_on_its_own_owns_it(self, show_client: TestClient) -> None:
         show_client.post("/api/override", json={"media_key": f"{self.SHOW}:1", "decision": "spare"})
-        group = show_client.get(f"/api/groups/{self.SHOW}").json()
+        group = show_client.get("/api/groups", params={"key": self.SHOW}).json()[0]
         assert group["show_override"] is None  # the show itself is undecided
         season = self._seasons(show_client)[f"{self.SHOW}:1"]
         assert season["override"] == "spare"

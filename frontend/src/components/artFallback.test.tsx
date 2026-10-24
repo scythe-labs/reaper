@@ -15,18 +15,31 @@ function hero(container: HTMLElement): HTMLImageElement | null {
 
 describe("the art-then-poster ladder", () => {
   it("asks for the wide art first", () => {
-    const { container } = render(<WhyHero posterUrl="/api/poster/1" />);
-    expect(hero(container)?.getAttribute("src")).toBe("/api/poster/1?kind=art");
+    const { container } = render(<WhyHero posterUrl="/api/poster/1.jpg" />);
+    expect(hero(container)?.getAttribute("src")).toBe("/api/poster/1.jpg?kind=art");
   });
 
   it("falls back to the poster when there is no separate art", () => {
-    const { container } = render(<WhyHero posterUrl="/api/poster/1" />);
+    const { container } = render(<WhyHero posterUrl="/api/poster/1.jpg" />);
     fireEvent.error(hero(container)!);
-    expect(hero(container)?.getAttribute("src")).toBe("/api/poster/1");
+    expect(hero(container)?.getAttribute("src")).toBe("/api/poster/1.jpg");
+  });
+
+  it("climbs the same ladder when the server answers its one-pixel placeholder", () => {
+    const { container } = render(<WhyHero posterUrl="/api/poster/1.jpg" />);
+    const placeholder = () => {
+      const img = hero(container)!;
+      Object.defineProperty(img, "naturalWidth", { value: 1, configurable: true });
+      fireEvent.load(img);
+    };
+    placeholder();
+    expect(hero(container)?.getAttribute("src")).toBe("/api/poster/1.jpg");
+    placeholder();
+    expect(hero(container)).toBeNull();
   });
 
   it("drops the banner when the poster fails too", () => {
-    const { container } = render(<WhyHero posterUrl="/api/poster/1" />);
+    const { container } = render(<WhyHero posterUrl="/api/poster/1.jpg" />);
     fireEvent.error(hero(container)!);
     fireEvent.error(hero(container)!);
     expect(hero(container)).toBeNull();
@@ -36,16 +49,16 @@ describe("the art-then-poster ladder", () => {
     // The panel is reused rather than remounted when the next item's detail is already
     // cached. Without a reset, the fallback flag from a failed load on one item would stay
     // set and show that item's poster under every title that follows it.
-    const { container, rerender } = render(<WhyHero posterUrl="/api/poster/1" />);
+    const { container, rerender } = render(<WhyHero posterUrl="/api/poster/1.jpg" />);
     fireEvent.error(hero(container)!);
-    expect(hero(container)?.getAttribute("src")).toBe("/api/poster/1");
+    expect(hero(container)?.getAttribute("src")).toBe("/api/poster/1.jpg");
 
-    rerender(<WhyHero posterUrl="/api/poster/2" />);
-    expect(hero(container)?.getAttribute("src")).toBe("/api/poster/2?kind=art");
+    rerender(<WhyHero posterUrl="/api/poster/2.jpg" />);
+    expect(hero(container)?.getAttribute("src")).toBe("/api/poster/2.jpg?kind=art");
 
     // And the fallback is armed again for the new item.
     fireEvent.error(hero(container)!);
-    expect(hero(container)?.getAttribute("src")).toBe("/api/poster/2");
+    expect(hero(container)?.getAttribute("src")).toBe("/api/poster/2.jpg");
   });
 
   it("says nothing to a screen reader, on every rung", async () => {
@@ -53,7 +66,7 @@ describe("the art-then-poster ladder", () => {
     // poster step, so a reader hears the title once, not twice. This is audited at the
     // fallback step too, since that is the one an author editing `WhyHero`'s <img> and leaving
     // `Backdrop`'s alone would miss.
-    const { container } = render(<WhyHero posterUrl="/api/poster/1" />);
+    const { container } = render(<WhyHero posterUrl="/api/poster/1.jpg" />);
     await expectNoA11yViolations(container);
 
     fireEvent.error(hero(container)!);

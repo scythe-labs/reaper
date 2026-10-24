@@ -54,7 +54,7 @@ def client(settings: Settings, sync_db: Engine) -> Iterator[TestClient]:
                 _candidate(
                     snapshot_id=snap.id,
                     media_key="radarr:1:10",
-                    plex_rating_key=555,  # -> poster served from /api/poster/555
+                    plex_rating_key=555,  # -> poster served from /api/poster/555.jpg
                     title="Example Alpha",
                     year=1979,
                     summary="A crew is hunted.",
@@ -122,7 +122,7 @@ class TestFilters:
         alpha = next(r for r in rows if r["title"] == "Example Alpha")
         assert alpha["year"] == 1979
         # The poster is served from Plex through our proxy, keyed by the rating key.
-        assert alpha["poster_url"] == "/api/poster/555"
+        assert alpha["poster_url"] == "/api/poster/555.jpg"
         assert alpha["requested_by"] == "Alice"
 
     def test_search_matches_title(self, client: TestClient) -> None:

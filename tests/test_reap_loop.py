@@ -18,7 +18,7 @@ import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest import mock
 
 import httpx
@@ -42,17 +42,20 @@ from reaper.db.models import (
     Instance,
     InstanceKind,
     Policy,
+    ReapBin,
     ReapRun,
     RunState,
     SizeSource,
     Snapshot,
     StepState,
+    WhitelistEntry,
 )
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody, ProfileSettings
 from reaper.engine.reason import Reason, from_stored
 from reaper.refusal import english
 from reaper.services import list_config, whitelist
+from reaper.services import recycle_bins as recycle_bins_module
 from reaper.services import whitelist as whitelist_module
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import (
@@ -293,6 +296,13 @@ class TestManifestHash:
             [_fake_candidate("radarr:1:1", 100 * GB), _fake_candidate("radarr:1:2", 114 * GB)]
         )
         assert phrase == "REAP 2 SOULS 214 GB"
+
+    def test_the_phrase_names_the_bins_it_turns_off(self) -> None:
+        """The reap confirm builds the same suffix (``skipPhrase`` in
+        ``frontend/src/components/RecycleBins.tsx``, pinned by its own test)."""
+        items = [_fake_candidate("radarr:1:1", 100 * GB)]
+        assert confirmation_phrase(items, skip_bins=1) == "REAP 1 SOUL 100 GB SKIP 1 BIN"
+        assert confirmation_phrase(items, skip_bins=2) == "REAP 1 SOUL 100 GB SKIP 2 BINS"
 
 
 class TestBuildPlan:
@@ -2119,6 +2129,20 @@ class TestMovieLiveSend:
         assert report.state is RunState.COMPLETED
         assert report.deleted_items == 1
         assert radarr.delete_calls == [1]
+        assert radarr.list_reads == [None]  # tmdbId=0 always answers empty
+
+    async def test_the_delete_check_reads_the_list_and_never_a_404(
+        self, session: AsyncSession
+    ) -> None:
+        """CrowdSec blocks a host after about ten 404s, so the check never reads one."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+        run = await _plan(session, snapshot_id)
+        radarr = FakeRadarr()
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert report.deleted_items == 1
+        assert radarr.list_reads == [556]  # the fake's TMDB id for movie 1
 
     async def test_a_movie_still_present_after_the_delete_fails(
         self, session: AsyncSession
@@ -2261,6 +2285,7 @@ class TestStreamingVeto:
         assert report.skipped == 1
         assert report.deleted_items == 0
         assert radarr.delete_calls == []  # never even attempted
+        assert report.outcomes[0].detail.id == "error.reap.step.being_watched"
 
     async def test_watching_an_episode_vetoes_its_whole_season(self, session: AsyncSession) -> None:
         """The stream is an episode (its own rating key), but the prune would take the
@@ -2291,6 +2316,7 @@ class TestStreamingVeto:
 
         assert report.skipped == 1
         assert radarr.delete_calls == []
+        assert report.outcomes[0].detail.id == "error.reap.step.watching_unreadable"
 
     async def test_a_stream_through_the_files_other_listing_vetoes(
         self, session: AsyncSession
@@ -2326,6 +2352,7 @@ class TestWatchedSinceApproval:
 
         assert report.skipped == 1
         assert radarr.delete_calls == []
+        assert report.outcomes[0].detail.id == "error.reap.step.played_since_approval"
 
     async def test_a_play_before_approval_does_not_spare(self, session: AsyncSession) -> None:
         """The precise per-row timestamp compare is what matters here. A play from before
@@ -2355,6 +2382,7 @@ class TestWatchedSinceApproval:
 
         assert report.skipped == 1
         assert radarr.delete_calls == []
+        assert report.outcomes[0].detail.id == "error.reap.step.play_history_unreadable"
 
     async def test_a_present_but_unreadable_row_fails_closed(self, session: AsyncSession) -> None:
         """A history row that survived the date filter but carries no readable timestamp is
@@ -2371,6 +2399,7 @@ class TestWatchedSinceApproval:
 
         assert report.skipped == 1
         assert radarr.delete_calls == []
+        assert report.outcomes[0].detail.id == "error.reap.step.play_history_unreadable"
 
     @pytest.mark.parametrize(
         "body",
@@ -2402,6 +2431,7 @@ class TestWatchedSinceApproval:
 
         assert report.skipped == 1
         assert radarr.delete_calls == []
+        assert report.outcomes[0].detail.id == "error.reap.step.play_history_unreadable"
 
     async def test_a_genuinely_empty_history_still_deletes(self, session: AsyncSession) -> None:
         """The other side of the previous test, so this behavior cannot be "spare on
@@ -3064,6 +3094,7 @@ async def _real(
     armed_recheck: Any = _armed_forever,
     stop_recheck: Any = None,
     settings: ProfileSettings | None = None,
+    skip_bins: frozenset[tuple[str, int]] = frozenset(),
 ) -> RunReport:
     """Execute a run for real (armed) against the given gateway of fakes. Zero poll delay so
     the exclusion-verification retry does not slow the suite."""
@@ -3077,6 +3108,7 @@ async def _real(
         stop_recheck=stop_recheck,
         exclusion_poll_delay=0.0,
         plex_settle_delay=0.0,
+        skip_bins=skip_bins,
     )
     return await executor.execute(run.id)
 
@@ -3144,6 +3176,7 @@ class FakeRadarr:
         self._deleted: set[int] = set()
         self.delete_calls: list[int] = []
         self.exclusion_args: list[bool] = []  # the add_exclusion value each delete was sent
+        self.list_reads: list[int | None] = []  # the tmdb_id filter of each movie-list read
 
     async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
         if movie_id in self._deleted and self._become_gone:
@@ -3154,6 +3187,12 @@ class FakeRadarr:
         if self._size_on_disk is not None:
             movie["sizeOnDisk"] = self._size_on_disk
         return movie
+
+    async def movies(self, *, tmdb_id: int | None = None) -> list[dict[str, Any]]:
+        # Lists only deleted movies that did not go.
+        self.list_reads.append(tmdb_id)
+        rows = [] if self._become_gone else [await self.movie_by_id(i) for i in self._deleted]
+        return [row for row in rows if tmdb_id is None or row.get("tmdbId") == tmdb_id]
 
     async def delete_movie(
         self, movie_id: int, *, delete_files: bool = True, add_exclusion: bool = True
@@ -3181,18 +3220,17 @@ class FakeRadarr:
     async def root_folders(self) -> list[dict[str, Any]]:
         return [{"path": "/movies", "accessible": self._root_accessible}]
 
+    async def filesystem(self, path: str) -> dict[str, Any]:
+        raise IntegrationError("radarr", "no disk listing in this fake")
+
 
 class UnreachableAfterDelete(FakeRadarr):
     """A movie Radarr accepted the delete for, then went unreachable for the confirming
     re-read. Nobody knows whether the movie is there. Shared by three tests in
     ``TestARemovalIsCountedEvenWhenTheStepFails`` that each drive it a different way."""
 
-    async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
-        if movie_id in self._deleted:
-            # A timeout carries no status at all, which is exactly the case that
-            # must not collapse into "the movie is still present".
-            raise IntegrationError("radarr", "timed out", status=None)
-        return await super().movie_by_id(movie_id)
+    async def movies(self, *, tmdb_id: int | None = None) -> list[dict[str, Any]]:
+        raise IntegrationError("radarr", "timed out", status=None)
 
 
 class FakeSonarr:
@@ -4299,9 +4337,400 @@ class TestARemovalIsCountedEvenWhenTheStepFails:
         assert "could not reach it again" in refusal_text(reason.id, **reason.params).lower()
 
 
+def _call_error(service: str, status: int | None) -> IntegrationError:
+    code = "error.integration.timed_out" if status is None else "error.integration.http_failure"
+    return IntegrationError(service, code, status=status)
+
+
+class SonarrThatDoesNotAnswer(FakeSonarr):
+    """Sonarr takes the bulk delete and the call fails. ``finishes`` says whether the files
+    are gone by the time Reaper re-reads them."""
+
+    def __init__(self, *, finishes: bool, status: int | None = None) -> None:
+        super().__init__()
+        self._finishes = finishes
+        self._status = status
+
+    async def delete_episode_files(self, episode_file_ids: list[int]) -> None:
+        if self._finishes:
+            await super().delete_episode_files(episode_file_ids)
+        else:
+            self.delete_calls.append(list(episode_file_ids))
+        raise _call_error("sonarr", self._status)
+
+
+class RadarrThatDoesNotAnswer(FakeRadarr):
+    """Radarr takes the movie delete and never answers."""
+
+    async def delete_movie(
+        self, movie_id: int, *, delete_files: bool = True, add_exclusion: bool = True
+    ) -> None:
+        await super().delete_movie(movie_id, delete_files=delete_files, add_exclusion=add_exclusion)
+        raise _call_error("radarr", None)
+
+
+class TestADeleteThatGetsNoAnswer:
+    """A delete call that times out may still be running on the *arr. The re-read decides
+    what landed, and the rolling budget is charged unless the call was answered."""
+
+    @staticmethod
+    async def _season(session: AsyncSession, sonarr: FakeSonarr) -> tuple[RunReport, ActionStep]:
+        snapshot_id = await _snapshot_one(
+            session, media_key="sonarr:1:42:3", rating_key=800, media_type="season"
+        )
+        run = await _plan(session, snapshot_id)
+        report = await _real(session, run, _gateway(sonarr={1: sonarr}))
+        steps = {s.kind: s for s in await _steps(session, run.id)}
+        return report, steps["sonarr_delete_files"]
+
+    @staticmethod
+    async def _movie(session: AsyncSession, radarr: FakeRadarr) -> tuple[RunReport, ActionStep]:
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+        report = await _real(session, run, _gateway(radarr={1: radarr}))
+        return report, (await _steps(session, run.id))[0]
+
+    async def test_a_season_sonarr_finished_is_verified(self, session: AsyncSession) -> None:
+        report, step = await self._season(session, SonarrThatDoesNotAnswer(finishes=True))
+
+        assert step.state is StepState.VERIFIED
+        assert step.file_removed_at is not None
+        assert report.deleted_items == 1
+
+    async def test_a_season_still_being_deleted_is_charged(self, session: AsyncSession) -> None:
+        report, step = await self._season(session, SonarrThatDoesNotAnswer(finishes=False))
+
+        assert step.state is StepState.FAILED
+        assert step.file_removed_at is not None
+        assert report.library_changed is True
+        reason = from_stored(step.error)
+        assert reason is not None
+        assert reason.id == "error.reap.step.arr_call_failed"
+
+    async def test_an_answered_error_that_removed_nothing_is_not_charged(
+        self, session: AsyncSession
+    ) -> None:
+        report, step = await self._season(
+            session, SonarrThatDoesNotAnswer(finishes=False, status=500)
+        )
+
+        assert step.state is StepState.FAILED
+        assert step.file_removed_at is None
+        assert report.library_changed is False
+
+    async def test_a_movie_radarr_removed_is_verified(self, session: AsyncSession) -> None:
+        report, step = await self._movie(session, RadarrThatDoesNotAnswer())
+
+        assert step.state is StepState.VERIFIED
+        assert report.deleted_items == 1
+
+    async def test_a_movie_still_listed_is_charged(self, session: AsyncSession) -> None:
+        report, step = await self._movie(session, RadarrThatDoesNotAnswer(become_gone=False))
+
+        assert step.state is StepState.FAILED
+        assert step.file_removed_at is not None
+        assert report.library_changed is True
+        reason = from_stored(step.error)
+        assert reason is not None
+        assert reason.id == "error.reap.step.arr_call_failed"
+
+
 # ---------------------------------------------------------------------------
 # The run's terminal totals, written once for a real run
 # ---------------------------------------------------------------------------
+
+
+class RadarrWithBin(FakeRadarr):
+    """A Radarr whose media management settings name a recycle bin. ``path=None`` makes
+    the read fail."""
+
+    def __init__(self, *, path: str | None = "/recycle/radarr", days: int = 3) -> None:
+        super().__init__()
+        self._bin_path = path
+        self._days = days
+
+    async def media_management(self) -> dict[str, Any]:
+        if self._bin_path is None:
+            raise IntegrationError("radarr", "error.integration.timed_out", status=None)
+        return {"recycleBin": self._bin_path, "recycleBinCleanupDays": self._days}
+
+
+class RadarrWithSwitchableBin(RadarrWithBin):
+    """A Radarr whose recycle bin Reaper can turn off and put back. ``fail_off`` and
+    ``fail_back`` make either write fail."""
+
+    def __init__(self, *, fail_off: bool = False, fail_back: bool = False) -> None:
+        super().__init__()
+        self._fail_off = fail_off
+        self._fail_back = fail_back
+        self.bin_writes: list[str] = []
+        self.bin_at_delete: list[str | None] = []
+
+    async def turn_off_recycle_bin(self, config: dict[str, Any]) -> None:
+        if self._fail_off:
+            raise IntegrationError("radarr", "error.integration.timed_out", status=None)
+        self.bin_writes.append("")
+        self._bin_path = ""
+
+    async def restore_recycle_bin(self, config: dict[str, Any], path: str) -> None:
+        if self._fail_back:
+            raise IntegrationError("radarr", "error.integration.timed_out", status=None)
+        self.bin_writes.append(path)
+        self._bin_path = path
+
+    async def delete_movie(
+        self, movie_id: int, *, delete_files: bool = True, add_exclusion: bool = True
+    ) -> None:
+        self.bin_at_delete.append(self._bin_path)
+        await super().delete_movie(movie_id, delete_files=delete_files, add_exclusion=add_exclusion)
+
+
+class TestARunCanSkipARecycleBin:
+    """A ticked bin is off for every delete of the reap and back on when it ends. A bin
+    Reaper cannot turn off stops the reap before anything is deleted."""
+
+    SKIP = frozenset({("radarr", 1)})
+
+    @staticmethod
+    async def _row(async_factory: async_sessionmaker[AsyncSession], run_id: int) -> ReapBin:
+        async with async_factory() as fresh:
+            rows = await fresh.execute(select(ReapBin).where(ReapBin.run_id == run_id))
+            return rows.scalars().one()
+
+    async def test_a_skipped_bin_is_off_for_every_delete_and_back_after(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 2 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+        radarr = RadarrWithSwitchableBin()
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}), skip_bins=self.SKIP)
+
+        assert report.state is RunState.COMPLETED
+        assert radarr.bin_at_delete == ["", ""]
+        assert radarr.bin_writes == ["", "/recycle/radarr"]
+        # Nothing waits in a bin, so all of it is freed.
+        assert report.binned_bytes == 0
+        row = await self._row(async_factory, run.id)
+        assert (row.skip, row.state) == (True, "restored")
+
+    async def test_a_bin_that_will_not_turn_off_stops_the_reap_before_any_delete(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        snapshot_id = await _snapshot_many(session, [("radarr:1:1", 1 * GB, 701)])
+        run = await _plan(session, snapshot_id)
+        radarr = RadarrWithSwitchableBin(fail_off=True)
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}), skip_bins=self.SKIP)
+
+        assert report.state is RunState.ABORTED
+        assert report.aborted_reason is not None
+        assert report.aborted_reason.id == "error.reap.bin_not_turned_off"
+        assert report.aborted_reason.params.get("name") == "Radarr i1"
+        assert radarr.delete_calls == []
+        # The bin never went off, so putting it back finds it already there.
+        assert (await self._row(async_factory, run.id)).state == "restored"
+
+    async def test_a_bin_that_will_not_come_back_stays_recorded_off(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        snapshot_id = await _snapshot_many(session, [("radarr:1:1", 1 * GB, 701)])
+        run = await _plan(session, snapshot_id)
+        radarr = RadarrWithSwitchableBin(fail_back=True)
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}), skip_bins=self.SKIP)
+
+        assert report.state is RunState.COMPLETED
+        assert (await self._row(async_factory, run.id)).state == "off"
+
+    async def test_a_bin_someone_else_set_during_the_reap_is_left_as_they_set_it(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        class SetByAnOperator(RadarrWithSwitchableBin):
+            async def delete_movie(
+                self, movie_id: int, *, delete_files: bool = True, add_exclusion: bool = True
+            ) -> None:
+                await super().delete_movie(
+                    movie_id, delete_files=delete_files, add_exclusion=add_exclusion
+                )
+                self._bin_path = "/somewhere/else"
+
+        snapshot_id = await _snapshot_many(session, [("radarr:1:1", 1 * GB, 701)])
+        run = await _plan(session, snapshot_id)
+        radarr = SetByAnOperator()
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}), skip_bins=self.SKIP)
+
+        assert report.state is RunState.COMPLETED
+        assert radarr.bin_writes == [""]  # the turn-off, and no restore
+        assert radarr._bin_path == "/somewhere/else"
+        assert (await self._row(async_factory, run.id)).state == "left"
+
+    async def test_a_hard_cancel_leaves_the_bin_off_and_sends_no_restore(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        class CancelBeforeSecondItem(FakePlex):
+            def __init__(self, **kw: Any) -> None:
+                super().__init__(**kw)
+                self._polls = 0
+
+            async def active_streams(self) -> list[ActiveStream]:
+                self._polls += 1
+                if self._polls >= 2:
+                    raise asyncio.CancelledError
+                return []
+
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+        plex = CancelBeforeSecondItem(
+            sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 99]}
+        )
+        radarr = RadarrWithSwitchableBin()
+
+        with pytest.raises(asyncio.CancelledError):
+            await _real(
+                session,
+                run,
+                _gateway(radarr={1: radarr}, plex=plex),
+                skip_bins=self.SKIP,
+            )
+
+        assert radarr.bin_writes == [""]  # the turn-off only
+        assert (await self._row(async_factory, run.id)).state == "off"
+
+    async def test_a_bin_nobody_ticked_is_left_alone(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        snapshot_id = await _snapshot_many(session, [("radarr:1:1", 1 * GB, 701)])
+        run = await _plan(session, snapshot_id)
+        radarr = RadarrWithSwitchableBin()
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert radarr.bin_writes == []
+        assert report.binned_bytes == 1 * GB
+        row = await self._row(async_factory, run.id)
+        assert (row.skip, row.state) == (False, None)
+
+
+class TestARunRecordsEachInstancesRecycleBin:
+    """A delete through an instance with a recycle bin frees nothing until the bin empties,
+    so the run records each bin as it starts and counts those bytes apart."""
+
+    @staticmethod
+    async def _bins(async_factory: async_sessionmaker[AsyncSession], run_id: int) -> list[ReapBin]:
+        async with async_factory() as fresh:
+            rows = await fresh.execute(select(ReapBin).where(ReapBin.run_id == run_id))
+            return list(rows.scalars())
+
+    async def test_bytes_removed_through_a_bin_are_counted_as_binned(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 2 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+
+        report = await _real(session, run, _gateway(radarr={1: RadarrWithBin(days=5)}))
+
+        assert report.state is RunState.COMPLETED
+        assert report.binned_bytes == 3 * GB
+        stored = await _stored_run(async_factory, run.id)
+        assert stored.binned_bytes == 3 * GB
+        [row] = await self._bins(async_factory, run.id)
+        assert (row.kind, row.instance_id, row.bin_path, row.cleanup_days) == (
+            "radarr",
+            1,
+            "/recycle/radarr",
+            5,
+        )
+
+    async def test_an_instance_with_no_bin_frees_its_bytes_now(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        snapshot_id = await _snapshot_many(session, [("radarr:1:1", 1 * GB, 701)])
+        run = await _plan(session, snapshot_id)
+
+        report = await _real(session, run, _gateway(radarr={1: RadarrWithBin(path="")}))
+
+        assert report.binned_bytes == 0
+        assert (await _stored_run(async_factory, run.id)).binned_bytes == 0
+        [row] = await self._bins(async_factory, run.id)
+        assert row.bin_path == ""
+
+    async def test_an_unreadable_bin_is_recorded_as_unknown_and_the_run_goes_on(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        snapshot_id = await _snapshot_many(session, [("radarr:1:1", 1 * GB, 701)])
+        run = await _plan(session, snapshot_id)
+
+        report = await _real(session, run, _gateway(radarr={1: RadarrWithBin(path=None)}))
+
+        assert report.state is RunState.COMPLETED
+        assert report.deleted_items == 1
+        assert report.binned_bytes == 1 * GB
+        assert (await _stored_run(async_factory, run.id)).binned_bytes == 1 * GB
+        [row] = await self._bins(async_factory, run.id)
+        assert row.bin_path is None
+
+    async def test_bytes_are_never_freed_when_the_binned_total_cannot_be_read(
+        self,
+        session: AsyncSession,
+        async_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def broken(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("query failed")
+
+        monkeypatch.setattr("reaper.services.recycle_bins.removed_on", broken)
+        snapshot_id = await _snapshot_many(session, [("radarr:1:1", 1 * GB, 701)])
+        run = await _plan(session, snapshot_id)
+
+        await _real(session, run, _gateway(radarr={1: RadarrWithBin()}))
+
+        stored = await _stored_run(async_factory, run.id)
+        assert stored.deleted_bytes == 1 * GB
+        assert stored.binned_bytes == 1 * GB
+
+    async def test_a_dry_run_records_no_bins(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        snapshot_id = await _snapshot_many(session, [("radarr:1:1", 1 * GB, 701)])
+        run = await _plan(session, snapshot_id)
+        executor = Executor(
+            session,
+            safety=_read_only(),
+            settings=ProfileSettings(),
+            dry_run=True,
+            gateway=_gateway(radarr={1: RadarrWithBin()}),
+        )
+
+        await executor.execute(run.id)
+
+        assert await self._bins(async_factory, run.id) == []
+
+
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        ({}, (None, None)),
+        ({"recycleBin": None}, ("", None)),
+        ({"recycleBin": ""}, ("", None)),
+        ({"recycleBin": 5}, (None, None)),
+        ({"recycleBin": "   "}, (None, None)),
+        ({"recycleBin": " /bin ", "recycleBinCleanupDays": True}, ("/bin", None)),
+        ({"recycleBin": "/bin", "recycleBinCleanupDays": "7"}, ("/bin", None)),
+        ({"recycleBin": "/bin", "recycleBinCleanupDays": 7}, ("/bin", 7)),
+    ],
+)
+def test_a_recycle_bin_setting_that_cannot_be_read_is_never_a_confirmed_answer(
+    config: dict[str, Any], expected: tuple[str | None, int | None]
+) -> None:
+    assert recycle_bins_module._parse(config) == expected
 
 
 class TestRunTotalsAreWrittenOnATerminalRun:
@@ -5662,7 +6091,9 @@ _BEFORE_ANY_DELETE_RUN_COLUMNS = frozenset(
 #: values come straight off a fresh ``run_totals.totals_query`` read each time
 #: ``_write_run_totals`` runs, so the same dataclass is what both of ``_commit_journal``'s
 #: attempts send, with nothing to lose to a rollback in between.
-_TOTALS_RUN_COLUMNS = frozenset({"deleted_items", "deleted_bytes", "deleted_unmeasured", "skipped"})
+_TOTALS_RUN_COLUMNS = frozenset(
+    {"deleted_items", "deleted_bytes", "deleted_unmeasured", "skipped", "binned_bytes"}
+)
 
 
 class TestARecoveredWriteCarriesEveryColumn:
@@ -5747,3 +6178,297 @@ class TestARecoveredWriteCarriesEveryColumn:
                 } == _REPLAYED_STEP_COLUMNS
         finally:
             await engine.dispose()
+
+
+class _Notifier:
+    def __init__(self) -> None:
+        self.still_off: list[tuple[str, int]] = []
+        self.back_on: list[str] = []
+
+    async def announce_bin_still_off(self, name: str, *, run_id: int) -> bool:
+        self.still_off.append((name, run_id))
+        return True
+
+    async def announce_bin_back_on(self, name: str) -> bool:
+        self.back_on.append(name)
+        return True
+
+
+class TestABinLeftOffIsPutBackLater:
+    """A bin a reap could not put back is retried at startup, before the next reap, and
+    from the banner. Discord hears once that it stayed off, and once that it is back."""
+
+    @staticmethod
+    async def _left_off(session: AsyncSession) -> int:
+        snapshot_id = await _snapshot_many(session, [("radarr:1:1", 1 * GB, 701)])
+        run = await _plan(session, snapshot_id)
+        session.add(
+            ReapBin(
+                run_id=run.id,
+                kind="radarr",
+                instance_id=1,
+                instance_name="HD",
+                bin_path="/recycle/radarr",
+                cleanup_days=3,
+                skip=True,
+                state="off",
+            )
+        )
+        await session.commit()
+        return run.id
+
+    async def test_it_comes_back_and_discord_hears_once_each_way(
+        self,
+        session: AsyncSession,
+        async_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from reaper.services import recycle_bins
+
+        run_id = await self._left_off(session)
+        notifier = _Notifier()
+
+        async def _build(*_a: object) -> _Notifier:
+            return notifier
+
+        monkeypatch.setattr(recycle_bins, "build_notifier", _build)
+        stuck = RadarrWithSwitchableBin(fail_back=True)
+        stuck._bin_path = ""
+
+        assert (
+            len(
+                await recycle_bins.restore_pending(
+                    async_factory, cast(Any, None), cast(Any, None), {("radarr", 1): stuck}
+                )
+            )
+            == 1
+        )
+        assert (
+            len(
+                await recycle_bins.restore_pending(
+                    async_factory, cast(Any, None), cast(Any, None), {("radarr", 1): stuck}
+                )
+            )
+            == 1
+        )
+        assert notifier.still_off == [("Radarr HD", run_id)]
+
+        healthy = RadarrWithSwitchableBin()
+        healthy._bin_path = ""
+        assert (
+            await recycle_bins.restore_pending(
+                async_factory, cast(Any, None), cast(Any, None), {("radarr", 1): healthy}
+            )
+            == []
+        )
+        assert healthy.bin_writes == ["/recycle/radarr"]
+        assert notifier.back_on == ["Radarr HD"]
+
+
+class TestOverridesDoNotOutliveAReap:
+    """A hand decision is consent for the file it was made on. A reap removes that file, so
+    the decision must not carry over to a title that returns under the same key."""
+
+    async def _removed(
+        self, session: AsyncSession, keys: list[tuple[str, int | None, int | None]], **kw: Any
+    ) -> None:
+        """Plan every key, then stamp each step as removed 30 minutes ago."""
+        snapshot_id = await _snapshot_many(session, keys, **kw)
+        run = await _plan(session, snapshot_id)
+        for step in await _steps(session, run.id):
+            step.file_removed_at = utcnow() - timedelta(minutes=30)
+        await session.flush()
+
+    async def _override(self, session: AsyncSession, key: str, decision: str, *, age: int) -> None:
+        """An override whose consent is ``age`` minutes old."""
+        await whitelist.set_override(
+            session, media_key=key, title="T", decision=decision, note=None
+        )
+        entry = await session.get(WhitelistEntry, key)
+        assert entry is not None
+        entry.created_at = utcnow() - timedelta(minutes=age)
+        await session.flush()
+
+    async def _kept_returned_movie(self, session: AsyncSession, key: str) -> int:
+        """A scan taken after the removal, holding the key again with a keep protection."""
+        explanation = _clean_explanation(
+            protections_fired=[{"gate": "rating_floor", "detail": "well rated"}]
+        )
+        snapshot_id = await _snapshot_many(session, [(key, 1 * GB, 701)], explanation=explanation)
+        candidate = (
+            await session.execute(select(Candidate).where(Candidate.snapshot_id == snapshot_id))
+        ).scalar_one()
+        candidate.verdict = "protect"
+        await session.flush()
+        return snapshot_id
+
+    async def test_a_reap_older_than_a_removal_does_not_condemn_the_returned_item(
+        self, session: AsyncSession
+    ) -> None:
+        key = "radarr:1:1"
+        await self._removed(session, [(key, 1 * GB, 701)])
+        snapshot_id = await self._kept_returned_movie(session, key)
+
+        await self._override(session, key, "reap", age=60)
+        decisions = await whitelist.overrides(session)
+
+        assert decisions == {}
+        assert await effective_condemned(session, snapshot_id, decisions) == {}
+
+    async def test_a_reap_made_after_a_removal_still_condemns_the_returned_item(
+        self, session: AsyncSession
+    ) -> None:
+        key = "radarr:1:1"
+        await self._removed(session, [(key, 1 * GB, 701)])
+        snapshot_id = await self._kept_returned_movie(session, key)
+
+        await self._override(session, key, "reap", age=5)
+        decisions = await whitelist.overrides(session)
+
+        assert decisions == {key: "reap"}
+        assert set(await effective_condemned(session, snapshot_id, decisions)) == {key}
+
+    async def test_deciding_again_restamps_the_consent(self, session: AsyncSession) -> None:
+        key = "radarr:1:1"
+        await self._removed(session, [(key, 1 * GB, 701)])
+        await self._override(session, key, "reap", age=60)
+        assert await whitelist.overrides(session) == {}
+
+        await whitelist.set_override(session, media_key=key, title="T", decision="reap", note=None)
+
+        assert await whitelist.overrides(session) == {key: "reap"}
+
+    async def test_a_spare_older_than_a_removal_stays_in_force(self, session: AsyncSession) -> None:
+        """Only reaps are voided. A stale spare can only keep a returned title."""
+        key = "radarr:1:1"
+        await self._removed(session, [(key, 1 * GB, 701)])
+
+        await self._override(session, key, "spare", age=60)
+
+        assert await whitelist.overrides(session) == {key: "spare"}
+        assert await whitelist.overrides_effective_at(session, utcnow()) == {key: "spare"}
+
+    async def test_the_scan_map_drops_a_stale_reap_too(self, session: AsyncSession) -> None:
+        key = "radarr:1:1"
+        await self._removed(session, [(key, 1 * GB, 701)])
+        await self._override(session, key, "reap", age=60)
+
+        assert await whitelist.overrides_effective_at(session, utcnow()) == {}
+
+    async def test_a_whole_show_reap_is_void_once_every_season_was_removed(
+        self, session: AsyncSession
+    ) -> None:
+        show = "sonarr:1:42"
+        await self._removed(
+            session,
+            [(f"{show}:1", 1 * GB, 701), (f"{show}:2", 1 * GB, 702)],
+            media_type="season",
+            group_key=show,
+        )
+        await self._override(session, show, "reap", age=60)
+
+        assert await whitelist.overrides(session) == {}
+
+    async def test_a_whole_show_reap_does_not_condemn_a_season_that_arrives_later(
+        self, session: AsyncSession
+    ) -> None:
+        show = "sonarr:1:42"
+        await self._removed(
+            session,
+            [(f"{show}:1", 1 * GB, 701), (f"{show}:2", 1 * GB, 702)],
+            media_type="season",
+            group_key=show,
+        )
+        explanation = _clean_explanation(
+            protections_fired=[{"gate": "rating_floor", "detail": "well rated"}]
+        )
+        snapshot_id = await _snapshot_many(
+            session,
+            [(f"{show}:4", 1 * GB, 704)],
+            media_type="season",
+            group_key=show,
+            explanation=explanation,
+        )
+        candidate = (
+            await session.execute(select(Candidate).where(Candidate.snapshot_id == snapshot_id))
+        ).scalar_one()
+        candidate.verdict = "protect"
+        await self._override(session, show, "reap", age=60)
+
+        decisions = await whitelist.overrides(session)
+
+        assert decisions == {}
+        assert await effective_condemned(session, snapshot_id, decisions) == {}
+
+    async def test_a_whole_show_reap_made_after_the_removals_still_holds(
+        self, session: AsyncSession
+    ) -> None:
+        show = "sonarr:1:42"
+        await self._removed(
+            session, [(f"{show}:1", 1 * GB, 701)], media_type="season", group_key=show
+        )
+        await self._override(session, show, "reap", age=5)
+
+        assert await whitelist.overrides(session) == {show: "reap"}
+
+    async def test_the_executor_keeps_a_spare_when_it_clears_a_removed_item(
+        self, session: AsyncSession
+    ) -> None:
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+        await whitelist.set_override(
+            session, media_key="radarr:1:1", title="T", decision="spare", note=None
+        )
+        executor = Executor(
+            session,
+            safety=_armed(),
+            settings=ProfileSettings(),
+            dry_run=False,
+            gateway=_gateway(radarr={1: FakeRadarr()}),
+            armed_recheck=_armed_forever,
+        )
+        step = (await _steps(session, run.id))[0]
+
+        await executor._mark_file_removed(step)
+
+        assert (await session.get(WhitelistEntry, "radarr:1:1")) is not None
+
+    async def test_the_executor_deletes_the_override_of_the_item_it_removed(
+        self, session: AsyncSession
+    ) -> None:
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        await whitelist.set_override(
+            session, media_key="radarr:1:1", title="T", decision="reap", note=None
+        )
+        run = await _plan(session, snapshot_id)
+
+        with capture_logs() as logs:
+            report = await _real(session, run, _gateway(radarr={1: FakeRadarr()}))
+
+        assert report.deleted_items == 1
+        assert await session.get(WhitelistEntry, "radarr:1:1") is None
+        cleared = [e for e in logs if e["event"] == "whitelist.override"]
+        assert [(e["decision"], e["prior"], e["cleared_by"]) for e in cleared] == [
+            ("cleared", "reap", "reap")
+        ]
+
+    async def test_a_plan_from_a_snapshot_older_than_a_reap_leaves_out_the_removed_item(
+        self, session: AsyncSession
+    ) -> None:
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 2 * GB, 702)]
+        )
+        first = await build_plan(
+            session, snapshot_id=snapshot_id, approved_by="admin", only_media_keys={"radarr:1:1"}
+        )
+        await _real(session, first, _gateway(radarr={1: FakeRadarr()}))
+
+        with capture_logs() as logs:
+            second = await _plan(session, snapshot_id)
+
+        assert {s.media_key for s in await _steps(session, second.id)} == {"radarr:1:2"}
+        assert [e["count"] for e in logs if e["event"] == "plan.left_out_removed"] == [1]
+        planned = await _planned_candidates(session, second)
+        assert [c.media_key for c in planned] == ["radarr:1:2"]
+        # The run that did the removing still describes what it acted on.
+        assert [c.media_key for c in await _planned_candidates(session, first)] == ["radarr:1:1"]

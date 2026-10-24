@@ -257,6 +257,30 @@ somebody decides what to delete, and long copy does not get read at all.
 
 After you write an operator string, cut it once more.
 
+### Code comments
+
+A comment tells the next person who changes the code what it must do or must never do. It
+never argues for the code.
+
+- No history. What the code replaced and how a problem was found go in the pull request or
+  `docs/LEARNINGS.md`.
+- No hypotheticals. "Returning False here would claim the movie is still there" defends
+  against a change nobody made.
+- No answer to "why not X". The reasoning behind a settled choice goes in `docs/DECISIONS.md`.
+- Many existing comments break these rules. Never match them. When you edit one, cut the
+  argument out.
+
+```python
+# Before
+# Broad on purpose: any failure to read history, not just IntegrationError, means
+# this cannot prove the item was not watched, so it is kept.
+
+# After
+# Any failure to read history keeps the item.
+```
+
+Read it back. Would each sentence still be there if nobody were going to review the diff?
+
 ### Prose in the repository
 
 American English throughout, including identifiers and commit messages. The exceptions are

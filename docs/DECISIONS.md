@@ -56,7 +56,11 @@ to keep something, while a badly written removal rule deletes a file.
 
 ## What a hand reap may overrule
 
-**Choice: Everything except a structural stop.**
+**Choice: Everything except a structural stop, and only for the file it was made on.**
+
+A hand reap is void once Reaper has removed its key after the reap was made, so a title that
+returns under the same key is judged fresh. `whitelist._live_rows` applies that to every reader.
+A spare is never voided, because a stale spare can only keep a returned title.
 
 A hand reap condemns past every cautious protection, whether it FIRED or merely could not be
 CHECKED. The only two refusals left are a *fired* `verdict.STRUCTURAL_GATES` member: something
@@ -1149,3 +1153,21 @@ param, and `SafetyViolationError.__str__` renders through `english()` instead of
 `str.format`, so the nested reason composes into its own sentence there too.
 `SafetyOut.note: str | None` becomes `note_reason: ReasonKey | None`, composed by the browser
 the same way every other reason is.
+
+## Recycle bins
+
+**Choice: Off per instance for one whole reap, put back when it ends, retried if that fails.**
+
+A reap can turn off a Sonarr or Radarr recycle bin for each instance the operator ticks on the
+reap confirm. Ticking one adds `SKIP N BINS` to the typed phrase. The bin goes off before the
+first delete and goes back on when the reap ends. A failed restore or a hard cancel leaves
+the bin off until the next startup, the next reap or the banner. Shutdown does no network work.
+
+Turning a bin off around each delete alone was offered and declined, since it costs two
+settings writes per item. The whole-reap window has a cost the confirm states: an upgrade that
+replaces a file during the reap skips the bin too.
+
+A bin that will not come back warns and never blocks the next reap. The banner, Discord and the
+report say so, and Reaper retries at startup, before the next reap and from the banner. Putting
+a bin back is the one write the transport guard allows with deletion off, so disarming mid-reap
+cannot leave a bin off. Turning one off still needs deletion armed.

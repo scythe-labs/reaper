@@ -61,6 +61,7 @@ from pydantic import BaseModel
 
 import reaper.api
 from reaper.api.backup import RestoreSummaryOut
+from reaper.api.review import GROUP_BATCH_MAX
 from reaper.api.schemas import (
     CandidateLinkOut,
     LinksOut,
@@ -107,9 +108,12 @@ INNER_MODULES = ("reaper.engine.policy", "reaper.engine.explanation")
 #: answer with a bare ``list[RunSummaryOut]``, and paging it (a footer count, "Show 50
 #: more") needed a total the page itself cannot carry.
 #:
+#: ``RunBinOut`` and ``RunBinsOut`` add 2, each Sonarr and Radarr instance's recycle bin.
+#: ``BinRefIn``, ``RecycleBinOffOut`` and ``RecycleBinsOffOut`` add 3, a bin a reap turns off.
+#:
 #: This count is here because the collision assertion below is flag-shaped, and a flag
 #: cannot see a member that left the walk.
-_EXPECTED_SERVER_MODELS = 153
+_EXPECTED_SERVER_MODELS = 158
 
 #: Browser types whose server counterpart is spelled differently. Each is a real pair, the
 #: field sets are compared, and the rename is the only reason a suffix rule cannot find it.
@@ -199,8 +203,8 @@ CLIENT_ONLY = {
 # `RunOutcomeReadOut`, and `RunOutcomes` with `RunOutcomesOut`, both on the suffix rule.
 # Both +1 again for the run history's envelope: `RunList` pairs with `RunListOut` on the
 # suffix rule.
-EXPECTED_INTERFACES = 107
-EXPECTED_PAIRS = 105
+EXPECTED_INTERFACES = 111
+EXPECTED_PAIRS = 109
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")
@@ -1432,3 +1436,13 @@ class TestAWireModelReadsOnlyFieldsItsRecordCarries:
             f"the sites building a wire model off a service record are now {sorted(sites)}. "
             "Add or remove its pair in COLLAPSED_PAIRS above, then move this list."
         )
+
+
+def test_the_client_splits_show_reads_at_the_server_bound() -> None:
+    """``api.ts`` batches ``/api/groups`` at the same size the route accepts, or a full
+    batch is refused whole and every expanded show on the page fails to load."""
+    declared = re.search(
+        r"^const GROUP_BATCH_MAX = (\d+);$", API_TS.read_text(encoding="utf-8"), re.MULTILINE
+    )
+    assert declared is not None, "frontend/src/api.ts no longer declares GROUP_BATCH_MAX"
+    assert int(declared.group(1)) == GROUP_BATCH_MAX

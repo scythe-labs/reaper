@@ -82,13 +82,21 @@ class TautulliClient(BaseClient):
         )
         self._api_key = api_key
 
-    async def call(self, cmd: str, *, read_timeout: float | None = None, **params: Any) -> Any:
+    async def call(
+        self,
+        cmd: str,
+        *,
+        read_timeout: float | None = None,
+        single_attempt: bool = False,
+        **params: Any,
+    ) -> Any:
         """Issue a read command and unwrap the response envelope.
 
         ``read_timeout`` widens the read budget for this one call (see
         ``BaseClient._request``). Every other command keeps the client's shared
         budget: the history sweep asks for tens of thousands of rows, while the
         artwork proxy on the same client is answering a browser waiting on a page.
+        ``single_attempt`` sends the request once, with no retry on a transport failure.
         """
         if cmd not in READ_COMMANDS:
             # This is a programming error, not an IntegrationError, so the request
@@ -100,7 +108,9 @@ class TautulliClient(BaseClient):
         query: dict[str, Any] = {"apikey": self._api_key, "cmd": cmd}
         query.update({k: v for k, v in params.items() if v is not None})
 
-        payload = await self.get_json("/api/v2", params=query, read_timeout=read_timeout)
+        payload = await self.get_json(
+            "/api/v2", params=query, read_timeout=read_timeout, single_attempt=single_attempt
+        )
         if not isinstance(payload, dict):
             raise IntegrationError(self.service, "error.integration.unexpected_shape", path=cmd)
 
@@ -174,6 +184,8 @@ class TautulliClient(BaseClient):
         length: int = 100,
         order_column: str = "added_at",
         order_dir: str = "desc",
+        refresh: bool = False,
+        read_timeout: float | None = None,
     ) -> dict[str, Any]:
         """The library sweep. This is the only endpoint that returns per-item
         ``last_played``, ``play_count``, ``file_size`` and ``added_at`` in one
@@ -181,20 +193,26 @@ class TautulliClient(BaseClient):
 
         ``last_played`` and ``play_count`` are recomputed live from the history
         database on every call, so ``refresh=true`` is not needed for fresh watch
-        data. That flag only re-pulls the item list and file sizes from Plex. Both leave out
-        the plays of a user archived in Tautulli, and no parameter brings them back. So read
-        plays from ``history`` instead.
+        data. That flag re-pulls the whole section's item list and file sizes from Plex
+        before the call returns, whatever ``start`` is, and rewrites Tautulli's cache. The
+        call is slow, so pass ``read_timeout`` with it. A refresh is sent once and never
+        retried. Send it on one page of a section.
+        ``last_played`` and ``play_count`` leave out the plays of a user archived in
+        Tautulli, and no parameter brings them back. So read plays from ``history`` instead.
 
         Never send ``section_type`` without a ``rating_key``: doing so corrupts the
         owner's own Tautulli Media Info page. This client never sends it.
         """
         data = await self.call(
             "get_library_media_info",
+            read_timeout=read_timeout,
+            single_attempt=refresh,
             section_id=section_id,
             start=start,
             length=length,
             order_column=order_column,
             order_dir=order_dir,
+            refresh="true" if refresh else None,
         )
         return data if isinstance(data, dict) else {}
 

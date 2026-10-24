@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from reaper.api.review import (
     _CHIP_IDS,
+    GROUP_BATCH_MAX,
     _chip,
     _decode_explanation,
     _explanation_out,
@@ -1638,7 +1639,7 @@ class TestCandidatesCarryTheGroupShape:
 
 class TestGroupDetail:
     def test_the_show_reads_whole(self, client: TestClient) -> None:
-        group = client.get("/api/groups/sonarr:5:42").json()
+        group = client.get("/api/groups", params={"key": "sonarr:5:42"}).json()[0]
         assert group["title"] == "Example Show"
         assert group["year"] == 2012
         assert group["summary"] == "A placeholder synopsis."
@@ -1650,12 +1651,24 @@ class TestGroupDetail:
     def test_the_show_leads_with_the_season_that_wants_eyes(self, client: TestClient) -> None:
         """A deliberately-flagged season outranks a merely higher-scoring one for the
         show-level status line."""
-        group = client.get("/api/groups/sonarr:5:42").json()
+        group = client.get("/api/groups", params={"key": "sonarr:5:42"}).json()[0]
         assert group["chip"]["tone"] == "look"
         assert group["reason_key"] == to_wire(_conflict_reason(kept_watchers=0))
 
-    def test_unknown_show_is_a_404(self, client: TestClient) -> None:
-        assert client.get("/api/groups/sonarr:5:999").status_code == 404
+    def test_an_unknown_show_is_left_out_of_the_answer(self, client: TestClient) -> None:
+        resp = client.get("/api/groups", params={"key": ["sonarr:5:999", "sonarr:5:42"]})
+        assert resp.status_code == 200, resp.text
+        assert [g["group_key"] for g in resp.json()] == ["sonarr:5:42"]
+
+    def test_a_repeated_key_is_answered_once(self, client: TestClient) -> None:
+        resp = client.get("/api/groups", params={"key": ["sonarr:5:42", "sonarr:5:42"]})
+        assert [g["group_key"] for g in resp.json()] == ["sonarr:5:42"]
+
+    def test_the_batch_is_bounded(self, client: TestClient) -> None:
+        keys = [f"sonarr:5:{n}" for n in range(GROUP_BATCH_MAX + 1)]
+        assert client.get("/api/groups", params={"key": keys[:-1]}).status_code == 200
+        assert client.get("/api/groups", params={"key": keys}).status_code == 422
+        assert client.get("/api/groups").status_code == 422
 
     def test_the_group_view_is_behind_auth(self, tmp_path: Path) -> None:
         authless_dir = tmp_path / "authless"
@@ -1665,7 +1678,7 @@ class TestGroupDetail:
         Base.metadata.create_all(engine)
         engine.dispose()
         with TestClient(create_app(settings)) as anonymous:
-            assert anonymous.get("/api/groups/sonarr:5:42").status_code == 401
+            assert anonymous.get("/api/groups", params={"key": "sonarr:5:42"}).status_code == 401
 
 
 class TestTheMatchStatusVocabulary:

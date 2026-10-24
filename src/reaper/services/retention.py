@@ -48,7 +48,8 @@ An operator's own decision. Hand spares and forced reaps live in ``WhitelistEntr
 by ``media_key`` because they are a decision about a file, not a property of the scan that
 happened to surface it, and the first-flagged clock and the watch high-water mark are keyed
 the same way. None of them is reachable from a snapshot, so sweeping one cannot lose an
-operator decision or restart a grace window.
+operator decision or restart a grace window. A reap does end one: the executor deletes the
+removed item's row, and ``whitelist.overrides`` ignores a reap older than a removal of its key.
 
 Preexisting installs are the case this is built for. An install that has been scanning for
 months arrives here with a backlog to drain in one pass, so the delete is batched into
@@ -102,7 +103,7 @@ COMPACT_MIN_FREE_RATIO = 0.25
 COMPACT_MIN_FREE_BYTES = 64 * 1024 * 1024
 
 
-def _doomed(keep: int) -> Select[tuple[int]]:
+def _doomed(keep: int) -> Select[int]:
     """Snapshot ids eligible to be swept, oldest first.
 
     Two exclusions, both erring toward keeping. ``NOT IN`` over an empty ``reap_run`` is

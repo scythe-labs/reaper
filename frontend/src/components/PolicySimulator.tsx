@@ -99,8 +99,11 @@ export function StaleNotice({
   detail,
   staleKind,
   staleReason,
+  waitingForPlex = false,
 }: {
   scanning: boolean;
+  /** Reaper is waiting for Plex to finish updating after a reap, so a scan cannot start yet. */
+  waitingForPlex?: boolean;
   /** A scan was already running when the rescan was requested, so a second one starts
    *  right after it. The copy must say so: the bar the owner is watching belongs to a
    *  scan that does NOT include their changes yet. */
@@ -189,10 +192,11 @@ export function StaleNotice({
               afterStart.arriving();
               onScan();
             }}
-            disabled={starting}
+            disabled={starting || waitingForPlex}
           >
             {starting ? t("common.starting") : t("common.scanNow")}
           </button>
+          {waitingForPlex && <p className="muted">{t("plexWait.button")}</p>}
         </>
       )}
       {startError && (

@@ -1211,7 +1211,7 @@ class TestBuildPersonDetail:
         assert title.co_requesters == ("Bob",)
         # The poster is proxied through our image route, falling back to the item's own key
         # when it has no separate poster key.
-        assert title.poster_url == "/api/poster/555"
+        assert title.poster_url == "/api/poster/555.jpg"
 
     async def test_name_links_to_the_requesters_portal_profile(
         self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]

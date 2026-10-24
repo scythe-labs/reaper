@@ -318,14 +318,15 @@ MESSAGES: dict[str, str] = {
     "error.leaving_soon.skip_unreachable": "Reaper couldn't reach Plex",
     "error.leaving_soon.skip_failed": "the update didn't finish",
     # -----------------------------------------------------------------------------
-    # Logs, poster artwork, Plex trash (read-only surfaces).
+    # Logs, Plex trash (read-only surfaces).
     # -----------------------------------------------------------------------------
     "error.logs.bad_level": "Pick Debug, Info, or Warning.",
-    "error.poster.no_tautulli": "No Tautulli configured to fetch artwork from.",
-    "error.poster.not_found": "No artwork for this item.",
     # -----------------------------------------------------------------------------
     # Whitelist / overrides.
     # -----------------------------------------------------------------------------
+    "error.override.already_removed": (
+        "Reaper already removed this. It leaves the queue after the next scan."
+    ),
     "error.whitelist.unknown_item": (
         "Reaper has no record of that item. It keeps only the last {keep_scans} scans."
     ),
@@ -449,7 +450,6 @@ MESSAGES: dict[str, str] = {
     # -----------------------------------------------------------------------------
     "error.review.no_scan": "No scan has run yet.",
     "error.review.candidate_not_found": "No such candidate.",
-    "error.review.show_not_in_scan": "That show is not in the latest scan.",
     # -----------------------------------------------------------------------------
     # Settings: instances, schedule, safety, general.
     # -----------------------------------------------------------------------------
@@ -766,6 +766,10 @@ MESSAGES: dict[str, str] = {
     "error.reap.stopped_by_operator": (
         "You stopped this run. Only the titles it had already reached were removed."
     ),
+    "error.reap.bin_not_turned_off": (
+        "Nothing was deleted. Reaper couldn't turn off {name}'s recycle bin. Try again, "
+        "or untick it to reap with the bin on."
+    ),
     "error.reap.journal_halt": (
         "Reaper could not save its record of what it just did, so it stopped before "
         "touching anything else. Anything already removed stays removed. Check the "
@@ -818,6 +822,9 @@ MESSAGES: dict[str, str] = {
     "error.scan.already_running": (
         "A scan is already running. Wait for it to finish, then start another."
     ),
+    "error.scan.waiting_for_plex": (
+        "Plex is still updating after a reap. Reaper scans on its own when it's done."
+    ),
     "error.scan.source_unreachable": "Reaper couldn't reach one of your sources: {error}",
     "error.scan.unexpected": "The scan hit a problem it didn't expect: {error}",
     # -----------------------------------------------------------------------------
@@ -851,6 +858,8 @@ MESSAGES: dict[str, str] = {
     ),
     "error.reap.step.being_watched": "Someone is watching it right now.",
     "error.reap.step.played_since_approval": "Played since the plan was approved.",
+    "error.reap.step.watching_unreadable": "Couldn't ask Plex who is watching.",
+    "error.reap.step.play_history_unreadable": "Couldn't read its watch history from Tautulli.",
     "error.reap.step.dry_run": "Would send: {plan}",
     "error.reap.step.no_approved_size": (
         "Reaper never got a size for this when it was scanned, so it cannot confirm this "
@@ -933,6 +942,10 @@ MESSAGES: dict[str, str] = {
     "error.reap.check.no_plex_match": "No Plex match, so we can't confirm it's idle. Kept.",
     "error.reap.check.being_watched": "Someone is watching it right now. Kept.",
     "error.reap.check.played_since_approval": "It was played since you approved the plan. Kept.",
+    "error.reap.check.watching_unreadable": "Couldn't ask Plex who is watching. Kept.",
+    "error.reap.check.play_history_unreadable": (
+        "Couldn't read its watch history from Tautulli. Kept."
+    ),
     "error.reap.check.movie_removed": "Removed the file through Radarr",
     "error.reap.check.exclusion_confirmed": "Import exclusion confirmed. It won't re-download",
     "error.reap.check.exclusion_off": "Import exclusion off for this Radarr, so none was added",

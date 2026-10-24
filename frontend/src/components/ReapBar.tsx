@@ -6,8 +6,10 @@ import { announce } from "../announce";
 import { api } from "../api";
 import { describeError } from "../errors";
 import { bytes, count, souls } from "../format";
+import { useWaitingForPlex } from "../useScanStatus";
 import { composeError } from "../why";
 import { Notice } from "./Notice";
+import { freedNow } from "./RecycleBins";
 import { ackRun, useAckedRun } from "./runAck";
 
 /** The app-wide reap bar: shown on every screen of the app while a reap runs, so its count and
@@ -55,6 +57,7 @@ export function ReapBar({
   // Shared with the Reap page's Done button and persisted, so dismissing a result on either
   // surface hides both, and a refresh does not bring it back.
   const dismissed = useAckedRun();
+  const waitingForPlex = useWaitingForPlex();
   // Idle still polls, slowly. A reap can be started from a phone or a second tab, and this
   // bar carries the only Stop on most screens: going silent when nothing is running here
   // would leave an open tab dark through someone else's deletion (the scan line idle-polls
@@ -95,18 +98,25 @@ export function ReapBar({
       t("reapConfirm.bar.announceEnded", {
         phase: status.phase,
         souls: souls(status.deleted_items),
-        bytes: bytes(status.deleted_bytes),
-      }),
+        bytes: bytes(freedNow(status.deleted_bytes, status.binned_bytes)),
+      }) +
+        (status.binned_bytes > 0
+          ? t("reapConfirm.bar.binnedSuffix", { binned: bytes(status.binned_bytes) })
+          : ""),
     );
     // ["run"] as well as ["runs"]: the plan surface reads one run by id, and that key does
     // not match the list's.
     for (const key of [
       ["runs"],
       ["run"],
+      ["run-bins"],
+      ["recycle-bins-off"],
       ["candidates"],
       ["reap-breakdown"],
       ["snapshot"],
       ["fairness"],
+      // The wait for Plex starts as the reap ends, so the buttons that read it turn off now.
+      ["scanStatus"],
     ]) {
       void queryClient.invalidateQueries({ queryKey: key });
     }
@@ -130,17 +140,27 @@ export function ReapBar({
   if (ended) {
     const errored = status.phase === "error";
     return (
-      <div className={errored ? "reap-bar errored" : "reap-bar done"}>
+      <div
+        className={
+          errored ? "reap-bar errored" : waitingForPlex ? "reap-bar waiting" : "reap-bar done"
+        }
+      >
         <span className="reap-bar-text">
           <span className="reap-bar-lead">
             <span className="banner-dot" aria-hidden="true" />
             <b>{t("reapConfirm.bar.endedLabel", { phase: status.phase })}</b>
           </span>
           <span className="reap-bar-sub">
-            {t("reapConfirm.bar.removedFreed", {
-              souls: souls(status.deleted_items),
-              bytes: bytes(status.deleted_bytes),
-            })}
+            {status.binned_bytes > 0
+              ? t("reapConfirm.bar.removedFreedBinned", {
+                  souls: souls(status.deleted_items),
+                  bytes: bytes(freedNow(status.deleted_bytes, status.binned_bytes)),
+                  binned: bytes(status.binned_bytes),
+                })
+              : t("reapConfirm.bar.removedFreed", {
+                  souls: souls(status.deleted_items),
+                  bytes: bytes(status.deleted_bytes),
+                })}
             {errored &&
               status.error_reason &&
               t("reapConfirm.bar.errorSuffix", { error: composeError(status.error_reason) })}
@@ -161,6 +181,11 @@ export function ReapBar({
             {t("reapConfirm.bar.dismiss")}
           </button>
         </span>
+        {waitingForPlex && (
+          <p className="reap-bar-wait" role="status">
+            {t("plexWait.bar")}
+          </p>
+        )}
       </div>
     );
   }
@@ -211,7 +236,12 @@ export function ReapBar({
       {/* The space freed so far. Inline after the count on desktop, its own line on a phone. */}
       {!status.stopping && (
         <span className="reap-bar-sub">
-          {t("reapConfirm.bar.freed", { bytes: bytes(status.deleted_bytes) })}
+          {status.binned_bytes > 0
+            ? t("reapConfirm.bar.freedBinned", {
+                bytes: bytes(freedNow(status.deleted_bytes, status.binned_bytes)),
+                binned: bytes(status.binned_bytes),
+              })
+            : t("reapConfirm.bar.freed", { bytes: bytes(status.deleted_bytes) })}
         </span>
       )}
       {/* The visible progress track. Decorative: the progressbar role and its aria live on the
