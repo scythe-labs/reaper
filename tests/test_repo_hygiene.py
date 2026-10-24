@@ -2185,10 +2185,9 @@ _WEBSITE_OVERRIDES = {"qs": "6.16.0", "serialize-javascript": "7.0.7", "uuid": "
 #: ``^7.0.3``, so a Docusaurus release that moves to them ends those two. ``sockjs`` 0.3.24 is
 #: the newest there is and still wants ``uuid@^8``, so that one ends when
 #: ``webpack-dev-server`` 6 arrives, having dropped ``sockjs`` for ``ws`` outright. ``express``
-#: and ``body-parser`` both cap ``qs`` at a tilde range on 6.15, so that pin ends when the pair
-#: widens the range in a release ``webpack-dev-server`` takes.
+#: caps ``qs`` at a tilde range on 6.15, so that pin ends when ``express`` widens the range in a
+#: release ``webpack-dev-server`` takes.
 _WEBSITE_OVERRIDE_CAUSES = {
-    ("body-parser", "qs"): "~6.15.1",
     ("copy-webpack-plugin", "serialize-javascript"): "^6.0.0",
     ("css-minimizer-webpack-plugin", "serialize-javascript"): "^6.0.1",
     ("express", "qs"): "~6.15.1",
