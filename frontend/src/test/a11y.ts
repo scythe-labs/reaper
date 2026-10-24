@@ -15,8 +15,10 @@ import { act } from "@testing-library/react";
 import axe from "axe-core";
 
 // jsdom builds a DOM but never lays it out or paints it, so every rule that needs geometry or a
-// computed color reports against a fiction. None of these three rules can fail here.
-// `color-contrast` reads pixels, gets none, and defers. `scrollable-region-focusable` does not
+// computed color reports against a fiction. None of these four rules can fail here.
+// `color-contrast` reads pixels, gets none, and defers. `label-content-name-mismatch` draws text
+// on a canvas to spot icon fonts, and jsdom has no canvas, so it errors and defers on every
+// labelled button. `scrollable-region-focusable` does not
 // apply with no scroll box. `target-size` is off by default in axe-core and outside the tags
 // below as well. They are listed here anyway, because a rule this gate cannot answer should say
 // so by name rather than be silently absent, and because turning any of them on for a real
@@ -28,6 +30,8 @@ import axe from "axe-core";
 const NEEDS_A_REAL_BROWSER = [
   // Reads rendered pixels. jsdom paints nothing. Checked against the running app.
   "color-contrast",
+  // Needs a canvas. jsdom has none.
+  "label-content-name-mismatch",
   // Both need layout to know what is on screen and what is behind it.
   "scrollable-region-focusable",
   "target-size",
