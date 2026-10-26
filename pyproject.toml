@@ -17,7 +17,7 @@ dependencies = [
     "fastapi>=0.143.0",          # >=0.138 for app.frontend(), >=0.135 for fastapi.sse
     "starlette>=1.7.0,<2.0.0",   # PIN: 1.0 removed on_startup/on_shutdown; FastAPI declares no upper bound
     "uvicorn[standard]>=0.54.0",
-    "pydantic>=2.14.0",
+    "pydantic>=2.14.1",
     "pydantic-settings>=2.15.0",
     "python-dotenv>=1.2.4",      # imported directly (config.load_raw_env), not only transitively
     # Persistence
@@ -56,7 +56,7 @@ dev = [
     "pytest-cov>=7.1.0",
     "httpx>=0.28.1",             # dev-only: no production import remains; respx speaks httpx only, not httpx2
     "respx>=0.23.1",             # httpx mocking (respx speaks httpx only, not httpx2)
-    "hypothesis>=6.168.5",      # property tests for the scoring invariants
+    "hypothesis>=6.169.0",      # property tests for the scoring invariants
     "pytest-xdist>=3.8.0",
     "pytest-httpx2>=1.0.0",      # httpx2 mocking; respx cannot (see docs/history/PLAN-narrative.md httpx2 scope)
     "pyyaml>=6.0.3",             # imported directly (test_repo_hygiene reads the CI config), not only via uvicorn[standard]
