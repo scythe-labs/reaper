@@ -2166,13 +2166,15 @@ def test_the_manual_sites_typescript_deferral_still_has_a_reason() -> None:
     )
 
 
-#: The advisory-fixed versions the manual site pins by hand. ``serialize-javascript`` 7.0.5
+#: The advisory-fixed versions the manual site pins by hand. ``serialize-javascript`` 7.1.3
 #: clears GHSA-5c6j-r48x-rmvq (code injection through a spoofed ``RegExp.flags`` or
-#: ``Date.prototype.toISOString``) and GHSA-qj8w-gfj5-8c6v (CPU exhaustion on an array-like);
-#: ``uuid`` 11.1.1 clears GHSA-w5hq-g745-h8pq. ``qs`` 6.16.0 clears GHSA-4mjr-xmp4-gh2g
-#: (``qs.stringify`` burns CPU on a crafted object) and GHSA-x5fp-wj9c-mxmx (a parsed query
-#: string walks past ``arrayLimit``).
-_WEBSITE_OVERRIDES = {"qs": "6.16.0", "serialize-javascript": "7.0.7", "uuid": "11.1.1"}
+#: ``Date.prototype.toISOString``), GHSA-qj8w-gfj5-8c6v (CPU exhaustion on an array-like) and
+#: GHSA-m5mm-p8h7-m29v (an unescaped ``</script`` closing a serialized function body).
+#: ``uuid`` 11.1.1 clears GHSA-w5hq-g745-h8pq. ``qs`` 6.16.1 clears GHSA-4mjr-xmp4-gh2g
+#: (``qs.stringify`` burns CPU on a crafted object), GHSA-x5fp-wj9c-mxmx (a parsed query
+#: string walks past ``arrayLimit``) and GHSA-6pq8-jhm2-2vcw (``qs.stringify`` with
+#: ``arrayFormat: "comma"`` throws on an element whose ``toString`` is not callable).
+_WEBSITE_OVERRIDES = {"qs": "6.16.1", "serialize-javascript": "7.1.3", "uuid": "11.1.1"}
 
 #: Why the pin has to be written by hand: each dependent declares a range that excludes its own
 #: fix, so no semver-compatible upgrade exists and Dependabot raises an alert it cannot propose
