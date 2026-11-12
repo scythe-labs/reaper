@@ -1275,10 +1275,15 @@
     },
     "trashNotice": {
       "ackLabel": "I understand, continue anyway",
-      "autoEmpties": "Plex is set to empty its trash after every scan, so Reaper's refresh empties it too.",
-      "knownReadable": "<strong>Plex may also remove records for items Reaper didn't delete.</strong> Its trash already holds {n, plural, one {# item} other {# items}}. Emptying it removes their watch history, ratings, and collections. No files are deleted.",
-      "knownUnreadable": "<strong>Plex may also remove records for items Reaper didn't delete.</strong> Its trash already holds at least {n, plural, one {# item} other {# items}}, and some libraries couldn't be read. Emptying it removes their watch history, ratings, and collections. No files are deleted.",
-      "unknown": "<strong>Reaper couldn't read Plex's trash.</strong> It can't say what's in there, and emptying it removes the watch history, ratings, and collections of everything that is. No files are deleted."
+      "emptiesKnown": "<strong>Plex will also remove records for {n, plural, one {# item} other {# items}} Reaper didn't delete.</strong> That is what its trash already holds, and Plex empties it after every scan. Watch history, ratings, and collections go too. No files are deleted.",
+      "emptiesPartial": "<strong>Plex will also remove records for at least {n, plural, one {# item} other {# items}} Reaper didn't delete.</strong> Some libraries couldn't be read. Plex empties its trash after every scan. Watch history, ratings, and collections go too. No files are deleted.",
+      "emptiesUnread": "<strong>Reaper couldn't read Plex's trash.</strong> Plex empties it after every scan, and everything in it loses its watch history, ratings, and collections. No files are deleted.",
+      "keptKnown": "<strong>Reaper will leave Plex's trash alone.</strong> It already holds {n, plural, one {# item} other {# items}} Reaper didn't delete. Titles from this reap show as unavailable in Plex until you empty it.",
+      "keptPartial": "<strong>Reaper will leave Plex's trash alone.</strong> It already holds at least {n, plural, one {# item} other {# items}} Reaper didn't delete, and some libraries couldn't be read. Titles from this reap show as unavailable in Plex until you empty it.",
+      "keptUnread": "<strong>Reaper couldn't read Plex's trash, so it will leave it alone.</strong> Titles from this reap may show as unavailable in Plex until you empty it.",
+      "mayEmptyKnown": "<strong>Plex may also remove records for {n, plural, one {# item} other {# items}} Reaper didn't delete.</strong> That is what its trash already holds. Reaper won't empty it, but Plex will if it's set to after a scan. Watch history, ratings, and collections would go too. No files are deleted.",
+      "mayEmptyPartial": "<strong>Plex may also remove records for at least {n, plural, one {# item} other {# items}} Reaper didn't delete.</strong> Some libraries couldn't be read. Reaper won't empty Plex's trash, but Plex will if it's set to after a scan. Watch history, ratings, and collections would go too. No files are deleted.",
+      "mayEmptyUnread": "<strong>Reaper couldn't read Plex's trash.</strong> Reaper won't empty it, but Plex will if it's set to after a scan. Everything in it would lose its watch history, ratings, and collections. No files are deleted."
     },
     "unlinkButton": "Unlink",
     "verifyCert": {

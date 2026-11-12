@@ -171,12 +171,13 @@ export function ReapConfirm({
   const dryClean = dryReport?.dry_run === true && dryReport.state === "completed";
   const phraseOk = typed.trim() === phrase;
   // Emptying Plex's trash takes the records of everything already in there. Reaper's own
-  // purge refuses such a trash, but Plex's own empty-after-scan does not. So the operator is
-  // told and must tick before Reap enables. The tick is dropped whenever the plan's content
-  // changes (the effect above), so consent from one plan can never carry into a different one.
+  // purge refuses such a trash, but Plex's own empty-after-scan does not. So the operator
+  // must tick before Reap enables, unless Plex is known to leave its trash alone. The tick is
+  // dropped whenever the plan's content changes (the effect above), so consent from one plan
+  // can never carry into a different one.
   const trash = usePlexTrash();
   const warn = trashWarning(trash.data, trash.isError);
-  const trashOk = !warn.show || trashAcked;
+  const trashOk = !warn.needsAck || trashAcked;
   const canExecute = armed && dryClean && phraseOk && trashOk && !exec.isPending && !otherRunning;
 
   // The typed-phrase field appears part-way through a dialog the operator is already standing
@@ -282,15 +283,15 @@ export function ReapConfirm({
         </Notice>
       )}
 
-      {/* Plex's trash takes more than this reap deletes, so say so before the phrase field
-          and hold Reap until it is acknowledged. */}
+      {/* Plex's trash holds other items, so say what happens to them before the phrase
+          field. */}
       {warn.show && !otherRunning && (
         <PlexTrashNotice
           known={warn.known}
           unreadable={warn.unreadable}
-          autoEmpties={warn.autoEmpties}
+          plexEmpties={warn.plexEmpties}
           acked={trashAcked}
-          onAck={setTrashAcked}
+          onAck={warn.needsAck ? setTrashAcked : undefined}
         />
       )}
 

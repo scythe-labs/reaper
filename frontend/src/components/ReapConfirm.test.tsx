@@ -137,21 +137,25 @@ describe("the execute gate", () => {
     expect(execute).toBeEnabled();
   });
 
-  // Emptying Plex's trash takes the library records of everything already in there, not
-  // just what this run deleted, and those items cancel out of the executor's before/after
-  // count so its gate cannot see them. The operator is told, and must say yes on purpose.
-  it("holds Reap until the operator accepts that Plex's trash goes too", async () => {
-    apiMock.plexTrash.mockResolvedValue({
-      configured: true,
-      trashed: 40,
-      sections_unreadable: 0,
-      empties_after_scan: false,
-    });
+  const trashOf = (trashed: number, empties_after_scan: boolean | null, unreadable = 0) => ({
+    configured: true,
+    trashed,
+    sections_unreadable: unreadable,
+    empties_after_scan,
+  });
+
+  // Plex's own empty-after-scan removes the records of everything already in its trash, and
+  // Reaper's rescan triggers it. The operator must say yes on purpose.
+  it("holds Reap until the operator accepts that Plex empties its trash", async () => {
+    apiMock.plexTrash.mockResolvedValue(trashOf(40, true));
     const user = userEvent.setup();
     renderSheet();
 
     await screen.findByText(/Practice run passed/);
-    expect(await screen.findByText(/already holds 40 items/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Plex will also remove records for 40 items/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/empties it after every scan/i)).toBeInTheDocument();
 
     // The phrase alone is not enough while the warning stands.
     await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
@@ -162,10 +166,63 @@ describe("the execute gate", () => {
     expect(execute).toBeEnabled();
   });
 
+  it("asks for no tick when Plex leaves its trash alone", async () => {
+    apiMock.plexTrash.mockResolvedValue(trashOf(40, false));
+    const user = userEvent.setup();
+    renderSheet();
+
+    await screen.findByText(/Practice run passed/);
+    expect(await screen.findByText(/will leave Plex's trash alone/i)).toBeInTheDocument();
+    expect(screen.getByText(/already holds 40 items/i)).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+
+    await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
+    expect(screen.getByRole("button", { name: /^Reap$/ })).toBeEnabled();
+  });
+
+  it("holds Reap when it can't tell whether Plex empties its trash", async () => {
+    // `null` means unknown. Reading it as "Plex does not empty its own trash" would drop the
+    // tick for a preference nobody checked.
+    apiMock.plexTrash.mockResolvedValue(trashOf(40, null));
+    const user = userEvent.setup();
+    renderSheet();
+
+    await screen.findByText(/Practice run passed/);
+    expect(
+      await screen.findByText(/Plex may also remove records for 40 items/i),
+    ).toBeInTheDocument();
+
+    await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
+    const execute = screen.getByRole("button", { name: /^Reap$/ });
+    expect(execute).toBeDisabled();
+
+    await user.click(screen.getByRole("checkbox"));
+    expect(execute).toBeEnabled();
+  });
+
+  it("says the count is a floor when a library couldn't be read", async () => {
+    apiMock.plexTrash.mockResolvedValue(trashOf(40, true, 1));
+    renderSheet();
+
+    await screen.findByText(/Practice run passed/);
+    expect(await screen.findByText(/for at least 40 items/i)).toBeInTheDocument();
+    expect(screen.getByRole("checkbox")).toBeInTheDocument();
+  });
+
+  it("asks for no tick when the trash is unreadable and Plex leaves it alone", async () => {
+    apiMock.plexTrash.mockResolvedValue(trashOf(0, false, 2));
+    renderSheet();
+
+    await screen.findByText(/Practice run passed/);
+    expect(
+      await screen.findByText(/couldn't read Plex's trash, so it will leave it alone/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  });
+
   it("warns when the trash can't be read, rather than reading silence as empty", async () => {
-    // Unreadable counts as unknown, not absent. The moment the app could not check is exactly
-    // when the operator needs telling, so it warns and holds Reap the same way a definite
-    // count does.
+    // Unreadable counts as unknown, not absent. A failed read says nothing about Plex's
+    // preference either, so it holds Reap the same way a definite count does.
     apiMock.plexTrash.mockRejectedValue(new Error("plex is down"));
     const user = userEvent.setup();
     renderSheet();
@@ -187,51 +244,14 @@ describe("the execute gate", () => {
   });
 
   it("stays silent when Plex empties its own trash and there is nothing in it", async () => {
-    // Plex ships this preference on by default, and most servers never change it. Shown on its
-    // own, it is not a warning, it would stand in front of every reap and train the operator to
-    // ignore the one that matters. It only appears alongside a trash count that already
-    // warrants telling them.
-    apiMock.plexTrash.mockResolvedValue({
-      configured: true,
-      trashed: 0,
-      sections_unreadable: 0,
-      empties_after_scan: true,
-    });
+    // Plex ships this preference on, so shown on its own it would stand in front of every
+    // reap.
+    apiMock.plexTrash.mockResolvedValue(trashOf(0, true));
     renderSheet();
 
     await screen.findByText(/Practice run passed/);
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    expect(screen.queryByText(/empty its trash/i)).not.toBeInTheDocument();
-  });
-
-  it("says who does the emptying when the trash already holds records", async () => {
-    apiMock.plexTrash.mockResolvedValue({
-      configured: true,
-      trashed: 40,
-      sections_unreadable: 0,
-      empties_after_scan: true,
-    });
-    renderSheet();
-
-    await screen.findByText(/Practice run passed/);
-    expect(await screen.findByText(/already holds 40 items/i)).toBeInTheDocument();
-    expect(screen.getByText(/empty its trash after every scan/i)).toBeInTheDocument();
-  });
-
-  it("says nothing about auto-emptying when the preference could not be read", async () => {
-    // `null` means unknown. Reading it as "Plex does not empty its own trash" would wrongly
-    // reassure the operator about a preference nobody actually checked.
-    apiMock.plexTrash.mockResolvedValue({
-      configured: true,
-      trashed: 40,
-      sections_unreadable: 0,
-      empties_after_scan: null,
-    });
-    renderSheet();
-
-    await screen.findByText(/Practice run passed/);
-    expect(await screen.findByText(/already holds 40 items/i)).toBeInTheDocument();
-    expect(screen.queryByText(/empty its trash/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Plex/i)).not.toBeInTheDocument();
   });
 
   it("offers no phrase input at all while deletion is off", async () => {
@@ -532,7 +552,7 @@ describe("what a screen reader hears through the gauntlet", () => {
       configured: true,
       trashed: 40,
       sections_unreadable: 0,
-      empties_after_scan: false,
+      empties_after_scan: true,
     });
     renderWithAnnouncer();
 
