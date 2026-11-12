@@ -103,9 +103,8 @@ profile_router = APIRouter(prefix="/api", tags=[api_tags.POLICY])
 #: How many journal rows a run's detail response carries, and the default page of the steps
 #: route. A plan of 500 seasons is 1,500 rows, each with a path and a stringified request body,
 #: and the table draws 50 of them. The rest are a route away rather than in every response.
-#: The outcomes route (GET /runs/{id}/outcomes) reuses this same constant: it pages the
-#: same journal at item granularity instead of step granularity, so producer and consumer
-#: agree on one page size rather than each guessing (rule 131).
+#: The outcomes route (GET /runs/{id}/outcomes) pages the same journal by item and reads
+#: its page size from this constant too.
 STEP_PAGE = 50
 
 #: The default and max page of GET /runs, named so a page size an operator's history view

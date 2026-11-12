@@ -599,6 +599,33 @@ def test_the_external_id_matcher_reads_every_spelling_it_claims() -> None:
         assert not any(guarded for _, _, guarded in reads), f"wrongly cleared: {source}"
 
 
+#: Every .py file under ``tests/``, reconciled by hand. A ban over this walk passes on an
+#: empty one, so the count is what notices a walk that stopped reading the tree.
+_EXPECTED_TEST_MODULES = 136
+
+
+def _src_python() -> list[Path]:
+    """Every .py file under ``src/reaper``, at least ``_EXPECTED_SOURCE_MODULES`` of them."""
+    files = sorted(SRC.rglob("*.py"))
+    assert len(files) >= _EXPECTED_SOURCE_MODULES, (
+        f"want {_EXPECTED_SOURCE_MODULES}+ .py files under src/reaper/, got {len(files)}. "
+        "If you deleted some, lower _EXPECTED_SOURCE_MODULES. If you did not, the walk "
+        "lost part of the tree and every ban built on it passes on what it cannot see."
+    )
+    return files
+
+
+def _test_python() -> list[Path]:
+    """Every .py file under ``tests/``, at least ``_EXPECTED_TEST_MODULES`` of them."""
+    files = sorted(TESTS.rglob("*.py"))
+    assert len(files) >= _EXPECTED_TEST_MODULES, (
+        f"expected at least {_EXPECTED_TEST_MODULES} .py files under tests/, walked {len(files)}. "
+        "If you deleted some, lower _EXPECTED_TEST_MODULES. If you did not, the walk "
+        "lost part of the tree and every ban built on it passes on what it cannot see."
+    )
+    return files
+
+
 def test_no_bare_exception_assertions_in_tests() -> None:
     """A test asserts the domain error and its message, never ``pytest.raises(Exception)``.
 
@@ -607,7 +634,7 @@ def test_no_bare_exception_assertions_in_tests() -> None:
     """
     offenders = [
         f"{p.relative_to(REPO)}:{n}"
-        for p in TESTS.rglob("*.py")
+        for p in _test_python()
         for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
         if re.search(r"pytest\.raises\(\s*Exception\s*[,)]", _strip_prose(line))
     ]
@@ -627,7 +654,7 @@ def test_fixtures_carry_no_real_imdb_id() -> None:
     """
     offenders = [
         f"{p.relative_to(REPO)}:{n}: {m.group()}"
-        for p in [*TESTS.rglob("*.py"), *SRC.rglob("*.py")]
+        for p in [*_test_python(), *_src_python()]
         for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
         for m in re.finditer(r"tt\d{7}", line)
         if not _PLACEHOLDER_IMDB_ID.fullmatch(m.group())
@@ -635,24 +662,47 @@ def test_fixtures_carry_no_real_imdb_id() -> None:
     assert not offenders, "swap in a placeholder id (tt000NNNN):\n" + "\n".join(offenders)
 
 
-def test_http_clients_are_only_constructed_in_clients() -> None:
-    """All HTTP clients are constructed inside ``clients/``.
+#: A client constructor, a module-level request, or the stdlib's one-shot opener.
+_HTTP_SITE = re.compile(
+    r"\b(?:httpx2?|requests)\.(?:Async)?(?:Client|Session)\s*\("
+    r"|(?<![\w.])(?:httpx2?|requests)\.(?:get|post|put|patch|delete|head|options|request|stream)"
+    r"\s*\("
+    r"|\burlopen\s*\("
+)
 
-    The shared clients install the transport guard. A client built anywhere else carries no
-    guard, so a mutating call from it could leave without an armed host or a journalled intent.
-    ``notify/discord.py`` is the one sanctioned exception, because its webhook URL embeds a
-    per-operator secret path the guard's allow-list cannot express.
+#: The two sanctioned HTTP sites outside ``clients/``, and how many each holds. Discord's
+#: webhook URL embeds a per-operator secret path the guard's allow-list cannot express. The
+#: launcher probes this process's own health route over loopback with no credentials.
+_SANCTIONED_HTTP = {"src/reaper/notify/discord.py": 1, "src/reaper/launcher.py": 1}
+
+
+def test_http_is_only_sent_from_clients() -> None:
+    """Every HTTP client is built, and every one-shot request is sent, inside ``clients/``.
+
+    The shared clients install the transport guard. A client built anywhere else, or a bare
+    ``httpx2.post(...)`` or ``urlopen(...)``, carries no guard, so a mutating call from it
+    could leave without an armed host or a journalled intent.
     """
-    sanctioned = {SRC / "notify" / "discord.py"}
-    constructors = re.compile(r"\b(?:httpx2?|requests)\.(?:Async)?(?:Client|Session)\s*\(")
-    offenders = [
-        f"{p.relative_to(REPO)}:{n}"
-        for p in SRC.rglob("*.py")
-        if "clients" not in p.parts and p not in sanctioned
-        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
-        if constructors.search(_strip_prose(line))
-    ]
-    assert not offenders, "construct HTTP clients only in clients/:\n" + "\n".join(offenders)
+    offenders: list[str] = []
+    sanctioned: Counter[str] = Counter()
+    for p in _src_python():
+        if p.relative_to(SRC).parts[0] == "clients":
+            continue
+        rel = p.relative_to(REPO).as_posix()
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
+            if _HTTP_SITE.search(_strip_prose(line)):
+                if rel in _SANCTIONED_HTTP:
+                    sanctioned[rel] += 1
+                else:
+                    offenders.append(f"{rel}:{n}")
+    assert not offenders, "send HTTP only through a client in src/reaper/clients/:\n" + "\n".join(
+        offenders
+    )
+    assert dict(sanctioned) == _SANCTIONED_HTTP, (
+        f"the sanctioned HTTP sites moved: found {dict(sanctioned)}, expected "
+        f"{_SANCTIONED_HTTP}. A new site in a sanctioned file is not covered by its exception. "
+        "Move it into clients/. A site that vanished means the matcher stopped seeing it."
+    )
 
 
 def test_the_admin_password_lockout_is_reached_through_one_function() -> None:
@@ -8111,3 +8161,668 @@ def test_the_bare_httpexception_matcher_reads_every_shape_it_claims() -> None:
             else next(kw.value for kw in maybe_call.keywords if kw.arg == "detail")
         )
         assert not _is_composed_on_the_spot(detail), f"should be left alone: {source}"
+
+
+# --- engineering rules a tree scan can enforce ---------------------------------------------
+
+
+def _parents(tree: ast.AST) -> dict[ast.AST, ast.AST]:
+    """Every node in ``tree`` mapped to the node that holds it."""
+    return {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+
+
+def _enclosing_defs(
+    parents: dict[ast.AST, ast.AST], node: ast.AST
+) -> list[ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef]:
+    """The functions and classes around ``node``, innermost first."""
+    found: list[ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef] = []
+    while node in parents:
+        node = parents[node]
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            found.append(node)
+    return found
+
+
+def _called_name(call: ast.Call) -> str:
+    """``create_task`` for ``asyncio.create_task(...)``, ``loop.create_task(...)`` or
+    ``create_task(...)`` alike."""
+    func = call.func
+    return func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+
+
+#: Every shipped .ts and .tsx under ``frontend/src``: no tests, no test harness, no ambient
+#: declarations. The frontend bans below read this walk, and a ban passes on an empty one.
+_EXPECTED_SHIPPED_FRONTEND_FILES = 130
+
+
+def _frontend_hits(pattern: re.Pattern[str], suffix: str = "") -> list[tuple[str, int]]:
+    """``(frontend/src-relative path, line)`` for every match of ``pattern`` in shipped code.
+
+    Comments are blanked first and line numbers kept, so a comment explaining a ban does not
+    break it. The pattern runs over the whole file, so a spelling wrapped across lines is
+    found. ``suffix`` narrows the walk to ``.tsx`` where a gate reads only components.
+    """
+    files = _shipped_frontend_source()
+    assert len(files) >= _EXPECTED_SHIPPED_FRONTEND_FILES, (
+        f"expected at least {_EXPECTED_SHIPPED_FRONTEND_FILES} shipped .ts/.tsx files under "
+        f"frontend/src/, walked {len(files)}. If you deleted some, lower "
+        "_EXPECTED_SHIPPED_FRONTEND_FILES. If you did not, the walk lost part of the tree."
+    )
+    hits: list[tuple[str, int]] = []
+    for path in files:
+        if not path.name.endswith(suffix):
+            continue
+        text = _without_comments_keeping_lines(path.read_text(encoding="utf-8"))
+        rel = path.relative_to(FRONTEND_SRC).as_posix()
+        hits.extend((rel, text.count("\n", 0, m.start()) + 1) for m in pattern.finditer(text))
+    return hits
+
+
+#: A ``FROM`` line: optional flags such as ``--platform``, the image, an optional stage name.
+_DOCKERFILE_FROM = re.compile(
+    r"^[ \t]*FROM\s+(?:--\S+\s+)*(\S+)(?:\s+AS\s+(\S+))?", re.IGNORECASE | re.MULTILINE
+)
+
+#: The frontend build stage and the runtime stage.
+_EXPECTED_DOCKERFILE_FROMS = 2
+
+
+def test_every_dockerfile_base_image_is_pinned_by_digest() -> None:
+    """Every ``FROM`` in the ``Dockerfile`` pins its image with ``@sha256:``.
+
+    A tag alone resolves to whatever the registry serves on the day CI builds. A ``FROM``
+    that names an earlier build stage pulls nothing and is exempt.
+    """
+    text = (REPO / "Dockerfile").read_text(encoding="utf-8")
+    stages: set[str] = set()
+    froms = 0
+    unpinned: list[str] = []
+    for m in _DOCKERFILE_FROM.finditer(text):
+        froms += 1
+        image, stage = m.group(1), m.group(2)
+        if image.lower() not in stages and "@sha256:" not in image:
+            lineno = text.count("\n", 0, m.start()) + 1
+            unpinned.append(f"Dockerfile:{lineno}: {image}")
+        if stage:
+            stages.add(stage.lower())
+    assert not unpinned, (
+        "pin each base image by digest, as image:tag@sha256:<digest>:\n" + "\n".join(unpinned)
+    )
+    assert froms == _EXPECTED_DOCKERFILE_FROMS, (
+        f"the Dockerfile has {froms} FROM lines, not {_EXPECTED_DOCKERFILE_FROMS}. If you added "
+        "or removed a stage, bump the number. If you did not, the matcher stopped reading one."
+    )
+
+
+def _json_strings(value: object, key: str = "") -> list[tuple[str, str]]:
+    """``(dotted key, text)`` for every string leaf of a parsed JSON value."""
+    if isinstance(value, dict):
+        return [
+            leaf
+            for k, v in value.items()
+            for leaf in _json_strings(v, f"{key}.{k}" if key else str(k))
+        ]
+    if isinstance(value, list):
+        return [leaf for i, v in enumerate(value) for leaf in _json_strings(v, f"{key}[{i}]")]
+    return [(key, value)] if isinstance(value, str) else []
+
+
+#: The English catalogs: the UI copy, and the notes Weblate shows translators beside it.
+_EN_CATALOGS = ("ui.json", "ui.notes.json")
+
+
+def test_no_english_catalog_string_holds_an_em_dash() -> None:
+    """No string in ``frontend/src/locales/en/*.json`` holds an em dash.
+
+    Operator copy separates two thoughts with a period, a comma or a colon. The translator
+    notes are held to the same rule.
+    """
+    catalogs = sorted((FRONTEND_SRC / "locales" / "en").glob("*.json"))
+    assert [p.name for p in catalogs] == sorted(_EN_CATALOGS), (
+        f"frontend/src/locales/en/ holds {[p.name for p in catalogs]}, expected "
+        f"{sorted(_EN_CATALOGS)}. Add a new catalog to _EN_CATALOGS."
+    )
+    offenders: list[str] = []
+    for path in catalogs:
+        leaves = _json_strings(json.loads(path.read_text(encoding="utf-8")))
+        assert leaves, f"{path.name} parsed to no strings, so this check read nothing"
+        offenders += [f"{path.relative_to(REPO)}: {k}" for k, text in leaves if "—" in text]
+    assert not offenders, (
+        "these strings hold an em dash. Reword each with a period, comma or colon:\n"
+        + "\n".join(offenders)
+    )
+
+
+#: The calls that start a task.
+_TASK_STARTERS = frozenset({"create_task", "ensure_future"})
+
+#: Every task ``src/reaper`` starts, reconciled by hand. Five detached tasks carry
+#: ``report_background_failure``: two in ``main.py``, one in ``api/scan.py``, two in
+#: ``api/runs.py``. The function around the scan's fan-out in ``services/snapshot.py`` reaps
+#: it. ``aio.py`` and the long delete in ``clients/arr.py`` await their own.
+_EXPECTED_TASK_SITES = 8
+
+
+def _observes(scope: ast.AST, names: set[str]) -> bool:
+    """Whether ``scope`` awaits one of ``names`` or calls ``add_done_callback`` on one."""
+    for node in ast.walk(scope):
+        if isinstance(node, ast.Await) and any(
+            isinstance(inner, ast.Name) and inner.id in names for inner in ast.walk(node)
+        ):
+            return True
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr == "add_done_callback"
+            and isinstance(node.value, ast.Name)
+            and node.value.id in names
+        ):
+            return True
+    return False
+
+
+def _task_sites(source: str) -> list[tuple[int, bool]]:
+    """``(line, observed)`` for every task started in one module.
+
+    A task is observed when ``add_done_callback`` is called on it, or when an ``await`` in a
+    function around the call names the variable it is bound to or a list it is appended to.
+    A task that is returned, passed on, or never bound reads as unobserved.
+    """
+    tree = ast.parse(source)
+    parents = _parents(tree)
+    sites: list[tuple[int, bool]] = []
+    for call in ast.walk(tree):
+        if not isinstance(call, ast.Call) or _called_name(call) not in _TASK_STARTERS:
+            continue
+        holder = parents.get(call)
+        if isinstance(holder, ast.Attribute) and holder.attr == "add_done_callback":
+            sites.append((call.lineno, True))
+            continue
+        stmt: ast.AST = call
+        while not isinstance(stmt, ast.stmt):
+            stmt = parents[stmt]
+        targets = stmt.targets if isinstance(stmt, ast.Assign) else [getattr(stmt, "target", None)]
+        names = {t.id for t in targets if isinstance(t, ast.Name)}
+        scopes: list[ast.AST] = [
+            d for d in _enclosing_defs(parents, stmt) if not isinstance(d, ast.ClassDef)
+        ] or [tree]
+        for node in ast.walk(scopes[0]):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"append", "add"}
+                and isinstance(node.func.value, ast.Name)
+                and any(isinstance(a, ast.Name) and a.id in names for a in node.args)
+            ):
+                names.add(node.func.value.id)
+        sites.append((call.lineno, any(_observes(scope, names) for scope in scopes)))
+    return sites
+
+
+def test_every_started_task_is_observed() -> None:
+    """Every task ``src/reaper`` starts has a done-callback, or a function around it awaits it.
+
+    A task nobody observes keeps its exception until garbage collection, and the log then
+    says only "Task exception was never retrieved". Hand a detached task to
+    ``add_done_callback(report_background_failure)``.
+    """
+    sites: list[tuple[str, bool]] = []
+    for path in _src_python():
+        rel = path.relative_to(REPO).as_posix()
+        source = path.read_text(encoding="utf-8")
+        sites += [(f"{rel}:{line}", ok) for line, ok in _task_sites(source)]
+    unobserved = [site for site, ok in sites if not ok]
+    assert not unobserved, (
+        "these tasks are never awaited and carry no done-callback. Call "
+        "task.add_done_callback(report_background_failure) from reaper.aio:\n"
+        + "\n".join(unobserved)
+    )
+    assert len(sites) == _EXPECTED_TASK_SITES, (
+        f"src/reaper starts {len(sites)} tasks, not {_EXPECTED_TASK_SITES}: "
+        f"{[s for s, _ in sites]}. If you added or removed one, bump _EXPECTED_TASK_SITES. "
+        "If you did not, the walk stopped seeing one."
+    )
+
+
+def test_the_task_walk_reads_every_spelling_it_claims() -> None:
+    """The walk above, driven against each way the tree starts and observes a task.
+
+    Observed: a callback on the bound name, a callback chained on the call, an await in the
+    same function, a list comprehension gathered later, and a task appended to a list that an
+    enclosing function awaits. Unobserved: a bare statement, a bound name nobody reads, an
+    annotated ``loop.create_task`` nobody reads, and a bare ``create_task`` imported by name.
+    """
+    observed = [
+        "async def f():\n    t = asyncio.create_task(g())\n    t.add_done_callback(cb)\n",
+        "def f():\n    asyncio.create_task(g()).add_done_callback(cb)\n",
+        "async def f():\n    t = asyncio.ensure_future(g())\n    await asyncio.wait({t})\n",
+        "async def f(aws):\n"
+        "    ts = [asyncio.ensure_future(a) for a in aws]\n"
+        "    return await asyncio.gather(*ts)\n",
+        "async def f():\n"
+        "    out = []\n"
+        "    def spawn(c):\n"
+        "        t = asyncio.create_task(c)\n"
+        "        out.append(t)\n"
+        "        return t\n"
+        "    spawn(g())\n"
+        "    await reap(out)\n",
+    ]
+    unobserved = [
+        "def f():\n    asyncio.create_task(g())\n",
+        "def f():\n    t = asyncio.create_task(g())\n    return None\n",
+        "def f(loop):\n    t: asyncio.Task[None] = loop.create_task(g())\n",
+        "from asyncio import create_task\nasync def f():\n    create_task(g())\n    await h()\n",
+    ]
+    for source in observed:
+        sites = _task_sites(source)
+        assert len(sites) == 1, f"the walk saw {len(sites)} tasks in:\n{source}"
+        assert sites[0][1], f"should read as observed:\n{source}"
+    for source in unobserved:
+        sites = _task_sites(source)
+        assert len(sites) == 1, f"the walk saw {len(sites)} tasks in:\n{source}"
+        assert not sites[0][1], f"should read as unobserved:\n{source}"
+
+
+#: The two builders that turn evidence into a ``Facts``, one per lane.
+_FACT_BUILDERS = (
+    ("services/snapshot.py", "build_facts"),
+    ("services/season_scan.py", "build_season_facts"),
+)
+
+
+def test_both_fact_builders_name_every_facts_field() -> None:
+    """``snapshot.build_facts`` and ``season_scan.build_season_facts`` each build one ``Facts``
+    and pass every one of its fields by keyword.
+
+    A field set in one lane and left to its default in the other changes scores and coverage
+    in one lane only. Pass a new field in both, as ``Absent`` with a comment where a lane has
+    no source for it.
+    """
+    fields = {f.name for f in dataclasses.fields(Facts)}
+    for rel, name in _FACT_BUILDERS:
+        tree = ast.parse((SRC / rel).read_text(encoding="utf-8"))
+        builder = next(
+            (
+                n
+                for n in tree.body
+                if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name == name
+            ),
+            None,
+        )
+        assert builder is not None, f"src/reaper/{rel} has no top-level {name}"
+        calls = [
+            n
+            for n in ast.walk(builder)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "Facts"
+        ]
+        assert len(calls) == 1, f"{name} builds {len(calls)} Facts, expected exactly one"
+        call = calls[0]
+        passed = {kw.arg for kw in call.keywords if kw.arg is not None}
+        assert not call.args and len(passed) == len(call.keywords), (
+            f"{name} passes Facts a positional or ** argument, which this check cannot read. "
+            "Pass every field by keyword."
+        )
+        assert passed == fields, (
+            f"{name} in src/reaper/{rel} leaves out {sorted(fields - passed)} and passes "
+            f"{sorted(passed - fields)}, which Facts does not have. Pass every field in both "
+            "builders."
+        )
+
+
+#: A name that holds degradation reasons. ``ScanContext.degraded_reasons``, the stored
+#: ``degraded_reason``, ``extra_degrade_reasons``, ``pre_scan_degradations``, every
+#: ``*_degradations`` reader, and ``reasons``, which ``src/reaper`` binds only to lists of
+#: degradation reasons.
+_PY_DEGRADATION_NAME = re.compile(r"\w*degrad\w*_reasons?|\w*degradations|reasons")
+
+#: String methods that test a part of the text they are called on.
+_PY_PART_TESTS = frozenset({"startswith", "endswith", "find", "rfind", "index", "rindex", "count"})
+
+#: Regex methods that test a part of the text they are handed.
+_PY_REGEX_TESTS = frozenset({"search", "match", "fullmatch", "findall", "finditer"})
+
+#: The browser reads a degradation reason from one field, ``degraded_reason``.
+_TS_DEGRADATION_NAME = r"\bdegraded_?[Rr]easons?\b"
+_TS_DEGRADATION_READ = re.compile(_TS_DEGRADATION_NAME)
+
+#: A part test on that field: chained after it, through an optional ``?? ""`` fallback, a
+#: closing paren and zero-argument calls such as ``.toLowerCase()``, or handed the field as
+#: its argument, as ``/plex/.test(...)`` is.
+_TS_DEGRADATION_TEST = re.compile(
+    _TS_DEGRADATION_NAME
+    + r"""(?:\s*\?\?\s*(?:"[^"]*"|'[^']*'))?\s*\)?(?:\s*\??\.\s*\w+\(\s*\))*"""
+    + r"\s*\??\.\s*(?:includes|indexOf|lastIndexOf|startsWith|endsWith|search|match)\b"
+    + r"|\.\s*(?:test|includes|indexOf|search|match)\s*\(\s*[\w$.?]*"
+    + _TS_DEGRADATION_NAME
+)
+
+#: How many times ``src/reaper`` names a degradation reason, and how many times shipped
+#: frontend code does. Reconciled by hand.
+_EXPECTED_PY_DEGRADATION_READS = 40
+_EXPECTED_TS_DEGRADATION_READS = 3
+
+
+def _py_identifier(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    return node.attr if isinstance(node, ast.Attribute) else ""
+
+
+def _py_degradation_tests(source: str) -> tuple[int, list[int]]:
+    """How often one module names a degradation reason, and the lines that test one by part.
+
+    A part test is ``in`` or ``not in`` with a reason on the right, a string method from
+    ``_PY_PART_TESTS`` called on a reason, or a regex method from ``_PY_REGEX_TESTS`` handed
+    one. A reason anywhere inside the expression counts, so ``" ".join(reasons)`` and
+    ``reason.lower()`` both do. A loop variable bound from a reason list is not read.
+    """
+
+    def names_a_reason(node: ast.AST) -> bool:
+        return any(_PY_DEGRADATION_NAME.fullmatch(_py_identifier(n)) for n in ast.walk(node))
+
+    reads = 0
+    tests: list[int] = []
+    for node in ast.walk(ast.parse(source)):
+        if _PY_DEGRADATION_NAME.fullmatch(_py_identifier(node)):
+            reads += 1
+        if isinstance(node, ast.Compare):
+            pairs = zip(node.ops, node.comparators, strict=True)
+            if any(isinstance(op, ast.In | ast.NotIn) and names_a_reason(r) for op, r in pairs):
+                tests.append(node.lineno)
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            method = node.func.attr
+            if (method in _PY_PART_TESTS and names_a_reason(node.func.value)) or (
+                method in _PY_REGEX_TESTS and any(names_a_reason(a) for a in node.args)
+            ):
+                tests.append(node.lineno)
+    return reads, tests
+
+
+def test_no_code_detects_degradation_by_matching_the_reason_text() -> None:
+    """Degradation is read from a typed flag, never by testing the reason text for a part.
+
+    The reason is operator copy and gets reworded, so ``"plex" in " ".join(reasons)`` stops
+    matching with no error. Carry a boolean on the scan context, as ``activity_degraded``
+    is carried.
+    """
+    reads = 0
+    offenders: list[str] = []
+    for path in _src_python():
+        found, lines = _py_degradation_tests(path.read_text(encoding="utf-8"))
+        reads += found
+        offenders += [f"{path.relative_to(REPO).as_posix()}:{n}" for n in lines]
+    offenders += [f"frontend/src/{rel}:{n}" for rel, n in _frontend_hits(_TS_DEGRADATION_TEST)]
+    assert not offenders, (
+        "these test a degradation reason's text. Read a typed flag instead:\n"
+        + "\n".join(offenders)
+    )
+    ts_reads = len(_frontend_hits(_TS_DEGRADATION_READ))
+    assert (reads, ts_reads) == (
+        _EXPECTED_PY_DEGRADATION_READS,
+        _EXPECTED_TS_DEGRADATION_READS,
+    ), (
+        f"src/reaper names a degradation reason {reads} times and shipped frontend code "
+        f"{ts_reads} times, expected {_EXPECTED_PY_DEGRADATION_READS} and "
+        f"{_EXPECTED_TS_DEGRADATION_READS}. Re-count by hand and bump the numbers. A new name "
+        "for a reason belongs in _PY_DEGRADATION_NAME or _TS_DEGRADATION_NAME."
+    )
+
+
+def test_the_degradation_matchers_read_every_spelling_they_claim() -> None:
+    """Both matchers above, driven against the part tests they must catch and the plain reads
+    they must leave alone.
+    """
+    caught_py = [
+        'ok = "plex" in " ".join(context.degraded_reasons)',
+        'ok = "plex" not in snapshot.degraded_reason',
+        'ok = snapshot.degraded_reason.startswith("Plex")',
+        'ok = (snapshot.degraded_reason or "").lower().find("plex") >= 0',
+        'ok = _PLEX.search(" ".join(reasons))',
+        'ok = "x" in pre_scan_degradations',
+    ]
+    left_py = [
+        "ok = bool(context.degraded_reasons)",
+        "for reason in extra_degrade_reasons:\n    out.append(reason)",
+        'ok = "plex" in other_text',
+        'reason = " ".join(context.degraded_reasons) or None',
+    ]
+    for source in caught_py:
+        reads, tests = _py_degradation_tests(source)
+        assert reads and tests, f"should be caught: {source}"
+    for source in left_py:
+        _reads, tests = _py_degradation_tests(source)
+        assert not tests, f"should be left alone: {source}"
+
+    caught_ts = [
+        'snapshot.degraded_reason?.includes("Plex")',
+        '(snapshot.data?.degraded_reason ?? "").startsWith("Plex")',
+        'snapshot.degraded_reason\n  ?.toLowerCase()\n  .indexOf("plex")',
+        '/plex/i.test(snapshot.degraded_reason ?? "")',
+    ]
+    left_ts = [
+        "values={{ reason: snapshot.degraded_reason }}",
+        'values={{ reason: snapshot.data?.degraded_reason ?? "" }}',
+        "degraded_reason: string | null;",
+    ]
+    for source in caught_ts:
+        assert _TS_DEGRADATION_TEST.search(source), f"should be caught: {source}"
+    for source in left_ts:
+        assert _TS_DEGRADATION_READ.search(source), f"the read matcher missed: {source}"
+        assert not _TS_DEGRADATION_TEST.search(source), f"should be left alone: {source}"
+
+
+def test_no_comment_in_src_cites_a_rule_number() -> None:
+    """No comment or docstring in ``src/reaper`` cites a rule number.
+
+    A comment states its constraint in plain words. The number lives in the rule file, which
+    a reader of the code does not have open.
+    """
+    offenders = [
+        f"{p.relative_to(REPO).as_posix()}:{n}: {m.group(0)}"
+        for p in _src_python()
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        for m in _RULE_CITE.finditer(line)
+    ]
+    assert not offenders, (
+        "these cite a rule number. State the constraint in plain words instead:\n"
+        + "\n".join(offenders)
+    )
+
+
+#: Every ``chmod`` in ``src/reaper``, keyed by the function around it, with the count and why
+#: it opens no window where a secret is readable. A secret file or an owner-only directory is
+#: created at its final mode, so a ``chmod`` may only narrow something already private or
+#: something an earlier version left wider.
+_CHMOD_SITES: dict[str, tuple[int, str]] = {
+    "src/reaper/logbuffer.py::_OwnerOnlyRotatingFileHandler._open": (
+        1,
+        "narrows a log file an earlier version left wider. New files open under a 077 umask.",
+    ),
+    "src/reaper/logbuffer.py::configure_file_logging": (
+        1,
+        "narrows a log directory an earlier version left wider. mkdir creates it at 0700.",
+    ),
+    "src/reaper/secrets.py::_ensure_owner_only": (
+        1,
+        "narrows an existing key file. A new key is created by os.open with O_EXCL at 0600.",
+    ),
+    "src/reaper/services/backup.py::snapshot_before_migration": (
+        1,
+        "the archive was written inside a 0700 mkdtemp, so no other user ever reached it.",
+    ),
+}
+
+
+def test_every_chmod_is_classified_in_writing() -> None:
+    """Every ``chmod`` in ``src/reaper`` carries a written reason in ``_CHMOD_SITES``.
+
+    A secret written first and narrowed after is readable by other users in between. Create
+    it at its final mode with ``os.open(..., O_EXCL, 0o600)`` or ``mkdir(mode=0o700)``.
+    """
+    found: Counter[str] = Counter()
+    for path in _src_python():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        parents = _parents(tree)
+        rel = path.relative_to(REPO).as_posix()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and _called_name(node) in {"chmod", "fchmod", "lchmod"}:
+                names = [d.name for d in reversed(_enclosing_defs(parents, node))]
+                found[f"{rel}::{'.'.join(names) or '<module>'}"] += 1
+    expected = {key: count for key, (count, _why) in _CHMOD_SITES.items()}
+    assert dict(found) == expected, (
+        f"the chmod calls in src/reaper moved. Found {dict(found)}, classified {expected}. "
+        "Create a secret at its final mode instead of narrowing it after. A chmod that only "
+        "narrows something already private gets a line in _CHMOD_SITES saying so."
+    )
+
+
+#: A forwarded header's name, in the spelling Starlette serves or an environ-style one.
+_FORWARDED_HEADER = re.compile(r"x[-_]forwarded[-_]", re.IGNORECASE)
+
+#: The modules that read a forwarded header, and how many reads each holds. Both decide
+#: trust through ``auth.proxy.peer_is_trusted_proxy``.
+_FORWARDED_HEADER_READS = {"src/reaper/auth/proxy.py": 1, "src/reaper/auth/cookie.py": 1}
+
+
+def test_forwarded_headers_are_read_only_where_proxy_trust_is_checked() -> None:
+    """A forwarded header is read only in ``auth/proxy.py`` and ``auth/cookie.py``.
+
+    Any client can write ``X-Forwarded-For`` or ``X-Forwarded-Proto``, so a read must pass the
+    trusted-proxy check those two modules make. Read the header through them.
+    """
+    sites: list[str] = []
+    for path in _src_python():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        docstrings = {
+            id(node.value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant) or id(node) in docstrings:
+                continue
+            value = node.value
+            text = value.decode("latin-1") if isinstance(value, bytes) else value
+            if isinstance(text, str) and _FORWARDED_HEADER.search(text):
+                sites.append(f"{path.relative_to(REPO).as_posix()}:{node.lineno}")
+    by_file = Counter(site.rsplit(":", 1)[0] for site in sites)
+    assert dict(by_file) == _FORWARDED_HEADER_READS, (
+        f"forwarded headers are read at {sites}, expected only "
+        f"{_FORWARDED_HEADER_READS}. Read the header in auth/proxy.py or auth/cookie.py, "
+        "behind peer_is_trusted_proxy."
+    )
+
+
+_ROLE_BUTTON = re.compile(r"""\brole\s*=\s*\{?\s*["'`]button["'`]""")
+
+
+def test_no_shipped_component_gives_an_element_the_button_role() -> None:
+    """No shipped ``.tsx`` gives an element ``role="button"``.
+
+    The role makes every child presentational, and the container cannot hold real buttons.
+    Put a real control on the card's title, as ``components/CardOpen.tsx`` does.
+    """
+    offenders = _frontend_hits(_ROLE_BUTTON, ".tsx")
+    assert not offenders, "use a real <button> instead of role=button:\n" + "\n".join(
+        f"frontend/src/{rel}:{n}" for rel, n in offenders
+    )
+
+
+_PROMISE_ALL = re.compile(r"\bPromise\s*\.\s*all\b")
+
+#: Every ``Promise.all`` in shipped frontend code, by file, with the count and why it is not a
+#: bulk operation over independent requests.
+_PROMISE_ALL_SITES: dict[str, tuple[int, str]] = {
+    "components/ListModal.tsx": (2, "cache refresh after a save and after a delete"),
+    "components/ReapPlan.tsx": (1, "paging: one run's outcomes, useless with a page missing"),
+    "components/ReviewQueue.tsx": (1, "cache refresh after a newer scan lands"),
+}
+
+
+def test_every_promise_all_is_classified_in_writing() -> None:
+    """Every ``Promise.all`` in shipped frontend code carries a written reason.
+
+    ``Promise.all`` rejects on the first failure and reports none of the other outcomes. A
+    bulk operation over independent requests uses ``Promise.allSettled`` and reconciles the
+    UI from every result.
+    """
+    found = Counter(rel for rel, _ in _frontend_hits(_PROMISE_ALL))
+    expected = {rel: count for rel, (count, _why) in _PROMISE_ALL_SITES.items()}
+    assert dict(found) == expected, (
+        f"the Promise.all calls moved. Found {dict(found)}, classified {expected}. Use "
+        "Promise.allSettled for independent requests. A cache refresh or a paged read gets a "
+        "line in _PROMISE_ALL_SITES."
+    )
+
+
+_NATIVE_CONFIRM = re.compile(r"(?<![\w$.])(?:(?:window|globalThis|self)\s*\.\s*)?confirm\s*\(")
+
+
+def test_no_shipped_code_calls_the_native_confirm_dialog() -> None:
+    """No shipped frontend code calls the browser's ``confirm()``.
+
+    The native dialog ignores the app's theme and typography. Use a two-step confirm in
+    place, as ``components/DeletionToggle.tsx`` does.
+    """
+    offenders = _frontend_hits(_NATIVE_CONFIRM)
+    assert not offenders, "use the app's two-step confirm instead:\n" + "\n".join(
+        f"frontend/src/{rel}:{n}" for rel, n in offenders
+    )
+
+
+_NUMBER_INPUT = re.compile(r"""\btype\s*=\s*\{?\s*["'`]number["'`]""")
+
+#: Every ``type="number"`` in a shipped ``.tsx``, by file, with the count and why.
+_NUMBER_INPUT_SITES: dict[str, tuple[int, str]] = {
+    "components/QuantityInput.tsx": (2, "QuantityInput and FixedQuantity themselves"),
+    "components/PolicyRuleEditors.tsx": (4, "the branch for a field with no unit"),
+}
+
+
+def test_every_number_input_is_classified_in_writing() -> None:
+    """Every ``type="number"`` in a shipped ``.tsx`` carries a written reason.
+
+    A number with a unit goes through ``QuantityInput`` or ``FixedQuantity``, which put the
+    unit in the box. A bare number input sits beside loose unit text.
+    """
+    found = Counter(rel for rel, _ in _frontend_hits(_NUMBER_INPUT, ".tsx"))
+    expected = {rel: count for rel, (count, _why) in _NUMBER_INPUT_SITES.items()}
+    assert dict(found) == expected, (
+        f"the number inputs moved. Found {dict(found)}, classified {expected}. Use "
+        "QuantityInput or FixedQuantity from components/QuantityInput.tsx for a number with a "
+        "unit. A number with no unit gets a line in _NUMBER_INPUT_SITES."
+    )
+
+
+_CAN_CLOSE_PROP = re.compile(r"\bcanClose\s*=\s*\{")
+_BACK_CLOSE_MIRROR = re.compile(r"\buseBackCloseMirror\s*\(")
+
+#: Mounted only by the setup wizard, which ``App.tsx`` renders outside ``BackNavProvider``.
+_NO_BACK_LAYER = frozenset({"components/DiscordModal.tsx"})
+
+#: Every shipped ``.tsx`` that passes ``canClose``.
+_EXPECTED_GUARDED_MODALS = 4
+
+
+def test_every_modal_close_guard_also_binds_browser_back() -> None:
+    """A shipped ``.tsx`` that passes ``canClose`` also calls ``useBackCloseMirror``.
+
+    Browser Back closes the top modal. Without the mirror it closes one whose close button
+    and Escape are refusing.
+    """
+    guarded = sorted({rel for rel, _ in _frontend_hits(_CAN_CLOSE_PROP, ".tsx")})
+    mirrored = {rel for rel, _ in _frontend_hits(_BACK_CLOSE_MIRROR, ".tsx")}
+    assert len(guarded) == _EXPECTED_GUARDED_MODALS, (
+        f"{len(guarded)} shipped .tsx files pass canClose, not {_EXPECTED_GUARDED_MODALS}: "
+        f"{guarded}. If you added or removed one, bump _EXPECTED_GUARDED_MODALS."
+    )
+    assert _NO_BACK_LAYER.issubset(guarded), (
+        f"{sorted(_NO_BACK_LAYER - set(guarded))} no longer pass canClose. Drop them from "
+        "_NO_BACK_LAYER."
+    )
+    missing = [rel for rel in guarded if rel not in mirrored and rel not in _NO_BACK_LAYER]
+    assert not missing, (
+        "these pass canClose but never call useBackCloseMirror, so Browser Back skips the "
+        "guard. Call useBackCloseMirror(blockCloseRef, canClose) from backnav.tsx:\n"
+        + "\n".join(f"frontend/src/{rel}" for rel in missing)
+    )
