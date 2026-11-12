@@ -176,7 +176,7 @@ class ArrClient(BaseClient):
         * ``identity.root_folder_paths`` uses each folder's ``path`` so the folder
           corroborator can measure a path below the instance's real root, instead of
           guessing where a container mount ends. It ignores ``accessible``.
-        * ``executor._mount_is_up`` reads ``accessible`` before the post-reap trash
+        * ``executor.TrashPurge._mount_is_up`` reads ``accessible`` before the trash
           purge. An unmounted volume makes media look like it vanished, and a purge
           would then destroy library records.
         """

@@ -27,9 +27,9 @@ Two ordering rules matter:
          200 response proves nothing.
       3. refresh the affected Plex path (a partial scan, not a full re-download)
 
-  Plex's ``emptyTrash`` never runs per item. It is one guarded call at the end of the
-  run, gated by an item-count check, because emptying an unmounted library's trash can
-  destroy the whole library.
+  Plex's ``emptyTrash`` never runs per item. It is one guarded call per section after
+  Plex finishes the run's scans (``executor.TrashPurge``), because emptying an unmounted
+  library's trash can destroy the whole library.
 """
 
 from __future__ import annotations

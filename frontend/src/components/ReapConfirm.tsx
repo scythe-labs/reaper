@@ -170,11 +170,10 @@ export function ReapConfirm({
 
   const dryClean = dryReport?.dry_run === true && dryReport.state === "completed";
   const phraseOk = typed.trim() === phrase;
-  // Emptying Plex's trash takes the records of everything already in there, not just what
-  // this run deleted, and the executor's count-delta gate structurally cannot see those
-  // items. So the operator is told and must tick before Reap enables. The tick is dropped
-  // whenever the plan's content changes (the effect above), so consent from one plan can
-  // never carry into a different one.
+  // Emptying Plex's trash takes the records of everything already in there. Reaper's own
+  // purge refuses such a trash, but Plex's own empty-after-scan does not. So the operator is
+  // told and must tick before Reap enables. The tick is dropped whenever the plan's content
+  // changes (the effect above), so consent from one plan can never carry into a different one.
   const trash = usePlexTrash();
   const warn = trashWarning(trash.data, trash.isError);
   const trashOk = !warn.show || trashAcked;

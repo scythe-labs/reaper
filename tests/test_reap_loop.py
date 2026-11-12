@@ -67,6 +67,7 @@ from reaper.services.executor import (
     ReapGateway,
     ReapProgress,
     RunReport,
+    TrashPurge,
     _common_parent,
     _deletable_bytes,
     _Delete,
@@ -1852,7 +1853,7 @@ class TestStopMidRun:
             session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
         )
         run = await _plan(session, snapshot_id)
-        plex = FakePlex(sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 99]})
+        plex = FakePlex(sections={"Movies": ["/movies"]}, trash={"Movies": {701}})
         radarr = FakeRadarr(path="/movies/One (2001)")
 
         answers = iter([False, True])
@@ -1894,14 +1895,8 @@ class TestStopMidRun:
         must still mark the run ABORTED before the cancellation propagates, so shutdown
         never leaves the run EXECUTING.
 
-        It must not tidy Plex. The purge polls each affected section for up to
-        ``_PLEX_SETTLE_ATTEMPTS * _plex_settle_delay`` before it can even decide, so
-        honoring it here would hold the container's shutdown open for tens of seconds per
-        section, and could empty a section's trash while the process is being torn down.
-        The queued rescans go with it, since they are sent at the end of a run and a
-        canceled run has no end. The tidy-up is cosmetic, where the state commit has to
-        survive, so the state is made durable and Plex is left to its own scheduled scan,
-        or to the next run over the same section.
+        It must not tidy Plex. The queued rescans are dropped and no trash purge is
+        recorded, so nothing reaches Plex while the process is torn down.
         """
         snapshot_id = await _snapshot_many(
             session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
@@ -1923,19 +1918,18 @@ class TestStopMidRun:
                     raise asyncio.CancelledError
                 return []
 
-        plex = _CancelBeforeSecondItem(
-            sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 99]}
-        )
+        plex = _CancelBeforeSecondItem(sections={"Movies": ["/movies"]}, trash={"Movies": {701}})
         radarr = FakeRadarr(path="/movies/One (2001)")
+        executor = _executor(session, _gateway(radarr={1: radarr}, plex=plex))
 
         with pytest.raises(asyncio.CancelledError):
-            await _real(session, run, _gateway(radarr={1: radarr}, plex=plex))
+            await executor.execute(run.id)
 
         # On disk, not merely on the session's copy of the row. A shutdown is exactly when
         # an in-memory terminal state buys nothing.
         assert (await _stored_run(async_factory, run.id)).state is RunState.ABORTED  # not EXECUTING
         assert plex.refreshed == []
-        # The settle-wait and the purge stay out of the cancellation too.
+        assert executor.trash_purge is None
         assert plex.emptied == []
 
     async def test_progress_is_reported_after_every_item(self, session: AsyncSession) -> None:
@@ -1956,7 +1950,6 @@ class TestStopMidRun:
             armed_recheck=_armed_forever,
             progress=lambda p: seen.append((p.done, p.total, p.deleted_items)),
             exclusion_poll_delay=0.0,
-            plex_settle_delay=0.0,
         )
         report = await executor.execute(run.id)
 
@@ -2626,15 +2619,36 @@ class TestASpareIsHonoredAtExecuteTime:
 
 
 class TestPlexCleanup:
+    async def test_the_run_itself_never_empties_the_trash(self, session: AsyncSession) -> None:
+        """The run sends the rescan and records what the purge needs. The purge waits for
+        Plex to finish its scans, so nothing empties the trash before ``execute`` returns."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+        run = await _plan(session, snapshot_id)
+        plex = FakePlex(sections={"Movies": ["/movies"]}, trash={"Movies": {700}})
+        executor = _executor(
+            session, _gateway(radarr={1: FakeRadarr(path="/movies/Worthless")}, plex=plex)
+        )
+
+        report = await executor.execute(run.id)
+
+        assert report.deleted_items == 1
+        assert plex.refreshed == [("Movies", "/movies/Worthless")]
+        assert plex.emptied == []
+        assert executor.trash_purge == TrashPurge(
+            deleted={100: frozenset({700})},
+            titles={100: "Movies"},
+            instances=frozenset({("radarr", 1)}),
+        )
+
     async def test_a_mapped_path_is_refreshed_then_trash_purged(
         self, session: AsyncSession
     ) -> None:
         """After the file is gone, Plex is refreshed for the affected path. With the mount
-        up and the section shrunk by exactly the one delete, the section's trash is also
-        purged, so no stale 'unavailable' entry lingers."""
+        up and the trash holding only that movie, the section's trash is also purged, so no
+        stale 'unavailable' entry lingers."""
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
         run = await _plan(session, snapshot_id)
-        plex = FakePlex(sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 99]})
+        plex = FakePlex(sections={"Movies": ["/movies"]}, trash={"Movies": {700}})
         gateway = _gateway(radarr={1: FakeRadarr(path="/movies/Worthless (2001)")}, plex=plex)
 
         report = await _real(session, run, gateway)
@@ -2668,7 +2682,7 @@ class TestPlexCleanup:
 
         radarr = FakeRadarr(path="/movies/Worthless")
         plex = _CountDeletesFirst(
-            radarr, sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 98]}
+            radarr, sections={"Movies": ["/movies"]}, trash={"Movies": {701, 702}}
         )
 
         report = await _real(session, run, _gateway(radarr={1: radarr}, plex=plex))
@@ -2678,7 +2692,7 @@ class TestPlexCleanup:
         assert plex.refreshed == [("Movies", "/movies/Worthless")]
         # It arrived after both deletes, never between them.
         assert plex.deletes_before_each_refresh == [2]
-        # Both rating keys still reach the purge gate, so it allows a shrink of two.
+        # Both rating keys still reach the purge, so a trash holding both is ours.
         assert plex.emptied == ["Movies"]
 
     async def test_refresh_and_purge_fire_even_when_the_exclusion_fails(
@@ -2688,7 +2702,7 @@ class TestPlexCleanup:
         stale entry. The refresh must fire whenever the file is gone, regardless."""
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
         run = await _plan(session, snapshot_id)
-        plex = FakePlex(sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 99]})
+        plex = FakePlex(sections={"Movies": ["/movies"]}, trash={"Movies": {700}})
         # Exclusion never lands -> the item FAILS, but the file is gone.
         gateway = _gateway(
             radarr={1: FakeRadarr(path="/movies/Worthless", land_exclusion=False)}, plex=plex
@@ -2708,7 +2722,7 @@ class TestPlexCleanup:
         than deleted ones. So the purge is refused."""
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
         run = await _plan(session, snapshot_id)
-        plex = FakePlex(sections={"Movies": ["/movies"]})
+        plex = FakePlex(sections={"Movies": ["/movies"]}, trash={"Movies": {700}})
         gateway = _gateway(
             radarr={1: FakeRadarr(path="/movies/Worthless", root_accessible=False)}, plex=plex
         )
@@ -2731,18 +2745,14 @@ class TestPlexCleanup:
         assert plex.refreshed == []  # refresh silently skipped, never fatal
         assert plex.emptied == []  # nothing to purge
 
-    async def test_the_trash_is_not_purged_when_the_section_shrank_by_more_than_we_deleted(
+    async def test_the_trash_is_not_purged_when_it_holds_a_title_this_run_did_not_remove(
         self, session: AsyncSession
     ) -> None:
-        """This is the mass-loss guard the count-delta gate exists for. A mount flap on
-        the Plex host, invisible to the *arr root-folder check because it is a different
-        mount, could trash hundreds of entries while this run deletes only one movie. When
-        the section shrinks by far more than this run deleted, purging would destroy
-        those items' library records, so the purge is refused.
-        """
+        """A mount flap on the Plex host, invisible to the *arr root-folder check, can trash
+        titles this run never touched. Emptying the trash would destroy their records."""
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
         run = await _plan(session, snapshot_id)
-        plex = FakePlex(sections={"Movies": ["/movies"]}, item_counts={"Movies": [400, 99]})
+        plex = FakePlex(sections={"Movies": ["/movies"]}, trash={"Movies": {700, 999}})
         gateway = _gateway(radarr={1: FakeRadarr(path="/movies/Worthless")}, plex=plex)
 
         report = await _real(session, run, gateway)
@@ -2751,16 +2761,13 @@ class TestPlexCleanup:
         assert plex.refreshed == [("Movies", "/movies/Worthless")]
         assert plex.emptied == []  # but the trash was NOT purged
 
-    async def test_the_trash_is_not_purged_when_plex_never_confirmed_the_delete(
+    async def test_the_trash_is_not_purged_when_plex_has_not_trashed_anything(
         self, session: AsyncSession
     ) -> None:
-        """No shrink at all means Plex has not confirmed OUR removals either (on some
-        servers trashed items still count toward the section size). Purging without
-        confirmation is refused. The stale entry is cosmetic, and Plex's own maintenance
-        will clear it."""
+        """An empty trash means Plex has not confirmed the removal, so nothing is sent."""
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
         run = await _plan(session, snapshot_id)
-        plex = FakePlex(sections={"Movies": ["/movies"]})  # count never changes
+        plex = FakePlex(sections={"Movies": ["/movies"]})
         gateway = _gateway(radarr={1: FakeRadarr(path="/movies/Worthless")}, plex=plex)
 
         report = await _real(session, run, gateway)
@@ -2769,22 +2776,16 @@ class TestPlexCleanup:
         assert plex.refreshed == [("Movies", "/movies/Worthless")]
         assert plex.emptied == []
 
-    async def test_two_copies_of_one_title_grant_the_purge_one_allowance_between_them(
+    async def test_two_copies_of_one_title_purge_on_their_one_listing(
         self, session: AsyncSession
     ) -> None:
-        """Two *arr instances holding the same movie bind to ONE merged Plex listing, so
-        the section's own count can only ever fall by one when both copies go. Counting
-        the allowance per candidate would charge that single listing twice and let a
-        shrink of two pass. A second entry lost from the section could only have come
-        from something other than this run, which is the mass loss this gate exists to
-        refuse. The allowance is the DISTINCT listings removed instead, so two candidates
-        on rating key 700 grant one.
-        """
+        """Two *arr instances holding the same movie bind to one merged Plex listing. The
+        trash holds that listing once, and it is ours."""
         snapshot_id = await _snapshot_many(
             session, [("radarr:1:1", 1 * GB, 700), ("radarr:2:1", 1 * GB, 700)]
         )
         run = await _plan(session, snapshot_id)
-        plex = FakePlex(sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 98]})
+        plex = FakePlex(sections={"Movies": ["/movies"]}, trash={"Movies": {700}})
         gateway = _gateway(
             radarr={
                 1: FakeRadarr(path="/movies/Worthless"),
@@ -2796,19 +2797,18 @@ class TestPlexCleanup:
         report = await _real(session, run, gateway)
 
         assert report.deleted_items == 2  # both copies really went
-        assert plex.emptied == []  # but the section lost one entry too many
+        assert plex.emptied == ["Movies"]
 
-    async def test_two_titles_of_their_own_still_earn_an_allowance_each(
+    async def test_two_titles_of_their_own_purge_when_the_trash_holds_both(
         self, session: AsyncSession
     ) -> None:
-        """The other side of the boundary above. Deduping the allowance is not the same
-        as capping it at one. Two candidates on their own Plex listings remove two
-        entries, the section falls by exactly two, and the purge goes ahead."""
+        """Two candidates on their own Plex listings remove two entries, and a trash holding
+        both is ours."""
         snapshot_id = await _snapshot_many(
             session, [("radarr:1:1", 1 * GB, 700), ("radarr:2:1", 1 * GB, 701)]
         )
         run = await _plan(session, snapshot_id)
-        plex = FakePlex(sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 98]})
+        plex = FakePlex(sections={"Movies": ["/movies"]}, trash={"Movies": {700, 701}})
         gateway = _gateway(
             radarr={
                 1: FakeRadarr(path="/movies/Worthless"),
@@ -2832,7 +2832,7 @@ class TestPlexCleanup:
         run = await _plan(session, snapshot_id)
         plex = FakePlex(
             sections={"Movies": ["/media/movies"], "Movies 4K": ["/media/movies-4k"]},
-            item_counts={"Movies 4K": [50, 49]},
+            trash={"Movies": {700}, "Movies 4K": {700}},
         )
         gateway = _gateway(
             radarr={1: FakeRadarr(path="/media/movies-4k/Worthless (2001)")}, plex=plex
@@ -2849,9 +2849,8 @@ class TestPlexCleanup:
     ) -> None:
         """Two Plex libraries may legally share a title, and a title lookup answers with
         whichever one the server listed first. Addressed by title, this run would refresh
-        one library, read ITS size as the count-delta baseline, and purge ITS trash. That
-        is three operations aimed at a library nothing was deleted from, on the most
-        dangerous call the app makes. Only the key tells them apart."""
+        one library and purge ITS trash, aimed at a library nothing was deleted from. Only
+        the key tells them apart."""
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
         run = await _plan(session, snapshot_id)
         plex = FakePlex(
@@ -2859,10 +2858,8 @@ class TestPlexCleanup:
                 PlexSectionPaths(key=1, title="Movies", locations=("/media/hd",)),
                 PlexSectionPaths(key=2, title="Movies", locations=("/media/4k",)),
             ],
-            # The count-delta baseline. Only the SECOND library shrinks by the one delete.
-            # Read off the first, the purge would be refused (or worse, allowed against a
-            # library whose size moved for some entirely unrelated reason).
-            item_counts_by_key={1: [100, 100], 2: [50, 49]},
+            # Both trashes would pass. Only the second library was refreshed.
+            trash_by_key={1: {700}, 2: {700}},
         )
         gateway = _gateway(radarr={1: FakeRadarr(path="/media/4k/Worthless (2001)")}, plex=plex)
 
@@ -3086,6 +3083,30 @@ async def _armed_forever() -> bool:
     return True
 
 
+def _executor(
+    session: AsyncSession,
+    gateway: ReapGateway,
+    *,
+    armed_recheck: Any = _armed_forever,
+    stop_recheck: Any = None,
+    settings: ProfileSettings | None = None,
+    skip_bins: frozenset[tuple[str, int]] = frozenset(),
+) -> Executor:
+    """An armed, real executor over the given gateway of fakes. Zero poll delay so the
+    exclusion-verification retry does not slow the suite."""
+    return Executor(
+        session,
+        safety=_armed(),
+        settings=settings or ProfileSettings(),
+        dry_run=False,
+        gateway=gateway,
+        armed_recheck=armed_recheck,
+        stop_recheck=stop_recheck,
+        exclusion_poll_delay=0.0,
+        skip_bins=skip_bins,
+    )
+
+
 async def _real(
     session: AsyncSession,
     run: ReapRun,
@@ -3096,21 +3117,20 @@ async def _real(
     settings: ProfileSettings | None = None,
     skip_bins: frozenset[tuple[str, int]] = frozenset(),
 ) -> RunReport:
-    """Execute a run for real (armed) against the given gateway of fakes. Zero poll delay so
-    the exclusion-verification retry does not slow the suite."""
-    executor = Executor(
+    """Execute a run for real, then run its trash purge on the same gateway, as the wait
+    after a reap does once Plex reports quiet."""
+    executor = _executor(
         session,
-        safety=_armed(),
-        settings=settings or ProfileSettings(),
-        dry_run=False,
-        gateway=gateway,
+        gateway,
         armed_recheck=armed_recheck,
         stop_recheck=stop_recheck,
-        exclusion_poll_delay=0.0,
-        plex_settle_delay=0.0,
+        settings=settings,
         skip_bins=skip_bins,
     )
-    return await executor.execute(run.id)
+    report = await executor.execute(run.id)
+    if executor.trash_purge is not None:
+        await executor.trash_purge.run(gateway)
+    return report
 
 
 def _gateway(
@@ -3285,10 +3305,9 @@ class FakePlex:
     """A stand-in Plex, with controllable streams, section paths, and a record of
     refreshes.
 
-    ``item_counts`` scripts what ``item_count`` returns per section, in read order (the
-    last value repeats), so a test can make a section "shrink" by exactly what was
-    deleted, or by more, to prove the purge refuses. The default never shrinks, which the
-    count-delta gate treats as unconfirmed, so no purge happens.
+    ``trash`` is the rating keys each section's trash holds, by title. ``trash_by_key``
+    does the same by key, for two libraries of one name. A section with no entry has an
+    empty trash, so no purge happens. Every section holds 100 items.
 
     Sections are declared by title for readability, and the fake assigns each one a KEY,
     which is all the executor ever sees, because a title cannot address a library on its
@@ -3306,8 +3325,8 @@ class FakePlex:
         raise_on_streams: bool = False,
         sections: dict[str, list[str]] | None = None,
         section_rows: list[PlexSectionPaths] | None = None,
-        item_counts: dict[str, list[int]] | None = None,
-        item_counts_by_key: dict[int, list[int]] | None = None,
+        trash: dict[str, set[int]] | None = None,
+        trash_by_key: dict[int, set[int]] | None = None,
     ) -> None:
         self._streams = streams or []
         self._raise = raise_on_streams
@@ -3316,15 +3335,10 @@ class FakePlex:
             for i, (title, paths) in enumerate((sections or {}).items())
         ]
         self._titles = {row.key: row.title for row in self._rows}
-        # Scripted counts are declared per title (every test that uses them has one
-        # library of that name) and resolved to the key the executor asks with.
-        self._item_counts = {
-            row.key: list(item_counts[row.title])
-            for row in self._rows
-            if item_counts and row.title in item_counts
+        self._trash = {
+            row.key: set(trash[row.title]) for row in self._rows if trash and row.title in trash
         }
-        # And by key directly, for the same-title case where a title cannot say which.
-        self._item_counts.update({k: list(v) for k, v in (item_counts_by_key or {}).items()})
+        self._trash.update({k: set(v) for k, v in (trash_by_key or {}).items()})
         self.refreshed: list[tuple[str, str]] = []
         self.refreshed_keys: list[int] = []
         self.emptied: list[str] = []
@@ -3342,14 +3356,11 @@ class FakePlex:
         self.refreshed.append((self._titles[section_key], path))
         self.refreshed_keys.append(section_key)
 
-    async def is_refreshing(self, section_key: int) -> bool:
-        return False
-
     async def item_count(self, section_key: int) -> int:
-        scripted = self._item_counts.get(section_key)
-        if not scripted:
-            return 100
-        return scripted.pop(0) if len(scripted) > 1 else scripted[0]
+        return 100
+
+    async def trash_keys(self, section_key: int) -> set[int]:
+        return set(self._trash.get(section_key, set()))
 
     async def empty_trash(self, section_key: int) -> None:
         self.emptied.append(self._titles[section_key])
@@ -3473,7 +3484,6 @@ class TestJournalDurability:
                     gateway=_gateway(radarr={1: _DyingRadarr()}),
                     armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
-                    plex_settle_delay=0.0,
                 )
                 with pytest.raises(_ProcessDied, match="process died"):
                     await executor.execute(run_id)
@@ -3526,7 +3536,6 @@ class TestTheExecutingClaimIsAtomic:
                     gateway=_gateway(radarr={1: radarr}, plex=plex),
                     armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
-                    plex_settle_delay=0.0,
                 )
                 task = asyncio.create_task(first.execute(run_id))
                 # The first run is now parked mid-run, AFTER committing its claim.
@@ -3540,7 +3549,6 @@ class TestTheExecutingClaimIsAtomic:
                     gateway=_gateway(radarr={1: radarr}, plex=plex),
                     armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
-                    plex_settle_delay=0.0,
                 )
                 with pytest.raises(ExecutionError, match="executing"):
                     await second.execute(run_id)
@@ -3636,7 +3644,6 @@ class TestRollingThirtyDayCaps:
             gateway=None if dry else _gateway(radarr={1: FakeRadarr()}),
             armed_recheck=None if dry else _armed_forever,
             exclusion_poll_delay=0.0,
-            plex_settle_delay=0.0,
         )
         return await executor.execute(run_id)
 
@@ -4547,10 +4554,10 @@ class TestADeleteThatGetsNoAnswer:
     async def test_a_movie_still_listed_grants_no_purge_allowance(
         self, session: AsyncSession, status: int | None
     ) -> None:
-        """A movie Radarr still lists queues no Plex rescan and adds nothing to the trash
-        purge's allowance, so a library that shrank by one at the same moment keeps its
-        trash. ``None`` is a timeout."""
-        plex = FakePlex(sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 99]})
+        """A movie Radarr still lists queues no Plex rescan and is not counted as removed
+        by this run, so a trash that holds its Plex listing is kept. ``None`` is a
+        timeout."""
+        plex = FakePlex(sections={"Movies": ["/movies"]}, trash={"Movies": {701}})
 
         _, step = await self._movie(
             session, RadarrThatDoesNotAnswer(become_gone=False, status=status), plex
@@ -4566,7 +4573,7 @@ class TestADeleteThatGetsNoAnswer:
     ) -> None:
         """A movie the re-read shows gone is rescanned and its library's trash purged,
         whatever the delete call answered. ``None`` is a timeout."""
-        plex = FakePlex(sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 99]})
+        plex = FakePlex(sections={"Movies": ["/movies"]}, trash={"Movies": {701}})
 
         report, _ = await self._movie(session, RadarrThatDoesNotAnswer(status=status), plex)
 
@@ -4736,9 +4743,7 @@ class TestARunCanSkipARecycleBin:
             session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
         )
         run = await _plan(session, snapshot_id)
-        plex = CancelBeforeSecondItem(
-            sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 99]}
-        )
+        plex = CancelBeforeSecondItem(sections={"Movies": ["/movies"]}, trash={"Movies": {701}})
         radarr = RadarrWithSwitchableBin()
 
         with pytest.raises(asyncio.CancelledError):
@@ -5122,7 +5127,6 @@ class TestProgressIsDenominatedInTheActedOnSet:
             armed_recheck=_armed_forever,
             progress=seen.append,
             exclusion_poll_delay=0.0,
-            plex_settle_delay=0.0,
         )
         report = await executor.execute(run.id)
 
@@ -5148,20 +5152,15 @@ class TestASeasonPruneTidiesPlexToo:
     async def test_a_pruned_season_refreshes_its_series_folder(self, session: AsyncSession) -> None:
         """The refresh is the point. The purge deliberately is not.
 
-        A Plex TV section counts SHOWS, so pruning one season of a multi-season show
-        moves that count by zero. The prune therefore claims no section entry, the
-        count-delta gate has no allowance to spend, and it declines. Claiming one per
-        season instead would authorize a shrink of up to N shows on the most dangerous
-        call in the application, and a shrink of that size could only have come from
-        something other than this run, since our own prunes move the count by nothing.
-        The cost is a lingering "unavailable" entry until Plex's own scan, which is
-        cosmetic.
+        A Plex TV section lists SHOWS, and pruning one season of a multi-season show
+        removes none. The prune claims no section entry, so the purge accepts nothing in
+        that trash, even a key that matches the season's own.
         """
         snapshot_id = await _snapshot_one(
             session, media_key="sonarr:1:42:3", rating_key=701, media_type="season"
         )
         run = await _plan(session, snapshot_id)
-        plex = FakePlex(sections={"Shows": ["/tv"]}, item_counts={"Shows": [50, 49]})
+        plex = FakePlex(sections={"Shows": ["/tv"]}, trash={"Shows": {701}})
 
         class _PathedSonarr(FakeSonarr):
             async def series_by_id(self, series_id: int) -> dict[str, Any]:
@@ -5172,18 +5171,14 @@ class TestASeasonPruneTidiesPlexToo:
         assert report.state is RunState.COMPLETED
         # Scoped to the series' own folder, never the whole library.
         assert plex.refreshed == [("Shows", "/tv/A Show")]
-        # The section is left for Plex to tidy. A shrink this run cannot account for is
-        # never ours to purge, even when the numbers happen to look right.
         assert plex.emptied == []
 
     async def test_a_movie_delete_still_purges_its_section(self, session: AsyncSession) -> None:
-        """This is the scope check on the test above. TV claims no entry, movies still
-        claim one, so the count-delta gate still confirms and purges for the movie path.
-        Without this, the assertion above would pass just as well if purging had been
-        disabled everywhere."""
+        """The scope check on the test above. A movie claims its entry, so its section's
+        trash, holding only that movie, is purged."""
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
         run = await _plan(session, snapshot_id)
-        plex = FakePlex(sections={"Films": ["/movies"]}, item_counts={"Films": [50, 49]})
+        plex = FakePlex(sections={"Films": ["/movies"]}, trash={"Films": {701}})
 
         report = await _real(
             session,
@@ -5252,7 +5247,7 @@ class TestTheSeasonRescanIsScopedToTheSeasonsOwnFolder:
     S03 rescan every season of the show. On a server set to empty its trash after every
     scan, that is a purge. Any other season whose files had gone missing out of band
     would lose its library records, watch state, ratings, collections, inside Plex,
-    where none of ``_finalize_plex``'s interlocks can see it.
+    where none of ``TrashPurge``'s checks can see it.
     """
 
     class _PathfulSonarr(FakeSonarr):
@@ -5730,7 +5725,6 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
                     gateway=_gateway(radarr={1: radarr}),
                     armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
-                    plex_settle_delay=0.0,
                 ).execute(run_id)
 
             assert lock.fired == 1, "the test did not actually break a commit"
@@ -5773,7 +5767,6 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
                     gateway=_gateway(radarr={1: radarr}),
                     armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
-                    plex_settle_delay=0.0,
                 ).execute(run_id)
 
             assert lock.fired == 2, "both the commit and its retry must have failed"
@@ -5834,7 +5827,6 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
                     gateway=_gateway(radarr={1: radarr}),
                     armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
-                    plex_settle_delay=0.0,
                 ).execute(run_id)
 
             assert lock.fired == 2, "both the commit and its retry must have failed"
@@ -5894,7 +5886,6 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
                     gateway=_gateway(radarr={1: radarr}),
                     armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
-                    plex_settle_delay=0.0,
                 ).execute(run_id)
 
             assert lock.fired == 2, "both the commit and its retry must have failed"
@@ -5944,7 +5935,6 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
                     gateway=_gateway(radarr={1: radarr}, plex=plex),
                     armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
-                    plex_settle_delay=0.0,
                 ).execute(run_id)
 
             assert lock.fired == 1
@@ -5988,7 +5978,6 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
                     gateway=_gateway(radarr={1: radarr}, plex=plex),
                     armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
-                    plex_settle_delay=0.0,
                 ).execute(run_id)
 
             assert lock.fired == 2

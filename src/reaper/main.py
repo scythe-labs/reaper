@@ -450,8 +450,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         bins.cancel()
         with suppress(asyncio.CancelledError, Exception):
             await bins
-        # The wait after a reap (api/runs.py) only reads Plex, so it is canceled and awaited
-        # before the engines go. It launches no scan when canceled.
+        # The wait after a reap (api/runs.py) is canceled and awaited before the engines go.
+        # A cancel starts no trash purge and no scan.
         plex_task = getattr(app.state, "plex_wait_task", None)
         if plex_task is not None and not plex_task.done():
             plex_task.cancel()

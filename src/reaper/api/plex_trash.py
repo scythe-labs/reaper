@@ -1,13 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Report what Plex would remove besides the files this reap deletes. Read-only.
 
-Reaper's end-of-run purge is section-wide. ``PUT /library/sections/{key}/emptyTrash``
-empties that section's whole trash, not just the part this run caused. Anything
-already sitting in the trash when the run started is in the same state before and
-after it, so it cancels out of the executor's count-delta gate
-(``_trash_delta_is_ours``), which cannot see it. The purge destroys its library
-records anyway, including watch history, ratings, and collection membership. No file
-on disk is touched.
+Emptying a section's trash (``PUT /library/sections/{key}/emptyTrash``) destroys the
+library records of everything in it, including watch history, ratings, and collection
+membership. No file on disk is touched. Reaper's own purge refuses a trash holding
+anything the reap did not remove (``executor.TrashPurge``). Plex's own
+``autoEmptyTrash``, on by default, empties it after the reap's rescans regardless.
 
 The operator is told this before they reap, and may proceed anyway. This endpoint is
 the evidence behind that warning. It plans nothing, deletes nothing, and every call it

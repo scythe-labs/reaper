@@ -277,17 +277,16 @@ class PlexError(RuntimeError):
 # in the codebase with no safety interlock in front of it.
 #
 # So this file enforces the same rule on the requests side: a mutating call
-# requires deletion to be enabled and an explicit declaration from the executor,
-# which writes its intent to the durable journal before declaring it. The
-# declaration is a context variable rather than a per-request flag only because
-# plexapi gives this code nowhere else to hang one.
+# requires deletion to be enabled and an explicit declaration from the executor
+# (``declared_mutation``). The declaration is a context variable because plexapi
+# gives this code nowhere else to hang one.
 
 _declared: ContextVar[bool] = ContextVar("reaper_plex_mutation_declared", default=False)
 
 #: Marks the enclosed writes as the "Leaving Soon" shelf reconcile, a set of
 #: reversible mutations that touch no files. This stays distinct from
 #: ``_declared`` so the two paths cannot be confused. A deletion needs the host
-#: armed and the write journalled. A shelf write needs the host armed, or the
+#: armed and the write declared. A shelf write needs the host armed, or the
 #: operator opted in separately.
 _benign_shelf: ContextVar[bool] = ContextVar("reaper_plex_benign_shelf", default=False)
 
@@ -370,12 +369,12 @@ def _report_incomplete(reason: str) -> None:
 
 @contextlib.contextmanager
 def declared_mutation() -> Iterator[None]:
-    """Permit mutating Plex calls on this task, after journalling the intent first.
+    """Permit mutating Plex calls on this task while deletion is on.
 
-    Set only by the action executor. Anything else calling this is a bug. That
-    narrowness is the point: the window is exactly one context manager wide, so a
-    stray write from some future code path fails loudly instead of quietly
-    succeeding.
+    Set only around the executor's two Plex writes, ``refresh_path`` in
+    ``_flush_refreshes`` and ``empty_trash`` in ``TrashPurge.run``. No journal row
+    records either. Anything else calling this is a bug. A write outside the block
+    fails loudly.
     """
     token = _declared.set(True)
     try:
@@ -596,9 +595,9 @@ def _iter_pages(server: Any, path: str, query: str, *, what: str) -> Iterator[li
     """Yield each raw page of one Plex listing, hardened against silent truncation.
 
     This is the single paging loop every listing read in this module runs on, so
-    none of them can drift apart. The four section sweeps (``library_guid_index``,
-    ``library_season_index``, ``labeled_in_section``, ``section_rating_keys``) go
-    through :func:`_iter_section_pages`, and the two shelf reads
+    none of them can drift apart. The five section sweeps (``library_guid_index``,
+    ``library_season_index``, ``labeled_in_section``, ``section_rating_keys``,
+    ``trash_keys``) go through :func:`_iter_section_pages`, and the two shelf reads
     (``list_collections``, ``collection_children``) call this directly.
     ``find_collection`` searches ``list_collections``'s result rather than paging a
     second time. ``query`` is the listing's own query string before the
@@ -793,17 +792,17 @@ class PlexClient:
 
         That refusal arm is the reason this is a helper rather than a tidy-up. A
         guard refusal is not a Plex failure. It means a mutating call was attempted
-        without the host armed, or without the intent journalled first, and
+        without the host armed, or without the intent declared first, and
         relabeling it ``PlexError`` would tell the caller Plex is unwell and invite
         it to mark the scan untrusted instead. Centralizing this arm here means a
         new write method inherits it automatically, rather than needing to copy it
         by hand.
 
         This uses ``asyncio.to_thread`` rather than a shared executor, and that
-        choice matters: it copies the current context, and the journalled-intent
+        choice matters: it copies the current context, and the declared-intent
         flag the guard reads is a :class:`~contextvars.ContextVar`. Under
         ``loop.run_in_executor`` with a bare executor, the worker would read that
-        flag as unset, and every journalled write would be refused. This fails
+        flag as unset, and every declared write would be refused. This fails
         closed in both directions, and both executor call sites turn a refusal
         into a warning rather than a crash, so a break here would happen quietly.
 
@@ -812,11 +811,10 @@ class PlexClient:
         ``what`` that is a noun, which is the one way to get a mismatched sentence
         like ``Could not GUID sweep: ...`` out of this.
 
-        Five methods do not read through this, and each explains why in place:
+        Four methods do not read through this, and each explains why in place:
         ``_connect`` (the one call that runs before there is a server, so this
         contract does not describe it), ``active_streams`` (its message is the
-        fail-closed reasoning itself, not a verb phrase), ``is_refreshing`` (it
-        falls back to a warning rather than raising), ``aclose`` (no mapping at
+        fail-closed reasoning itself, not a verb phrase), ``aclose`` (no mapping at
         all, since it is teardown), and ``trash_count`` (its own read already
         raises ``PlexError``, which this would wrap a second time).
         """
@@ -1093,21 +1091,13 @@ class PlexClient:
         return out
 
     async def item_count(self, section_key: int) -> int:
-        """How many items a section holds. This is the input to the trash
-        interlock: the executor reads it before its first delete and again before
-        purging, and refuses the purge unless the section shrank by no more than
-        what the run deleted under it.
+        """How many items a section holds. A trash read this size means Plex
+        ignored ``trash=1``. The trash purge then refuses, and the trash notice
+        reads the trash as unreadable.
 
-        Addressed by key, through ``sectionByID``. A by-title lookup would return
-        whichever of two same-titled libraries plexapi saw first, so the interlock
-        meant to catch an over-large trash purge would end up comparing the wrong
-        library's size against this run's deletions.
-
-        The ``reload()`` is what makes the second read a second read. plexapi holds
-        one section object per key for the life of the connection and caches
-        ``totalSize`` on it, so without this the before-count and the after-count
-        are the same number, the gate sees a shrink of zero, and it declines every
-        purge it was asked to decide.
+        Addressed by key, through ``sectionByID``. The ``reload()`` makes each call
+        a fresh read, since plexapi caches ``totalSize`` on the section object for
+        the life of the connection.
         """
         server = await self._connect()
 
@@ -1124,10 +1114,9 @@ class PlexClient:
         This is what the operator is warned about before a reap. ``empty_trash`` is
         section-wide (``PUT /library/sections/{key}/emptyTrash``), so it destroys
         the library records, watch history, ratings, collection membership, of
-        everything already in the trash, not just what this run deleted. Items
-        trashed before a run are in the same state before and after it, so they
-        cancel out of the executor's count-delta gate, and that gate cannot see
-        them. This read is the only thing that can.
+        everything already in the trash, not just what this run deleted. Reaper's
+        own purge refuses a trash holding anything the run did not remove
+        (``executor.TrashPurge``). Plex's own ``autoEmptyTrash`` does not.
 
         This is a count read, not a listing read: the container window is
         zero-sized and only ``totalSize`` is taken, so the complete-or-raise
@@ -1178,9 +1167,8 @@ class PlexClient:
         This reads Plex's ``autoEmptyTrash`` preference, which is server-wide, not
         per-library. It ships on by default, which is why this is worth
         surfacing: when it is on, Plex purges the trash itself after each scan
-        Reaper's path refresh triggers, so the executor's own trash interlock (the
-        count-delta gate, the mount check, the settle wait) never gets a say. The
-        purge has already happened, inside Plex.
+        Reaper's path refresh triggers, so the executor's own trash checks never
+        get a say. The purge has already happened, inside Plex.
 
         Raises ``PlexError`` if the preference cannot be read, which the caller
         reports as unknown rather than as "no".
@@ -1217,31 +1205,6 @@ class PlexClient:
 
     async def __aexit__(self, *exc: object) -> None:
         await self.aclose()
-
-    async def is_refreshing(self, section_key: int) -> bool:
-        """Is a scan currently running on this section?
-
-        A refresh (``section.update(path=...)``) fires an asynchronous scan. The
-        executor polls this so it does not empty the trash before Plex has
-        actually noticed the deleted file is gone. A read, addressed by key
-        through ``sectionByID``, so it cannot report on the wrong one of two
-        same-titled libraries. On any error, it reports ``True`` (still busy), so
-        the caller waits rather than racing ahead."""
-        server = await self._connect()
-
-        def read() -> bool:
-            section = server.library.sectionByID(section_key)
-            section.reload()
-            return bool(getattr(section, "refreshing", False))
-
-        # Not routed through `_call`. This falls back to a warning and a
-        # conservative True rather than raising, so there is no `PlexError` for a
-        # shared mapping to build.
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            log.warning("plex.refresh_state_unreadable", section=section_key, error=str(exc))
-            return True
 
     async def is_scanning(self) -> bool:
         """Is Plex running a library scan right now?
@@ -1329,6 +1292,22 @@ class PlexClient:
             return keys
 
         return await self._call(read, what=f"list section {section_key}")
+
+    async def trash_keys(self, section_key: int) -> set[int]:
+        """The rating keys of the items in one section's trash. A read.
+
+        Paged through ``_iter_section_pages``, so a listing it cannot prove complete
+        raises ``PlexError`` and never returns part of the trash.
+        """
+        server = await self._connect()
+
+        def read() -> set[int]:
+            keys: set[int] = set()
+            for raw in _iter_section_pages(server, section_key, "?trash=1", what="trash listing"):
+                keys.update(int(el.get("ratingKey") or 0) for el in raw)
+            return keys
+
+        return await self._call(read, what=f"list the trash of section {section_key}")
 
     async def library_season_index(
         self, *, allowed_sections: set[int] | None = None
@@ -1869,11 +1848,9 @@ class PlexClient:
 
         This is the most dangerous call in the whole application. An unmounted
         library, a scan that finds nothing, and then this, is how a whole Plex
-        library is lost. So the executor gates it behind a count-delta check and
-        only ever runs it after confirming the section shrank by roughly what was
-        deleted and no more. This method does the purge. Deciding it is safe to
-        purge is the caller's job, deliberately kept out of here so the interlock
-        cannot be bypassed by calling the client directly.
+        library is lost. The executor runs it only when everything in the
+        section's trash is something the run removed (``executor.TrashPurge``).
+        This method does the purge. Deciding it is safe is the caller's job.
 
         A mutation, so it is guarded like a delete: it needs arming plus the
         executor's ``declared_mutation``. Scoped to one section, never the whole

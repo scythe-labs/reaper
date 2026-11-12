@@ -414,9 +414,8 @@ function ReapingCard({ status }: { status: ReapStatus }) {
   // top counts a mid-run veto twice and reads finished while files are still being removed.
   const handled = status.done;
   const pct = status.total > 0 ? Math.min(100, Math.round((handled / status.total) * 100)) : 0;
-  // Every item is handled, but the run is still going: it is tidying Plex now (refreshing the
-  // library so the deletes show, then the trash purge), which can take several seconds. Say so,
-  // or the last "Now removing" line sits there looking hung through that wait.
+  // Every item is handled, but the run is still sending Plex its rescans, which can take
+  // several seconds. The line says so while it does.
   const finalizing = status.total > 0 && handled >= status.total;
 
   return (
