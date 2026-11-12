@@ -83,16 +83,11 @@ export function SafetyBanner({ onGoToDeletion }: { onGoToDeletion?: () => void }
   // updates this banner in the same render pass. It also polls, so arming from another tab
   // reaches this one too (see useSafety for why). /api/health is only a liveness probe now
   // and carries no armed state.
-  const { data, isLoading, isError } = useSafety();
+  const { data, isError } = useSafety();
 
-  // On the very first fetch, nothing is known yet. Stay quiet rather than flash a state
-  // that might be wrong a moment later.
-  if (isLoading) return null;
-
-  // The banner's whole point is that it states the regime every time it renders. When the
-  // safety state can't be read and React Query has no last-known value, show an unknown
-  // state instead of nothing: an absent banner reads as "nothing to worry about". Use the
-  // amber "could not check" tone so it never reads as safe.
+  // The banner states the regime every time it renders, and never renders nothing. When the
+  // safety read is pending or failed and React Query has no last-known value, it shows the
+  // amber "could not check" state, which never reads as safe.
   if (isError || !data) {
     return (
       <Banner tone="banner-unknown">

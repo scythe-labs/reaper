@@ -91,6 +91,13 @@ describe("the safety banner", () => {
     expect(await screen.findByText(/safety state unknown/i)).toBeInTheDocument();
   });
 
+  it("says the state is unknown while the read is pending, never nothing", () => {
+    apiMock.safety.mockReturnValue(new Promise(() => {}));
+    renderBanner();
+
+    expect(screen.getByText(/safety state unknown/i)).toBeInTheDocument();
+  });
+
   it("collapses to one line on a phone and expands on tap", async () => {
     // jsdom ships no `matchMedia`, so `useMediaQuery` reads the wide layout by default. Report
     // the narrow one, which is where the notice collapses to a single tappable line. The state
