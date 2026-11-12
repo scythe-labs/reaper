@@ -89,6 +89,15 @@ Override = Literal["spare", "reap"]
 STRUCTURAL_GATES = frozenset({GateId.STREAMING_NOW, GateId.UNMANAGED})
 
 
+def below_coverage_floor(coverage_bp: int, coverage_floor_bp: int) -> bool:
+    """Whether too little of an item's evidence could be read to judge it.
+
+    :func:`decide_verdict` calls this. The review queue's chip and reason line call it too,
+    so they name the check the verdict used.
+    """
+    return coverage_bp < coverage_floor_bp
+
+
 def decide_verdict(
     *,
     protected: bool,
@@ -146,7 +155,7 @@ def decide_verdict(
         return "protect"
     if blocked:
         return "abstain"
-    if coverage_bp < coverage_floor_bp:
+    if below_coverage_floor(coverage_bp, coverage_floor_bp):
         return "abstain"
     if score >= condemn_at:
         return "condemn"

@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from reaper.api.review import (
     _CHIP_IDS,
     GROUP_BATCH_MAX,
+    _candidate_out,
     _chip,
     _decode_explanation,
     _explanation_out,
@@ -299,6 +300,7 @@ def _exp(
     fired: list[dict[str, Any]] | None = None,
     unknown: list[dict[str, Any]] | None = None,
     match_status: str | None = None,
+    coverage_floor_bp: int | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "score": score,
@@ -311,6 +313,8 @@ def _exp(
     }
     if match_status is not None:
         body["match"] = {"status": match_status}
+    if coverage_floor_bp is not None:
+        body["coverage_floor_bp"] = coverage_floor_bp
     return body
 
 
@@ -1332,6 +1336,69 @@ class TestTheReasonLineAgreesWithTheChip:
             exp = _decode_explanation(raw)
             assert exp is not None
             assert _primary_reason(exp, "abstain", 82) == Reason("below_threshold")
+
+
+class TestACoverageHoldUnderTheThresholdNamesTheFloor:
+    """A title under the coverage floor is held there, whatever it scored. The chip and
+    the reason line name the floor, even when the score is also under the threshold.
+
+    Every explanation here says its own coverage is 1.0, so only the row's stored
+    ``coverage_bp`` can produce the coverage reason. The floors sweep values on both sides
+    of the 5000 default, so a reader that compared against a constant fails.
+    """
+
+    @pytest.mark.parametrize(
+        ("floor", "coverage_bp", "held_by_coverage"),
+        [
+            (5000, 4000, True),
+            (8000, 6000, True),
+            (5000, 6000, False),
+            (3000, 4000, False),
+            (5000, 5000, False),
+            (None, 4000, False),
+        ],
+    )
+    def test_the_chip_and_the_line_name_the_check_that_held_it(
+        self, floor: int | None, coverage_bp: int, held_by_coverage: bool
+    ) -> None:
+        exp = _exp(42, coverage_floor_bp=floor)
+
+        chip = _chip(exp, "abstain", 42, coverage_bp=coverage_bp)
+        reason = _primary_reason(exp, "abstain", 42, coverage_bp=coverage_bp)
+
+        assert chip is not None
+        if held_by_coverage:
+            assert _chip_reason(chip) == Reason("coverage")
+            assert reason == Reason("kept_safe.coverage")
+        else:
+            assert _chip_reason(chip) == Reason("below_threshold", {"score": 42, "threshold": 70})
+            assert reason == Reason("below_threshold")
+
+    @pytest.mark.parametrize(
+        ("coverage_bp", "chip_id", "reason_id"),
+        [(4000, "coverage", "kept_safe.coverage"), (6000, "below_threshold", "below_threshold")],
+    )
+    def test_the_queue_row_passes_its_own_coverage(
+        self, coverage_bp: int, chip_id: str, reason_id: str
+    ) -> None:
+        row = Candidate(
+            id=1,
+            media_key="radarr:1:10",
+            title="Example Movie",
+            media_type="movie",
+            size_bytes=1_000_000_000,
+            verdict="abstain",
+            score=42,
+            coverage_bp=coverage_bp,
+            explanation_json=_exp_json(42, coverage_floor_bp=5000),
+        )
+
+        out = _candidate_out(row)
+
+        assert out.chip is not None
+        assert out.chip.reason.k == chip_id
+        assert out.reason_key is not None
+        assert out.reason_key.k == reason_id
 
 
 class TestTheChipSentence:
