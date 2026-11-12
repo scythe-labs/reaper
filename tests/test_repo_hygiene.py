@@ -660,9 +660,13 @@ def test_fixtures_carry_no_real_imdb_id() -> None:
     assert not offenders, "swap in a placeholder id (tt000NNNN):\n" + "\n".join(offenders)
 
 
-#: A client constructor, a module-level request, or the stdlib's one-shot opener.
+#: A client constructor, a module-level request, or the stdlib's one-shot opener. An aliased
+#: or from-import of an HTTP library counts too, because the other patterns match the
+#: library's own name.
 _HTTP_SITE = re.compile(
-    r"\b(?:httpx2?|requests)\.(?:Async)?(?:Client|Session)\s*\("
+    r"^\s*import\s+(?:httpx2?|requests)\s+as\b"
+    r"|^\s*from\s+(?:httpx2?|requests)(?:\.\w+)*\s+import\b"
+    r"|\b(?:httpx2?|requests)\.(?:Async)?(?:Client|Session)\s*\("
     r"|(?<![\w.])(?:httpx2?|requests)\.(?:get|post|put|patch|delete|head|options|request|stream)"
     r"\s*\("
     r"|\burlopen\s*\("

@@ -516,8 +516,8 @@ function Dashboard({ user }: { user: AuthUser }) {
           landmark section lets a screen reader user browsing by landmark (the normal way to
           skim a page) reach these facts, the same way they reach the nav and the main content.
           `.app` is plain block flow with no child or sibling selectors, so this wrapper moves
-          nothing on screen. `AppStaleRead.test.tsx` is the only test that mounts the shell, and
-          it runs a page-level axe audit that catches a landmark like this going missing. */}
+          nothing on screen. `AppStaleRead.test.tsx` runs a page-level axe audit that catches a
+          landmark like this going missing. */}
       <section className="app-status" aria-label={t("shell.app.statusLabel")}>
         <SafetyBanner onGoToDeletion={() => goToPolicySection("deletion")} />
         <RecycleBinBanner />
