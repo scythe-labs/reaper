@@ -848,10 +848,9 @@ class TestTrashCount:
     """What the operator is warned about before a reap.
 
     ``empty_trash`` is section-wide, so it destroys the library records of everything
-    already in the trash, not just what the run deleted. Those items sit on both sides of
-    the executor's before/after count and cancel out of its gate, so this read is the only
-    thing that can see them. Every branch here therefore resolves toward telling the
-    operator something rather than reporting a reassuring zero.
+    already in the trash, and Plex's own ``autoEmptyTrash`` empties it after a reap's
+    rescans. Every branch here resolves toward telling the operator something rather than
+    reporting a reassuring zero.
     """
 
     def _server(self, xml: str) -> _FakeServer:
@@ -887,6 +886,37 @@ class TestTrashCount:
 
         with pytest.raises(PlexError):
             await _client_with(_Boom([], {})).trash_count(7)
+
+
+class TestTrashKeys:
+    """The rating keys in one section's trash, which the trash purge checks against what the
+    run removed. Complete or raise, like every other listing."""
+
+    async def test_it_reads_every_page_of_the_trash(self) -> None:
+        page0 = '<MediaContainer size="1" totalSize="2"><Video ratingKey="11"/></MediaContainer>'
+        page1 = '<MediaContainer size="1" totalSize="2"><Video ratingKey="12"/></MediaContainer>'
+        server = _FakeServer(
+            [],
+            {
+                "/library/sections/7/all?trash=1&X-Plex-Container-Start=0": page0,
+                "/library/sections/7/all?trash=1&X-Plex-Container-Start=1": page1,
+            },
+        )
+
+        assert await _client_with(server).trash_keys(7) == {11, 12}
+        assert all(q.startswith("/library/sections/7/all?trash=1&") for q in server.queries)
+
+    async def test_a_listing_it_cannot_prove_complete_raises(self) -> None:
+        """A full page with no ``totalSize`` could have more behind it. Part of the trash
+        must never read as all of it."""
+        rows = "".join(f'<Video ratingKey="{i}"/>' for i in range(1, SWEEP_PAGE_SIZE + 1))
+        server = _FakeServer(
+            [], {"/library/sections/7/all?trash=1": f"<MediaContainer>{rows}</MediaContainer>"}
+        )
+
+        with pytest.raises(PlexError) as exc:
+            await _client_with(server).trash_keys(7)
+        assert exc.value.code == "error.plexclient.call_failed"
 
 
 class TestEmptiesTrashAfterScan:

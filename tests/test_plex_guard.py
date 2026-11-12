@@ -85,7 +85,7 @@ class TestAMutatingCallIsRefusedUnlessArmedAndDeclared:
             session.put("http://127.0.0.1:1/library/x")
 
     def test_a_put_is_blocked_when_armed_but_not_declared(self) -> None:
-        """Armed, but nobody wrote the intent to the journal. The declaration is there so
+        """Armed, but nobody declared the intent. The declaration is there so
         a mutation which skipped the executor cannot reach Plex."""
         session = GuardedSession(ARMED)
 
@@ -94,7 +94,7 @@ class TestAMutatingCallIsRefusedUnlessArmedAndDeclared:
 
     def test_turning_deletion_off_blocks_even_a_declared_mutation(self) -> None:
         """Deletion off wins over everything. Even with a run in flight and its intent
-        already journalled, turning deletion off makes the guard refuse it."""
+        already declared, turning deletion off makes the guard refuse it."""
         session = GuardedSession(READ_ONLY)
 
         with declared_mutation(), pytest.raises(SafetyViolationError):
@@ -235,7 +235,7 @@ class TestGetShapedMutationsAreGated:
             session.get("http://127.0.0.1:1/library/sections/3/refresh")
 
     def test_a_refresh_get_passes_when_armed_and_declared(self) -> None:
-        """The executor's path. Armed, with the intent journalled, and the request reaches
+        """The executor's path. Armed, with the intent declared, and the request reaches
         the transport."""
         session = GuardedSession(ARMED)
         with _transport() as send, declared_mutation():

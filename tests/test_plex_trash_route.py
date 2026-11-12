@@ -1,11 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The pre-reap Plex trash warning's evidence endpoint.
 
-Reaper's post-reap purge is section-wide, so it destroys the library records of
-everything already in the trash, not just what the run deleted. Those items sit on both
-sides of the executor's before/after count and cancel out of its gate, so this endpoint is
-the only thing that can see them. Every branch here resolves toward telling the operator
-something rather than reporting a reassuring zero.
+Emptying a section's trash destroys the library records of everything in it, and Plex's
+own ``autoEmptyTrash`` does that after a reap's rescans. Every branch here resolves toward
+telling the operator something rather than reporting a reassuring zero.
 """
 
 from __future__ import annotations
