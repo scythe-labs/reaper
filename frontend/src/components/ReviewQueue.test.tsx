@@ -1455,6 +1455,16 @@ describe("the kept-by-the-whole-show note", () => {
     expect(screen.getByText(/goes back on the list/i)).toBeInTheDocument();
   });
 
+  it.each([
+    ["will be removed", null],
+    ["kept for now", false],
+  ])("says clearing a season reap under a spared show keeps it, on %s", (lead, effective) => {
+    // Clearing the season's reap hands it back to the show's spare, so the file stays.
+    const { container } = render1("reap", "spare", effective);
+    expect(screen.getByText(new RegExp(lead, "i"))).toBeInTheDocument();
+    expect(container.textContent).toContain("Clear it and it stays.");
+  });
+
   it("names the consequence of clearing in BOTH directions, never only the safe one", () => {
     // The note must state the consequence for both directions: when clearing is harmless, and
     // when clearing puts a file on the block. Whichever way the sentences are later reworded,
