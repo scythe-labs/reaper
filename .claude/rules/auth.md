@@ -2,9 +2,13 @@
 paths:
   - "src/reaper/auth/**/*.py"
   - "src/reaper/secrets.py"
+  - "src/reaper/crypto.py"
   - "src/reaper/logbuffer.py"
+  - "src/reaper/logging.py"
   - "src/reaper/services/restore.py"
   - "src/reaper/services/backup.py"
+  - "src/reaper/services/admin_password.py"
+  - "src/reaper/services/login.py"
   - "src/reaper/api/settings.py"
   - "src/reaper/api/plex.py"
   - "src/reaper/api/backup.py"
@@ -23,13 +27,14 @@ bind every backend file are in `.claude/rules/backend.md`. Rules that bind every
 root `CLAUDE.md`. Holds 11, 12, 14, 74–76, 83, 84, 98–101, 125, 126, 130.
 
 **11 / 98. Throttles and the Argon2 gate bind at the granularity of the thing being abused.**
-Every unauthenticated, state-establishing endpoint is throttled both per IP and per account,
-with backoff and lockout. `plex/start` and `plex/poll` are throttled exactly as `/local` and
-`/recover` are. A route that amplifies outbound requests caps resource creation per IP. The
-concurrency gate acquires one slot per hash, not per request. A gate wrapped around a loop of N
-Argon2 verifications bounds nothing. A full gate returns 503 and must never count as a failed
-attempt. Otherwise an attacker who fills the gate triggers the account lockout. Never rely on a
-fixed CSRF header or a password-length rule as the only defense.
+Every unauthenticated, state-establishing endpoint is throttled. A password endpoint is
+throttled per IP and per account, with backoff and lockout. `/recover` is throttled per IP,
+because it has no account to key on. A sign-in route whose calls succeed (`plex/start`,
+`plex/poll`) takes a per-IP call cap. A route that amplifies outbound requests caps resource
+creation per IP. The concurrency gate acquires one slot per hash, not per request. A gate
+wrapped around a loop of N Argon2 verifications bounds nothing. A full gate returns 503 and must
+never count as a failed attempt. Otherwise an attacker who fills the gate triggers the account
+lockout. Never rely on a fixed CSRF header or a password-length rule as the only defense.
 
 **12 / 75. A credential change invalidates existing sessions, and restoring or importing an
 auth-bearing database is a credential change.** Call the sign-out-everywhere primitive on
@@ -61,10 +66,10 @@ that appends `self.format(record)` beside an already-redacted copy.
 
 **100. When key or salt material is present but unreadable, the app refuses to boot. It never
 regenerates the material and proceeds.** Regenerated material cannot decrypt any credential
-written under the prior material, and nothing reports the loss. Raise with an actionable
-message and surface it in the UI safety state. Material that is missing may still be generated,
-because missing material means a first run. Material that is present but corrupt is never
-treated as a first run.
+written under the prior material, and nothing reports the loss. Raise `SecretMaterialError`
+(`secrets.py`) with an actionable message, and boot stops. Material that is missing may still
+be generated, because missing material means a first run. Material that is present but corrupt
+is never treated as a first run.
 
 **101. A forwarded request header that changes an auth or security decision is trusted only from
 a configured trusted proxy.** `X-Forwarded-Proto` passes the same `trusted_proxies` check that
@@ -80,14 +85,16 @@ able to retry.
 never claims a state the code did not verify.** A restore interrupted between its two move
 loops must never leave the staged key and salt deleted while the database they decrypt is
 already live. Stage first, then swap, so that any interruption leaves one complete set intact.
-Never print "your current data was kept" from a path that did not confirm it (rule 7/24, and
-the prime directive).
+`services/restore.py` writes `SWAP_MARKER` before the first move, and the next boot reads it
+and finishes the swap. Never print "your current data was kept" from a path that did not
+confirm it (rule 7/24, and the prime directive).
 
 **130. A KDF cost is bound to a stated threat model, and raised by forward-compatible
-rotation.** Record the cost parameter beside the material it derived. Register prior costs as
-decrypt-only, so raising the cost cannot make tokens already stored unreadable. A cost chosen
-once and never revisited falls behind attacker hardware, and rule 13's "salted KDF" weakens with
-no warning.
+rotation.** No cost is stored beside the material. Decrypt tries each cost in
+`_SUPERSEDED_SCRYPT_N` (`src/reaper/crypto.py`) after the current one fails. When you raise
+`_SCRYPT_N`, add the old cost to that tuple. Keep every superseded cost there, decrypt-only, so
+raising the cost cannot make stored tokens unreadable. A cost chosen once and never revisited
+falls behind attacker hardware, and rule 13's "salted KDF" weakens with no warning.
 
 **74. A gate on an uploaded or restored artifact validates the artifact, never its manifest.**
 Any property a safety check depends on (schema revision, version, counts) is read from the

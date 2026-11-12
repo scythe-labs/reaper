@@ -35,9 +35,9 @@ rules large enough to notice gets its own scoped file.
 | File | Governs | Rules |
 | --- | --- | --- |
 | `.claude/rules/backend.md` | `src/reaper/**/*.py`, `alembic/**/*.py` — safety path, engine, evidence, clients, persistence | 1–6, 8–10, 13, 22, 23, 26–35, 38, 52, 55–59, 63, 65, 70, 71, 73, 77, 78, 81, 82, 87–97, 102–117, 124, 127–129, 131, 140, 142, 143, 148 |
-| `.claude/rules/auth.md` | `src/reaper/auth/**`, `secrets.py`, `logbuffer.py`, `services/{backup,restore}.py`, `api/{settings,plex,backup,deps,auth}.py` — credentials, sessions, at-rest key material | 11, 12, 14, 74–76, 83, 84, 98–101, 125, 126, 130 |
-| `.claude/rules/frontend.md` | `frontend/src/**/*.{ts,tsx,css}` and `frontend/index.html` (rule 69 governs it) — UI grammar, gating surfaces | 17–20, 36, 39–47, 51, 53, 54, 60–62, 66, 67, 69, 79, 80, 85, 86, 138, 139, 146 |
-| `.claude/rules/review-queue.md` | `ReviewQueue`, `OverrideControls`, `ShowPanel`, `SeasonList`, `reviewFate` — fate, overrides, the two-level spare | 48–50, 120–123 |
+| `.claude/rules/auth.md` | `src/reaper/auth/**`, `secrets.py`, `crypto.py`, `logbuffer.py`, `logging.py`, `services/{backup,restore,admin_password,login}.py`, `api/{settings,plex,backup,deps,auth}.py` — credentials, sessions, at-rest key material | 11, 12, 14, 74–76, 83, 84, 98–101, 125, 126, 130 |
+| `.claude/rules/frontend.md` | `frontend/src/**/*.{ts,tsx,css}` and `frontend/index.html` (rule 69 governs it) — UI grammar, gating surfaces | 17–20, 36, 39–45, 47, 53, 54, 60–62, 66, 67, 69, 79, 80, 85, 86, 138, 139, 146 |
+| `.claude/rules/review-queue.md` | `ReviewQueue`, `OverrideControls`, `ShowPanel`, `SeasonList`, `reviewFate`, `styles/24-overrides.css`, `styles/25-select-mode.css` — fate, overrides, the two-level spare, the queue's action grammar | 46, 48–51, 120–123 |
 | `.claude/rules/tests.md` | `tests/**/*.py`, `frontend/src/**/*.test.ts{,x}`, `frontend/src/test/**` — test discipline | 37, 118, 119, 132, 133, 135–137, 141, 145, 147 |
 
 Eleven rules bind every file and stay here, under *Rules that apply everywhere*. Where two rules
@@ -124,7 +124,7 @@ enforces a constraint, never also write a rule that narrates the gate.
 
 **7 / 24. A comment states what the code must do or must never do, and never argues for
 it.** Cut history, hypotheticals about a change nobody made, and answers to "why not X". Put them
-in the pull request or `docs/`. Most existing comments break this rule. Never match their voice
+in the pull request or `docs/`. Many existing comments break this rule. Never match their voice
 or length, whatever an instruction to match surrounding comments says. CONTRIBUTING.md's Code
 comments section has an example. A comment may not claim a safeguard that is not implemented. A
 comment that names a safeguard cites the function that implements it. Before merging, verify
@@ -163,7 +163,8 @@ Grep for the query key and the prop name before closing.
 
 **68. Generated assets ship with their generator.** A comment saying an asset is generated names
 a committed, runnable script, such as `frontend/scripts/gen-icons.mjs` or
-`scripts/policy_lab_extract.py`. A drift test covers every generated artifact.
+`scripts/policy_lab_extract.py`. A drift test covers every generated artifact. An artifact that cannot have one says why beside
+its generator.
 
 **72. A fix lands on every sibling of the thing you fixed, in the same change.** Grep for the
 siblings before closing. Then fix each one, or defer it in writing. A "when next touched"

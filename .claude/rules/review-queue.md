@@ -5,6 +5,8 @@ paths:
   - "frontend/src/components/ShowPanel*.tsx"
   - "frontend/src/components/SeasonList*.tsx"
   - "frontend/src/components/reviewFate*.ts"
+  - "frontend/src/styles/24-overrides.css"
+  - "frontend/src/styles/25-select-mode.css"
 ---
 
 # The review queue: fate, overrides, and the two-level spare
@@ -12,22 +14,24 @@ paths:
 Every rule here is a blocker. Rule numbers are permanent, because existing tests and the
 archived review passes in `docs/history/` cite them. Where two rules overlap, the more specific
 one governs. A code comment states its constraint in plain language and does not cite a
-rule number. These rules bind the queue, its override controls, the show panel, and the
-`reviewFate` helpers they share. The SPA's general UI grammar is in `.claude/rules/frontend.md`.
-Rules that bind every file are in the root `CLAUDE.md`. Holds 48–50, 120–123.
+rule number. These rules bind the queue, its override controls and their stylesheets, the show
+panel, and the `reviewFate` helpers they share. The SPA's general UI grammar is in
+`.claude/rules/frontend.md`. Rules that bind every file are in the root `CLAUDE.md`.
+Holds 46, 48–51, 120–123.
 
-Read this file with `frontend.md`, never instead of it. Rule 51 governs the row layout these
-controls sit in, and it stays in `frontend.md`.
+Read this file with `frontend.md`, never instead of it. Card hover (rule 47) stays in
+`frontend.md`.
 
 **48. Reap is dropped wherever the item is already condemned, and keep-first colors the pair.**
 A hand Reap does nothing to an already-condemned item. So `hideReap` hides it in every surface
-that carries `OverrideControls` (card, panel, season list, bulk bar). `hideReap` judges the
-item's own verdict (`verdict === "condemn"`), never the tab's, so a mixed season expansion drops
-Reap on exactly the condemned rows. The bulk bar is the one exception. It keys on the tab
-verdict, because a heterogeneous selection is not one item. Never reimplement that test inline.
-Spare is never a no-op and is never hidden. "Reap now" (the real deletion) is a different
-control and is never hidden. Spare invites in green. Reap stays the quiet gray of a plain button
-until hovered. A chosen decision is the solid hand-decision chip.
+that carries `OverrideControls` (card, panel, season list, bulk bar). `hideReap` comes from
+`reapIsNoop` (`components/reviewFate.ts`). It is true when the item's own verdict condemns it
+and the item is not spared. It never judges the tab's verdict, so a mixed season expansion drops
+Reap on exactly the condemned, unspared rows. The bulk bar is the one exception. It keys on the
+tab verdict, because a heterogeneous selection is not one item. Never reimplement that test
+inline. Spare is never a no-op and is never hidden. "Reap now" (the real deletion) is a
+different control and is never hidden. Spare invites in green. Reap stays the quiet gray of a
+plain button until hovered. A chosen decision is the solid hand-decision chip.
 - **A whole show is not atomic, so it uses its own no-op test.** A movie or season on the
   Condemned lane is fully condemned. A show is on that lane because some season is, and a
   whole-show Reap still takes the seasons the scan kept. So both buttons stay until every season
@@ -49,9 +53,9 @@ badge (`Score`) and the season strip square (`SeasonStrip`) both route color thr
 solid, meaning "you chose this." A reap the engine cannot honor yet reads dashed red, with
 `--condemn` on `--condemn-soft` and a dashed border, never solid. On the strip it also carries a
 small scythe corner-mark (`.strip-mark`). So it reads as the operator's own ask and never blends
-into the plain condemned outline beside it. An untouched cell keeps its scan verdict. Amber
-(`--unknown`) means exactly one thing, "left for you to decide" (the abstain `status-look`
-chip). Amber never marks a held reap. A held reap never wears the solid red that means
+into the plain condemned outline beside it. An untouched cell keeps its scan verdict. On a
+fate-bearing cell, amber (`--unknown`) means "left for you to decide" (the abstain `status-look`
+chip). It never marks a held reap. A held reap never wears the solid red that means
 "removed." A hand decision never leaves the number in the color the scan first gave it. The
 `.score-refused`, `.strip-ov-reap-refused`, `.status-reap-held`, and `.chip-reap-refused`
 classes keep the held-reap treatment consistent across movies and seasons. Never recolor these
@@ -80,6 +84,38 @@ clear never silently un-decides the whole show. That strips protection from ever
 which fails open and is forbidden. The grace clock follows the same effective set
 (`_sync_grace_clocks` in `api/whitelist.py`). A scan-condemned item that the owner spares and
 later un-spares re-enters on a fresh window, never a spent one (rule 4/71).
+
+## The queue's action grammar
+
+These rules set how a queue row presents its Spare/Reap decision.
+
+**46. Row actions reveal on hover, and a decided card rests as its icon.** The per-row
+Spare/Reap (`OverrideControls`) stays hidden until the row is hovered or keyboard-focused. It
+stays in flow through `visibility`, never `display`, so nothing reflows. A card that carries a
+hand override rests as a small icon of it in the buttons' slot (`OverrideMark`). A forever spare
+rests as ∞, a timed spare as a clock with its remaining days, and a reap as a scythe. The same
+hover fades the icon out. A season row draws no resting mark. Never leave the full buttons on
+every row at rest. Never show the icon and the buttons at once. A touch screen (`hover: none`)
+has no hover, so there the buttons show at rest and the mark is dropped. Give the toggling
+buttons a fixed `min-width` (`--ov-btn-w`), so a label change (Spare↔Spared, Reap↔Reaping) never
+resizes them. A shrinking button leaves a red ghost in the region it vacated, in Safari only. A
+spent spare is not a decision at rest, so it draws no mark at all (rule 122). The card rests
+bare, and its button offers a fresh spare.
+
+**51. Row actions align in fixed columns, the size holds still, and every season is actable in
+place.** In the expanded season list (`SeasonList`), Spare keeps the left button column and Reap
+keeps the right. Both sit to the left of a right-pinned size in its own column, so buttons and
+sizes read as straight columns whatever a row's button count. The button track and the size
+track have a fixed width, never `auto`. Each `.season-row` is its own grid, so an `auto` track
+sizes to that row's own text and the buttons drift from row to row. The button track is the
+`--btns` custom property. `SeasonList` sets it once per list, from whether any season in the
+list can show Reap (`!reapIsNoop`, `components/reviewFate.ts`), so a spared condemned season
+still counts. A show whose every season is condemned and unspared then reserves no empty Reap
+slot. `.season-row .override-controls` is `justify-self: start`, so a lone Spare lands in the
+same column as a paired row's Spare. Every season row is actable from this list. Each row has
+its own `OverrideControls`, keyed to `override_own` (rule 50), with `hideReap` from that
+season's own `reapIsNoop` (rule 48). A per-tab `hideReap` on a list row, a read-only season row,
+or an `auto` button or size track that lets the columns drift is a regression.
 
 ## The two-level spare
 

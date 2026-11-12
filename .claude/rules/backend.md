@@ -27,11 +27,12 @@ because the stored copy still protects everything on it. Past that bound, or wit
 a successful sync, degrade.
 
 **3 / 22. One decision function.** The condemn/abstain/protect decision lives only in
-`engine/verdict.decide_verdict`. Four callers import it: `snapshot`, `simulate`, `condemned`,
-and `policy_warnings.inspect`. The "nothing will be flagged for removal" warning in
-`policy_warnings.inspect` depends on the decision staying monotone in score and coverage. Never
-write `score >= threshold` or `coverage_bp >= floor` inline outside it. Never reimplement
-scoring, coverage, rounding, or floors anywhere they can drift.
+`engine/verdict.decide_verdict`. Five callers import it: `snapshot`, `simulate`, `condemned`,
+`policy_warnings.inspect`, and the threshold curve (`api/policy.threshold_curve_rows`). The
+"nothing will be flagged for removal" warning in `policy_warnings.inspect` depends on the
+decision staying monotone in score and coverage. The threshold curve depends on it staying
+monotone in score. Never write `score >= threshold` or `coverage_bp >= floor` inline outside
+it. Never reimplement scoring, coverage, rounding, or floors anywhere they can drift.
 
 **4 / 71. Reset time-window clocks on re-entry, and clear them when an item leaves the set.**
 Never let a stale first-flagged timestamp skip a safety window. When an override that kept an
@@ -46,8 +47,8 @@ button derives from the same set the server acts on.
 
 **23. Every re-decision surface handles every stored verdict state.** When you add or consume a
 Candidate verdict, enumerate every state at every consumer. The states are protect,
-abstain-blocked, abstain-by-score, condemn, overrides, and expired. Add the blocked and override
-cases to the simulator test in the same change.
+abstain-blocked, abstain-by-coverage, abstain-by-score, condemn, overrides, and expired. Add the
+blocked and override cases to `tests/test_simulate_permutations.py` in the same change.
 
 **26. Journal and state-transition writes on the deletion path are durably committed at each
 step.** Never rely on `flush()` inside a run-long transaction for anything described as an
@@ -59,10 +60,12 @@ produces less pressure.
 
 **38 / 117. A gate or option the operator can enable must be able to fire.** If every fact
 builder sets its input `Absent`, either wire the input or retire the gate. To retire a gate,
-remove it from `GATE_TYPES`, refuse it in `build_gates`, and refuse to scan under a policy that
-enables it. Keep its `GateId` so stored explanations still decode. Delete dead safety-adjacent
-code. A method "for when the interlock lands" ships with its interlock and its tests, or does
-not exist.
+remove it from `GATE_TYPES` and add it to `PolicyBody.RETIRED_GATES`, which drops it from a
+stored policy on load. A gate that was a live protection gets a load shim instead (rule 105).
+Keep its `GateId` so stored explanations still decode. `build_gates` still refuses an unknown
+id. `test_every_unbuildable_gate_id_is_declared_retired` fails on a gate retired neither way.
+Delete dead safety-adjacent code. A method "for when the interlock lands" ships with its
+interlock and its tests, or does not exist.
 
 **73. A password-gated destructive confirm is content-bound.** The confirm request carries a
 server-verified token derived from the exact content the operator reviewed. The server
@@ -71,11 +74,12 @@ since review. The execute route's phrase is the model. Any new stage-review-conf
 (restore, import, bulk apply) carries the same binding.
 
 **97. Anything counting what was deleted counts the file's removal, not the bookkeeping after
-it.** A live re-resolve that returns no files goes to `_mark_skipped` ("no files resolved;
-kept"). It never counts the approved size as deleted, and it never overwrites an
-already-VERIFIED step. A step whose file is confirmed gone but whose follow-up (exclusion,
-refresh) failed stays FAILED, because VERIFIED would make the journal claim a verification that
-failed. That step still charges the rolling caps through the durable `file_removed_at` column.
+it.** A live re-resolve that returns no files goes to `_mark_skipped`, recorded under
+`error.reap.step.season_files_vanished`. It never counts the approved size as deleted, and it
+never overwrites an already-VERIFIED step. A step whose file is confirmed gone but whose
+follow-up (exclusion, refresh) failed stays FAILED, because VERIFIED would make the journal
+claim a verification that failed. That step still charges the rolling caps through the
+durable `file_removed_at` column.
 
 **111. The executor's send loop and `execute()` each carry a catch-all that records terminal
 state.** An unmapped exception after a file is already deleted must not leave the step `SENT`,
@@ -95,12 +99,16 @@ and enforce it at execute time. The refusal's operator copy tells the operator t
 because a policy edit does not trigger a scan on its own. Execute refuses a plan built after the
 edit as well as one built before it. Never leave a hash recorded and unread.
 
-**124. A protection derived from viewing position anchors on the most recent play, never the
-highest ordinal.** Anchoring the mid-binge guard on the highest season number a viewer touched
-gives a re-watcher or an out-of-order viewer no protection at all. A position derived that way
+**124. A protection derived from viewing position anchors on the most recent play as well as
+the highest ordinal, never on the ordinal alone.** Anchoring the mid-binge guard on the highest
+season number alone gives a re-watcher or an out-of-order viewer no protection at all.
+Anchoring on the latest play alone drops the hold on the newest season when a viewer dips back
+into an old one. Each viewer anchors on the season of their latest play and on the highest
+season they played (`season_pruning.sequential_protections`). A position derived by arithmetic
 can also land outside the set that exists. It then protects nothing while it reads as a live
-guard. Derive the anchor from the latest play. Check that the anchored position is a member of
-the set before you treat it as cover. Specials count as a season.
+guard. Before you treat the next season as cover, check that it exists on disk. Specials are an
+anchor only when `keep_specials` is off, and a specials anchor holds the specials alone, never
+season 1.
 
 **116. A degraded snapshot's side effects are gated with its plan.** An un-plannable snapshot is
 also un-announced. Grace clocks, the Leaving Soon shelf, and Discord all read the condemned set.
@@ -130,10 +138,10 @@ success response that carries a null or malformed body as a failure, never as a 
   It is not the send refusal. Never collapse the send refusal back to it, because that drops the
   comparable-quantity check. This exception covers the item's own size only. A source that
   fails to respond still degrades.
-- *Sanctioned exception:* a source that can only add condemn evidence (the batch enrichment in
-  `season_scan`) may log instead of degrading. Losing it can only lower pressure, which is the
-  keep direction. The comment at that site must say so. A source whose loss can withdraw a
-  protection never qualifies.
+- *Sanctioned exception:* a log-only `except` is allowed only where the fallback keeps the
+  file. The comment beside it names the fallback: the item abstains, a protection widens, or a
+  slower complete path runs. A source whose loss can withdraw a protection or add pressure
+  always degrades.
 
 **35. New `Facts` fields are populated, or explicitly `Absent` with a comment, in every fact
 builder.** Two builders read evidence, `snapshot.build_facts` and
@@ -197,9 +205,10 @@ became unofferable. Never drop the rule silently.
 
 ## Identity, joins, and keys
 
-**6. Disambiguate cross-system joins by a stable identifier** (year + title, never title
-alone). Refuse to bind on ambiguity (return Unknown / ABSTAIN). Never let the last write
-silently win in a `dict[title, row]` map.
+**6. Disambiguate cross-system joins by a stable identifier.** Bind on an external id first.
+Year plus title is the last tier (`identity.title_year_match`), and title alone never binds.
+Refuse to bind on ambiguity (return Unknown / ABSTAIN). Never let the last write silently win
+in a `dict[title, row]` map.
 
 **29 / 106. Every id the item carries, of every kind and every spelling, goes into every
 lookup.** Pass imdb, tmdb, and tvdb together to `membership_index.lookup` or any cross-system
@@ -210,11 +219,12 @@ every lookup call site and update each one in the same change.
 
 **52. A bare tmdb id is not a stable key across media kinds.** Movie and TV tmdb ids share one
 integer space. Every map, index, or lookup keyed on a tmdb id carries the media kind with the
-number, on both the write side and the read side.
+number, on both the write side and the read side, unless the map holds one media kind only.
 
 **63. Rows are keyed and aggregated by a stable server id, never a display name.** If the schema
-lacks an id, add one in the same change. User-level roll-ups key on the always-present per-user
-id, never an optional linked-account id. This binds membership indexes and path tables as much
+lacks an id, add one in the same change. Key a person on an id unique across every source: the
+linked id when present, else the per-user id qualified by its portal (`fairness._identity`).
+Never key on a value that can be None. This binds membership indexes and path tables as much
 as display rows. Any dict whose key can collide is a bug, and a display name can always collide.
 
 **109. An identity tier that can corroborate a bind is computed even when an earlier tier already
@@ -228,8 +238,9 @@ agreement.
 ## Policy evaluation
 
 **32. Typed condition values validate against the field's type at the boundary, and evaluation
-never raises out of a scan.** A rule evaluation error degrades that item as blocked. A stored
-policy must not be able to crash `score()` or `evaluate_all`.
+never raises out of a scan.** `Condition.validate_for` refuses a mistyped value at save.
+`fields.evaluate` holds the rest: an evaluation error marks that item blocked, and a stored
+policy never crashes `score()` or `evaluate_all`.
 
 **108. A text condition value is rejected at the save boundary when it strips to empty, or
 when it carries the separator its fact is joined on.** `contains ""` matches every item and
@@ -237,17 +248,9 @@ applies the rule's full weight library-wide. `in ""` can never match and reports
 "checked, did not fire." Reject `value.strip() == ""` for CONTAINS and IN. Reject an IN target
 whose split yields no elements, so a comma-only list cannot pass.
 
-The separator can enter where no condition validator sees it. A multi-valued fact is one string
-with its elements joined by a comma (`lists.on_list_fact`). `fields._compare` splits it on
-commas to test membership, so a value that contains a comma is never an element of its own
-fact. When that value is an operator-typed name that the app later turns into a condition (a
-list name becomes an `on_list` rule), refuse the separator on the name, at the boundary that
-stores it, as well as on the rule built from it. By the time a validator sees the condition, the
-operator is on another screen, and every surface shows the rule as a live protection that
-covers nothing. It fails in both directions at once. A list named `Kids, Holiday` protects
-nothing, and a different list named `Holiday` protects everything on it. When a stored string
-will become an element of a joined fact, refuse the separator where the operator types it, and
-say so in the operator's words.
+When a stored string will become an element of a joined fact, refuse the separator where the
+name is typed as well as on the rule built from it, and say so in the operator's words.
+`list_config._clean_name` and `Condition._validate_value_type` hold the detail.
 
 ## Clients & HTTP
 
@@ -263,7 +266,7 @@ match.
 actual timeout kind, never a hardcoded budget. Honor upstream retry signals instead of dropping
 them.
 
-**33. All HTTP lives in `clients/`.** A raw `httpx` or `requests` usage outside
+**33. All HTTP lives in `clients/`.** A raw `httpx2` or `requests` usage outside
 `src/reaper/clients/` is a blocker unless this rule names it below as a sanctioned exception.
 The guard classifies and gates GET-shaped mutating endpoints by path. It never assumes one is
 safe by its method. Public unauthenticated GETs go through `clients/public.py`.
@@ -286,7 +289,8 @@ second `enter_async_context`.
 **56 / 89. Every windowed list read goes through the complete-or-raise paging helper.** Page
 through `clients/plex.py`'s `_iter_pages`, or assert `totalSize` completeness. Raw
 `server.query(...)` and raw multi-id metadata reads that can silently truncate are banned. Any
-unbounded loop gets a page backstop (`MAX_HISTORY_PAGES` is the model). Pagination advances and
+unbounded loop gets a page backstop. `plex.SWEEP_MAX_PAGES` raises at the backstop and is the
+model. `history_sync.MAX_HISTORY_PAGES` warns and stops instead. Pagination advances and
 terminates on the raw page count, never a filtered one. A defensive filter that can shrink a
 page raises on an anomaly instead of silently resizing the page. A total-size fallback never
 defaults to the page size. A complete-or-raise docstring is a contract. Input that violates it
@@ -294,11 +298,10 @@ raises, and the function never returns a partial result. A truncated read of a p
 source silently stops that protection covering most of the library.
 
 **57. Plex removals address the stored spelling, and sections resolve by key.** Group items by
-the exact stored tag spelling (casefold-matched, following `remove_label`). Resolve sections
-with `sectionByID`. `library.section(title)` is banned in `src/` outright. The ban binds every
-call, including trash, refresh, count, and refresh-status as well as label and collection
-writes. Where only a title is known and it is ambiguous, ask each same-titled library in turn
-(`lists.PlexCollection` is the model), never only the first match.
+the exact stored tag spelling, casefold-matched as `remove_label` does. Resolve sections with
+`sectionByID`. `test_plex_sections_are_never_resolved_by_title` fails on any
+`library.section(` call in `src/`. Where only a title is known and it is ambiguous, ask each
+same-titled library in turn (`lists.PlexCollection` is the model), never only the first match.
 
 **88. Case-fold both sides of every label, tag, collection, or list-name match, through
 `reaper.text.fold`.** When one side of a lookup is lower-cased, lower-case the other too.
@@ -309,8 +312,9 @@ This rule covers names only. A path takes a different fold (`identity.to_basenam
 `to_segments`), and so does a token that is not a name.
 
 **114. A sleep, retry budget, or allocation whose size comes from a remote server is clamped**
-to both a ceiling and the caller's remaining deadline. `notify/discord.py`'s
-`_MAX_RETRY_AFTER` is the pattern. Any other site that honors `Retry-After` matches it.
+to both a ceiling and the caller's remaining deadline. `PlexTvClient.wait_for_pin` in
+`clients/plextv.py` is the model. `notify/discord.py` clamps to a ceiling only. Any other site
+that honors `Retry-After` matches `wait_for_pin`.
 
 **58. A check-then-write re-reads inside the write transaction.** A state check may run on a
 separate read connection only if the write transaction re-reads the state it acts on. DDL or
@@ -319,22 +323,18 @@ destructive writes driven by pre-lock reads are a blocker.
 **59. Multi-key JSON settings update per key or under a guarded merge.** A read-modify-write of a
 whole settings dict across an `await` is a blocker.
 
-**81. A baseline edit, even one reverted within hours, obligates a guarded migration.** If the
-frozen baseline was ever wrong in a merged commit, every additive migration that covers that
-window carries the heal migration's reflection guard. In-window databases then upgrade instead
-of boot-looping. Never edit the baseline. If someone edits it anyway, the follow-up migration
-is guarded, never plain.
+**81. A baseline edit, even one reverted within hours, obligates a guarded migration.** Never
+edit the baseline. `test_alembic_baseline_is_frozen` fails on any byte change to it. If the
+baseline was ever wrong in a merged commit, every additive migration that covers that window
+carries the heal migration's reflection guard, so in-window databases upgrade instead of
+boot-looping.
 
-**94. Every `WHERE col IN :keys` over a scan-sized set is chunked on `db.KEY_CHUNK`.** An
-unchunked expanding bindparam overflows SQLite's variable ceiling and aborts the scan. Chunk it,
-or express the filter as an anti-join. The bound is one declaration, and a gate enforces the
-sweep. `test_repo_hygiene.py` collects the three spellings `src/` uses (the ORM operators, an
-`expanding` bindparam, and a hand-built placeholder list) and fails on any site that carries no
-written classification. The gate cannot see a fourth spelling, and no count goes missing when
-one appears (rule 147). So a new form ships with the walk that reads it. A new
+**94. Every `WHERE col IN :keys` over a scan-sized set is chunked on `db.KEY_CHUNK`.**
+`test_every_scan_sized_in_clause_is_chunked_or_classified` fails on any site with no written
+classification, and a new spelling ships with the walk that reads it. A new
 `parent_rating_key`-style filter also needs its covering index. Reconcile a `cache.db` index by
-name and create the missing one in place. Never bump the column-shape tuple to force it,
-because that drops the whole mirror.
+name and create the missing one in place, never by bumping the column-shape tuple, which drops
+the whole mirror.
 
 **95. Every numeric API bound is validated at the boundary with `ge`/`le`, and every
 destructive-path list or string carries `max_length`.** A `min()` cap with no floor lets
@@ -346,9 +346,12 @@ restore refuses. Where a producer and a consumer must agree on a limit, both rea
 A test writes at the limit and reads the result back. This is rule 67 generalized from the
 TSX/CSS pair to any producer/consumer bound.
 
-**13. Never put secrets in URL query strings or path components that get logged.** Keep them in
-request bodies or headers. Default to `verify=True` for TLS. Derive at-rest keys with a salted
-KDF, and apply an entropy floor to operator-supplied keys.
+**13. Never log a URL that carries a secret.** Keep a secret in a request body or header
+wherever the upstream accepts one. Tautulli, MDBList, and plexapi require the key in the query
+string, so trace an outbound call by its path only (`base.trace_call`), never the URL with its
+query. `logging.redact_secrets` scrubs a query string that reaches a log anyway. Default to
+`verify=True` for TLS. Derive at-rest keys with a salted KDF. An operator-supplied key below
+the entropy floor logs a warning (`secrets._warn_if_weak`).
 
 ## Jobs, notifications, and side effects
 
@@ -361,10 +364,10 @@ paths, and other side entrances honor the stored off value, or the off-warning c
 exception explicitly. That copy states the real, code-verified consequence of turning the job
 off, including degradation that blocks runs, never a guessed softer one.
 
-**82. A persistent sink degrades loudly, once.** Any always-on writer (log file mirror, export
-stream) that can fail after setup carries a one-shot degradation flag, surfaced where its output
-is consumed. A bare `suppress(Exception)` around a steady-state write whose output is documented
-as an audit trail is a blocker.
+**82. A persistent sink degrades loudly, once.** Any always-on writer (the log file mirror in
+`logbuffer.py`) that can fail after setup carries a one-shot degradation flag, surfaced where
+its output is consumed. A bare `suppress(Exception)` around a steady-state write whose output is
+documented as an audit trail is a blocker.
 
 **87. A guarded startup replay is mirrored on every runtime replay of the same data.** When
 startup wraps a stored-value replay in a tolerant guard (malformed cron, bad zone), every
@@ -385,17 +388,18 @@ sessions that are pruned only when the same token is presented again grow the ta
 Pair every expiry rule with the job that enforces it. Rule 55 applies, so the sweeper's off
 switch governs every path that runs it.
 
-**115. A protection-list slug that changes shape disables its predecessor in the same
-transaction.** Slugs derived from operator settings (match mode, instance id) leave orphaned rows
-that `enabled = 1` keeps protecting forever, so a tightening the operator saved never takes
-effect. Either disable every slug the current run did not produce, or keep the setting out of
-the slug. Retire a slug only on a successful sync, and only for a family whose source was
-reachable. A failed sync's slug holds exactly the membership that must survive.
+**115. A protection-list slug that changes shape disables its predecessor in the same sync
+pass, after the replacing sync lands.** Slugs derived from operator settings (match mode,
+instance id) leave orphaned rows that `enabled = 1` keeps protecting forever, so a tightening
+the operator saved never takes effect. Either disable every slug the current run did not
+produce, or keep the setting out of the slug. Retire a slug only on a successful sync, and only
+for a family whose source was reachable. A failed sync's slug holds exactly the membership
+that must survive.
 
 ## Reporting, attribution, and stored explanations
 
 **77. Backend reporting surfaces consult effective overrides.** Any service that summarizes
-items as removable, reclaimable, or kept (Scales, breakdowns, exports) merges live override
+items as removable, reclaimable, or kept (Scales, breakdowns) merges live override
 state the same way the review routes do. Otherwise its copy states explicitly that it shows scan
 verdicts only.
 

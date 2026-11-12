@@ -13,9 +13,10 @@ archived review passes in `docs/history/` cite them. Where two rules overlap, th
 one governs. A test docstring or code comment states its constraint in plain language and
 does not cite a rule number. Holds 37, 118, 119, 132, 133, 135–137, 141, 145, 147.
 
-**37. Tests that boot the app are hermetic.** Use the shared autouse `_hermetic` fixture in
-`tests/conftest.py`. It stubs env seeding and the network calls made at startup. Never let a
-test read the developer's `.env` or reach the network.
+**37. Tests that boot the app are hermetic.** Use the shared autouse fixtures in
+`tests/conftest.py`. `_hermetic` keeps `Settings` off the developer's dotenv files, and stubs env
+seeding and the startup catch-up work. `_no_network` blocks every connection beyond loopback, and
+fails the test that tried one. Never let a test read the developer's `.env` or reach the network.
 
 **118. Every deletion-path interlock has a test that fails when the interlock is deleted.**
 When a guard upstream makes the interlock unreachable through the public path, write the test
@@ -33,14 +34,15 @@ never rests on an environmental accident.**
 - Where a test mirrors a production pipeline, extract the shared part and point both at it.
   Never patch the copy. When the copy also generates the fixture's own baseline, nothing can show
   that the copy drifted from production.
-- Assert the domain error and its message, never `pytest.raises(Exception)`.
+- Assert the domain error and its message, never `pytest.raises(Exception)`. A bare
+  `.toThrow()` in a frontend test is the same defect.
 - A test whose evidence is a closed port, a non-root uid, or any other property of the machine
   proves nothing. Stub the boundary and assert what was actually sent. Add a case no
   environment can skip.
 
 **132. Test infrastructure may not imply coverage that does not exist.** A fixture, helper, or
-`conftest.py` comment that names a function's poll loop reads as "this is covered". If that
-function has no test, write one or stop naming it.
+comment that names an untested function reads as coverage, so write its test or stop naming it
+(rule 7/24 applied to test infrastructure).
 
 **133. A test leaves no process-global state behind, and never rests on a clock production
 also samples.** Anything that mutates process-global configuration (logging, env, registries)
@@ -48,12 +50,8 @@ restores it. Otherwise the next test in the same xdist worker inherits it. A tes
 the wall clock production also reads rests on an environmental accident, as in rule 119. Freeze
 the clock or assert a range. Never sample the clock twice and compare.
 
-Where the suite already makes a delay instant, elapsed time cannot fail at all, so a range on
-it proves nothing. `conftest.py` makes every `asyncio.sleep` instant, so a clipped and an
-unclipped delay return equally fast (#346). For a delay, take `conftest.py`'s `slept` fixture.
-It owns `loop.time()` and advances it by each delay. Assert the delay that was asked for. The
-requested delay is the behavior, and elapsed time is a measurement of the machine. This is how
-rule 118 applies to anything bounded by a deadline.
+`conftest.py` makes every `asyncio.sleep` instant, so a range on elapsed time cannot fail
+(#346). To test a delay, take the `slept` fixture and assert the delay that was asked for.
 
 **135. A module mock answers everything the tree under test reads, and a gap fails the run,
 because a warning cannot.** `vi.mock("../api", …)` hands every consumer `undefined` for what it
@@ -62,11 +60,10 @@ the test passes against the fallback. `src/test/setup.ts` fails the run on such 
 `src/test/apiFixtures.ts` holds the payloads as the shipped defaults, so adding one does not
 change what a passing test renders.
 
-The gate in `setup.ts` misses a mock gap when the read goes through an arrow function. The gate
-sees `queryFn: api.profile` handed `undefined`. It cannot see
-`queryFn: () => api.vocabularyValues(f)`, where the `queryFn` exists and throws inside. React
-Query files that as an ordinary rejection, and the tree renders its failed-read branch with no
-error and no warning. Read the tree's `queryFn`s, not just its hooks.
+`setup.ts` also fails a read that resolves `undefined`, including one inside an arrow
+(`queryFn: () => api.vocabularyValues(f)`). The gap that remains is a hand-picked mock that omits
+a function an arrow calls. The arrow throws, and the tree renders its failed-read branch with no
+error and no warning. So mock `../api` with `makeApiMock()` (`src/test/apiMock.ts`).
 
 **136. A state update outside `act(...)` fails the run, with no exemption for the framework.**
 `src/test/setup.ts` enforces this. Such an update means the test asserted on a state the

@@ -15,7 +15,7 @@ archived review passes in `docs/history/` cite them. Where two rules overlap, th
 one governs. A code comment states its constraint in plain language and does not cite a
 rule number. Rules that bind every file are in the root `CLAUDE.md`. The backend rules are in
 `.claude/rules/backend.md`, and the review queue's rules are in `.claude/rules/review-queue.md`.
-Holds 17–20, 36, 39–47, 51, 53, 54, 60–62, 66, 67, 69, 79, 80, 85, 86, 138, 139, 146.
+Holds 17–20, 36, 39–45, 47, 53, 54, 60–62, 66, 67, 69, 79, 80, 85, 86, 138, 139, 146.
 
 ## React correctness
 
@@ -24,11 +24,10 @@ explicit unknown or error fallback for safety indicators and setup gates. A comp
 contract is "always visible" never returns `null` on a missing or failed query. Every async
 onClick is a mutation with a rendered error state.
 
-**19. Stable keys, stable effect dependencies.** A list key is unique among its siblings and
-comes from a stable server id, never a display name (rule 63). Memoize arrays. Use `useRef` for
-a mutable flag that lives across renders. Reset state with `useEffect` when a prop changes
-identity. Never key on a value that sibling rows share. Never make an effect depend on a freshly
-allocated array.
+**19. Stable keys, stable effect dependencies.** A list key comes from a stable server id,
+never a display name (rule 63). Use `useRef` for a mutable flag that lives across renders, and
+reset state with `useEffect` when a prop changes identity. `src/test/setup.ts` fails a run on
+duplicate sibling keys, and eslint `react-hooks/exhaustive-deps` covers effect dependencies.
 
 **20. Independent bulk operations use `Promise.allSettled`, never `Promise.all`.** After the
 batch settles, reconcile UI state even when part of it failed. Invalidate the queries, and clear
@@ -53,6 +52,18 @@ Invalidation alone fails there, because the key itself points at superseded data
 **80. Every close affordance runs the modal's close guard.** Browser Back, gestures, and any new
 dismissal path honor the same `canClose` that the scrim, Escape, and ✕ honor. A back-layer close
 that bypasses a declared guard is a blocker.
+
+**146. A dirty or blocked signal that a component reports upward is two claims, and both are
+checked in every state the component can render.** A component lifts "this panel is holding
+something" into a parent so the parent can guard on it. That report asserts two facts. There is
+something to lose, and the operator can still reach it. The two facts are computed in different
+places. Re-read every early return as a state in which the report still fires. State what the
+parent is told while the component renders "loading", while it renders its failure branch, and
+after it unmounts. Sometimes the reported set and the acting surface differ by design, for
+example when a bar must not name a control the operator cannot reach. Then compute them
+separately and state why where you compute them. Never derive one from the other and leave a
+comment that claims they cannot disagree. A guard whose signal outlives the surface that
+satisfies it does not guard. Its only exit is the destructive button.
 
 ## Honesty of what the UI asserts
 
@@ -81,9 +92,12 @@ mirror, and rule 103's drift guard binds it. Rule 103 lives in `.claude/rules/ba
 never loads for the file that carries the copy, so the obligation is stated here too. Derive the
 map's keys from one declaration, or make a test fail when the set changes. `gateMeta` is the
 worked case. `policyMeta.ts` types it off a `GateId` union, and `test_api_type_mirror.py` pins
-that union against the enum. Do not count on the fallback here. The fallback is what makes a
-missing member silent (#551). `signalMeta`, `RAMPS` and `BUILTIN_SIGNAL_IDS` have the same shape
-and have no guard yet.
+that union against the enum. `jobMeta` (`JobsPanel.tsx`) is guarded by `test_repo_hygiene.py`,
+and `REPAIR_NOTICES` (`PolicyEditor.tsx`) by `test_policy_repairs.py`. Do not count on the
+fallback here. The fallback is what makes a missing member silent (#551). `signalMeta`,
+`RAMP_SPECS` (`signalRamp.ts`) and `BUILTIN_SIGNAL_IDS` have the same shape and have no guard
+yet. `phaseLabel` (`ScanBar.tsx`) mirrors the phase list in `src/reaper/api/scan.py` and has no
+guard either.
 
 **85. Success copy fires on settled state.** A toast, timestamp, or "done" indicator is set only
 after the operation it describes has completed (refetch settled, final chunk streamed). It is
@@ -130,20 +144,22 @@ as its `guard`, so it claims the field only while the condition holds (#145).
 `PolicyEditor.warnings.test.tsx` proves both directions. It drives every anchor through the
 state its guard requires and through every branch the guard does not name, so a missing guard
 fails as loudly as a wrong one (#167).
-Action failures everywhere are `.notice.notice-error` with a plain-language lead ("The scan
-didn't start: …"). Bare red `.error` text stays only in the review surfaces and in the
-simulator's dedicated failure panel.
+Action failures render `<Notice tone="error">` (`components/Notice.tsx`) with a plain-language
+lead ("The scan didn't start: …"). A hand-written `.notice` is banned, and
+`test_every_notice_goes_through_the_one_component_that_announces_it` fails on one. Bare red
+`.error` text stays only in the review surfaces and in the simulator's dedicated failure panel.
 
-**43. One save affordance per page.** The policy editor's sticky `.savebar` is the only save UI
-on that page. It names what is dirty, states when each part takes effect, saves everything with
-one click, and offers Discard. New savable state on that page joins the bar. Never add a second
-Save button beside it.
+**43. One save affordance per page.** The Policy editor's sticky `.savebar` is that page's one
+save affordance. It names what is dirty, states when each part takes effect, saves everything
+with one click, and offers Discard. General settings has its own `.savebar`
+(`components/GeneralPanel.tsx`). New savable state joins its page's bar. Never add a second
+Save button beside one.
 
 **44. Settings-bearing groups are cards, and plain toggles are rows.** A protection or group
-with sub-configuration is a `.rules-card` with its `Switch` in `.card-head`, as the rating bars
-and keep-tags are. The season card shares the container. An on/off with nothing else stays a
-bare `.rule-row`. Rows of repeated per-item controls align in one grid with a shared label
-column, never one boxed well per row.
+with sub-configuration is a `.rules-card` with its `Switch` in `.card-head`, as the rating floor
+and the rewatch keep cards in `PolicyEditor.tsx` are. The season card shares the container. An
+on/off with nothing else stays a bare `.rule-row`. Rows of repeated per-item controls align in
+one grid with a shared label column, never one boxed well per row.
 
 **45. Help text binds to exactly one control, directly beneath it.** Never write one help
 paragraph that covers two controls. Never detach help from the row it explains.
@@ -169,11 +185,12 @@ title, a path, or a host can arrive from a portal, a file system, or someone els
 one long unbroken string. On a phone that string paints through the box that holds it. A
 scrolling page slides sideways. A clipping container, such as a side panel or a sheet, makes the
 tail unreachable, which is rule 138's failure by a different route. An element that renders text
-from outside the app carries `overflow-wrap: anywhere`, the idiom already used at a dozen sites
-across `styles/`. The fix lands on every surface that renders the same value (rule 72). The
-Scales card's `.fair-name` and the person panel's `.scales-head-id h2` are one name in two
-places. Wrap the text, never truncate it. Two handles that differ only in their tail truncate to
-the same string, and the operator reading them is deciding whose files to delete.
+from outside the app carries `overflow-wrap: anywhere`. Wrap the text, never truncate it. Two
+handles that differ only in their tail truncate to the same string, and the operator reading
+them is deciding whose files to delete. A new surface adds a row to the `SITES` table in
+`index-outside-text.test.ts`, which checks every surface listed there. The fix lands on every
+surface that renders the same value (rule 72). The Scales card's `.fair-name` and the person
+panel's `.scales-head-id h2` are one name in two places.
 
 **67. Values coupled across TSX and CSS derive from one declaration.** A width, gap, or count
 that must agree between a component and a stylesheet lives in one custom property that both
@@ -181,51 +198,16 @@ read, or both sites carry a cross-reference comment. The `--btns` track (rule 51
 and the rule covers every such value.
 
 **69. The icon link the app rewrites at runtime is declared last in `index.html`.** Static
-fallback icons precede the dynamic one. Adding an icon link after `#favicon` is a blocker.
+fallback icons precede the dynamic one. `test_dynamic_favicon_link_is_declared_last` fails on an
+icon link after `#favicon`.
 
 ## The queue's action grammar
 
-These rules set how a queue row presents its Spare/Reap decision.
-
-**46. Row actions reveal on hover, and a decided row rests as its icon.** The per-row Spare/Reap
-(`OverrideControls`) stays hidden until the row is hovered or keyboard-focused. It stays in flow
-through `visibility`, never `display`, so nothing reflows. A row that carries a hand override
-rests as a small icon of it in the buttons' slot (`OverrideMark`, ∞ for spared and a scythe for
-reaped). The same hover fades the icon out. Never leave the full buttons on every row at rest.
-Never show the icon and the buttons at once. Give the toggling buttons a fixed width, so a label
-change (Spare↔Spared, Reap↔Reaping) never resizes them. A shrinking button leaves a red ghost in
-the region it vacated, in Safari only. A spent spare is not a decision at rest, so it draws no mark
-at all (rule 122). The row rests bare, and its button offers a fresh spare.
+This rule sets how a queue card shows hover and selection. The Spare/Reap row grammar is in
+`.claude/rules/review-queue.md`.
 
 **47. Card hover is the accent, additive on the open card.** A card's hover is the accent edge,
 never gray. On hover, the open (`card-selected`) card keeps its accent selection bar and deepens
 it. It never trades the bar for the plain hover, which reads as a deselect. Any `:hover` that
 can also be `.active` or selected re-asserts the selected treatment at equal or higher
 specificity.
-
-**51. Row actions align in fixed columns, the size holds still, and every season is actable in
-place.** In the expanded season list (`SeasonList`), Spare keeps the left button column and Reap
-keeps the right. Both sit to the left of a right-pinned size in its own column, so buttons and
-sizes read as straight columns whatever a row's button count. The button track and the size
-track have a fixed width, never `auto`. Each `.season-row` is its own grid, so an `auto` track
-sizes to that row's own text and the buttons drift from row to row. The button track is the
-`--btns` custom property. `SeasonList` sets it once per list, from whether any season in the
-list can show Reap (any non-condemned one). A show condemned top to bottom then reserves no
-empty Reap slot. `.season-row .override-controls` is `justify-self: start`, so a lone Spare lands
-in the same column as a paired row's Spare. Every season row is actable from this list. Each row
-has its own `OverrideControls`, keyed to `override_own` (rule 50), with `hideReap` from that
-season's own verdict (rule 48). A per-tab `hideReap` on a list row, a read-only season row, or
-an `auto` button or size track that lets the columns drift is a regression.
-
-**146. A dirty or blocked signal that a component reports upward is two claims, and both are
-checked in every state the component can render.** A component lifts "this panel is holding
-something" into a parent so the parent can guard on it. That report asserts two facts. There is
-something to lose, and the operator can still reach it. The two facts are computed in different
-places. Declare a hook that reports state upward above every early return. Then re-read every
-early return as a state in which the report still fires. State what the parent is told while
-the component renders "loading", while it renders its failure branch, and after it unmounts.
-Sometimes the reported set and the acting surface differ by design, for example when a bar must
-not name a control the operator cannot reach. Then compute them separately and state why where
-you compute them. Never derive one from the other and leave a comment that claims they cannot
-disagree. A guard whose signal outlives the surface that satisfies it does not guard. Its only
-exit is the destructive button.
