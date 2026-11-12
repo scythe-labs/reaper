@@ -13,13 +13,13 @@ disposable), drive the real UI, capture what you see.
 `scripts/dev-local.sh` does the whole Boot section below in one step: migrates, starts both
 auto-reloading servers against the shared real `data/` (derived from git), waits for health,
 prints the URLs. `scripts/dev-local.sh down | status | logs` manage it. Both servers
-auto-update — backend edits reload the API, frontend edits hot-swap — so you rarely restart.
+auto-update. Backend edits reload the API and frontend edits hot-swap, so you rarely restart.
 Use it, then skip to "Log in" and "Drive headlessly". The manual Boot below is the fallback
 when you need a non-default data dir or want to watch startup by hand.
 
-**Beside a running instance, pass BOTH ports** — they move together, because Vite's `/api`
-proxy target reads `REAPER_PORT` (`frontend/vite.config.ts`), so moving only the web port
-leaves the second UI talking to the first instance's API:
+**Beside a running instance, pass BOTH ports.** They move together. Vite's `/api` proxy target
+reads `REAPER_PORT` (`frontend/vite.config.ts`), so moving only the web port leaves the
+second UI talking to the first instance's API:
 
 ```
 REAPER_PORT=8421 REAPER_WEB_PORT=5174 scripts/dev-local.sh up
@@ -54,7 +54,7 @@ another port (`strictPort`), so a second UI can never end up on the first instan
 won't duplicate configured instances.
 
 **Both files resolve against the cwd**, so a manual boot from a worktree reads neither and
-falls back to `data/secret.key` — a different key than the one that `data/` was encrypted
+falls back to `data/secret.key`, a different key than the one that `data/` was encrypted
 under. If stored credentials won't decrypt, do NOT re-enter them: that overwrites the good
 ciphertext under the wrong key. Boot with `scripts/dev-local.sh`, which loads the dotenv
 beside the data dir it serves.
@@ -69,10 +69,9 @@ uv run reaper-admin create-admin --username local-test
 
 ## Drive headlessly
 
-Two ways in, and **which one is available is a property of the box, so check before writing the
-script.** The claude-in-chrome extension needs a real Chrome with a logged-in profile, so on a
-headless host it is not merely unavailable, it cannot exist; Playwright is then the only route
-rather than the fallback.
+Two ways in. **Which one is available depends on the box, so check before writing the
+script.** The claude-in-chrome extension needs a real Chrome with a logged-in profile. A
+headless host cannot have one, so Playwright is the only route there.
 
 **Against a system Chrome** (a desktop machine that already has one), installed in a scratch dir
 so the repo stays clean:
@@ -84,23 +83,23 @@ PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install playwright-core   # in a scratch 
 Then `chromium.launch({ channel: "chrome", headless: true })`.
 
 **Against Playwright's own chromium** (a headless VM, or any box with no Google Chrome). Drop the
-channel — `chromium.launch({ headless: true })` — because `channel: "chrome"` names the *Google
-Chrome* binary and fails outright where only Playwright's build exists, which is the ordinary
-shape of a fresh Linux host. Install `playwright` rather than `playwright-core` there, or bring
+channel, `chromium.launch({ headless: true })`, because `channel: "chrome"` names the *Google
+Chrome* binary and fails outright where only Playwright's build exists. That is the usual
+state of a fresh Linux host. Install `playwright` rather than `playwright-core` there, or bring
 your own browsers with `npx playwright install chromium`.
 
 Two things a minimal Linux host will not have, both of which fail in ways that read as a bug in
 the app:
 
-- `npx playwright install-deps chromium` — the shared libraries (`libnss3`, `libatk-bridge2.0`,
+- `npx playwright install-deps chromium` installs the shared libraries (`libnss3`, `libatk-bridge2.0`,
   `libgbm1` and the rest). Without them the launch itself dies.
 - Fonts. A netinst Debian ships next to none, so every string screenshots as an empty box and the
-  capture is worthless for the one thing it is for. `fonts-liberation` plus
+  capture cannot show the copy. `fonts-liberation` plus
   `fonts-noto-color-emoji` covers the UI.
 
 **WebKit is a lane, not an extra.** Chromium answers "does it work"; it cannot answer "does it
-work on the operator's phone", and this UI has already shipped a defect no Chromium run could
-see — rule 46's shrinking button left a red ghost in the region it vacated, in Safari alone.
+work on the operator's phone", and a shrinking button (rule 46) leaves a red ghost in the
+region it vacated, in Safari only.
 WebKit is the only engine outside a Mac that renders what an iPhone or a Safari desktop will, so
 a change to the queue's action grammar, an anchored popover (rule 138), or anything laid out with
 `dvh` gets driven there too: `npx playwright install webkit`, `install-deps webkit`, then
@@ -119,7 +118,7 @@ headers:{"X-Reaper-CSRF":"1"}, body:"{}"})`, then `page.reload()` so the shell p
 
 ## Gotchas
 
-- A scan is **read-only** but really reaches the configured Plex/*arr/Tautulli hosts — expect
+- A scan is **read-only** but really reaches the configured Plex/*arr/Tautulli hosts. Expect
   real reads if the box can reach them. Never drive `POST /api/runs/{id}/execute`.
 - Screenshot on **Policy** or **Settings** (config, no library titles) to keep identifying
-  content out of captures — the golden rule applies to screenshots too.
+  content out of captures. The golden rule applies to screenshots too.
