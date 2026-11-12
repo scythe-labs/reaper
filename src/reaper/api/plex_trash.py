@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Report what Plex would remove besides the files this reap deletes. Read-only.
 
-Reaper's end-of-run purge is section-wide. ``PUT /library/sections/{key}/emptyTrash``
+Reaper's post-reap purge is section-wide. ``PUT /library/sections/{key}/emptyTrash``
 empties that section's whole trash, not just the part this run caused. Anything
 already sitting in the trash when the run started is in the same state before and
 after it, so it cancels out of the executor's count-delta gate

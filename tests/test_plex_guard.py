@@ -245,7 +245,7 @@ class TestGetShapedMutationsAreGated:
 
     def test_an_ordinary_section_read_stays_free(self) -> None:
         """Reads that merely look like the refresh path's neighbors (the section
-        listing is_refreshing polls) must not need arming."""
+        listing ``item_count`` reloads) must not need arming."""
         session = GuardedSession(READ_ONLY)
         with _transport() as send:
             session.get("http://127.0.0.1:1/library/sections/3", timeout=0.05)
@@ -328,7 +328,7 @@ class TestAGuardRefusalReachesTheCallerAsARefusal:
     ``PlexError``. ``leaving_soon.sync_shelves._reconcile`` catches ``PlexError`` per
     library and continues past it, so that would turn a safety refusal into one line
     beside "Plex is unreachable". The executor's ``_flush_refreshes`` and
-    ``_finalize_plex`` swallow a ``PlexError`` even more completely, by design.
+    ``TrashPurge.run`` swallow a ``PlexError`` even more completely, by design.
 
     **What this pins and what it does not.** It pins that a refusal raised inside the
     worker leaves the method as a ``SafetyViolationError`` rather than a ``PlexError``.
@@ -428,7 +428,7 @@ class TestEveryRefusalIsOnTheRecord:
 
     At the point of refusal nothing is written by default, so the only trace is whatever
     the caller makes of the exception. The executor's ``_flush_refreshes`` and
-    ``_finalize_plex`` catch ``Exception`` on purpose, because a reap must not fail on a
+    ``TrashPurge.run`` catch ``Exception`` on purpose, because a reap must not fail on a
     follow-up, and each logs the refusal under an event naming the wrong cause. What
     matters is having a discriminator to tell refusals apart, not the wording.
     ``sync_shelves._reconcile`` catches only ``PlexError``, so a shelf refusal passes

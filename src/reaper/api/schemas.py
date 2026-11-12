@@ -1468,7 +1468,7 @@ class ReapBreakdownOut(BaseModel):
 class PlexTrashOut(BaseModel):
     """What Plex would remove besides the files a reap deletes.
 
-    Reaper's end-of-run purge is section-wide, so it destroys the library records of
+    Reaper's post-reap purge is section-wide, so it destroys the library records of
     everything already in the trash, not just what the run caused. Those items sit on both
     sides of the executor's before/after count and cancel out of its gate, so this read is
     the only thing that can see them. No file on disk is affected either way.

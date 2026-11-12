@@ -812,11 +812,10 @@ class PlexClient:
         ``what`` that is a noun, which is the one way to get a mismatched sentence
         like ``Could not GUID sweep: ...`` out of this.
 
-        Five methods do not read through this, and each explains why in place:
+        Four methods do not read through this, and each explains why in place:
         ``_connect`` (the one call that runs before there is a server, so this
         contract does not describe it), ``active_streams`` (its message is the
-        fail-closed reasoning itself, not a verb phrase), ``is_refreshing`` (it
-        falls back to a warning rather than raising), ``aclose`` (no mapping at
+        fail-closed reasoning itself, not a verb phrase), ``aclose`` (no mapping at
         all, since it is teardown), and ``trash_count`` (its own read already
         raises ``PlexError``, which this would wrap a second time).
         """
@@ -1179,7 +1178,7 @@ class PlexClient:
         per-library. It ships on by default, which is why this is worth
         surfacing: when it is on, Plex purges the trash itself after each scan
         Reaper's path refresh triggers, so the executor's own trash interlock (the
-        count-delta gate, the mount check, the settle wait) never gets a say. The
+        count-delta gate and the mount check) never gets a say. The
         purge has already happened, inside Plex.
 
         Raises ``PlexError`` if the preference cannot be read, which the caller
@@ -1217,31 +1216,6 @@ class PlexClient:
 
     async def __aexit__(self, *exc: object) -> None:
         await self.aclose()
-
-    async def is_refreshing(self, section_key: int) -> bool:
-        """Is a scan currently running on this section?
-
-        A refresh (``section.update(path=...)``) fires an asynchronous scan. The
-        executor polls this so it does not empty the trash before Plex has
-        actually noticed the deleted file is gone. A read, addressed by key
-        through ``sectionByID``, so it cannot report on the wrong one of two
-        same-titled libraries. On any error, it reports ``True`` (still busy), so
-        the caller waits rather than racing ahead."""
-        server = await self._connect()
-
-        def read() -> bool:
-            section = server.library.sectionByID(section_key)
-            section.reload()
-            return bool(getattr(section, "refreshing", False))
-
-        # Not routed through `_call`. This falls back to a warning and a
-        # conservative True rather than raising, so there is no `PlexError` for a
-        # shared mapping to build.
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            log.warning("plex.refresh_state_unreadable", section=section_key, error=str(exc))
-            return True
 
     async def is_scanning(self) -> bool:
         """Is Plex running a library scan right now?

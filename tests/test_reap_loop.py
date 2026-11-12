@@ -67,6 +67,7 @@ from reaper.services.executor import (
     ReapGateway,
     ReapProgress,
     RunReport,
+    TrashPurge,
     _common_parent,
     _deletable_bytes,
     _Delete,
@@ -1894,14 +1895,8 @@ class TestStopMidRun:
         must still mark the run ABORTED before the cancellation propagates, so shutdown
         never leaves the run EXECUTING.
 
-        It must not tidy Plex. The purge polls each affected section for up to
-        ``_PLEX_SETTLE_ATTEMPTS * _plex_settle_delay`` before it can even decide, so
-        honoring it here would hold the container's shutdown open for tens of seconds per
-        section, and could empty a section's trash while the process is being torn down.
-        The queued rescans go with it, since they are sent at the end of a run and a
-        canceled run has no end. The tidy-up is cosmetic, where the state commit has to
-        survive, so the state is made durable and Plex is left to its own scheduled scan,
-        or to the next run over the same section.
+        It must not tidy Plex. The queued rescans are dropped and no trash purge is
+        recorded, so nothing reaches Plex while the process is torn down.
         """
         snapshot_id = await _snapshot_many(
             session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
@@ -1927,15 +1922,16 @@ class TestStopMidRun:
             sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 99]}
         )
         radarr = FakeRadarr(path="/movies/One (2001)")
+        executor = _executor(session, _gateway(radarr={1: radarr}, plex=plex))
 
         with pytest.raises(asyncio.CancelledError):
-            await _real(session, run, _gateway(radarr={1: radarr}, plex=plex))
+            await executor.execute(run.id)
 
         # On disk, not merely on the session's copy of the row. A shutdown is exactly when
         # an in-memory terminal state buys nothing.
         assert (await _stored_run(async_factory, run.id)).state is RunState.ABORTED  # not EXECUTING
         assert plex.refreshed == []
-        # The settle-wait and the purge stay out of the cancellation too.
+        assert executor.trash_purge is None
         assert plex.emptied == []
 
     async def test_progress_is_reported_after_every_item(self, session: AsyncSession) -> None:
@@ -1956,7 +1952,6 @@ class TestStopMidRun:
             armed_recheck=_armed_forever,
             progress=lambda p: seen.append((p.done, p.total, p.deleted_items)),
             exclusion_poll_delay=0.0,
-            plex_settle_delay=0.0,
         )
         report = await executor.execute(run.id)
 
@@ -2626,6 +2621,28 @@ class TestASpareIsHonoredAtExecuteTime:
 
 
 class TestPlexCleanup:
+    async def test_the_run_itself_never_empties_the_trash(self, session: AsyncSession) -> None:
+        """The run sends the rescan and records what the purge needs. The purge waits for
+        Plex to finish its scans, so nothing empties the trash before ``execute`` returns."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+        run = await _plan(session, snapshot_id)
+        plex = FakePlex(sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 99]})
+        executor = _executor(
+            session, _gateway(radarr={1: FakeRadarr(path="/movies/Worthless")}, plex=plex)
+        )
+
+        report = await executor.execute(run.id)
+
+        assert report.deleted_items == 1
+        assert plex.refreshed == [("Movies", "/movies/Worthless")]
+        assert plex.emptied == []
+        assert executor.trash_purge == TrashPurge(
+            pre_counts={100: 100},
+            deleted={100: frozenset({700})},
+            titles={100: "Movies"},
+            instances=frozenset({("radarr", 1)}),
+        )
+
     async def test_a_mapped_path_is_refreshed_then_trash_purged(
         self, session: AsyncSession
     ) -> None:
@@ -3086,6 +3103,30 @@ async def _armed_forever() -> bool:
     return True
 
 
+def _executor(
+    session: AsyncSession,
+    gateway: ReapGateway,
+    *,
+    armed_recheck: Any = _armed_forever,
+    stop_recheck: Any = None,
+    settings: ProfileSettings | None = None,
+    skip_bins: frozenset[tuple[str, int]] = frozenset(),
+) -> Executor:
+    """An armed, real executor over the given gateway of fakes. Zero poll delay so the
+    exclusion-verification retry does not slow the suite."""
+    return Executor(
+        session,
+        safety=_armed(),
+        settings=settings or ProfileSettings(),
+        dry_run=False,
+        gateway=gateway,
+        armed_recheck=armed_recheck,
+        stop_recheck=stop_recheck,
+        exclusion_poll_delay=0.0,
+        skip_bins=skip_bins,
+    )
+
+
 async def _real(
     session: AsyncSession,
     run: ReapRun,
@@ -3096,21 +3137,20 @@ async def _real(
     settings: ProfileSettings | None = None,
     skip_bins: frozenset[tuple[str, int]] = frozenset(),
 ) -> RunReport:
-    """Execute a run for real (armed) against the given gateway of fakes. Zero poll delay so
-    the exclusion-verification retry does not slow the suite."""
-    executor = Executor(
+    """Execute a run for real, then run its trash purge on the same gateway, as the wait
+    after a reap does once Plex reports quiet."""
+    executor = _executor(
         session,
-        safety=_armed(),
-        settings=settings or ProfileSettings(),
-        dry_run=False,
-        gateway=gateway,
+        gateway,
         armed_recheck=armed_recheck,
         stop_recheck=stop_recheck,
-        exclusion_poll_delay=0.0,
-        plex_settle_delay=0.0,
+        settings=settings,
         skip_bins=skip_bins,
     )
-    return await executor.execute(run.id)
+    report = await executor.execute(run.id)
+    if executor.trash_purge is not None:
+        await executor.trash_purge.run(gateway)
+    return report
 
 
 def _gateway(
@@ -3342,9 +3382,6 @@ class FakePlex:
         self.refreshed.append((self._titles[section_key], path))
         self.refreshed_keys.append(section_key)
 
-    async def is_refreshing(self, section_key: int) -> bool:
-        return False
-
     async def item_count(self, section_key: int) -> int:
         scripted = self._item_counts.get(section_key)
         if not scripted:
@@ -3473,7 +3510,6 @@ class TestJournalDurability:
                     gateway=_gateway(radarr={1: _DyingRadarr()}),
                     armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
-                    plex_settle_delay=0.0,
                 )
                 with pytest.raises(_ProcessDied, match="process died"):
                     await executor.execute(run_id)
@@ -3526,7 +3562,6 @@ class TestTheExecutingClaimIsAtomic:
                     gateway=_gateway(radarr={1: radarr}, plex=plex),
                     armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
-                    plex_settle_delay=0.0,
                 )
                 task = asyncio.create_task(first.execute(run_id))
                 # The first run is now parked mid-run, AFTER committing its claim.
@@ -3540,7 +3575,6 @@ class TestTheExecutingClaimIsAtomic:
                     gateway=_gateway(radarr={1: radarr}, plex=plex),
                     armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
-                    plex_settle_delay=0.0,
                 )
                 with pytest.raises(ExecutionError, match="executing"):
                     await second.execute(run_id)
@@ -3582,7 +3616,6 @@ class TestRollingThirtyDayCaps:
             gateway=None if dry else _gateway(radarr={1: FakeRadarr()}),
             armed_recheck=None if dry else _armed_forever,
             exclusion_poll_delay=0.0,
-            plex_settle_delay=0.0,
         )
         return await executor.execute(run_id)
 
@@ -4972,7 +5005,6 @@ class TestProgressIsDenominatedInTheActedOnSet:
             armed_recheck=_armed_forever,
             progress=seen.append,
             exclusion_poll_delay=0.0,
-            plex_settle_delay=0.0,
         )
         report = await executor.execute(run.id)
 
@@ -5102,7 +5134,7 @@ class TestTheSeasonRescanIsScopedToTheSeasonsOwnFolder:
     S03 rescan every season of the show. On a server set to empty its trash after every
     scan, that is a purge. Any other season whose files had gone missing out of band
     would lose its library records, watch state, ratings, collections, inside Plex,
-    where none of ``_finalize_plex``'s interlocks can see it.
+    where none of ``TrashPurge``'s checks can see it.
     """
 
     class _PathfulSonarr(FakeSonarr):
@@ -5580,7 +5612,6 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
                     gateway=_gateway(radarr={1: radarr}),
                     armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
-                    plex_settle_delay=0.0,
                 ).execute(run_id)
 
             assert lock.fired == 1, "the test did not actually break a commit"
@@ -5623,7 +5654,6 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
                     gateway=_gateway(radarr={1: radarr}),
                     armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
-                    plex_settle_delay=0.0,
                 ).execute(run_id)
 
             assert lock.fired == 2, "both the commit and its retry must have failed"
@@ -5684,7 +5714,6 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
                     gateway=_gateway(radarr={1: radarr}),
                     armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
-                    plex_settle_delay=0.0,
                 ).execute(run_id)
 
             assert lock.fired == 2, "both the commit and its retry must have failed"
@@ -5744,7 +5773,6 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
                     gateway=_gateway(radarr={1: radarr}),
                     armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
-                    plex_settle_delay=0.0,
                 ).execute(run_id)
 
             assert lock.fired == 2, "both the commit and its retry must have failed"
@@ -5794,7 +5822,6 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
                     gateway=_gateway(radarr={1: radarr}, plex=plex),
                     armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
-                    plex_settle_delay=0.0,
                 ).execute(run_id)
 
             assert lock.fired == 1
@@ -5838,7 +5865,6 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
                     gateway=_gateway(radarr={1: radarr}, plex=plex),
                     armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
-                    plex_settle_delay=0.0,
                 ).execute(run_id)
 
             assert lock.fired == 2

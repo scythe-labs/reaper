@@ -14,14 +14,18 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 
 import pytest
+import requests
 from fastapi.testclient import TestClient
+from structlog.testing import capture_logs
 
 from reaper.api import runs
-from reaper.clients.plex import PlexClient
+from reaper.clients.plex import GuardedSession, PlexClient
 from reaper.config import RuntimeSafety
 from reaper.services import app_settings, plex_wait, scan_runner, scheduler
+from reaper.services.executor import ReapGateway, TrashPurge
 
 
 @pytest.fixture(autouse=True)
@@ -176,10 +180,18 @@ def _app() -> Any:
 
 @pytest.fixture
 def waiting_app(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """An app whose reap wait reads a scripted Plex. ``launches`` records each scan start."""
+    """An app whose reap wait reads a scripted Plex. ``launches`` records each scan start.
+
+    ``safeties`` answers each read of the deletion switch in turn, the last one repeating.
+    ``built`` records the switch each set of clients was built with. ``gateway`` makes the
+    gateway handed back for that switch.
+    """
     app = _app()
     app.launches = []
     app.plex = SimpleNamespace()
+    app.safeties = [RuntimeSafety()]
+    app.built = []
+    app.gateway = lambda safety: ReapGateway()
 
     class _Session:
         async def __aenter__(self) -> _Session:
@@ -189,12 +201,14 @@ def waiting_app(monkeypatch: pytest.MonkeyPatch) -> Any:
             return None
 
     async def runtime_safety(*_a: Any, **_k: Any) -> RuntimeSafety:
-        return RuntimeSafety()
+        safeties: list[RuntimeSafety] = app.safeties
+        return safeties.pop(0) if len(safeties) > 1 else safeties[0]
 
-    async def build(*_a: Any, **_k: Any) -> Any:
+    async def build(*_a: Any, safety: RuntimeSafety, **_k: Any) -> Any:
+        app.built.append(safety)
         plex = PlexClient("http://plex.local:32400", "token", safety=RuntimeSafety())
         plex.is_scanning = app.plex.is_scanning  # type: ignore[method-assign]
-        return None, [plex]
+        return app.gateway(safety), [plex]
 
     app.state.session_factory = lambda: _Session()
     monkeypatch.setattr(app_settings, "runtime_safety", runtime_safety)
@@ -267,6 +281,228 @@ class TestTheWaitBeforeTheScan:
         await waiting_app.state.plex_wait_task
 
         assert first.cancelled()
+        assert waiting_app.launches == ["scan"]
+
+
+ARMED = RuntimeSafety(destructive_enabled=True)
+READ_ONLY = RuntimeSafety(destructive_enabled=False)
+
+
+class _TrashPlex:
+    """Plex for the purge. ``counts`` is each section's item count now. ``events`` is the
+    list the scan polls write to, so the order of polls and purges reads back."""
+
+    def __init__(self, events: list[str], counts: dict[int, int]) -> None:
+        self._events = events
+        self._counts = counts
+
+    async def item_count(self, section_key: int) -> int:
+        return self._counts[section_key]
+
+    async def empty_trash(self, section_key: int) -> None:
+        self._events.append(f"empty {section_key}")
+
+
+class _Radarr:
+    def __init__(self, *, accessible: bool = True) -> None:
+        self._accessible = accessible
+
+    async def root_folders(self) -> list[dict[str, Any]]:
+        return [{"path": "/movies", "accessible": self._accessible}]
+
+
+class _GuardedPlex(PlexClient):
+    """A real ``empty_trash`` that sends its PUT through a real guard, built from the switch
+    this client was given. The count read is scripted."""
+
+    def __init__(self, safety: RuntimeSafety) -> None:
+        super().__init__("http://plex.test", "t", safety=safety)
+        session = GuardedSession(self._safety)
+
+        def section(key: int) -> Any:
+            url = f"http://plex.test/library/sections/{key}/emptyTrash"
+            return SimpleNamespace(emptyTrash=lambda: session.put(url))
+
+        self._server = SimpleNamespace(library=SimpleNamespace(sectionByID=section))  # type: ignore[assignment]
+
+    async def item_count(self, section_key: int) -> int:
+        return 99
+
+
+def _purge(**changes: Any) -> TrashPurge:
+    """Films lost one listing and Films 4K two. Shows was rescanned and lost none."""
+    fields: dict[str, Any] = {
+        "pre_counts": {1: 100, 2: 50, 3: 40},
+        "deleted": {1: frozenset({11}), 2: frozenset({21, 22}), 3: frozenset()},
+        "titles": {1: "Films", 2: "Films 4K", 3: "Shows"},
+        "instances": frozenset({("radarr", 1)}),
+    }
+    return TrashPurge(**{**fields, **changes})
+
+
+#: Each section shrank by what the run removed there. Shows shrank by one it did not remove.
+_SHRUNK = {1: 99, 2: 48, 3: 39}
+
+
+def _polls(app: Any, *reads: bool) -> list[str]:
+    """Script the scan polls, then ``False`` forever. Returns the events list they write."""
+    events: list[str] = []
+    queue = list(reads)
+
+    async def is_scanning() -> bool:
+        events.append("poll")
+        return queue.pop(0) if queue else False
+
+    app.plex.is_scanning = is_scanning
+    return events
+
+
+def _serve(app: Any, plex: Any, radarrs: dict[int, Any] | None = None) -> None:
+    app.gateway = lambda safety: ReapGateway(radarr=radarrs or {1: _Radarr()}, plex=plex)
+
+
+async def _wait(app: Any, purge: TrashPurge | None) -> None:
+    await runs.start_plex_wait(app, purge)
+    await app.state.plex_wait_task
+
+
+class TestTheTrashPurgeWaitsForPlex:
+    async def test_it_empties_each_section_that_lost_listings_once_plex_goes_quiet(
+        self, waiting_app: Any, slept: list[float]
+    ) -> None:
+        events = _polls(waiting_app, True, True, True)
+        _serve(waiting_app, _TrashPlex(events, _SHRUNK))
+
+        await _wait(waiting_app, _purge())
+
+        assert events == ["poll"] * 6 + ["empty 1", "empty 2"]
+        assert waiting_app.launches == ["scan"]
+
+    async def test_a_wait_that_hits_its_ceiling_empties_nothing(
+        self, waiting_app: Any, slept: list[float]
+    ) -> None:
+        events = _polls(waiting_app, *([True] * 10_000))
+        _serve(waiting_app, _TrashPlex(events, _SHRUNK))
+
+        await _wait(waiting_app, _purge())
+
+        assert set(events) == {"poll"}
+        assert sum(slept) == plex_wait.CEILING_S
+        assert waiting_app.launches == ["scan"]
+
+    async def test_a_count_off_at_purge_time_empties_nothing(
+        self, waiting_app: Any, slept: list[float]
+    ) -> None:
+        """Films lost ten where the run removed one. Films 4K has not shrunk at all."""
+        events = _polls(waiting_app)
+        _serve(waiting_app, _TrashPlex(events, {1: 90, 2: 50, 3: 40}))
+
+        await _wait(waiting_app, _purge())
+
+        assert set(events) == {"poll"}
+
+    async def test_a_root_folder_down_at_purge_time_empties_nothing(
+        self, waiting_app: Any, slept: list[float]
+    ) -> None:
+        events = _polls(waiting_app)
+        _serve(waiting_app, _TrashPlex(events, _SHRUNK), {1: _Radarr(accessible=False)})
+
+        await _wait(waiting_app, _purge())
+
+        assert set(events) == {"poll"}
+
+    async def test_an_instance_gone_by_purge_time_empties_nothing(
+        self, waiting_app: Any, slept: list[float]
+    ) -> None:
+        """The run deleted through Radarr 1. After the wait only Radarr 2 is set up, so
+        nothing can say whether the folders Radarr 1 deleted from are still mounted."""
+        events = _polls(waiting_app)
+        _serve(waiting_app, _TrashPlex(events, _SHRUNK), {2: _Radarr()})
+
+        await _wait(waiting_app, _purge())
+
+        assert set(events) == {"poll"}
+
+    @pytest.mark.parametrize(("after", "sent"), [(ARMED, 1), (READ_ONLY, 0)])
+    async def test_deletion_turned_off_during_the_wait_makes_the_guard_refuse(
+        self, waiting_app: Any, slept: list[float], after: RuntimeSafety, sent: int
+    ) -> None:
+        """The switch is read again after the wait, and the purge's clients are built from
+        that read. The armed case is the control: the same purge reaches the transport."""
+        _polls(waiting_app)
+        waiting_app.safeties = [ARMED, after]
+        radarrs: dict[int, Any] = {1: _Radarr()}
+        waiting_app.gateway = lambda safety: ReapGateway(radarr=radarrs, plex=_GuardedPlex(safety))
+
+        with (
+            mock.patch.object(requests.Session, "send", autospec=True) as send,
+            capture_logs() as logs,
+        ):
+            send.return_value = requests.Response()
+            await _wait(waiting_app, _purge(deleted={1: frozenset({11})}))
+
+        assert waiting_app.built == [ARMED, after]
+        assert send.call_count == sent
+        if sent:
+            prepared = send.call_args.args[1]
+            assert (prepared.method, prepared.url) == (
+                "PUT",
+                "http://plex.test/library/sections/1/emptyTrash",
+            )
+        else:
+            blocked = [e for e in logs if e["event"] == "plex.write_blocked"]
+            assert [e.get("reason") for e in blocked] == ["not_armed"]
+
+    async def test_a_cancel_during_the_wait_empties_nothing(
+        self, waiting_app: Any, slept: list[float]
+    ) -> None:
+        events = _polls(waiting_app, *([True] * 10_000))
+        _serve(waiting_app, _TrashPlex(events, _SHRUNK))
+        await runs.start_plex_wait(waiting_app, _purge())
+        await asyncio.sleep(0)
+
+        task = waiting_app.state.plex_wait_task
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert set(events) <= {"poll"}
+        assert waiting_app.launches == []
+
+    async def test_a_section_that_lost_no_listings_is_never_purged(
+        self, waiting_app: Any, slept: list[float]
+    ) -> None:
+        """Shows was rescanned and fell by one, but the run removed nothing from it. The
+        shrink bound refuses this too, so this pins the outcome, not which check gave it."""
+        events = _polls(waiting_app)
+        _serve(waiting_app, _TrashPlex(events, _SHRUNK))
+
+        await _wait(waiting_app, _purge(deleted={3: frozenset()}))
+
+        assert set(events) == {"poll"}
+
+    async def test_a_section_with_no_baseline_is_never_purged(
+        self, waiting_app: Any, slept: list[float]
+    ) -> None:
+        events = _polls(waiting_app)
+        _serve(waiting_app, _TrashPlex(events, _SHRUNK))
+
+        await _wait(waiting_app, _purge(pre_counts={}))
+
+        assert set(events) == {"poll"}
+
+    async def test_a_wait_with_nothing_captured_empties_nothing(
+        self, waiting_app: Any, slept: list[float]
+    ) -> None:
+        """A restart drops the captured counts, and the reap's error path never had them.
+        The wait still scans, and builds no clients for a purge."""
+        events = _polls(waiting_app)
+        _serve(waiting_app, _TrashPlex(events, _SHRUNK))
+
+        await _wait(waiting_app, None)
+
+        assert set(events) == {"poll"}
+        assert len(waiting_app.built) == 1
         assert waiting_app.launches == ["scan"]
 
 
