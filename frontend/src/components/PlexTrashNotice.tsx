@@ -1,62 +1,63 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The one warning that Plex's trash holds records this reap never touched.
+// The one notice about what Plex's trash holds before a reap.
 
 import { Trans, useTranslation } from "react-i18next";
 import { Notice } from "./Notice";
 
-/** Warns that emptying Plex's trash takes more than this reap deletes.
+/** Says what happens to the items already in Plex's trash when this reap runs.
  *
- * One component for both surfaces so the wording cannot drift: the plan summary shows it
- * to inform (Execute only opens the sheet, so nothing irreversible is one click away), and
- * the reap sheet shows it with `onAck`, where it must be ticked before Reap enables.
+ * `plexEmpties` is Plex's empty-after-scan preference. `true` means Plex removes those
+ * items' records. `false` means the trash is left alone, so the reaped titles stay in Plex
+ * as unavailable. `null` means the preference could not be read.
  *
- * Three shapes, and the unreadable one never reports a reassuring zero: a library Reaper
- * could not read is Unknown, never Absent, and "we could not look" is exactly when the
- * operator most needs telling.
- *
- * `autoEmpties` adds a sentence rather than a fourth shape. It never brings this notice up on
- * its own: Plex ships that preference on and most servers leave it, so it would stand in front
- * of every reap and train the operator past the warning that matters. Here it answers the
- * question the warning above raises, which is who does the emptying.
+ * The checkbox renders only with `onAck`. The caller passes it when the operator must tick
+ * before Reap enables.
  */
 export function PlexTrashNotice({
   known,
   unreadable,
-  autoEmpties,
+  plexEmpties,
   acked,
   onAck,
 }: {
   known: number;
   unreadable: boolean;
-  autoEmpties?: boolean;
+  plexEmpties: boolean | null;
   acked?: boolean;
-  onAck?: (next: boolean) => void;
+  onAck?: ((next: boolean) => void) | undefined;
 }) {
   const { t } = useTranslation();
+  // `known` is an exact count. A library that could not be read makes it a floor, and no
+  // count at all is its own wording.
+  const read = known > 0 ? (unreadable ? "partial" : "known") : "unread";
+  const fill = { values: { n: known }, components: { strong: <strong /> } };
   return (
-    // `standing`: both surfaces mount this on a Plex read, never on a press. In the sheet it also
-    // holds the checkbox that gates Reap, so it has to be navigated to rather than shouted, and
-    // `ReapConfirm` already withholds its focus move so the notice is met in document order.
+    // `standing`: this mounts on a Plex read, never on a press, so it must not interrupt.
     <Notice tone="warn" standing>
-      {known > 0 ? (
-        unreadable ? (
-          <Trans
-            i18nKey="plex.trashNotice.knownUnreadable"
-            values={{ n: known }}
-            components={{ strong: <strong /> }}
-          />
+      {plexEmpties === true ? (
+        read === "known" ? (
+          <Trans i18nKey="plex.trashNotice.emptiesKnown" {...fill} />
+        ) : read === "partial" ? (
+          <Trans i18nKey="plex.trashNotice.emptiesPartial" {...fill} />
         ) : (
-          <Trans
-            i18nKey="plex.trashNotice.knownReadable"
-            values={{ n: known }}
-            components={{ strong: <strong /> }}
-          />
+          <Trans i18nKey="plex.trashNotice.emptiesUnread" {...fill} />
         )
+      ) : plexEmpties === false ? (
+        read === "known" ? (
+          <Trans i18nKey="plex.trashNotice.keptKnown" {...fill} />
+        ) : read === "partial" ? (
+          <Trans i18nKey="plex.trashNotice.keptPartial" {...fill} />
+        ) : (
+          <Trans i18nKey="plex.trashNotice.keptUnread" {...fill} />
+        )
+      ) : read === "known" ? (
+        <Trans i18nKey="plex.trashNotice.mayEmptyKnown" {...fill} />
+      ) : read === "partial" ? (
+        <Trans i18nKey="plex.trashNotice.mayEmptyPartial" {...fill} />
       ) : (
-        <Trans i18nKey="plex.trashNotice.unknown" components={{ strong: <strong /> }} />
+        <Trans i18nKey="plex.trashNotice.mayEmptyUnread" {...fill} />
       )}
-      {autoEmpties && ` ${t("plex.trashNotice.autoEmpties")}`}
       {onAck && (
         <label className="trash-ack">
           <input type="checkbox" checked={!!acked} onChange={(e) => onAck(e.target.checked)} />

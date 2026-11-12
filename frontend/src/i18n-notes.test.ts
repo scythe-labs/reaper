@@ -118,7 +118,10 @@ const HOW_TO_UPDATE =
 //: a failure of its own. It closes the moment a reap starts, and the Reap tab and app-wide bar
 //: carry the run from there. Gone are the progress tick and item counter, the freed and spared
 //: fragments, the result line's reclaimed/spared/unmeasured pieces, and the failure body.
-const EXPECTED_REQUIRED_COUNT = 1193;
+//:
+//: The Plex trash notice adds 6. Its three strings became nine, one for each pairing of who
+//: empties the trash and what Reaper could read of it.
+const EXPECTED_REQUIRED_COUNT = 1199;
 
 describe("translator notes (locales/en/ui.notes.json)", () => {
   it("classifies a plain literal as not required, and an ICU or tagged one as required (rule 145)", () => {

@@ -1,23 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// What Plex would remove besides the files a reap deletes, read the one way everywhere.
+// What Plex's trash holds besides this reap's titles, read the one way everywhere.
 
 import { useQuery } from "@tanstack/react-query";
 import { api, type PlexTrash } from "./api";
 
-/** Whether emptying Plex's trash would take records this reap never touched.
+/** What Plex's trash holds before a reap.
  *
- * Reaper's end-of-run purge empties a library's whole trash. Items already in there when
- * the run started sit on both sides of the executor's before/after count, so they cancel
- * out of its gate and it cannot see them, yet the purge destroys their library records
- * anyway. This read is the only thing that can see them, so the operator gets told before
- * they reap and may go ahead anyway.
+ * Reaper empties a library's trash only when everything in it came from the reap. Plex's own
+ * empty-after-scan preference has no such check, and Reaper's rescan triggers it. So items
+ * already in the trash lose their library records when Plex empties it, and stay when Plex
+ * does not.
  *
- * It hits Plex, so it is not polled: the reap sheet asks once when it opens, and staleness
- * of a few minutes cannot matter for a warning the operator acknowledges by hand. Retries
- * are off for the same reason a failure is not silent here: an unreadable trash is its own
- * warning state (Unknown, never Absent), so failing fast reaches that state sooner than
- * three quiet retries would.
+ * It hits Plex, so it is not polled. The reap sheet asks once when it opens. Retries are off,
+ * because an unreadable trash is its own warning state (Unknown, never Absent).
  */
 export function usePlexTrash(enabled = true) {
   return useQuery<PlexTrash>({
@@ -30,34 +26,39 @@ export function usePlexTrash(enabled = true) {
   });
 }
 
-/** Does this state need the operator to acknowledge it before they can reap?
+/** What the reap sheet says about Plex's trash, and whether the operator must tick first.
  *
- * Two causes, one decision: records that are not from this reap may go. A definite count
- * of at least one, or any library we could not read (unreadable is Unknown, never a
- * reassuring zero). Kept beside the hook so the reap sheet and the plan summary cannot
- * drift on what counts as a warning.
+ * `show` is true for a count of at least one, for any library that could not be read, and for
+ * a query that failed outright. The page must never read "we could not look" as "there is
+ * nothing there".
  *
- * A query that failed outright warns too, for the same reason: the page must never read
- * "we could not look" as "there is nothing there".
+ * `plexEmpties` is Plex's empty-after-scan preference. `null` means it could not be read. It
+ * never raises the notice on its own, because Plex ships it on and it would then stand in
+ * front of every reap.
+ *
+ * `needsAck` is true unless Plex is known to leave its trash alone. Only then do no other
+ * records go.
  */
 export function trashWarning(
   data: PlexTrash | undefined,
   isError: boolean,
-): { show: boolean; known: number; unreadable: boolean; autoEmpties: boolean } {
-  if (isError) return { show: true, known: 0, unreadable: true, autoEmpties: false };
+): {
+  show: boolean;
+  known: number;
+  unreadable: boolean;
+  plexEmpties: boolean | null;
+  needsAck: boolean;
+} {
+  if (isError) return { show: true, known: 0, unreadable: true, plexEmpties: null, needsAck: true };
   if (!data || !data.configured)
-    return { show: false, known: 0, unreadable: false, autoEmpties: false };
+    return { show: false, known: 0, unreadable: false, plexEmpties: null, needsAck: false };
   const unreadable = data.sections_unreadable > 0;
+  const show = data.trashed > 0 || unreadable;
   return {
-    show: data.trashed > 0 || unreadable,
+    show,
     known: data.trashed,
     unreadable,
-    // This must never trigger the notice on its own. Plex ships this preference on, and most
-    // servers never change it, so warning about it over an empty trash would put a standing
-    // amber block in front of every reap and teach the operator to click past the one that
-    // matters. It only rides on a trash that already warrants a warning, where it says which
-    // mechanism will do the emptying. `null` means the preference could not be read and says
-    // nothing, rather than claiming Plex does not empty its own trash.
-    autoEmpties: data.empties_after_scan === true,
+    plexEmpties: data.empties_after_scan,
+    needsAck: show && data.empties_after_scan !== false,
   };
 }

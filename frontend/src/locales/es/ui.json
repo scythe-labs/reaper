@@ -800,11 +800,7 @@
             "watchHistory": ""
         },
         "trashNotice": {
-            "ackLabel": "",
-            "autoEmpties": "",
-            "knownReadable": "",
-            "knownUnreadable": "",
-            "unknown": ""
+            "ackLabel": ""
         },
         "unlinkButton": "",
         "verifyCert": {
