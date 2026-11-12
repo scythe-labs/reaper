@@ -440,10 +440,10 @@ class TestOnlyOneWalkOfTheHistoryRunsAtATime:
     ) -> None:
         """The control half is the whole test. "The scan had not reached Tautulli" only
         means the lock held it if the scan would otherwise have got there, and every await
-        inside ``_sync`` before its first request goes out to a thread. So the same pump
-        runs first with nothing in flight, where it must arrive. Without that control, this
-        test would still pass with the lock deleted, because it would only be reading its
-        own scheduling."""
+        inside ``_sync`` before its first request goes out to a thread. So the same bounded
+        pump runs first with nothing in flight, where it must arrive. Without that control,
+        this test would still pass with the lock deleted, because it would only be reading
+        its own scheduling."""
         gate = asyncio.Event()
         holding = asyncio.Event()
         reached: list[str] = []
@@ -461,11 +461,14 @@ class TestOnlyOneWalkOfTheHistoryRunsAtATime:
                     await gate.wait()
                 return await super().history(**kwargs)
 
-        async def pump() -> None:
+        async def pump(name: str) -> None:
             # Real database round trips are used here, not a bare `sleep(0)`. The awaits a
             # sync makes before its first request are executor hops, which a loop yielding
-            # only to itself does not advance.
-            for _ in range(20):
+            # only to itself does not advance. The pump stops once `name` reaches Tautulli,
+            # so only a caller the lock holds off spends the whole bound.
+            for _ in range(200):
+                if name in reached:
+                    return
                 await _count(engine)
 
         # The pump reads `watch_event`, so the table has to exist before it runs. Otherwise
@@ -475,19 +478,19 @@ class TestOnlyOneWalkOfTheHistoryRunsAtATime:
         rows = [_row(n, days_ago=n) for n in range(1, 6)]
 
         uncontended = asyncio.create_task(sync(engine, _Gated(rows, "control", blocks=False)))
-        await pump()
-        assert "control" in reached, "the pump is too short to prove anything about the lock"
+        await pump("control")
+        assert "control" in reached, "the pump bound is too short to prove anything about the lock"
         await uncontended
         reached.clear()
 
         sweep = asyncio.create_task(sync(engine, _Gated(rows, "sweep", blocks=True), full=True))
         await holding.wait()  # the sweep is inside the lock and parked on its first request
         scan = asyncio.create_task(sync(engine, _Gated(rows, "scan", blocks=False)))
-        await pump()
+        await pump("scan")
 
-        # Same pump, and this time the scan has not reached Tautulli at all, not even the
-        # regression check's probe, which is inside the lock because it reads the stored
-        # total and writes it back.
+        # The pump spent the whole bound the control arrived within. The scan has not reached
+        # Tautulli at all, not even the regression check's probe. The probe is inside the
+        # lock because it reads the stored total and writes it back.
         assert set(reached) == {"sweep"}
         assert not scan.done()
 
