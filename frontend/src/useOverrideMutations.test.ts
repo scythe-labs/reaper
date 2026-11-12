@@ -21,9 +21,11 @@ import { api } from "./api";
 import { useOverrideMutations } from "./useOverrideMutations";
 import type { QueryClient } from "@tanstack/react-query";
 
-vi.mock("./api", () => ({
-  api: { override: vi.fn().mockResolvedValue({}), clearOverride: vi.fn().mockResolvedValue({}) },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("./test/apiMock")).makeApiMock(),
 }));
+
+vi.mock("./api", () => ({ api: apiMock }));
 
 // A minimal candidate row: only the fields the patch reads and writes matter here.
 const row = (media_key: string, group_key: string | null) =>
@@ -69,7 +71,11 @@ const setup = () => {
 };
 
 describe("useOverrideMutations", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    apiMock.override.mockResolvedValue({});
+    apiMock.clearOverride.mockResolvedValue({});
+  });
 
   it("patches a per-item decision in place and does NOT refetch the active tab", async () => {
     const { client, invalidateSpy, hook } = setup();

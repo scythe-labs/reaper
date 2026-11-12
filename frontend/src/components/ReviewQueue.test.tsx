@@ -182,7 +182,6 @@ function pickedCount(): string {
 
 /** Enter Select mode (the bulk bar only exists there) and pick every drawn card. */
 async function selectAllDrawn() {
-  const { userEvent } = await import("@testing-library/user-event");
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Select" }));
   await user.click(await screen.findByRole("button", { name: "Select all" }));

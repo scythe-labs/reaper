@@ -12,11 +12,15 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import { OverrideControls, OverrideMark } from "./OverrideControls";
 import { QueueSettingsContext, type QueueSettings } from "./queueSettings";
 
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
+}));
+
 // Spreads the real module for ApiError: describeError's `instanceof ApiError` check throws
 // against a mock that answers for `api` alone.
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
-  api: { general: vi.fn(), profile: vi.fn() },
+  api: apiMock,
 }));
 
 /** An ISO instant `days` from now. Negative is a spare whose count has already run down. */
