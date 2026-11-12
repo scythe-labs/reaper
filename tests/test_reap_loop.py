@@ -25,7 +25,7 @@ import httpx
 import pytest
 import respx
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError, PendingRollbackError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
@@ -3555,6 +3555,60 @@ class TestTheExecutingClaimIsAtomic:
         finally:
             await engine.dispose()
 
+    async def test_a_claim_taken_after_the_state_check_is_refused(
+        self, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Another request claims the run after this one read it as PLANNED. The claim
+        refuses, and nothing is sent."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+        run = await _plan(session, snapshot_id)
+
+        # The policy read runs after the state check and before the claim.
+        async def claimed_meanwhile(s: AsyncSession) -> str:
+            await s.execute(
+                update(ReapRun)
+                .where(ReapRun.id == run.id)
+                .values(state=RunState.EXECUTING)
+                .execution_options(synchronize_session=False)
+            )
+            return await live_policy_hash(s)
+
+        monkeypatch.setattr("reaper.services.executor.live_policy_hash", claimed_meanwhile)
+        radarr = FakeRadarr()
+
+        with pytest.raises(ExecutionError, match="already claimed"):
+            await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert radarr.delete_calls == []
+
+
+class TestAnUnexpectedRunLevelError:
+    """An unmapped error outside the per-item loop ends the run ABORTED, on disk and in the
+    report, and the report is returned."""
+
+    async def test_it_aborts_the_run_and_returns_the_report(
+        self,
+        session: AsyncSession,
+        async_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def broken(self: Executor, deletes: Sequence[_Delete]) -> None:
+            raise ValueError("a bug outside the item loop")
+
+        monkeypatch.setattr(Executor, "_check_rolling_caps", broken)
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+        radarr = FakeRadarr()
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert report.state is RunState.ABORTED
+        assert report.aborted_reason is not None
+        assert report.aborted_reason.id == "error.reap.unexpected"
+        assert report.aborted_reason.params.get("error") == "a bug outside the item loop"
+        assert (await _stored_run(async_factory, run.id)).state is RunState.ABORTED
+        assert radarr.delete_calls == []
+
 
 class TestRollingThirtyDayCaps:
     """The 30-day budget is enforced at execute time, over verified deletions. No
@@ -3741,6 +3795,23 @@ class TestAPolicyEditVoidsAPendingPlan:
         assert radarr.delete_calls == []  # nothing was sent
         # On disk. A refused run that claimed EXECUTING and could not roll it back is
         # exactly the state that would make "still runnable after a re-scan" false.
+        assert (await _stored_run(async_factory, run.id)).state is RunState.PLANNED
+
+    async def test_a_plan_built_after_the_edit_is_refused_too(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A plan carries the policy its snapshot was scored under, never the live one. A
+        plan built after the edit, from a snapshot taken before it, is refused."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        await self._tighten(session)
+        run = await _plan(session, snapshot_id)
+        await session.commit()
+
+        radarr = FakeRadarr()
+        with pytest.raises(ExecutionError, match="policy changed"):
+            await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert radarr.delete_calls == []
         assert (await _stored_run(async_factory, run.id)).state is RunState.PLANNED
 
     async def test_the_dry_run_proves_the_same_refusal(self, session: AsyncSession) -> None:
