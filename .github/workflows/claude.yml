@@ -159,11 +159,12 @@ jobs:
             - Title the pull request as a Conventional Commit, because it becomes the
               commit message on dev. A workflow checks that it parses.
             - Write the PR body against .github/PULL_REQUEST_TEMPLATE.md. Keep its
-              headings, put `Closes #<issue number>` under "What this changes", and answer
-              "Does this touch the deletion path" honestly.
+              headings, put `Closes #<issue number>` under "What was wrong", and answer
+              "Does this touch the deletion path" honestly. Keep the body short however
+              large the change is.
             - Put this on the AI disclosure line: "Claude Code generated this branch from
               the issue report. A maintainer reviews and tests it before it leaves draft."
-            - Leave "How you tested it" empty and every checklist box unchecked. Those
+            - Leave "Tests" empty and every checklist box unchecked. Those
               belong to the maintainer who reviews the branch. CI runs the verification
               gates on the pull request.
 

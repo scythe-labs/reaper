@@ -8,19 +8,32 @@ the history forever:
     docs: contributor guide
 
 A workflow checks the title and will tell you if it does not parse.
+
+Keep the description short however large the change is. Summarize, and group
+related edits into one item. Say what the diff cannot show.
 -->
 
-## What this changes
+## What was wrong
 
-<!-- What it does and why it is worth doing. Link the issue it closes. -->
+<!--
+What someone could see go wrong, then the cause. Add a log line or a short
+example if you have one. For a feature, say what was missing. Link the issue.
+-->
 
 Closes #
 
-## How you tested it
+## What this PR does
+
+<!-- A numbered list, one change per item, a plain sentence or two each. -->
+
+1.
+
+## Tests
 
 <!--
-What you actually ran or clicked, and what you saw. "CI is green" is a fine
-answer for a docs change and a thin one for anything that touches a decision.
+What you added, what you ran with its real result, and what you clicked and
+saw. "CI is green" is a fine answer for a docs change and a thin one for
+anything that touches a decision.
 -->
 
 ## Does this touch the deletion path
