@@ -485,14 +485,17 @@ class TrashPurge:
                 "reap.trash_purge_skipped", section=title, reason=f"could not read the trash: {exc}"
             )
             return False
-        if not trash or not trash <= ours or whole_section:
+        if not trash:
+            log.info("reap.trash_already_empty", section=title)
+            return False
+        if not trash <= ours or whole_section:
             log.warning(
                 "reap.trash_purge_skipped",
                 section=title,
                 in_trash=len(trash),
                 not_this_run=len(trash - ours),
                 whole_section=whole_section,
-                reason="the trash holds something this run did not remove, or nothing",
+                reason="the trash holds something this run did not remove",
             )
             return False
         return True
