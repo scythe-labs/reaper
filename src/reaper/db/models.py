@@ -928,8 +928,10 @@ class RecoveryToken(Base):
 #:
 #: Declared here, beside the models, rather than as a literal inside the restore code that
 #: consumes it (``services.restore._purge_auth_state``), so a new auth-bearing table added
-#: over there is never carried silently forward. ``tests/test_restore.py`` fails when a
-#: table that looks auth-bearing is missing from this tuple.
+#: over there is never carried silently forward.
+#: ``test_no_auth_bearing_table_is_unaccounted_for`` in
+#: ``tests/test_restore_interruption.py`` fails when a table that looks auth-bearing is
+#: missing from this tuple.
 AUTH_BEARING_TABLES: tuple[str, ...] = (
     "auth_session",
     "recovery_token",

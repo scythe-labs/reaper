@@ -466,11 +466,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             scan_task.cancel()
         # A reap (api/runs.py) is detached too, but it is deleting, so it
         # must be canceled and awaited before the engines go. That lets the
-        # executor's CancelledError branch mark the run ABORTED, whose
-        # finally commits that state against the still-live DB. Bounded,
-        # so a slow Plex cannot hang shutdown forever. If it exceeds the
-        # bound, the second cancel (from wait_for) interrupts the cleanup
-        # and shutdown proceeds anyway.
+        # executor's CancelledError branch mark the run ABORTED and commit
+        # that state against the still-live DB. A canceled run skips the Plex
+        # tidy and the bin restore. The wait is bounded, so a slow commit
+        # cannot hang shutdown. If it exceeds the bound, the second cancel
+        # (from wait_for) interrupts the cleanup and shutdown proceeds anyway.
         reap_task = getattr(app.state, "reap_task", None)
         if reap_task is not None and not reap_task.done():
             reap_task.cancel()

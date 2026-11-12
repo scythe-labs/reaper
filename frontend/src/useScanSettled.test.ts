@@ -11,7 +11,13 @@ import { describe, expect, it, vi } from "vitest";
 import { Announcer } from "./announce";
 import type { ReasonKey } from "./api";
 import { testQueryClient } from "./test/queryClient";
+import { sourceText } from "./test/sources";
 import { SCAN_SETTLED_KEYS, useScanSettled } from "./useScanSettled";
+
+/** Caches the review queue reads that a finished scan leaves unchanged, each with the reason. */
+const NOT_SCAN_DERIVED: Record<string, string> = {
+  profile: "the operator's saved settings, which a scan never writes",
+};
 
 function harness() {
   const client = testQueryClient();
@@ -66,6 +72,19 @@ describe("useScanSettled", () => {
     // Plex's recorded-watch-history line, whose sentence names the last scan while quoting a
     // number that only a scan moves.
     expect(invalidated).toContain(JSON.stringify(["watch-evidence"]));
+  });
+
+  it("lists every cache the review queue reads, unless a scan cannot change it", () => {
+    const source = sourceText("components/ReviewQueue.tsx");
+    const heads = [...source.matchAll(/queryKey:\s*\[\s*"([^"]+)"/g)].map((m) => m[1]!);
+    // Every key the queue declares must be a literal array, or the walk cannot read its head.
+    expect(heads).toHaveLength([...source.matchAll(/queryKey:/g)].length);
+    // Ten declarations, counted by hand. A key added or removed in the queue moves this.
+    expect(heads).toHaveLength(10);
+
+    const listed = new Set(SCAN_SETTLED_KEYS.map((k) => k[0]));
+    const missing = [...new Set(heads)].filter((h) => !listed.has(h) && !(h in NOT_SCAN_DERIVED));
+    expect(missing).toEqual([]);
   });
 
   it("does nothing on a mount that arrives after the scan already ended", () => {

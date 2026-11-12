@@ -520,9 +520,8 @@ function RatingFloorRow({
       ? t("policyEditor.ratingFloor.emptySummary")
       : t("policyEditor.ratingFloor.summary", { bars: rules.map(describeBar).join(joiner) });
 
-  // The same shape as the keep-tag chips above, on this same long form: the ✕ removes the row
-  // it lives in, so without this, focus would fall to `<body>` and the next Tab would restart
-  // at the top.
+  // The ✕ removes the row it lives in, so without this, focus would fall to `<body>` and the
+  // next Tab would restart at the top.
   const addSourceRef = useRef<HTMLSelectElement>(null);
   const bars = useRemovalFocus(addSourceRef);
 

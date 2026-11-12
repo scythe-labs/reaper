@@ -1033,13 +1033,10 @@ function Signals({ item }: { item: CandidateDetail }) {
   const addedTotal = adds.reduce((sum, r) => sum + r.share, 0);
 
   // Below the floor, name the line coverage fell under, the way the score names its
-  // threshold. An abstain forced by too little readable evidence scores at or above the
-  // threshold and is held anyway (`decide_verdict` checks coverage before the score), so
-  // the score alone never explains that hold, and the coverage number alone does not say
-  // it was too low. This only renders when the two round to different percentages: "40%,
-  // under the 50% it needs" reads fine, but "50%, under the 50% it needs" would read as a
-  // bug. Silent when the floor predates the field (null, so the panel omits it like a null
-  // threshold) or coverage cleared it. `coverage_bp < floor` implies `< FULL_COVERAGE_BP`,
+  // threshold. `decide_verdict` checks coverage before the score, so an item under the
+  // floor is held whatever it scored. This only renders when the two round to different
+  // percentages, so it never reads "50%, under the 50% it needs". Silent when the floor
+  // is null or coverage cleared it. `coverage_bp < floor` implies `< FULL_COVERAGE_BP`,
   // so this clause only ever rides inside the sentence below.
   const floor = explanation.coverage_floor_bp ?? null;
   const hasFloorClause =

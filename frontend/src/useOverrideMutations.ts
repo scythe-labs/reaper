@@ -16,7 +16,15 @@ const DAY_MS = 86_400_000;
  *  summary shifts lanes by the overrides and the Scales figures count only the effective reap
  *  set, so those two go wrong the moment a title is spared just as easily and just as
  *  invisibly. A surface that gains an override-aware number is added here, and only here. */
-const OVERRIDE_AWARE = [["group"], ["candidate"], ["reap-breakdown"], ["snapshot"], ["fairness"]];
+const OVERRIDE_AWARE = [
+  ["candidates-fate"],
+  ["candidates-unfiltered"],
+  ["group"],
+  ["candidate"],
+  ["reap-breakdown"],
+  ["snapshot"],
+  ["fairness"],
+];
 
 export function useOverrideMutations() {
   const queryClient = useQueryClient();

@@ -611,8 +611,9 @@ async def _sync(
             break
         if pages >= MAX_HISTORY_PAGES:
             # Only reachable if the source keeps serving non-empty pages without ever
-            # reporting a total. Stop rather than spin. The horizon gate treats the
-            # shorter mirror as less evidence, which keeps files rather than deleting.
+            # reporting a total. Stop rather than spin. The sweep still returns
+            # normally and no later check flags the rows past the cap, so the log line is the
+            # only record.
             log.warning("history.page_cap_reached", pages=pages, fetched=start)
             break
 

@@ -15,7 +15,7 @@
    never lands pressed against the buttons. */
 @container (max-width: 560px) {
   .card,
-  .card-head {
+  .card-show > .card-head {
     flex-wrap: wrap;
   }
   /* .card .poster, not bare .poster: the base rule is declared later in the file and
@@ -25,7 +25,7 @@
     height: 66px;
   }
   .card > .card-side,
-  .card-head > .card-side {
+  .card-show > .card-head > .card-side {
     width: 100%;
     flex-direction: row;
     justify-content: flex-end;
@@ -44,12 +44,12 @@
      the actions at rest and drop the mark. The decision still reads from the card's override
      chip. */
   .card > .card-side .override-controls,
-  .card-head > .card-side .override-controls {
+  .card-show > .card-head > .card-side .override-controls {
     opacity: 1;
     visibility: visible;
   }
   .card > .card-side .override-mark,
-  .card-head > .card-side .override-mark {
+  .card-show > .card-head > .card-side .override-mark {
     display: none;
   }
   /* An expanded season row folds the same way the card above it does. Its four tracks plus
@@ -154,7 +154,7 @@
 /* Neither of these has a border of its own to light: a show card's border belongs to the
    `<article>` wrapping the head and the season list, and a season row has none. So both take
    the same accent wash their `:hover` takes. */
-.card-head:has(> .card-body .card-title > .card-open:focus-visible),
+.card-show > .card-head:has(> .card-body .card-title > .card-open:focus-visible),
 .season-row:has(> .season-title > .card-open:focus-visible) {
   background: color-mix(in srgb, var(--accent) 7%, var(--surface));
 }
@@ -257,7 +257,7 @@
   --scrim-angle: 270deg;
 }
 .card > *:not(.card-bg):not(.card-scrim),
-.card-head > *:not(.card-bg):not(.card-scrim) {
+.card-show > .card-head > *:not(.card-bg):not(.card-scrim) {
   position: relative;
   z-index: 2;
 }

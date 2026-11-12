@@ -13,7 +13,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Schedule, ScheduledJob } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
-import { DEFAULT_UPDATE, IDLE_SCAN } from "../test/apiFixtures";
+import { DEFAULT_GENERAL, DEFAULT_UPDATE, IDLE_SCAN } from "../test/apiFixtures";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { Settings } from "./Settings";
 
@@ -96,5 +96,54 @@ describe("the history sweep's schedule, as the operator reads it", () => {
     // The schedule editor open over the panel, which is the state this file is the only one
     // to drive for this job.
     await expectNoA11yViolations();
+  });
+});
+
+/** The test runner's own zone, which the browser formats in when no zone is given. */
+const RUNNER_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+/** Two stored zones, neither the runner's, so a date formatted in the wrong zone shows. */
+const SERVER_ZONES = ["Pacific/Kiritimati", "Pacific/Pago_Pago", "Asia/Kathmandu"]
+  .filter((zone) => zone !== RUNNER_ZONE)
+  .slice(0, 2);
+
+/** Testing Library folds every whitespace run to one space, including the narrow space before
+ *  AM and PM, so the expected text is folded the same way. */
+const folded = (text: string) => text.replace(/\s+/g, " ");
+
+/** The scan and the sweep, both next due at `at`. */
+function dueAt(at: string): Schedule {
+  const sweep = schedule({ next_run_at: at }).jobs[0]!;
+  return {
+    jobs: [{ ...sweep, id: "scheduled_scan", cron: "0 3 * * *", default_cron: "0 3 * * *" }, sweep],
+  };
+}
+
+describe("a next run more than a day out", () => {
+  it.each(SERVER_ZONES)("is written in the stored zone, %s, on both rows", async (zone) => {
+    const at = new Date(Date.now() + 3 * 86_400_000).toISOString();
+    const inStoredZone = folded(new Date(at).toLocaleString(undefined, { timeZone: zone }));
+    // The runner's zone must print this instant differently, or the test proves nothing.
+    expect(folded(new Date(at).toLocaleString())).not.toBe(inStoredZone);
+    apiMock.general.mockResolvedValue({ ...DEFAULT_GENERAL, timezone: zone });
+    apiMock.schedule.mockResolvedValue(dueAt(at));
+
+    renderJobs();
+
+    expect(await screen.findAllByText((text) => text.includes(inStoredZone))).toHaveLength(2);
+  });
+
+  it.each([
+    ["not loaded", null],
+    ["unknown to this browser", { ...DEFAULT_GENERAL, timezone: "Nowhere/Unlisted" }],
+  ])("names the browser's zone when the stored zone is %s", async (_case, general) => {
+    const at = new Date(Date.now() + 3 * 86_400_000).toISOString();
+    const named = folded(new Date(at).toLocaleString(undefined, { timeZoneName: "short" }));
+    apiMock.general.mockResolvedValue(general);
+    apiMock.schedule.mockResolvedValue(dueAt(at));
+
+    renderJobs();
+
+    expect(await screen.findAllByText((text) => text.includes(named))).toHaveLength(2);
   });
 });

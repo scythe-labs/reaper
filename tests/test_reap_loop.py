@@ -25,7 +25,7 @@ import httpx
 import pytest
 import respx
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError, PendingRollbackError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
@@ -3563,6 +3563,60 @@ class TestTheExecutingClaimIsAtomic:
         finally:
             await engine.dispose()
 
+    async def test_a_claim_taken_after_the_state_check_is_refused(
+        self, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Another request claims the run after this one read it as PLANNED. The claim
+        refuses, and nothing is sent."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+        run = await _plan(session, snapshot_id)
+
+        # The policy read runs after the state check and before the claim.
+        async def claimed_meanwhile(s: AsyncSession) -> str:
+            await s.execute(
+                update(ReapRun)
+                .where(ReapRun.id == run.id)
+                .values(state=RunState.EXECUTING)
+                .execution_options(synchronize_session=False)
+            )
+            return await live_policy_hash(s)
+
+        monkeypatch.setattr("reaper.services.executor.live_policy_hash", claimed_meanwhile)
+        radarr = FakeRadarr()
+
+        with pytest.raises(ExecutionError, match="already claimed"):
+            await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert radarr.delete_calls == []
+
+
+class TestAnUnexpectedRunLevelError:
+    """An unmapped error outside the per-item loop ends the run ABORTED, on disk and in the
+    report, and the report is returned."""
+
+    async def test_it_aborts_the_run_and_returns_the_report(
+        self,
+        session: AsyncSession,
+        async_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def broken(self: Executor, deletes: Sequence[_Delete]) -> None:
+            raise ValueError("a bug outside the item loop")
+
+        monkeypatch.setattr(Executor, "_check_rolling_caps", broken)
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+        radarr = FakeRadarr()
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert report.state is RunState.ABORTED
+        assert report.aborted_reason is not None
+        assert report.aborted_reason.id == "error.reap.unexpected"
+        assert report.aborted_reason.params.get("error") == "a bug outside the item loop"
+        assert (await _stored_run(async_factory, run.id)).state is RunState.ABORTED
+        assert radarr.delete_calls == []
+
 
 class TestRollingThirtyDayCaps:
     """The 30-day budget is enforced at execute time, over verified deletions. No
@@ -3748,6 +3802,23 @@ class TestAPolicyEditVoidsAPendingPlan:
         assert radarr.delete_calls == []  # nothing was sent
         # On disk. A refused run that claimed EXECUTING and could not roll it back is
         # exactly the state that would make "still runnable after a re-scan" false.
+        assert (await _stored_run(async_factory, run.id)).state is RunState.PLANNED
+
+    async def test_a_plan_built_after_the_edit_is_refused_too(
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A plan carries the policy its snapshot was scored under, never the live one. A
+        plan built after the edit, from a snapshot taken before it, is refused."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        await self._tighten(session)
+        run = await _plan(session, snapshot_id)
+        await session.commit()
+
+        radarr = FakeRadarr()
+        with pytest.raises(ExecutionError, match="policy changed"):
+            await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert radarr.delete_calls == []
         assert (await _stored_run(async_factory, run.id)).state is RunState.PLANNED
 
     async def test_the_dry_run_proves_the_same_refusal(self, session: AsyncSession) -> None:
@@ -4367,18 +4438,27 @@ class SonarrThatDoesNotAnswer(FakeSonarr):
 
 
 class RadarrThatDoesNotAnswer(FakeRadarr):
-    """Radarr takes the movie delete and never answers."""
+    """Radarr takes the movie delete and the call fails with ``status``."""
+
+    def __init__(self, *, status: int | None = None, **kw: Any) -> None:
+        super().__init__(**kw)
+        self._status = status
 
     async def delete_movie(
         self, movie_id: int, *, delete_files: bool = True, add_exclusion: bool = True
     ) -> None:
         await super().delete_movie(movie_id, delete_files=delete_files, add_exclusion=add_exclusion)
-        raise _call_error("radarr", None)
+        raise _call_error("radarr", self._status)
+
+
+# The statuses a reverse proxy answers with when it gives up on the *arr behind it.
+_GATEWAY_STATUSES = [502, 503, 504, 524]
 
 
 class TestADeleteThatGetsNoAnswer:
-    """A delete call that times out may still be running on the *arr. The re-read decides
-    what landed, and the rolling budget is charged unless the call was answered."""
+    """A delete call that times out, or that a proxy gives up on, may still be running on
+    the *arr. The re-read decides what landed, and the rolling budget is charged unless the
+    *arr itself answered."""
 
     @staticmethod
     async def _season(session: AsyncSession, sonarr: FakeSonarr) -> tuple[RunReport, ActionStep]:
@@ -4391,10 +4471,12 @@ class TestADeleteThatGetsNoAnswer:
         return report, steps["sonarr_delete_files"]
 
     @staticmethod
-    async def _movie(session: AsyncSession, radarr: FakeRadarr) -> tuple[RunReport, ActionStep]:
+    async def _movie(
+        session: AsyncSession, radarr: FakeRadarr, plex: FakePlex | None = None
+    ) -> tuple[RunReport, ActionStep]:
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
         run = await _plan(session, snapshot_id)
-        report = await _real(session, run, _gateway(radarr={1: radarr}))
+        report = await _real(session, run, _gateway(radarr={1: radarr}, plex=plex))
         return report, (await _steps(session, run.id))[0]
 
     async def test_a_season_sonarr_finished_is_verified(self, session: AsyncSession) -> None:
@@ -4425,11 +4507,79 @@ class TestADeleteThatGetsNoAnswer:
         assert step.file_removed_at is None
         assert report.library_changed is False
 
+    @pytest.mark.parametrize("status", _GATEWAY_STATUSES)
+    async def test_a_season_a_proxy_gave_up_on_is_charged(
+        self, session: AsyncSession, status: int
+    ) -> None:
+        """Every gateway status charges a season Sonarr has not finished deleting."""
+        report, step = await self._season(
+            session, SonarrThatDoesNotAnswer(finishes=False, status=status)
+        )
+
+        assert step.state is StepState.FAILED
+        assert step.file_removed_at is not None
+        assert report.library_changed is True
+
+    @pytest.mark.parametrize("status", _GATEWAY_STATUSES)
+    async def test_a_movie_a_proxy_gave_up_on_is_charged(
+        self, session: AsyncSession, status: int
+    ) -> None:
+        """Every gateway status charges a movie Radarr still lists."""
+        report, step = await self._movie(
+            session, RadarrThatDoesNotAnswer(become_gone=False, status=status)
+        )
+
+        assert step.state is StepState.FAILED
+        assert step.file_removed_at is not None
+        assert report.library_changed is True
+
+    async def test_an_answered_movie_error_that_removed_nothing_is_not_charged(
+        self, session: AsyncSession
+    ) -> None:
+        report, step = await self._movie(
+            session, RadarrThatDoesNotAnswer(become_gone=False, status=500)
+        )
+
+        assert step.state is StepState.FAILED
+        assert step.file_removed_at is None
+        assert report.library_changed is False
+
     async def test_a_movie_radarr_removed_is_verified(self, session: AsyncSession) -> None:
         report, step = await self._movie(session, RadarrThatDoesNotAnswer())
 
         assert step.state is StepState.VERIFIED
         assert report.deleted_items == 1
+
+    @pytest.mark.parametrize("status", [None, 502, 504])
+    async def test_a_movie_still_listed_grants_no_purge_allowance(
+        self, session: AsyncSession, status: int | None
+    ) -> None:
+        """A movie Radarr still lists queues no Plex rescan and is not counted as removed
+        by this run, so a trash that holds its Plex listing is kept. ``None`` is a
+        timeout."""
+        plex = FakePlex(sections={"Movies": ["/movies"]}, trash={"Movies": {701}})
+
+        _, step = await self._movie(
+            session, RadarrThatDoesNotAnswer(become_gone=False, status=status), plex
+        )
+
+        assert step.file_removed_at is not None
+        assert plex.refreshed == []
+        assert plex.emptied == []
+
+    @pytest.mark.parametrize("status", [None, 504])
+    async def test_a_movie_radarr_removed_is_rescanned_and_purged(
+        self, session: AsyncSession, status: int | None
+    ) -> None:
+        """A movie the re-read shows gone is rescanned and its library's trash purged,
+        whatever the delete call answered. ``None`` is a timeout."""
+        plex = FakePlex(sections={"Movies": ["/movies"]}, trash={"Movies": {701}})
+
+        report, _ = await self._movie(session, RadarrThatDoesNotAnswer(status=status), plex)
+
+        assert report.deleted_items == 1
+        assert plex.refreshed == [("Movies", "/movies/Worthless")]
+        assert plex.emptied == ["Movies"]
 
     async def test_a_movie_still_listed_is_charged(self, session: AsyncSession) -> None:
         report, step = await self._movie(session, RadarrThatDoesNotAnswer(become_gone=False))

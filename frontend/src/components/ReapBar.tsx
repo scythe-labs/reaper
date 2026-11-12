@@ -112,6 +112,9 @@ export function ReapBar({
       ["run-bins"],
       ["recycle-bins-off"],
       ["candidates"],
+      // A removed file voids its hand reap, which can move the title to another lane.
+      ["candidates-unfiltered"],
+      ["candidates-fate"],
       ["reap-breakdown"],
       ["snapshot"],
       ["fairness"],

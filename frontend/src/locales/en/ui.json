@@ -131,7 +131,7 @@
       },
       "refreshRatings": {
         "desc": "Downloads the latest IMDb ratings so scores use current numbers.",
-        "offWarning": "With this off, ratings won't refresh on a schedule. Reaper still refreshes them once at startup if they're over two weeks old.",
+        "offWarning": "With this off, ratings stop updating. After two weeks, Reaper can't plan removals until you run this or restart it.",
         "title": "Refresh IMDb ratings"
       },
       "scan": {
@@ -2706,8 +2706,8 @@
       "groupAria": "Spare or reap this item",
       "menuAria": "Spare this item for",
       "menuHeading": "Spare for…",
-      "ownReapedHeld": "You reaped this season, but it is <b>kept for now</b>, even though the whole show is spared.",
-      "ownReapedRemoved": "You reaped this season, so it <b>will be removed</b> even though the whole show is spared.",
+      "ownReapedHeld": "You reaped this season, but it is <b>kept for now</b>, even though the whole show is spared. Clear it and it <b>stays</b>.",
+      "ownReapedRemoved": "You reaped this season, so it <b>will be removed</b> even though the whole show is spared. Clear it and it <b>stays</b>.",
       "ownSparedStays": "You spared this season, so it <b>stays</b> even though the whole show is set to reap. Clear it and it <b>goes back on the list</b>.",
       "reap": "Reap",
       "reapForceTitle": "Force this onto the reap list",

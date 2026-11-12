@@ -1407,7 +1407,7 @@ const ShowCard = memo(function ShowCard({
                 // (showReapIsNoop). Judged over `marks`, every season, every lane, not
                 // `group.items`, which on the Condemned tab holds only this show's condemned
                 // seasons and would wrongly read as "all condemned" and hide Reap. The season
-                // rows below keep the per-lane test.
+                // rows below use the per-item `reapIsNoop`.
                 hideReap={showReapIsNoop(showSeasons)}
                 // The show's OWN spare, to match the show-level decision the button reflects.
                 spareExpiresAt={first.show_spare_expires_at}
@@ -1941,6 +1941,7 @@ export function ReviewQueue({
         [
           ["candidates"],
           ["candidates-unfiltered"],
+          ["candidates-fate"],
           ["candidate"],
           ["group"],
           ["snapshot"],
