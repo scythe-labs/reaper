@@ -108,8 +108,9 @@ def per_loop_lock() -> Callable[[], asyncio.Lock]:
     ``history_sync._sync_lock``, ``lists._widen_lock``, and ``leaving_soon._pass_lock``.
     Only ``_rebuild_lock`` and ``_widen_lock`` guard schema changes.
     ``history_sync`` drops a stale ``watch_event`` row under its lock, but
-    ``lists.ensure_schema`` must never drop a row that way: dropping it would stop every keep list from protecting anything until the next sync refills
-    it. ``imdb_dataset`` takes no lock here and needs none. It never drops a live
+    ``lists.ensure_schema`` must never drop a row that way: dropping it would stop
+    every keep list from protecting anything until the next sync refills it.
+    ``imdb_dataset`` takes no lock here and needs none. It never drops a live
     table, it builds a new copy and renames it into place, and a missing table
     degrades gracefully on the read side instead of reading as empty.
     """
