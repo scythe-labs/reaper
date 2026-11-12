@@ -131,7 +131,7 @@
       },
       "refreshRatings": {
         "desc": "Downloads the latest IMDb ratings so scores use current numbers.",
-        "offWarning": "With this off, ratings won't refresh on a schedule. Reaper still refreshes them once at startup if they're over two weeks old.",
+        "offWarning": "With this off, ratings stop updating. After two weeks, Reaper can't plan removals until you run this or restart it.",
         "title": "Refresh IMDb ratings"
       },
       "scan": {

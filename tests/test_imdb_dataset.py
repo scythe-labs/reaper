@@ -23,12 +23,15 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.session import create_engine
 from reaper.services.imdb_dataset import (
+    DEFAULT_MAX_AGE,
     DatasetDegradedError,
     DatasetState,
     ImdbRatings,
     load,
     parse_rows,
 )
+
+from ._reasons import catalog_entry
 
 SAMPLE = (
     "tconst\taverageRating\tnumVotes\n"
@@ -120,6 +123,14 @@ class TestDegradedStateRefusesToAnswer:
     def test_fresh_state_is_healthy(self) -> None:
         fresh = DatasetState(row_count=1_694_979, synced_at=utcnow())
         assert fresh.degraded() is False
+
+    def test_the_age_limit_is_the_two_weeks_the_off_warning_states(self) -> None:
+        change_both = (
+            "Change DEFAULT_MAX_AGE and jobs.meta.refreshRatings.offWarning in "
+            "frontend/src/locales/en/ui.json together. The sentence states this limit."
+        )
+        assert timedelta(days=14) == DEFAULT_MAX_AGE, change_both
+        assert "two weeks" in catalog_entry("meta.refreshRatings.offWarning", "jobs"), change_both
 
 
 class TestAtomicLoad:
