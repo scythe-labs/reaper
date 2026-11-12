@@ -5869,7 +5869,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: parses. Pinned for the same reason as `_EXPECTED_SOURCE_MODULES`, and it carries more
 #: weight here: the expected cycle set is empty, so a walk that stopped reading the tree
 #: would agree with a clean graph exactly.
-_EXPECTED_FRONTEND_MODULES = 251
+_EXPECTED_FRONTEND_MODULES = 252
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")

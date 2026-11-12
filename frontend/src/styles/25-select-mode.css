@@ -146,7 +146,7 @@
   padding: 0;
   gap: 0;
 }
-.card-head {
+.card-show > .card-head {
   position: relative;
   overflow: hidden;
   display: flex;
@@ -160,7 +160,7 @@
   border-radius: var(--radius);
   cursor: pointer;
 }
-.card-head:hover {
+.card-show > .card-head:hover {
   background: color-mix(in srgb, var(--accent) 7%, var(--surface));
 }
 /* The selection tick's column, present only in Select mode. Posters otherwise sit
