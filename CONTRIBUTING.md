@@ -164,7 +164,7 @@ Run the writing form of both formatters before you stage: `uv run ruff format .`
 whole machine takes about one, which is the difference between running it before every commit
 and running it once at the end. Drop the flag only to debug a single test, where `-s` and
 `--pdb` need one worker. A test that fails only under `-n auto` is a test leaking
-process-global state into the next worker, not a reason to stop using it.
+process-global state into a later test in the same worker, not a reason to stop using it.
 
 **Judge a gate by its exit code.** A pipeline reports its last command's status, so
 `npm --prefix frontend run build | tail -4` prints `tail`'s success while a failing compile

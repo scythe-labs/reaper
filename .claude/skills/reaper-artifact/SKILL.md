@@ -7,8 +7,8 @@ description: Build an HTML mockup or artifact in Reaper's look and feel, pulling
 
 Load this before you mock up UI, so you do not re-derive Reaper's design language every time.
 It tells you where the live tokens and component styles are, then hands off to the general
-`artifact-design` skill for layout and the publish flow. Do not type token values from memory;
-read them from the files named here, so the artifact tracks the app instead of a snapshot of it.
+`artifact-design` skill for layout and the publish flow. Do not type token values from memory.
+Read them from the files named here, so the artifact tracks the app.
 
 ## Get the stylesheet, one of two ways
 
@@ -33,7 +33,7 @@ reinvent them:
 - `--protect`, `--protect-soft`: green. Kept, a protection that holds.
 - `--abstain`: gray. Undecided.
 - `--unknown`, `--unknown-soft`: amber. "Could not be checked," which must never look like
-  "checked and fine." This distinction is the whole reason the palette exists.
+  "checked and fine." The palette exists to keep these two apart.
 - `--accent`, `--accent-soft`, `--accent-text`: the operator's sky-blue tint. `--accent-text`
   is the AA-safe ink for accent-colored text.
 - Neutrals: `--bg`, `--surface`, `--surface-2`, `--border`, `--text`, `--muted`. Scales:
@@ -64,5 +64,4 @@ requires it before publishing.
 ## What keeps this current
 
 `tests/test_repo_hygiene.py` fails if a file named here goes missing or a variable named above
-leaves `00-tokens.css`. The tokens moved once already (from `index.css` to
-`styles/00-tokens.css`), so this guard is why a rename breaks the test, not an operator's mockup.
+leaves `00-tokens.css`. A rename breaks the test, so an operator's mockup does not break.

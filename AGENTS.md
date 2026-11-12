@@ -1,4 +1,4 @@
-# Reaper — entry point for AI agents
+# Reaper, entry point for AI agents
 
 Reaper is a self-hosted web tool that finds media nobody watches, explains why it thinks
 each item is expendable, lets an operator review and approve, then removes it through
@@ -13,12 +13,13 @@ shipped as one container.
 **[CONTRIBUTING.md](CONTRIBUTING.md)** holds the conventions, and they apply to you exactly
 as they apply to a human contributor: how the project is set up, the verification gates and
 how to read their exit codes, commit and pull request conventions, how operator-facing text
-is written, and the AI policy. Nothing in this file restates it.
+is written, and the AI policy. This file does not restate it.
 
 **[CLAUDE.md](CLAUDE.md)** holds the working instructions for this repository: the
 architecture, the two-layer safety model, the documentation discipline, and the numbered
-engineering rules that the code cites by number. Read it before you change anything. It is
-named for the tool it was first written for, and it is not specific to that tool.
+engineering rules that the tests and the archived review passes cite by number. Read it before
+you change anything. It is named for the tool it was first written for. It is not specific to
+that tool.
 
 The numbered rules live in `.claude/rules/`, scoped so that a set loads when you open a file
 it governs. CLAUDE.md's table says which file governs what. Read the governing file before
@@ -35,5 +36,4 @@ the tree. CLAUDE.md carries all four in full.
 ## Ground truth
 
 `docs/STATUS.md` is what is true right now, and it is the place to start. `docs/DECISIONS.md`
-says why each locked decision is what it is, and several were reversed once already, which is
-the part a future reader needs most.
+says why each locked decision is what it is. Read the reversals there before you change one.
