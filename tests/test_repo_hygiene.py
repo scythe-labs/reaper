@@ -534,10 +534,8 @@ def test_every_external_id_read_goes_through_the_sentinel_filter() -> None:
 
     Some sources emit ``tt0000000`` or ``tt0`` for "unknown". Because that value is truthy, a
     raw ``imdbId`` carried onto a stored or in-memory record shadows the cleaned id Plex
-    actually matched wherever code falls back with ``item.imdb_id or item.plex_imdb_id``. The
-    keep-list lookup then runs against an id no list row carries, which can let a keep-listed
-    file get deleted. Filtering the value at the read is what stops a new unfiltered site from
-    ever landing.
+    actually matched wherever code falls back with ``item.imdb_id or item.plex_imdb_id``.
+    Filtering the value at the read is what stops a new unfiltered site from ever landing.
     """
     scanned = 0
     exempted = 0

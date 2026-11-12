@@ -213,10 +213,10 @@ in a `dict[title, row]` map.
 
 **29 / 106. Every id the item carries, of every kind and every spelling, goes into every
 lookup.** Pass imdb, tmdb, and tvdb together to `membership_index.lookup` or any cross-system
-join. Look up an item that holds both `imdb_id` and `plex_imdb_id` with
-`item.imdb_id or item.plex_imdb_id`, on the movie path exactly as on the TV path. Passing one id
-where two exist is a fail-open protection bug. When you add a new id kind to storage, grep for
-every lookup call site and update each one in the same change.
+join. Pass both `imdb_id` and `plex_imdb_id` to `membership_index.lookup`, on the movie path
+exactly as on the TV path. Never pick one with `item.imdb_id or item.plex_imdb_id`, because the
+two can differ. Passing one id where two exist is a fail-open protection bug. When you add a new
+id kind to storage, grep for every lookup call site and update each one in the same change.
 
 **52. A bare tmdb id is not a stable key across media kinds.** Movie and TV tmdb ids share one
 integer space. Every map, index, or lookup keyed on a tmdb id carries the media kind with the

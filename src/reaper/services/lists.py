@@ -1438,6 +1438,7 @@ class MembershipIndex:
         *,
         media_type: str,
         imdb_id: str | None = None,
+        plex_imdb_id: str | None = None,
         tmdb_id: int | None = None,
         tvdb_id: int | None = None,
         plex_rating_keys: Collection[int] = (),
@@ -1451,12 +1452,16 @@ class MembershipIndex:
         set: a "Never Reap" entry no agent matched is stored under its Plex key alone,
         and an item bound to a merged group of byte-identical twins carries one key per
         listing, any of which the operator may have put on the list.
+
+        ``imdb_id`` is the *arr's IMDb id and ``plex_imdb_id`` the one Plex matched. The
+        two can differ, and both are looked up.
         """
-        if not (imdb_id or tmdb_id or tvdb_id or plex_rating_keys):
+        if not (imdb_id or plex_imdb_id or tmdb_id or tvdb_id or plex_rating_keys):
             return []
         entries: list[tuple[int, str, Membership]] = []
-        if imdb_id is not None:
-            entries += self._by_imdb.get(imdb_id, ())
+        for imdb in {imdb_id, plex_imdb_id}:
+            if imdb:
+                entries += self._by_imdb.get(imdb, ())
         if tmdb_id is not None:
             entries += self._by_tmdb.get(tmdb_id, ())
         if tvdb_id is not None:
@@ -1535,6 +1540,7 @@ async def memberships(
     *,
     media_type: str,
     imdb_id: str | None = None,
+    plex_imdb_id: str | None = None,
     tmdb_id: int | None = None,
     tvdb_id: int | None = None,
     plex_rating_keys: Collection[int] = (),
@@ -1557,6 +1563,7 @@ async def memberships(
     return index.lookup(
         media_type=media_type,
         imdb_id=imdb_id,
+        plex_imdb_id=plex_imdb_id,
         tmdb_id=tmdb_id,
         tvdb_id=tvdb_id,
         plex_rating_keys=plex_rating_keys,

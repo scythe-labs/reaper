@@ -2010,7 +2010,8 @@ def _judge_series(
     # guids never parsed is stored under that key alone.
     curated_by_series = membership_index.lookup(
         media_type="tv",
-        imdb_id=show_imdb_id,
+        imdb_id=sonarr_ids.imdb,
+        plex_imdb_id=item.plex_imdb_id,
         tmdb_id=show_tmdb_id,
         tvdb_id=tvdb_id,
         plex_rating_keys=(item.show_rating_key,) if item.show_rating_key is not None else (),

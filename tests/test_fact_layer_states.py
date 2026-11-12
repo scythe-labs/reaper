@@ -160,6 +160,24 @@ class TestAKeepListRowIsFoundByEveryIdTheMovieCarries:
 
         assert facts.is_whitelisted == Known(value=True, source="Never Reap")
 
+    @pytest.mark.parametrize(
+        ("radarr_imdb", "plex_imdb"),
+        [("tt0000041", "tt0000042"), ("tt0000042", "tt0000041")],
+        ids=["row-under-plexs-id", "row-under-radarrs-id"],
+    )
+    def test_a_movie_whose_two_imdb_ids_differ_is_found_by_either(
+        self, radarr_imdb: str, plex_imdb: str
+    ) -> None:
+        """Radarr and Plex can hold different IMDb ids for one film. The row is stored under
+        one IMDb id alone, with no TMDb id and no Plex key, and must protect the film whichever
+        side holds that id."""
+        facts = _facts(
+            _raw(imdb_id=radarr_imdb, tmdb_id=7, plex_imdb_id=plex_imdb),
+            membership_index=self._keep_list_stored_under_imdb_only(),
+        )
+
+        assert facts.is_whitelisted == Known(value=True, source="Never Reap")
+
     def test_a_movie_carrying_neither_imdb_id_is_not_falsely_protected(self) -> None:
         """The other direction: the fallback must not invent a match."""
         facts = _facts(
@@ -170,13 +188,10 @@ class TestAKeepListRowIsFoundByEveryIdTheMovieCarries:
         assert facts.is_whitelisted == Known(value=False, source="lists")
 
     def test_radarrs_unknown_id_sentinel_does_not_shadow_the_one_plex_matched(self) -> None:
-        """The fallback above is an ``or``, and ``"tt0000000"`` is truthy.
-
-        Some sources emit ``tt0000000`` / ``tt0`` for "unknown" (``identity._clean_imdb``).
-        A sentinel reaching ``RawItem.imdb_id`` raw means the lookup runs under an id no
-        list row carries and the ``or`` never reaches the id Plex matched, so the keep list
-        is defeated in exactly the case it was written for. Driven through ``_raw_items``,
-        because that is the site that has to filter it.
+        """Some sources emit ``tt0000000`` / ``tt0`` for "unknown" (``identity._clean_imdb``).
+        ``_raw_items`` must drop it, so ``RawItem.imdb_id`` is empty and the film is still
+        found by the id Plex matched. Driven through ``_raw_items``, because that is the
+        site that has to filter it.
         """
         plex = identity.PlexIndex.build(
             [
@@ -199,6 +214,7 @@ class TestAKeepListRowIsFoundByEveryIdTheMovieCarries:
             "sizeOnDisk": 8_000_000_000,
         }
         item = _raw_items([movie], plex, instance_id=1)[0]
+        assert item.imdb_id is None
         assert item.plex_imdb_id == "tt0000042"
 
         facts = _facts(item, membership_index=self._keep_list_stored_under_imdb_only())

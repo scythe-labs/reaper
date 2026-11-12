@@ -1400,6 +1400,8 @@ class TestMembershipIndexParity:
             {"media_type": "movie", "imdb_id": "tt0000005", "tmdb_id": 1005},  # one row, both ways
             {"media_type": "tv", "tvdb_id": 777},  # tv, whitelist only
             {"media_type": "tv", "tmdb_id": 1005},  # a show colliding with a film: no match
+            # Plex's imdb id finds the rows when the *arr's matches nothing.
+            {"media_type": "movie", "imdb_id": "tt9999999", "plex_imdb_id": "tt0000005"},
             {"media_type": "movie", "imdb_id": "tt9999999"},  # on nothing
             {"media_type": "movie"},  # no ids at all
         ]
