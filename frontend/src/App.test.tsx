@@ -310,8 +310,7 @@ describe("SectionNav", () => {
   it("draws no mark while deletion is off", async () => {
     apiMock.safety.mockResolvedValue(SAFETY);
     const { container } = renderNav();
-    await act(async () => {});
-    expect(container.querySelector(".view-armed")).not.toBeInTheDocument();
+    await waitFor(() => expect(container.querySelector(".view-armed")).not.toBeInTheDocument());
   });
 
   // No mark means the deletion switch is not armed. If a failed safety read also showed no
@@ -324,10 +323,10 @@ describe("SectionNav", () => {
     expect(container.querySelector(".view-armed-armed")).not.toBeInTheDocument();
   });
 
-  it("draws nothing on the very first fetch, which knows nothing yet", () => {
+  it("shows the unknown mark while the safety read is pending", () => {
     apiMock.safety.mockReturnValue(new Promise(() => {}));
     const { container } = renderNav();
-    expect(container.querySelector(".view-armed")).not.toBeInTheDocument();
+    expect(container.querySelector(".view-armed-unknown")).toBeInTheDocument();
   });
 });
 

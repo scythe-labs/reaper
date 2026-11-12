@@ -27,6 +27,7 @@ import { readLanding, sectionUrl, writeUrl } from "./navUrl";
 import { usePageScrollLock } from "./pageScrollLock";
 import { useGeneralSettings, useSeedLanguage } from "./useGeneralSettings";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "./useMediaQuery";
+import { useSafety } from "./useSafety";
 import { useScanSettled } from "./useScanSettled";
 import { RecycleBinBanner } from "./components/RecycleBins";
 import { SafetyBanner } from "./components/SafetyBanner";
@@ -672,16 +673,21 @@ function Authed({ user }: { user: AuthUser }) {
     queryKey: ["setup"],
     queryFn: api.setupStatus,
   });
+  // No screen paints until the first safety read settles, so the safety banner is never
+  // absent. A failed read settles it too. Only the first read holds the spinner. A poll after a
+  // failure goes pending again, and it must never unmount the app.
+  const safety = useSafety();
+  const loading = isLoading || (safety.isLoading && !safety.isFetched);
 
   // Declared above the early return below, so hook order stays the same whichever branch
   // renders.
-  useSlowWait(isLoading ? t("shell.app.stillLoadingReaper") : null);
+  useSlowWait(loading ? t("shell.app.stillLoadingReaper") : null);
   // The first signed-in moment is the earliest one where a browser that knows its own preferred
   // languages is talking to a server that cannot detect them. Here rather than in the wizard,
   // because an install past setup never runs the wizard again.
   useSeedLanguage();
 
-  if (isLoading) {
+  if (loading) {
     return (
       // The sr-only word here is read in document order like any other text; it is not a
       // live region. The sentence for a wait that runs long is announced separately, through
