@@ -177,7 +177,7 @@ def test_env_py_configures_batch_mode(tmp_path: Path, monkeypatch: pytest.Monkey
     )
     # The other half of the pair. The convention only helps if the metadata carrying
     # it is the metadata env.py hands to Alembic.
-    assert kwargs["target_metadata"].naming_convention == NAMING_CONVENTION
+    assert getattr(kwargs.get("target_metadata"), "naming_convention", None) == NAMING_CONVENTION
 
 
 def _alembic_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:

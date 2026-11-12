@@ -16,11 +16,15 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import { ShowPanel } from "./ShowPanel";
 import { WhyPanel } from "./WhyPanel";
 
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
+}));
+
 // Spreads the real module for ApiError: describeError's `instanceof ApiError` check throws
 // against a mock that answers for `api` alone.
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
-  api: { override: vi.fn(), clearOverride: vi.fn(), profile: vi.fn(), general: vi.fn() },
+  api: apiMock,
 }));
 
 // Both panels read settings through hooks no assertion here names: the unmeasured allowance
