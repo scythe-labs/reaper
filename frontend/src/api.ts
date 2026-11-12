@@ -839,6 +839,8 @@ export type PolicyRepair =
 
 /** One title the draft would newly flag, for the simulator's "New on the list" block. */
 export interface SimExample {
+  /** The candidate's own key, for the list key. Never shown. */
+  media_key: string;
   title: string;
   year: number | null;
   score: number;

@@ -1774,7 +1774,7 @@ class TestTheSimulator:
 
         assert result["newly_condemned"] == 1
         assert result["examples_newly_condemned"] == [
-            {"title": "Example Oldie", "year": None, "score": 45}
+            {"media_key": "radarr:1:13", "title": "Example Oldie", "year": None, "score": 45}
         ]
 
     def test_examples_are_empty_when_nothing_new_is_flagged(self, client: TestClient) -> None:

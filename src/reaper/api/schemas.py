@@ -1212,6 +1212,9 @@ class PolicyOut(BaseModel):
 class SimExampleOut(BaseModel):
     """One title the draft would newly flag."""
 
+    media_key: str
+    """The candidate's own key, unique within the snapshot. The list keys on it, and it is
+    never shown."""
     title: str
     year: int | None = None
     score: int
