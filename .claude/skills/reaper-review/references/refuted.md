@@ -369,6 +369,15 @@ The two sections after the index are **not** refutations. Read their headings be
 | `frontend/src/locales/en/ui.json:error.scan.waiting_for_plex` — key-out-of-alphabetical-order | No test or tool requires sorted keys in ui.json, and the i18n tests compare key sets only. | `30fd2c37` |
 | `src/reaper/notify/discord.py:_retry_after_429` — retry-after-ignores-the-callers-deadline | No caller gives the Discord post a deadline, so there is none to clamp to. The ceiling `_MAX_RETRY_AFTER` is the only bound that applies. | `488e0334` |
 | `src/reaper/services/whitelist.py:purge_expired_spares` — scan-purge-has-no-deletion-test | Deleting the scan's purge call leaves an expired spare in force, which keeps the file. That is the keep direction, so it is no deletion-path interlock. `purge_expired_spares` has its own direct tests. | `488e0334` |
+| `src/reaper/services/condemned.py:match_state` — empty-status-reads-as-absent | The only writer of the stored explanation writes the match status from the `MatchStatus` enum, which has no blank value. A blank status needs a hand edit of the database. | `488e0334` |
+| `src/reaper/services/snapshot.py:_release_age_days` — unreadable-year-reads-as-absent | The year is Radarr's integer year. Only a value below 1 or above 9999 reaches the branch. | `488e0334` |
+| `src/reaper/services/backup.py:MAX_DB_BYTES` — writer-limit-exceeds-upload-cap | An archive passes the 8 GiB upload cap only when the database is near 100 GiB. The writer refuses anything past 64 GiB. | `488e0334` |
+| `src/reaper/api/schemas.py:ProfileSettingsIO.grace_days` — unbounded-grace-overflows-timedelta | The grace period overflows only past about 2.9 million days, and the field is a unit picker. | `488e0334` |
+| `src/reaper/clients/public.py:_stream_once` — remote-sized-download-unbounded | The download URL is a fixed HTTPS constant (`DATASET_URL`) the operator cannot set. | `488e0334` |
+| `src/reaper/auth/recovery.py:mint_recovery_token` — recovery-token-rows-never-deleted | Token rows are added only on a boot with recovery on. That boot also turns deletion off. | `488e0334` |
+| `src/reaper/services/list_config.py:_refuse_name_twice` — name-clash-answers-400-not-409 | The UI reads the response detail and never the status, so a 400 shows the operator the same sentence a 409 would. | `488e0334` |
+| `src/reaper/api/plex_trash.py:get_plex_trash` — client-leaks-on-non-numeric-library-key | `set_plex_libraries` validates the library key as an integer when it writes, so the route cannot read a non-numeric one. | `488e0334` |
+| `src/reaper/services/requested_by.py:build_map` — two-requesters-one-display-name | It needs two portal accounts with one name. The effect is the wording of one tag. | `488e0334` |
 
 ## Carried over with NO evidence — unverified, not refuted
 
