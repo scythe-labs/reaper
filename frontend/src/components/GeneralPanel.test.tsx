@@ -5,7 +5,7 @@
 // spare length is edited by two controls at once, a Forever button and a day box, and both
 // stage into the bar rather than writing immediately, so a save always sends what the bar
 // shows.
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Announcer } from "../announce";
@@ -677,6 +677,44 @@ describe("the display language picker", () => {
     // `test_repo_hygiene.py` that pins every reload in the tree rests on exactly this.
     await waitFor(() => expect(bar()).not.toBeNull());
     expect(select).toBeDisabled();
+  });
+});
+
+describe("the theme switch", () => {
+  beforeEach(() => {
+    localStorage.removeItem("reaper-theme");
+    delete document.documentElement.dataset.theme;
+  });
+
+  it("shows all three choices, with the stored one pressed", async () => {
+    localStorage.setItem("reaper-theme", "dark");
+    renderPanel();
+    const group = await screen.findByRole("group", { name: "Theme" });
+
+    const pressed = within(group)
+      .getAllByRole("button")
+      .map((b) => [b.textContent, b.getAttribute("aria-pressed")]);
+    expect(pressed).toEqual([
+      ["Match my device", "false"],
+      ["Light", "false"],
+      ["Dark", "true"],
+    ]);
+  });
+
+  it("themes this browser on a press, and saves nothing to the server", async () => {
+    const person = renderPanel();
+    const group = await screen.findByRole("group", { name: "Theme" });
+
+    await person.click(within(group).getByRole("button", { name: "Dark" }));
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(localStorage.getItem("reaper-theme")).toBe("dark");
+
+    await person.click(within(group).getByRole("button", { name: "Match my device" }));
+    expect(document.documentElement.dataset.theme).toBeUndefined();
+    expect(localStorage.getItem("reaper-theme")).toBeNull();
+
+    expect(apiMock.saveGeneral).not.toHaveBeenCalled();
+    expect(bar()).toBeNull();
   });
 });
 
