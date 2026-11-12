@@ -257,9 +257,17 @@ async def _sent(call: Awaitable[None], *, media_key: str) -> IntegrationError | 
     return None
 
 
+# What a reverse proxy answers when the *arr behind it is slow or away. The *arr may still
+# be deleting.
+_GATEWAY_STATUSES = frozenset({502, 503, 504, 524})
+
+
 def _no_answer(error: IntegrationError | None) -> bool:
-    """The delete got no answer, so the *arr may still be removing files."""
-    return error is not None and error.status is None
+    """The *arr itself did not answer the delete, so it may still be removing files.
+
+    A timeout carries no status. A proxy that gave up carries a gateway status.
+    """
+    return error is not None and (error.status is None or error.status in _GATEWAY_STATUSES)
 
 
 def _season_number(obj: dict[str, Any]) -> int:
@@ -2508,15 +2516,11 @@ class Executor:
             excluded = True
             checks.append(StepCheck(Reason("error.reap.check.exclusion_off"), True))
 
-        # Once the file is gone, queue Plex's rescan of its folder, whatever the
-        # exclusion result. This is what stops a stale entry lingering, and it must be
-        # queued even when the exclusion check failed, since the file is still gone.
-        # ``_flush_refreshes`` sends it at the end of the run. Best-effort: never
-        # affects the item's verdict. A merged bind lists this one file under several
-        # rating keys, so the purge's count-delta gate is told which Plex listings this
-        # delete removes. Handing over the keys rather than their count is what lets the
-        # gate dedup a listing two candidates both bound to (see ``_deleted_by_section``).
-        if assume_removed:
+        # Queue Plex's rescan of the folder unless the re-read still lists the movie,
+        # whatever the exclusion result. The keys become this delete's allowance in the
+        # trash purge's count check (``_deleted_by_section``), so a movie Radarr still
+        # lists must add none, even when the delete got no answer.
+        if gone is not False:
             self._queue_refresh(
                 str(movie.get("path") or movie.get("folderName") or ""),
                 plex_keys=self._equivalent_keys(delete.candidate),
