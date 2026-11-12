@@ -257,9 +257,17 @@ async def _sent(call: Awaitable[None], *, media_key: str) -> IntegrationError | 
     return None
 
 
+# What a reverse proxy answers when the *arr behind it is slow or away. The *arr may still
+# be deleting.
+_GATEWAY_STATUSES = frozenset({502, 503, 504, 524})
+
+
 def _no_answer(error: IntegrationError | None) -> bool:
-    """The delete got no answer, so the *arr may still be removing files."""
-    return error is not None and error.status is None
+    """The *arr itself did not answer the delete, so it may still be removing files.
+
+    A timeout carries no status. A proxy that gave up carries a gateway status.
+    """
+    return error is not None and (error.status is None or error.status in _GATEWAY_STATUSES)
 
 
 def _season_number(obj: dict[str, Any]) -> int:

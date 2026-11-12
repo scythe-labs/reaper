@@ -4360,18 +4360,27 @@ class SonarrThatDoesNotAnswer(FakeSonarr):
 
 
 class RadarrThatDoesNotAnswer(FakeRadarr):
-    """Radarr takes the movie delete and never answers."""
+    """Radarr takes the movie delete and the call fails with ``status``."""
+
+    def __init__(self, *, status: int | None = None, **kw: Any) -> None:
+        super().__init__(**kw)
+        self._status = status
 
     async def delete_movie(
         self, movie_id: int, *, delete_files: bool = True, add_exclusion: bool = True
     ) -> None:
         await super().delete_movie(movie_id, delete_files=delete_files, add_exclusion=add_exclusion)
-        raise _call_error("radarr", None)
+        raise _call_error("radarr", self._status)
+
+
+# The statuses a reverse proxy answers with when it gives up on the *arr behind it.
+_GATEWAY_STATUSES = [502, 503, 504, 524]
 
 
 class TestADeleteThatGetsNoAnswer:
-    """A delete call that times out may still be running on the *arr. The re-read decides
-    what landed, and the rolling budget is charged unless the call was answered."""
+    """A delete call that times out, or that a proxy gives up on, may still be running on
+    the *arr. The re-read decides what landed, and the rolling budget is charged unless the
+    *arr itself answered."""
 
     @staticmethod
     async def _season(session: AsyncSession, sonarr: FakeSonarr) -> tuple[RunReport, ActionStep]:
@@ -4412,6 +4421,43 @@ class TestADeleteThatGetsNoAnswer:
     ) -> None:
         report, step = await self._season(
             session, SonarrThatDoesNotAnswer(finishes=False, status=500)
+        )
+
+        assert step.state is StepState.FAILED
+        assert step.file_removed_at is None
+        assert report.library_changed is False
+
+    @pytest.mark.parametrize("status", _GATEWAY_STATUSES)
+    async def test_a_season_a_proxy_gave_up_on_is_charged(
+        self, session: AsyncSession, status: int
+    ) -> None:
+        """Every gateway status charges a season Sonarr has not finished deleting."""
+        report, step = await self._season(
+            session, SonarrThatDoesNotAnswer(finishes=False, status=status)
+        )
+
+        assert step.state is StepState.FAILED
+        assert step.file_removed_at is not None
+        assert report.library_changed is True
+
+    @pytest.mark.parametrize("status", _GATEWAY_STATUSES)
+    async def test_a_movie_a_proxy_gave_up_on_is_charged(
+        self, session: AsyncSession, status: int
+    ) -> None:
+        """Every gateway status charges a movie Radarr still lists."""
+        report, step = await self._movie(
+            session, RadarrThatDoesNotAnswer(become_gone=False, status=status)
+        )
+
+        assert step.state is StepState.FAILED
+        assert step.file_removed_at is not None
+        assert report.library_changed is True
+
+    async def test_an_answered_movie_error_that_removed_nothing_is_not_charged(
+        self, session: AsyncSession
+    ) -> None:
+        report, step = await self._movie(
+            session, RadarrThatDoesNotAnswer(become_gone=False, status=500)
         )
 
         assert step.state is StepState.FAILED
