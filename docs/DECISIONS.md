@@ -537,7 +537,7 @@ first keystroke shoved the field being typed in 71px sideways. The bar names eve
 sends them in one request, offers Discard, holds the whole save while the accent hex is
 half-typed, and renders a refusal inside itself, since the route writes all six fields or none.
 Controls that take effect the moment they change are not drafts and stay out of it: the
-reverse-proxy Switch and the expand-seasons select save on the spot, and the theme select is local
+reverse-proxy Switch and the expand-seasons select save on the spot, and the theme switch is local
 to the browser. The spare-length Segmented was a third until it started staging its mode in the
 bar instead: Forever is 0 in the same field the day box edits, so a press that wrote it dropped
 the field out of the bar and took the day box's Discard with it. **Switching section asks first**:

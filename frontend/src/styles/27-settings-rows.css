@@ -441,6 +441,15 @@
   .set-row .set-control input.input-port {
     width: 5rem;
   }
+  /* A boxed switch spans the row, like the selects stacked above and below it. */
+  .set-row .set-control > .segmented.flat {
+    width: 100%;
+  }
+  .set-row .set-control > .segmented.flat .seg {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding-inline: var(--space-md);
+  }
 }
 
 /* The Plex libraries picker: one card per video library, a switch on each. */

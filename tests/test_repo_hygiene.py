@@ -4620,7 +4620,7 @@ def test_the_fingerprint_matcher_reads_every_spelling_the_tree_puts_after_of() -
 # Every ``<select>`` the app ships, counted by the scan below rather than believed. Pinned as
 # a count because an unnamed one added later could otherwise hide behind the ones that already
 # have names.
-_EXPECTED_SELECTS = 24
+_EXPECTED_SELECTS = 23
 
 
 #: A ``//`` that starts a comment, which is any ``//`` not preceded by a colon. Splitting on the
