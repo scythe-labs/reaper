@@ -1941,6 +1941,7 @@ export function ReviewQueue({
         [
           ["candidates"],
           ["candidates-unfiltered"],
+          ["candidates-fate"],
           ["candidate"],
           ["group"],
           ["snapshot"],

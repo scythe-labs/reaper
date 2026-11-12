@@ -134,6 +134,8 @@ describe("useOverrideMutations", () => {
       );
       for (const key of [
         "candidates",
+        "candidates-fate",
+        "candidates-unfiltered",
         "group",
         "candidate",
         "reap-breakdown",

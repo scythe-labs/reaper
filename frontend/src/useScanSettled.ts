@@ -24,6 +24,7 @@ export const SCAN_SETTLED_KEYS: string[][] = [
   ["snapshot"], // the scan's own totals, in the header and on the Reap page
   ["candidates"], // the review queue, every loaded page
   ["candidates-unfiltered"], // the "how many the filters are hiding" count beside it
+  ["candidates-fate"], // a collection screen's removed, kept and undecided counts
   ["candidate"], // an open item panel
   ["group"], // an open show panel, and every expanded season list
   ["reap-breakdown"], // the Reap page's ledger, including its expired-spares line
