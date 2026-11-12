@@ -23,8 +23,8 @@
 }
 .card:hover > .card-side .override-controls,
 .card:focus-within > .card-side .override-controls,
-.card-head:hover > .card-side .override-controls,
-.card-head:focus-within > .card-side .override-controls,
+.card-show > .card-head:hover > .card-side .override-controls,
+.card-show > .card-head:focus-within > .card-side .override-controls,
 .season-row:hover .override-controls,
 .season-row:focus-within .override-controls {
   opacity: 1;
@@ -73,8 +73,8 @@
 }
 .card:hover > .card-side .override-mark,
 .card:focus-within > .card-side .override-mark,
-.card-head:hover > .card-side .override-mark,
-.card-head:focus-within > .card-side .override-mark {
+.card-show > .card-head:hover > .card-side .override-mark,
+.card-show > .card-head:focus-within > .card-side .override-mark {
   opacity: 0;
 }
 /* Opening the length menu portals it to the body, so the pointer leaves the card and the card
