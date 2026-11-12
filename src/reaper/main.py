@@ -62,6 +62,7 @@ from reaper.auth.proxy import parse_proxy_networks
 from reaper.auth.recovery import clear_recovery_file, mint_recovery_token, recovery_base_url
 from reaper.auth.sessions import clear_recovery_marks
 from reaper.buildinfo import build_version, install_kind, is_release, project_root, short_commit
+from reaper.clients import plex as plex_client
 from reaper.config import (
     Settings,
     get_settings,
@@ -442,6 +443,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     bins = asyncio.create_task(restore_recycle_bins(app), name="restore_recycle_bins")
     bins.add_done_callback(report_background_failure)
 
+    plex_client.resume_requests()
     try:
         yield
     finally:
@@ -483,6 +485,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await close_artwork_client(app)
         await engine.dispose()
         await cache_engine.dispose()
+        # A canceled scan leaves Plex reads running on worker threads, and the process
+        # cannot exit until they return. Everything above is durable, so end them now.
+        plex_client.stop_requests()
         log.info("reaper.stopped")
 
 
