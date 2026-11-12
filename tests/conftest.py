@@ -57,6 +57,7 @@ from reaper.auth.ratelimit import (
     password_throttle,
     recover_throttle,
 )
+from reaper.clients import plex as plex_client
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.session import create_engine as create_async_engine
@@ -492,6 +493,8 @@ def _hermetic(monkeypatch: pytest.MonkeyPatch) -> None:
     recover_throttle.reset()
     password_throttle.reset()
     argon2_gate.reset()
+    # A lifespan that ended in an earlier test left Plex requests refused.
+    plex_client.resume_requests()
 
 
 # --------------------------------------------------------------------------------------

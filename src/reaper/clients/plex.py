@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import re
+import threading
 import time
 from collections.abc import Callable, Iterator
 from contextvars import ContextVar
@@ -452,6 +453,23 @@ def _benign_shape(method: str, path: str) -> bool:
     return False
 
 
+#: Set once the app has finished shutting down. A Plex read runs on a worker thread that a
+#: canceled task cannot interrupt, and the process cannot exit while one runs. With this set,
+#: the next request on any session raises, so a read that loops over pages ends after the
+#: request it is in.
+_stopping = threading.Event()
+
+
+def stop_requests() -> None:
+    """Refuse every Plex request from now on. The lifespan calls this last, on the way out."""
+    _stopping.set()
+
+
+def resume_requests() -> None:
+    """Allow Plex requests again. The lifespan calls this on the way in."""
+    _stopping.clear()
+
+
 class GuardedSession(requests.Session):
     """``GuardedTransport``'s twin, for the one library that does not use httpx."""
 
@@ -464,6 +482,8 @@ class GuardedSession(requests.Session):
         self.verify = verify
 
     def request(self, method: str, url: str, *args: Any, **kwargs: Any) -> requests.Response:  # type: ignore[override]
+        if _stopping.is_set():
+            raise requests.ConnectionError("Reaper is stopping")
         path = urlsplit(url).path
         mutates = method.upper() not in SAFE_METHODS or bool(_GET_SHAPED_MUTATIONS.match(path))
         if mutates:

@@ -20,8 +20,10 @@ from unittest import mock
 
 import pytest
 import requests
+from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
+from reaper.clients import plex as plex_client
 from reaper.clients.base import SafetyViolationError
 from reaper.clients.plex import (
     PLEX_READ_TIMEOUT,
@@ -32,7 +34,8 @@ from reaper.clients.plex import (
     declared_mutation,
     normalize_label,
 )
-from reaper.config import RuntimeSafety
+from reaper.config import RuntimeSafety, Settings
+from reaper.main import create_app
 
 ARMED = RuntimeSafety(destructive_enabled=True)
 READ_ONLY = RuntimeSafety(destructive_enabled=False)
@@ -522,3 +525,40 @@ class TestTheConnectionCarriesReapersOwnTimeout:
         assert captured["timeout"] == PLEX_READ_TIMEOUT
         # Wider than plexapi's own default, which the constant alone cannot prove.
         assert PLEX_READ_TIMEOUT > plexapi.TIMEOUT
+
+
+class TestRequestsAreRefusedOnceTheAppHasStopped:
+    """A Plex read runs on a thread that cancellation cannot reach, and the process cannot
+    exit while it runs. Once shutdown is complete the session refuses the next request, so a
+    read that loops over pages ends."""
+
+    def test_a_get_is_refused_and_nothing_is_sent(self) -> None:
+        session = GuardedSession(READ_ONLY)
+        plex_client.stop_requests()
+
+        with _transport() as send, pytest.raises(requests.ConnectionError, match="stopping"):
+            session.get("http://127.0.0.1:1/library/sections", timeout=0.05)
+
+        assert send.call_count == 0
+
+    def test_a_get_is_sent_again_once_requests_resume(self) -> None:
+        session = GuardedSession(READ_ONLY)
+        plex_client.stop_requests()
+        plex_client.resume_requests()
+
+        with _transport() as send:
+            session.get("http://127.0.0.1:1/library/sections", timeout=0.05)
+
+        assert _sent(send) == ("GET", "http://127.0.0.1:1/library/sections")
+
+    def test_the_app_refuses_requests_only_after_it_has_shut_down(self, settings: Settings) -> None:
+        """The lifespan allows requests while the app runs and refuses them on the way out."""
+        session = GuardedSession(READ_ONLY)
+        plex_client.stop_requests()
+        with TestClient(create_app(settings)), _transport() as send:
+            session.get("http://127.0.0.1:1/library/sections", timeout=0.05)
+            assert send.call_count == 1
+
+        with _transport() as send, pytest.raises(requests.ConnectionError, match="stopping"):
+            session.get("http://127.0.0.1:1/library/sections", timeout=0.05)
+        assert send.call_count == 0
