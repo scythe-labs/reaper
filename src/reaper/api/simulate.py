@@ -502,7 +502,8 @@ async def _replay_simulation(
         changed_titles=changed,
         histogram=histogram,
         examples_newly_condemned=[
-            SimExampleOut(title=r.title, year=r.year, score=s) for r, s in newly_rows[:5]
+            SimExampleOut(media_key=r.media_key, title=r.title, year=r.year, score=s)
+            for r, s in newly_rows[:5]
         ],
         protected_by=[
             GateCountOut(gate=gate, count=n)
@@ -854,7 +855,8 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         changed_titles=changed,
         histogram=histogram,
         examples_newly_condemned=[
-            SimExampleOut(title=r.title, year=r.year, score=r.score) for r in newly_rows[:5]
+            SimExampleOut(media_key=r.media_key, title=r.title, year=r.year, score=r.score)
+            for r in newly_rows[:5]
         ],
         protected_by=[
             GateCountOut(gate=gate, count=n)

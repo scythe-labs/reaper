@@ -442,3 +442,27 @@ describe("what the spared-by list calls each protection", () => {
     await expectNoA11yViolations(container);
   });
 });
+
+describe("the titles a draft newly flags", () => {
+  it("lists one film held by two instances as two rows", () => {
+    // The same title and year from two Radarr instances. A duplicate sibling key fails the run.
+    render(
+      <Outcome
+        simulation={{
+          ...BASE,
+          newly_condemned: 2,
+          examples_newly_condemned: [
+            { media_key: "radarr:1:7", title: "Example Film", year: 1999, score: 80 },
+            { media_key: "radarr:2:7", title: "Example Film", year: 1999, score: 80 },
+          ],
+        }}
+        threshold={62}
+        pace={null}
+        edited
+        mediaType="movie"
+      />,
+    );
+
+    expect(screen.getAllByText("Example Film")).toHaveLength(2);
+  });
+});
