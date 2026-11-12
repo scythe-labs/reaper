@@ -206,8 +206,9 @@ became unofferable. Never drop the rule silently.
 ## Identity, joins, and keys
 
 **6. Disambiguate cross-system joins by a stable identifier.** Bind on an external id first.
-Year plus title is the last tier (`identity.title_year_match`), and title alone never binds.
-Refuse to bind on ambiguity (return Unknown / ABSTAIN). Never let the last write silently win
+Year plus title is the last tier (`identity.title_year_match`). There a unique title binds
+unless the known years conflict, and a duplicate title needs a year that singles out one item.
+Refuse to bind on any other ambiguity (return Unknown / ABSTAIN). Never let the last write silently win
 in a `dict[title, row]` map.
 
 **29 / 106. Every id the item carries, of every kind and every spelling, goes into every

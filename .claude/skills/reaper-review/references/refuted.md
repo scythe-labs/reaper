@@ -367,6 +367,8 @@ The two sections after the index are **not** refutations. Read their headings be
 | `tests/test_review_scan.py:refresh tests` — refresh-branches-untested | This names no trigger. Its one concrete case, an empty refresh, was fixed and pinned as its own finding. | `60bd2cd2` |
 | `frontend/src/components/ReapBar.tsx:ReapBar` — errored-bar-hides-the-wait-line | The `waitingForPlex` line renders outside the `!errored` guard, so a red bar after a failed reap that deleted files still shows why scans are paused. Only the amber tint is lost. | `30fd2c37` |
 | `frontend/src/locales/en/ui.json:error.scan.waiting_for_plex` — key-out-of-alphabetical-order | No test or tool requires sorted keys in ui.json, and the i18n tests compare key sets only. | `30fd2c37` |
+| `src/reaper/notify/discord.py:_retry_after_429` — retry-after-ignores-the-callers-deadline | No caller gives the Discord post a deadline, so there is none to clamp to. The ceiling `_MAX_RETRY_AFTER` is the only bound that applies. | `488e0334` |
+| `src/reaper/services/whitelist.py:purge_expired_spares` — scan-purge-has-no-deletion-test | Deleting the scan's purge call leaves an expired spare in force, which keeps the file. That is the keep direction, so it is no deletion-path interlock. `purge_expired_spares` has its own direct tests. | `488e0334` |
 
 ## Carried over with NO evidence — unverified, not refuted
 
