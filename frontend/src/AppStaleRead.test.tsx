@@ -113,7 +113,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   apiMock.me.mockResolvedValue(USER);
   apiMock.setupStatus.mockResolvedValue(COMPLETE_SETUP);
-  apiMock.safety.mockResolvedValue({ destructive_enabled: false, dry_run: true, reason: null });
+  apiMock.safety.mockResolvedValue({
+    destructive_enabled: false,
+    has_password: true,
+    recovery_mode: false,
+  } satisfies Safety);
   apiMock.latestSnapshot.mockResolvedValue(null);
   apiMock.scanStatus.mockResolvedValue(IDLE_SCAN);
   apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
