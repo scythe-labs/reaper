@@ -21,8 +21,9 @@ name: Binaries
 # Deliberately NOT on pull_request or push: the per-commit lanes pay for the amd64
 # docker gate in ci.yml and nothing else; everything here is nightly or hand-run.
 #
-# macOS builds on macos-14 (arm64) because the build image sets the binary's minimum
-# macOS: building on a newer image silently raises the floor for every operator.
+# macOS builds on an arm64 runner, and the "Check the minimum macOS" step holds the
+# binary's floor at MACOS_FLOOR whichever image builds it. GitHub retires a macOS image
+# about two years after it ships, so the runner label has to move and the floor must not.
 # Intel Macs have no lane; GitHub retired the x64 macOS runners.
 #
 # Actions are pinned to commit SHAs for the same supply-chain reason as ci.yml, and
@@ -132,7 +133,7 @@ jobs:
         include:
           - runner: windows-latest
             slug: windows-x64
-          - runner: macos-14
+          - runner: macos-15
             slug: macos-arm64
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -240,6 +241,44 @@ jobs:
           }
           probe ./build/pyinstaller/dist/reaper/reaper 8461 server.log
           probe ./build/pyinstaller/dist/Reaper.app/Contents/MacOS/Reaper 8462 app.log
+
+      # Every Mach-O file in the bundle records the oldest macOS it loads on. The
+      # highest of those is the oldest macOS the app starts on.
+      - name: Check the minimum macOS
+        if: runner.os == 'macOS'
+        env:
+          MACOS_FLOOR: "14.0"
+        run: |
+          set -euo pipefail
+          : > minos.txt
+          while IFS= read -r -d '' f; do
+            case "$(file -b "${f}")" in
+              *Mach-O*)
+                otool -l "${f}" \
+                  | awk -v f="${f}" '/LC_BUILD_VERSION/ {b=1} b && $1 == "minos" {print $2, f; b=0}' \
+                  >> minos.txt
+                ;;
+            esac
+          done < <(find build/pyinstaller/dist -type f -print0)
+          if [ ! -s minos.txt ]; then
+            echo "found no Mach-O file with a minimum macOS in the bundle"; exit 1
+          fi
+          awk -v floor="${MACOS_FLOOR}" '
+            function newer(a, b,    x, y, i) {
+              split(a, x, "."); split(b, y, ".")
+              for (i = 1; i <= 3; i++) {
+                if ((x[i] + 0) != (y[i] + 0)) return (x[i] + 0) > (y[i] + 0)
+              }
+              return 0
+            }
+            newer($1, floor) { print "  " $0 }
+          ' minos.txt > too-new.txt
+          if [ -s too-new.txt ]; then
+            echo "these files need a newer macOS than ${MACOS_FLOOR}:"
+            cat too-new.txt
+            exit 1
+          fi
+          echo "every file in the bundle loads on macOS ${MACOS_FLOOR}"
 
       - name: Boot the binary and probe it (Windows)
         if: runner.os == 'Windows'

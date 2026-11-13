@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Binaries alert
+
+# A nightly Binaries run that does not succeed publishes nothing, and the dev
+# prerelease keeps its old binaries. This workflow puts that in the tracker. A
+# release calls the same build, so the issue is also the warning that a release
+# would fail.
+#
+# It is its own workflow because release.yml calls binaries.yml, and a caller must
+# grant every permission a called job declares. A job in binaries.yml that asks for
+# issues:write would make every release ask for it too.
+
+on:
+  workflow_run:
+    workflows: [Binaries]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  report:
+    name: Report a nightly build that did not succeed
+    if: >-
+      github.event.workflow_run.event == 'schedule'
+      && github.event.workflow_run.conclusion != 'success'
+      && github.event.workflow_run.conclusion != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          set -euo pipefail
+          title="The nightly binaries build did not succeed"
+          open="$(gh issue list --repo "${GITHUB_REPOSITORY}" --state open \
+            --search "in:title \"${title}\"" --json number -q '.[0].number // empty')"
+          if [ -n "${open}" ]; then
+            gh issue comment "${open}" --repo "${GITHUB_REPOSITORY}" \
+              --body "It ended as ${CONCLUSION} again: ${RUN_URL}"
+          else
+            gh issue create --repo "${GITHUB_REPOSITORY}" --title "${title}" \
+              --label "Kind/Bug,Priority/High" \
+              --body "The run ended as ${CONCLUSION}. The dev prerelease was not refreshed, and a release would fail the same way. Run: ${RUN_URL}"
+          fi
