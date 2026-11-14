@@ -222,8 +222,7 @@ class ExternalIds:
         Every site that reads an ``imdbId``, ``tmdbId``, or ``tvdbId`` off a payload must
         come through here. A raw ``tt0000000`` reaching a stored record is truthy, so
         skipping this filter would let it shadow the cleaned id at ``item.imdb_id or
-        item.plex_imdb_id`` downstream, sending a keep-list lookup out under an id no
-        list row carries.
+        item.plex_imdb_id`` downstream.
         ``test_repo_hygiene.test_every_external_id_read_goes_through_the_sentinel_filter``
         parses ``src/`` and fails on a read that bypasses this.
 

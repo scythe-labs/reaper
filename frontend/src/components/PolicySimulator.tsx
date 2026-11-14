@@ -299,7 +299,7 @@ export function Outcome({
           <h3>{t("policySim.newOnTheList")}</h3>
           <ul className="sim-examples">
             {simulation.examples_newly_condemned.map((e) => (
-              <li key={`${e.title}-${e.year ?? ""}`}>
+              <li key={e.media_key}>
                 <span className="sim-example-title">
                   {e.title}
                   {e.year !== null && <span className="muted"> ({e.year})</span>}

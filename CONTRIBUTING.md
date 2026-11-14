@@ -164,7 +164,7 @@ Run the writing form of both formatters before you stage: `uv run ruff format .`
 whole machine takes about one, which is the difference between running it before every commit
 and running it once at the end. Drop the flag only to debug a single test, where `-s` and
 `--pdb` need one worker. A test that fails only under `-n auto` is a test leaking
-process-global state into the next worker, not a reason to stop using it.
+process-global state into a later test in the same worker, not a reason to stop using it.
 
 **Judge a gate by its exit code.** A pipeline reports its last command's status, so
 `npm --prefix frontend run build | tail -4` prints `tail`'s success while a failing compile
@@ -226,6 +226,13 @@ checks the type and nothing else, so subject wording is yours.
 
 Commits on your branch are yours to shape however you like, since they are collapsed on the
 way in. Meaningful ones make review easier and nothing more is required of them.
+
+### The pull request description
+
+The template gives every description the same three sections. "What was wrong" says what
+someone could see go wrong, then the cause. "What this PR does" is a numbered list, one change
+per item. "Tests" says what you ran and what you saw. Keep it short however large the change
+is. Summarize, group related edits into one item, and leave out what the diff already shows.
 
 ### Review and merge
 

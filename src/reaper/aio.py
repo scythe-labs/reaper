@@ -104,12 +104,13 @@ def per_loop_lock() -> Callable[[], asyncio.Lock]:
     that ever contended, which costs nothing in a process with one loop.
 
     This function only provides mutual exclusion. It enforces no policy about what
-    a caller does under the lock. Three callers use it: ``history_sync._rebuild_lock``,
-    ``lists._widen_lock``, and ``leaving_soon._pass_lock``, and only the first two
-    guard schema changes. ``history_sync`` drops a stale ``watch_event`` row under
-    its lock, but ``lists.ensure_schema`` must never drop a row that way: dropping it
-    would stop every keep list from protecting anything until the next sync refills
-    it. ``imdb_dataset`` takes no lock here and needs none. It never drops a live
+    a caller does under the lock. Four callers use it: ``history_sync._rebuild_lock``,
+    ``history_sync._sync_lock``, ``lists._widen_lock``, and ``leaving_soon._pass_lock``.
+    Only ``_rebuild_lock`` and ``_widen_lock`` guard schema changes.
+    ``history_sync`` drops a stale ``watch_event`` row under its lock, but
+    ``lists.ensure_schema`` must never drop a row that way: dropping it would stop
+    every keep list from protecting anything until the next sync refills it.
+    ``imdb_dataset`` takes no lock here and needs none. It never drops a live
     table, it builds a new copy and renames it into place, and a missing table
     degrades gracefully on the read side instead of reading as empty.
     """

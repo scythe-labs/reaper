@@ -21,8 +21,9 @@ name: Binaries
 # Deliberately NOT on pull_request or push: the per-commit lanes pay for the amd64
 # docker gate in ci.yml and nothing else; everything here is nightly or hand-run.
 #
-# macOS builds on macos-14 (arm64) because the build image sets the binary's minimum
-# macOS: building on a newer image silently raises the floor for every operator.
+# macOS builds on an arm64 runner, and the "Check the minimum macOS" step holds the
+# binary's floor at MACOS_FLOOR whichever image builds it. GitHub retires a macOS image
+# about two years after it ships, so the runner label has to move and the floor must not.
 # Intel Macs have no lane; GitHub retired the x64 macOS runners.
 #
 # Actions are pinned to commit SHAs for the same supply-chain reason as ci.yml, and
@@ -132,7 +133,7 @@ jobs:
         include:
           - runner: windows-latest
             slug: windows-x64
-          - runner: macos-14
+          - runner: macos-15
             slug: macos-arm64
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -148,7 +149,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           cache: npm
@@ -165,7 +166,7 @@ jobs:
           npm run build
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
 
@@ -241,6 +242,44 @@ jobs:
           probe ./build/pyinstaller/dist/reaper/reaper 8461 server.log
           probe ./build/pyinstaller/dist/Reaper.app/Contents/MacOS/Reaper 8462 app.log
 
+      # Every Mach-O file in the bundle records the oldest macOS it loads on. The
+      # highest of those is the oldest macOS the app starts on.
+      - name: Check the minimum macOS
+        if: runner.os == 'macOS'
+        env:
+          MACOS_FLOOR: "14.0"
+        run: |
+          set -euo pipefail
+          : > minos.txt
+          while IFS= read -r -d '' f; do
+            case "$(file -b "${f}")" in
+              *Mach-O*)
+                otool -l "${f}" \
+                  | awk -v f="${f}" '/LC_BUILD_VERSION/ {b=1} b && $1 == "minos" {print $2, f; b=0}' \
+                  >> minos.txt
+                ;;
+            esac
+          done < <(find build/pyinstaller/dist -type f -print0)
+          if [ ! -s minos.txt ]; then
+            echo "found no Mach-O file with a minimum macOS in the bundle"; exit 1
+          fi
+          awk -v floor="${MACOS_FLOOR}" '
+            function newer(a, b,    x, y, i) {
+              split(a, x, "."); split(b, y, ".")
+              for (i = 1; i <= 3; i++) {
+                if ((x[i] + 0) != (y[i] + 0)) return (x[i] + 0) > (y[i] + 0)
+              }
+              return 0
+            }
+            newer($1, floor) { print "  " $0 }
+          ' minos.txt > too-new.txt
+          if [ -s too-new.txt ]; then
+            echo "these files need a newer macOS than ${MACOS_FLOOR}:"
+            cat too-new.txt
+            exit 1
+          fi
+          echo "every file in the bundle loads on macOS ${MACOS_FLOOR}"
+
       - name: Boot the binary and probe it (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -311,7 +350,7 @@ jobs:
           Compress-Archive -Path "build\pyinstaller\dist\reaper" `
             -DestinationPath "artifacts\Reaper-$env:VERSION-windows-x64.zip"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: binaries-${{ matrix.slug }}
           path: artifacts/*
@@ -382,7 +421,7 @@ jobs:
           fi
           sudo snap remove scythe-labs-reaper
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: binaries-snap-${{ matrix.arch }}
           path: ${{ steps.build.outputs.snap }}
@@ -483,7 +522,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: binaries-*
           merge-multiple: true

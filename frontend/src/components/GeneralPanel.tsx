@@ -471,7 +471,7 @@ export function GeneralPanel({
   // One save affordance for the whole panel. The bar names what is unsaved and sends all of it
   // in one request. The controls that take effect the moment they change are not drafts and do
   // not join it. Three of them call `save` themselves: the reverse-proxy `Switch`, the
-  // expand-seasons `<select>`, and the language `<select>`. The theme `<select>` writes this
+  // expand-seasons `<select>`, and the language `<select>`. The theme switch writes this
   // browser's own localStorage and never reaches the server, so it has no draft to hold either.
   // The language select reloads the page once its save lands (see `setLanguage`), which would
   // take this bar's contents with it, so it is disabled while the bar has any. That is why it
@@ -770,19 +770,20 @@ export function GeneralPanel({
           </SetRow>
 
           <SetRow label={t("general.theme.label")} help={t("general.theme.help")}>
-            <select
+            <Segmented
               value={theme}
-              aria-label={t("general.theme.label")}
-              onChange={(e) => {
-                const next = e.target.value as ThemeChoice;
+              options={[
+                ["system", t("general.theme.optionSystem")],
+                ["light", t("general.theme.optionLight")],
+                ["dark", t("general.theme.optionDark")],
+              ]}
+              label={t("general.theme.label")}
+              variant="flat"
+              onChange={(next) => {
                 setTheme(next);
                 applyTheme(next);
               }}
-            >
-              <option value="system">{t("general.theme.optionSystem")}</option>
-              <option value="light">{t("general.theme.optionLight")}</option>
-              <option value="dark">{t("general.theme.optionDark")}</option>
-            </select>
+            />
           </SetRow>
         </div>
       </div>
@@ -791,8 +792,7 @@ export function GeneralPanel({
         <h3>{t("general.sections.reviewQueue")}</h3>
         <div className="set-rows">
           <SetRow label={t("general.expandSeasons.label")} help={t("general.expandSeasons.help")}>
-            {/* Four choices, so this is a select rather than a Segmented, on the same control
-                standard as the Theme picker above. */}
+            {/* Four choices, so this is a select rather than a Segmented. */}
             <select
               value={data.expand_seasons_mode}
               aria-label={t("general.expandSeasons.label")}

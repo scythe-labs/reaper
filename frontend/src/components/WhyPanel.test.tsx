@@ -27,6 +27,10 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import { CSS } from "../test/stylesheet";
 import { Synopsis, WhyPanel, allocateShares } from "./WhyPanel";
 
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
+}));
+
 // This preserves the real exports (`...actual`) instead of just stubbing out `api`.
 // WhyPanel.tsx reads the real `REWATCH_KEEP` constant from this same module, and a bare
 // `{ api: {...} }` factory would hand it `undefined`, which compares unequal to every keep
@@ -35,13 +39,7 @@ vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
     ...actual,
-    api: {
-      override: vi.fn(),
-      clearOverride: vi.fn(),
-      profile: vi.fn(),
-      general: vi.fn(),
-      forgetWatchEvidenceFor: vi.fn(),
-    },
+    api: apiMock,
   };
 });
 

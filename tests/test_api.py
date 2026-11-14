@@ -1240,6 +1240,58 @@ class TestExecuteGates:
         with pytest.raises(RuntimeError):
             armed_client.post(f"/api/runs/{run['id']}/execute", json=body)
 
+    def test_a_finished_reap_hands_its_trash_purge_to_the_wait(
+        self, armed_client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The wait after the reap runs the purge the run recorded. Without the handoff,
+        Reaper never empties the trash."""
+        from reaper.api import runs as runs_module
+        from reaper.services.executor import ReapGateway, RunReport, TrashPurge
+
+        purge = TrashPurge(
+            deleted={1: frozenset({11})},
+            titles={1: "Films"},
+            instances=frozenset({("radarr", 1)}),
+        )
+        handed: list[object] = []
+
+        class _Executor:
+            def __init__(self, *_a: object, **_k: object) -> None:
+                self.trash_purge = purge
+
+            async def execute(self, run_id: int) -> RunReport:
+                return RunReport(
+                    run_id=run_id, dry_run=False, state=RunState.COMPLETED, deleted_items=1
+                )
+
+        async def build(*_a: object, **_k: object) -> tuple[ReapGateway, list[object]]:
+            stand_in: Any = object()
+            return ReapGateway(plex=stand_in, tautulli=stand_in), []
+
+        async def no_bins(*_a: object, **_k: object) -> list[object]:
+            return []
+
+        async def start(_app: object, purge_arg: object = None) -> None:
+            handed.append(purge_arg)
+
+        monkeypatch.setattr(runs_module, "build_reap_gateway", build)
+        monkeypatch.setattr(runs_module, "Executor", _Executor)
+        monkeypatch.setattr(runs_module, "_retry_bins", no_bins)
+        monkeypatch.setattr(runs_module, "start_plex_wait", start)
+        run = armed_client.post("/api/runs").json()
+
+        resp = armed_client.post(
+            f"/api/runs/{run['id']}/execute",
+            json={"confirmation_phrase": run["confirmation_phrase"]},
+        )
+        assert resp.status_code == 200, resp.text
+
+        async def finished() -> None:
+            await armed_client.app.state.reap_task  # type: ignore[attr-defined]
+
+        armed_client.portal.call(finished)  # type: ignore[union-attr]
+        assert handed == [purge]
+
 
 class TestTheProfileControlsTheCaps:
     """The reap caps are the owner's decision, read from the profile, not a hardcoded
@@ -1774,7 +1826,7 @@ class TestTheSimulator:
 
         assert result["newly_condemned"] == 1
         assert result["examples_newly_condemned"] == [
-            {"title": "Example Oldie", "year": None, "score": 45}
+            {"media_key": "radarr:1:13", "title": "Example Oldie", "year": None, "score": 45}
         ]
 
     def test_examples_are_empty_when_nothing_new_is_flagged(self, client: TestClient) -> None:

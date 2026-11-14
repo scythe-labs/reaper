@@ -62,6 +62,7 @@ from reaper.auth.proxy import parse_proxy_networks
 from reaper.auth.recovery import clear_recovery_file, mint_recovery_token, recovery_base_url
 from reaper.auth.sessions import clear_recovery_marks
 from reaper.buildinfo import build_version, install_kind, is_release, project_root, short_commit
+from reaper.clients import plex as plex_client
 from reaper.config import (
     Settings,
     get_settings,
@@ -442,6 +443,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     bins = asyncio.create_task(restore_recycle_bins(app), name="restore_recycle_bins")
     bins.add_done_callback(report_background_failure)
 
+    plex_client.resume_requests()
     try:
         yield
     finally:
@@ -450,8 +452,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         bins.cancel()
         with suppress(asyncio.CancelledError, Exception):
             await bins
-        # The wait after a reap (api/runs.py) only reads Plex, so it is canceled and awaited
-        # before the engines go. It launches no scan when canceled.
+        # The wait after a reap (api/runs.py) is canceled and awaited before the engines go.
+        # A cancel starts no trash purge and no scan.
         plex_task = getattr(app.state, "plex_wait_task", None)
         if plex_task is not None and not plex_task.done():
             plex_task.cancel()
@@ -466,11 +468,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             scan_task.cancel()
         # A reap (api/runs.py) is detached too, but it is deleting, so it
         # must be canceled and awaited before the engines go. That lets the
-        # executor's CancelledError branch mark the run ABORTED, whose
-        # finally commits that state and tidies Plex against the still-live
-        # DB and clients. Bounded, so a slow Plex cannot hang shutdown
-        # forever. If it exceeds the bound, the second cancel (from
-        # wait_for) interrupts the cleanup and shutdown proceeds anyway.
+        # executor's CancelledError branch mark the run ABORTED and commit
+        # that state against the still-live DB. A canceled run skips the Plex
+        # tidy and the bin restore. The wait is bounded, so a slow commit
+        # cannot hang shutdown. If it exceeds the bound, the second cancel
+        # (from wait_for) interrupts the cleanup and shutdown proceeds anyway.
         reap_task = getattr(app.state, "reap_task", None)
         if reap_task is not None and not reap_task.done():
             reap_task.cancel()
@@ -483,6 +485,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await close_artwork_client(app)
         await engine.dispose()
         await cache_engine.dispose()
+        # A canceled scan leaves Plex reads running on worker threads, and the process
+        # cannot exit until they return. Everything above is durable, so end them now.
+        plex_client.stop_requests()
         log.info("reaper.stopped")
 
 

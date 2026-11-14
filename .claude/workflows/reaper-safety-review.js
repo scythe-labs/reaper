@@ -50,7 +50,7 @@ const GROUPS = [
     key: 'executor-send',
     files: 'src/reaper/services/executor.py (read lines 1300-2548 with offset/limit)',
     focus:
-      'the movie and season send paths, size gates, Plex refresh scoping, _finalize_plex and the trash purge',
+      'the movie and season send paths, size gates, Plex refresh scoping, and the trash purge (TrashPurge near the top of the file, run from api/runs.py _wait_for_plex_then_scan)',
   },
   {
     key: 'snapshot',

@@ -476,11 +476,9 @@ def build_facts(
     # would tell the owner "whitelisted" about a film they never touched. The why-panel
     # must be able to say which.
     #
-    # Every id the movie carries is passed together, the same as on the TV path. Radarr is
-    # tmdb-native and a blank imdbId is ordinary, so the imdb id may be the one Plex
-    # matched. A keep-list row stored under imdb alone, which is what a legacy-agent Plex
-    # library yields for a "Never Reap" collection, must still protect it. Matching on one
-    # id kind alone fails open on the deletion path.
+    # Every id the movie carries is passed together, the same as on the TV path. That
+    # includes both IMDb ids, Radarr's and the one Plex matched, which can differ. A
+    # keep-list row stored under either IMDb id alone must still protect the film.
     #
     # Every listing of a merged bind, or the single key of a normal one, is derived once
     # here and read again by the streaming veto below. A "Never Reap" entry no agent ever
@@ -489,7 +487,8 @@ def build_facts(
     plex_keys = item.merged_rating_keys or ((rating_key,) if rating_key else ())
     memberships = membership_index.lookup(
         media_type="movie",
-        imdb_id=item.imdb_id or item.plex_imdb_id,
+        imdb_id=item.imdb_id,
+        plex_imdb_id=item.plex_imdb_id,
         tmdb_id=item.tmdb_id,
         plex_rating_keys=plex_keys,
     )
@@ -2546,9 +2545,7 @@ def _raw_items(
         # filter runs once here, and everything below reads `ids` rather than the raw
         # payload. A raw `imdbId` of "tt0000000" is truthy, so carrying it onto the
         # RawItem would shadow the id Plex matched at every
-        # `item.imdb_id or item.plex_imdb_id` downstream, including the keep-list lookup
-        # in `build_facts`, which would then run under an id no list row carries and
-        # condemn a keep-listed film.
+        # `item.imdb_id or item.plex_imdb_id` downstream.
         ids = identity.ExternalIds.of(imdb=movie.get("imdbId"), tmdb=movie.get("tmdbId"))
         tmdb_id = ids.tmdb
         # The Plex library the operator mapped this movie's root folder to, if any. Tried ahead

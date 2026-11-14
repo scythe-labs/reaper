@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The two gates in `App` that sit above the whole signed-in UI, driven through a failed refetch.
+// The gates in `App` that sit above the whole signed-in UI, driven through a failed refetch.
 //
 // React Query keeps the last good data through a failed refetch and raises `isError` beside
 // it. So a gate that checks only `isError`, without asking whether a value is still in hand,
@@ -15,7 +15,7 @@ import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { QueryClient } from "@tanstack/react-query";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AuthUser, CandidatePage, SetupStatus } from "./api";
+import type { AuthUser, CandidatePage, Safety, SetupStatus } from "./api";
 import {
   DEFAULT_GENERAL,
   DEFAULT_PROFILE,
@@ -113,7 +113,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   apiMock.me.mockResolvedValue(USER);
   apiMock.setupStatus.mockResolvedValue(COMPLETE_SETUP);
-  apiMock.safety.mockResolvedValue({ destructive_enabled: false, dry_run: true, reason: null });
+  apiMock.safety.mockResolvedValue({
+    destructive_enabled: false,
+    has_password: true,
+    recovery_mode: false,
+  } satisfies Safety);
   apiMock.latestSnapshot.mockResolvedValue(null);
   apiMock.scanStatus.mockResolvedValue(IDLE_SCAN);
   apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
@@ -226,6 +230,58 @@ describe("the setup gate through a failed refetch", () => {
     // routing an unfinished install here safe.
     expect(screen.getByRole("button", { name: WIZARD_WAY_OUT })).toBeEnabled();
     expect(dashboardNav()).toBeNull();
+  });
+});
+
+describe("the safety gate", () => {
+  /** Lets the query cache's queued notification reach React and commit. */
+  async function settle() {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  it("holds the spinner until the first safety read lands, so no screen paints without the banner", async () => {
+    let answer: (safety: Safety) => void = () => {};
+    apiMock.safety.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    const queryClient = renderApp();
+
+    await waitFor(() => expect(queryClient.getQueryState(["setup"])?.status).toBe("success"));
+    await settle();
+    expect(screen.getByText("Loading Reaper…")).toBeInTheDocument();
+    expect(dashboardNav()).toBeNull();
+
+    await act(async () =>
+      answer({ destructive_enabled: false, has_password: true, recovery_mode: false }),
+    );
+    expect(await screen.findByRole("navigation", { name: "Sections" })).toBeInTheDocument();
+    expect(screen.getByText("Read-only.")).toBeInTheDocument();
+  });
+
+  it("shows the amber banner when the first safety read fails, and never holds the spinner", async () => {
+    apiMock.safety.mockRejectedValue(new Error("boom"));
+    renderApp();
+
+    expect(await screen.findByRole("navigation", { name: "Sections" })).toBeInTheDocument();
+    expect(screen.getByText("Safety state unknown.")).toBeInTheDocument();
+  });
+
+  it("keeps the app and the amber banner up while a failed safety read is polled again", async () => {
+    apiMock.safety.mockRejectedValue(new Error("boom"));
+    const queryClient = renderApp();
+    await screen.findByText("Safety state unknown.");
+
+    // A poll after a failure puts the read back to pending, with no last-known value.
+    apiMock.safety.mockReturnValue(new Promise(() => {}));
+    act(() => {
+      void queryClient.refetchQueries({ queryKey: ["safety"] });
+    });
+    await waitFor(() => expect(queryClient.getQueryState(["safety"])?.status).toBe("pending"));
+    await settle();
+
+    expect(dashboardNav()).toBeInTheDocument();
+    expect(screen.getByText("Safety state unknown.")).toBeInTheDocument();
+    expect(document.querySelector(".view-armed-unknown")).toBeInTheDocument();
   });
 });
 

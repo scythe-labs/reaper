@@ -182,7 +182,6 @@ function pickedCount(): string {
 
 /** Enter Select mode (the bulk bar only exists there) and pick every drawn card. */
 async function selectAllDrawn() {
-  const { userEvent } = await import("@testing-library/user-event");
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Select" }));
   await user.click(await screen.findByRole("button", { name: "Select all" }));
@@ -1453,6 +1452,16 @@ describe("the kept-by-the-whole-show note", () => {
     // the season onto the reap list. The note must say so, not just warn about the harmless
     // direction and go quiet about the destructive one.
     expect(screen.getByText(/goes back on the list/i)).toBeInTheDocument();
+  });
+
+  it.each([
+    ["will be removed", null],
+    ["kept for now", false],
+  ])("says clearing a season reap under a spared show keeps it, on %s", (lead, effective) => {
+    // Clearing the season's reap hands it back to the show's spare, so the file stays.
+    const { container } = render1("reap", "spare", effective);
+    expect(screen.getByText(new RegExp(lead, "i"))).toBeInTheDocument();
+    expect(container.textContent).toContain("Clear it and it stays.");
   });
 
   it("names the consequence of clearing in BOTH directions, never only the safe one", () => {

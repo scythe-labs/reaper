@@ -27,6 +27,7 @@ import { readLanding, sectionUrl, writeUrl } from "./navUrl";
 import { usePageScrollLock } from "./pageScrollLock";
 import { useGeneralSettings, useSeedLanguage } from "./useGeneralSettings";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "./useMediaQuery";
+import { useSafety } from "./useSafety";
 import { useScanSettled } from "./useScanSettled";
 import { RecycleBinBanner } from "./components/RecycleBins";
 import { SafetyBanner } from "./components/SafetyBanner";
@@ -515,8 +516,8 @@ function Dashboard({ user }: { user: AuthUser }) {
           landmark section lets a screen reader user browsing by landmark (the normal way to
           skim a page) reach these facts, the same way they reach the nav and the main content.
           `.app` is plain block flow with no child or sibling selectors, so this wrapper moves
-          nothing on screen. `AppStaleRead.test.tsx` is the only test that mounts the shell, and
-          it runs a page-level axe audit that catches a landmark like this going missing. */}
+          nothing on screen. `AppStaleRead.test.tsx` runs a page-level axe audit that catches a
+          landmark like this going missing. */}
       <section className="app-status" aria-label={t("shell.app.statusLabel")}>
         <SafetyBanner onGoToDeletion={() => goToPolicySection("deletion")} />
         <RecycleBinBanner />
@@ -672,16 +673,21 @@ function Authed({ user }: { user: AuthUser }) {
     queryKey: ["setup"],
     queryFn: api.setupStatus,
   });
+  // No screen paints until the first safety read settles, so the safety banner is never
+  // absent. A failed read settles it too. Only the first read holds the spinner. A poll after a
+  // failure goes pending again, and it must never unmount the app.
+  const safety = useSafety();
+  const loading = isLoading || (safety.isLoading && !safety.isFetched);
 
   // Declared above the early return below, so hook order stays the same whichever branch
   // renders.
-  useSlowWait(isLoading ? t("shell.app.stillLoadingReaper") : null);
+  useSlowWait(loading ? t("shell.app.stillLoadingReaper") : null);
   // The first signed-in moment is the earliest one where a browser that knows its own preferred
   // languages is talking to a server that cannot detect them. Here rather than in the wizard,
   // because an install past setup never runs the wizard again.
   useSeedLanguage();
 
-  if (isLoading) {
+  if (loading) {
     return (
       // The sr-only word here is read in document order like any other text; it is not a
       // live region. The sentence for a wait that runs long is announced separately, through

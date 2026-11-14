@@ -1798,17 +1798,11 @@ class TestGatherEndToEnd:
         self, cache_engine: AsyncEngine
     ) -> None:
         """Sonarr's ``tt0000000`` "unknown" sentinel must not stand in for the imdb id
-        Plex matched. The sentinel is truthy, so if the ids were not cleaned before the
-        membership lookup, the lookup would run under an id no keep row carries, and the
-        row stored under the real id would go unfound. The show owns every season beneath
-        it, so one shadowed id would un-protect the whole series at once. This is pinned
-        end to end rather than left to the hygiene gate, because that gate only reads the
-        source for an ``ExternalIds.of`` call and would stay green even if the lookup were
-        re-pointed at the raw payload.
+        Plex matched. The sentinel is truthy, so an uncleaned id would shadow Plex's id as
+        the show's imdb coordinate on every season row.
 
-        The keep row is stored under imdb alone, on purpose. Giving it a tvdb id as well
-        would let the lookup find it by tvdb regardless of what the imdb arm does, and the
-        test would stop discriminating.
+        The keep row is stored under imdb alone, so only the imdb arm of the lookup can
+        find it.
         """
         series = [
             {
@@ -1882,11 +1876,91 @@ class TestGatherEndToEnd:
 
         assert judgments, "the show's seasons must still be gathered"
         for judgment in judgments:
+            assert judgment.imdb_id == "tt0000042"
             assert isinstance(judgment.facts.is_whitelisted, Known)
             assert judgment.facts.is_whitelisted.value is True, (
-                "the sentinel shadowed the imdb id Plex matched, so the keep row stored under "
-                "the real id was not found and every season of the show lost its protection"
+                "the keep row stored under the imdb id Plex matched was not found, so every "
+                "season of the show lost its protection"
             )
+
+    async def test_a_keep_row_under_plexs_imdb_id_protects_when_sonarr_holds_another(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """Sonarr and Plex can hold different imdb ids for one show. A keep row stored under
+        Plex's imdb id alone must still protect every season. The row carries no tvdb id, so
+        only the imdb arm of the lookup can find it."""
+        series = [
+            {
+                "id": 92,
+                "title": "Two Ids Show",
+                "year": 2019,
+                "status": "ended",
+                "ended": True,
+                "tvdbId": 5151,
+                "imdbId": "tt0000041",
+                "seasons": [_season_payload(n) for n in range(1, 6)],
+            }
+        ]
+        children = {910: [{"media_index": n, "rating_key": 910 + n} for n in range(1, 6)]}
+        tautulli = show_library(
+            rows=[
+                {"rating_key": 910, "title": "Two Ids Show", "year": 2019, "added_at": "1000000"}
+            ],
+            children=children,
+        )
+        plex = _FakePlexGuids(
+            {
+                910: identity.PlexItem(
+                    rating_key=910,
+                    title="Two Ids Show",
+                    year=2019,
+                    added_at=None,
+                    ids=identity.ExternalIds.of(tvdb=5151, imdb="tt0000042"),
+                    content_rating="TV-14",
+                    runtime_minutes=45,
+                    ratings=(),
+                )
+            },
+            seasons=_season_rows(children),
+        )
+        keep_row = lists.Membership(
+            slug="never-reap",
+            display_name="Never Reap",
+            mode=lists.ListMode.HARD,
+            kind=lists.ListKind.WHITELIST,
+            rank=None,
+        )
+        index = lists.MembershipIndex(
+            _by_imdb={"tt0000042": ((0, "tv", keep_row),)},
+            _by_tmdb={},
+            _by_tvdb={},
+            _by_plex_key={},
+        )
+        _reasons, degrade = _degrade_sink()
+
+        judgments = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
+            plex=plex,  # type: ignore[arg-type]
+            horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
+            active_rating_keys=set(),
+            activity_degraded=False,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+            membership_index=index,
+            watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
+        )
+
+        assert judgments, "the show's seasons must still be gathered"
+        for judgment in judgments:
+            assert judgment.facts.is_whitelisted == Known(value=True, source="lists")
 
     async def test_an_unmatched_series_yields_unresolved_seasons(
         self, cache_engine: AsyncEngine

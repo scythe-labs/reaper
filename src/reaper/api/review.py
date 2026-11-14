@@ -60,6 +60,7 @@ from reaper.engine import identity
 from reaper.engine.explanation import absorb_legacy_detail, read_explanation, thaw_reason_key
 from reaper.engine.gates import GateId, thaw_defers_to_owner
 from reaper.engine.reason import Reason, from_wire, to_wire
+from reaper.engine.verdict import below_coverage_floor
 from reaper.services import (
     app_settings,
     whitelist,
@@ -959,8 +960,29 @@ def _contribution(entry: dict[str, Any]) -> float:
     return float(value) if isinstance(value, int | float) else 0.0
 
 
+def _held_by_coverage(exp: dict[str, Any], score: int, coverage_bp: int | None) -> bool:
+    """Whether the coverage floor, not the score, held an abstain past every blocked case.
+
+    ``coverage_bp`` is the row's stored value, the one the verdict compared. With a frozen
+    floor this is the verdict's own floor check. A row frozen before the floor was stored,
+    or a caller with no coverage, falls back to the threshold. An abstain at or above it
+    can only be the floor. ``_chip`` and ``_primary_reason`` both call this, so the chip
+    and the line beneath it name the same cause.
+    """
+    floor = thaw_threshold(exp.get("coverage_floor_bp"))
+    if floor is not None and coverage_bp is not None:
+        return below_coverage_floor(coverage_bp, floor)
+    threshold = thaw_threshold(exp.get("threshold"))
+    return threshold is not None and score >= threshold
+
+
 def _primary_reason(
-    exp: dict[str, Any] | None, verdict: str, score: int, media_type: str = "movie"
+    exp: dict[str, Any] | None,
+    verdict: str,
+    score: int,
+    media_type: str = "movie",
+    *,
+    coverage_bp: int | None = None,
 ) -> Reason | None:
     """The single line the card shows: why Reaper judged this, not what it is about.
 
@@ -1011,14 +1033,8 @@ def _primary_reason(
     unknown = _entries(exp, "protections_unknown")
     if unknown:
         return _detail_reason(unknown[0])
-    # An abstain that got this far was stopped by the score or by the coverage floor. These
-    # are different decisions with different remedies: one says move the slider, the other
-    # says fix the evidence source. ``decide_verdict``'s order settles which: past every
-    # blocked case, an abstain at or above the threshold can only be the coverage floor.
-    # This is the same branch ``_chip`` makes below, and the two must agree, or the chip
-    # and the line beneath it would name different causes for the same row.
-    threshold = thaw_threshold(exp.get("threshold"))
-    if threshold is not None and score >= threshold:
+    # An abstain that got this far was stopped by the coverage floor or by the score.
+    if _held_by_coverage(exp, score, coverage_bp):
         return Reason("kept_safe.coverage")
     return Reason("below_threshold")
 
@@ -1211,7 +1227,12 @@ def _came_back_chip(fired: list[dict[str, Any]]) -> ChipOut | None:
 
 
 def _chip(
-    exp: dict[str, Any] | None, verdict: str, score: int, media_type: str = "movie"
+    exp: dict[str, Any] | None,
+    verdict: str,
+    score: int,
+    media_type: str = "movie",
+    *,
+    coverage_bp: int | None = None,
 ) -> ChipOut | None:
     """The card's one short status chip: Sanctuary and Limbo lanes only.
 
@@ -1294,17 +1315,15 @@ def _chip(
     if unknown:
         return ChipOut(tone="quiet", reason=to_wire(Reason("unknown_checks")))
 
+    if _held_by_coverage(exp, score, coverage_bp):
+        return ChipOut(tone="quiet", reason=to_wire(Reason("coverage")))
     threshold = thaw_threshold(exp.get("threshold"))
-    if threshold is not None:
-        if score >= threshold:
-            # decide_verdict's order: past the blocked cases, an abstain at or above
-            # the threshold can only be the coverage floor.
-            return ChipOut(tone="quiet", reason=to_wire(Reason("coverage")))
-        return ChipOut(
-            tone="quiet",
-            reason=to_wire(Reason("below_threshold", {"score": score, "threshold": threshold})),
-        )
-    return ChipOut(tone="quiet", reason=to_wire(Reason("below")))
+    if threshold is None:
+        return ChipOut(tone="quiet", reason=to_wire(Reason("below")))
+    return ChipOut(
+        tone="quiet",
+        reason=to_wire(Reason("below_threshold", {"score": score, "threshold": threshold})),
+    )
 
 
 def _season_number(media_key: str) -> int | None:
@@ -1374,7 +1393,9 @@ def _candidate_out(
     # the same multi-KB document.
     explanation = _decode_explanation(r.explanation_json)
     dormant_days = _dormant_days(explanation)
-    primary_reason = _primary_reason(explanation, r.verdict, r.score, r.media_type)
+    primary_reason = _primary_reason(
+        explanation, r.verdict, r.score, r.media_type, coverage_bp=r.coverage_bp
+    )
     reason_key = to_wire(primary_reason) if primary_reason is not None else None
     return CandidateOut(
         id=r.id,
@@ -1417,7 +1438,7 @@ def _candidate_out(
         spare_expires_at=spare_exp.isoformat() if spare_exp is not None else None,
         spare_covers_until=_covers_until(r.media_key, override, decisions, expiries),
         show_spare_expires_at=show_spare_exp.isoformat() if show_spare_exp is not None else None,
-        chip=_chip(explanation, r.verdict, r.score, r.media_type),
+        chip=_chip(explanation, r.verdict, r.score, r.media_type, coverage_bp=r.coverage_bp),
         season_number=_season_number(r.media_key),
         show_status=r.show_status,
         collections=_collections(r.collections_json),

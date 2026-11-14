@@ -128,7 +128,8 @@ function maintenancePresets(defaultCron: string): { label: string; cron: string 
 const OFF_VALUE = "__off__";
 const CUSTOM_VALUE = "__custom__";
 
-function whenText(iso: string | null): string {
+/** `zone` is the server's stored zone, the one the cron text beside this runs on. */
+function whenText(iso: string | null, zone: string | undefined): string {
   if (!iso) return i18next.t("jobs.when.unscheduled");
   const ms = new Date(iso).getTime() - Date.now();
   if (ms <= 0) return i18next.t("jobs.when.anyMoment");
@@ -136,7 +137,21 @@ function whenText(iso: string | null): string {
   if (mins < 60) return i18next.t("jobs.when.inMinutes", { mins });
   const hours = Math.round(mins / 60);
   if (hours < 24) return i18next.t("jobs.when.inHours", { hours });
-  return new Date(iso).toLocaleString();
+  return dateInZone(iso, zone);
+}
+
+/** The date and time in the server's zone. When that zone is unknown, or this browser cannot
+ *  format it, the browser's own time is shown with its zone named. */
+function dateInZone(iso: string, zone: string | undefined): string {
+  const at = new Date(iso);
+  if (zone) {
+    try {
+      return at.toLocaleString(undefined, { timeZone: zone });
+    } catch {
+      // A zone name this browser does not know throws a RangeError.
+    }
+  }
+  return at.toLocaleString(undefined, { timeZoneName: "short" });
 }
 
 /** The clock as US 12-hour text, whatever the locale; the cron messages take it as a ready
@@ -183,7 +198,11 @@ function describeCron(cron: string): string {
   return i18next.t("jobs.cron.custom", { cron });
 }
 
-function scanScheduleText(job: ScheduledJob | undefined, failed: boolean): string {
+function scanScheduleText(
+  job: ScheduledJob | undefined,
+  failed: boolean,
+  zone: string | undefined,
+): string {
   // A failed load is not "still checking". Say so, so the row doesn't claim to be checking
   // forever after the schedule query errored. This only matters when there is no last good row
   // to fall back on, though: React Query keeps the previous jobs and raises the failure beside
@@ -196,15 +215,15 @@ function scanScheduleText(job: ScheduledJob | undefined, failed: boolean): strin
   if (job.cron === null) return i18next.t("jobs.scan.scheduleOff");
   return i18next.t("jobs.scan.scheduleText", {
     cron: describeCron(job.cron),
-    when: whenText(job.next_run_at),
+    when: whenText(job.next_run_at, zone),
   });
 }
 
-function maintenanceScheduleText(job: ScheduledJob): string {
+function maintenanceScheduleText(job: ScheduledJob, zone: string | undefined): string {
   if (job.cron === null) return i18next.t("jobs.maintenance.off");
   return i18next.t("jobs.maintenance.scheduleText", {
     cron: describeCron(job.cron),
-    when: whenText(job.next_run_at),
+    when: whenText(job.next_run_at, zone),
   });
 }
 
@@ -331,7 +350,15 @@ function ScheduleModal({
 
 /** One upkeep job: what it is, when it runs, and Edit + Run now. It shows an honest
  *  "running now" while it works; none of these can delete anything. */
-function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
+function JobRow({
+  job,
+  zone,
+  onEdit,
+}: {
+  job: ScheduledJob;
+  zone: string | undefined;
+  onEdit: () => void;
+}) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const meta = jobMeta(job.id);
@@ -390,7 +417,7 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
           lastResult={lastResultText}
           flash={flash}
         />
-        <div className="jobrow-sched">{maintenanceScheduleText(job)}</div>
+        <div className="jobrow-sched">{maintenanceScheduleText(job, zone)}</div>
         {run.error && (
           <Notice tone="error" inline>
             {t("jobs.row.startFailed", { message: describeError(run.error) })}
@@ -682,6 +709,7 @@ export function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
 
   const jobsById = new Map<string, ScheduledJob>((schedule.data?.jobs ?? []).map((j) => [j.id, j]));
   const scanJob = jobsById.get(SCAN_ID);
+  const zone = useGeneralSettings().data?.timezone;
   const waitingForPlex = useWaitingForPlex();
 
   return (
@@ -717,7 +745,7 @@ export function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
           scanJob={scanJob}
           title={jobMeta(SCAN_ID).title}
           desc={jobMeta(SCAN_ID).desc}
-          scheduleText={scanScheduleText(scanJob, schedule.isError)}
+          scheduleText={scanScheduleText(scanJob, schedule.isError, zone)}
           onEdit={() => scanJob && setEditing(scanJob)}
           canEdit={!!scanJob}
         />
@@ -728,7 +756,7 @@ export function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
         {(schedule.data?.jobs ?? [])
           .filter((job) => job.id !== SCAN_ID)
           .map((job) => (
-            <JobRow key={job.id} job={job} onEdit={() => setEditing(job)} />
+            <JobRow key={job.id} job={job} zone={zone} onEdit={() => setEditing(job)} />
           ))}
       </div>
 

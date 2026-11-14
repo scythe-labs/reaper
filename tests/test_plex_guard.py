@@ -20,8 +20,10 @@ from unittest import mock
 
 import pytest
 import requests
+from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
+from reaper.clients import plex as plex_client
 from reaper.clients.base import SafetyViolationError
 from reaper.clients.plex import (
     PLEX_READ_TIMEOUT,
@@ -32,7 +34,8 @@ from reaper.clients.plex import (
     declared_mutation,
     normalize_label,
 )
-from reaper.config import RuntimeSafety
+from reaper.config import RuntimeSafety, Settings
+from reaper.main import create_app
 
 ARMED = RuntimeSafety(destructive_enabled=True)
 READ_ONLY = RuntimeSafety(destructive_enabled=False)
@@ -85,7 +88,7 @@ class TestAMutatingCallIsRefusedUnlessArmedAndDeclared:
             session.put("http://127.0.0.1:1/library/x")
 
     def test_a_put_is_blocked_when_armed_but_not_declared(self) -> None:
-        """Armed, but nobody wrote the intent to the journal. The declaration is there so
+        """Armed, but nobody declared the intent. The declaration is there so
         a mutation which skipped the executor cannot reach Plex."""
         session = GuardedSession(ARMED)
 
@@ -94,7 +97,7 @@ class TestAMutatingCallIsRefusedUnlessArmedAndDeclared:
 
     def test_turning_deletion_off_blocks_even_a_declared_mutation(self) -> None:
         """Deletion off wins over everything. Even with a run in flight and its intent
-        already journalled, turning deletion off makes the guard refuse it."""
+        already declared, turning deletion off makes the guard refuse it."""
         session = GuardedSession(READ_ONLY)
 
         with declared_mutation(), pytest.raises(SafetyViolationError):
@@ -235,7 +238,7 @@ class TestGetShapedMutationsAreGated:
             session.get("http://127.0.0.1:1/library/sections/3/refresh")
 
     def test_a_refresh_get_passes_when_armed_and_declared(self) -> None:
-        """The executor's path. Armed, with the intent journalled, and the request reaches
+        """The executor's path. Armed, with the intent declared, and the request reaches
         the transport."""
         session = GuardedSession(ARMED)
         with _transport() as send, declared_mutation():
@@ -245,7 +248,7 @@ class TestGetShapedMutationsAreGated:
 
     def test_an_ordinary_section_read_stays_free(self) -> None:
         """Reads that merely look like the refresh path's neighbors (the section
-        listing is_refreshing polls) must not need arming."""
+        listing ``item_count`` reloads) must not need arming."""
         session = GuardedSession(READ_ONLY)
         with _transport() as send:
             session.get("http://127.0.0.1:1/library/sections/3", timeout=0.05)
@@ -328,7 +331,7 @@ class TestAGuardRefusalReachesTheCallerAsARefusal:
     ``PlexError``. ``leaving_soon.sync_shelves._reconcile`` catches ``PlexError`` per
     library and continues past it, so that would turn a safety refusal into one line
     beside "Plex is unreachable". The executor's ``_flush_refreshes`` and
-    ``_finalize_plex`` swallow a ``PlexError`` even more completely, by design.
+    ``TrashPurge.run`` swallow a ``PlexError`` even more completely, by design.
 
     **What this pins and what it does not.** It pins that a refusal raised inside the
     worker leaves the method as a ``SafetyViolationError`` rather than a ``PlexError``.
@@ -428,7 +431,7 @@ class TestEveryRefusalIsOnTheRecord:
 
     At the point of refusal nothing is written by default, so the only trace is whatever
     the caller makes of the exception. The executor's ``_flush_refreshes`` and
-    ``_finalize_plex`` catch ``Exception`` on purpose, because a reap must not fail on a
+    ``TrashPurge.run`` catch ``Exception`` on purpose, because a reap must not fail on a
     follow-up, and each logs the refusal under an event naming the wrong cause. What
     matters is having a discriminator to tell refusals apart, not the wording.
     ``sync_shelves._reconcile`` catches only ``PlexError``, so a shelf refusal passes
@@ -522,3 +525,40 @@ class TestTheConnectionCarriesReapersOwnTimeout:
         assert captured["timeout"] == PLEX_READ_TIMEOUT
         # Wider than plexapi's own default, which the constant alone cannot prove.
         assert PLEX_READ_TIMEOUT > plexapi.TIMEOUT
+
+
+class TestRequestsAreRefusedOnceTheAppHasStopped:
+    """A Plex read runs on a thread that cancellation cannot reach, and the process cannot
+    exit while it runs. Once shutdown is complete the session refuses the next request, so a
+    read that loops over pages ends."""
+
+    def test_a_get_is_refused_and_nothing_is_sent(self) -> None:
+        session = GuardedSession(READ_ONLY)
+        plex_client.stop_requests()
+
+        with _transport() as send, pytest.raises(requests.ConnectionError, match="stopping"):
+            session.get("http://127.0.0.1:1/library/sections", timeout=0.05)
+
+        assert send.call_count == 0
+
+    def test_a_get_is_sent_again_once_requests_resume(self) -> None:
+        session = GuardedSession(READ_ONLY)
+        plex_client.stop_requests()
+        plex_client.resume_requests()
+
+        with _transport() as send:
+            session.get("http://127.0.0.1:1/library/sections", timeout=0.05)
+
+        assert _sent(send) == ("GET", "http://127.0.0.1:1/library/sections")
+
+    def test_the_app_refuses_requests_only_after_it_has_shut_down(self, settings: Settings) -> None:
+        """The lifespan allows requests while the app runs and refuses them on the way out."""
+        session = GuardedSession(READ_ONLY)
+        plex_client.stop_requests()
+        with TestClient(create_app(settings)), _transport() as send:
+            session.get("http://127.0.0.1:1/library/sections", timeout=0.05)
+            assert send.call_count == 1
+
+        with _transport() as send, pytest.raises(requests.ConnectionError, match="stopping"):
+            session.get("http://127.0.0.1:1/library/sections", timeout=0.05)
+        assert send.call_count == 0

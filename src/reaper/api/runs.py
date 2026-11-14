@@ -54,6 +54,7 @@ from reaper.api.schemas import (
     RunStepsOut,
     RunSummaryOut,
 )
+from reaper.clients.base import BaseClient
 from reaper.clients.plex import PlexClient
 from reaper.config import Settings
 from reaper.crypto import SecretBox
@@ -70,6 +71,7 @@ from reaper.services.executor import (
     ReapGateway,
     ReapProgress,
     RunReport,
+    TrashPurge,
     size_confirmed,
 )
 from reaper.services.planner import (
@@ -103,9 +105,8 @@ profile_router = APIRouter(prefix="/api", tags=[api_tags.POLICY])
 #: How many journal rows a run's detail response carries, and the default page of the steps
 #: route. A plan of 500 seasons is 1,500 rows, each with a path and a stringified request body,
 #: and the table draws 50 of them. The rest are a route away rather than in every response.
-#: The outcomes route (GET /runs/{id}/outcomes) reuses this same constant: it pages the
-#: same journal at item granularity instead of step granularity, so producer and consumer
-#: agree on one page size rather than each guessing (rule 131).
+#: The outcomes route (GET /runs/{id}/outcomes) pages the same journal by item and reads
+#: its page size from this constant too.
 STEP_PAGE = 50
 
 #: The default and max page of GET /runs, named so a page size an operator's history view
@@ -822,26 +823,40 @@ def reap_in_flight(app: FastAPI) -> bool:
     return status is not None and status.running
 
 
-async def _wait_for_plex_then_scan(app: FastAPI) -> None:
-    """Hold until Plex has finished the reap's folder scans, then start the scan.
+async def _clients(
+    app: FastAPI, stack: AsyncExitStack
+) -> tuple[ReapGateway, list[BaseClient | PlexClient]]:
+    """Live clients built from the deletion switch as it reads now, closed with ``stack``."""
+    factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with factory() as session:
+        safety = await app_settings.runtime_safety(session, app.state.settings)
+    gateway, closers = await build_reap_gateway(factory, app.state.secret_box, safety=safety)
+    for client in closers:
+        await stack.enter_async_context(client)
+    return gateway, closers
 
-    Setup trouble falls back to scanning at once. A cancel (shutdown, or a later reap taking
-    over) starts nothing.
+
+async def _wait_for_plex_then_scan(app: FastAPI, purge: TrashPurge | None) -> None:
+    """Hold until Plex has finished the reap's folder scans, empty its trash, then scan.
+
+    ``purge`` runs only when the wait ends quiet, still inside the wait, on clients built
+    after it. A switch turned off during the wait makes ``clients.plex.GuardedSession``
+    refuse the purge. Setup trouble skips the purge and scans at once. A cancel (shutdown,
+    or a later reap taking over) starts no purge and no scan.
     """
     began = time.monotonic()
     reason = "skipped"
     try:
-        factory: async_sessionmaker[AsyncSession] = app.state.session_factory
-        async with factory() as session:
-            safety = await app_settings.runtime_safety(session, app.state.settings)
-        _gateway, closers = await build_reap_gateway(factory, app.state.secret_box, safety=safety)
         async with AsyncExitStack() as stack:
-            for client in closers:
-                await stack.enter_async_context(client)
+            _gateway, closers = await _clients(app, stack)
             plex = next((c for c in closers if isinstance(c, PlexClient)), None)
             if plex is not None:
                 log.info("reap.plex_wait_started")
                 reason = await plex_wait.wait_until_quiet(plex.is_scanning)
+        if reason == "quiet" and purge is not None:
+            async with AsyncExitStack() as stack:
+                gateway, _closers = await _clients(app, stack)
+                await purge.run(gateway)
     except Exception as exc:
         log.warning("reap.plex_wait_failed", error=str(exc))
     finally:
@@ -852,16 +867,17 @@ async def _wait_for_plex_then_scan(app: FastAPI) -> None:
     launch_scan(app)
 
 
-async def start_plex_wait(app: FastAPI) -> None:
-    """Start the wait that ends in the scan after a reap. A reap is refused while a wait runs,
-    so replacing a running wait here is only a guard."""
+async def start_plex_wait(app: FastAPI, purge: TrashPurge | None = None) -> None:
+    """Start the wait that ends in the scan after a reap. ``purge`` empties Plex's trash when
+    the wait ends quiet. A reap is refused while a wait runs, so replacing a running wait
+    here is only a guard, and it drops the old wait's purge."""
     old: asyncio.Task[None] | None = getattr(app.state, "plex_wait_task", None)
     if old is not None and not old.done():
         old.cancel()
         with suppress(asyncio.CancelledError):
             await old
     plex_wait.begin()
-    task = asyncio.create_task(_wait_for_plex_then_scan(app), name="plex_wait")
+    task = asyncio.create_task(_wait_for_plex_then_scan(app, purge), name="plex_wait")
     task.add_done_callback(report_background_failure)
     app.state.plex_wait_task = task
 
@@ -1108,15 +1124,16 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
                 aborted_reason=english(report.aborted_reason) if report.aborted_reason else None,
             )
             # Removing files leaves the last snapshot's queue and policy
-            # preview stale, so this kicks a fresh scan, on a completed or
-            # a stopped run alike, as long as at least one file was
-            # actually removed. Nothing removed means nothing went stale.
+            # preview stale, so this starts the wait that empties Plex's
+            # trash and then scans, on a completed or a stopped run alike,
+            # as long as at least one file was actually removed. Nothing
+            # removed means nothing went stale.
             # This checks ``library_changed``, not ``deleted_items``. A
             # movie Radarr deleted whose import exclusion never landed
             # ends FAILED, and reading the confirmed count alone would
             # leave the queue offering files that were already gone.
             if report.library_changed:
-                await start_plex_wait(app)
+                await start_plex_wait(app, executor.trash_purge)
         except ExecutionError as exc:
             # A refused run the executor raised rather than executed
             # (changed manifest, not PLANNED, missing clients). The run

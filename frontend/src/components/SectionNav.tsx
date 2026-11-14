@@ -23,17 +23,12 @@ export function SectionNav({ view, onChange }: { view: View; onChange: (next: Vi
     { id: "fairness", label: t("shell.sectionNav.scales"), Icon: ScalesIcon },
     { id: "settings", label: t("shell.sectionNav.settings"), Icon: SettingsIcon },
   ];
-  const { data, isLoading, isError } = useSafety();
-  // No dot means "not armed", so a failed read must never fall through to showing no dot. It
-  // wears the amber "could not check" mark instead, the tone the banner uses for the same
-  // state. Only the very first fetch draws nothing, because it genuinely knows nothing yet.
-  const safety: "armed" | "unknown" | null = isLoading
-    ? null
-    : isError || !data
-      ? "unknown"
-      : data.destructive_enabled
-        ? "armed"
-        : null;
+  const { data, isError } = useSafety();
+  // No dot means "not armed", so a pending or failed read must never fall through to showing no
+  // dot. It wears the amber "could not check" mark instead, the tone the banner uses for the
+  // same state.
+  const safety: "armed" | "unknown" | null =
+    isError || !data ? "unknown" : data.destructive_enabled ? "armed" : null;
 
   return (
     <nav className="views" aria-label={t("shell.sectionNav.sectionsLabel")}>

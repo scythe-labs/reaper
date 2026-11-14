@@ -839,6 +839,8 @@ export type PolicyRepair =
 
 /** One title the draft would newly flag, for the simulator's "New on the list" block. */
 export interface SimExample {
+  /** The candidate's own key, for the list key. Never shown. */
+  media_key: string;
   title: string;
   year: number | null;
   score: number;
@@ -1264,12 +1266,12 @@ export interface ListSyncResult {
   plex_error_reason: ReasonKey | null;
 }
 
-/** What Plex would remove besides the files a reap deletes.
+/** What Plex's trash holds before a reap.
  *
- *  Reaper's end-of-run purge empties a library's whole trash, not just the part this
- *  run caused, so anything already in there loses its watch history, ratings and
- *  collections too. Those items sit on both sides of the executor's before/after
- *  count, so its gate cannot see them. No file on disk is affected either way.
+ *  Emptying a library's trash removes the watch history, ratings and collections of
+ *  everything in it. Reaper empties it only when everything in it came from the reap.
+ *  Plex's own empty-after-scan preference has no such check. No file on disk is affected
+ *  either way.
  */
 export interface PlexTrash {
   /** False when no Plex server is linked, in which case nothing purges. */
