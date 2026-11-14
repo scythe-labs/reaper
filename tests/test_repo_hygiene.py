@@ -2806,7 +2806,7 @@ def test_binaries_publish_is_gated_to_the_dev_ref() -> None:
 #: block leaving the walk is visible rather than silently dropping out of the ban below.
 #: The other workflows set it nowhere, and a block without it is out of scope on purpose:
 #: there the pipeline's status is the reader's, which is the answer the step wanted.
-_PIPEFAIL_RUN_BLOCKS = 18
+_PIPEFAIL_RUN_BLOCKS = 20
 
 
 def test_no_pipefail_gate_reads_its_verdict_through_a_short_circuiting_pipe() -> None:

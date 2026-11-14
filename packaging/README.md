@@ -42,9 +42,10 @@ packaging change before merge, run the workflow against the branch by hand:
 `gh workflow run binaries.yml --ref <branch>` (artifacts land on the run, and the
 dev-build prerelease is only refreshed when `publish` is set).
 
-The macOS build runs on the `macos-14` runner **because the build image sets the
-binary's minimum macOS**. Moving to a newer image silently raises that floor; don't,
-without meaning to. No dependency currently forces anything newer than macOS 14.
+The macOS build's "Check the minimum macOS" step fails if any file in the bundle
+needs a macOS newer than `MACOS_FLOOR` (14.0). GitHub retires a macOS runner image
+about two years after it ships. When it retires one, move the `runner` label in
+`binaries.yml` to the next image. The check keeps the floor where it is.
 
 ## Building locally
 
